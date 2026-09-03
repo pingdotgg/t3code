@@ -37,10 +37,12 @@ manifest ID, so one addon may safely render multiple controls.
 
 Submission payloads contain an addon-owned revision and opaque value. The host
 snapshots them before dispatch and commits that exact snapshot only after T3
-accepts the thread's first turn. Cleanup receives the submitted revision and
-must clear atomically only when the staged value still has that revision. This
-preserves edits made while uploads or turn creation are in flight. Draft
-discard paths invoke the same cleanup contract with the current revision.
+accepts the thread's first turn. Successful-send cleanup receives the submitted
+revision and must clear atomically only when the staged value still has that
+revision. This preserves edits made while uploads or turn creation are in
+flight. Draft discard invokes every cleanup hook; it supplies a null expected
+revision when no readable payload exists so invalid or partially staged state
+is removed too.
 
 Lifecycle callbacks may be synchronous or asynchronous. The host isolates
 read, commit, and cleanup failures per addon so one broken callback cannot

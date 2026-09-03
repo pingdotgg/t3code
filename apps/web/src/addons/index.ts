@@ -91,11 +91,11 @@ export async function clearComposerAddonSubmissionPayloadsFrom(
   const failures: ComposerAddonLifecycleFailure[] = [...snapshot.failures];
   for (const [addonId, addon] of addons) {
     const addonSnapshot = snapshot.payloads[addonId];
-    if (addonSnapshot === undefined || addon.clearSubmissionPayload === undefined) continue;
+    if (addon.clearSubmissionPayload === undefined) continue;
     try {
       await addon.clearSubmissionPayload({
         targetKey,
-        expectedRevision: addonSnapshot.revision,
+        expectedRevision: addonSnapshot?.revision ?? null,
         reason,
       });
     } catch (error) {

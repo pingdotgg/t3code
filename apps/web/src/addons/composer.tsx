@@ -42,7 +42,8 @@ export interface ComposerAddon {
    */
   readonly clearSubmissionPayload?: (input: {
     readonly targetKey: string;
-    readonly expectedRevision: string;
+    /** Null only for an explicit draft discard, which clears all staged state. */
+    readonly expectedRevision: string | null;
     readonly reason: "discarded" | "submitted";
   }) => void | Promise<void>;
 }

@@ -121,7 +121,7 @@ describe("composer addon lifecycle", () => {
 
   it("passes the snapshotted revision so newer edits are not cleared", async () => {
     let currentRevision = "1";
-    const clear = vi.fn(({ expectedRevision }: { expectedRevision: string }) => {
+    const clear = vi.fn(({ expectedRevision }: { expectedRevision: string | null }) => {
       if (currentRevision === expectedRevision) currentRevision = "cleared";
     });
     const stagedAddon = addon({ commitSubmission: () => undefined, clearSubmissionPayload: clear });
@@ -144,6 +144,7 @@ describe("composer addon lifecycle", () => {
 
   it("clears every staged addon on draft discard and isolates failures", async () => {
     const clearReady = vi.fn();
+    const clearUnreadable = vi.fn();
     const failures = await clearComposerAddonSubmissionPayloadsFrom(
       [
         [
@@ -162,6 +163,7 @@ describe("composer addon lifecycle", () => {
             clearSubmissionPayload: clearReady,
           }),
         ],
+        ["unreadable", addon({ clearSubmissionPayload: clearUnreadable })],
       ],
       "draft:1",
       "discarded",
@@ -171,6 +173,11 @@ describe("composer addon lifecycle", () => {
     expect(clearReady).toHaveBeenCalledWith({
       targetKey: "draft:1",
       expectedRevision: "2",
+      reason: "discarded",
+    });
+    expect(clearUnreadable).toHaveBeenCalledWith({
+      targetKey: "draft:1",
+      expectedRevision: null,
       reason: "discarded",
     });
   });
