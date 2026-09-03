@@ -8,6 +8,7 @@ import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
 import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import type { PreviewAutomationSnapshot } from "@t3tools/contracts";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -22,6 +23,119 @@ import {
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+
+/**
+ * Ceiling for the JSON metadata a `preview_snapshot` result hands the agent.
+ * Chrome's full accessibility tree has no natural bound and alone ran to
+ * hundreds of kilobytes on content-heavy pages, enough to crowd out the rest
+ * of a thread's context, so it is the first thing to go. The ceiling sits
+ * above what the producer's own caps (20k characters of visible text, 200
+ * interactive elements) add up to on an ordinary page, so a snapshot without
+ * the tree is normally sent whole. The screenshot travels beside the metadata
+ * as an image and is never reduced.
+ */
+export const PREVIEW_SNAPSHOT_METADATA_MAX_BYTES = 100_000;
+
+type PreviewSnapshotMetadata = Omit<PreviewAutomationSnapshot, "screenshot"> & {
+  readonly screenshot: Omit<PreviewAutomationSnapshot["screenshot"], "data">;
+};
+
+type OmittableField =
+  | "accessibilityTree"
+  | "networkEntries"
+  | "consoleEntries"
+  | "actionTimeline"
+  | "interactiveElements";
+
+/** Cuts a string to at most `length` UTF-16 units without splitting a surrogate pair. */
+const cutText = (text: string, length: number): string => {
+  const cut = text.slice(0, Math.max(0, length));
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
+};
+
+const serializedBytes = (value: unknown) => {
+  const serialized = JSON.stringify(value);
+  return { serialized, bytes: Buffer.byteLength(serialized, "utf8") };
+};
+
+/**
+ * Reduces snapshot metadata until it fits the limit, least useful field
+ * first, and records what went. The order is what an agent can best do
+ * without: the accessibility tree (redundant with the elements and the
+ * screenshot), then the diagnostics logs, then the visible text is cut short,
+ * and only then the interactive elements, which carry the locators the other
+ * tools need. Every step keeps the result inside the tool's output schema.
+ */
+export function boundPreviewSnapshotMetadata(snapshot: PreviewAutomationSnapshot): {
+  readonly metadata: PreviewSnapshotMetadata;
+  readonly serialized: string;
+} {
+  const {
+    screenshot: { data: _data, ...screenshot },
+    ...page
+  } = snapshot;
+  let metadata: PreviewSnapshotMetadata = { ...page, screenshot };
+  let { serialized, bytes } = serializedBytes(metadata);
+  if (bytes <= PREVIEW_SNAPSHOT_METADATA_MAX_BYTES) {
+    return { metadata, serialized };
+  }
+
+  const originalBytes = bytes;
+  const omitted: string[] = [];
+  const trimmed: string[] = [];
+  const measure = (): number => {
+    metadata = { ...metadata, truncation: { originalBytes, omitted, trimmed } };
+    const measured = serializedBytes(metadata);
+    serialized = measured.serialized;
+    return measured.bytes;
+  };
+  const omit = (field: OmittableField): number => {
+    metadata = { ...metadata, [field]: field === "accessibilityTree" ? null : [] };
+    omitted.push(field);
+    return measure();
+  };
+
+  if (metadata.accessibilityTree !== null && metadata.accessibilityTree !== undefined) {
+    bytes = omit("accessibilityTree");
+  }
+  for (const field of ["networkEntries", "consoleEntries", "actionTimeline"] as const) {
+    if (bytes <= PREVIEW_SNAPSHOT_METADATA_MAX_BYTES) break;
+    if (metadata[field].length > 0) bytes = omit(field);
+  }
+  if (bytes > PREVIEW_SNAPSHOT_METADATA_MAX_BYTES && metadata.visibleText.length > 0) {
+    trimmed.push("visibleText");
+    while (bytes > PREVIEW_SNAPSHOT_METADATA_MAX_BYTES && metadata.visibleText.length > 0) {
+      // Each pass keeps at most the share of the text the budget allows, so a
+      // few passes converge even when escaping and multi-byte characters make
+      // the serialized form larger than the character count.
+      const share = Math.min(0.9, PREVIEW_SNAPSHOT_METADATA_MAX_BYTES / bytes);
+      metadata = {
+        ...metadata,
+        visibleText: cutText(metadata.visibleText, Math.floor(metadata.visibleText.length * share)),
+      };
+      bytes = measure();
+    }
+  }
+  if (bytes > PREVIEW_SNAPSHOT_METADATA_MAX_BYTES && metadata.interactiveElements.length > 0) {
+    omit("interactiveElements");
+  }
+  return { metadata, serialized };
+}
+
+const formatKilobytes = (bytes: number) => `${Math.round(bytes / 1000)} KB`;
+
+/** The plain-language half of a reduced result, beside the JSON the agent parses. */
+const truncationNote = (metadata: PreviewSnapshotMetadata): string | undefined => {
+  const truncation = metadata.truncation;
+  if (truncation === undefined) return undefined;
+  return [
+    `Snapshot metadata was ${formatKilobytes(truncation.originalBytes)}, above the ${formatKilobytes(PREVIEW_SNAPSHOT_METADATA_MAX_BYTES)} limit sent to agents.`,
+    ...(truncation.omitted.length > 0 ? [`Omitted: ${truncation.omitted.join(", ")}.`] : []),
+    ...(truncation.trimmed.length > 0 ? [`Cut short: ${truncation.trimmed.join(", ")}.`] : []),
+    "Use preview_evaluate for targeted reads of what was left out.",
+  ].join(" ");
+};
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -163,34 +277,20 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
           Effect.matchCauseEffect({
             onFailure: previewSnapshotFailure,
             onSuccess: ({ encodedResult }) => {
-              const snapshot = encodedResult as {
-                readonly screenshot: {
-                  readonly mimeType: "image/png";
-                  readonly data: string;
-                  readonly width: number;
-                  readonly height: number;
-                };
-                readonly [key: string]: unknown;
-              };
-              const { screenshot, ...page } = snapshot;
-              const metadata = {
-                ...page,
-                screenshot: {
-                  mimeType: screenshot.mimeType,
-                  width: screenshot.width,
-                  height: screenshot.height,
-                },
-              };
+              const snapshot = encodedResult as PreviewAutomationSnapshot;
+              const { metadata, serialized } = boundPreviewSnapshotMetadata(snapshot);
+              const note = truncationNote(metadata);
               return Effect.succeed(
                 new McpSchema.CallToolResult({
                   isError: false,
                   structuredContent: metadata,
                   content: [
-                    { type: "text", text: JSON.stringify(metadata) },
+                    { type: "text", text: serialized },
+                    ...(note === undefined ? [] : [{ type: "text" as const, text: note }]),
                     {
                       type: "image",
-                      data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
-                      mimeType: screenshot.mimeType,
+                      data: new Uint8Array(Buffer.from(snapshot.screenshot.data, "base64")),
+                      mimeType: snapshot.screenshot.mimeType,
                     },
                   ],
                 }),

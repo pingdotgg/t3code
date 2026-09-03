@@ -543,6 +543,16 @@ export const PreviewAutomationSnapshot = Schema.Struct({
     width: Schema.Int,
     height: Schema.Int,
   }),
+  /** Present only when the metadata handed to an agent had to be reduced to
+      fit its size limit: which fields were replaced with null or an empty
+      list, which were cut short, and how large the whole was before. */
+  truncation: Schema.optional(
+    Schema.Struct({
+      originalBytes: Schema.Int,
+      omitted: Schema.Array(Schema.String),
+      trimmed: Schema.Array(Schema.String),
+    }),
+  ),
 });
 export type PreviewAutomationSnapshot = typeof PreviewAutomationSnapshot.Type;
 
