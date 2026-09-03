@@ -3,7 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   getCopyableDomSelectionText,
   normalizeTerminalSelectionText,
+  sameDomSelectionSnapshot,
   shouldAutoCopyOnMouseUp,
+  snapshotDomSelection,
 } from "./copyOnSelect";
 
 function mouseUp(overrides: Partial<MouseEvent> = {}): MouseEvent {
@@ -48,6 +50,25 @@ function selectionOf(text: string, startContainer: unknown, endContainer: unknow
   } as unknown as Selection;
 }
 
+function selectionWithAnchors(
+  text: string,
+  anchorNode: unknown,
+  anchorOffset: number,
+  focusNode: unknown,
+  focusOffset: number,
+) {
+  return {
+    isCollapsed: false,
+    rangeCount: 1,
+    toString: () => text,
+    anchorNode,
+    anchorOffset,
+    focusNode,
+    focusOffset,
+    getRangeAt: () => ({ startContainer: anchorNode, endContainer: focusNode }),
+  } as unknown as Selection;
+}
+
 describe("shouldAutoCopyOnMouseUp", () => {
   it("copies on a plain left-button release", () => {
     expect(shouldAutoCopyOnMouseUp(mouseUp())).toBe(true);
@@ -75,6 +96,52 @@ describe("normalizeTerminalSelectionText", () => {
     expect(normalizeTerminalSelectionText("")).toBeNull();
     expect(normalizeTerminalSelectionText("\n\n")).toBeNull();
     expect(normalizeTerminalSelectionText("\r\n\r\n")).toBeNull();
+  });
+});
+
+describe("dom selection snapshots", () => {
+  it("snapshots null for missing or collapsed selections", () => {
+    expect(snapshotDomSelection(null)).toBeNull();
+    expect(
+      snapshotDomSelection({ isCollapsed: true } as unknown as Selection),
+    ).toBeNull();
+  });
+
+  it("treats an unchanged selection across a click as the same", () => {
+    const node = textNode("hello");
+    const before = snapshotDomSelection(
+      selectionWithAnchors("hello", node, 0, node, 5),
+    );
+    const after = snapshotDomSelection(
+      selectionWithAnchors("hello", node, 0, node, 5),
+    );
+    expect(sameDomSelectionSnapshot(before, after)).toBe(true);
+  });
+
+  it("detects a gesture that created or changed the selection", () => {
+    const startNode = textNode("hello");
+    const endNode = textNode("hello world");
+    // Plain click away collapses the selection.
+    expect(
+      sameDomSelectionSnapshot(
+        snapshotDomSelection(selectionWithAnchors("hello", startNode, 0, startNode, 5)),
+        snapshotDomSelection({ isCollapsed: true } as unknown as Selection),
+      ),
+    ).toBe(false);
+    // Drag extends the focus.
+    expect(
+      sameDomSelectionSnapshot(
+        snapshotDomSelection(selectionWithAnchors("hello", startNode, 0, startNode, 5)),
+        snapshotDomSelection(selectionWithAnchors("hello world", endNode, 0, endNode, 11)),
+      ),
+    ).toBe(false);
+    // Same text reselected at other offsets still counts as a new gesture.
+    expect(
+      sameDomSelectionSnapshot(
+        snapshotDomSelection(selectionWithAnchors("hi", startNode, 0, startNode, 2)),
+        snapshotDomSelection(selectionWithAnchors("hi", startNode, 1, startNode, 3)),
+      ),
+    ).toBe(false);
   });
 });
 

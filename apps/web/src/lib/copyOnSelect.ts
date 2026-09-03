@@ -72,3 +72,42 @@ export function getCopyableDomSelectionText(
   }
   return text;
 }
+
+/**
+ * Identity of a DOM selection at one moment of a mouse gesture. Compared
+ * between mousedown and mouseup so a plain click over an existing selection
+ * never re-copies it: only a gesture that created or changed the selection
+ * may trigger an auto-copy.
+ */
+export type DomSelectionSnapshot = {
+  text: string;
+  anchorNode: Node | null;
+  anchorOffset: number;
+  focusNode: Node | null;
+  focusOffset: number;
+} | null;
+
+export function snapshotDomSelection(selection: Selection | null): DomSelectionSnapshot {
+  if (selection === null || selection.isCollapsed) return null;
+  return {
+    text: selection.toString(),
+    anchorNode: selection.anchorNode,
+    anchorOffset: selection.anchorOffset,
+    focusNode: selection.focusNode,
+    focusOffset: selection.focusOffset,
+  };
+}
+
+export function sameDomSelectionSnapshot(
+  before: DomSelectionSnapshot,
+  after: DomSelectionSnapshot,
+): boolean {
+  if (before === null || after === null) return before === after;
+  return (
+    before.text === after.text &&
+    before.anchorNode === after.anchorNode &&
+    before.anchorOffset === after.anchorOffset &&
+    before.focusNode === after.focusNode &&
+    before.focusOffset === after.focusOffset
+  );
+}
