@@ -4,6 +4,7 @@ import {
   type EnvironmentId,
   type PullRequestAction,
   type PullRequestMergeMethod,
+  type PullRequestListEntry,
   type PullRequestUpdateMethod,
   type PullRequestRef,
   type PullRequestState,
@@ -447,6 +448,7 @@ export function PullRequestDetailPanel({
   environmentId,
   threadRef = null,
   reference,
+  listEntry = null,
   refreshToken: forcedRefreshToken = 0,
   onActed,
   onClose,
@@ -463,6 +465,8 @@ export function PullRequestDetailPanel({
    */
   threadRef?: ScopedThreadRef | null;
   reference: PullRequestRef;
+  /** Row fields already loaded by the pull-request list, used while richer detail arrives. */
+  listEntry?: PullRequestListEntry | null;
   /**
    * Bumped by whatever holds the panel when a reader asks for everything on screen to be read
    * again. The panel owns its own reads, so the page cannot refresh them for it — it says when,
@@ -491,6 +495,12 @@ export function PullRequestDetailPanel({
   composerDraftTarget?: ScopedThreadRef | DraftId;
 }) {
   const pullRequestKey = `${reference.projectId}:${reference.repository}#${reference.number}`;
+  const matchingListEntry =
+    listEntry?.projectId === reference.projectId &&
+    listEntry.repository.toLowerCase() === reference.repository.toLowerCase() &&
+    listEntry.number === reference.number
+      ? listEntry
+      : null;
   const [tab, setTab] = useState<DetailTab>("summary");
   const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
   const [codeCommitScope, setCodeCommitScope] = useState<{
@@ -1296,10 +1306,10 @@ export function PullRequestDetailPanel({
         ).length
       : 0;
 
-  // A reopen already has last time's title, author, and counts. Keep them on screen
-  // and let the live read replace fields — especially the diff counts — in place.
+  // The list already has the pull request's identity and summary. Keep them on screen
+  // and let the richer detail read replace the remaining placeholders in place.
   if (detailQuery.isPending && !detail) {
-    return <PullRequestDetailGhost />;
+    return <PullRequestDetailGhost seed={matchingListEntry} />;
   }
 
   return (
