@@ -567,6 +567,139 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("accepts a canonical window whose local midnight starts in a DST gap", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const baseDir = NodePath.join(home, "midnight-gap-retention-state");
+      const stateDir = NodePath.join(baseDir, "userdata");
+      const totals = {
+        uncachedInputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 5,
+        reasoningTokens: 0,
+      };
+      yield* Effect.promise(() => NodeFSP.mkdir(stateDir, { recursive: true }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(stateDir, "usage-record-ledger.json"),
+          JSON.stringify({
+            version: 2,
+            // The 92-day retention cutoff is 21:00 UTC on April 23. Cairo's
+            // April 24 midnight gap begins at 22:00 UTC, so that local day
+            // is still fully inside retention.
+            generatedAtMs: Date.parse("2026-07-24T21:00:00.000Z"),
+            aggregates: [
+              {
+                hostId: "mac",
+                provider: "claude",
+                resolvedHomePath: "/a/.claude",
+                volumeId: "vol-1",
+                bucketStartMs: Date.parse("2026-04-24T12:00:00.000Z"),
+                model: "claude-fable-5",
+                totals,
+                pricedTotals: totals,
+                savingsTotals: totals,
+                legacyPricing: false,
+                legacyPricingRecords: 0,
+                reportedCostUsd: 0,
+                records: 1,
+                unpricedRecords: 0,
+                providerReportedRecords: 0,
+                sessions: ["session-1"],
+              },
+            ],
+            sources: [],
+          }),
+        ),
+      );
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-midnight-gap-retention-test",
+            baseDir,
+            home,
+            settings,
+          }),
+        ),
+      );
+      const result = yield* service.readSummary({
+        timeZone: "Africa/Cairo",
+        sinceDay: UsageDay.make("2026-04-24"),
+        untilDay: UsageDay.make("2026-07-22"),
+        resolution: "day",
+      });
+      assert.strictEqual(totalOutputTokens(result), 5);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("rejects a skipped local civil date", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const baseDir = NodePath.join(home, "skipped-date-retention-state");
+      const stateDir = NodePath.join(baseDir, "userdata");
+      const totals = {
+        uncachedInputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 5,
+        reasoningTokens: 0,
+      };
+      yield* Effect.promise(() => NodeFSP.mkdir(stateDir, { recursive: true }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(stateDir, "usage-record-ledger.json"),
+          JSON.stringify({
+            version: 2,
+            // Apia skipped December 30, 2011 when it moved across the date
+            // line. The old iterative resolver could return a prior instant.
+            generatedAtMs: Date.parse("2012-03-28T00:00:00.000Z"),
+            aggregates: [
+              {
+                hostId: "mac",
+                provider: "claude",
+                resolvedHomePath: "/a/.claude",
+                volumeId: "vol-1",
+                bucketStartMs: Date.parse("2011-12-30T12:00:00.000Z"),
+                model: "claude-fable-5",
+                totals,
+                pricedTotals: totals,
+                savingsTotals: totals,
+                legacyPricing: false,
+                legacyPricingRecords: 0,
+                reportedCostUsd: 0,
+                records: 1,
+                unpricedRecords: 0,
+                providerReportedRecords: 0,
+                sessions: ["session-1"],
+              },
+            ],
+            sources: [],
+          }),
+        ),
+      );
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-skipped-date-retention-test",
+            baseDir,
+            home,
+            settings,
+          }),
+        ),
+      );
+      const result = yield* service
+        .readSummary({
+          timeZone: "Pacific/Apia",
+          sinceDay: UsageDay.make("2011-12-30"),
+          untilDay: UsageDay.make("2011-12-30"),
+          resolution: "day",
+        })
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(result));
+    }).pipe(Effect.scoped),
+  );
+
   it.live("serves a remote-timezone preset from the normalized ledger", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;

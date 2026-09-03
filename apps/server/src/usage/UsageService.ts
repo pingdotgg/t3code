@@ -276,58 +276,35 @@ function isCommonPreset(input: UsageSummaryInput): boolean {
 }
 
 function localStartOfDayMs(timeZone: string, day: string): number {
-  const targetMs = Date.parse(`${day}T00:00:00.000Z`);
-  if (!Number.isFinite(targetMs)) return Number.NaN;
-  let formatter: Intl.DateTimeFormat;
-  try {
-    formatter = new Intl.DateTimeFormat("en-CA", {
-      timeZone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hourCycle: "h23",
-    });
-  } catch {
-    formatter = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "UTC",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hourCycle: "h23",
-    });
+  const [yearText, monthText, dayText] = day.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const calendarDay = Number(dayText);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(day) ||
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(calendarDay)
+  ) {
+    return Number.NaN;
   }
 
-  const [targetYear, targetMonth, targetDay] = day.split("-");
-  let candidateMs = targetMs;
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const parts = Object.fromEntries(
-      formatter.formatToParts(new Date(candidateMs)).map(({ type, value }) => [type, value]),
-    );
-    if (
-      parts.year === targetYear &&
-      parts.month === targetMonth &&
-      parts.day === targetDay &&
-      parts.hour === "00" &&
-      parts.minute === "00" &&
-      parts.second === "00"
-    ) {
-      return candidateMs;
-    }
-    const localMs = Date.parse(
-      `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}Z`,
-    );
-    if (!Number.isFinite(localMs)) return Number.NaN;
-    const adjustedMs = targetMs - (localMs - targetMs);
-    if (adjustedMs === candidateMs) return candidateMs;
-    candidateMs = adjustedMs;
-  }
-  return candidateMs;
+  // `compatible` chooses the first occurrence for a repeated midnight and
+  // the first valid instant after a midnight gap. Validate the resulting
+  // civil date because a whole date can be skipped (for example, Apia in
+  // 2011), in which case the adjusted value belongs to the following date.
+  const zone = Option.getOrElse(DateTime.zoneMakeNamed(timeZone), () =>
+    DateTime.zoneMakeNamedUnsafe("UTC"),
+  );
+  const resolved = DateTime.makeZoned(
+    { year, month, day: calendarDay, hour: 0, minute: 0, second: 0, millisecond: 0 },
+    { timeZone: zone, adjustForTimeZone: true, disambiguation: "compatible" },
+  );
+  if (Option.isNone(resolved)) return Number.NaN;
+  const parts = DateTime.toParts(resolved.value);
+  return parts.year === year && parts.month === month && parts.day === calendarDay
+    ? DateTime.toEpochMillis(resolved.value)
+    : Number.NaN;
 }
 
 function isWithinLedgerRetention(input: UsageSummaryInput, nowMs: number): boolean {
