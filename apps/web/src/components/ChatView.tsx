@@ -240,6 +240,7 @@ import {
   beginBackgroundDraftSubmissionByRef,
   clearBackgroundDraftSubmissionByRef,
   composerDraftHasUserContent,
+  composerTargetKey,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -248,6 +249,7 @@ import {
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
+import { commitComposerAddonSubmissionPayloads } from "../addons";
 import {
   appendTerminalContextsToPrompt,
   formatTerminalContextLabel,
@@ -5927,6 +5929,7 @@ function ChatViewContent(props: ChatViewProps) {
       selectedProviderModels: ctxSelectedProviderModels,
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
+      addonPayloads,
     } = sendCtx;
     const annotationImageAlreadyAttached =
       directAnnotation?.image !== undefined &&
@@ -6507,6 +6510,13 @@ function ChatViewContent(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        if (isLocalDraftThread && Object.keys(addonPayloads).length > 0) {
+          commitComposerAddonSubmissionPayloads({
+            targetKey: composerTargetKey(composerDraftTarget),
+            threadId: threadIdForSend,
+            payloads: addonPayloads,
+          });
+        }
         if (turnUsesAttachmentUploads) {
           releaseDraftAttachments(composerAttachmentsSnapshot);
         }
