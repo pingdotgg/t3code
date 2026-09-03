@@ -1,4 +1,4 @@
-import { autoAnimate } from "@formkit/auto-animate";
+import { autoAnimate, type AutoAnimationPlugin } from "@formkit/auto-animate";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
@@ -473,6 +473,51 @@ type SortablePinnedRowBag = Pick<
   ReturnType<typeof useSortable>,
   "listeners" | "setNodeRef" | "transform" | "transition" | "isDragging"
 >;
+
+type PinFlight = {
+  threadKey: string;
+  clone: HTMLElement;
+  sourceElement: HTMLElement;
+  sourceRect: DOMRect;
+  timeoutId: number;
+};
+
+const sidebarThreadListAnimation: AutoAnimationPlugin = (
+  element,
+  action,
+  oldCoordinates,
+  newCoordinates,
+) => {
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const pinInFlight = document.body.dataset.pinFlight === "true";
+  const timing: KeyframeEffectOptions = {
+    duration: reduceMotion ? 0 : pinInFlight ? 760 : 150,
+    easing: pinInFlight ? "cubic-bezier(.22,.68,.18,1)" : "ease-out",
+  };
+
+  if (action === "remain" && oldCoordinates && newCoordinates) {
+    const x = oldCoordinates.left - newCoordinates.left;
+    const y = oldCoordinates.top - newCoordinates.top;
+    return new KeyframeEffect(
+      element,
+      pinInFlight
+        ? [
+            { transform: `translate(${x}px, ${y}px)`, offset: 0 },
+            { transform: `translate(${x}px, ${y}px)`, offset: 0.44 },
+            { transform: `translate(${x * 0.9}px, ${y * 0.9}px)`, offset: 0.58 },
+            { transform: `translate(${x * 0.5}px, ${y * 0.5}px)`, offset: 0.78 },
+            { transform: "translate(0, 4px)", offset: 0.93 },
+            { transform: "translate(0, 0)", offset: 1 },
+          ]
+        : [{ transform: `translate(${x}px, ${y}px)` }, { transform: "translate(0, 0)" }],
+      timing,
+    );
+  }
+  if (action === "add") {
+    return new KeyframeEffect(element, [{ opacity: 0 }, { opacity: 1 }], timing);
+  }
+  return new KeyframeEffect(element, [{ opacity: 1 }, { opacity: 0 }], timing);
+};
 
 function SortablePinnedThreadRow(props: {
   id: string;
@@ -1423,6 +1468,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   return (
     <li
       data-thread-item
+      data-thread-key={scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))}
       ref={sortable?.setNodeRef}
       style={
         sortable
@@ -2221,6 +2267,8 @@ export default function Sidebar() {
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
+  const [pinMotionThreadKey, setPinMotionThreadKey] = useState<string | null>(null);
+  const pinFlightRef = useRef<PinFlight | null>(null);
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
   const searchableThreads = useMemo(
     () => [...pinnedThreads, ...activeThreads, ...snoozedThreads, ...settledThreads],
@@ -2732,15 +2780,71 @@ export default function Sidebar() {
       setOptimisticPinnedOrder(null);
     }
   }, [optimisticPinnedOrder, pinnedThreads, reorderablePinnedKeys]);
+  const finishPinFlight = useCallback((threadKey: string) => {
+    const flight = pinFlightRef.current;
+    if (flight?.threadKey !== threadKey) {
+      setPinMotionThreadKey((current) => (current === threadKey ? null : current));
+      return;
+    }
+    window.clearTimeout(flight.timeoutId);
+    flight.clone.remove();
+    flight.sourceElement.style.removeProperty("visibility");
+    delete document.body.dataset.pinFlight;
+    document
+      .querySelector<HTMLElement>(`[data-thread-key="${window.CSS.escape(threadKey)}"]`)
+      ?.style.removeProperty("visibility");
+    pinFlightRef.current = null;
+    setPinMotionThreadKey((current) => (current === threadKey ? null : current));
+  }, []);
   const attemptPin = useCallback(
     (threadRef: ScopedThreadRef) => {
+      const threadKey = scopedThreadKey(threadRef);
+      const sourceElement = document.querySelector<HTMLElement>(
+        `[data-thread-key="${window.CSS.escape(threadKey)}"]`,
+      );
+      if (
+        sourceElement !== null &&
+        !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ) {
+        const sourceRect = sourceElement.getBoundingClientRect();
+        const clone = sourceElement.cloneNode(true) as HTMLElement;
+        clone.removeAttribute("data-thread-key");
+        clone.setAttribute("aria-hidden", "true");
+        clone.inert = true;
+        Object.assign(clone.style, {
+          position: "fixed",
+          zIndex: "100",
+          pointerEvents: "none",
+          left: `${sourceRect.left}px`,
+          top: `${sourceRect.top}px`,
+          width: `${sourceRect.width}px`,
+          height: `${sourceRect.height}px`,
+          margin: "0",
+          listStyle: "none",
+          borderRadius: "8px",
+          background: "var(--sidebar)",
+          boxShadow: "0 12px 28px rgb(0 0 0 / 0.28)",
+          contain: "layout paint style",
+          transformOrigin: "center",
+          backfaceVisibility: "hidden",
+          willChange: "transform",
+        });
+        document.body.append(clone);
+        document.body.dataset.pinFlight = "true";
+        sourceElement.style.visibility = "hidden";
+        const timeoutId = window.setTimeout(() => finishPinFlight(threadKey), 5_000);
+        pinFlightRef.current = { threadKey, clone, sourceElement, sourceRect, timeoutId };
+      }
+      setPinMotionThreadKey(threadKey);
       void (async () => {
         // Fresh pins take the top of the arranged run: pinThread computes a
         // key before the smallest key across ALL pinned shells — including
         // snoozed pins hidden from this list, whose keys are still part of
         // the run — so the new pin can't land beneath a hidden head.
         const result = await pinThread(threadRef);
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        if (result._tag === "Failure") {
+          finishPinFlight(threadKey);
+          if (isAtomCommandInterrupted(result)) return;
           const error = squashAtomCommandFailure(result);
           toastManager.add(
             stackedThreadToast({
@@ -2752,7 +2856,53 @@ export default function Sidebar() {
         }
       })();
     },
-    [pinThread],
+    [finishPinFlight, pinThread],
+  );
+  useEffect(() => {
+    if (pinMotionThreadKey === null) return;
+    const pinLanded = pinnedThreads.some(
+      (thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === pinMotionThreadKey,
+    );
+    if (!pinLanded) return;
+    const flight = pinFlightRef.current;
+    if (flight?.threadKey !== pinMotionThreadKey) {
+      setPinMotionThreadKey(null);
+      return;
+    }
+    const destination = document.querySelector<HTMLElement>(
+      `[data-thread-key="${window.CSS.escape(pinMotionThreadKey)}"]`,
+    );
+    if (destination === null) return;
+    destination.style.visibility = "hidden";
+    const destinationRect = destination.getBoundingClientRect();
+    const x = destinationRect.left - flight.sourceRect.left;
+    const y = destinationRect.top - flight.sourceRect.top;
+    const bow = Math.min(120, Math.max(88, flight.sourceRect.width * 0.42));
+    const animation = flight.clone.animate(
+      [
+        { transform: "translate(0, 0) scale(1)", offset: 0 },
+        { transform: "translate(0, 42px) scale(.98)", offset: 0.16 },
+        { transform: `translate(${bow * 0.8}px, ${y * 0.2 + 34}px) scale(1.015)`, offset: 0.4 },
+        { transform: `translate(${bow}px, ${y * 0.58}px) scale(1.03)`, offset: 0.66 },
+        { transform: `translate(${x + bow * 0.35}px, ${y * 0.86}px) scale(1.025)`, offset: 0.84 },
+        { transform: `translate(${x + 6}px, ${y - 5}px) scale(1.018)`, offset: 0.94 },
+        { transform: `translate(${x}px, ${y}px) scale(1)`, offset: 1 },
+      ],
+      { duration: 780, easing: "cubic-bezier(.2,.7,.16,1)", fill: "forwards" },
+    );
+    void animation.finished.catch(() => undefined).then(() => finishPinFlight(pinMotionThreadKey));
+  }, [finishPinFlight, pinMotionThreadKey, pinnedThreads]);
+  useEffect(
+    () => () => {
+      const flight = pinFlightRef.current;
+      if (flight === null) return;
+      window.clearTimeout(flight.timeoutId);
+      flight.clone.remove();
+      flight.sourceElement.style.removeProperty("visibility");
+      delete document.body.dataset.pinFlight;
+    },
+    [],
   );
   const attemptUnpin = useCallback(
     (threadRef: ScopedThreadRef) => {
@@ -3460,7 +3610,7 @@ export default function Sidebar() {
 
   const attachListAutoAnimateRef = useCallback((node: HTMLUListElement | null) => {
     if (!node) return;
-    autoAnimate(node, { duration: 150, easing: "ease-out" });
+    autoAnimate(node, sidebarThreadListAnimation);
   }, []);
 
   // New thread defaults to the project you're in (active thread's project,
