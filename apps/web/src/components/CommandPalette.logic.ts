@@ -3,24 +3,95 @@ import {
   type KeybindingCommand,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
+import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { type ReactNode } from "react";
 import { sortThreads } from "../lib/threadSort";
+import { normalizeSearchText } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 
+export { normalizeSearchText } from "../lib/utils";
+
 export const RECENT_THREAD_LIMIT = 12;
-export const ITEM_ICON_CLASS = "size-4 text-muted-foreground/80";
+export const ITEM_ICON_CLASS = "size-4 text-icon-muted";
 export const ADDON_ICON_CLASS = "size-4";
+
+export function browseInputEndPaddingClass(input: {
+  readonly willCreateProjectPath: boolean;
+  readonly hasHighlightedBrowseItem: boolean;
+}): string {
+  if (input.willCreateProjectPath) {
+    return "*:data-[slot=autocomplete-input]:pe-38!";
+  }
+  if (input.hasHighlightedBrowseItem) {
+    return "*:data-[slot=autocomplete-input]:pe-30!";
+  }
+  return "*:data-[slot=autocomplete-input]:pe-24!";
+}
+
+/**
+ * The global search overlay hosts three mutually exclusive surfaces: the
+ * command palette (⌘K), the project file picker (⌘P), and project content
+ * search (⇧⌘F). One reducer owns open/mode state so the surfaces can never
+ * stack and re-triggering a mode's shortcut toggles it closed.
+ */
+export type SearchOverlayMode = "command" | "files" | "content";
+
+export interface CommandPaletteOpenIntent {
+  readonly kind: "add-project" | "new-thread-in";
+}
+
+export interface CommandPaletteUiState {
+  readonly open: boolean;
+  readonly mode: SearchOverlayMode;
+  readonly openIntent: CommandPaletteOpenIntent | null;
+}
+
+export type CommandPaletteUiAction =
+  | { readonly _tag: "SetOpen"; readonly open: boolean }
+  | { readonly _tag: "ToggleMode"; readonly mode: SearchOverlayMode }
+  | { readonly _tag: "OpenAddProject" }
+  | { readonly _tag: "OpenNewThreadIn" }
+  | { readonly _tag: "ClearOpenIntent" };
+
+export function reduceCommandPaletteUiState(
+  state: CommandPaletteUiState,
+  action: CommandPaletteUiAction,
+): CommandPaletteUiState {
+  switch (action._tag) {
+    case "SetOpen":
+      return action.open
+        ? { open: true, mode: "command", openIntent: state.openIntent }
+        : { ...state, open: false, openIntent: null };
+    case "ToggleMode":
+      return state.open && state.mode === action.mode
+        ? { ...state, open: false, openIntent: null }
+        : { open: true, mode: action.mode, openIntent: null };
+    case "OpenAddProject":
+      return { open: true, mode: "command", openIntent: { kind: "add-project" } };
+    case "OpenNewThreadIn":
+      return { open: true, mode: "command", openIntent: { kind: "new-thread-in" } };
+    case "ClearOpenIntent":
+      return state.openIntent ? { ...state, openIntent: null } : state;
+  }
+}
+
+export interface CommandPaletteThreadContentMatch {
+  readonly source: "user" | "assistant";
+  readonly snippet: string;
+  readonly query: string;
+}
 
 export interface CommandPaletteItem {
   readonly kind: "action" | "submenu";
   readonly value: string;
   readonly searchTerms: ReadonlyArray<string>;
   readonly title: ReactNode;
-  readonly description?: string;
+  readonly description?: ReactNode;
+  readonly threadContentMatch?: CommandPaletteThreadContentMatch;
   readonly timestamp?: string;
   readonly icon: ReactNode;
   readonly disabled?: boolean;
@@ -70,16 +141,13 @@ export function enumerateCommandPaletteItems(
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
 
-export function normalizeSearchText(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
 export function buildProjectActionItems(input: {
   projects: ReadonlyArray<Project>;
   valuePrefix: string;
   icon: (project: Project) => ReactNode;
   runProject: (project: Project) => Promise<void>;
   searchTerms?: (project: Project) => ReadonlyArray<string>;
+  renderDescription?: (project: Project) => ReactNode;
   shortcutCommand?: KeybindingCommand;
 }): CommandPaletteActionItem[] {
   return input.projects.map((project) => ({
@@ -87,7 +155,7 @@ export function buildProjectActionItems(input: {
     value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
     searchTerms: [project.title, project.workspaceRoot, ...(input.searchTerms?.(project) ?? [])],
     title: project.title,
-    description: project.workspaceRoot,
+    description: input.renderDescription?.(project) ?? project.workspaceRoot,
     icon: input.icon(project),
     ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
     run: async () => {
@@ -98,7 +166,16 @@ export function buildProjectActionItems(input: {
 
 export type BuildThreadActionItemsThread = Pick<
   SidebarThreadSummary,
-  "archivedAt" | "branch" | "createdAt" | "environmentId" | "id" | "projectId" | "title"
+  | "archivedAt"
+  | "branch"
+  | "createdAt"
+  | "environmentId"
+  | "id"
+  | "modelSelection"
+  | "projectId"
+  | "session"
+  | "title"
+  | "worktreePath"
 > & {
   updatedAt: string;
   latestUserMessageAt?: string | null;
@@ -114,6 +191,9 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   renderLeadingContent?: (thread: TThread) => ReactNode;
   /** Optional content rendered inline after the title text per-thread. */
   renderTrailingContent?: (thread: TThread) => ReactNode;
+  /** Optional rich description (e.g. favicon + workspace icons). Falls back to text. */
+  renderDescription?: (thread: TThread, meta: { projectTitle: string | undefined }) => ReactNode;
+  getContentMatch?: (thread: TThread) => CommandPaletteThreadContentMatch | undefined;
   runThread: (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => Promise<void>;
   limit?: number;
 }): CommandPaletteActionItem[] {
@@ -140,14 +220,23 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
 
     const leadingContent = input.renderLeadingContent?.(thread);
     const trailingContent = input.renderTrailingContent?.(thread);
+    const contentMatch = input.getContentMatch?.(thread);
+    const description = input.renderDescription
+      ? input.renderDescription(thread, { projectTitle })
+      : descriptionParts.join(` · `);
 
     return Object.assign(
       {
         kind: "action" as const,
         value: `thread:${thread.id}`,
-        searchTerms: [thread.title, projectTitle ?? ``, thread.branch ?? ``],
+        searchTerms: [
+          thread.title,
+          projectTitle ?? ``,
+          thread.branch ?? ``,
+          contentMatch?.snippet ?? ``,
+        ],
         title: thread.title,
-        description: descriptionParts.join(` · `),
+        description,
         timestamp: formatRelativeTimeLabel(
           thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
         ),
@@ -155,6 +244,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
       },
       leadingContent ? { titleLeadingContent: leadingContent } : {},
       trailingContent ? { titleTrailingContent: trailingContent } : {},
+      contentMatch ? { threadContentMatch: contentMatch } : {},
       {
         run: async () => {
           await input.runThread(thread);
@@ -164,9 +254,16 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   });
 }
 
-function rankSearchFieldMatch(field: string, normalizedQuery: string): number {
+function rankSearchFieldMatch(
+  field: string,
+  normalizedQuery: string,
+  queryTokens: ReadonlyArray<string>,
+): number {
   const normalizedField = normalizeSearchText(field);
-  if (normalizedField.length === 0 || !normalizedField.includes(normalizedQuery)) {
+  if (
+    normalizedField.length === 0 ||
+    !queryTokens.every((token) => normalizedField.includes(token))
+  ) {
     return Number.NEGATIVE_INFINITY;
   }
   if (normalizedField === normalizedQuery) {
@@ -175,12 +272,16 @@ function rankSearchFieldMatch(field: string, normalizedQuery: string): number {
   if (normalizedField.startsWith(normalizedQuery)) {
     return 2;
   }
-  return 1;
+  if (normalizedField.includes(normalizedQuery)) {
+    return 1;
+  }
+  return 0;
 }
 
 function rankCommandPaletteItemMatch(
   item: CommandPaletteActionItem | CommandPaletteSubmenuItem,
   normalizedQuery: string,
+  queryTokens: ReadonlyArray<string>,
 ): number {
   const terms = item.searchTerms.filter((term) => term.length > 0);
   if (terms.length === 0) {
@@ -188,7 +289,7 @@ function rankCommandPaletteItemMatch(
   }
 
   for (const [index, field] of terms.entries()) {
-    const fieldRank = rankSearchFieldMatch(field, normalizedQuery);
+    const fieldRank = rankSearchFieldMatch(field, normalizedQuery, queryTokens);
     if (fieldRank !== Number.NEGATIVE_INFINITY) {
       return 1_000 - index * 100 + fieldRank;
     }
@@ -202,6 +303,7 @@ export function filterCommandPaletteGroups(input: {
   query: string;
   isInSubmenu: boolean;
   projectSearchItems: ReadonlyArray<CommandPaletteActionItem>;
+  settingsSearchItems?: ReadonlyArray<CommandPaletteActionItem>;
   threadSearchItems: ReadonlyArray<CommandPaletteActionItem>;
 }): CommandPaletteGroup[] {
   const isActionsFilter = input.query.startsWith(">");
@@ -214,6 +316,7 @@ export function filterCommandPaletteGroups(input: {
     }
     return [...input.activeGroups];
   }
+  const queryTokens = normalizedQuery.split(" ");
 
   let baseGroups = [...input.activeGroups];
   if (isActionsFilter) {
@@ -231,6 +334,13 @@ export function filterCommandPaletteGroups(input: {
         items: input.projectSearchItems,
       });
     }
+    if (input.settingsSearchItems && input.settingsSearchItems.length > 0) {
+      searchableGroups.push({
+        value: "settings-search",
+        label: "Settings",
+        items: input.settingsSearchItems,
+      });
+    }
     if (input.threadSearchItems.length > 0) {
       searchableGroups.push({
         value: "threads-search",
@@ -243,14 +353,14 @@ export function filterCommandPaletteGroups(input: {
   return searchableGroups.flatMap((group) => {
     const items = Arr.filterMap(group.items, (item, index) => {
       const haystack = normalizeSearchText(item.searchTerms.join(" "));
-      if (!haystack.includes(normalizedQuery)) {
+      if (!queryTokens.every((token) => haystack.includes(token))) {
         return Result.failVoid;
       }
 
       return Result.succeed({
         item,
         index,
-        rank: rankCommandPaletteItemMatch(item, normalizedQuery),
+        rank: rankCommandPaletteItemMatch(item, normalizedQuery, queryTokens),
       });
     })
       .toSorted((left, right) => right.rank - left.rank || left.index - right.index)
@@ -304,6 +414,25 @@ export function buildBrowseGroups(input: {
   }
 
   return [{ value: "directories", label: "Directories", items }];
+}
+
+export function filterPinnedBrowseEntries(input: {
+  browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
+  filterQuery: string;
+  pinnedDirectoryName: string;
+  caseSensitive: boolean;
+}): ReturnType<typeof filterFilesystemBrowseEntries> {
+  const namesMatch = (left: string, right: string) =>
+    input.caseSensitive ? left === right : left.toLowerCase() === right.toLowerCase();
+  const visibleFilterQuery = namesMatch(input.filterQuery, input.pinnedDirectoryName)
+    ? ""
+    : input.filterQuery;
+  const { visibleEntries } = filterFilesystemBrowseEntries(input.browseEntries, visibleFilterQuery);
+  const exactEntry =
+    input.filterQuery.length > 0
+      ? (input.browseEntries.find((entry) => namesMatch(entry.name, input.filterQuery)) ?? null)
+      : null;
+  return { visibleEntries, exactEntry };
 }
 
 export function getCommandPaletteMode(input: {

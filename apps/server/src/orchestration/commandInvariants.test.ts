@@ -14,7 +14,6 @@ import * as Effect from "effect/Effect";
 import {
   findThreadById,
   listThreadsByProjectId,
-  requireNonNegativeInteger,
   requireThread,
   requireThreadAbsent,
 } from "./commandInvariants.ts";
@@ -201,23 +200,33 @@ describe("commandInvariants", () => {
     ).rejects.toThrow("already exists");
   });
 
-  it("requires non-negative integers", async () => {
-    await Effect.runPromise(
-      requireNonNegativeInteger({
-        commandType: "thread.checkpoint.revert",
-        field: "turnCount",
-        value: 0,
-      }),
-    );
+  it("lets a draft retry re-create a thread id after its first attempt was deleted", async () => {
+    const threadId = ThreadId.make("thread-1");
+    const firstAttempt = readModel.threads.find((thread) => thread.id === threadId)!;
+    const afterRollback: OrchestrationReadModel = {
+      ...readModel,
+      threads: readModel.threads.map((thread) =>
+        thread.id === threadId ? { ...thread, deletedAt: now, updatedAt: now } : thread,
+      ),
+    };
+    const retry: OrchestrationCommand = {
+      type: "thread.create",
+      commandId: CommandId.make("cmd-retry"),
+      threadId,
+      projectId: firstAttempt.projectId,
+      title: firstAttempt.title,
+      modelSelection: firstAttempt.modelSelection,
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      branch: null,
+      worktreePath: null,
+      createdAt: now,
+    };
 
     await expect(
       Effect.runPromise(
-        requireNonNegativeInteger({
-          commandType: "thread.checkpoint.revert",
-          field: "turnCount",
-          value: -1,
-        }),
+        requireThreadAbsent({ readModel: afterRollback, command: retry, threadId }),
       ),
-    ).rejects.toThrow("greater than or equal to 0");
+    ).resolves.toBeUndefined();
   });
 });

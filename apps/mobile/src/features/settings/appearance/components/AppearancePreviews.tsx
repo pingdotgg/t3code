@@ -1,12 +1,13 @@
-import { Platform, ScrollView, View, useColorScheme } from "react-native";
+import { Platform, ScrollView, type StyleProp, type TextStyle, View } from "react-native";
 
 import { AppText as Text } from "../../../../components/AppText";
 import {
   resolveMarkdownFontSizes,
   resolveMobileCodeSurface,
 } from "../../../../lib/appearancePreferences";
-import { useThemeColor } from "../../../../lib/useThemeColor";
-import { getPierreTerminalTheme } from "../../../terminal/terminalTheme";
+import { useUniwindTheme } from "../../../../lib/useUniwindTheme";
+import { getMobileTerminalTheme } from "../../../terminal/terminalTheme";
+import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 
 const CODE_FONT_FAMILY = Platform.select({
   ios: "ui-monospace",
@@ -46,22 +47,56 @@ export function TextAppearancePreview(props: { readonly fontSize: number }) {
  * on the shared card background so it reads like the other previews.
  */
 export function TerminalAppearancePreview(props: { readonly fontSize: number }) {
-  const scheme = useColorScheme() === "light" ? "light" : "dark";
-  const theme = getPierreTerminalTheme(scheme);
+  const { themeAppearance: scheme, themeId } = useAppearancePreferences();
+  const theme = getMobileTerminalTheme(themeId, scheme);
   const lineHeight = Math.round(props.fontSize * 1.6);
   const lineStyle = {
     fontFamily: "Menlo",
     fontSize: props.fontSize,
     lineHeight,
   } as const;
+  // AppText stamps the sans font on every node, so nested spans must
+  // re-apply the terminal font instead of relying on inheritance, exactly
+  // like the code preview's tokens below.
+  const span = (color: string, extra?: TextStyle): StyleProp<TextStyle> => [
+    lineStyle,
+    { color, ...extra },
+  ];
 
   return (
     <View className="p-4">
-      <Text style={[lineStyle, { color: theme.foreground }]}>$ npm run dev</Text>
-      <Text style={[lineStyle, { color: theme.palette[2] }]}>✓ Ready in 430ms</Text>
-      <Text style={[lineStyle, { color: theme.foreground }]}>
-        Local: http://localhost:3000{" "}
-        <Text style={[lineStyle, { color: theme.cursorForeground }]}>▏</Text>
+      <Text style={span(theme.foreground)}>
+        <Text style={span(theme.palette[2])}>→ </Text>
+        <Text style={span(theme.palette[6])}>t3code </Text>
+        <Text style={span(theme.palette[4])}>git:(</Text>
+        <Text style={span(theme.palette[1])}>main</Text>
+        <Text style={span(theme.palette[4])}>)</Text>
+        <Text style={span(theme.palette[3])}> ✗</Text>
+        <Text style={span(theme.foreground)}> vpr dev</Text>
+      </Text>
+      <Text style={span(theme.foreground)}>
+        <Text style={span(theme.palette[2])}>VITE v7.1.1</Text>
+        <Text style={span(theme.mutedForeground)}> ready in</Text>
+        <Text style={span(theme.foreground)}> 1.24s</Text>
+      </Text>
+      <Text style={span(theme.foreground)}>
+        <Text style={span(theme.palette[2])}>→ </Text>
+        <Text style={span(theme.mutedForeground)}>Local: </Text>
+        <Text style={span(theme.palette[6], { textDecorationLine: "underline" })}>
+          http://127.0.0.1:5173/
+        </Text>
+      </Text>
+      <Text style={span(theme.foreground)}>
+        <Text style={span(theme.palette[2])}>✓ 85 passed</Text>
+        <Text style={span(theme.palette[3])}> △ 2 warnings</Text>
+        <Text style={span(theme.palette[1])}> ✗ 0 failed</Text>
+      </Text>
+      <Text style={span(theme.foreground)}>
+        <Text style={span(theme.background, { backgroundColor: theme.palette[2] })}>
+          {" READY "}
+        </Text>
+        <Text style={span(theme.mutedForeground)}> watching for changes</Text>{" "}
+        <Text style={span(theme.cursorForeground)}>▏</Text>
       </Text>
     </View>
   );
@@ -103,8 +138,9 @@ export function CodeAppearancePreview(props: {
   readonly wordBreak: boolean;
 }) {
   const surface = resolveMobileCodeSurface(props.fontSize);
-  const lineNumberColor = useThemeColor("--color-icon-subtle");
-  const keywordColor = useThemeColor("--color-md-link");
+  const theme = useUniwindTheme();
+  const lineNumberColor = theme["--color-icon-subtle"];
+  const keywordColor = theme["--color-md-link"];
 
   const lineNumber = (line: CodePreviewLine, index: number) => (
     <Text

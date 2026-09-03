@@ -8,13 +8,14 @@ const {
   autoUpdaterRemoveListenerMock,
   exitMock,
   getAppPathMock,
+  getSystemLocaleMock,
   getVersionMock,
   isDefaultProtocolClientMock,
   onMock,
   quitMock,
   relaunchMock,
   removeListenerMock,
-  requestSingleInstanceLockMock,
+  removeSwitchMock,
   setAboutPanelOptionsMock,
   setAppUserModelIdMock,
   setAsDefaultProtocolClientMock,
@@ -29,13 +30,14 @@ const {
   autoUpdaterRemoveListenerMock: vi.fn(),
   exitMock: vi.fn(),
   getAppPathMock: vi.fn(() => "/app"),
+  getSystemLocaleMock: vi.fn(() => "en-GB"),
   getVersionMock: vi.fn(() => "1.2.3"),
   isDefaultProtocolClientMock: vi.fn(() => false),
   onMock: vi.fn(),
   quitMock: vi.fn(),
   relaunchMock: vi.fn(),
   removeListenerMock: vi.fn(),
-  requestSingleInstanceLockMock: vi.fn(() => true),
+  removeSwitchMock: vi.fn(),
   setAboutPanelOptionsMock: vi.fn(),
   setAppUserModelIdMock: vi.fn(),
   setAsDefaultProtocolClientMock: vi.fn(() => true),
@@ -54,11 +56,13 @@ vi.mock("electron", () => ({
   app: {
     commandLine: {
       appendSwitch: appendSwitchMock,
+      removeSwitch: removeSwitchMock,
     },
     dock: {
       setIcon: setDockIconMock,
     },
     getAppPath: getAppPathMock,
+    getSystemLocale: getSystemLocaleMock,
     getVersion: getVersionMock,
     isDefaultProtocolClient: isDefaultProtocolClientMock,
     isPackaged: true,
@@ -67,7 +71,6 @@ vi.mock("electron", () => ({
     quit: quitMock,
     relaunch: relaunchMock,
     removeListener: removeListenerMock,
-    requestSingleInstanceLock: requestSingleInstanceLockMock,
     runningUnderARM64Translation: false,
     setAboutPanelOptions: setAboutPanelOptionsMock,
     setAsDefaultProtocolClient: setAsDefaultProtocolClientMock,
@@ -92,6 +95,7 @@ describe("ElectronApp", () => {
     quitMock.mockClear();
     relaunchMock.mockClear();
     removeListenerMock.mockClear();
+    removeSwitchMock.mockClear();
     setPathMock.mockClear();
   });
 
@@ -107,6 +111,23 @@ describe("ElectronApp", () => {
         resourcesPath: process.resourcesPath,
         runningUnderArm64Translation: false,
       });
+    }).pipe(Effect.provide(ElectronApp.layer)),
+  );
+
+  it.effect("reads the OS locale through the service", () =>
+    Effect.gen(function* () {
+      const electronApp = yield* ElectronApp.ElectronApp;
+
+      assert.strictEqual(yield* electronApp.systemLocale, "en-GB");
+    }).pipe(Effect.provide(ElectronApp.layer)),
+  );
+
+  it.effect("normalizes POSIX-style locale identifiers that Intl rejects", () =>
+    Effect.gen(function* () {
+      getSystemLocaleMock.mockImplementationOnce(() => "en_GB");
+      const electronApp = yield* ElectronApp.ElectronApp;
+
+      assert.strictEqual(yield* electronApp.systemLocale, "en-GB");
     }).pipe(Effect.provide(ElectronApp.layer)),
   );
 
@@ -179,6 +200,15 @@ describe("ElectronApp", () => {
       assert.deepEqual(autoUpdaterRemoveListenerMock.mock.calls, [
         ["before-quit-for-update", listener],
       ]);
+    }).pipe(Effect.provide(ElectronApp.layer)),
+  );
+
+  it.effect("removes command-line switches through the service", () =>
+    Effect.gen(function* () {
+      const electronApp = yield* ElectronApp.ElectronApp;
+      yield* electronApp.removeCommandLineSwitch("password-store");
+
+      assert.deepEqual(removeSwitchMock.mock.calls, [["password-store"]]);
     }).pipe(Effect.provide(ElectronApp.layer)),
   );
 });

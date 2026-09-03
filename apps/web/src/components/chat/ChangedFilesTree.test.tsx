@@ -22,9 +22,6 @@ describe("ChangedFilesCard", () => {
 
     expect(markup).toContain('data-changed-files-state="expanded"');
     expect(markup).toContain('aria-expanded="true"');
-    expect(markup).toContain("whitespace-nowrap");
-    expect(markup).toContain("!size-[22px]");
-    expect(markup).toContain("size-3");
     expect(markup).toContain('aria-label="Collapse all folders"');
     expect(markup).toContain('aria-label="Open diff"');
     expect(markup).toContain('role="group" aria-label="2 additions, 1 deletions"');

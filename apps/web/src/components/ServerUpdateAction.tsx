@@ -1,55 +1,110 @@
-import { useEffect, useRef, useState } from "react";
 import type { EnvironmentId, ServerSelfUpdateCapability } from "@t3tools/contracts";
+import type { ServerUpdateStage, ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import type { ComponentProps } from "react";
 
+import { requestConfirmDialog } from "~/confirmDialog";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { useClientSettings } from "~/hooks/useSettings";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { manualServerUpdateCommand } from "~/versionSkew";
 import { Button } from "./ui/button";
-import { Spinner } from "./ui/spinner";
 import { toastManager } from "./ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-/**
- * The npm install on the server side is capped at 10 minutes; expire the
- * spinner a bit beyond that so a dead transport never strands a disabled
- * button, while a legitimately slow install is never cut off.
- */
-const UPDATE_PENDING_EXPIRY_MS = 12 * 60_000;
+// The wire "installing" stage is a sub-second launcher handoff, so the UI
+// folds it into the download phase; everything after the handoff is the
+// restart the user is actually waiting through.
+const UPDATE_STAGE_LABELS: Record<ServerUpdateStage, string> = {
+  downloading: "Downloading…",
+  installing: "Downloading…",
+  resuming: "Restarting…",
+};
+const pendingUpdateEnvironmentIds = new Set<EnvironmentId>();
+
+export function serverUpdateStageLabel(stage: ServerUpdateStage): string {
+  return UPDATE_STAGE_LABELS[stage];
+}
 
 function updateFailureMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Server update failed.";
 }
 
 /**
- * The call-to-action for a version-skewed server, matched to the update path
- * it advertises: a one-click install-and-restart for servers that can update
- * themselves, an update-the-desktop-app hint for desktop-managed backends
- * (running `npx t3` there would start a second server, not update this one),
- * and copying the manual relaunch command for everything else — so the skew
- * warning always offers a way out.
+ * One-row status for an in-flight server update: "Downloading…" then
+ * "Restarting…". The update is a wait, not a warning: a single pulsing dot
+ * and label, no step rail, no versions. Failure turns the row red with the
+ * rollback reason.
+ */
+export function ServerUpdateProgress({
+  state,
+}: {
+  readonly state: Exclude<ServerUpdateState, { status: "idle" }>;
+}) {
+  if (state.status === "failed") {
+    return (
+      <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-destructive" role="alert">
+        <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
+        <Tooltip>
+          <TooltipTrigger render={<span className="min-w-0 truncate">{state.message}</span>} />
+          <TooltipPopup side="top" className="max-w-80">
+            {state.message}
+          </TooltipPopup>
+        </Tooltip>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-1 flex items-center gap-2 text-xs font-medium text-foreground">
+      <span
+        className="size-1.5 shrink-0 animate-status-pulse rounded-full bg-foreground"
+        aria-hidden="true"
+      />
+      <span>{serverUpdateStageLabel(state.stage)}</span>
+    </div>
+  );
+}
+
+/**
+ * Offers the update path advertised by a version-skewed server. Self-updates
+ * delegate their full lifecycle to client-runtime so this component can
+ * unmount during reconnect without losing operation state.
  */
 export function ServerUpdateAction({
   environmentId,
   serverLabel,
   selfUpdate,
+  desktopAppUpdate = false,
+  threadContinuation = false,
   targetVersion,
+  label = "Update",
+  variant = "outline",
+  size = "xs",
 }: {
   readonly environmentId: EnvironmentId;
   readonly serverLabel: string;
   readonly selfUpdate: ServerSelfUpdateCapability | null;
+  /** The desktop app supervising this server accepts remote update
+      requests (capabilities.desktopAppUpdate). */
+  readonly desktopAppUpdate?: boolean;
+  /** The server can durably continue running provider turns after updating. */
+  readonly threadContinuation?: boolean;
   readonly targetVersion: string;
+  readonly label?: string;
+  readonly variant?: ComponentProps<typeof Button>["variant"];
+  readonly size?: ComponentProps<typeof Button>["size"];
 }) {
+  const isDesktopAppUpdate = selfUpdate === "desktop-managed";
+  const continueThreadsAfterServerUpdate = useClientSettings(
+    (settings) => settings.continueThreadsAfterServerUpdate,
+  );
   const updateServer = useAtomCommand(serverEnvironment.updateServer, {
     reportFailure: false,
   });
-  const [pending, setPending] = useState(false);
-  const inFlightRef = useRef(false);
-  const attemptRef = useRef(0);
-  const expiryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { copyToClipboard } = useCopyToClipboard<{ command: string }>({
     target: "update command",
     onCopy: ({ command }) => {
@@ -68,110 +123,60 @@ export function ServerUpdateAction({
     },
   });
 
-  useEffect(
-    () => () => {
-      if (expiryRef.current !== null) {
-        clearTimeout(expiryRef.current);
-        expiryRef.current = null;
-      }
-      attemptRef.current += 1;
-      inFlightRef.current = false;
-    },
-    [],
-  );
-
-  const handleUpdate = () => {
-    // Synchronous re-entry guard: setPending is async, so a rapid
-    // double-click would otherwise dispatch two updates.
-    if (inFlightRef.current) {
+  const handleUpdate = async () => {
+    if (pendingUpdateEnvironmentIds.has(environmentId)) {
       return;
     }
-    inFlightRef.current = true;
-    const attempt = attemptRef.current + 1;
-    attemptRef.current = attempt;
-    const ownsAttempt = () => attemptRef.current === attempt;
-    setPending(true);
-    const armExpiry = () => {
-      const expiry = setTimeout(() => {
-        if (!ownsAttempt()) return;
-        expiryRef.current = null;
-        attemptRef.current += 1;
-        inFlightRef.current = false;
-        setPending(false);
-        toastManager.add({
-          type: "error",
-          title: "Server update timed out",
-          description: "The update may still be running on the server — check again in a minute.",
-        });
-      }, UPDATE_PENDING_EXPIRY_MS);
-      expiryRef.current = expiry;
-      return expiry;
-    };
-    let expiry = armExpiry();
-    let restartAccepted = false;
-    const keepPendingForRestart = () => {
-      restartAccepted = true;
-      if (expiryRef.current === expiry) {
-        clearTimeout(expiry);
-        expiry = armExpiry();
+    if (isDesktopAppUpdate) {
+      // No themed host mounted (undefined) means proceed: the click itself
+      // was the request. This is the only confirmation in the flow; the
+      // remote machine installs without asking anyone there.
+      const confirmed =
+        (await requestConfirmDialog(
+          `Update the T3 Code desktop app that runs the ${serverLabel}? It will close and relaunch on that machine.`,
+        )) ?? true;
+      if (!confirmed) {
+        return;
       }
-    };
-    void Promise.resolve()
-      .then(() =>
-        updateServer({
-          environmentId,
-          input: { targetVersion },
-        }),
-      )
-      .then((result) => {
-        if (!ownsAttempt()) return;
-        if (result._tag === "Failure") {
-          // An interrupt may be the expected boot-service disconnect, but it
-          // can also be client-side cancellation before restart was accepted.
-          // Release the action quietly; version sync will remove it when a
-          // successful replacement reconnects.
-          if (isAtomCommandInterrupted(result)) {
-            return;
-          }
-          toastManager.add({
-            type: "error",
-            title: "Server update failed",
-            description: updateFailureMessage(squashAtomCommandFailure(result)),
-          });
+    }
+    if (pendingUpdateEnvironmentIds.has(environmentId)) {
+      return;
+    }
+    pendingUpdateEnvironmentIds.add(environmentId);
+    try {
+      const result = await updateServer({
+        environmentId,
+        input: {
+          targetVersion,
+          ...(threadContinuation && continueThreadsAfterServerUpdate
+            ? { continueRunningThreads: true }
+            : {}),
+        },
+      });
+      if (result._tag === "Failure") {
+        if (isAtomCommandInterrupted(result)) {
           return;
         }
-        keepPendingForRestart();
-        // Installation can legitimately consume most of the request window.
-        // Give restart/reconnect a fresh full window after the server accepts
-        // the handoff instead of expiring based on the original click time.
-        toastManager.add({
-          type: "success",
-          title: `Updating ${serverLabel}`,
-          description: `t3@${result.value.targetVersion} is installed — the server is restarting and will reconnect shortly.`,
-        });
-      })
-      .catch((error: unknown) => {
-        if (!ownsAttempt()) return;
         toastManager.add({
           type: "error",
           title: "Server update failed",
-          description: updateFailureMessage(error),
+          description: updateFailureMessage(squashAtomCommandFailure(result)),
         });
-      })
-      .finally(() => {
-        // A successful RPC only acknowledges that restart is scheduled. Keep
-        // the action disabled until version sync unmounts it, or until the
-        // safety expiry reports that reconnection never arrived.
-        if (restartAccepted || !ownsAttempt() || expiryRef.current !== expiry) return;
-        expiryRef.current = null;
-        clearTimeout(expiry);
-        attemptRef.current += 1;
-        inFlightRef.current = false;
-        setPending(false);
+        return;
+      }
+      toastManager.add({
+        type: "success",
+        title: `${serverLabel} updated`,
+        description: isDesktopAppUpdate
+          ? `Desktop app relaunched on ${result.value.targetVersion}.`
+          : `Reconnected on t3@${result.value.targetVersion}.`,
       });
+    } finally {
+      pendingUpdateEnvironmentIds.delete(environmentId);
+    }
   };
 
-  if (selfUpdate === "desktop-managed") {
+  if (selfUpdate === "desktop-managed" && !desktopAppUpdate) {
     return (
       <span className="text-muted-foreground text-xs">
         Update the desktop app on that machine to update this server.
@@ -182,20 +187,15 @@ export function ServerUpdateAction({
   if (selfUpdate === null) {
     const command = manualServerUpdateCommand(targetVersion);
     return (
-      <Button size="xs" variant="outline" onClick={() => copyToClipboard(command, { command })}>
+      <Button size={size} variant={variant} onClick={() => copyToClipboard(command, { command })}>
         Copy update command
       </Button>
     );
   }
 
-  return pending ? (
-    <Button size="xs" disabled>
-      <Spinner className="size-3.5" />
-      Updating...
-    </Button>
-  ) : (
-    <Button size="xs" onClick={() => void handleUpdate()}>
-      Update server
+  return (
+    <Button size={size} variant={variant} onClick={() => void handleUpdate()}>
+      {label}
     </Button>
   );
 }

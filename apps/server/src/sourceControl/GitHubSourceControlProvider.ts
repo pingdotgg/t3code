@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -29,7 +30,10 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
     baseRefName: summary.baseRefName,
     headRefName: summary.headRefName,
     state: summary.state ?? "open",
-    updatedAt: Option.none(),
+    updatedAt:
+      summary.updatedAt === undefined
+        ? Option.none()
+        : Option.some(DateTime.makeUnsafe(summary.updatedAt)),
     ...(summary.isCrossRepository !== undefined
       ? { isCrossRepository: summary.isCrossRepository }
       : {}),
@@ -64,6 +68,16 @@ function parseGitHubAuth(input: SourceControlAuthProbeInput) {
       detail:
         failedAccount?.error ??
         "Run `gh auth login` to authenticate GitHub CLI with an active account.",
+    });
+  }
+
+  // gh gained `auth status --json` in 2.81.0. Older versions reject the flag and exit
+  // non-zero, which reads exactly like a signed-out CLI. Name the real problem instead.
+  if (input.exitCode !== 0 && output.includes("unknown flag: --json")) {
+    return providerAuth({
+      status: "unknown",
+      detail:
+        "GitHub CLI is too old to report sign-in status. Update `gh` to 2.81.0 or newer (for example `brew upgrade gh`) and rescan.",
     });
   }
 
@@ -152,10 +166,18 @@ export const make = Effect.gen(function* () {
               Effect.flatMap((decoded) =>
                 Result.isSuccess(decoded)
                   ? Effect.succeed(
-                      decoded.success.map((item) => ({
-                        ...toChangeRequest(item),
-                        updatedAt: item.updatedAt,
-                      })),
+                      decoded.success.map((item) => {
+                        const { updatedAt, ...summary } = item;
+                        return {
+                          ...toChangeRequest({
+                            ...summary,
+                            ...(Option.isSome(updatedAt)
+                              ? { updatedAt: DateTime.formatIso(updatedAt.value) }
+                              : {}),
+                          }),
+                          updatedAt,
+                        };
+                      }),
                     )
                   : Effect.fail(
                       new GitHubCli.GitHubChangeRequestListDecodeError({

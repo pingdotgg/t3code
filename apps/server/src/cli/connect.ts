@@ -5,6 +5,7 @@ import {
   type RelayClientInstallProgressStage,
 } from "@t3tools/contracts";
 import { RelayOkResponse } from "@t3tools/contracts/relay";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
@@ -36,6 +37,7 @@ import * as CliState from "../cloud/CliState.ts";
 import * as CliTokenManager from "../cloud/CliTokenManager.ts";
 import {
   CLOUD_LINKED_USER_ID,
+  isAgentActivityPublishingEnabledValue,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
@@ -46,6 +48,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ExternalLauncher from "../process/externalLauncher.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { resolveCliCommand } from "./invocation.ts";
 import {
   bootServiceLayer,
   offerServiceDuringOnboarding,
@@ -141,7 +144,7 @@ function stringToBytes(value: string): Uint8Array {
 }
 
 export function isPublishAgentActivityEnabledValue(value: string | null): boolean {
-  return value === "true";
+  return isAgentActivityPublishingEnabledValue(value);
 }
 
 interface CloudCliStatus {
@@ -334,7 +337,7 @@ const unlinkRelayEnvironment = Effect.fn("cloud.cli.unlink_relay_environment")(f
     return { status: "not-authenticated" } satisfies RelayUnlinkResult;
   }
 
-  const environment = yield* ServerEnvironment.ServerEnvironment;
+  const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const environmentId = yield* environment.getEnvironmentId;
   const relayUrl = yield* relayUrlConfig;
   const httpClient = yield* HttpClient.HttpClient;
@@ -429,7 +432,7 @@ const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E
     | HttpClient.HttpClient
     | Prompt.Environment
     | ServerConfig.ServerConfig
-    | ServerEnvironment.ServerEnvironment
+    | ServerEnvironment.ServerEnvironmentIdentity
   >,
   options?: {
     readonly quietLogs?: boolean;
@@ -446,7 +449,6 @@ const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E
     ),
     RelayClient.layerCloudflared({ baseDir: config.baseDir }),
     EnvironmentAuth.runtimeLayer,
-    ServerEnvironment.layer,
     bootServiceLayer(config),
     headlessRelayClientTracingLayer,
   ).pipe(
@@ -526,10 +528,11 @@ const connectLinkCommand = Command.make("link", {
         yield* Console.log("T3 Connect\n");
         const linked = yield* linkEnvironmentForConnect(flags);
         if (linked) {
+          const serveCommand = yield* resolveCliCommand("serve");
           yield* Console.log(
             flags.publishOnly
               ? `✓ Authorized${connectedAs(linked.identity)}\n\nNext\n  Start T3 to publish agent activity (no managed tunnel).`
-              : `✓ Authorized${connectedAs(linked.identity)}\n\nNext\n  Start the server with \`t3 serve\` to make this machine reachable.`,
+              : `✓ Authorized${connectedAs(linked.identity)}\n\nNext\n  Start the server with \`${serveCommand}\` to make this machine reachable.`,
           );
         }
       }),
@@ -691,10 +694,18 @@ export const connectCommand = Command.make("connect", {
         // Connect itself already succeeded; a boot-service failure must not
         // fail the command, just tell the user what happened and move on.
         const background = yield* recoverServiceOnboardingOffer(offerServiceDuringOnboarding);
+        if (background) {
+          const platform = yield* HostProcessPlatform;
+          yield* Console.log(
+            platform === "darwin"
+              ? "\n✓ Background service ready\n\nT3 Code will stay reachable while you are logged in to this Mac."
+              : "\n✓ Background service ready\n\nT3 Code will stay reachable after you log out.",
+          );
+          return;
+        }
+        const serveCommand = yield* resolveCliCommand("serve");
         yield* Console.log(
-          background
-            ? "\n✓ Background service ready\n\nT3 Code will stay reachable after you log out."
-            : "\nNext\n  Start the server with `t3 serve` to make this machine reachable.",
+          `\nNext\n  Start the server with \`${serveCommand}\` to make this machine reachable.`,
         );
       }),
     ),

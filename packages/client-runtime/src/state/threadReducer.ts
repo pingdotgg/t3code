@@ -35,6 +35,33 @@ const activityOrder = O.combineAll<OrchestrationThreadActivity>([
   O.mapInput(O.String, (a) => a.id),
 ]);
 
+// Per-array id index so the streaming append path can reject a re-delivered
+// id without rescanning the history. Only arrays this reducer produced are
+// indexed: presence also proves the array is activityOrder-sorted, which
+// snapshot-loaded arrays (DB order, null sequences first) are not.
+const activityIdIndex = new WeakMap<
+  ReadonlyArray<OrchestrationThreadActivity>,
+  Set<OrchestrationThreadActivity["id"]>
+>();
+
+/**
+ * Matches the validity rule in `deriveLatestContextWindowSnapshot` (and the
+ * server's snapshot-side `dropStaleContextWindowActivities`): rows without a
+ * finite, non-negative `usedTokens` are skipped during the consumer's backward
+ * walk, so they must not replace an earlier resolvable row here.
+ */
+function isResolvableContextWindowActivity(activity: OrchestrationThreadActivity): boolean {
+  if (activity.kind !== "context-window.updated") {
+    return false;
+  }
+  const payload =
+    activity.payload && typeof activity.payload === "object"
+      ? (activity.payload as Record<string, unknown>)
+      : null;
+  const usedTokens = payload?.usedTokens;
+  return typeof usedTokens === "number" && Number.isFinite(usedTokens) && usedTokens >= 0;
+}
+
 /**
  * Apply a single orchestration event to an `OrchestrationThread`, returning
  * the updated thread, a deletion signal, or an "unchanged" marker when the
@@ -74,6 +101,7 @@ export function applyThreadDetailEvent(
           archivedAt: null,
           settledOverride: null,
           settledAt: null,
+          unsettledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
           deletedAt: null,
@@ -94,6 +122,7 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           archivedAt: event.payload.archivedAt,
+          titleRegeneration: null,
           updatedAt: event.payload.updatedAt,
         },
       };
@@ -111,6 +140,7 @@ export function applyThreadDetailEvent(
           ...thread,
           settledOverride: "settled",
           settledAt: event.payload.settledAt,
+          unsettledAt: null,
           updatedAt: event.payload.updatedAt,
         },
       };
@@ -122,6 +152,12 @@ export function applyThreadDetailEvent(
           ...thread,
           settledOverride: event.payload.reason === "user" ? "active" : null,
           settledAt: null,
+          // A thread already pinned active keeps its re-entry stamp: the
+          // activity reset that clears the pin must not reorder the list.
+          unsettledAt:
+            thread.settledOverride === "active"
+              ? (thread.unsettledAt ?? null)
+              : event.payload.updatedAt,
           updatedAt: event.payload.updatedAt,
         },
       };
@@ -148,6 +184,40 @@ export function applyThreadDetailEvent(
         },
       };
 
+    case "thread.pinned":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          pinnedAt: event.payload.pinnedAt,
+          ...(event.payload.pinOrderKey !== undefined
+            ? { pinOrderKey: event.payload.pinOrderKey }
+            : {}),
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
+    case "thread.unpinned":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          pinnedAt: null,
+          pinOrderKey: null,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
+    case "thread.pin-reordered":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          pinOrderKey: event.payload.orderKey,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
     // ── Thread metadata ─────────────────────────────────────────────
     case "thread.meta-updated":
       return {
@@ -155,12 +225,18 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+          ...(event.payload.titleRegeneration !== undefined
+            ? { titleRegeneration: event.payload.titleRegeneration }
+            : {}),
           ...(event.payload.modelSelection !== undefined
             ? { modelSelection: event.payload.modelSelection }
             : {}),
           ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
           ...(event.payload.worktreePath !== undefined
             ? { worktreePath: event.payload.worktreePath }
+            : {}),
+          ...(event.payload.linkedPullRequest !== undefined
+            ? { linkedPullRequest: event.payload.linkedPullRequest }
             : {}),
           updatedAt: event.payload.updatedAt,
         },
@@ -264,16 +340,18 @@ export function applyThreadDetailEvent(
       // assistant message only settles the turn once the session is no longer
       // running it — providers may emit several assistant messages per turn
       // (commentary between tool calls), and the turn must stay unsettled
-      // until the provider reports turn end.
+      // until the provider reports turn end. Streaming deltas recompute the
+      // same record, so the previous reference is kept when nothing changed.
       const turnStillRunning =
         event.payload.turnId !== null &&
         thread.session?.status === "running" &&
         thread.session.activeTurnId === event.payload.turnId;
       const settlesTurn = !event.payload.streaming && !turnStillRunning;
-      const latestTurn: OrchestrationThread["latestTurn"] =
+      const latestTurn = reuseLatestTurn(
+        thread.latestTurn,
         event.payload.role === "assistant" &&
-        event.payload.turnId !== null &&
-        (thread.latestTurn === null || thread.latestTurn.turnId === event.payload.turnId)
+          event.payload.turnId !== null &&
+          (thread.latestTurn === null || thread.latestTurn.turnId === event.payload.turnId)
           ? {
               turnId: event.payload.turnId,
               state: settlesTurn
@@ -298,9 +376,11 @@ export function applyThreadDetailEvent(
                   : null,
               assistantMessageId: event.payload.messageId,
             }
-          : thread.latestTurn;
+          : thread.latestTurn,
+      );
 
-      // Rebind checkpoint assistant message IDs for assistant messages.
+      // Rebind checkpoint assistant message IDs for assistant messages. The
+      // helper hands back the same array when the entry is already bound.
       const checkpoints =
         event.payload.role === "assistant" && event.payload.turnId !== null
           ? rebindCheckpointAssistantMessage(
@@ -327,7 +407,8 @@ export function applyThreadDetailEvent(
       // Leaving the "running" session status is the turn-end signal: settle a
       // still-running latest turn so its duration reflects the whole turn.
       const settledTurnState = settledTurnStateForSessionStatus(event.payload.session.status);
-      const latestTurn: OrchestrationLatestTurn | null =
+      const latestTurn = reuseLatestTurn(
+        thread.latestTurn,
         event.payload.session.status === "running" && event.payload.session.activeTurnId !== null
           ? {
               turnId: event.payload.session.activeTurnId,
@@ -357,7 +438,8 @@ export function applyThreadDetailEvent(
                 // "running" is the authoritative turn end.
                 completedAt: event.payload.session.updatedAt,
               }
-            : thread.latestTurn;
+            : thread.latestTurn,
+      );
 
       return {
         kind: "updated",
@@ -505,12 +587,56 @@ export function applyThreadDetailEvent(
 
     // ── Activities ──────────────────────────────────────────────────
     case "thread.activity-appended": {
+      const activity = event.payload.activity;
+      // A resolvable context-window update supersedes earlier resolvable ones
+      // for the same turn: consumers only read the latest value (walking the
+      // array backwards), and providers stream these updates continuously, so
+      // retaining the history grows the thread by thousands of rows over a
+      // long session. Mirrors the server-side snapshot rule in
+      // dropStaleContextWindowActivities; retention stays per turn so a
+      // thread.reverted that discards turns can still resolve a value from
+      // the turns that survive.
+      const supersedesContextWindow = isResolvableContextWindowActivity(activity);
+      // Live streams append in order: an unseen id sorting at/after the tail
+      // of a known-sorted array appends without re-filtering and re-sorting
+      // the whole history on every event. The id set moves forward to the new
+      // array; a superseded array falls back to the sorting path.
+      const ids = activityIdIndex.get(thread.activities);
+      const lastActivity = thread.activities.at(-1);
+      if (
+        !supersedesContextWindow &&
+        ids !== undefined &&
+        (lastActivity === undefined || activityOrder(lastActivity, activity) <= 0) &&
+        !ids.has(activity.id)
+      ) {
+        const activities = Arr.append(thread.activities, activity);
+        activityIdIndex.delete(thread.activities);
+        ids.add(activity.id);
+        activityIdIndex.set(activities, ids);
+        return {
+          kind: "updated",
+          thread: {
+            ...thread,
+            activities,
+            updatedAt: event.occurredAt,
+          },
+        };
+      }
       const activities = pipe(
         thread.activities,
-        Arr.filter((activity) => activity.id !== event.payload.activity.id),
-        Arr.append(event.payload.activity),
+        Arr.filter(
+          (entry) =>
+            entry.id !== activity.id &&
+            !(
+              supersedesContextWindow &&
+              entry.turnId === activity.turnId &&
+              isResolvableContextWindowActivity(entry)
+            ),
+        ),
+        Arr.append(activity),
         Arr.sort(activityOrder),
       );
+      activityIdIndex.set(activities, new Set(activities.map((entry) => entry.id)));
 
       return {
         kind: "updated",
@@ -567,11 +693,46 @@ function checkpointStatusToTurnState(
   }
 }
 
+/**
+ * Returns `previous` when `next` matches it field for field, otherwise `next`.
+ * Streaming cases recompute the latest turn on every delta, and keeping the
+ * old reference lets selectors and memos keyed on `latestTurn` skip work.
+ */
+function reuseLatestTurn(
+  previous: OrchestrationLatestTurn | null,
+  next: OrchestrationLatestTurn | null,
+): OrchestrationLatestTurn | null {
+  if (previous === null || next === null) {
+    return next;
+  }
+  return previous.turnId === next.turnId &&
+    previous.state === next.state &&
+    previous.requestedAt === next.requestedAt &&
+    previous.startedAt === next.startedAt &&
+    previous.completedAt === next.completedAt &&
+    previous.assistantMessageId === next.assistantMessageId &&
+    previous.sourceProposedPlan?.threadId === next.sourceProposedPlan?.threadId &&
+    previous.sourceProposedPlan?.planId === next.sourceProposedPlan?.planId
+    ? previous
+    : next;
+}
+
+/**
+ * Points the checkpoint for `turnId` at `messageId`. Returns the input array
+ * untouched when no checkpoint needs rebinding, so streaming deltas for an
+ * already-bound message do not allocate a new `checkpoints` reference.
+ */
 function rebindCheckpointAssistantMessage(
   checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>,
   turnId: TurnId,
   messageId: MessageId,
-): OrchestrationCheckpointSummary[] {
+): ReadonlyArray<OrchestrationCheckpointSummary> {
+  const needsRebind = checkpoints.some(
+    (entry) => entry.turnId === turnId && entry.assistantMessageId !== messageId,
+  );
+  if (!needsRebind) {
+    return checkpoints;
+  }
   return Arr.map(checkpoints, (entry) =>
     entry.turnId === turnId ? { ...entry, assistantMessageId: messageId } : entry,
   );

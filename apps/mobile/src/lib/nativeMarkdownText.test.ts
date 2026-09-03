@@ -11,6 +11,43 @@ import {
 } from "@t3tools/mobile-markdown-text/markdown";
 
 describe("nativeMarkdownTextRuns", () => {
+  it("links a path-shaped code span without changing the same path in prose", () => {
+    expect(
+      nativeMarkdownTextRuns({
+        type: "paragraph",
+        children: [
+          { type: "text", content: "/tmp/frame.png " },
+          { type: "code_inline", content: "/tmp/frame.png" },
+        ],
+      }),
+    ).toEqual([
+      { text: "/tmp/frame.png " },
+      { text: "frame.png", href: "/tmp/frame.png", fileIcon: "image" },
+    ]);
+  });
+
+  it("preserves the destination of a link with a code-formatted label", () => {
+    expect(
+      nativeMarkdownTextRuns({
+        type: "paragraph",
+        children: [
+          {
+            type: "link",
+            href: "https://example.com/docs",
+            children: [{ type: "code_inline", content: "src/main.ts" }],
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        text: "src/main.ts",
+        code: true,
+        href: "https://example.com/docs",
+        externalHost: "example.com",
+      },
+    ]);
+  });
+
   it("preserves inline emphasis and code styles", () => {
     const node: MarkdownNode = {
       type: "paragraph",
@@ -126,6 +163,22 @@ describe("nativeMarkdownTextRuns", () => {
     ]);
   });
 
+  it.each([
+    ["&#128512;", "😀"],
+    ["&#x1f680;", "🚀"],
+    ["&#9999999999;", "&#9999999999;"],
+    ["&#x110000;", "&#x110000;"],
+    ["&amp;#9999999999;", "&#9999999999;"],
+    ["&amp;#x110000;", "&#x110000;"],
+  ])("normalizes numeric entity %s without throwing", (content, expected) => {
+    const node: MarkdownNode = {
+      type: "paragraph",
+      children: [{ type: "text", content }],
+    };
+
+    expect(nativeMarkdownTextRuns(node)).toEqual([{ text: expected }]);
+  });
+
   it("reads inline content from nested text nodes", () => {
     const node: MarkdownNode = {
       type: "paragraph",
@@ -171,6 +224,25 @@ describe("nativeMarkdownDocumentRuns", () => {
       },
       { text: " for this.", role: "body" },
     ]);
+  });
+
+  it("decorates known skill references inside blockquotes", () => {
+    const node: MarkdownNode = {
+      type: "blockquote",
+      children: [
+        {
+          type: "paragraph",
+          children: [{ type: "text", content: "Use $ui for this." }],
+        },
+      ],
+    };
+
+    expect(nativeMarkdownDocumentRuns(node, [{ name: "ui", displayName: "UI" }])).toContainEqual({
+      text: "$ui",
+      role: "body",
+      skillName: "ui",
+      skillLabel: "UI",
+    });
   });
 
   it("leaves unknown skill-like text unchanged", () => {
@@ -328,7 +400,7 @@ describe("nativeMarkdownDocumentRuns", () => {
     ]);
   });
 
-  it("includes quotes and fenced code in the same selectable string", () => {
+  it("preserves quotes and fenced code in document runs", () => {
     const node: MarkdownNode = {
       type: "document",
       children: [
@@ -414,6 +486,39 @@ describe("nativeMarkdownListItemBlocks", () => {
 });
 
 describe("nativeMarkdownDocumentChunks", () => {
+  it("renders plain blockquotes as rich blocks so their marker spans wrapped lines", () => {
+    const blockquote: MarkdownNode = {
+      type: "blockquote",
+      beg: 0,
+      end: 120,
+      children: [
+        {
+          type: "paragraph",
+          children: [
+            {
+              type: "text",
+              content:
+                "Persistent random per-result keys are the strongest design, even when this text wraps.",
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(
+      nativeMarkdownDocumentChunks({
+        type: "document",
+        children: [blockquote],
+      }),
+    ).toEqual([
+      {
+        kind: "rich",
+        key: "rich:blockquote:0:120",
+        node: blockquote,
+      },
+    ]);
+  });
+
   it("keeps headings and plain lists in one selectable document", () => {
     const document: MarkdownNode = {
       type: "document",

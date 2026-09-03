@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import Constants from "expo-constants";
 import * as Network from "expo-network";
 import { AppState } from "react-native";
 
@@ -28,8 +29,9 @@ import { authClientMetadata } from "../lib/authClientMetadata";
 import * as Runtime from "../lib/runtime";
 import * as MobileStorage from "../persistence/mobile-storage";
 import { appAtomRegistry } from "../state/atom-registry";
-import { clearThreadOutboxEnvironment } from "../state/thread-outbox";
+import { clearThreadOutboxEnvironment } from "../state/thread-outbox-removal";
 import { clearComposerDraftsEnvironment } from "../state/use-composer-drafts";
+import { mobileApplicationActiveWakeup } from "./app-state-wakeups";
 import { connectionStorageLayer } from "./storage";
 
 function networkStatus(state: Network.NetworkState): "unknown" | "offline" | "online" {
@@ -54,27 +56,53 @@ const connectivityLayer = Connectivity.layer({
   ),
   changes: Stream.callback((queue) =>
     Effect.acquireRelease(
-      Effect.sync(() =>
-        Network.addNetworkStateListener((state) => {
+      Effect.sync(() => {
+        let active = true;
+        const networkSubscription = Network.addNetworkStateListener((state) => {
           Queue.offerUnsafe(queue, networkStatus(state));
-        }),
-      ),
-      (subscription) => Effect.sync(() => subscription.remove()),
+        });
+        const appStateSubscription = AppState.addEventListener("change", (state) => {
+          if (state !== "active") {
+            return;
+          }
+          void Network.getNetworkStateAsync()
+            .then((current) => {
+              if (active) {
+                Queue.offerUnsafe(queue, networkStatus(current));
+              }
+            })
+            .catch(() => undefined);
+        });
+        return {
+          close: () => {
+            active = false;
+            networkSubscription.remove();
+            appStateSubscription.remove();
+          },
+        };
+      }),
+      ({ close }) => Effect.sync(close),
     ).pipe(Effect.asVoid),
   ),
 });
 
 const wakeupsLayer = Wakeups.layer({
   changes: Stream.merge(
-    Stream.callback<"application-active">((queue) =>
+    Stream.callback<"application-active-probe" | "application-active-reconnect">((queue) =>
       Effect.acquireRelease(
-        Effect.sync(() =>
-          AppState.addEventListener("change", (state) => {
-            if (state === "active") {
-              Queue.offerUnsafe(queue, "application-active");
+        Effect.sync(() => {
+          let backgroundedAtMs = AppState.currentState === "background" ? Date.now() : null;
+          return AppState.addEventListener("change", (state) => {
+            if (state === "background") {
+              backgroundedAtMs = Date.now();
+              return;
             }
-          }),
-        ),
+            if (state === "active") {
+              Queue.offerUnsafe(queue, mobileApplicationActiveWakeup(backgroundedAtMs, Date.now()));
+              backgroundedAtMs = null;
+            }
+          });
+        }),
         (subscription) => Effect.sync(() => subscription.remove()),
       ).pipe(Effect.asVoid),
     ),
@@ -139,7 +167,7 @@ const capabilitiesLayer = Layer.effectContext(
       Context.add(
         ClientPresentation,
         ClientPresentation.of({
-          metadata: authClientMetadata(),
+          metadata: authClientMetadata(Constants.expoConfig?.version),
           scopes: AuthStandardClientScopes,
         }),
       ),

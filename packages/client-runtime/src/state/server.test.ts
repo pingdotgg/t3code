@@ -6,11 +6,20 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
+import { RpcClientError } from "effect/unstable/rpc";
+import * as Socket from "effect/unstable/socket/Socket";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -22,11 +31,22 @@ import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
-  applyServerConfigProjection,
   makeEnvironmentServerConfigState,
+  isLegacyUpdateHandoffLoss,
+  matchesServerUpdateReadyEvent,
+  matchesServerUpdateResumeEvent,
+  nudgeReconnectDuringUpdateRestart,
   projectServerWelcome,
   resolveServerConfigValue,
+  resolveServerUpdateProgressResult,
+  serverUpdateStateForProgressEvent,
+  serverUpdateStateForServerVersion,
+  validateServerUpdateReadyEvent,
+  waitForNextEnvironmentReconnect,
+  waitForDesktopUpdateTarget,
+  runDesktopCommitWithReconnectObserver,
 } from "./server.ts";
+import { applyServerConfigProjection } from "./serverConfigProjection.ts";
 
 const CONFIG = {
   availableEditors: [],
@@ -36,6 +56,9 @@ const CONFIG = {
   observability: null,
   providers: [],
   settings: {},
+  // Capabilities drive version-skew behaviour in the projection, so the
+  // fixture carries them rather than leaving the field absent.
+  environment: { capabilities: { environmentThemes: true } },
 } as unknown as ServerConfig;
 
 const snapshotEvent = (config: ServerConfig): ServerConfigStreamEvent => ({
@@ -55,13 +78,332 @@ function session(client: WsRpcProtocolClient): RpcSession {
   return {
     client,
     initialConfig: Effect.succeed(CONFIG),
+    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,
   };
 }
 
+describe("update restart reconnect nudges", () => {
+  it.effect("retries a desktop commit that was lost before delivery", () =>
+    Effect.gen(function* () {
+      const readyEvents =
+        yield* Queue.unbounded<Parameters<typeof matchesServerUpdateReadyEvent>[1]>();
+      const ready = (serverVersion: string) =>
+        ({
+          version: 1 as const,
+          sequence: 1,
+          type: "ready" as const,
+          payload: {
+            at: "2026-09-01T00:00:00.000Z",
+            environment: { serverVersion },
+          },
+        }) as Parameters<typeof matchesServerUpdateReadyEvent>[1];
+      yield* Queue.offerAll(readyEvents, [ready("0.0.30"), ready("0.0.31")]);
+      const retries = yield* Ref.make(0);
+      const disconnect = new RpcClientError.RpcClientError({
+        reason: new Socket.SocketCloseError({ code: 1006 }),
+      });
+
+      const result = yield* waitForDesktopUpdateTarget(
+        "0.0.31",
+        Queue.take(readyEvents),
+        Ref.update(retries, (count) => count + 1).pipe(Effect.andThen(Effect.fail(disconnect))),
+      );
+
+      expect(result.payload.environment.serverVersion).toBe("0.0.31");
+      expect(yield* Ref.get(retries)).toBe(1);
+    }),
+  );
+  it.effect("observes a fast reconnect even when the caller awaits it later", () =>
+    Effect.gen(function* () {
+      const states = yield* Queue.unbounded<{ readonly phase: string }>();
+      const reconnected = yield* waitForNextEnvironmentReconnect(Stream.fromQueue(states)).pipe(
+        Effect.forkChild,
+      );
+      yield* Queue.offerAll(states, [
+        { phase: "connected" },
+        { phase: "backoff" },
+        { phase: "connected" },
+      ]);
+
+      yield* Fiber.join(reconnected);
+    }),
+  );
+  it.effect("arms the retry observer before a commit can disconnect", () =>
+    Effect.gen(function* () {
+      const allowSubscription = yield* Deferred.make<void>();
+      const subscriptionStarted = yield* Deferred.make<void>();
+      const states = yield* Queue.unbounded<{ readonly phase: string }>();
+      const commits = yield* Ref.make(0);
+      const disconnect = new RpcClientError.RpcClientError({
+        reason: new Socket.SocketCloseError({ code: 1006 }),
+      });
+      const stateChanges = Stream.unwrap(
+        Deferred.succeed(subscriptionStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(allowSubscription)),
+          Effect.as(Stream.fromQueue(states)),
+        ),
+      );
+      const retry = yield* runDesktopCommitWithReconnectObserver(
+        stateChanges,
+        Ref.update(commits, (count) => count + 1).pipe(
+          Effect.andThen(Queue.offerAll(states, [{ phase: "backoff" }, { phase: "connected" }])),
+          Effect.andThen(Effect.fail(disconnect)),
+        ),
+      ).pipe(Effect.flip, Effect.forkChild);
+
+      yield* Deferred.await(subscriptionStarted);
+      expect(yield* Ref.get(commits)).toBe(0);
+      yield* Deferred.succeed(allowSubscription, undefined);
+      yield* Queue.offer(states, { phase: "connected" });
+
+      expect(yield* Fiber.join(retry)).toBe(disconnect);
+      expect(yield* Ref.get(commits)).toBe(1);
+    }),
+  );
+  it.effect("retries once per backoff entry instead of only the first", () =>
+    Effect.gen(function* () {
+      const retries = yield* Ref.make(0);
+      const states = [
+        { phase: "backoff" },
+        { phase: "connecting" },
+        { phase: "backoff" },
+        { phase: "backoff" },
+      ];
+
+      yield* nudgeReconnectDuringUpdateRestart({
+        stateChanges: Stream.fromIterable(states),
+        retryNow: Ref.update(retries, (count) => count + 1),
+        interval: Duration.zero,
+      });
+
+      // Three backoff entries, three nudges. The old one-shot behavior fired
+      // once and then let the supervisor's ladder stretch to 16-second gaps.
+      expect(yield* Ref.get(retries)).toBe(3);
+    }),
+  );
+
+  it.effect("paces nudges so a fast-failing connection cannot spin", () =>
+    Effect.gen(function* () {
+      const retries = yield* Ref.make(0);
+
+      const fiber = yield* Effect.forkChild(
+        nudgeReconnectDuringUpdateRestart({
+          stateChanges: Stream.fromIterable([{ phase: "backoff" }, { phase: "backoff" }]),
+          retryNow: Ref.update(retries, (count) => count + 1),
+        }),
+        { startImmediately: true },
+      );
+
+      // Each nudge waits out the interval first, so nothing fires immediately.
+      yield* TestClock.adjust(Duration.millis(999));
+      expect(yield* Ref.get(retries)).toBe(0);
+
+      yield* TestClock.adjust(Duration.millis(1));
+      expect(yield* Ref.get(retries)).toBe(1);
+
+      yield* TestClock.adjust(Duration.seconds(1));
+      expect(yield* Ref.get(retries)).toBe(2);
+
+      yield* Fiber.join(fiber);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("retries rejected credentials only while the update restart is in progress", () =>
+    Effect.gen(function* () {
+      const retries = yield* Ref.make(0);
+
+      yield* nudgeReconnectDuringUpdateRestart({
+        stateChanges: Stream.fromIterable([
+          { phase: "blocked", lastFailure: { reason: "permission" } },
+          {
+            phase: "blocked",
+            lastFailure: {
+              reason: "authentication",
+              detail: "The environment credential is invalid.",
+            },
+          },
+          { phase: "blocked", lastFailure: { reason: "configuration" } },
+        ]),
+        retryNow: Ref.update(retries, (count) => count + 1),
+        interval: Duration.zero,
+      });
+
+      expect(yield* Ref.get(retries)).toBe(1);
+    }),
+  );
+});
+
 describe("server state projection", () => {
+  it("only treats a legacy transport interruption as an unacknowledged handoff", () => {
+    expect(isLegacyUpdateHandoffLoss(Cause.interrupt(1))).toBe(true);
+    expect(
+      isLegacyUpdateHandoffLoss(
+        Cause.fail(
+          new RpcClientError.RpcClientError({
+            reason: new Socket.SocketCloseError({ code: 1006 }),
+          }),
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      isLegacyUpdateHandoffLoss(
+        Cause.fail(
+          new RpcClientError.RpcClientError({
+            reason: new Socket.SocketOpenError({
+              kind: "Unknown",
+              cause: new Error("connection refused"),
+            }),
+          }),
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      isLegacyUpdateHandoffLoss(
+        Cause.fail(
+          new RpcClientError.RpcClientError({
+            reason: new RpcClientError.RpcClientDefect({
+              message: "incompatible protocol",
+              cause: new Error("invalid response"),
+            }),
+          }),
+        ),
+      ),
+    ).toBe(false);
+    expect(isLegacyUpdateHandoffLoss(Cause.fail(new Error("Install failed.")))).toBe(false);
+  });
+
+  it.effect("resumes after the progress stream disconnects following completion", () => {
+    const result = {
+      targetVersion: "0.0.31",
+      method: "respawn" as const,
+    };
+    const disconnect = new RpcClientError.RpcClientError({
+      reason: new Socket.SocketCloseError({ code: 1006 }),
+    });
+
+    return Effect.gen(function* () {
+      const resumed = yield* resolveServerUpdateProgressResult(
+        result.targetVersion,
+        Option.some(result),
+        Exit.fail(disconnect),
+      );
+      expect(resumed).toEqual(result);
+    });
+  });
+
+  it("projects streamed update milestones into the shared operation state", () => {
+    expect(
+      serverUpdateStateForProgressEvent("0.0.30", "0.0.31", {
+        type: "progress",
+        stage: "installing",
+      }),
+    ).toEqual({
+      status: "running",
+      stage: "installing",
+      fromVersion: "0.0.30",
+      targetVersion: "0.0.31",
+    });
+    expect(
+      serverUpdateStateForProgressEvent("0.0.30", "0.0.31", {
+        type: "complete",
+        result: { targetVersion: "0.0.31", method: "respawn" },
+      }),
+    ).toEqual({
+      status: "running",
+      stage: "resuming",
+      fromVersion: "0.0.30",
+      targetVersion: "0.0.31",
+    });
+  });
+
+  it("keeps active update state and hides stale failures after a version change", () => {
+    const running = {
+      status: "running" as const,
+      stage: "resuming" as const,
+      fromVersion: "0.0.30",
+      targetVersion: "0.0.31",
+    };
+    const failed = {
+      status: "failed" as const,
+      stage: "installing" as const,
+      fromVersion: "0.0.30",
+      targetVersion: "0.0.31",
+      message: "Install failed.",
+    };
+
+    expect(serverUpdateStateForServerVersion(running, "0.0.31")).toBe(running);
+    expect(serverUpdateStateForServerVersion(failed, "0.0.30")).toBe(failed);
+    expect(serverUpdateStateForServerVersion(failed, null)).toBe(failed);
+    expect(serverUpdateStateForServerVersion(failed, "0.0.31")).toEqual({ status: "idle" });
+  });
+
+  it.effect("correlates launcher outcomes and fails immediately after rollback", () =>
+    Effect.gen(function* () {
+      const result = {
+        targetVersion: "0.0.31",
+        method: "boot-service" as const,
+        updateId: "update-1",
+      };
+      const ready = (status: "committed" | "rolled-back") =>
+        ({
+          version: 1 as const,
+          sequence: 1,
+          type: "ready" as const,
+          payload: {
+            at: "2026-08-01T00:00:00.000Z",
+            environment: { serverVersion: status === "committed" ? "0.0.31" : "0.0.30" },
+            updateOutcome: {
+              id: "update-1",
+              fromVersion: "0.0.30",
+              targetVersion: "0.0.31",
+              status,
+              ...(status === "rolled-back" ? { reason: "prepared-timeout" } : {}),
+            },
+          },
+        }) as Parameters<typeof matchesServerUpdateReadyEvent>[1];
+
+      expect(matchesServerUpdateReadyEvent(result, ready("committed"))).toBe(true);
+      yield* validateServerUpdateReadyEvent(result, ready("committed"));
+      const rollback = yield* Effect.flip(
+        validateServerUpdateReadyEvent(result, ready("rolled-back")),
+      );
+      expect(rollback.message).toBe("prepared-timeout");
+    }),
+  );
+
+  it("requires tokenless desktop updates to reach the target version", () => {
+    const ready = (serverVersion: string) =>
+      ({
+        version: 1 as const,
+        sequence: 1,
+        type: "ready" as const,
+        payload: {
+          at: "2026-09-01T00:00:00.000Z",
+          environment: { serverVersion },
+        },
+      }) as Parameters<typeof matchesServerUpdateResumeEvent>[1];
+
+    expect(
+      matchesServerUpdateResumeEvent(
+        { targetVersion: "0.0.31", method: "desktop-app" },
+        ready("0.0.30"),
+      ),
+    ).toBe(false);
+    expect(
+      matchesServerUpdateResumeEvent(
+        {
+          targetVersion: "0.0.31",
+          method: "desktop-app",
+          desktopUpdateToken: "update-1",
+        },
+        ready("0.0.30"),
+      ),
+    ).toBe(true);
+  });
+
   it("applies every config category to the projected snapshot", () => {
     const snapshot = applyServerConfigProjection(Option.none(), {
       version: 1,
@@ -78,6 +420,78 @@ describe("server state projection", () => {
     const result = Option.getOrThrow(projected);
     expect(result.config.settings).toBe(settings);
     expect(result.latestEvent.type).toBe("settingsUpdated");
+  });
+
+  it("carries published environment themes in and out of the projected snapshot", () => {
+    const snapshot = applyServerConfigProjection(Option.none(), {
+      version: 1,
+      type: "snapshot",
+      config: CONFIG,
+    });
+    const themes = [
+      {
+        id: "nightfall",
+        name: "Nightfall",
+        appearance: "dark",
+        canvas: "#1a1b26",
+        accent: "#7aa2f7",
+      },
+    ] as const;
+
+    const published = applyServerConfigProjection(snapshot, {
+      version: 1,
+      type: "environmentThemesUpdated",
+      payload: { themes },
+    });
+    expect(Option.getOrThrow(published).config.environmentThemes).toEqual(themes);
+
+    // A machine that stops publishing has to clear the palettes, not freeze
+    // clients on the last set it sent.
+    const unpublished = applyServerConfigProjection(published, {
+      version: 1,
+      type: "environmentThemesUpdated",
+      payload: { themes: [] },
+    });
+    expect(Option.getOrThrow(unpublished).config.environmentThemes).toBeUndefined();
+  });
+
+  // A snapshot never carries published themes, so taking it wholesale would
+  // clear them on every reconnect and repaint anyone wearing one.
+  it("keeps published themes across a reconnect snapshot", () => {
+    const themes = [
+      {
+        id: "nightfall",
+        name: "Nightfall",
+        appearance: "dark",
+        canvas: "#1a1b26",
+        accent: "#7aa2f7",
+      },
+    ] as const;
+
+    const withThemes = applyServerConfigProjection(
+      applyServerConfigProjection(Option.none(), { version: 1, type: "snapshot", config: CONFIG }),
+      { version: 1, type: "environmentThemesUpdated", payload: { themes } },
+    );
+    expect(Option.getOrThrow(withThemes).config.environmentThemes).toEqual(themes);
+
+    const afterReconnect = applyServerConfigProjection(withThemes, {
+      version: 1,
+      type: "snapshot",
+      config: CONFIG,
+    });
+    expect(Option.getOrThrow(afterReconnect).config.environmentThemes).toEqual(themes);
+
+    // A server that predates the feature never sends another theme event, so
+    // carrying the set forward would leave a palette nothing can update.
+    const downgraded = applyServerConfigProjection(withThemes, {
+      version: 1,
+      type: "snapshot",
+      config: {
+        ...CONFIG,
+        environment: { capabilities: {} },
+      } as unknown as ServerConfig,
+    });
+    expect(Option.getOrThrow(downgraded).config.environmentThemes).toBeUndefined();
   });
 
   it("retains welcome when a ready event follows in the same stream chunk", () => {
@@ -100,9 +514,16 @@ describe("server state projection", () => {
   });
 
   it("prefers an active session config over cache until a live event arrives", () => {
-    const cached = { ...CONFIG, settings: { source: "cache" } } as unknown as ServerConfig;
-    const initial = { ...CONFIG, settings: { source: "session" } } as unknown as ServerConfig;
-    const live = { ...CONFIG, settings: { source: "live" } } as unknown as ServerConfig;
+    const config = (source: string, serverVersion: string) =>
+      ({
+        ...CONFIG,
+        environment: { serverVersion },
+        settings: { source },
+      }) as unknown as ServerConfig;
+    const cached = config("cache", "0.0.29");
+    const staleLive = config("stale-live", "0.0.29");
+    const initial = config("session", "0.0.30");
+    const live = config("live", "0.0.30");
 
     expect(
       resolveServerConfigValue(
@@ -110,6 +531,16 @@ describe("server state projection", () => {
           config: cached,
           latestEvent: snapshotEvent(cached),
           source: "cache",
+        },
+        initial,
+      ),
+    ).toBe(initial);
+    expect(
+      resolveServerConfigValue(
+        {
+          config: staleLive,
+          latestEvent: snapshotEvent(staleLive),
+          source: "live",
         },
         initial,
       ),

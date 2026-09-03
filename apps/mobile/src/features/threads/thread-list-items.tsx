@@ -3,24 +3,32 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
+import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useMemo, type ComponentProps } from "react";
-import { Pressable, useColorScheme, useWindowDimensions, View } from "react-native";
+import { Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import Svg, { Circle, Path } from "react-native-svg";
 
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
+import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { cn } from "../../lib/cn";
+import { HOME_HORIZONTAL_INSET } from "../../lib/layoutMetrics";
 import { relativeTime } from "../../lib/time";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { themeColorWithAlpha } from "../../lib/mobileTheme";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr, type ThreadPr } from "../../state/use-thread-pr";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
+import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import { resolveThreadStatus } from "./threadPresentation";
+import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 
 /**
  * Shared presentation for the thread lists: the compact (phone) Home list and
@@ -31,13 +39,10 @@ import { resolveThreadStatus } from "./threadPresentation";
 export type ThreadListVariant = "compact" | "sidebar";
 
 /** Left inset that aligns compact secondary rows with the title column. */
-export const THREAD_LIST_COMPACT_INSET = 20;
+export const THREAD_LIST_COMPACT_INSET = HOME_HORIZONTAL_INSET;
 const SIDEBAR_ROW_RADIUS = 12;
 
-function pullRequestTintColor(
-  state: ThreadPr["state"],
-  colorScheme: ReturnType<typeof useColorScheme>,
-) {
+function pullRequestTintColor(state: ThreadPr["state"], colorScheme: "light" | "dark") {
   const dark = colorScheme === "dark";
   switch (state) {
     case "open":
@@ -84,7 +89,6 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
   readonly newThreadTarget?: EnvironmentProject | null;
   readonly onNewThread?: (project: EnvironmentProject) => void;
 }) {
-  const iconMutedColor = useThemeColor("--color-icon-muted");
   const { groupKey, onGroupAction, onNewThread } = props;
   const newThreadTarget = props.newThreadTarget ?? null;
   const compact = props.variant === "compact";
@@ -131,6 +135,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
       >
         <ProjectFavicon
           environmentId={props.project.environmentId}
+          faviconPath={props.project.faviconPath}
           open={!props.collapsed}
           size={compact ? 22 : 18}
           projectTitle={props.project.title}
@@ -167,7 +172,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
           <SymbolView
             name="plus"
             size={compact ? 20 : 16}
-            tintColor={iconMutedColor}
+            tintColorClassName={"accent-icon-muted"}
             type="monochrome"
             weight="medium"
           />
@@ -186,7 +191,6 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
   readonly groupKey: string;
   readonly onGroupAction: (key: string, action: HomeGroupDisplayAction) => void;
 }) {
-  const iconSubtleColor = useThemeColor("--color-icon-subtle");
   const showsMore = props.hiddenCount > 0;
   const compact = props.variant === "compact";
   const { groupKey, onGroupAction } = props;
@@ -217,7 +221,7 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
         <SymbolView
           name={icon}
           size={10}
-          tintColor={iconSubtleColor}
+          tintColorClassName={"accent-icon-subtle"}
           type="monochrome"
           weight="semibold"
         />
@@ -266,15 +270,15 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
   readonly variant: ThreadListVariant;
   readonly pendingTask: PendingNewTask;
   readonly environmentLabel: string | null;
+  readonly environmentMachine?: EnvironmentMachineKind;
   readonly isLast: boolean;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
 }) {
   const compact = props.variant === "compact";
-  const separatorColor = useThemeColor("--color-separator");
-  const iconSubtleColor = useThemeColor("--color-icon-subtle");
-  const mutedColor = useThemeColor("--color-foreground-muted");
-  const pressedBackgroundColor = useThemeColor("--color-subtle");
+  const theme = useUniwindTheme();
+  const separatorColor = theme["--color-separator"];
+  const pressedBackgroundColor = theme["--color-subtle"];
 
   const { pendingTask, onSelectPendingTask, onDeletePendingTask } = props;
   const timestamp = relativeTime(pendingTask.message.createdAt);
@@ -290,8 +294,8 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
   );
 
   const statusPill = (
-    <View className="rounded-full bg-zinc-500/12 px-1.5 py-0.5 dark:bg-zinc-500/16">
-      <Text className="text-3xs font-t3-bold text-zinc-600 dark:text-zinc-300">Pending</Text>
+    <View className="rounded-full bg-adaptive-zinc-500-a12-a16 px-1.5 py-0.5">
+      <Text className="text-3xs font-t3-bold text-adaptive-zinc-600-300">Pending</Text>
     </View>
   );
 
@@ -301,9 +305,16 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
         <SymbolView
           name="tray.and.arrow.up"
           size={10}
-          tintColor={compact ? iconSubtleColor : mutedColor}
+          tintColorClassName={compact ? "accent-icon-subtle" : "accent-foreground-muted"}
           type="monochrome"
         />
+        {props.environmentLabel && props.environmentMachine ? (
+          <EnvironmentMachineSymbol
+            kind={props.environmentMachine}
+            size={compact ? 12 : 10}
+            tintColorClassName={compact ? "accent-icon-subtle" : "accent-foreground-muted"}
+          />
+        ) : null}
         <Text
           className={
             compact
@@ -351,7 +362,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
               <SymbolView
                 name="chevron.right"
                 size={13}
-                tintColor={iconSubtleColor}
+                tintColorClassName={"accent-icon-subtle"}
                 type="monochrome"
               />
             </View>
@@ -415,7 +426,10 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly variant: ThreadListVariant;
   readonly thread: EnvironmentThreadShell;
   readonly environmentLabel: string | null;
+  readonly environmentMachine?: EnvironmentMachineKind;
   readonly projectCwd: string | null;
+  readonly searchMatch?: EnvironmentThreadSearchMatch;
+  readonly searchQuery?: string;
   readonly isLast: boolean;
   /** Sidebar only: the thread currently open in the detail pane. */
   readonly selected?: boolean;
@@ -424,6 +438,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
+  readonly onRegenerateThreadTitle: (thread: EnvironmentThreadShell) => void;
+  readonly titleRegenerationSupported: boolean;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   readonly simultaneousSwipeGesture?: ComponentProps<
@@ -431,21 +447,23 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   >["simultaneousWithExternalGesture"];
 }) {
   const { width: windowWidth } = useWindowDimensions();
-  const colorScheme = useColorScheme();
+  const { themeAppearance: colorScheme } = useAppearancePreferences();
   const compact = props.variant === "compact";
   const selected = props.selected === true;
   // Recycling-safe: resets when the list container is reused for another
   // thread, so a hover highlight can't leak across rows.
   const [hovered, setHovered] = useRecyclingState(false);
 
-  const separatorColor = useThemeColor("--color-separator");
-  const iconSubtleColor = useThemeColor("--color-icon-subtle");
-  const screenColor = useThemeColor("--color-screen");
-  const drawerColor = useThemeColor("--color-drawer");
-  const pressedBackgroundColor = useThemeColor("--color-subtle");
-  const selectedBackgroundColor = useThemeColor("--color-user-bubble");
+  const theme = useUniwindTheme();
+  const separatorColor = theme["--color-separator"];
+  const screenColor = theme["--color-screen"];
+  const drawerColor = theme["--color-drawer"];
+  const pressedBackgroundColor = theme["--color-subtle"];
+  const selectedBackgroundColor = theme["--color-user-bubble"];
+  const selectedForegroundColor = theme["--color-user-bubble-foreground"];
 
-  const { thread, onSelectThread, onArchiveThread, onDeleteThread } = props;
+  const { thread, onSelectThread, onArchiveThread, onDeleteThread, onRegenerateThreadTitle } =
+    props;
   const status = resolveThreadStatus(thread);
   const pr = useThreadPr(thread, props.projectCwd);
   const timestamp = relativeTime(
@@ -457,14 +475,35 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   );
 
   const backgroundColor = compact ? screenColor : drawerColor;
-  const effectivePressedBackground = selected ? "rgba(255,255,255,0.16)" : pressedBackgroundColor;
+  const effectivePressedBackground = selected
+    ? themeColorWithAlpha(String(selectedForegroundColor), 0.16)
+    : pressedBackgroundColor;
   const effectiveStatus =
     selected && status
-      ? { ...status, pillClassName: "bg-white/20", textClassName: "text-white" }
+      ? {
+          ...status,
+          pillClassName: "bg-user-bubble-foreground/20",
+          textClassName: "text-user-bubble-foreground",
+        }
       : status;
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
+  const handleRegenerateTitle = useCallback(
+    () => onRegenerateThreadTitle(thread),
+    [onRegenerateThreadTitle, thread],
+  );
+  const menuActions = useMemo<MenuAction[]>(
+    () => [
+      THREAD_ROW_MENU_ACTIONS[0]!,
+      ...buildThreadTitleRegenerationMenuItems({
+        supported: props.titleRegenerationSupported,
+        isRegenerating: thread.titleRegeneration != null,
+      }),
+      THREAD_ROW_MENU_ACTIONS[1]!,
+    ],
+    [props.titleRegenerationSupported, thread.titleRegeneration],
+  );
   const primaryAction = useMemo(
     () => ({
       accessibilityLabel: `Archive ${thread.title}`,
@@ -477,9 +516,10 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "archive") handleArchive();
+      if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
       if (nativeEvent.event === "delete") handleDelete();
     },
-    [handleArchive, handleDelete],
+    [handleArchive, handleDelete, handleRegenerateTitle],
   );
 
   const statusPill = effectiveStatus ? (
@@ -495,6 +535,19 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       <View className="mt-px flex-row items-center gap-1.5">
         {subtitleParts.length > 0 ? (
           <>
+            {props.environmentLabel && props.environmentMachine ? (
+              <EnvironmentMachineSymbol
+                kind={props.environmentMachine}
+                size={compact ? 12 : 10}
+                tintColorClassName={
+                  compact
+                    ? "accent-icon-subtle"
+                    : selected
+                      ? "accent-user-bubble-foreground-muted"
+                      : "accent-foreground-muted"
+                }
+              />
+            ) : null}
             <Text
               className={cn(
                 "shrink",
@@ -512,11 +565,15 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
           <View className="flex-row items-center gap-0.5">
             <PullRequestIcon
               size={compact ? 13 : 11}
-              color={selected ? "#ffffff" : pullRequestTintColor(pr.state, colorScheme)}
+              color={
+                selected
+                  ? String(selectedForegroundColor)
+                  : pullRequestTintColor(pr.state, colorScheme)
+              }
             />
             <Text
               className={`${compact ? "text-sm" : "text-xs"} font-t3-medium ${
-                selected ? "text-white" : pr.textClassName
+                selected ? "text-user-bubble-foreground" : pr.textClassName
               }`}
             >
               {pr.label}
@@ -564,11 +621,18 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 <SymbolView
                   name="chevron.right"
                   size={13}
-                  tintColor={iconSubtleColor}
+                  tintColorClassName={"accent-icon-subtle"}
                   type="monochrome"
                 />
               </View>
             </View>
+            {props.searchMatch ? (
+              <ThreadSearchMatchExcerpt
+                compact
+                match={props.searchMatch}
+                query={props.searchQuery ?? ""}
+              />
+            ) : null}
             {subtitleRow}
           </View>
         </View>
@@ -623,6 +687,13 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               </Text>
             </View>
           </View>
+          {props.searchMatch ? (
+            <ThreadSearchMatchExcerpt
+              match={props.searchMatch}
+              query={props.searchQuery ?? ""}
+              selected={selected}
+            />
+          ) : null}
           {subtitleRow}
         </View>
       </Pressable>
@@ -654,7 +725,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         // ControlPillMenu injects onLongPress into the row and anchors the
         // token-styled dropdown to it; taps and swipes are untouched.
         <ControlPillMenu
-          actions={THREAD_ROW_MENU_ACTIONS}
+          actions={menuActions}
           onPressAction={handleMenuAction}
           shouldOpenOnLongPress
         >

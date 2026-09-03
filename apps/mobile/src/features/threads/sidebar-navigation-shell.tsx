@@ -1,18 +1,15 @@
-import {
-  DarkTheme,
-  DefaultTheme,
-  NavigationContainer,
-  NavigationIndependentTree,
-} from "@react-navigation/native";
+import { NavigationContainer, NavigationIndependentTree } from "@react-navigation/native";
 import {
   createNativeStackNavigator,
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
 import type { ReactNode } from "react";
-import { Platform, useColorScheme } from "react-native";
+import { Platform } from "react-native";
 
+import { getCompactBrandHeaderOptions } from "../../components/CompactBrandTitle";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
+import { useMobileNavigationTheme } from "../../lib/useMobileNavigationTheme";
 
 const SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -35,10 +32,9 @@ const SIDEBAR_SCREEN_OPTIONS: SidebarScreenOptions = {
   headerShadowVisible: false,
   headerShown: true,
   headerStyle: NATIVE_LIQUID_GLASS_SUPPORTED ? { backgroundColor: "transparent" } : undefined,
-  headerTitleStyle: { fontSize: 18, fontWeight: "800" },
+  ...getCompactBrandHeaderOptions({ fontSize: 18, fontWeight: "800" }),
   headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
   scrollEdgeEffects: NATIVE_LIQUID_GLASS_SUPPORTED ? SCROLL_EDGE_EFFECTS : undefined,
-  title: "Threads",
   unstable_navigationItemStyle: NATIVE_LIQUID_GLASS_SUPPORTED ? "editor" : undefined,
 };
 
@@ -56,11 +52,11 @@ const SidebarStack = createNativeStackNavigator();
  * navigation hooks used for header configuration inside the pane.
  */
 export function SidebarNavigationShell(props: { readonly children: ReactNode }) {
-  const colorScheme = useColorScheme();
+  const navigationTheme = useMobileNavigationTheme();
 
   return (
     <NavigationIndependentTree>
-      <NavigationContainer theme={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
+      <NavigationContainer theme={navigationTheme}>
         <SidebarStack.Navigator
           screenOptions={SIDEBAR_SCREEN_OPTIONS}
           initialRouteName="SidebarThreads"

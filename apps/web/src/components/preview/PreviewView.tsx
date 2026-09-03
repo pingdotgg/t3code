@@ -3,14 +3,23 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  DEFAULT_BROWSER_PROFILE_ID,
   FILL_PREVIEW_VIEWPORT,
+  type PreviewAnnotationPayload,
   type PreviewViewportSetting,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { useComposerDraftStore } from "~/composerDraftStore";
+import {
+  BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT,
+  recordVisitForThread,
+  removeUrlForThread,
+  setTitleForThreadUrl,
+  useThreadRecentHistory,
+} from "~/browserHistoryStore";
+import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
 import { previewAnnotationScreenshotFile } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
 import {
@@ -19,7 +28,7 @@ import {
   useThreadPreviewState,
 } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
-import { useEnvironment, useEnvironmentHttpBaseUrl } from "~/state/environments";
+import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
@@ -29,37 +38,49 @@ import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
 import { openPreviewSession } from "./openPreviewSession";
 import { PreviewChromeRow } from "./PreviewChromeRow";
-import { formatPreviewUrl } from "./previewUrlPresentation";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu } from "./PreviewMoreMenu";
 import {
   commitBrowserViewportChange,
   subscribeBrowserViewportChange,
 } from "~/browser/browserViewportActions";
-import { resolveResponsiveBrowserViewportSize } from "~/browser/browserViewportLayout";
+import { browserResponsiveViewportForToggle, useBrowserDefaults } from "~/browser/browserDefaults";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
+import { Badge } from "~/components/ui/badge";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
-import { useLoadingProgress } from "./useLoadingProgress";
 import { usePreviewSession } from "./usePreviewSession";
 import { ZoomIndicator } from "./ZoomIndicator";
 import { AgentBrowserCursor } from "./AgentBrowserCursor";
 import {
   findActiveBrowserRecordingRuntimeTabId,
+  isBrowserRecordingStartCancelledError,
   startBrowserRecording,
   stopBrowserRecording,
   useActiveBrowserRecordingTabIds,
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
 interface Props {
   threadRef: ScopedThreadRef;
   tabId?: string | null;
   configuredUrls?: ReadonlyArray<string> | undefined;
   visible: boolean;
+  onSendAnnotation?: (
+    annotation: PreviewAnnotationPayload,
+    image: ComposerImageAttachment | null,
+  ) => void;
+}
+
+export function previewProfileName(
+  profiles: ReadonlyArray<{ readonly id: string; readonly name: string }>,
+  profileId: string,
+): string {
+  return profiles.find((profile) => profile.id === profileId)?.name ?? "Removed profile";
 }
 
 const localApi = typeof window === "undefined" ? null : ensureLocalApi();
@@ -68,20 +89,36 @@ const localApi = typeof window === "undefined" ? null : ensureLocalApi();
  * Single-tab preview surface: chrome row on top, one webview below, empty
  * state when no session exists for the thread.
  */
-export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, visible }: Props) {
+export function PreviewView({
+  threadRef,
+  tabId: requestedTabId,
+  configuredUrls,
+  visible,
+  onSendAnnotation,
+}: Props) {
   const [focusUrlNonce, setFocusUrlNonce] = useState<number | undefined>(undefined);
   const [pickActive, setPickActive] = useState(false);
   const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
   const pickActiveRef = useRef(false);
   const isMountedRef = useRef(true);
+  // Kept in sync so the title effect can depend on the stable thread key
+  // instead of the thread object, which is recreated on every update.
+  const threadRefRef = useRef(threadRef);
+  threadRefRef.current = threadRef;
   const previewState = useThreadPreviewState(threadRef);
+  const recentHistoryEntries = useThreadRecentHistory(
+    threadRef,
+    BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT,
+  );
   const miniPlayer = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayer(state.byThreadKey, threadRef),
   );
   const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
   const addImage = useComposerDraftStore((store) => store.addImage);
-  const environment = useEnvironment(threadRef.environmentId);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
+  const environmentHostname = environmentHttpBaseUrl
+    ? new URL(environmentHttpBaseUrl).hostname
+    : null;
   const open = useAtomCommand(previewEnvironment.open);
   const resize = useAtomCommand(previewEnvironment.resize, "preview viewport resize");
 
@@ -115,34 +152,41 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const isUnreachable = navStatus._tag === "LoadFailed";
   const showEmptyState = shouldShowPreviewEmptyState(snapshot);
   const controller = desktopOverlay?.controller ?? "none";
-  const loadProgress = useLoadingProgress(loading);
-  const displayUrl =
-    url && environment && environmentHttpBaseUrl
-      ? (formatPreviewUrl({
-          url,
-          environmentLabel: environment.label,
-          environmentHttpBaseUrl,
-        }) ?? undefined)
-      : undefined;
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
+  const browserDefaults = useBrowserDefaults();
+  // A tab created before profiles existed carries no profile of its own. It
+  // runs in the built-in `default` partition — the scope the browser used
+  // before profiles — not in whatever profile is configured as the default
+  // now, so that is what its label names and its clear actions target.
+  // Passing the snapshot's raw `undefined` through would reach the IPC layer
+  // as "every profile".
+  const activeProfileId = snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID;
+  const activeProfileName = previewProfileName(browserDefaults.profiles, activeProfileId);
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
 
+  const navUrl = navStatus._tag === "Success" ? navStatus.url : null;
+  const navTitle = navStatus._tag === "Success" ? navStatus.title : null;
+  const latestHistoryUrl = recentHistoryEntries[0]?.url;
+  const threadKey = scopedThreadKey(threadRef);
+  useEffect(() => {
+    if (!navUrl || !navTitle || !latestHistoryUrl) return;
+    // Agent-driven pages only enrich an existing requested URL.
+    setTitleForThreadUrl(threadRefRef.current, navUrl, navTitle, environmentHostname);
+    // threadKey stands in for threadRef, whose identity churns on every thread update.
+  }, [environmentHostname, latestHistoryUrl, navTitle, navUrl, threadKey]);
+
   const navigateToResolvedUrl = useCallback(
     async (resolvedUrl: string) => {
       if (runtimeTabId && previewBridge) {
-        // Drive the webview imperatively; `usePreviewBridge` mirrors the
-        // resolved URL back to the server so other clients stay in sync.
+        // The bridge mirrors the resolved URL back to the server.
         await previewBridge.navigate(runtimeTabId, resolvedUrl);
         rememberPreviewUrl(threadRef, resolvedUrl);
-      } else {
-        await openPreviewSession({
-          openPreview: open,
-          threadRef,
-          url: resolvedUrl,
-        });
+        return true;
       }
+      const result = await openPreviewSession({ openPreview: open, threadRef, url: resolvedUrl });
+      return result._tag === "Success";
     },
     [open, runtimeTabId, threadRef],
   );
@@ -150,23 +194,29 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const handleSubmitUrl = useCallback(
     async (next: string) => {
       try {
-        await navigateToResolvedUrl(normalizePreviewUrl(next));
+        const normalized = normalizePreviewUrl(next);
+        if (await navigateToResolvedUrl(normalized)) {
+          recordVisitForThread(threadRef, normalized);
+        }
       } catch {
         // Server-side `failed` event renders the unreachable view.
       }
     },
-    [navigateToResolvedUrl],
+    [navigateToResolvedUrl, threadRef],
   );
 
   const handleOpenServerUrl = useCallback(
     async (next: string) => {
       try {
-        await navigateToResolvedUrl(resolveDiscoveredServerUrl(threadRef.environmentId, next));
+        const resolved = resolveDiscoveredServerUrl(threadRef.environmentId, next);
+        if (await navigateToResolvedUrl(resolved)) {
+          recordVisitForThread(threadRef, next);
+        }
       } catch {
         // Server-side `failed` event renders the unreachable view.
       }
     },
-    [navigateToResolvedUrl, threadRef.environmentId],
+    [navigateToResolvedUrl, threadRef],
   );
 
   const handleRefresh = useCallback(() => {
@@ -217,12 +267,14 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
       return;
     }
 
-    const responsiveSize = panelRect
-      ? resolveResponsiveBrowserViewportSize(panelRect, desktopOverlay?.zoomFactor)
-      : { width: 1024, height: 768 };
-    void commitBrowserViewportChange(runtimeTabId, { _tag: "freeform", ...responsiveSize }).catch(
-      () => undefined,
-    );
+    void commitBrowserViewportChange(
+      runtimeTabId,
+      browserResponsiveViewportForToggle({
+        defaults: browserDefaults,
+        panelRect,
+        zoomFactor: desktopOverlay?.zoomFactor,
+      }),
+    ).catch(() => undefined);
   };
 
   useEffect(() => {
@@ -365,10 +417,12 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
       }
       if (record) {
         void startBrowserRecording(runtimeTabId, threadRef, tabId).catch((error) => {
+          const description = error instanceof Error ? error.message : "An error occurred.";
+          if (isBrowserRecordingStartCancelledError(error)) return;
           toastManager.add({
             type: "error",
             title: "Unable to start recording",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            description,
           });
         });
         return;
@@ -523,20 +577,34 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
     setPickActive(true);
     void (async () => {
       try {
-        const annotation = await previewBridge.pickElement(runtimeTabId);
-        if (!annotation) return;
+        const result = await previewBridge.pickElement(runtimeTabId);
+        if (!result) return;
+        const { annotation, submission } = result;
         addPreviewAnnotation(threadRef, annotation);
-        const screenshotFile = await previewAnnotationScreenshotFile(annotation);
-        if (screenshotFile && annotation.screenshot) {
-          addImage(threadRef, {
-            type: "image",
-            id: annotation.id,
-            name: screenshotFile.name,
-            mimeType: screenshotFile.type,
-            sizeBytes: screenshotFile.size,
-            previewUrl: annotation.screenshot.dataUrl,
-            file: screenshotFile,
-          });
+        let screenshotFile: File | null = null;
+        try {
+          screenshotFile = await previewAnnotationScreenshotFile(annotation);
+        } catch {
+          // The structured annotation is still sendable when converting its
+          // optional screenshot into a composer attachment fails.
+        }
+        const image =
+          screenshotFile && annotation.screenshot
+            ? ({
+                type: "image",
+                id: annotation.id,
+                name: screenshotFile.name,
+                mimeType: screenshotFile.type,
+                sizeBytes: screenshotFile.size,
+                previewUrl: annotation.screenshot.dataUrl,
+                file: screenshotFile,
+              } satisfies ComposerImageAttachment)
+            : null;
+        if (image) {
+          addImage(threadRef, image);
+        }
+        if (submission === "send") {
+          onSendAnnotation?.(annotation, image);
         }
       } catch {
         // Picker failed (e.g. webview navigated). Treat as silent cancel.
@@ -561,7 +629,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         }
       }
     })();
-  }, [addImage, addPreviewAnnotation, runtimeTabId, threadRef]);
+  }, [addImage, addPreviewAnnotation, onSendAnnotation, runtimeTabId, threadRef]);
 
   // If the active tab changes mid-pick (close, thread switch, hot restart),
   // tell main to tear down the in-flight session AND reset our local toggle
@@ -611,9 +679,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
     >
       <PreviewChromeRow
         url={url}
-        displayUrl={displayUrl}
         loading={loading}
-        loadProgress={loadProgress}
         canGoBack={canGoBack}
         canGoForward={canGoForward}
         refreshDisabled={refreshDisabled}
@@ -638,9 +704,32 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         pickDisabledReason={
           isUnreachable ? "Page didn't load — pick unavailable until the page renders" : undefined
         }
+        leadingActions={
+          // Only when it differs from the default: labelling every tab
+          // "Default" would be noise on the common case, while a tab in
+          // another profile is exactly what needs calling out.
+          activeProfileId !== browserDefaults.profileId ? (
+            // Capped: profile names run to 48 characters, and an unbounded
+            // badge in this row takes its width from the URL input, the only
+            // flexible element in the compact chrome. The cap sits on the
+            // badge and the truncation on an inner span, because `Badge` is an
+            // `inline-flex` with `whitespace-nowrap` — `text-overflow` never
+            // reaches a bare text node inside it, so the name would be cut off
+            // at both ends with no ellipsis.
+            <Tooltip>
+              <TooltipTrigger render={<Badge variant="outline" className="max-w-28 shrink-0" />}>
+                <span className="truncate">{activeProfileName}</span>
+              </TooltipTrigger>
+              <TooltipPopup side="top">{activeProfileName}</TooltipPopup>
+            </Tooltip>
+          ) : null
+        }
         trailingActions={
           previewBridge ? (
             <PreviewMoreMenu
+              environmentId={threadRef.environmentId}
+              profileId={activeProfileId}
+              profileName={activeProfileName}
               tabId={runtimeTabId}
               hasWebContents={desktopOverlay?.hasWebContents ?? false}
               zoomFactor={desktopOverlay?.zoomFactor ?? 1}
@@ -665,9 +754,11 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         ) : null}
         {showEmptyState ? (
           <PreviewEmptyState
+            threadRef={threadRef}
             environmentId={threadRef.environmentId}
             configuredUrls={configuredUrls}
-            recentlySeenUrls={previewState.recentlySeenUrls}
+            recentEntries={recentHistoryEntries}
+            onRemoveRecent={(url) => removeUrlForThread(threadRef, url)}
             onOpenUrl={(next) => void handleOpenServerUrl(next)}
           />
         ) : null}

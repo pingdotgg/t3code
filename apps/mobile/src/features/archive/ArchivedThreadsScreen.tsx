@@ -27,9 +27,12 @@ import { EmptyState } from "../../components/EmptyState";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { relativeTime } from "../../lib/time";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
-import { createNativeMailSearchToolbarItem } from "../layout/native-mail-search-toolbar";
+import {
+  createNativeMailSearchToolbarItem,
+  NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
+} from "../layout/native-mail-search-toolbar";
 import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
 
 export interface ArchivedThreadsHeaderEnvironment {
@@ -67,10 +70,9 @@ function ArchivedThreadsHeader(props: {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const hasCustomFilter = props.selectedEnvironmentId !== null || props.sortOrder !== "newest";
-  const searchIconColor = useThemeColor("--color-icon");
-  const searchTextColor = useThemeColor("--color-foreground");
   const usesNativeChrome = Platform.OS === "ios";
-  const usesCompactMailToolbar = Platform.OS === "ios" && width < 700;
+  const usesCompactMailToolbar =
+    Platform.OS === "ios" && width < 700 && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED;
   const androidFilterActions = useMemo<MenuAction[]>(
     () => [
       {
@@ -150,7 +152,7 @@ function ArchivedThreadsHeader(props: {
               <SymbolView
                 name="chevron.left"
                 size={24}
-                tintColor={searchTextColor}
+                tintColorClassName={"accent-foreground"}
                 type="monochrome"
               />
             </Pressable>
@@ -158,7 +160,7 @@ function ArchivedThreadsHeader(props: {
               <SymbolView
                 name="magnifyingglass"
                 size={17}
-                tintColor={searchIconColor}
+                tintColorClassName={"accent-icon"}
                 type="monochrome"
               />
               <TextInput
@@ -188,7 +190,7 @@ function ArchivedThreadsHeader(props: {
                       : "line.3.horizontal.decrease.circle"
                   }
                   size={16}
-                  tintColor={searchIconColor}
+                  tintColorClassName={"accent-icon"}
                   type="monochrome"
                 />
               </Pressable>
@@ -272,7 +274,11 @@ function ArchivedThreadsHeader(props: {
                 ...(usesNativeChrome
                   ? {
                       allowToolbarIntegration: true,
-                      placement: "integratedButton" as const,
+                      // "integratedButton" is an iOS 26 search-bar placement;
+                      // pre-glass iOS keeps the default pull-down placement.
+                      ...(NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED
+                        ? { placement: "integratedButton" as const }
+                        : null),
                     }
                   : {
                       placement: "stacked" as const,
@@ -360,6 +366,7 @@ function ProjectGroupLabel(props: {
     <View className="flex-row items-center gap-2.5 px-1 pb-2">
       <ProjectFavicon
         environmentId={props.project.environmentId}
+        faviconPath={props.project.faviconPath}
         projectTitle={props.project.title}
         size={18}
         workspaceRoot={props.project.workspaceRoot}
@@ -393,9 +400,7 @@ function ArchivedThreadRow(props: {
   readonly thread: EnvironmentThreadShell;
 }) {
   const { width: windowWidth } = useWindowDimensions();
-  const cardColor = useThemeColor("--color-card");
-  const iconColor = useThemeColor("--color-icon-subtle");
-  const separatorColor = useThemeColor("--color-separator");
+  const cardColor = useUniwindTheme()["--color-card"];
   const timestamp = relativeTime(props.thread.archivedAt ?? props.thread.updatedAt);
   const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
     Boolean(part),
@@ -427,14 +432,15 @@ function ArchivedThreadRow(props: {
     >
       {() => (
         <View
-          className="flex-row items-center gap-3 bg-card px-4 py-3"
-          style={{
-            borderBottomColor: separatorColor,
-            borderBottomWidth: props.isLast ? 0 : 1,
-          }}
+          className={`flex-row items-center gap-3 bg-card px-4 py-3 ${props.isLast ? "" : "border-b border-separator"}`}
         >
           <View className="h-[34px] w-[34px] items-center justify-center rounded-[11px] bg-subtle">
-            <SymbolView name="archivebox.fill" size={15} tintColor={iconColor} type="monochrome" />
+            <SymbolView
+              name="archivebox.fill"
+              size={15}
+              tintColorClassName={"accent-icon-subtle"}
+              type="monochrome"
+            />
           </View>
 
           <View className="min-w-0 flex-1 gap-1">
@@ -454,7 +460,7 @@ function ArchivedThreadRow(props: {
                 <SymbolView
                   name="arrow.triangle.branch"
                   size={10}
-                  tintColor={iconColor}
+                  tintColorClassName={"accent-icon-subtle"}
                   type="monochrome"
                 />
                 <Text
@@ -504,7 +510,6 @@ export function ArchivedThreadsScreen(props: {
   const { onDeleteThread, onUnarchiveThread } = props;
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const archiveScrollGesture = useMemo(() => Gesture.Native(), []);
-  const refreshTint = useThemeColor("--color-icon");
   const environmentLabelsById = useMemo(
     () =>
       new Map(
@@ -585,7 +590,7 @@ export function ArchivedThreadsScreen(props: {
     if (isInitialLoad) {
       return (
         <View className="items-center py-16">
-          <ActivityIndicator color={refreshTint} />
+          <ActivityIndicator colorClassName={"accent-icon"} />
           <Text className="mt-3 text-sm text-foreground-muted">Loading archive...</Text>
         </View>
       );
@@ -601,7 +606,7 @@ export function ArchivedThreadsScreen(props: {
         title={isFiltered ? "No matching threads" : "No archived threads"}
       />
     );
-  }, [isFiltered, isInitialLoad, refreshTint]);
+  }, [isFiltered, isInitialLoad]);
 
   return (
     <View className="flex-1 bg-sheet">
@@ -640,7 +645,7 @@ export function ArchivedThreadsScreen(props: {
             <RefreshControl
               onRefresh={props.onRefresh}
               refreshing={props.isLoading && !isInitialLoad}
-              tintColor={String(refreshTint)}
+              tintColorClassName={String("accent-icon")}
             />
           }
           renderItem={renderListItem}

@@ -3,10 +3,20 @@ import {
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
   DesktopThemeSchema,
+  EDITORS,
+  EditorId,
+  PickedThemeFileSchema,
   PickFolderOptionsSchema,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
+  REMOTE_CAPABLE_EDITOR_IDS,
   type DesktopEnvironmentBootstrap,
+  type PickedThemeFile,
 } from "@t3tools/contracts";
+import { WORKSPACE_IMAGE_PREVIEW_EXTENSIONS } from "@t3tools/shared/filePreview";
+import { isCommandAvailable } from "@t3tools/shared/shell";
+import * as NodeOS from "node:os";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -17,6 +27,7 @@ import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
+import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../../electron/ElectronMenu.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
@@ -52,6 +63,15 @@ export const getAppBranding = DesktopIpc.makeSyncIpcMethod({
   handler: Effect.fn("desktop.ipc.window.getAppBranding")(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     return environment.branding;
+  }),
+});
+
+export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_SYSTEM_LOCALE_CHANNEL,
+  result: Schema.String,
+  handler: Effect.fn("desktop.ipc.window.getSystemLocale")(function* () {
+    const electronApp = yield* ElectronApp.ElectronApp;
+    return yield* electronApp.systemLocale;
   }),
 });
 
@@ -215,16 +235,25 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const confirm = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.CONFIRM_CHANNEL,
-  payload: Schema.String,
-  result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.window.confirm")(function* (message) {
+export const pickProjectFavicon = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PICK_PROJECT_FAVICON_CHANNEL,
+  payload: Schema.UndefinedOr(Schema.String),
+  result: Schema.NullOr(Schema.String),
+  handler: Effect.fn("desktop.ipc.window.pickProjectFavicon")(function* (initialPath) {
     const dialog = yield* ElectronDialog.ElectronDialog;
     const electronWindow = yield* ElectronWindow.ElectronWindow;
-    return yield* electronWindow.focusedMainOrFirst.pipe(
-      Effect.flatMap((owner) => dialog.confirm({ owner, message })),
-    );
+    const paths = yield* dialog.pickFiles({
+      owner: yield* electronWindow.focusedMainOrFirst,
+      defaultPath: Option.fromNullishOr(initialPath),
+      multiple: false,
+      filters: [
+        {
+          name: "Images",
+          extensions: WORKSPACE_IMAGE_PREVIEW_EXTENSIONS.map((extension) => extension.slice(1)),
+        },
+      ],
+    });
+    return paths[0] ?? null;
   }),
 });
 
@@ -266,5 +295,76 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.openExternal")(function* (url) {
     const shell = yield* ElectronShell.ElectronShell;
     return yield* shell.openExternal(url);
+  }),
+});
+
+export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL,
+  payload: Schema.Undefined,
+  result: Schema.Array(EditorId),
+  // Probes THIS machine (where the renderer runs) for remote-capable editor
+  // CLIs, unlike the server's probe which walks the environment host's PATH.
+  // A Finder-launched app can miss PATH entries; an empty result makes the
+  // renderer fall back to VS Code only, so that fails soft.
+  handler: Effect.fn("desktop.ipc.window.probeRemoteEditors")(function* () {
+    const available: Array<EditorId> = [];
+    for (const editorId of REMOTE_CAPABLE_EDITOR_IDS) {
+      const commands = EDITORS.find((editor) => editor.id === editorId)?.commands;
+      if (!commands) continue;
+      for (const command of commands) {
+        if (yield* isCommandAvailable(command, { env: process.env })) {
+          available.push(editorId);
+          break;
+        }
+      }
+    }
+    return available;
+  }),
+});
+
+/** Theme files are a few KB; anything larger returns empty text and lets the
+ *  renderer reject it by size without the contents ever crossing the bridge. */
+const PICKED_THEME_FILE_MAX_BYTES = 256 * 1024;
+
+export const pickThemeFiles = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PICK_THEME_FILES_CHANNEL,
+  payload: Schema.Undefined,
+  result: Schema.NullOr(Schema.Array(PickedThemeFileSchema)),
+  handler: Effect.fn("desktop.ipc.window.pickThemeFiles")(function* () {
+    const dialog = yield* ElectronDialog.ElectronDialog;
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    // The VS Code extensions directory is the same dotfolder on Windows,
+    // macOS, and Linux; when it is missing the picker opens wherever the
+    // platform would by default.
+    const extensionsDir = path.join(NodeOS.homedir(), ".vscode", "extensions");
+    const defaultPath = yield* fileSystem
+      .exists(extensionsDir)
+      .pipe(Effect.orElseSucceed(() => false));
+    const paths = yield* dialog.pickFiles({
+      owner: yield* electronWindow.focusedMainOrFirst,
+      defaultPath: defaultPath ? Option.some(extensionsDir) : Option.none(),
+      filters: [{ name: "JSON", extensions: ["json"] }],
+      multiple: true,
+    });
+    if (paths.length === 0) {
+      return null;
+    }
+    return yield* Effect.forEach(paths, (filePath) => {
+      const name = path.basename(filePath);
+      return Effect.gen(function* () {
+        const info = yield* fileSystem.stat(filePath);
+        const size = Number(info.size);
+        if (size > PICKED_THEME_FILE_MAX_BYTES) {
+          return { name, size, text: "" } satisfies PickedThemeFile;
+        }
+        const text = yield* fileSystem.readFileString(filePath);
+        return { name, size, text } satisfies PickedThemeFile;
+      }).pipe(
+        // An unreadable file degrades to an entry the renderer reports.
+        Effect.orElseSucceed((): PickedThemeFile => ({ name, size: 0, text: "" })),
+      );
+    });
   }),
 });

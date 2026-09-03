@@ -1,16 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  formatDayAwareTimestamp,
   formatElapsedDurationLabel,
   formatExpiresInLabel,
   formatRelativeTime,
   formatRelativeTimeLabel,
-  formatRelativeTimeUntil,
-  formatRelativeTimeUntilLabel,
   formatShortTimestamp,
-  formatTimestamp,
   getRelativeTimeState,
   getTimestampFormatOptions,
+  resolveTimestampLocale,
 } from "./timestampFormat";
 
 describe("getTimestampFormatOptions", () => {
@@ -40,30 +39,37 @@ describe("getTimestampFormatOptions", () => {
   });
 });
 
-describe("formatRelativeTimeUntilLabel", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-04-07T12:00:00.000Z"));
+describe("resolveTimestampLocale", () => {
+  it("defers to the runtime default when the host reports no locale", () => {
+    expect(resolveTimestampLocale(null)).toBeUndefined();
+    expect(resolveTimestampLocale(undefined)).toBeUndefined();
+    expect(resolveTimestampLocale("   ")).toBeUndefined();
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
+  it("uses a BCP-47 tag reported by the host", () => {
+    expect(resolveTimestampLocale("en-GB")).toBe("en-GB");
   });
 
-  it("returns Expired when the instant is in the past", () => {
-    expect(formatRelativeTimeUntilLabel("2026-04-07T11:59:00.000Z")).toBe("Expired");
+  it("defers to the runtime default rather than throwing on an unusable tag", () => {
+    // The desktop bridge normalizes POSIX identifiers before reporting them, so
+    // anything Intl still rejects here falls back instead of breaking every
+    // timestamp in the UI.
+    expect(resolveTimestampLocale("not a locale")).toBeUndefined();
+    expect(resolveTimestampLocale("en_GB")).toBeUndefined();
   });
 
-  it("formats seconds remaining", () => {
-    expect(formatRelativeTimeUntilLabel("2026-04-07T12:00:45.000Z")).toBe("45s left");
-  });
+  it("renders the host locale's hour cycle under the locale setting", () => {
+    const formatAt1544 = (systemLocale: string | null) =>
+      new Intl.DateTimeFormat(resolveTimestampLocale(systemLocale), {
+        ...getTimestampFormatOptions("locale", false),
+        timeZone: "UTC",
+      })
+        .format(new Date("2026-04-07T15:44:00.000Z"))
+        // ICU separates the day period with a narrow no-break space.
+        .replace(/[  ]/g, " ");
 
-  it("formats minutes remaining", () => {
-    expect(formatRelativeTimeUntilLabel("2026-04-07T12:15:00.000Z")).toBe("15m left");
-  });
-
-  it("formats hours remaining", () => {
-    expect(formatRelativeTimeUntilLabel("2026-04-07T18:00:00.000Z")).toBe("6h left");
+    expect(formatAt1544("en-GB")).toBe("15:44");
+    expect(formatAt1544("en-US")).toBe("3:44 PM");
   });
 });
 
@@ -96,14 +102,71 @@ describe("formatExpiresInLabel", () => {
   });
 });
 
-describe("invalid timestamp inputs", () => {
-  it("returns an empty timestamp instead of throwing", () => {
-    expect(() => formatTimestamp("not-a-date", "12-hour")).not.toThrow();
-    expect(formatTimestamp("not-a-date", "12-hour")).toBe("");
+describe("formatDayAwareTimestamp", () => {
+  // Instants are built with the local-time Date constructor so the
+  // calendar-day boundaries hold in any test timezone or locale.
+  const iso = (y: number, monthIndex: number, d: number, h: number, mi: number) =>
+    new Date(y, monthIndex, d, h, mi).toISOString();
+  const now = new Date(2026, 7, 14, 12, 0).getTime();
+  const time = (isoDate: string) => formatShortTimestamp(isoDate, "12-hour");
+
+  it("shows time only for today", () => {
+    const messageAt = iso(2026, 7, 14, 9, 30);
+    expect(formatDayAwareTimestamp(messageAt, "12-hour", now)).toBe(time(messageAt));
   });
 
+  it("labels the previous calendar day as yesterday even when under 24h old", () => {
+    const messageAt = iso(2026, 7, 13, 23, 30);
+    const justPastMidnight = new Date(2026, 7, 14, 0, 30).getTime();
+    expect(formatDayAwareTimestamp(messageAt, "12-hour", justPastMidnight)).toBe(
+      `yesterday at ${time(messageAt)}`,
+    );
+  });
+
+  it("prefixes older same-year messages with the numeric date", () => {
+    const messageAt = iso(2026, 7, 12, 12, 34);
+    const datePart = new Intl.DateTimeFormat(undefined, {
+      month: "numeric",
+      day: "numeric",
+    }).format(new Date(messageAt));
+    expect(formatDayAwareTimestamp(messageAt, "12-hour", now)).toBe(
+      `${datePart} ${time(messageAt)}`,
+    );
+  });
+
+  it("includes the year once the calendar year differs", () => {
+    const messageAt = iso(2025, 11, 31, 18, 0);
+    const datePart = new Intl.DateTimeFormat(undefined, {
+      month: "numeric",
+      day: "numeric",
+      year: "numeric",
+    }).format(new Date(messageAt));
+    expect(formatDayAwareTimestamp(messageAt, "12-hour", now)).toBe(
+      `${datePart} ${time(messageAt)}`,
+    );
+  });
+
+  it("uses the host locale for both the numeric date and wall-clock time", async () => {
+    vi.stubGlobal("window", {
+      desktopBridge: { getSystemLocale: () => "en-GB" },
+    });
+    vi.resetModules();
+
+    const { formatDayAwareTimestamp: formatWithHostLocale } = await import("./timestampFormat");
+    const messageAt = iso(2026, 7, 12, 15, 44);
+
+    expect(formatWithHostLocale(messageAt, "locale", now)).toBe("12/08 15:44");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("returns an empty string for invalid input", () => {
+    expect(formatDayAwareTimestamp("not-a-date", "12-hour", now)).toBe("");
+  });
+});
+
+describe("invalid timestamp inputs", () => {
   it("returns an empty short timestamp instead of throwing", () => {
-    expect(() => formatShortTimestamp("not-a-date", "12-hour")).not.toThrow();
     expect(formatShortTimestamp("not-a-date", "12-hour")).toBe("");
   });
 
@@ -119,11 +182,6 @@ describe("invalid timestamp inputs", () => {
 
   it("returns an empty elapsed duration instead of a NaN label", () => {
     expect(formatElapsedDurationLabel("not-a-date")).toBe("");
-  });
-
-  it("returns an empty relative time until label instead of a NaN label", () => {
-    expect(formatRelativeTimeUntil("not-a-date")).toBeNull();
-    expect(formatRelativeTimeUntilLabel("not-a-date")).toBe("");
   });
 
   it("returns an empty expires-in label instead of a NaN label", () => {

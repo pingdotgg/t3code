@@ -250,6 +250,52 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("sends selected project skills in Cursor's native slash form", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-skill-dispatch");
+      const workspace = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-skill-dispatch-")),
+      );
+      const requestLogPath = NodePath.join(workspace, "requests.ndjson");
+      const argvLogPath = NodePath.join(workspace, "argv.txt");
+      const skillDirectory = NodePath.join(workspace, ".cursor", "skills", "review");
+      yield* Effect.promise(() => NodeFSP.mkdir(skillDirectory, { recursive: true }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(NodePath.join(skillDirectory, "SKILL.md"), "# Review\n", "utf8"),
+      );
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: workspace,
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "please $review this",
+        attachments: [],
+      });
+      yield* adapter.stopSession(threadId);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const promptRequests = requests.filter((entry) => entry.method === "session/prompt");
+      assert.deepStrictEqual(
+        promptRequests.map(
+          (request) => (request.params as Record<string, unknown> | undefined)?.prompt,
+        ),
+        [[{ type: "text", text: "please /review this" }]],
+      );
+    }),
+  );
+
   it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
@@ -820,6 +866,9 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         );
         assert.isDefined(permissionResponse);
 
+        const argvRuns = yield* Effect.promise(() => readArgvLog(argvLogPath));
+        assert.deepStrictEqual(argvRuns, [["--force", "acp"]]);
+
         yield* adapter.stopSession(threadId);
       }),
   );
@@ -1260,7 +1309,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
 
       const argvRuns = yield* Effect.promise(() => readArgvLog(argvLogPath));
       assert.lengthOf(argvRuns, 1, "session should not restart — only one spawn");
-      assert.deepStrictEqual(argvRuns[0], ["acp"]);
+      assert.deepStrictEqual(argvRuns[0], ["--force", "acp"]);
 
       const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
       const setConfigRequests = requests.filter(
@@ -1428,5 +1477,73 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         yield* adapter.stopSession(threadId);
       }).pipe(Effect.provide(customAdapterLayer));
     },
+  );
+
+  // Production calls startSession from a request fiber that finishes as soon as
+  // the session exists. `Effect.forkChild` made the notification consumer a
+  // child of that fiber, and Effect interrupts a fiber's children when it
+  // completes, so the consumer died on return and every later session/update
+  // was dropped: the thread sat on "Working" forever while the provider
+  // streamed its whole turn. The other tests here call startSession directly
+  // from the test fiber, which never completes, so the consumer survived and
+  // the bug stayed invisible. Running it in a fiber that finishes is what
+  // reproduces production.
+  it.effect("keeps consuming notifications after the startSession fiber completes", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-consumer-outlives-start-session");
+
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const sawContentDelta = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "content.delta" && String(event.threadId) === String(threadId)
+              ? Deferred.succeed(sawContentDelta, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      const startSessionFiber = yield* adapter
+        .startSession({
+          threadId,
+          provider: ProviderDriverKind.make("cursor"),
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+        })
+        .pipe(Effect.forkChild);
+      yield* Fiber.join(startSessionFiber).pipe(Effect.timeout("10 seconds"));
+
+      // Forked, and the assertion waits on the projected event rather than on
+      // sendTurn: with the consumer dead the turn never settles, so awaiting it
+      // directly would hang until the suite timeout instead of failing here.
+      const sendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "hello mock", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(sawContentDelta).pipe(Effect.timeout("10 seconds"));
+      yield* Fiber.join(sendTurnFiber).pipe(Effect.timeout("10 seconds"));
+
+      const delta = runtimeEvents.find(
+        (event) => event.type === "content.delta" && String(event.threadId) === String(threadId),
+      );
+      assert.isDefined(
+        delta,
+        "no content.delta was projected after the startSession fiber completed",
+      );
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+      // Live clock so the timeouts above are real: under the default test clock
+      // they wait on virtual time that never advances, and a regression would
+      // hang until the suite timeout instead of failing here.
+    }).pipe(TestClock.withLive),
   );
 });

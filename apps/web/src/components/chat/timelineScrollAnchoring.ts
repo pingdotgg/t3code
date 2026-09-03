@@ -1,3 +1,6 @@
+// Match the titlebar fade inset so draft promotion preserves the first row's position.
+export const CHAT_TIMELINE_ANCHOR_OFFSET = 24;
+
 export type TimelineScrollMode = "following-end" | "anchoring-new-turn" | "free-scrolling";
 
 export interface TimelineListMeasurementState {
@@ -17,6 +20,22 @@ export interface AnchoredTurnMetrics {
   readonly overflowsUsableViewport: boolean;
   readonly targetScrollToRevealEnd: number;
   readonly scrollDeltaToRevealEnd: number;
+}
+
+export function keepTimelineEndVisibleAfterOverlayGrowth({
+  timeline,
+  previousOverlayHeight,
+  overlayHeight,
+  followingEnd,
+}: {
+  readonly timeline: { scrollToEnd: (options: { animated: boolean }) => unknown } | null;
+  readonly previousOverlayHeight: number;
+  readonly overlayHeight: number;
+  readonly followingEnd: boolean;
+}): void {
+  if (timeline && followingEnd && overlayHeight > previousOverlayHeight) {
+    void timeline.scrollToEnd({ animated: false });
+  }
 }
 
 export function getRowBottom(state: TimelineListMeasurementState, index: number): number | null {

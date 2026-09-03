@@ -4,7 +4,7 @@ import type {
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import {
-  buildProviderOptionSelectionsFromDescriptors,
+  buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 
@@ -16,6 +16,7 @@ export type ModelOption = {
   readonly providerLabel: string;
   readonly providerDriver: string;
   readonly isDefault: boolean;
+  readonly isLegacy: boolean;
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
 };
@@ -44,11 +45,12 @@ function normalizeSelectionOptions(
   if (!capabilities) {
     return selection;
   }
-  const options = buildProviderOptionSelectionsFromDescriptors(
+  const options = buildExplicitProviderOptionSelectionsFromDescriptors(
     getProviderOptionDescriptors({
       caps: capabilities,
       selections: selection.options,
     }),
+    selection.options,
   );
   return options
     ? { ...selection, options }
@@ -56,6 +58,67 @@ function normalizeSelectionOptions(
         instanceId: selection.instanceId,
         model: selection.model,
       };
+}
+
+/**
+ * A stored model selection is only usable when its provider instance is
+ * currently enabled, installed, and authenticated on the server. Returns the
+ * selection unchanged when usable, otherwise `null` so callers fall through to
+ * the server's default model. A missing config (environment offline) cannot be
+ * validated, so stored selections pass through untouched.
+ */
+export function resolveSelectableModelSelection(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection | null,
+): ModelSelection | null {
+  if (!selection || !config) {
+    return selection;
+  }
+  const provider = config.providers.find(
+    (candidate) => candidate.instanceId === selection.instanceId,
+  );
+  return provider &&
+    provider.enabled &&
+    provider.installed &&
+    provider.auth.status !== "unauthenticated"
+    ? selection
+    : null;
+}
+
+/**
+ * Like resolveSelectableModelSelection, but additionally rejects legacy
+ * models. Used for implicit defaults (stored draft, project last-used): a
+ * new thread should never quietly start on a legacy model, so those fall
+ * through to the provider's default instead. Explicit picks in the settings
+ * sheet are unaffected.
+ */
+export function resolveDefaultableModelSelection(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection | null,
+): ModelSelection | null {
+  const usable = resolveSelectableModelSelection(config, selection);
+  if (!usable || !config) {
+    return usable;
+  }
+  const provider = config.providers.find((candidate) => candidate.instanceId === usable.instanceId);
+  const model = provider?.models.find((candidate) => candidate.slug === usable.model);
+  return model?.isLegacy === true ? null : usable;
+}
+
+export function resolveNewTaskModelSelection(input: {
+  readonly draftSelection: ModelSelection | null;
+  readonly projectDefaultSelection: ModelSelection | null;
+  readonly stickySelection: ModelSelection | null;
+  readonly modelOptions: ReadonlyArray<ModelOption>;
+}): ModelSelection | null {
+  return (
+    input.draftSelection ??
+    input.projectDefaultSelection ??
+    input.stickySelection ??
+    input.modelOptions.find((option) => option.isDefault)?.selection ??
+    input.modelOptions[0]?.selection ??
+    null
+  );
 }
 
 export function buildModelOptions(
@@ -75,11 +138,12 @@ export function buildModelOptions(
       options.set(key, {
         key,
         label: model.name,
-        subtitle: providerLabel,
+        subtitle: model.subProvider ?? "",
         providerKey: provider.instanceId,
         providerLabel,
         providerDriver: provider.driver,
         isDefault: model.isDefault === true,
+        isLegacy: model.isLegacy === true,
         capabilities: model.capabilities,
         selection: normalizeSelectionOptions(
           {
@@ -105,11 +169,12 @@ export function buildModelOptions(
       options.set(key, {
         key,
         label: fallbackModelSelection.model,
-        subtitle: providerLabel,
+        subtitle: "",
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
         providerDriver: fallbackModelSelection.instanceId,
         isDefault: false,
+        isLegacy: false,
         capabilities: null,
         selection: fallbackModelSelection,
       });

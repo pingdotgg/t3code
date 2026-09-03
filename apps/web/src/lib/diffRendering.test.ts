@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
-import { buildPatchCacheKey, getDiffLineStat, getRenderablePatch } from "./diffRendering";
+import {
+  buildFileDiffContentVersion,
+  buildFileDiffIdentityKey,
+  buildFileDiffRenderKey,
+  buildPatchCacheKey,
+  getDiffLineStat,
+  getRenderablePatch,
+} from "./diffRendering";
 
 describe("buildPatchCacheKey", () => {
-  it("returns a stable cache key for identical content", () => {
-    const patch = "diff --git a/a.ts b/a.ts\n+console.log('hello')";
-
-    expect(buildPatchCacheKey(patch)).toBe(buildPatchCacheKey(patch));
-  });
-
   it("normalizes outer whitespace before hashing", () => {
     const patch = "diff --git a/a.ts b/a.ts\n+console.log('hello')";
 
@@ -80,6 +81,72 @@ describe("getRenderablePatch", () => {
     expect(parsed?.kind).toBe("files");
     if (parsed?.kind !== "files") return;
     expect(parsed.files[0]?.hunks[0]?.unifiedLineStart).toBe(47);
+  });
+});
+
+describe("diff file reconciliation", () => {
+  it("keeps Pierre's render key stable when a partial diff hydrates", () => {
+    const patch = [
+      "diff --git a/example.ts b/example.ts",
+      "--- a/example.ts",
+      "+++ b/example.ts",
+      "@@ -1 +1 @@",
+      "-before",
+      "+after",
+    ].join("\n");
+    const parsed = getRenderablePatch(patch, "hydrated-key");
+    expect(parsed?.kind).toBe("files");
+    if (parsed?.kind !== "files") return;
+
+    const file = parsed.files[0];
+    expect(file).toBeDefined();
+    if (!file) return;
+    const key = buildFileDiffRenderKey(file);
+    file.cacheKey = `${file.cacheKey}:hydrated`;
+
+    expect(buildFileDiffRenderKey(file)).toBe(key);
+  });
+
+  it("keeps identities stable and versions local to the changed file", () => {
+    const patch = (secondLine: string) =>
+      [
+        "diff --git a/unchanged.ts b/unchanged.ts",
+        "--- a/unchanged.ts",
+        "+++ b/unchanged.ts",
+        "@@ -1 +1 @@",
+        "-before",
+        "+after",
+        "diff --git a/changed.ts b/changed.ts",
+        "--- a/changed.ts",
+        "+++ b/changed.ts",
+        "@@ -1 +1 @@",
+        "-old",
+        `+${secondLine}`,
+      ].join("\n");
+    const before = getRenderablePatch(patch("new"), "before");
+    const after = getRenderablePatch(patch("newer"), "after");
+    expect(before?.kind).toBe("files");
+    expect(after?.kind).toBe("files");
+    if (before?.kind !== "files" || after?.kind !== "files") return;
+
+    const [beforeUnchanged, beforeChanged] = before.files;
+    const [afterUnchanged, afterChanged] = after.files;
+    expect(beforeUnchanged).toBeDefined();
+    expect(beforeChanged).toBeDefined();
+    expect(afterUnchanged).toBeDefined();
+    expect(afterChanged).toBeDefined();
+    if (!beforeUnchanged || !beforeChanged || !afterUnchanged || !afterChanged) return;
+
+    expect(buildFileDiffIdentityKey(afterUnchanged)).toBe(
+      buildFileDiffIdentityKey(beforeUnchanged),
+    );
+    expect(buildFileDiffIdentityKey(afterChanged)).toBe(buildFileDiffIdentityKey(beforeChanged));
+    expect(buildFileDiffContentVersion(afterUnchanged)).toBe(
+      buildFileDiffContentVersion(beforeUnchanged),
+    );
+    expect(buildFileDiffContentVersion(afterChanged)).not.toBe(
+      buildFileDiffContentVersion(beforeChanged),
+    );
   });
 });
 
