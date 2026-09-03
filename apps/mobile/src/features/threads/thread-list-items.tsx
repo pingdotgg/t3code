@@ -333,8 +333,8 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
       className="bg-screen active:opacity-70"
       onPress={() => onSelectPendingTask(pendingTask)}
     >
-      <View className="pl-5 pr-[18px] pt-2.5">
-        <View className={cn("gap-[3px] pb-2.5", !props.isLast && "border-b border-separator")}>
+      <View className="pr-[18px] pt-[10px]" style={{ paddingLeft: THREAD_LIST_COMPACT_INSET }}>
+        <View className={cn("gap-[3px] pb-[10px]", !props.isLast && "border-b border-separator")}>
           <View className="flex-row items-center justify-between gap-2">
             <Text className="flex-1 text-lg font-t3-bold text-foreground" numberOfLines={1}>
               {pendingTask.title}
@@ -577,8 +577,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
           onSelectThread(thread);
         }}
       >
-        <View className="pl-5 pr-[18px] pt-2.5">
-          <View className={cn("gap-[3px] pb-2.5", !props.isLast && "border-b border-separator")}>
+        <View className="pr-[18px] pt-[10px]" style={{ paddingLeft: THREAD_LIST_COMPACT_INSET }}>
+          <View className={cn("gap-[3px] pb-[10px]", !props.isLast && "border-b border-separator")}>
             <View className="flex-row items-center justify-between gap-2">
               <Text className="flex-1 text-lg font-t3-bold text-foreground" numberOfLines={1}>
                 {thread.title}
