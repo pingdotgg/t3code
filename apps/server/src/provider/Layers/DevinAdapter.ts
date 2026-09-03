@@ -117,6 +117,20 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
     const fileSystem = yield* FileSystem.FileSystem;
 
     const sessions = new Map<ThreadId, DevinSessionContext>();
+    const pendingApprovalsByRequestId = new Map<
+      ApprovalRequestId,
+      {
+        readonly decision: Deferred.Deferred<ProviderApprovalDecision>;
+        readonly threadId: ThreadId;
+      }
+    >();
+    const pendingUserInputsByRequestId = new Map<
+      ApprovalRequestId,
+      {
+        readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
+        readonly threadId: ThreadId;
+      }
+    >();
     const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
 
@@ -571,6 +585,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                 if (ctx) {
                   ctx.pendingApprovals.set(requestId, { request, decision });
                 }
+                pendingApprovalsByRequestId.set(requestId, { decision, threadId: input.threadId });
 
                 yield* offerRuntimeEvent(
                   makeAcpRequestOpenedEvent({
@@ -591,6 +606,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                 const resolved = yield* Deferred.await(decision);
                 pendingApprovals.delete(requestId);
                 ctx?.pendingApprovals.delete(requestId);
+                pendingApprovalsByRequestId.delete(requestId);
 
                 yield* offerRuntimeEvent(
                   makeAcpRequestResolvedEvent({
@@ -646,6 +662,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                 if (ctx) {
                   ctx.pendingUserInputs.set(requestId, { request, answers });
                 }
+                pendingUserInputsByRequestId.set(requestId, { answers, threadId: input.threadId });
 
                 const questions = elicitQuestionsFromRequest(request);
                 const stamp = yield* makeEventStamp();
@@ -662,11 +679,13 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                 const resolved = yield* Deferred.await(answers);
                 pendingUserInputs.delete(requestId);
                 ctx?.pendingUserInputs.delete(requestId);
+                pendingUserInputsByRequestId.delete(requestId);
 
                 const content = resolved as Record<string, EffectAcpSchema.ElicitationContentValue>;
+                const resolvedStamp = yield* makeEventStamp();
                 yield* offerRuntimeEvent({
                   type: "user-input.resolved",
-                  ...stamp,
+                  ...resolvedStamp,
                   provider: PROVIDER,
                   threadId: input.threadId,
                   turnId,
@@ -802,9 +821,10 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             threadId: input.threadId,
             payload: { resume: started.initializeResult },
           });
+          const stamp2 = yield* makeEventStamp();
           yield* offerRuntimeEvent({
             type: "session.state.changed",
-            ...stamp,
+            ...stamp2,
             provider: PROVIDER,
             threadId: input.threadId,
             payload: { state: "ready" },
@@ -1028,38 +1048,30 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
       );
 
     const respondToRequest = (
-      threadId: ThreadId,
+      _threadId: ThreadId,
       _requestId: ApprovalRequestId,
       _decision: ProviderApprovalDecision,
     ) =>
-      withThreadLock(
-        threadId,
-        Effect.gen(function* () {
-          const ctx = yield* getSession(threadId, "respondToRequest");
-          const pending = ctx.pendingApprovals.get(_requestId);
-          if (!pending) {
-            return;
-          }
-          yield* Deferred.succeed(pending.decision, _decision).pipe(Effect.ignore);
-        }),
-      );
+      Effect.gen(function* () {
+        const pending = pendingApprovalsByRequestId.get(_requestId);
+        if (!pending) {
+          return;
+        }
+        yield* Deferred.succeed(pending.decision, _decision).pipe(Effect.ignore);
+      });
 
     const respondToUserInput = (
-      threadId: ThreadId,
+      _threadId: ThreadId,
       _requestId: ApprovalRequestId,
       _answers: ProviderUserInputAnswers,
     ) =>
-      withThreadLock(
-        threadId,
-        Effect.gen(function* () {
-          const ctx = yield* getSession(threadId, "respondToUserInput");
-          const pending = ctx.pendingUserInputs.get(_requestId);
-          if (!pending) {
-            return;
-          }
-          yield* Deferred.succeed(pending.answers, _answers).pipe(Effect.ignore);
-        }),
-      );
+      Effect.gen(function* () {
+        const pending = pendingUserInputsByRequestId.get(_requestId);
+        if (!pending) {
+          return;
+        }
+        yield* Deferred.succeed(pending.answers, _answers).pipe(Effect.ignore);
+      });
 
     const stopSession = (threadId: ThreadId) =>
       withThreadLock(
