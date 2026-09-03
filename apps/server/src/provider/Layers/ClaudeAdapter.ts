@@ -3278,6 +3278,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     yield* completeTurn(context, status, errorMessage, message);
+
+    // The CLI loads credentials once per process and never re-reads them, so
+    // a session whose login expired stays signed out even after the user logs
+    // in again. Stopping it lets the next turn resume from the persisted
+    // cursor on a fresh CLI that picks up the current credentials.
+    if (status === "failed" && turn?.authenticationFailureMessage !== undefined) {
+      yield* Effect.logInfo("claude.session.stopped.authentication-failed", {
+        threadId: context.session.threadId,
+      });
+      yield* stopSessionInternal(context, { emitExitEvent: true });
+    }
   });
 
   /**
@@ -4110,9 +4121,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     yield* Queue.shutdown(context.promptQueue);
 
+    // The stream fiber ends on its own once `stopped` is set, so a stop issued
+    // from a message handler running on that fiber must not wait on itself.
     const streamFiber = context.streamFiber;
     context.streamFiber = undefined;
-    if (streamFiber && streamFiber.pollUnsafe() === undefined) {
+    const currentFiber = yield* Effect.withFiber((fiber) => Effect.succeed(fiber));
+    if (streamFiber && streamFiber !== currentFiber && streamFiber.pollUnsafe() === undefined) {
       yield* Fiber.interrupt(streamFiber);
     }
 
