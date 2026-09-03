@@ -6023,15 +6023,13 @@ function ChatViewContent(props: ChatViewProps) {
     }
     const session = activeServerThread.session ?? null;
     const latestTurn = activeServerThread.latestTurn ?? null;
+    // Read "has the user retyped?" from the draft store keyed by this thread's
+    // target, not the imperative composer refs: those still hold the previously
+    // viewed thread's content until child effects resync, so on navigating back
+    // to a failed turn they would misjudge whether *this* thread's composer has
+    // content and wrongly drop or apply the recovery snapshot.
     const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
-    const composerHasContent =
-      promptRef.current.trim().length > 0 ||
-      composerImagesRef.current.length > 0 ||
-      composerFilesRef.current.length > 0 ||
-      composerTerminalContextsRef.current.length > 0 ||
-      composerElementContextsRef.current.length > 0 ||
-      (draft?.previewAnnotations.length ?? 0) > 0 ||
-      (draft?.reviewComments.length ?? 0) > 0;
+    const composerHasContent = composerDraftHasUserContent(draft);
     const action = deriveTurnFailureRecoveryAction({
       hasPendingSnapshot: true,
       preSendTurnId: pending.preSendTurnId,
