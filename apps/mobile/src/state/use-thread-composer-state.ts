@@ -45,6 +45,7 @@ import {
   mergeComposerDraftContent,
   removeComposerDraftAttachment,
   scheduleUnusedComposerAttachmentCleanup,
+  setComposerDraftModelSelection,
   setComposerDraftText,
   updateComposerDraftSettings,
   useComposerDraft,
@@ -455,7 +456,7 @@ export function useThreadComposerState() {
       if (!selectedThreadKey) {
         return;
       }
-      updateComposerDraftSettings(selectedThreadKey, { modelSelection: value });
+      setComposerDraftModelSelection(selectedThreadKey, value);
     },
     [selectedThreadKey],
   );

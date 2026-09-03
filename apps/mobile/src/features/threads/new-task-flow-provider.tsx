@@ -49,8 +49,8 @@ import {
   removeComposerDraftAttachment,
   replaceComposerDraftAttachments,
   scheduleUnusedComposerAttachmentCleanup,
+  setComposerDraftModelSelection,
   setComposerDraftText,
-  setStickyComposerModelSelection,
   updateComposerDraftSettings,
   useComposerDraft,
   useStickyComposerModelSelection,
@@ -486,8 +486,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         return;
       }
       const selection = options ? { ...option.selection, options } : option.selection;
-      updateComposerDraftSettings(selectedProjectDraftKey, { modelSelection: selection });
-      setStickyComposerModelSelection(selection);
+      setComposerDraftModelSelection(selectedProjectDraftKey, selection);
     },
     [modelOptions, selectedProjectDraftKey],
   );
@@ -502,10 +501,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
             instanceId: selectedModel.instanceId,
             model: selectedModel.model,
           };
-      updateComposerDraftSettings(selectedProjectDraftKey, {
-        modelSelection: nextSelection,
-      });
-      setStickyComposerModelSelection(nextSelection);
+      setComposerDraftModelSelection(selectedProjectDraftKey, nextSelection);
     },
     [selectedModel, selectedProjectDraftKey],
   );
