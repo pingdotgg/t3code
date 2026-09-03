@@ -75,7 +75,9 @@ const RATES_TTL_MS = 24 * 60 * 60 * 1000;
  * Files are filtered by mtime before opening. The slack covers a session whose
  * last write lands just before local midnight on the window's first day.
  */
-const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
+// Covers the full supported UTC offset spread plus DST and filesystem write
+// skew when a remote viewer's calendar day differs from the server's.
+const MTIME_SLACK_MS = 72 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /** Longest window the UI offers, plus slack. Older entries are pruned. */
@@ -822,11 +824,12 @@ export const make = Effect.gen(function* () {
    * the same corpus twice.
    */
   const inflightScans = new Map<string, Deferred.Deferred<UsageSummary, UsageReadError>>();
+  let canonicalRefreshWaiter: Deferred.Deferred<UsageSummary, UsageReadError> | null = null;
 
   const scanKey = snapshotKey;
 
   const scanAndPersist = (input: UsageSummaryInput) => {
-    const scan = ensureUsageLedgerLoaded.pipe(
+    const scan = (isCanonicalLedgerInput(input) ? ensureUsageLedgerLoaded : Effect.void).pipe(
       Effect.andThen(scanSummary(input)),
       Effect.tap((result) =>
         Effect.sync(() => {
@@ -863,11 +866,27 @@ export const make = Effect.gen(function* () {
     return input.sinceDay > input.untilDay ? summary : scanSemaphore.withPermits(1)(summary);
   };
 
+  const runBackgroundRefresh = (input: UsageSummaryInput) => {
+    if (!isCanonicalLedgerInput(input)) return scanAndPersist(input);
+    const waiter = Deferred.makeUnsafe<UsageSummary, UsageReadError>();
+    canonicalRefreshWaiter = waiter;
+    return scanAndPersist(input).pipe(
+      Effect.onExit((exit) =>
+        Effect.sync(() => {
+          if (canonicalRefreshWaiter === waiter) canonicalRefreshWaiter = null;
+        }).pipe(Effect.andThen(Deferred.done(waiter, exit))),
+      ),
+    );
+  };
+
   /** Derives a requested preset from the durable normalized record ledger. */
   const readPresetFromLedger = Effect.fn("UsageService.readPresetFromLedger")(function* (
     input: UsageSummaryInput,
   ) {
     yield* ensureUsageLedgerLoaded;
+    if (usageLedgerGeneratedAtMs <= 0 && canonicalRefreshWaiter !== null) {
+      yield* Deferred.await(canonicalRefreshWaiter);
+    }
     // `generatedAtMs` is the scan marker. An empty ledger is a valid complete
     // zero snapshot and must not be confused with a never-scanned ledger.
     if (usageLedgerGeneratedAtMs <= 0) return null;
@@ -882,8 +901,11 @@ export const make = Effect.gen(function* () {
     if (input.resolution === "hour") {
       if (input.sinceTime === undefined || input.untilTime === undefined) return null;
       const sinceTimeMs = Date.parse(input.sinceTime);
-      const untilTimeMs = Math.min(Date.parse(input.untilTime), generatedAtMs);
-      if (!Number.isFinite(sinceTimeMs) || untilTimeMs <= sinceTimeMs) return null;
+      const observedUntilMs = Math.min(Date.parse(input.untilTime), generatedAtMs);
+      if (!Number.isFinite(sinceTimeMs) || observedUntilMs <= sinceTimeMs) return null;
+      const completeHours = Math.floor((observedUntilMs - sinceTimeMs) / (60 * 60 * 1000));
+      const untilTimeMs = sinceTimeMs + completeHours * 60 * 60 * 1000;
+      if (untilTimeMs <= sinceTimeMs) return null;
       hourlyWindow = { sinceTimeMs, untilTimeMs };
     }
 
@@ -1026,7 +1048,10 @@ export const make = Effect.gen(function* () {
       yield* Effect.forEach(
         inputs,
         (input) =>
-          scanAndPersist(input).pipe(Effect.timeout(BACKGROUND_REFRESH_TIMEOUT), Effect.ignore),
+          runBackgroundRefresh(input).pipe(
+            Effect.timeout(BACKGROUND_REFRESH_TIMEOUT),
+            Effect.ignore,
+          ),
         {
           concurrency: 1,
           discard: true,
@@ -1044,7 +1069,6 @@ export const make = Effect.gen(function* () {
   });
 
   yield* Effect.uninterruptible(ensureUsageSnapshotsLoaded);
-  yield* Effect.uninterruptible(ensureUsageLedgerLoaded);
   return { readSummary, refreshSummary, startBackgroundRefresh } as const;
 });
 

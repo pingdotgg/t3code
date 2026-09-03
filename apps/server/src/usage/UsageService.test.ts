@@ -200,6 +200,71 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("uses the last complete client-aligned hourly bucket from a :20 ledger cutoff", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const baseDir = NodePath.join(home, "hourly-ledger-state");
+      const stateDir = NodePath.join(baseDir, "userdata");
+      yield* Effect.promise(() => NodeFSP.mkdir(stateDir, { recursive: true }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(stateDir, "usage-record-ledger.json"),
+          JSON.stringify({
+            version: 1,
+            generatedAtMs: Date.parse("2026-08-02T00:20:00.000Z"),
+            records: [
+              {
+                hostId: "mac",
+                provider: "claude",
+                resolvedHomePath: "/a/.claude",
+                volumeId: "vol-1",
+                record: {
+                  provider: "claude",
+                  timestampMs: Date.parse("2026-08-01T22:45:00.000Z"),
+                  model: "claude-fable-5",
+                  sessionId: "session-1",
+                  totals: {
+                    uncachedInputTokens: 1,
+                    cachedInputTokens: 0,
+                    cacheCreationTokens: 0,
+                    outputTokens: 5,
+                    reasoningTokens: 0,
+                  },
+                  reportedCostUsd: 3,
+                  dedupeKey: "record-1",
+                },
+              },
+            ],
+          }),
+        ),
+      );
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-hourly-ledger-test",
+            baseDir,
+            home,
+            settings,
+          }),
+        ),
+      );
+      const result = yield* service.readSummary({
+        timeZone: "UTC",
+        sinceDay: UsageDay.make("2026-08-01"),
+        untilDay: UsageDay.make("2026-08-02"),
+        resolution: "hour",
+        sinceTime: "2026-08-01T00:30:00.000Z",
+        untilTime: "2026-08-02T00:30:00.000Z",
+      });
+      assert.strictEqual(result.coverage?.availableThroughTime, "2026-08-01T23:30:00.000Z");
+      assert.deepStrictEqual(
+        result.buckets.map((bucket) => bucket.hourStart),
+        ["2026-08-01T22:30:00.000Z"],
+      );
+      assert.strictEqual(result.buckets[0]?.costUsd, 3);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("does not orphan an in-flight scan when its first caller is interrupted", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
