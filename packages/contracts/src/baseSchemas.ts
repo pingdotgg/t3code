@@ -43,6 +43,27 @@ export type IsoDateTime = typeof IsoDateTime.Type;
  * rejecting the payload would take down the connection over data the client
  * couldn't act on anyway. Encoding is the plain array encoding.
  */
+/**
+ * Same idea for one optional value whose literal set grows over time: a
+ * member this build does not know decodes as absent rather than failing the
+ * enclosing struct. Encoding is the plain encoding.
+ */
+export const ForwardCompatibleOptional = <Value extends Schema.Top>(value: Value) => {
+  const decodeValue = Schema.decodeUnknownOption(value as never);
+  return Schema.optionalKey(
+    Schema.Unknown.pipe(
+      Schema.decodeTo(
+        Schema.UndefinedOr(value),
+        SchemaTransformation.transform<Value["Encoded"] | undefined, unknown>({
+          decode: (raw) =>
+            Option.isSome(decodeValue(raw)) ? (raw as Value["Encoded"]) : undefined,
+          encode: (raw) => raw,
+        }),
+      ),
+    ),
+  );
+};
+
 export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Element) => {
   const decodeElement = Schema.decodeUnknownOption(element as never);
   return Schema.Array(Schema.Unknown).pipe(
