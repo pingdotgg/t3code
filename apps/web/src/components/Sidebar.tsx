@@ -111,7 +111,11 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useThreadShells } from "../state/entities";
+import {
+  useAllEnvironmentShellsBootstrapped,
+  useProjects,
+  useThreadShells,
+} from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
@@ -2167,13 +2171,15 @@ export default function Sidebar() {
     [scopedProjectGroup],
   );
   // A persisted scope whose project is gone falls back to all projects, but
-  // only once groups exist: projects stream in after mount, so clearing while
-  // the list is still empty would drop the restored scope every launch.
+  // only after every catalog environment has delivered its project snapshot:
+  // environments populate independently, so a partial list must not clear a
+  // scope whose project lives in an environment that is still loading.
+  const allShellsBootstrapped = useAllEnvironmentShellsBootstrapped();
   useEffect(() => {
-    if (projectScopeKey !== null && projectGroups.length > 0 && scopedProjectGroup === null) {
+    if (projectScopeKey !== null && allShellsBootstrapped && scopedProjectGroup === null) {
       setProjectScopeKey(null);
     }
-  }, [projectGroups.length, projectScopeKey, scopedProjectGroup, setProjectScopeKey]);
+  }, [allShellsBootstrapped, projectScopeKey, scopedProjectGroup, setProjectScopeKey]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from
