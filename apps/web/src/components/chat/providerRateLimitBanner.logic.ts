@@ -35,7 +35,9 @@ export function resolveProviderRateLimitSuggestion(input: {
   return {
     limited,
     fallback,
-    key: `${limited.instanceId}:${limited.rateLimit?.resetsAt ?? limited.rateLimit?.observedAt ?? ""}`,
+    // One dismissal per limit window; an unknown reset counts as one window
+    // so a fresh observedAt on every snapshot cannot resurface the banner.
+    key: `${limited.instanceId}:${limited.rateLimit?.resetsAt ?? "unknown-reset"}`,
   };
 }
 
