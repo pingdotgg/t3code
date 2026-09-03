@@ -339,6 +339,7 @@ describe("environment query lifecycle", () => {
         }).pipe(Effect.exit);
         expect(Exit.isFailure(initial)).toBe(true);
         expect(executions).toBe(1);
+        expect(vi.getTimerCount()).toBe(1);
 
         yield* SubscriptionRef.set(
           harness.supervisorState,
@@ -348,6 +349,7 @@ describe("environment query lifecycle", () => {
         const waiting = registry.get(harness.atom);
         expect(AsyncResult.isFailure(waiting)).toBe(true);
         expect(waiting.waiting).toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
 
         yield* Effect.promise(() => vi.advanceTimersByTimeAsync(5_000));
         expect(executions).toBe(1);
