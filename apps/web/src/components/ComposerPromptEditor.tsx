@@ -924,6 +924,7 @@ interface ComposerPromptEditorProps {
   onPageScrollKeyDown?: (key: "PageUp" | "PageDown") => void;
   onPageScrollKeyUp?: (key: string) => void;
   onPageScrollRelease?: () => void;
+  onCitationSubmitAndSend?: () => void;
   onPaste: React.ClipboardEventHandler<HTMLElement>;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }
@@ -1571,6 +1572,7 @@ function ComposerPromptEditorInner({
   onPageScrollKeyDown,
   onPageScrollKeyUp,
   onPageScrollRelease,
+  onCitationSubmitAndSend,
   onPaste,
   editorRef,
 }: ComposerPromptEditorProps) {
@@ -1603,8 +1605,9 @@ function ComposerPromptEditorInner({
           open ? { nodeKey } : current?.nodeKey === nodeKey ? null : current,
         );
       },
+      onSubmitAndSend: onCitationSubmitAndSend ?? (() => {}),
     }),
-    [openCitationComment],
+    [onCitationSubmitAndSend, openCitationComment],
   );
   const terminalContextActions = useMemo(
     () => ({ onRemoveTerminalContext }),
@@ -1969,6 +1972,7 @@ export function ComposerPromptEditor({
   onPageScrollKeyDown,
   onPageScrollKeyUp,
   onPageScrollRelease,
+  onCitationSubmitAndSend,
   onPaste,
   editorRef,
 }: ComposerPromptEditorProps) {
@@ -2013,6 +2017,7 @@ export function ComposerPromptEditor({
         onChange={onChange}
         {...(onVisibleSelectionChange ? { onVisibleSelectionChange } : {})}
         onPaste={onPaste}
+        {...(onCitationSubmitAndSend ? { onCitationSubmitAndSend } : {})}
         editorRef={editorRef}
         {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
         {...(onPageScrollKeyDown ? { onPageScrollKeyDown } : {})}
