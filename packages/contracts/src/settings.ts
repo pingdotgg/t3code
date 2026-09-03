@@ -354,10 +354,13 @@ export const ClientSettingsSchema = Schema.Struct({
   /**
    * Herdr-style copy-on-select: releasing a mouse drag or double-click
    * copies the selection to the clipboard. Matches Herdr's
-   * `ui.copy_on_select` (default true); the terminal pane and the chat
-   * timeline both honor it.
+   * `ui.copy_on_select`, but opt-in rather than default-on: automatically
+   * writing to the clipboard changes everyday behavior, so existing users
+   * keep the current explicit-copy flow until they enable this in
+   * Settings → General. The terminal pane and the chat timeline both
+   * honor it.
    */
-  copyOnSelect: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  copyOnSelect: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
    * Shows the "copied to clipboard" toast after an automatic copy.
    * Matches Herdr's `ui.toast.clipboard.enabled` (default true); turning

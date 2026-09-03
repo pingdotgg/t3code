@@ -60,7 +60,7 @@ const clientSettings: ClientSettings = {
   legacySidebarEnabled: false,
   timestampFormat: "24-hour",
   wordWrap: true,
-  copyOnSelect: true,
+  copyOnSelect: false,
   copyOnSelectToast: true,
 };
 

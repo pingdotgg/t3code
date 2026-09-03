@@ -77,13 +77,13 @@ describe("ClientSettings proactive panels", () => {
 });
 
 describe("ClientSettings copy on select", () => {
-  it("defaults copy and its toast on, matching Herdr", () => {
-    expect(decodeClientSettings({}).copyOnSelect).toBe(true);
+  it("is opt-in, with the toast defaulting on for when it is enabled", () => {
+    expect(decodeClientSettings({}).copyOnSelect).toBe(false);
     expect(decodeClientSettings({}).copyOnSelectToast).toBe(true);
   });
 
   it("accepts client-local updates", () => {
-    expect(decodeClientSettingsPatch({ copyOnSelect: false }).copyOnSelect).toBe(false);
+    expect(decodeClientSettingsPatch({ copyOnSelect: true }).copyOnSelect).toBe(true);
     expect(decodeClientSettingsPatch({ copyOnSelectToast: false }).copyOnSelectToast).toBe(false);
   });
 });
