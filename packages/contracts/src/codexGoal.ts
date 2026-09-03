@@ -46,12 +46,10 @@ export const CodexGoalSetInput = Schema.Struct({
   tokenBudget: Schema.optionalKey(Schema.NullOr(PositiveInt)),
 });
 export type CodexGoalSetInput = typeof CodexGoalSetInput.Type;
-
 export const CodexGoalClearResult = Schema.Struct({
   cleared: Schema.Boolean,
 });
 export type CodexGoalClearResult = typeof CodexGoalClearResult.Type;
-
 export const CodexGoalStreamEvent = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("snapshot"),
@@ -69,7 +67,6 @@ export const CodexGoalStreamEvent = Schema.Union([
   }),
 ]);
 export type CodexGoalStreamEvent = typeof CodexGoalStreamEvent.Type;
-
 export const CodexGoalOperation = Schema.Literals(["get", "set", "clear", "subscribe"]);
 export type CodexGoalOperation = typeof CodexGoalOperation.Type;
 

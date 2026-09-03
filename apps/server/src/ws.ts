@@ -2697,7 +2697,10 @@ const makeWsRpcLayer = (
               const snapshotUpdatedAt = goal?.updatedAt ?? Number.NEGATIVE_INFINITY;
               const liveGoalStream = Stream.fromQueue(liveGoalEvents).pipe(
                 Stream.filter(
-                  ({ buffered, updatedAt }) => !buffered || updatedAt >= snapshotUpdatedAt,
+                  ({ buffered, type, updatedAt }) =>
+                    !buffered ||
+                    updatedAt > snapshotUpdatedAt ||
+                    (type === "updated" && updatedAt === snapshotUpdatedAt),
                 ),
                 Stream.map(({ buffered: _, updatedAt: __, ...event }) => event),
               ) as Stream.Stream<
