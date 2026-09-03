@@ -17,11 +17,14 @@ import {
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
+  describeCodexThreadSettingDowngrades,
   describeMcpElicitation,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
+  readCodexManagedRequirements,
+  resolveCodexThreadConfig,
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
@@ -848,6 +851,204 @@ describe("openCodexThread", () => {
 
       NodeAssert.ok(isCodexAppServerRequestError(error));
       NodeAssert.equal(error.errorMessage, "timed out waiting for server");
+    }),
+  );
+});
+
+describe("resolveCodexThreadConfig", () => {
+  it("keeps the requested settings when Codex reports no requirements", () => {
+    const resolved = resolveCodexThreadConfig("full-access", undefined);
+
+    NodeAssert.deepStrictEqual(resolved.config, {
+      approvalPolicy: "never",
+      sandbox: "danger-full-access",
+      approvalsReviewer: "user",
+    });
+    NodeAssert.deepStrictEqual(resolved.downgrades, []);
+  });
+
+  it("lowers full access to workspace-write when the policy forbids danger-full-access", () => {
+    const resolved = resolveCodexThreadConfig("full-access", {
+      allowedSandboxModes: ["read-only", "workspace-write"],
+    });
+
+    NodeAssert.equal(resolved.config.sandbox, "workspace-write");
+    NodeAssert.equal(resolved.config.approvalPolicy, "never");
+    NodeAssert.deepStrictEqual(resolved.downgrades, [
+      { setting: "sandbox", requested: "danger-full-access", applied: "workspace-write" },
+    ]);
+  });
+
+  it("lowers the approval policy to the most permissive allowed value", () => {
+    const resolved = resolveCodexThreadConfig("full-access", {
+      allowedApprovalPolicies: ["untrusted", "on-request"],
+    });
+
+    NodeAssert.equal(resolved.config.approvalPolicy, "on-request");
+    NodeAssert.equal(resolved.config.sandbox, "danger-full-access");
+    NodeAssert.deepStrictEqual(resolved.downgrades, [
+      { setting: "approvalPolicy", requested: "never", applied: "on-request" },
+    ]);
+  });
+
+  it("leaves settings alone when they are already allowed or the lists are null", () => {
+    NodeAssert.deepStrictEqual(
+      resolveCodexThreadConfig("auto", {
+        allowedSandboxModes: ["workspace-write"],
+        allowedApprovalPolicies: ["on-request"],
+      }).downgrades,
+      [],
+    );
+    NodeAssert.deepStrictEqual(
+      resolveCodexThreadConfig("full-access", {
+        allowedSandboxModes: null,
+        allowedApprovalPolicies: null,
+      }).downgrades,
+      [],
+    );
+  });
+
+  it("never raises a setting above what was requested", () => {
+    const resolved = resolveCodexThreadConfig("approval-required", {
+      allowedSandboxModes: ["workspace-write"],
+    });
+
+    NodeAssert.equal(resolved.config.sandbox, "read-only");
+    NodeAssert.deepStrictEqual(resolved.downgrades, []);
+  });
+
+  it("describes downgrades in one sentence and nothing when there are none", () => {
+    NodeAssert.equal(describeCodexThreadSettingDowngrades([]), undefined);
+    NodeAssert.equal(
+      describeCodexThreadSettingDowngrades([
+        { setting: "sandbox", requested: "danger-full-access", applied: "workspace-write" },
+      ]),
+      "Managed Codex policy lowered thread settings: sandbox danger-full-access -> workspace-write.",
+    );
+  });
+});
+
+describe("buildTurnStartParams under managed requirements", () => {
+  it.effect("sends the lowered sandbox policy on every turn", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "hello",
+        requirements: { allowedSandboxModes: ["workspace-write"] },
+      });
+
+      NodeAssert.deepStrictEqual(params.sandboxPolicy, { type: "workspaceWrite" });
+      NodeAssert.equal(params.approvalPolicy, "never");
+    }),
+  );
+
+  it.effect("keeps danger-full-access when no requirements are supplied", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "hello",
+      });
+
+      NodeAssert.deepStrictEqual(params.sandboxPolicy, { type: "dangerFullAccess" });
+    }),
+  );
+});
+
+describe("openCodexThread under managed requirements", () => {
+  it.effect("starts the thread with the lowered sandbox instead of failing", () =>
+    Effect.gen(function* () {
+      const payloads: Array<unknown> = [];
+      const client = {
+        request: <M extends "thread/start" | "thread/resume">(
+          _method: M,
+          payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          payloads.push(payload);
+          return Effect.succeed(
+            makeThreadOpenResponse("thread-1") as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+
+      yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: undefined,
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+        requirements: { allowedSandboxModes: ["read-only", "workspace-write"] },
+      });
+
+      NodeAssert.equal(payloads.length, 1);
+      NodeAssert.equal(
+        (payloads[0] as EffectCodexSchema.V2ThreadStartParams).sandbox,
+        "workspace-write",
+      );
+      NodeAssert.equal(
+        (payloads[0] as EffectCodexSchema.V2ThreadStartParams).approvalPolicy,
+        "never",
+      );
+    }),
+  );
+});
+
+describe("readCodexManagedRequirements", () => {
+  const requirements = { allowedSandboxModes: ["read-only", "workspace-write"] as const };
+
+  it.effect("returns the requirements Codex reports", () =>
+    Effect.gen(function* () {
+      const client = {
+        request: (
+          _method: "configRequirements/read",
+          _payload: CodexRpc.ClientRequestParamsByMethod["configRequirements/read"],
+        ) =>
+          Effect.succeed({
+            requirements,
+          } as CodexRpc.ClientRequestResponsesByMethod["configRequirements/read"]),
+      };
+
+      const result = yield* readCodexManagedRequirements(client);
+
+      NodeAssert.deepStrictEqual(result?.allowedSandboxModes, ["read-only", "workspace-write"]);
+    }),
+  );
+
+  it.effect("treats a null requirements payload as no requirements", () =>
+    Effect.gen(function* () {
+      const client = {
+        request: (
+          _method: "configRequirements/read",
+          _payload: CodexRpc.ClientRequestParamsByMethod["configRequirements/read"],
+        ) =>
+          Effect.succeed({
+            requirements: null,
+          } as CodexRpc.ClientRequestResponsesByMethod["configRequirements/read"]),
+      };
+
+      NodeAssert.equal(yield* readCodexManagedRequirements(client), undefined);
+    }),
+  );
+
+  it.effect("treats an unsupported method as no requirements", () =>
+    Effect.gen(function* () {
+      const client = {
+        request: (
+          _method: "configRequirements/read",
+          _payload: CodexRpc.ClientRequestParamsByMethod["configRequirements/read"],
+        ) =>
+          Effect.fail(
+            new CodexErrors.CodexAppServerRequestError({
+              code: -32601,
+              errorMessage: "Method not found",
+            }),
+          ),
+      };
+
+      NodeAssert.equal(yield* readCodexManagedRequirements(client), undefined);
     }),
   );
 });
