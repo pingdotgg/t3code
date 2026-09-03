@@ -933,6 +933,14 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,
     }),
+    refreshUsageRates: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:refresh-usage-rates",
+      tag: WS_METHODS.serverRefreshUsageRates,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
     retryResourceTelemetry: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:retry-resource-telemetry",
       tag: WS_METHODS.serverRetryResourceTelemetry,
