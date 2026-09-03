@@ -1,8 +1,11 @@
-import type { ResourceTelemetryHistoryInput, ResourceTelemetrySnapshot } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ResourceTelemetryHistoryInput,
+  ResourceTelemetrySnapshot,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { useCallback } from "react";
 
-import { usePrimaryEnvironment } from "../state/environments";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -15,9 +18,7 @@ export interface ResourceTelemetryState {
   readonly retry: () => Promise<ResourceTelemetrySnapshot>;
 }
 
-export function useResourceTelemetry(): ResourceTelemetryState {
-  const primaryEnvironment = usePrimaryEnvironment();
-  const environmentId = primaryEnvironment?.environmentId ?? null;
+export function useResourceTelemetry(environmentId: EnvironmentId | null): ResourceTelemetryState {
   const query = useEnvironmentQuery(
     environmentId === null
       ? null
@@ -40,9 +41,10 @@ export function useResourceTelemetry(): ResourceTelemetryState {
   return { ...query, retry };
 }
 
-export function useResourceTelemetryHistory(input: ResourceTelemetryHistoryInput) {
-  const primaryEnvironment = usePrimaryEnvironment();
-  const environmentId = primaryEnvironment?.environmentId ?? null;
+export function useResourceTelemetryHistory(
+  environmentId: EnvironmentId | null,
+  input: ResourceTelemetryHistoryInput,
+) {
   return useEnvironmentQuery(
     environmentId === null
       ? null

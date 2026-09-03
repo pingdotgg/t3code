@@ -39,6 +39,7 @@ import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import { isElectron } from "../../env";
 import { usePrimarySessionState } from "../../environments/primary";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import { useSettingsEnvironment } from "../../hooks/useSettingsEnvironment";
 import { cn } from "../../lib/utils";
 import { resolveAppModelSelectionState } from "../../modelSelection";
 import {
@@ -210,19 +211,14 @@ function ProviderSettingsPanelContent() {
   const { environments, isReady } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const searchTargetId = useSettingsSearchTargetId();
+  const { environmentId: settingsEnvironmentId, selectEnvironment } = useSettingsEnvironment();
   const options = useMemo(
     () => buildProviderEnvironmentOptions(environments, primaryEnvironmentId),
     [environments, primaryEnvironmentId],
   );
-  // Raw user intent; the effective selection is re-derived every render so a
-  // device that drops out of the catalog falls back without erasing the pick —
-  // if it reappears (e.g. after a reconnect) the selection is restored.
-  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(
-    primaryEnvironmentId,
-  );
   const effectiveEnvironmentId = resolveSelectedProviderEnvironmentId(
     options,
-    selectedEnvironmentId,
+    settingsEnvironmentId,
     primaryEnvironmentId,
   );
   const selectedEnvironment =
@@ -245,9 +241,14 @@ function ProviderSettingsPanelContent() {
       !selectedEnvironmentCanRenderSettings &&
       searchableEnvironmentId !== undefined
     ) {
-      setSelectedEnvironmentId(searchableEnvironmentId);
+      selectEnvironment(searchableEnvironmentId);
     }
-  }, [searchTargetId, searchableEnvironmentId, selectedEnvironmentCanRenderSettings]);
+  }, [
+    searchTargetId,
+    searchableEnvironmentId,
+    selectEnvironment,
+    selectedEnvironmentCanRenderSettings,
+  ]);
   const onlyPrimaryDevice =
     options.length === 1 && options[0]?.entry.target._tag === "PrimaryConnectionTarget";
   const deviceTabs =
@@ -271,7 +272,7 @@ function ProviderSettingsPanelContent() {
                       type="button"
                       aria-pressed={selected}
                       className={cn(providerSettingsTabClassName(selected), "gap-2 text-left")}
-                      onClick={() => setSelectedEnvironmentId(environment.environmentId)}
+                      onClick={() => selectEnvironment(environment.environmentId)}
                     >
                       <Icon className="size-3.5 shrink-0" aria-hidden />
                       <span className="max-w-40 truncate">{environment.label}</span>

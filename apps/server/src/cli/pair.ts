@@ -12,6 +12,7 @@
 import {
   AuthStandardClientScopes,
   ExecutionEnvironmentDescriptor,
+  type LocalServerPairCommandOutput,
   PortSchema,
 } from "@t3tools/contracts";
 import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
@@ -192,6 +193,23 @@ export const formatPairOutput = (input: {
     ...input.notes.flatMap((note) => ["", `Note: ${note}`]),
     "",
   ].join("\n");
+
+export const formatPairJsonOutput = (input: {
+  readonly pairingUrl: string;
+  readonly token: string;
+  readonly expiresAt: DateTime.Utc;
+  readonly origin: string;
+  readonly environmentId: LocalServerPairCommandOutput["environmentId"];
+  readonly label: string;
+}): string =>
+  JSON.stringify({
+    pairingUrl: input.pairingUrl,
+    token: input.token,
+    expiresAt: DateTime.formatIso(input.expiresAt),
+    origin: input.origin,
+    environmentId: input.environmentId,
+    label: input.label,
+  } satisfies LocalServerPairCommandOutput);
 
 /**
  * Three outcomes, because they drive different decisions: a T3 descriptor
@@ -458,6 +476,11 @@ const labelFlag = Flag.string("label").pipe(
   Flag.optional,
 );
 
+const jsonFlag = Flag.boolean("json").pipe(
+  Flag.withDescription("Emit JSON instead of human-readable output."),
+  Flag.withDefault(false),
+);
+
 const tailscaleFlag = Flag.boolean("tailscale").pipe(
   Flag.withDescription(
     "Publish the server over Tailscale Serve HTTPS and pair through the tailnet URL.",
@@ -475,6 +498,7 @@ export const pairCommand = Command.make("pair", {
   baseDir: baseDirFlag,
   ttl: ttlFlag,
   label: labelFlag,
+  json: jsonFlag,
   tailscale: tailscaleFlag,
   tailscaleServePort: tailscaleServePortFlag,
 }).pipe(
@@ -484,9 +508,11 @@ export const pairCommand = Command.make("pair", {
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       const cliLogLevel = yield* GlobalFlag.LogLevel;
-      // Default to Warn so storage/migration chatter cannot bury the QR code;
-      // an explicit --log-level still wins.
-      const logLevel = Option.getOrElse(cliLogLevel, () => "Warn" as const);
+      // JSON is consumed by other processes, so keep storage/migration chatter
+      // off stdout. Human output defaults to Warn so it cannot bury the QR.
+      const logLevel = flags.json
+        ? ("Error" as const)
+        : Option.getOrElse(cliLogLevel, () => "Warn" as const);
 
       const target = yield* discoverPairTarget(Option.getOrUndefined(flags.baseDir));
 
@@ -518,14 +544,23 @@ export const pairCommand = Command.make("pair", {
       const pairingUrl = buildPairingUrl(pairingBaseUrl, issued.credential);
 
       yield* Console.log(
-        formatPairOutput({
-          serverLabel: target.descriptor.label,
-          origin: target.state.origin,
-          pairingUrl,
-          token: issued.credential,
-          expiresAt: issued.expiresAt,
-          notes,
-        }),
+        flags.json
+          ? formatPairJsonOutput({
+              pairingUrl,
+              token: issued.credential,
+              expiresAt: issued.expiresAt,
+              origin: target.state.origin,
+              environmentId: target.descriptor.environmentId,
+              label: target.descriptor.label,
+            })
+          : formatPairOutput({
+              serverLabel: target.descriptor.label,
+              origin: target.state.origin,
+              pairingUrl,
+              token: issued.credential,
+              expiresAt: issued.expiresAt,
+              notes,
+            }),
       );
     }).pipe(Effect.provide(FetchHttpClient.layer)),
   ),

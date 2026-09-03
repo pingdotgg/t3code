@@ -46,7 +46,8 @@ import { APP_VERSION } from "../branding";
 import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";
 import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
 import {
-  readPrimaryEnvironmentTarget,
+  readOptionalPrimaryEnvironmentTarget,
+  isDesktopClientOnlyMode,
   type PrimaryEnvironmentTarget,
 } from "../environments/primary/target";
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
@@ -404,7 +405,7 @@ export type PrimaryEnvironmentTargetRead =
     };
 
 export function readPrimaryEnvironmentTargetResult(
-  readTarget: () => PrimaryEnvironmentTarget | null = readPrimaryEnvironmentTarget,
+  readTarget: () => PrimaryEnvironmentTarget | null = readOptionalPrimaryEnvironmentTarget,
 ): PrimaryEnvironmentTargetRead {
   try {
     return { _tag: "Success", target: readTarget() };
@@ -461,7 +462,7 @@ export function secondaryRegistrationsToRetainAfterTopologyRead(
 const platformConnectionSourceLayer = Layer.effect(
   PlatformConnectionSource,
   Effect.gen(function* () {
-    if (isHostedStaticApp()) {
+    if (isHostedStaticApp() || isDesktopClientOnlyMode()) {
       return PlatformConnectionSource.of({
         registrations: Stream.empty,
       });

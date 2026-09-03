@@ -2,10 +2,15 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
 
-import { BearerConnectionProfile, type ConnectionCatalogEntry } from "./catalog.ts";
+import {
+  BearerConnectionProfile,
+  type ConnectionCatalogEntry,
+  SshConnectionProfile,
+} from "./catalog.ts";
 import {
   BearerConnectionTarget,
   ConnectionTransientError,
+  SshConnectionTarget,
   type SupervisorConnectionState,
 } from "./model.ts";
 import {
@@ -53,6 +58,32 @@ function supervisorState(overrides: Partial<SupervisorConnectionState>): Supervi
 describe("connection presentation", () => {
   it("preserves profile display information without exposing credentials", () => {
     expect(connectionCatalogDisplayUrl(ENTRY)).toBe("https://environment.example.test");
+  });
+
+  it("formats SSH display information without a missing username and preserves the port", () => {
+    const target = new SshConnectionTarget({
+      environmentId: EnvironmentId.make("environment-ssh"),
+      label: "SSH environment",
+      connectionId: "connection-ssh",
+    });
+    const entry: ConnectionCatalogEntry = {
+      target,
+      profile: Option.some(
+        new SshConnectionProfile({
+          connectionId: target.connectionId,
+          environmentId: target.environmentId,
+          label: target.label,
+          target: {
+            alias: "devbox",
+            hostname: "devbox.example.test",
+            username: null,
+            port: 2222,
+          },
+        }),
+      ),
+    };
+
+    expect(connectionCatalogDisplayUrl(entry)).toBe("devbox.example.test:2222");
   });
 
   it("distinguishes initial connection, reconnect, and retry errors", () => {

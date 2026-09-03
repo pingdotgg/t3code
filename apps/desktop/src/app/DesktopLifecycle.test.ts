@@ -90,6 +90,7 @@ function makeDesktopWindowLayer(
     createMainIfBackendReady: Effect.void,
     showConnectingSplash: Effect.void,
     handleBackendReady: () => Effect.void,
+    handleRendererReady: Effect.void,
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: input.flushMainWindowBounds ?? Effect.void,
     dispatchMenuAction: () => Effect.void,

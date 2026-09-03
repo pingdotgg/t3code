@@ -100,9 +100,12 @@ export function connectionCatalogDisplayUrl(entry: ConnectionCatalogEntry): stri
         ? entry.profile.value.httpBaseUrl
         : null;
     case "SshConnectionTarget":
-      return Option.isSome(entry.profile) && entry.profile.value._tag === "SshConnectionProfile"
-        ? `${entry.profile.value.target.username}@${entry.profile.value.target.hostname}`
-        : null;
+      if (Option.isNone(entry.profile) || entry.profile.value._tag !== "SshConnectionProfile") {
+        return null;
+      }
+      const { hostname, port, username } = entry.profile.value.target;
+      const authority = username ? `${username}@${hostname}` : hostname;
+      return port ? `${authority}:${port}` : authority;
   }
 }
 

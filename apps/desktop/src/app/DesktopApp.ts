@@ -1,9 +1,12 @@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
+import type { DesktopBackendMode as DesktopBackendModeValue } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import * as Crypto from "effect/Crypto";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -13,6 +16,7 @@ import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
 import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
+import * as DesktopBackendMode from "./DesktopBackendMode.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
@@ -22,6 +26,7 @@ import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
+import * as DesktopRunningLocalServers from "./DesktopRunningLocalServers.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -59,6 +64,17 @@ export class DesktopDevelopmentBackendPortRequiredError extends Schema.TaggedErr
 ) {
   override get message(): string {
     return "T3CODE_PORT is required in desktop development.";
+  }
+}
+
+export class DesktopRendererAssetsUnavailableError extends Schema.TaggedErrorClass<DesktopRendererAssetsUnavailableError>()(
+  "DesktopRendererAssetsUnavailableError",
+  {
+    candidates: Schema.Array(Schema.String),
+  },
+) {
+  override get message(): string {
+    return `The packaged desktop renderer was not found. Checked: ${this.candidates.join(", ")}.`;
   }
 }
 
@@ -141,22 +157,95 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
 const fatalStartupCause = <E>(stage: string, cause: Cause.Cause<E>) =>
   handleFatalStartupError(stage, Cause.pretty(cause)).pipe(Effect.andThen(Effect.failCause(cause)));
 
+export const latchDesktopBackendModeForStartup = Effect.fn(
+  "desktop.startup.latchDesktopBackendMode",
+)(function* (configuredMode: DesktopBackendModeValue) {
+  const backendMode = yield* DesktopBackendMode.DesktopBackendMode;
+  return yield* backendMode
+    .latch(configuredMode)
+    .pipe(Effect.catchCause((cause) => fatalStartupCause("backendMode", cause)));
+});
+
+export const handleClientOnlyRendererReady = <E extends { readonly message: string }>(
+  rendererReady: Effect.Effect<void, E>,
+): Effect.Effect<void, E> =>
+  rendererReady.pipe(
+    Effect.tapError((error) =>
+      logBootstrapWarning("failed to open main window after renderer readiness", {
+        error: error.message,
+      }),
+    ),
+  );
+
+const resolvePackagedClientRoot = Effect.fn("desktop.bootstrap.resolvePackagedClientRoot")(
+  function* (candidates: readonly string[]) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    for (const candidate of candidates) {
+      if (
+        yield* fileSystem
+          .exists(path.join(candidate, "index.html"))
+          .pipe(Effect.orElseSucceed(() => false))
+      ) {
+        return candidate;
+      }
+    }
+    return yield* new DesktopRendererAssetsUnavailableError({ candidates: [...candidates] });
+  },
+);
+
 const bootstrap = Effect.gen(function* () {
-  const pool = yield* DesktopBackendPool.DesktopBackendPool;
-  const primaryBackend = yield* pool.primary;
+  const launchMode = yield* DesktopBackendMode.DesktopBackendMode;
   const state = yield* DesktopState.DesktopState;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
-  const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-  const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
+  const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
+  const backendMode = (yield* launchMode.get).effectiveMode;
   yield* logBootstrapInfo("bootstrap start");
+
+  if (backendMode === "client-only") {
+    if (environment.isDevelopment) {
+      yield* electronProtocol.registerDesktopProtocol({
+        scheme: ElectronProtocol.getDesktopScheme(true),
+        source: "proxy",
+        targetOrigin: Option.getOrThrow(environment.devServerUrl),
+        clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
+      });
+    } else {
+      const staticRoot = yield* resolvePackagedClientRoot(environment.packagedClientRootCandidates);
+      yield* electronProtocol.registerDesktopProtocol({
+        scheme: ElectronProtocol.getDesktopScheme(false),
+        source: "static",
+        staticRoot,
+        clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
+      });
+      yield* logBootstrapInfo("bootstrap resolved packaged renderer", { staticRoot });
+    }
+
+    yield* installDesktopIpcHandlers();
+    yield* logBootstrapInfo("bootstrap ipc handlers registered");
+    if (!(yield* Ref.get(state.quitting))) {
+      yield* appActivation.start.pipe(
+        Effect.tap(() => logBootstrapInfo("desktop app control socket ready")),
+        Effect.catch((error) =>
+          logStartupError("desktop app control socket unavailable", { error }),
+        ),
+      );
+      yield* handleClientOnlyRendererReady(desktopWindow.handleRendererReady);
+    }
+    return;
+  }
 
   if (environment.isDevelopment && Option.isNone(environment.configuredBackendPort)) {
     return yield* new DesktopDevelopmentBackendPortRequiredError();
   }
 
+  const pool = yield* DesktopBackendPool.DesktopBackendPool;
+  const primaryBackend = yield* pool.primary;
+  const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+  const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
   const backendPortSelection = yield* resolveDesktopBackendPort(environment.configuredBackendPort);
   const backendPort = backendPortSelection.port;
   yield* logBootstrapInfo(
@@ -177,14 +266,13 @@ const bootstrap = Effect.gen(function* () {
   }
   const serverExposureState = yield* serverExposure.configureFromSettings({ port: backendPort });
   const backendConfig = yield* serverExposure.backendConfig;
-  const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
   const rendererTarget = environment.isDevelopment
     ? Option.getOrThrow(environment.devServerUrl)
     : backendConfig.httpBaseUrl;
   yield* electronProtocol.registerDesktopProtocol({
     scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment),
+    source: "proxy",
     targetOrigin: rendererTarget,
-    backendOrigin: backendConfig.httpBaseUrl,
     clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
   });
   yield* logBootstrapInfo("bootstrap resolved backend endpoint", {
@@ -263,7 +351,33 @@ const startup = Effect.gen(function* () {
   const userDataPath = yield* appIdentity.resolveUserDataPath;
   yield* electronApp.setPath("userData", userDataPath);
   yield* logStartupInfo("runtime logging configured", { logDir: environment.logDir });
-  yield* desktopSettings.load;
+  const settings = yield* desktopSettings.load;
+  const latchedLaunchMode = yield* latchDesktopBackendModeForStartup(settings.backendMode);
+  const existingServer =
+    latchedLaunchMode.effectiveMode === "managed" && !environment.isDevelopment
+      ? (yield* (yield* DesktopRunningLocalServers.DesktopRunningLocalServers).discover).find(
+          (server) => server.variant === "userdata",
+        )
+      : undefined;
+  const backendMode = yield* DesktopBackendMode.DesktopBackendMode;
+  const launchMode = yield* backendMode.resolveExistingServer({
+    isDevelopment: environment.isDevelopment,
+    hasRunningUserdataServer: existingServer !== undefined,
+  });
+  yield* logStartupInfo("desktop backend mode selected", {
+    effectiveMode: launchMode.effectiveMode,
+    configuredMode: launchMode.configuredMode,
+    source: launchMode.source,
+    ...(launchMode.cliOverride === null ? {} : { cliOverride: launchMode.cliOverride }),
+  });
+  if (launchMode.source === "existing-server" && existingServer !== undefined) {
+    yield* logStartupInfo("using existing local server instead of starting managed backend", {
+      environmentId: existingServer.environmentId,
+      origin: existingServer.httpBaseUrl,
+      pid: existingServer.pid,
+      statePath: existingServer.statePath,
+    });
+  }
 
   if (linuxElectronOptions !== null) {
     yield* logStartupInfo("linux password store configured", {
@@ -308,6 +422,10 @@ const scopedProgram = Effect.scoped(
 
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
+        const backendMode = yield* DesktopBackendMode.DesktopBackendMode;
+        if ((yield* backendMode.get).effectiveMode === "client-only") {
+          return;
+        }
         const pool = yield* DesktopBackendPool.DesktopBackendPool;
         // Stop every backend in the pool, not just the primary. The
         // electronApp.quit() path can race ahead of the layer-scope

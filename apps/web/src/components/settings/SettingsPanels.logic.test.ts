@@ -19,7 +19,53 @@ import {
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
   resolveBackgroundActivityProfileOption,
+  resolveSettingsEnvironmentId,
 } from "./SettingsPanels.logic";
+import { EnvironmentId } from "@t3tools/contracts";
+
+describe("settings environment resolution", () => {
+  const primary = EnvironmentId.make("primary");
+  const active = EnvironmentId.make("active");
+  const selected = EnvironmentId.make("selected");
+
+  it("prefers an explicit selection, then primary, then active", () => {
+    expect(
+      resolveSettingsEnvironmentId({
+        selectedEnvironmentId: selected,
+        primaryEnvironmentId: primary,
+        activeEnvironmentId: active,
+        availableEnvironmentIds: [primary, active, selected],
+      }),
+    ).toBe(selected);
+    expect(
+      resolveSettingsEnvironmentId({
+        selectedEnvironmentId: null,
+        primaryEnvironmentId: primary,
+        activeEnvironmentId: active,
+        availableEnvironmentIds: [active, primary],
+      }),
+    ).toBe(primary);
+    expect(
+      resolveSettingsEnvironmentId({
+        selectedEnvironmentId: null,
+        primaryEnvironmentId: null,
+        activeEnvironmentId: active,
+        availableEnvironmentIds: [selected, active],
+      }),
+    ).toBe(active);
+  });
+
+  it("recovers from a stale selection", () => {
+    expect(
+      resolveSettingsEnvironmentId({
+        selectedEnvironmentId: selected,
+        primaryEnvironmentId: primary,
+        activeEnvironmentId: active,
+        availableEnvironmentIds: [primary, active],
+      }),
+    ).toBe(primary);
+  });
+});
 
 describe("typography settings restore", () => {
   it("detects family and size changes by font row", () => {

@@ -7,9 +7,11 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { LocalServerPairCommandOutput } from "@t3tools/contracts";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
 
@@ -194,6 +196,47 @@ describe("t3 pair", () => {
         off: () => undefined,
       }),
     ),
+  );
+
+  it.effect("prints one machine-readable object with --json", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-json-test-"));
+        const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+        yield* persistServerRuntimeState({
+          path: statePath,
+          state: yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: Number(new URL(origin).port),
+          }),
+        });
+
+        const output = yield* captureStdout(
+          runCli(["pair", "--base-dir", baseDir, "--label", "Desktop", "--json"]),
+        );
+        const decoded = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(LocalServerPairCommandOutput),
+        )(output);
+
+        assert.deepEqual(Object.keys(decoded), [
+          "pairingUrl",
+          "token",
+          "expiresAt",
+          "origin",
+          "environmentId",
+          "label",
+        ]);
+        assert.equal(decoded.origin, origin);
+        assert.equal(decoded.environmentId, testDescriptor.environmentId);
+        assert.equal(decoded.label, testDescriptor.label);
+        assert.match(String(decoded.pairingUrl), new RegExp(`^${origin}/pair#token=`));
+        assert.equal(
+          new URL(String(decoded.pairingUrl)).hash.slice("#token=".length),
+          decoded.token,
+        );
+        assert.isFalse(/Pairing with|Note:|[█▀▄]/.test(output));
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("pairs through the recorded dev web URL for dev servers", () =>

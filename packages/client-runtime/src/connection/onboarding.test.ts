@@ -113,7 +113,7 @@ describe("connection onboarding", () => {
           : String(tokenRequest?.init.body);
       const tokenParams = new URLSearchParams(tokenBody);
       expect(tokenParams.get("subject_token")).toBe("pairing-token");
-      expect(tokenParams.get("scope")).toBe(AuthStandardClientScopes.join(" "));
+      expect(tokenParams.get("scope")).toBeNull();
       expect(tokenParams.get("client_label")).toBe("T3 Code Test");
     }),
   );

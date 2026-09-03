@@ -7,13 +7,14 @@ import {
   InfoIcon,
   RefreshCwIcon,
 } from "lucide-react";
-import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
+  EnvironmentId,
+  ServerConfig,
   ServerProcessDiagnosticsEntry,
   ServerProcessResourceHistorySummary,
   ServerProcessSignal,
@@ -26,19 +27,15 @@ import { ensureLocalApi } from "../../localApi";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { useEnvironmentQuery } from "../../state/query";
-import {
-  primaryServerAvailableEditorsAtom,
-  primaryServerObservabilityAtom,
-  serverEnvironment,
-} from "../../state/server";
+import { serverEnvironment } from "../../state/server";
 import { shellEnvironment } from "../../state/shell";
-import { usePrimaryEnvironment } from "../../state/environments";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { ResourceTelemetryDiagnostics } from "./ResourceTelemetryDiagnostics";
+import { SettingsEnvironmentScope } from "./SettingsEnvironmentSelector";
 import { SettingsPageContainer, SettingsSection, useRelativeTimeTick } from "./settingsLayout";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -809,10 +806,30 @@ function DiagnosticsRefreshButton({
 }
 
 export function DiagnosticsSettingsPanel() {
-  const observability = useAtomValue(primaryServerObservabilityAtom);
-  const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
-  const primaryEnvironment = usePrimaryEnvironment();
-  const environmentId = primaryEnvironment?.environmentId ?? null;
+  return (
+    <SettingsPageContainer width="expanded" className="gap-10">
+      <SettingsEnvironmentScope description="Traces, processes, and resource history come from the environment's own server.">
+        {(environment, serverConfig) => (
+          <DiagnosticsSettingsContent
+            key={environment.environmentId}
+            environmentId={environment.environmentId}
+            serverConfig={serverConfig}
+          />
+        )}
+      </SettingsEnvironmentScope>
+    </SettingsPageContainer>
+  );
+}
+
+function DiagnosticsSettingsContent({
+  environmentId,
+  serverConfig,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly serverConfig: ServerConfig;
+}) {
+  const observability = serverConfig.observability;
+  const availableEditors = serverConfig.availableEditors;
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
     reportFailure: false,
   });
@@ -824,56 +841,42 @@ export function DiagnosticsSettingsPanel() {
     RESOURCE_HISTORY_WINDOWS.find((option) => option.windowMs === resourceWindowMs) ??
     RESOURCE_HISTORY_WINDOWS[1];
   const { data, error, isPending, refresh } = useEnvironmentQuery(
-    environmentId === null
-      ? null
-      : serverEnvironment.traceDiagnostics({ environmentId, input: {} }),
+    serverEnvironment.traceDiagnostics({ environmentId, input: {} }),
   );
   const {
     data: processData,
     error: processError,
     isPending: isProcessPending,
     refresh: refreshProcesses,
-  } = useEnvironmentQuery(
-    environmentId === null
-      ? null
-      : serverEnvironment.processDiagnostics({ environmentId, input: {} }),
-  );
+  } = useEnvironmentQuery(serverEnvironment.processDiagnostics({ environmentId, input: {} }));
   const {
     data: resourceData,
     error: resourceError,
     isPending: isResourcePending,
     refresh: refreshResources,
   } = useEnvironmentQuery(
-    environmentId === null
-      ? null
-      : serverEnvironment.processResourceHistory({
-          environmentId,
-          input: {
-            windowMs: selectedResourceWindow.windowMs,
-            bucketMs: selectedResourceWindow.bucketMs,
-          },
-        }),
+    serverEnvironment.processResourceHistory({
+      environmentId,
+      input: {
+        windowMs: selectedResourceWindow.windowMs,
+        bucketMs: selectedResourceWindow.bucketMs,
+      },
+    }),
   );
   const [isOpeningLogsDirectory, setIsOpeningLogsDirectory] = useState(false);
   const [openLogsDirectoryError, setOpenLogsDirectoryError] = useState<string | null>(null);
   const [signalingPid, setSignalingPid] = useState<number | null>(null);
   const signalingPidRef = useRef<number | null>(null);
-  const environmentIdRef = useRef(environmentId);
   const processDataRef = useRef(processData);
-  environmentIdRef.current = environmentId;
   processDataRef.current = processData;
 
   const openLogsDirectory = useCallback(() => {
     const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
     if (!logsDirectoryPath) return;
 
-    const editor = resolveAndPersistPreferredEditor(availableEditors ?? []);
+    const editor = resolveAndPersistPreferredEditor(availableEditors);
     if (!editor) {
       setOpenLogsDirectoryError("No available editors found.");
-      return;
-    }
-    if (environmentId === null) {
-      setOpenLogsDirectoryError("No environment is selected.");
       return;
     }
 
@@ -902,6 +905,8 @@ export function DiagnosticsSettingsPanel() {
   const signalProcess = useCallback(
     async (pid: number, signal: ServerProcessSignal) => {
       if (signalingPidRef.current !== null) return;
+      const process = processDataRef.current?.processes.find((entry) => entry.pid === pid);
+      if (process === undefined) return;
       signalingPidRef.current = pid;
       setSignalingPid(pid);
       const clearSignaling = () => {
@@ -929,20 +934,9 @@ export function DiagnosticsSettingsPanel() {
           return;
         }
       }
-      const currentEnvironmentId = environmentIdRef.current;
-      if (currentEnvironmentId === null) {
-        clearSignaling();
-        return;
-      }
-      const process = processDataRef.current?.processes.find((entry) => entry.pid === pid);
-      if (process === undefined) {
-        clearSignaling();
-        return;
-      }
-
       try {
         const result = await signalServerProcess({
-          environmentId: currentEnvironmentId,
+          environmentId,
           input: { pid, startTimeMs: process.startTimeMs, signal },
         });
         if (result._tag === "Failure") {
@@ -981,7 +975,7 @@ export function DiagnosticsSettingsPanel() {
         clearSignaling();
       }
     },
-    [refreshProcesses, signalServerProcess],
+    [environmentId, refreshProcesses, signalServerProcess],
   );
 
   const processDiagnosticsError = processData ? Option.getOrNull(processData.error) : null;
@@ -990,10 +984,9 @@ export function DiagnosticsSettingsPanel() {
   const traceDiagnosticsPartialFailure = data
     ? Option.getOrElse(data.partialFailure, () => false)
     : false;
-
   return (
-    <SettingsPageContainer width="expanded" className="gap-10">
-      <ResourceTelemetryDiagnostics />
+    <>
+      <ResourceTelemetryDiagnostics environmentId={environmentId} />
 
       <SettingsSection
         title="Live Processes"
@@ -1386,6 +1379,6 @@ export function DiagnosticsSettingsPanel() {
           <EmptyRows label={isInitialLoading ? "Loading span names..." : "No spans found."} />
         )}
       </SettingsSection>
-    </SettingsPageContainer>
+    </>
   );
 }

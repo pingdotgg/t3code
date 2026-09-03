@@ -9,21 +9,30 @@ import {
 } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 
-import { useSettingsRestore } from "../components/settings/SettingsPanels";
+import { type SettingsOwnership, useSettingsRestore } from "../components/settings/SettingsPanels";
 import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
 import { Button } from "../components/ui/button";
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { isElectron } from "../env";
 
-function RestoreDefaultsButton({ onRestored }: { onRestored: () => void }) {
-  const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
+function RestoreDefaultsButton({
+  ownership,
+  onRestored,
+}: {
+  ownership: SettingsOwnership;
+  onRestored: () => void;
+}) {
+  const { canRestoreDefaults, changedSettingLabels, restoreDefaults } = useSettingsRestore(
+    ownership,
+    onRestored,
+  );
 
   return (
     <Button
       size="xs"
       variant="ghost"
-      disabled={changedSettingLabels.length === 0}
+      disabled={!canRestoreDefaults || changedSettingLabels.length === 0}
       onClick={() => void restoreDefaults()}
     >
       <RotateCcwIcon className="mx-1 size-3.5" />
@@ -37,7 +46,12 @@ function SettingsContentLayout() {
   const navigate = useNavigate();
   const canGoBack = useCanGoBack();
   const [restoreSignal, setRestoreSignal] = useState(0);
-  const showRestoreDefaults = location.pathname === "/settings/general";
+  const restoreOwnership: SettingsOwnership | null =
+    location.pathname === "/settings/general"
+      ? "client"
+      : location.pathname === "/settings/environment"
+        ? "environment"
+        : null;
   const handleRestored = () => setRestoreSignal((value) => value + 1);
   const navigateBackWithinApp = useCallback(() => {
     if (canGoBack) {
@@ -74,9 +88,9 @@ function SettingsContentLayout() {
         <WorkspacePageHeader electron={isElectron}>
           <div className="flex w-full items-center gap-3">
             <SettingsBreadcrumb pathname={location.pathname} />
-            {showRestoreDefaults ? (
+            {restoreOwnership ? (
               <div className="ms-auto flex items-center gap-2">
-                <RestoreDefaultsButton onRestored={handleRestored} />
+                <RestoreDefaultsButton ownership={restoreOwnership} onRestored={handleRestored} />
               </div>
             ) : null}
           </div>
