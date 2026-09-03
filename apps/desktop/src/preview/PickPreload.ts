@@ -297,29 +297,51 @@ function withCaptureTimeout<A>(promise: Promise<A>, millis: number): Promise<A |
   ]).finally(() => clearTimeout(timer));
 }
 
-async function captureElement(element: Element): Promise<PickedElementPayload | null> {
+/** Truncation for the DOM-only preview used when React context is unavailable. */
+const HTML_PREVIEW_MAX_CHARS = 500;
+
+/**
+ * Describes a picked element. The React context lookup can stall or throw on
+ * some pages, so the element is never dropped: without context it still
+ * carries its tag, a short HTML preview, and its rect so the crop stays on the
+ * pick instead of falling back to the whole viewport.
+ */
+async function captureElement(element: Element): Promise<PickedElementPayload> {
+  const base = {
+    pageUrl: location.href,
+    pageTitle: document.title?.trim() || null,
+    tagName: element.tagName.toLowerCase(),
+    pickedAt: new Date().toISOString(),
+  };
   try {
     const context = await withCaptureTimeout(
       Promise.resolve(getElementContext(element)),
       ELEMENT_CONTEXT_TIMEOUT_MS,
     );
-    if (!context) return null;
-    const stack = (context.stack ?? []).map(toStackFrame);
-    return {
-      pageUrl: location.href,
-      pageTitle: document.title?.trim() || null,
-      tagName: element.tagName.toLowerCase(),
-      selector: context.selector,
-      htmlPreview: context.htmlPreview ?? "",
-      componentName: context.componentName,
-      source: stack[0] ?? null,
-      stack,
-      styles: context.styles ?? "",
-      pickedAt: new Date().toISOString(),
-    };
+    if (context) {
+      const stack = (context.stack ?? []).map(toStackFrame);
+      return {
+        ...base,
+        selector: context.selector,
+        htmlPreview: context.htmlPreview ?? "",
+        componentName: context.componentName,
+        source: stack[0] ?? null,
+        stack,
+        styles: context.styles ?? "",
+      };
+    }
   } catch {
-    return null;
+    // Fall through to the DOM-only payload.
   }
+  return {
+    ...base,
+    selector: null,
+    htmlPreview: element.outerHTML.slice(0, HTML_PREVIEW_MAX_CHARS),
+    componentName: null,
+    source: null,
+    stack: [],
+    styles: "",
+  };
 }
 
 function createButton(label: string, title: string): HTMLButtonElement {
@@ -1257,9 +1279,10 @@ function startAnnotation(): void {
     void Promise.all(
       Array.from(selected.values()).map(async (target) => {
         const element = await captureElement(target.element);
-        if (!element) return null;
         for (const change of submittedStyleChanges) {
-          if (change.targetId === target.id) change.selector = element.selector;
+          if (change.targetId === target.id && element.selector !== null) {
+            change.selector = element.selector;
+          }
         }
         return {
           id: target.id,
@@ -1268,11 +1291,10 @@ function startAnnotation(): void {
         };
       }),
     )
-      .then((captured) => {
+      .then((elements) => {
         // The overlay may have been cancelled or replaced while the capture
         // ran. A late submit must not deliver into the next pick's listener.
         if (finished) return;
-        const elements = captured.filter((target) => target !== null);
         const annotation: PreviewAnnotationPayload = {
           id: nextId("annotation"),
           pageUrl: location.href,
