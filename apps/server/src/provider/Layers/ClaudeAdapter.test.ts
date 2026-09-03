@@ -3984,6 +3984,74 @@ describe("ClaudeAdapterLive", () => {
     },
   );
 
+  it.effect(
+    "synthesizes a snapshot-only message instead of dropping it as a divergent snapshot of a stalled id-less block",
+    () => {
+      const harness = makeHarness();
+      const firstText = "First answer.";
+      const snapshotOnlyText = "Second, snapshot-only message.";
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const runtimeEventsFiber = yield* Stream.takeUntil(
+          adapter.streamEvents,
+          (event) => event.type === "turn.completed",
+        ).pipe(Stream.runCollect, Effect.forkChild);
+
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "go",
+          attachments: [],
+        });
+
+        // A message streams WITHOUT message_start and stalls: no content_block_stop ever
+        // arrives, so its id-less block stays open. Its own snapshot repairs the missing
+        // suffix but must not close the block (late deltas could still follow).
+        harness.query.emit(textBlockStart("stalled-start-1", 0));
+        harness.query.emit(textDelta("stalled-delta-1", 0, "First ans"));
+        harness.query.emit(assistantSnapshot("stalled-snapshot-1", "msg-first", [firstText]));
+
+        // The next message never streams at all and reuses content index 0. The still-open
+        // block already has its snapshot, so this one is a different message: it must be
+        // materialized, not logged away as a divergent snapshot of the first.
+        harness.query.emit(
+          assistantSnapshot("snapshot-only-2", "msg-snapshot-only", [snapshotOnlyText]),
+        );
+        harness.query.emit(successResult("stalled-result"));
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        const deltas = assistantTextDeltas(runtimeEvents);
+        // The stalled block's missing suffix ("wer.") is shipped when the block completes,
+        // which only the turn result does here — so it lands after the snapshot-only message.
+        assert.deepEqual(deltas.map(deltaText), ["First ans", snapshotOnlyText, "wer."]);
+        assert.equal(String(deltas[0]?.itemId), String(deltas[2]?.itemId));
+        assert.notEqual(String(deltas[0]?.itemId), String(deltas[1]?.itemId));
+
+        const completions = runtimeEvents.filter(
+          (event) =>
+            event.type === "item.completed" && event.payload.itemType === "assistant_message",
+        );
+        // The snapshot-only message completes from its snapshot right away; the stalled
+        // block is only closed by the turn result, with its repaired text as detail.
+        assert.deepEqual(
+          completions.map((event) =>
+            event.type === "item.completed" ? event.payload.detail : undefined,
+          ),
+          [snapshotOnlyText, firstText],
+        );
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("segments Claude assistant text blocks around tool calls", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

@@ -174,6 +174,8 @@ interface AssistantTextBlockState {
    */
   streamedText: string;
   fallbackText: string;
+  /** True once this block's own `claude/assistant` snapshot has been applied to it. */
+  snapshotApplied: boolean;
   streamClosed: boolean;
   completionEmitted: boolean;
 }
@@ -1891,6 +1893,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       readonly fallbackText?: string;
       readonly streamClosed?: boolean;
       readonly messageId?: string | undefined;
+      /** The caller is materializing a `claude/assistant` snapshot rather than a stream event. */
+      readonly fromSnapshot?: boolean;
     },
   ) {
     const turnState = context.turnState;
@@ -1905,10 +1909,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     // message, so when a previous message left an unclosed block behind, reusing it by index
     // alone spliced two separate answers into one chat message. Only reuse when the message
     // matches — or when neither side knows its message (no `message_start`), which keeps the
-    // pre-existing behaviour for non-streaming paths.
+    // pre-existing behaviour for non-streaming paths. Even without ids, an open block that
+    // already received its own snapshot is not the home of a second, different snapshot (a
+    // message delivers exactly one); late stream deltas may still continue it, so only
+    // snapshots are turned away.
     const belongsToSameMessage =
       existing?.messageId === undefined || messageId === undefined
-        ? true
+        ? !(options?.fromSnapshot === true && existing?.snapshotApplied === true)
         : existing.messageId === messageId;
     if (existing && !existing.completionEmitted && belongsToSameMessage) {
       if (existing.fallbackText.length === 0 && options?.fallbackText) {
@@ -1926,6 +1933,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       messageId,
       streamedText: "",
       fallbackText: options?.fallbackText ?? "",
+      snapshotApplied: false,
       streamClosed: options?.streamClosed ?? false,
       completionEmitted: false,
     };
@@ -1954,6 +1962,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         fallbackText,
         streamClosed: true,
         messageId: location.messageId,
+        fromSnapshot: true,
       });
     },
   );
@@ -2075,18 +2084,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         candidates.findLast(
           (block) => block.messageId !== undefined && block.messageId === snapshotMessageId,
         ) ??
-        // Without ids the block is only "this snapshot's" when it is still open or its
-        // delivered text matches. A completed block with DIFFERENT text belongs to an earlier
-        // message — claiming it would swallow a snapshot-only message entirely; excluding
-        // every completed block would re-synthesize the ordinary stream→stop→snapshot flow as
-        // a duplicate.
-        candidates.findLast(
-          (block) =>
-            (block.messageId === undefined || snapshotMessageId === undefined) &&
-            (!block.completionEmitted ||
-              block.streamedText === text ||
-              block.fallbackText === text),
-        );
+        // Without ids the block is only "this snapshot's" when its delivered text matches or
+        // it is still open and has not received a snapshot yet. A completed block with
+        // DIFFERENT text belongs to an earlier message — claiming it would swallow a
+        // snapshot-only message entirely; excluding every completed block would re-synthesize
+        // the ordinary stream→stop→snapshot flow as a duplicate. A message delivers exactly one
+        // snapshot, so an open block that already has its own belongs to an earlier message
+        // too: a second, different snapshot at that index is a snapshot-only message, not a
+        // divergent repeat.
+        candidates.findLast((block) => {
+          if (block.messageId !== undefined && snapshotMessageId !== undefined) {
+            return false;
+          }
+          if (block.completionEmitted) {
+            return block.streamedText === text || block.fallbackText === text;
+          }
+          return !block.snapshotApplied || block.fallbackText === text;
+        });
 
       const block =
         existing ??
@@ -2115,6 +2129,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
 
       block.fallbackText = text;
+      block.snapshotApplied = true;
 
       // A snapshot alone is not grounds for completing the block: late deltas may still
       // follow. `content_block_stop` or the turn result closes it.
