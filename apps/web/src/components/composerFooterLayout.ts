@@ -27,7 +27,9 @@ export function shouldUseRestingComposerLayout(input: {
   isExistingThread: boolean;
   isMobileViewport: boolean;
   isFocused: boolean;
+  isScrollCollapsed: boolean;
   hasExpandedChrome: boolean;
+  collapseOnBlur: boolean;
 }): boolean {
   // Passive draft content is deliberately absent here. Resting only clamps
   // the prompt row and overlays its actions; non-image attachment and context
@@ -37,12 +39,13 @@ export function shouldUseRestingComposerLayout(input: {
   // deliberately absent here: resting reclaims vertical space at every
   // desktop width, and where the strip is missing or too narrow the controls
   // simply return when the composer is focused.
-  return (
-    input.isExistingThread &&
-    !input.isMobileViewport &&
-    !input.isFocused &&
-    !input.hasExpandedChrome
-  );
+  //
+  // A scroll collapse rests the composer regardless of the blur preference:
+  // the user asked for it with the gesture, and it lifts on the next
+  // composer interaction. With blur collapse off, losing focus alone never
+  // rests the composer.
+  const collapsed = input.isScrollCollapsed || (input.collapseOnBlur && !input.isFocused);
+  return input.isExistingThread && !input.isMobileViewport && collapsed && !input.hasExpandedChrome;
 }
 
 export function shouldAnimateComposerRestingTransition(input: {

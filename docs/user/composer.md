@@ -56,7 +56,9 @@ the composer loses focus. At wider sizes, scrolling the conversation also rests 
 except when scrolling toward the end while already there. When the thread-context strip has room,
 the model and mode controls stay available beside the thread context; otherwise they return when the
 composer is focused. Focus the composer or start typing to expand it again. New-thread layouts keep
-the full composer.
+the full composer. Both triggers are optional: turn off **Settings → General → Collapse composer
+when it loses focus** to keep the composer expanded until you scroll, or **Collapse composer when
+scrolling** to rest it only when it loses focus. Turn off both and the composer stays expanded.
 
 At phone-sized web or desktop window widths, existing threads animate between their compact and
 expanded layouts. Up to three image attachments remain visible in either resting layout, followed
