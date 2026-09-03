@@ -62,28 +62,31 @@ function pullRequestSettles(
   return pullRequestAt >= userAnchorAt;
 }
 
-export function shouldAutoSettleThread(input: {
+export function resolveAutoSettlementAt(input: {
   readonly thread: OrchestrationThreadShell;
   readonly pullRequest: SettlementPullRequest | null;
   readonly now: string;
   readonly autoSettleAfterDays: number | null;
   readonly autoSettleOnMerge: boolean;
-}): boolean {
+}): string | null {
   const { thread, pullRequest } = input;
-  if (!isAutoSettlementCandidate(thread, input.now)) return false;
-  if (pullRequest !== null) {
-    if (pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) return true;
-    if (pullRequest.state === "open") return false;
-  }
-  if (input.autoSettleAfterDays === null) return false;
+  if (!isAutoSettlementCandidate(thread, input.now)) return null;
   const activityAt = latestTimestamp([
     thread.latestUserMessageAt,
     thread.latestTurn?.requestedAt,
     thread.latestTurn?.startedAt,
     thread.latestTurn?.completedAt,
   ]);
-  if (activityAt === null) return false;
-  return Date.parse(activityAt) < Date.parse(input.now) - input.autoSettleAfterDays * DAY_MS;
+  if (pullRequest !== null) {
+    if (pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) {
+      return activityAt ?? thread.createdAt;
+    }
+    if (pullRequest.state === "open") return null;
+  }
+  if (input.autoSettleAfterDays === null || activityAt === null) return null;
+  return Date.parse(activityAt) < Date.parse(input.now) - input.autoSettleAfterDays * DAY_MS
+    ? activityAt
+    : null;
 }
 
 /** Cheap checks that run before any source control lookup. */
