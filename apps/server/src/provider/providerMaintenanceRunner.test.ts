@@ -250,6 +250,92 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
+  it.effect("re-resolves ownership before running and executes the fresh command", () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    const fresh: Array<boolean> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider, options) => {
+          fresh.push(options?.fresh === true);
+          return Effect.succeed(
+            makeProviderMaintenanceCapabilities({
+              provider,
+              packageName: "@openai/codex",
+              updateExecutable: options?.fresh ? "/opt/homebrew/bin/brew" : "brew",
+              updateArgs: ["upgrade", "--cask", "codex"],
+              updateLockKey: "homebrew",
+            }),
+          );
+        },
+      });
+
+      yield* updater.updateProvider(CODEX_DRIVER);
+      // Cached read picks the lock; the two fresh reads bracket the command.
+      assert.deepStrictEqual(fresh, [false, true, true]);
+      assert.deepStrictEqual(calls, [
+        { command: "/opt/homebrew/bin/brew", args: ["upgrade", "--cask", "codex"] },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("aborts without running when the installation changed since the advisory", () => {
+    const calls: Array<string> = [];
+    return Effect.gen(function* () {
+      const { registry, updateStatesRef } = yield* makeRegistry(baseProvider);
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider, options) =>
+          Effect.succeed(
+            options?.fresh
+              ? makeProviderMaintenanceCapabilities({
+                  provider,
+                  packageName: "@openai/codex",
+                  updateExecutable: null,
+                  updateArgs: [],
+                  updateLockKey: null,
+                })
+              : lifecycleFor(provider),
+          ),
+      });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      assert.deepStrictEqual(calls, []);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "failed");
+      assert.strictEqual(
+        result.providers[0]?.updateState?.message,
+        "Provider installation changed. Refresh and try again.",
+      );
+      assert.deepStrictEqual(
+        (yield* Ref.get(updateStatesRef)).map((state) => state.status),
+        ["queued", "running", "failed"],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((command) => {
+            calls.push(command);
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("uses the resolved provider capabilities when choosing the update executable", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     return Effect.gen(function* () {

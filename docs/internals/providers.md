@@ -55,6 +55,22 @@ run before the prompt. They reject profiles with such configuration before launc
 instructions and tool denial do not create a native sandbox.
 See [helper constraints](../../apps/server/src/textGeneration/AntigravityTextGeneration.ts).
 
+## Provider updates run only through the owning installer
+
+A one-click update is offered only when the resolved executable's real path proves which installer
+owns it: a native installer layout, a versioned keg or cask under `brew --prefix`, or
+`<prefix>/lib/node_modules/<pkg>/` for npm (Windows: the shim beside `node_modules`). Anything
+unproven stays manual-only but still reports the version gap. npm updates pin `--prefix` because
+the `npm` on `PATH` can belong to a different Node than the one that owns the provider. Homebrew
+compares against `brew info` since casks trail npm by hours; native installs share npm's version
+train, so the registry stays authoritative for them.
+See the [resolver](../../apps/server/src/provider/providerMaintenance.ts).
+
+Ownership is cached per instance and re-read immediately before an update runs. The
+[runner](../../apps/server/src/provider/providerMaintenanceRunner.ts) refuses when the lock key
+changed since the advisory, and reports success only when the refreshed provider is still installed
+with a readable, current version.
+
 ## Protocol traps
 
 Codex async questions arrive as notifications and are answered with a new user message. There is

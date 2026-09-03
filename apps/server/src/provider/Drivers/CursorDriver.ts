@@ -54,16 +54,19 @@ import { probeCursorSkills } from "./CursorSkills.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
+// cursor-agent updates itself; run whichever executable the user configured.
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
-  resolve: (options) =>
-    makeProviderMaintenanceCapabilities({
-      provider: DRIVER_KIND,
-      packageName: null,
-      updateExecutable: options?.binaryPath?.trim() || "cursor-agent",
-      updateArgs: ["update"],
-      updateLockKey: "cursor-agent",
-      ...(options?.platform ? { platform: options.platform } : {}),
-    }),
+  resolve: (context) =>
+    Effect.succeed(
+      makeProviderMaintenanceCapabilities({
+        provider: DRIVER_KIND,
+        packageName: null,
+        updateExecutable: context?.resolvedCommandPath ?? "cursor-agent",
+        updateArgs: ["update"],
+        updateLockKey: "cursor-agent",
+        updateCommand: "cursor-agent update",
+      }),
+    ),
 };
 
 export type CursorDriverEnv =
@@ -110,7 +113,11 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
-      });
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
 
       const adapter = yield* makeCursorAdapter(effectiveConfig, {
         environment: processEnv,
@@ -129,7 +136,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<CursorSettings>>({
-        maintenanceCapabilities,
+        resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
