@@ -2787,6 +2787,52 @@ describe("deriveUserInputExchanges stale requests", () => {
     expect(exchanges[0]?.resolved).toBe(true);
     expect(exchanges[0]?.answers).toBeUndefined();
   });
+
+  it("settles a request whose stale respond-failure sorted before it", () => {
+    // compareActivitiesByOrder sorts sequenced activities after unsequenced
+    // ones, so a sequenced request processes AFTER an unsequenced failure.
+    // The composer has already retired the prompt, so the card must not open
+    // pending.
+    const exchanges = deriveUserInputExchanges([
+      makeActivity({
+        id: "ui-requested-seq-stale",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        sequence: 10,
+        payload: {
+          requestId: "req-stale-2",
+          questions: [
+            {
+              id: "Continue?",
+              header: "Approval",
+              question: "Continue?",
+              options: [{ label: "Yes", description: "Continue execution" }],
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "ui-respond-failed-unsequenced",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "provider.user-input.respond.failed",
+        summary: "Provider user input response failed",
+        tone: "error",
+        payload: {
+          requestId: "req-stale-2",
+          detail:
+            "Provider adapter request failed (codex) for item/tool/requestUserInput: Unknown pending Codex user input request: req-stale-2",
+        },
+      }),
+    ]);
+
+    expect(exchanges).toHaveLength(1);
+    expect(exchanges[0]?.id).toBe("ui-requested-seq-stale");
+    expect(exchanges[0]?.resolved).toBe(true);
+    expect(exchanges[0]?.answers).toBeUndefined();
+  });
 });
 
 describe("deriveUserInputExchanges mixed sequence presence", () => {

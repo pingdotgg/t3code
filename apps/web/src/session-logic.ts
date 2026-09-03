@@ -965,7 +965,12 @@ export function deriveUserInputExchanges(
       const detail = typeof payload?.detail === "string" ? payload.detail : undefined;
       if (requestId !== null && isStalePendingRequestFailureDetail(detail)) {
         const openIndex = openIndexByRequestId.get(requestId);
-        if (openIndex !== undefined && !entries[openIndex]!.resolved) {
+        if (openIndex === undefined) {
+          // The failure sorted before its request (mixed sequence presence):
+          // remember it so the later request opens already-settled rather
+          // than waiting on a prompt the composer has already retired.
+          answerlessResolvedRequestIds.add(requestId);
+        } else if (!entries[openIndex]!.resolved) {
           entries[openIndex] = { ...entries[openIndex]!, resolved: true };
         }
       }
