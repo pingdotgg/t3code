@@ -979,14 +979,6 @@ export const make = Effect.gen(function* () {
           if (record.timestampMs >= startedAtMs) continue;
           // Only sessions that contributed in-window count: the mtime slack
           // admits boundary files whose records fall outside the range.
-          if (aggregator.add(record) && record.sessionId.length > 0) {
-            sessionIds.add(record.sessionId);
-          }
-
-          // The canonical ledger is normalized independently of the requested
-          // viewer zone. Keep quarter-hour cells so IANA offsets at :30/:45
-          // and rolling windows aligned to the half hour can be rebucketed
-          // without retaining every transcript record.
           const dedupeKey = record.dedupeKey;
           if (dedupeKey !== null) {
             const directory = path.dirname(file.path);
@@ -998,6 +990,20 @@ export const make = Effect.gen(function* () {
             if (ledgerSeen.has(dedupeKey)) continue;
             ledgerSeen.add(dedupeKey);
           }
+
+          // The viewer aggregate and canonical ledger must make the same
+          // directory-scoped dedupe decision. Hide the key from the
+          // aggregator after this decision so its global seen set cannot
+          // collapse equal keys from another transcript directory.
+          const summaryRecord = dedupeKey === null ? record : { ...record, dedupeKey: null };
+          if (aggregator.add(summaryRecord) && record.sessionId.length > 0) {
+            sessionIds.add(record.sessionId);
+          }
+
+          // The canonical ledger is normalized independently of the requested
+          // viewer zone. Keep quarter-hour cells so IANA offsets at :30/:45
+          // and rolling windows aligned to the half hour can be rebucketed
+          // without retaining every transcript record.
           if (record.timestampMs < ledgerStartMs || record.timestampMs >= startedAtMs) continue;
 
           const priced = priceUsage(rates, record.model, record.totals, record.reportedCostUsd);

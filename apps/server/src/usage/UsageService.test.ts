@@ -46,20 +46,6 @@ function claudeLine(
   })}\n`;
 }
 
-function grokLine(outputTokens: number): string {
-  return `${JSON.stringify({
-    timestamp: 1785578405,
-    params: {
-      sessionId: "session",
-      update: {
-        sessionUpdate: "turn_completed",
-        prompt_id: "prompt",
-        usage: { inputTokens: 10, outputTokens },
-      },
-    },
-  })}\n`;
-}
-
 const WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
   sinceDay: UsageDay.make("2026-07-31"),
@@ -706,7 +692,7 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live("dedupes within a provider directory but not across directories", () =>
+  it.live("dedupes within a transcript directory but not across projects", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
       const duplicateClaude = NodePath.join(NodePath.dirname(transcript), "duplicate.jsonl");
@@ -714,10 +700,10 @@ describe("UsageService", () => {
       yield* Effect.promise(() => NodeFSP.writeFile(transcript, sharedKeyClaude));
       yield* Effect.promise(() => NodeFSP.writeFile(duplicateClaude, sharedKeyClaude));
 
-      const grokDir = NodePath.join(home, "grok", "sessions");
-      yield* Effect.promise(() => NodeFSP.mkdir(grokDir, { recursive: true }));
+      const otherProjectDir = NodePath.join(home, "claude", "projects", "other");
+      yield* Effect.promise(() => NodeFSP.mkdir(otherProjectDir, { recursive: true }));
       yield* Effect.promise(() =>
-        NodeFSP.writeFile(NodePath.join(grokDir, "updates.jsonl"), grokLine(5)),
+        NodeFSP.writeFile(NodePath.join(otherProjectDir, "session.jsonl"), sharedKeyClaude),
       );
 
       const service = yield* UsageService.make.pipe(
@@ -731,13 +717,12 @@ describe("UsageService", () => {
         ),
       );
       const result = yield* service.refreshSummary(currentCanonicalWindow());
-      // Claude and Grok deliberately produce the same non-null dedupe key,
-      // while the duplicate Claude file is in the same provider directory.
-      // The cross-directory record must survive, but the intra-directory one
-      // must be dropped.
-      // The viewer aggregate deliberately de-duplicates globally. The
-      // canonical ledger preserves both provider-directory records.
-      assert.strictEqual(totalOutputTokens(result), 5);
+      // Both Claude project directories deliberately produce the same
+      // non-null key. The duplicate file in the first directory is dropped,
+      // while the second project's record remains visible.
+      assert.strictEqual(totalOutputTokens(result), 10);
+      const read = yield* service.readSummary(currentCanonicalWindow());
+      assert.strictEqual(totalOutputTokens(read), 10);
       const raw = yield* Effect.promise(() =>
         NodeFSP.readFile(
           NodePath.join(home, "directory-dedupe-state", "userdata", "usage-record-ledger.json"),
@@ -745,12 +730,14 @@ describe("UsageService", () => {
         ),
       );
       const document = JSON.parse(raw) as {
-        aggregates?: readonly { records?: number; provider?: string }[];
+        aggregates?: readonly {
+          records?: number;
+          totals?: { outputTokens?: number };
+        }[];
       };
-      assert.strictEqual(
-        document.aggregates?.filter((aggregate) => aggregate.records === 1).length,
-        2,
-      );
+      assert.strictEqual(document.aggregates?.length, 1);
+      assert.strictEqual(document.aggregates?.[0]?.records, 2);
+      assert.strictEqual(document.aggregates?.[0]?.totals?.outputTokens, 10);
     }).pipe(Effect.scoped),
   );
 
