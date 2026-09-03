@@ -105,8 +105,13 @@ export function PullRequestCandidatePicker<T>({
       open={open}
       onOpenChange={(nextOpen, details) => {
         // Stays open on a pick: a change is confirmed by the row's own check turning over, and a
-        // second label or reviewer is usually wanted right after the first.
-        if (!nextOpen && details.reason === "item-press") return;
+        // second label or reviewer is usually wanted right after the first. Cancelled rather than
+        // ignored, so the combobox also skips its own close work: freezing the query and returning
+        // focus to the trigger, either of which would take the next keystroke away from the box.
+        if (!nextOpen && details.reason === "item-press") {
+          details.cancel();
+          return;
+        }
         onOpenChange(nextOpen);
       }}
     >
