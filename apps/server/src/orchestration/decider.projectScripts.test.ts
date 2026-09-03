@@ -94,7 +94,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
     }),
   );
 
-  it.effect("propagates a project favicon path in project.meta.update", () =>
+  it.effect("propagates project icon metadata in project.meta.update", () =>
     Effect.gen(function* () {
       const now = "2026-01-01T00:00:00.000Z";
       const readModel = yield* projectEvent(createEmptyReadModel(now), {
@@ -125,6 +125,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           commandId: CommandId.make("cmd-project-update-favicon"),
           projectId: asProjectId("project-favicon"),
           faviconPath: "brand/icon.svg",
+          projectIcon: { kind: "lucide", name: "alarm-clock", color: "violet" },
         },
         readModel,
       });
@@ -132,6 +133,11 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
       const event = Array.isArray(result) ? result[0] : result;
       expect(event.type).toBe("project.meta-updated");
       expect((event.payload as { faviconPath?: string }).faviconPath).toBe("brand/icon.svg");
+      expect((event.payload as { projectIcon?: unknown }).projectIcon).toEqual({
+        kind: "lucide",
+        name: "alarm-clock",
+        color: "violet",
+      });
     }),
   );
 

@@ -38,6 +38,7 @@ export function ThreadCommandSubtitle(props: {
   environmentId: EnvironmentId;
   projectCwd: string | null;
   projectFaviconPath?: string | null;
+  projectIcon?: import("@t3tools/contracts").ProjectIconOverride | null;
   projectTitle: string | null;
   branch: string | null;
   worktreePath: string | null;
@@ -72,7 +73,9 @@ export function ThreadCommandSubtitle(props: {
             <ProjectFavicon
               environmentId={props.environmentId}
               cwd={props.projectCwd}
+              projectName={projectLabel}
               faviconPath={props.projectFaviconPath}
+              projectIcon={props.projectIcon}
               className="size-3 shrink-0"
             />
           ) : null}
