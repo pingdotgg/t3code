@@ -15,6 +15,7 @@ describe("flattenInlineMenuSections", () => {
           { id: "regenerate", title: "Regenerate" },
         ],
       },
+      { id: "copy", title: "Copy" },
       {
         id: "delete-actions",
         title: "",
@@ -27,9 +28,16 @@ describe("flattenInlineMenuSections", () => {
       "settle",
       "rename",
       "regenerate",
+      "copy",
       "delete",
     ]);
-    expect(entries.map(({ dividerBefore }) => dividerBefore)).toEqual([false, true, false, true]);
+    expect(entries.map(({ dividerBefore }) => dividerBefore)).toEqual([
+      false,
+      true,
+      false,
+      true,
+      true,
+    ]);
   });
 
   it("keeps regular submenus nested", () => {
