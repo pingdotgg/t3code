@@ -100,6 +100,7 @@ import {
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
   findLatestProposedPlan,
+  deriveUserInputExchanges,
   deriveWorkLogEntries,
   hasActionableProposedPlan,
   isLatestTurnSettled,
@@ -2873,10 +2874,19 @@ function ChatViewContent(props: ChatViewProps) {
     feedbackSubmissions,
     optimisticUserMessages,
   ]);
+  const userInputExchanges = useMemo(
+    () => deriveUserInputExchanges(threadActivities),
+    [threadActivities],
+  );
   const timelineEntries = useMemo(
     () =>
-      deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
-    [activeThread?.proposedPlans, timelineMessages, workLogEntries],
+      deriveTimelineEntries(
+        timelineMessages,
+        activeThread?.proposedPlans ?? [],
+        workLogEntries,
+        userInputExchanges,
+      ),
+    [activeThread?.proposedPlans, timelineMessages, userInputExchanges, workLogEntries],
   );
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
@@ -7694,6 +7704,7 @@ function ChatViewContent(props: ChatViewProps) {
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
                 topFadeEnabled={!hasTimelineTopBanner}
                 loadEarlier={loadEarlierTurns}
+                pendingUserInputDraftAnswersByRequestId={pendingUserInputAnswersByRequestId}
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}

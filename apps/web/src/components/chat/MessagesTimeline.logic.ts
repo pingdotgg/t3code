@@ -25,6 +25,7 @@ import {
   workEntryIndicatesToolNeutralStatus,
   workLogEntryIsToolLike,
   type TimelineEntry,
+  type UserInputExchangeEntry,
   type WorkLogEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
@@ -359,6 +360,12 @@ export type MessagesTimelineRow =
       proposedPlan: ProposedPlan;
     }
   | {
+      kind: "user-input";
+      id: string;
+      createdAt: string;
+      userInputExchange: UserInputExchangeEntry;
+    }
+  | {
       kind: "working";
       id: string;
       createdAt: string | null;
@@ -502,6 +509,9 @@ function timelineEntryTurnId(entry: TimelineEntry): TurnId | null {
   }
   if (entry.kind === "proposed-plan") {
     return entry.proposedPlan.turnId;
+  }
+  if (entry.kind === "user-input") {
+    return entry.userInputExchange.turnId;
   }
   return entry.kind === "work" ? (entry.entry.turnId ?? null) : null;
 }
@@ -1056,6 +1066,22 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    if (timelineEntry.kind === "user-input") {
+      nextRows.push({
+        kind: "user-input",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        userInputExchange: timelineEntry.userInputExchange,
+      });
+      // A pending Q&A card means the agent is blocked on the user, so it
+      // counts as the live activity row — a "Thinking" shimmer under it
+      // would be a lie.
+      if (!timelineEntry.userInputExchange.resolved) {
+        hasActivityRow = true;
+      }
+      continue;
+    }
+
     const assistantTurnStillInProgress =
       timelineEntry.message.role === "assistant" &&
       unsettledTurnId !== null &&
@@ -1152,6 +1178,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
+
+    case "user-input":
+      return a.userInputExchange === (b as typeof a).userInputExchange;
 
     case "work": {
       const bw = b as typeof a;
