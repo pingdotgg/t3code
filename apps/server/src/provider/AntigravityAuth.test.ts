@@ -56,6 +56,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     readonly interactive?: boolean;
     readonly authorizationUrls?: ReadonlyArray<string>;
     readonly supportsLogout?: boolean;
+    readonly beforeInitialize?: Effect.Effect<void>;
     readonly forwardCallback?: Effect.Effect<void, ProviderSetupError>;
   } = {},
 ) {
@@ -82,8 +83,9 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
         );
         return {
           initialize: () =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
               events.push("initialize");
+              yield* options.beforeInitialize ?? Effect.void;
               return options.supportsLogout === false
                 ? { ...initialized, agentCapabilities: {} }
                 : initialized;
@@ -390,6 +392,45 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
         "process-close",
       ]);
       assert.deepEqual(harness.catalog(), []);
+      yield* harness.auth.withProcess(Effect.void, Effect.void).pipe(Effect.scoped);
+    }),
+  );
+
+  it.effect("signs out after a slow packaged runtime starts", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const initialized = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        beforeInitialize: Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(initialized)),
+        ),
+      });
+      const logout = yield* harness.auth.controller.logout(Effect.void).pipe(Effect.forkScoped);
+      yield* Deferred.await(entered);
+      yield* TestClock.adjust("47 seconds");
+      yield* Deferred.succeed(initialized, undefined);
+      assert.equal((yield* Fiber.join(logout)).phase, "idle");
+      assert.include(harness.events, "logout");
+      assert.deepEqual(harness.catalog(), []);
+      yield* Deferred.await(harness.closed);
+    }),
+  );
+
+  it.effect("closes a stalled sign-out process without clearing its account catalog", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        beforeInitialize: Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+      });
+      const logout = yield* harness.auth.controller
+        .logout(Effect.void)
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* Deferred.await(entered);
+      yield* TestClock.adjust("90 seconds");
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(logout)));
+      yield* Deferred.await(harness.closed);
+      assert.notInclude(harness.events, "logout");
+      assert.deepEqual(harness.catalog(), ["previous-account-model"]);
       yield* harness.auth.withProcess(Effect.void, Effect.void).pipe(Effect.scoped);
     }),
   );

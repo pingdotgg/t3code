@@ -417,11 +417,17 @@ it.layer(testLayer)("Antigravity provider snapshots", (it) => {
       Effect.gen(function* () {
         const harness = yield* makeHarness();
         yield* harness.initialize;
-        yield* Ref.set(harness.probe, Effect.sleep("20 seconds").pipe(Effect.as(initializeResult)));
+        const entered = yield* Deferred.make<void>();
+        const initialized = yield* Deferred.make<EffectAcpSchema.InitializeResponse>();
+        yield* Ref.set(
+          harness.probe,
+          Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(initialized))),
+        );
 
         const refresh = yield* harness.provider.snapshot.refresh.pipe(Effect.forkChild);
-        yield* Effect.yieldNow;
-        yield* TestClock.adjust("20 seconds");
+        yield* Deferred.await(entered);
+        yield* TestClock.adjust("47 seconds");
+        yield* Deferred.succeed(initialized, initializeResult);
         const snapshot = yield* Fiber.join(refresh);
 
         expect(snapshot).toMatchObject({
@@ -429,6 +435,31 @@ it.layer(testLayer)("Antigravity provider snapshots", (it) => {
           status: "warning",
           auth: { status: "unknown" },
         });
+      }),
+    ),
+  );
+
+  it.effect("closes a stalled health probe at its deadline", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.initialize;
+        const entered = yield* Deferred.make<void>();
+        const closed = yield* Deferred.make<void>();
+        yield* Ref.set(
+          harness.probe,
+          Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Effect.never),
+            Effect.ensuring(Deferred.succeed(closed, undefined)),
+          ),
+        );
+        const refresh = yield* harness.provider.snapshot.refresh.pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        yield* TestClock.adjust("90 seconds");
+        const snapshot = yield* Fiber.join(refresh);
+        yield* Deferred.await(closed);
+        expect(snapshot.status).toBe("error");
+        expect(snapshot.message).toContain("90 seconds");
       }),
     ),
   );
