@@ -174,6 +174,8 @@ import {
   BrowserPreviewUnavailableError,
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
+import { parseGitHubRepositoryLink } from "../githubRepositoryLink";
+import { GitHubIcon } from "./Icons";
 
 interface ChatMarkdownProps {
   text: string;
@@ -185,6 +187,8 @@ interface ChatMarkdownProps {
   isStreaming?: boolean;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   className?: string;
+  /** Use the contrasting link treatment for markdown rendered inside a user message. */
+  messageLinkStyle?: boolean;
   /** Treat single newlines as hard breaks — chat-style user input. */
   lineBreaks?: boolean;
   /** Parse sanitized raw HTML instead of displaying its source text. */
@@ -1579,6 +1583,15 @@ function MarkdownExternalLinkContent({
   );
 }
 
+function MarkdownGitHubRepositoryLinkContent({ nameWithOwner }: { nameWithOwner: string }) {
+  return (
+    <span className="inline-flex min-w-0 max-w-full items-center gap-[0.35em] align-middle">
+      <GitHubIcon aria-hidden="true" className="size-[1em] shrink-0" />
+      <span className="min-w-0 truncate">{nameWithOwner}</span>
+    </span>
+  );
+}
+
 const MarkdownFileLink = memo(function MarkdownFileLink({
   href,
   targetPath,
@@ -1961,6 +1974,7 @@ function ChatMarkdown({
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
   className,
+  messageLinkStyle = false,
   lineBreaks = false,
   parseRawHtml = true,
   onUseArtifactTemplate,
@@ -2432,6 +2446,7 @@ function ChatMarkdown({
           : null;
         if (!fileLinkMeta) {
           const faviconHost = resolveExternalWebLinkHost(href);
+          const githubRepository = href ? parseGitHubRepositoryLink(href) : null;
           const pullRequestAutolink = String(
             (props as Record<string, unknown>)["data-pull-request-autolink"] ?? "",
           );
@@ -2442,6 +2457,8 @@ function ChatMarkdown({
                 ? plainHastText(node)
                 : undefined;
           const isPullRequestAutolink = pullRequestCopy !== undefined;
+          const isGitHubRepositoryLink =
+            githubRepository !== null && hastHasText(node) && !isPullRequestAutolink;
           const isSameDocumentLink = href?.startsWith("#") ?? false;
           const onClick = props.onClick;
           const canOpenInPreview = Boolean(threadRef) && isPreviewSupportedInRuntime();
@@ -2449,7 +2466,14 @@ function ChatMarkdown({
           const link = (
             <a
               {...props}
-              className={cn(props.className, pullRequestAutolink === "commit" && "font-mono")}
+              className={cn(
+                props.className,
+                pullRequestAutolink === "commit" && "font-mono",
+                isGitHubRepositoryLink && "chat-markdown-github-repository-link",
+                isGitHubRepositoryLink &&
+                  messageLinkStyle &&
+                  "chat-markdown-github-repository-message-link",
+              )}
               data-markdown-copy={pullRequestCopy}
               href={href}
               target={isSameDocumentLink ? undefined : "_blank"}
@@ -2563,7 +2587,11 @@ function ChatMarkdown({
                 });
               }}
             >
-              {faviconHost && hastHasText(node) && !isPullRequestAutolink ? (
+              {isGitHubRepositoryLink && githubRepository ? (
+                <MarkdownGitHubRepositoryLinkContent
+                  nameWithOwner={githubRepository.nameWithOwner}
+                />
+              ) : faviconHost && hastHasText(node) && !isPullRequestAutolink ? (
                 <MarkdownExternalLinkContent host={faviconHost} plainText={plainHastText(node)}>
                   {linkChildren}
                 </MarkdownExternalLinkContent>
@@ -2743,6 +2771,7 @@ function ChatMarkdown({
     imageBaseDir,
     isStreaming,
     linkTargetPreference,
+    messageLinkStyle,
     markdownFileLinkMetaByHref,
     onTaskListChange,
     onUseArtifactTemplate,

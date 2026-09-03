@@ -8,6 +8,7 @@ import {
   collectComposerInlineTokens,
   type ComposerInlineToken,
 } from "@t3tools/shared/composerInlineTokens";
+import { collectGitHubRepositoryLinkMatches } from "./githubRepositoryLink";
 
 export type ComposerPromptSegment =
   | {
@@ -26,6 +27,12 @@ export type ComposerPromptSegment =
   | {
       type: "citation";
       citation: AssistantCitation;
+      source: string;
+    }
+  | {
+      type: "github-repository";
+      href: string;
+      nameWithOwner: string;
       source: string;
     }
   | {
@@ -132,9 +139,13 @@ function forEachMentionMatch(
 }
 
 export function collectComposerPromptInlineTokens(text: string) {
-  const tokens = collectComposerInlineTokens(text);
+  const githubRepositories = collectGitHubRepositoryLinkMatches(text).map((match) => ({
+    ...match,
+    type: "github-repository" as const,
+  }));
+  const tokens = [...collectComposerInlineTokens(text), ...githubRepositories];
   const citations = collectAssistantCitations(text);
-  if (citations.length === 0) return tokens;
+  if (citations.length === 0) return tokens.sort((left, right) => left.start - right.start);
 
   // An unfinished @ mention can otherwise consume the start of a citation's label.
   return [
@@ -169,6 +180,13 @@ function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegmen
       segments.push({
         type: "mention",
         path: match.value,
+        source: match.source,
+      });
+    } else if (match.type === "github-repository") {
+      segments.push({
+        type: "github-repository",
+        href: match.href,
+        nameWithOwner: match.nameWithOwner,
         source: match.source,
       });
     } else {

@@ -72,7 +72,11 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
   let expandedCursor = 0;
 
   for (const segment of segments) {
-    if (segment.type === "mention" || segment.type === "citation") {
+    if (
+      segment.type === "mention" ||
+      segment.type === "citation" ||
+      segment.type === "github-repository"
+    ) {
       const expandedLength = segment.source.length;
       if (remaining <= 1) {
         return expandedCursor + (remaining === 0 ? 0 : expandedLength);
@@ -149,7 +153,11 @@ export function collapseExpandedComposerCursor(text: string, cursorInput: number
   let collapsedCursor = 0;
 
   for (const segment of segments) {
-    if (segment.type === "mention" || segment.type === "citation") {
+    if (
+      segment.type === "mention" ||
+      segment.type === "citation" ||
+      segment.type === "github-repository"
+    ) {
       const expandedLength = segment.source.length;
       if (remaining === 0) {
         return collapsedCursor;

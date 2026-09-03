@@ -1700,6 +1700,22 @@ code {
   text-decoration: none;
 }
 
+.chat-markdown a.chat-markdown-github-repository-link {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  vertical-align: middle;
+}
+
+.chat-markdown a.chat-markdown-github-repository-message-link,
+.chat-markdown a.chat-markdown-github-repository-message-link:hover,
+.chat-markdown a.chat-markdown-github-repository-message-link:focus-visible {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+}
+
 .chat-markdown a:not(.chat-markdown-file-link):hover,
 .chat-markdown a:not(.chat-markdown-file-link):focus-visible {
   background-image: radial-gradient(circle, currentcolor 0.75px, transparent 1px);

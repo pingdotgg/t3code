@@ -241,6 +241,22 @@ describe("ChatMarkdown file option chips", () => {
   });
 });
 
+describe("ChatMarkdown GitHub repository links", () => {
+  it("shows the repository name with a GitHub icon instead of a favicon URL", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text="https://github.com/pingdotgg/t3code"
+        messageLinkStyle
+      />,
+    );
+
+    expect(html).toContain("pingdotgg/t3code");
+    expect(html).toContain("<svg");
+    expect(html).not.toContain("google.com/s2/favicons");
+  });
+});
+
 const ARTIFACT_TEMPLATE_DIRECTIVE =
   '::artifact-template{skill_name="artifact-template-hello-world" skill_directory="/Users/test/.codex/skills/artifact-template-hello-world" display_name="Hello World" artifact_kind="document"}';
 

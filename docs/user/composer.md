@@ -8,6 +8,11 @@ On mobile, an empty composer shows an interrupt button while the agent is workin
 or an attachment replaces it with the send button. This applies to both compact and expanded
 composers.
 
+On web and desktop, a GitHub repository URL displays as a compact GitHub icon with its
+`owner/repository` name in the composer and after sending. T3 Code preserves the full URL when
+copying or sending the message. Links to issues, pull requests, files, and other repository pages
+keep their full text.
+
 You can attach images up to 10 MB. On servers that support file uploads, you can also
 attach videos, text files, PDFs, ZIP archives, and other files. Each file can be up to the limit advertised
 by the server, capped at 50 MB. Each message can contain up to eight attachments in total. Files

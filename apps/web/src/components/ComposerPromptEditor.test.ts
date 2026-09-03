@@ -52,6 +52,8 @@ function createCitationEditor(text = "") {
   registerComposerInlineTokenPaste(editor, {
     createMentionNode: (path) => $createTextNode(`<mention:${path}>`),
     createCitationNode: $createComposerCitationNode,
+    createGitHubRepositoryNode: (_href, nameWithOwner) =>
+      $createTextNode(`<github:${nameWithOwner}>`),
     getExpandedAbsoluteOffsetForPoint: (_node, offset) => offset,
   });
   return editor;
@@ -113,6 +115,8 @@ describe("registerComposerInlineTokenPaste", () => {
     registerComposerInlineTokenPaste(editor, {
       createMentionNode: (path) => $createTextNode(`<mention:${path}>`),
       createCitationNode: $createComposerCitationNode,
+      createGitHubRepositoryNode: (_href, nameWithOwner) =>
+        $createTextNode(`<github:${nameWithOwner}>`),
       getExpandedAbsoluteOffsetForPoint: () => 0,
     });
     editor.registerCommand(PASTE_COMMAND, plainTextFallback, COMMAND_PRIORITY_EDITOR);
@@ -159,6 +163,8 @@ describe("registerComposerInlineTokenPaste", () => {
     registerComposerInlineTokenPaste(editor, {
       createMentionNode: (path) => $createTextNode(`<mention:${path}>`),
       createCitationNode: $createComposerCitationNode,
+      createGitHubRepositoryNode: (_href, nameWithOwner) =>
+        $createTextNode(`<github:${nameWithOwner}>`),
       getExpandedAbsoluteOffsetForPoint: () => 0,
     });
     editor.registerCommand(PASTE_COMMAND, plainTextFallback, COMMAND_PRIORITY_EDITOR);
@@ -194,6 +200,8 @@ describe("registerComposerInlineTokenPaste", () => {
     registerComposerInlineTokenPaste(editor, {
       createMentionNode: (path) => $createTextNode(`<mention:${path}>`),
       createCitationNode: $createComposerCitationNode,
+      createGitHubRepositoryNode: (_href, nameWithOwner) =>
+        $createTextNode(`<github:${nameWithOwner}>`),
       getExpandedAbsoluteOffsetForPoint: () => 0,
     });
     editor.registerCommand(PASTE_COMMAND, plainTextFallback, COMMAND_PRIORITY_EDITOR);
@@ -212,6 +220,38 @@ describe("registerComposerInlineTokenPaste", () => {
     expect(event.defaultPrevented).toBe(true);
     expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe(
       "<mention:@scope/pkg/sub> ",
+    );
+  });
+
+  it("pastes a GitHub repository link as a display token while preserving its URL", () => {
+    vi.stubGlobal("ClipboardEvent", TestClipboardEvent);
+    const editor = createEditor();
+    const githubUrl = "https://github.com/pingdotgg/t3code";
+    const createGitHubRepositoryNode = vi.fn((href: string, nameWithOwner: string) =>
+      $createTextNode(`<github:${href}:${nameWithOwner}>`),
+    );
+
+    editor.update(
+      () => {
+        const paragraph = $createParagraphNode();
+        $getRoot().append(paragraph);
+        paragraph.selectEnd();
+      },
+      { discrete: true },
+    );
+    registerComposerInlineTokenPaste(editor, {
+      createMentionNode: (path) => $createTextNode(`<mention:${path}>`),
+      createCitationNode: $createComposerCitationNode,
+      createGitHubRepositoryNode,
+      getExpandedAbsoluteOffsetForPoint: () => 0,
+    });
+
+    const event = pasteText(editor, githubUrl);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(createGitHubRepositoryNode).toHaveBeenCalledWith(githubUrl, "pingdotgg/t3code");
+    expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe(
+      `<github:${githubUrl}:pingdotgg/t3code> `,
     );
   });
 
