@@ -37,7 +37,10 @@ const SIGN_IN_MESSAGE = "Sign in with Google to use Antigravity.";
 const AUTH_UNCHECKED_MESSAGE =
   "Antigravity is installed. Google account access is not checked yet.";
 
-type SessionSetupResult = AcpSessionRuntimeStartResult["sessionSetupResult"];
+type SessionSetupResult = Pick<
+  AcpSessionRuntimeStartResult["sessionSetupResult"],
+  "configOptions" | "models"
+>;
 
 /** Keep the native model IDs, including model-specific thinking levels. */
 export function buildAntigravityModelsFromSession(
@@ -299,6 +302,16 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     });
   });
 
+  const onConfigOptionsUpdated = Effect.fn("AntigravityProvider.onConfigOptionsUpdated")(function* (
+    configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+  ) {
+    const models = buildAntigravityModelsFromSession({ configOptions });
+    yield* SubscriptionRef.update(metadata, (state) => {
+      if (state.draft.auth.status !== "authenticated") return state;
+      return { ...state, draft: { ...state.draft, models } };
+    });
+  });
+
   const onAvailableCommands = Effect.fn("AntigravityProvider.onAvailableCommands")(function* (
     commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
     cwd?: string,
@@ -373,6 +386,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   return {
     snapshot: { ...managed, getSnapshot },
     onSessionStarted,
+    onConfigOptionsUpdated,
     onAvailableCommands,
     onSignedOut: clearAccountMetadata(),
     onAuthRequired: clearAccountMetadata(),

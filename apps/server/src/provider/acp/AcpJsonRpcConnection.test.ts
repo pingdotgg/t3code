@@ -69,17 +69,35 @@ describe("AcpSessionRuntime", () => {
         expect(events.map((event) => event._tag)).toEqual([
           "AvailableCommandsUpdated",
           "ModeChanged",
+          "ConfigOptionsUpdated",
         ]);
         expect(events[0]).toMatchObject({
           availableCommands: [{ name: "plan", description: "Native command" }],
         });
         expect(yield* runtime.getModeState).toMatchObject({ currentModeId: "code" });
+        expect(events[2]).toMatchObject({
+          configOptions: yield* runtime.getConfigOptions,
+        });
         expect(
           (yield* runtime.getConfigOptions).find((option) => option.category === "model"),
         ).toMatchObject({ currentValue: "gpt-5.4" });
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   }
+
+  it.effect("publishes model changes returned by a config request and live notifications", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.make(mockRuntimeOptions);
+      yield* runtime.start();
+      const updates = yield* Stream.toPull(
+        runtime.getEvents().pipe(Stream.filter((event) => event._tag === "ConfigOptionsUpdated")),
+      );
+      const selected = yield* runtime.setConfigOption("model", "composer-2");
+      expect((yield* updates)[0]?.configOptions).toEqual(selected.configOptions);
+      yield* runtime.request("_test/startup-metadata", {});
+      expect((yield* updates)[0]?.configOptions).toEqual(yield* runtime.getConfigOptions);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("awaits native resume instead of using the load replay idle fallback", () =>
     Effect.gen(function* () {
