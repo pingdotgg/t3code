@@ -1,0 +1,307 @@
+/**
+ * Importable browser sources.
+ *
+ * Each entry pins its own on-disk and keychain coordinates rather than
+ * deriving them: Chromium forks do not agree on the convention. Helium, for
+ * instance, uses the keychain service "Helium Storage Key" / account "Helium"
+ * where Chrome and its closer relatives use "<Name> Safe Storage" / "<Name>".
+ *
+ * @module BrowserImportSources
+ */
+import type { BrowserImportSourceId, BrowserImportSourceProfile } from "@t3tools/contracts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import { HostProcessEnvironment, HostProcessHostname } from "@t3tools/shared/hostProcess";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+
+/**
+ * Where a source's files live, resolved once per call rather than read from
+ * the ambient process so the registry stays testable.
+ */
+export interface SourcePaths {
+  readonly path: Path.Path;
+  readonly home: string;
+}
+
+export const sourcePaths = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const environment = yield* HostProcessEnvironment;
+  return { path, home: environment.HOME ?? environment.USERPROFILE ?? "" } satisfies SourcePaths;
+});
+
+export interface BrowserImportSourceDefinition {
+  readonly id: BrowserImportSourceId;
+  readonly name: string;
+  /** Platforms the definition's paths are valid for. */
+  readonly platforms: ReadonlyArray<NodeJS.Platform>;
+  readonly userDataDirectory: (paths: SourcePaths) => string;
+  readonly keychainService: string;
+  readonly keychainAccount: string;
+}
+
+export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition> = [
+  {
+    id: "helium",
+    name: "Helium",
+    platforms: ["darwin"],
+    userDataDirectory: ({ path, home }) =>
+      path.join(home, "Library", "Application Support", "net.imput.helium"),
+    keychainService: "Helium Storage Key",
+    keychainAccount: "Helium",
+  },
+];
+
+/**
+ * Where a profile's cookie database may live, most current first. Chromium 96
+ * moved the live jar to `Network/Cookies`; a root-level `Cookies` is either a
+ * pre-96 install or a leftover from before the move. Importing the leftover
+ * while sessions live in `Network/` would snapshot a stale or empty database,
+ * and a fresh install with only `Network/Cookies` would read as not installed.
+ */
+export const cookieDatabaseCandidatePaths = (
+  definition: BrowserImportSourceDefinition,
+  paths: SourcePaths,
+  profileDirectory: string,
+): ReadonlyArray<string> => {
+  const profile = paths.path.join(definition.userDataDirectory(paths), profileDirectory);
+  return [paths.path.join(profile, "Network", "Cookies"), paths.path.join(profile, "Cookies")];
+};
+
+/** The first candidate that is a regular file, or undefined when none is. */
+export const resolveCookieDatabase = Effect.fnUntraced(function* (
+  definition: BrowserImportSourceDefinition,
+  paths: SourcePaths,
+  profileDirectory: string,
+) {
+  for (const candidate of cookieDatabaseCandidatePaths(definition, paths, profileDirectory)) {
+    if (yield* databaseFileExists(candidate)) return candidate;
+  }
+  return undefined;
+});
+
+/** Shape of the slice of Chromium's `Local State` that names its profiles. */
+const LocalState = Schema.Struct({
+  profile: Schema.optional(
+    Schema.Struct({
+      info_cache: Schema.optional(
+        Schema.Record(Schema.String, Schema.Struct({ name: Schema.optional(Schema.String) })),
+      ),
+    }),
+  ),
+});
+const decodeLocalState = Schema.decodeUnknownEffect(Schema.fromJsonString(LocalState));
+
+/** A single plain path segment: no separators, no `.`/`..`, not empty. */
+const isSafeProfileDirectory = (directory: string): boolean =>
+  directory.length > 0 &&
+  directory !== "." &&
+  directory !== ".." &&
+  !/[\\/]/.test(directory) &&
+  !directory.includes("\u0000");
+
+const CookieCountRow = Schema.Struct({ count: Schema.Number });
+const decodeCookieCount = Schema.decodeUnknownEffect(Schema.Array(CookieCountRow));
+
+/**
+ * How many cookies a profile holds, counted without decrypting anything — a
+ * bare `COUNT(*)` needs no key. Best effort: a locked, missing or non-Chromium
+ * database (Firefox's table is named differently, Safari's is not SQL) yields
+ * `undefined` rather than failing the listing.
+ */
+const countProfileCookies = Effect.fnUntraced(function* (
+  definition: BrowserImportSourceDefinition,
+  paths: SourcePaths,
+  directory: string,
+): Effect.fn.Return<number | undefined, never, FileSystem.FileSystem> {
+  const database = yield* resolveCookieDatabase(definition, paths, directory);
+  if (database === undefined) return undefined;
+  return yield* Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql`select count(*) as count from cookies`;
+    const [row] = yield* decodeCookieCount(rows);
+    return row?.count;
+  }).pipe(
+    Effect.provide(NodeSqliteClient.layer({ filename: database, readonly: true })),
+    Effect.orElseSucceed(() => undefined),
+  );
+});
+
+const withCookieCounts = (
+  definition: BrowserImportSourceDefinition,
+  paths: SourcePaths,
+  profiles: ReadonlyArray<BrowserImportSourceProfile>,
+) =>
+  Effect.forEach(profiles, (profile) =>
+    countProfileCookies(definition, paths, profile.directory).pipe(
+      Effect.map((cookieCount) =>
+        cookieCount === undefined ? profile : { ...profile, cookieCount },
+      ),
+    ),
+  );
+
+/**
+ * Profiles the source browser knows about, read from its `Local State`.
+ *
+ * When that file is missing, unreadable or malformed, the user-data directory
+ * is scanned for directories that hold a cookie database. Assuming `Default`
+ * instead would report a browser whose cookies live in `Profile 1` as having
+ * nothing to import — and it is then left out of the menu entirely.
+ */
+export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProfiles")(function* (
+  definition: BrowserImportSourceDefinition,
+  paths: SourcePaths,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const localStatePath = paths.path.join(definition.userDataDirectory(paths), "Local State");
+
+  const root = definition.userDataDirectory(paths);
+  const declared = yield* fileSystem.readFileString(localStatePath).pipe(
+    Effect.flatMap(decodeLocalState),
+    Effect.map((state) => Object.entries(state.profile?.info_cache ?? {})),
+    // The keys are directory names from the browser's own metadata file, which
+    // is writable by anything running as the user. Anything but a single plain
+    // segment is dropped: `..` or a path separator would otherwise be handed
+    // to `cookieDatabasePath` and read a database outside the user-data
+    // directory.
+    Effect.map((entries) => entries.filter(([directory]) => isSafeProfileDirectory(directory))),
+    Effect.map((entries) =>
+      entries.map(([directory, info]) => ({ directory, name: info.name?.trim() || directory })),
+    ),
+    Effect.orElseSucceed(() => [] as ReadonlyArray<BrowserImportSourceProfile>),
+  );
+  if (declared.length > 0) return yield* withCookieCounts(definition, paths, declared);
+
+  // `Local State` is missing, unreadable or malformed. Scanning for
+  // directories that hold a cookie database finds the profiles anyway;
+  // assuming `Default` would report a browser whose cookies live in
+  // `Profile 1` as having nothing to import, and it is then hidden entirely.
+  const entries = yield* fileSystem
+    .readDirectory(root)
+    .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+  const candidates = entries.filter(isSafeProfileDirectory);
+  const found = yield* Effect.forEach(candidates, (directory) =>
+    resolveCookieDatabase(definition, paths, directory).pipe(
+      Effect.map((database) =>
+        database === undefined ? undefined : { directory, name: directory },
+      ),
+    ),
+  );
+  return yield* withCookieCounts(
+    definition,
+    paths,
+    found.filter((profile) => profile !== undefined),
+  );
+});
+
+/**
+ * Whether a cookie database candidate is a regular file. Presence alone is
+ * not enough: a directory at the path would list as an importable profile and
+ * then fail the SQLite open, so anything but a file is treated as absent.
+ */
+const databaseFileExists = Effect.fnUntraced(function* (path: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem.stat(path).pipe(
+    Effect.map((info) => info.type === "File"),
+    Effect.orElseSucceed(() => false),
+  );
+});
+
+type ProcessLivenessProbe = (pid: number) => Effect.Effect<boolean>;
+
+export const chromiumProcessIsAlive = (
+  pid: number,
+  signalProcess: (pid: number, signal: 0) => unknown = process.kill.bind(process),
+) =>
+  Effect.sync(() => {
+    try {
+      // Signal 0 performs a read-only existence/permission check.
+      signalProcess(pid, 0);
+      return true;
+    } catch (cause) {
+      // Only ESRCH positively proves the process is gone. Permission errors
+      // and unknown failures stay conservative so an active browser is never
+      // mistaken for a stale lock.
+      return !(
+        typeof cause === "object" &&
+        cause !== null &&
+        "code" in cause &&
+        cause.code === "ESRCH"
+      );
+    }
+  });
+
+const processIsAlive: ProcessLivenessProbe = (pid) => chromiumProcessIsAlive(pid);
+
+/** Whether a Chromium `<host>-<pid>` lock target may still name its owner. */
+export const chromiumSingletonLockIsHeld = Effect.fnUntraced(function* (
+  target: string,
+  currentHost: string,
+  isProcessAlive: ProcessLivenessProbe,
+) {
+  const separator = target.lastIndexOf("-");
+  if (separator <= 0) return true;
+  const host = target.slice(0, separator);
+  const pidText = target.slice(separator + 1);
+  if (!/^\d+$/.test(pidText)) return true;
+  const pid = Number(pidText);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
+  // A PID is meaningful only on this host. A foreign hostname can come from a
+  // shared home directory, and cannot safely be declared stale from here.
+  if (host !== currentHost) return true;
+  return yield* isProcessAlive(pid);
+});
+
+/** Whether the browser is running, which leaves its cookie DB mid-write. */
+export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")(function* (
+  definition: BrowserImportSourceDefinition,
+  paths: SourcePaths,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const currentHost = yield* HostProcessHostname;
+  const lock = paths.path.join(definition.userDataDirectory(paths), "SingletonLock");
+  // Chromium writes a `SingletonLock` symlink for as long as an instance holds
+  // the profile. Its presence is a far cheaper and more targeted signal than
+  // scanning the process table for a name.
+  //
+  // The link points at `<host>-<pid>`, a target that never exists, and both
+  // `stat` and `exists` follow links — so they report every running browser as
+  // closed, which would let an import read a live, mid-write database.
+  // `readLink` is the one probe that answers for the entry itself. Chromium
+  // can leave this link behind after a crash, so a positively dead local PID
+  // is stale. Every ambiguous target or liveness result stays conservative.
+  return yield* fileSystem.readLink(lock).pipe(
+    Effect.flatMap((target) => chromiumSingletonLockIsHeld(target, currentHost, processIsAlive)),
+    Effect.catch((error) => Effect.succeed(error.reason._tag !== "NotFound")),
+  );
+});
+
+/**
+ * Whether the source has cookies to import.
+ *
+ * Keyed off the cookie database rather than the user-data directory, because
+ * that directory is not evidence the browser exists: installers for native
+ * messaging hosts create an empty one for every Chromium fork they know about,
+ * so a machine with only Chrome reports Edge, Brave, Vivaldi, Opera and Arc as
+ * present. The database is the thing an import actually needs, so its absence
+ * is the honest answer either way.
+ *
+ * Existence is checked without opening the file, which matters for Safari: TCC
+ * permits `stat` on the jar inside its container but refuses a read, so this
+ * still sees it and the user gets the Full Disk Access prompt rather than
+ * having Safari disappear.
+ */
+export const isSourceInstalled = Effect.fn("BrowserImportSources.isSourceInstalled")(function* (
+  definition: BrowserImportSourceDefinition,
+  paths: SourcePaths,
+) {
+  const profiles = yield* listSourceProfiles(definition, paths);
+  const found = yield* Effect.forEach(profiles, (profile) =>
+    resolveCookieDatabase(definition, paths, profile.directory).pipe(
+      Effect.map((database) => database !== undefined),
+    ),
+  );
+  return found.some(Boolean);
+});
