@@ -541,6 +541,38 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("derives a canonical follower response for its requested timezone", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(transcript, claudeLine(1, 5, "2026-06-05T12:30:00Z")),
+      );
+      const ratesGate = yield* Deferred.make<void>();
+      const ratesStarted = yield* Deferred.make<void>();
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-canonical-follower-test",
+            home,
+            settings,
+            ratesGate,
+            ratesStarted,
+          }),
+        ),
+      );
+      const leader = currentCanonicalWindow();
+      const follower = { ...leader, timeZone: "Pacific/Kiritimati" };
+      const leaderFiber = yield* service.refreshSummary(leader).pipe(Effect.forkChild);
+      yield* Deferred.await(ratesStarted);
+      const followerFiber = yield* service.refreshSummary(follower).pipe(Effect.forkChild);
+      yield* Deferred.succeed(ratesGate, undefined);
+      yield* Fiber.join(leaderFiber);
+      const result = yield* Fiber.join(followerFiber);
+      assert.strictEqual(result.timeZone, follower.timeZone);
+      assert.strictEqual(result.buckets[0]?.day, "2026-06-06");
+    }).pipe(Effect.scoped),
+  );
+
   it.live("clears an interrupted canonical waiter so the next refresh can run", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
@@ -810,6 +842,38 @@ describe("UsageService", () => {
         document.aggregates.reduce((sum, entry) => sum + entry.totals.outputTokens, 0),
         12,
       );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("scans common windows outside ledger retention instead of returning truncated data", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(transcript, claudeLine(1, 5, "2026-04-01T10:00:00Z")),
+      );
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-historical-preset-test",
+            baseDir: NodePath.join(home, "historical-preset-state"),
+            home,
+            settings,
+          }),
+        ),
+      );
+      const windows: readonly UsageSummaryInput[] = [
+        { sinceDay: UsageDay.make("2026-04-01"), untilDay: UsageDay.make("2026-04-01") },
+        { sinceDay: UsageDay.make("2026-03-29"), untilDay: UsageDay.make("2026-04-04") },
+        { sinceDay: UsageDay.make("2026-03-18"), untilDay: UsageDay.make("2026-04-16") },
+        { sinceDay: UsageDay.make("2026-01-06"), untilDay: UsageDay.make("2026-04-05") },
+      ].map((window) => ({ ...window, timeZone: "UTC", resolution: "day" as const }));
+
+      for (const input of windows) {
+        const result = yield* service.refreshSummary(input);
+        assert.strictEqual(totalOutputTokens(result), 5);
+      }
+      const current = yield* service.refreshSummary(currentCanonicalWindow());
+      assert.strictEqual(totalOutputTokens(current), 0);
     }).pipe(Effect.scoped),
   );
 

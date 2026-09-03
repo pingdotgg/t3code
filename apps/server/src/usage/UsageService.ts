@@ -275,6 +275,11 @@ function isCommonPreset(input: UsageSummaryInput): boolean {
   return days === 1 || days === 7 || days === 30 || days === 90;
 }
 
+function isWithinLedgerRetention(input: UsageSummaryInput, nowMs: number): boolean {
+  const sinceMs = Date.parse(`${input.sinceDay}T00:00:00Z`);
+  return Number.isFinite(sinceMs) && sinceMs >= nowMs - USAGE_LEDGER_RETENTION_MS;
+}
+
 function isCanonicalLedgerInput(input: UsageSummaryInput): boolean {
   if (input.resolution === "hour") return false;
   const days =
@@ -799,8 +804,6 @@ export const make = Effect.gen(function* () {
     readonly files:
       | readonly { readonly path: string; readonly records: readonly UsageRecord[] }[]
       | null;
-    readonly missingFiles: number;
-    readonly failedFiles: number;
     readonly complete: boolean;
   }
 
@@ -820,8 +823,6 @@ export const make = Effect.gen(function* () {
           dir,
           volumeId: volume.volumeId,
           files: null,
-          missingFiles: 0,
-          failedFiles: 0,
           // Only stat's explicit ENOENT is a confirmed missing source. An
           // exists/stat disagreement can be a permission or I/O failure.
           complete: volume.status !== "failed",
@@ -837,17 +838,13 @@ export const make = Effect.gen(function* () {
       );
       let complete = volume.status === "ok" && walk.complete;
       const parsedFiles: { path: string; records: readonly UsageRecord[] }[] = [];
-      let missingFiles = walk.missingFiles;
-      let failedFiles = walk.failedFiles;
       for (const file of walk.files) {
         const result = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
         if (result.issue === "missing") {
-          missingFiles += 1;
           complete = false;
           continue;
         }
         if (result.issue === "failed") {
-          failedFiles += 1;
           complete = false;
           continue;
         }
@@ -858,8 +855,6 @@ export const make = Effect.gen(function* () {
         dir,
         volumeId: volume.volumeId,
         files: parsedFiles,
-        missingFiles,
-        failedFiles,
         complete,
       });
     }
@@ -939,15 +934,7 @@ export const make = Effect.gen(function* () {
     const walkedRoots: string[] = [];
 
     let scanComplete = true;
-    for (const {
-      provider,
-      dir,
-      volumeId,
-      files,
-      missingFiles,
-      failedFiles,
-      complete,
-    } of scannedDirs) {
+    for (const { provider, dir, volumeId, files, complete } of scannedDirs) {
       if (!complete) scanComplete = false;
       if (files === null) {
         sources.push({
@@ -1037,17 +1024,12 @@ export const make = Effect.gen(function* () {
 
       sources.push({
         fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-        status: missingFiles > 0 || failedFiles > 0 ? "partial" : "ok",
+        status: "ok",
         scannedFiles,
-        skippedFiles: skippedFiles + missingFiles + failedFiles,
+        skippedFiles,
         malformedRecords: 0,
         distinctSessions: sessionIds.size,
-        message:
-          failedFiles > 0
-            ? `${failedFiles} unreadable transcript file${failedFiles === 1 ? "" : "s"} skipped.`
-            : missingFiles > 0
-              ? `${missingFiles} transcript file${missingFiles === 1 ? "" : "s"} disappeared while scanning.`
-              : null,
+        message: null,
       });
     }
 
@@ -1145,7 +1127,10 @@ export const make = Effect.gen(function* () {
             usageSnapshots.delete(oldest[0]);
           }
           snapshotsDirty = true;
-          if (isCanonicalLedgerInput(input)) {
+          if (
+            isCanonicalLedgerInput(input) &&
+            isWithinLedgerRetention(input, result.scanStartedAtMs)
+          ) {
             // A complete canonical scan is a replacement, not a merge. This
             // removes records for deleted or rewritten transcripts while the
             // last-good file remains intact if the scan failed above.
@@ -1170,58 +1155,74 @@ export const make = Effect.gen(function* () {
   };
 
   const runBackgroundRefresh = (input: UsageSummaryInput) => {
-    const requestedCommonPreset = isCommonPreset(input);
-    if (!requestedCommonPreset && !isCanonicalLedgerInput(input)) return scanAndPersist(input);
     // Do not enroll a waiter while merely constructing the effect. An
     // unauthorized RPC can construct and discard this effect before it ever
     // executes, which would otherwise wedge all later canonical refreshes.
     return Effect.suspend(() =>
-      Effect.uninterruptibleMask((restore) =>
-        Effect.gen(function* () {
-          const canonicalSummary = (summary: UsageSummary) =>
-            requestedCommonPreset && !isCanonicalLedgerInput(input)
-              ? readPresetFromLedger(input).pipe(
-                  Effect.flatMap((preset) =>
-                    preset === null
-                      ? Effect.fail(
-                          new UsageReadError({
-                            reason: "scanFailed",
-                            detail: "The canonical usage refresh did not complete.",
-                          }),
-                        )
-                      : Effect.succeed(preset),
-                  ),
-                )
-              : Effect.succeed(summary);
+      Effect.gen(function* () {
+        const requestedCommonPreset = isCommonPreset(input);
+        const nowMs = yield* Clock.currentTimeMillis;
+        if (!requestedCommonPreset || !isWithinLedgerRetention(input, nowMs)) {
+          return yield* scanAndPersist(input);
+        }
+        return yield* Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const canonicalSummary = (summary: UsageSummary) =>
+              requestedCommonPreset && !isCanonicalLedgerInput(input)
+                ? readPresetFromLedger(input).pipe(
+                    Effect.flatMap((preset) =>
+                      preset === null
+                        ? Effect.fail(
+                            new UsageReadError({
+                              reason: "scanFailed",
+                              detail: "The canonical usage refresh did not complete.",
+                            }),
+                          )
+                        : Effect.succeed(preset),
+                    ),
+                  )
+                : Effect.succeed(summary);
 
-          if (canonicalRefreshWaiter !== null) {
-            const summary = yield* restore(awaitCanonicalRefresh());
-            return yield* summary === null
-              ? Effect.fail(
-                  new UsageReadError({
-                    reason: "scanFailed",
-                    detail: "The canonical usage refresh did not complete.",
-                  }),
-                )
-              : canonicalSummary(summary);
-          }
+            if (canonicalRefreshWaiter !== null) {
+              const summary = yield* restore(awaitCanonicalRefresh());
+              return yield* summary === null
+                ? Effect.fail(
+                    new UsageReadError({
+                      reason: "scanFailed",
+                      detail: "The canonical usage refresh did not complete.",
+                    }),
+                  )
+                : readPresetFromLedger(input).pipe(
+                    Effect.flatMap((requested) =>
+                      requested === null
+                        ? Effect.fail(
+                            new UsageReadError({
+                              reason: "scanFailed",
+                              detail: "The canonical usage refresh did not complete.",
+                            }),
+                          )
+                        : Effect.succeed(requested),
+                    ),
+                  );
+            }
 
-          const waiter = Deferred.makeUnsafe<Exit.Exit<UsageSummary, UsageReadError>, never>();
-          canonicalRefreshWaiter = waiter;
-          const canonicalInput = isCanonicalLedgerInput(input)
-            ? input
-            : (yield* defaultDailyInputs)[0]!;
-          yield* refreshHooks.beforeCanonicalScan;
-          const summary = yield* restore(scanAndPersist(canonicalInput)).pipe(
-            Effect.onExit((exit) =>
-              Effect.sync(() => {
-                if (canonicalRefreshWaiter === waiter) canonicalRefreshWaiter = null;
-              }).pipe(Effect.andThen(Deferred.succeed(waiter, exit))),
-            ),
-          );
-          return yield* canonicalSummary(summary);
-        }),
-      ),
+            const waiter = Deferred.makeUnsafe<Exit.Exit<UsageSummary, UsageReadError>, never>();
+            canonicalRefreshWaiter = waiter;
+            const canonicalInput = isCanonicalLedgerInput(input)
+              ? input
+              : (yield* defaultDailyInputs)[0]!;
+            yield* refreshHooks.beforeCanonicalScan;
+            const summary = yield* restore(scanAndPersist(canonicalInput)).pipe(
+              Effect.onExit((exit) =>
+                Effect.sync(() => {
+                  if (canonicalRefreshWaiter === waiter) canonicalRefreshWaiter = null;
+                }).pipe(Effect.andThen(Deferred.succeed(waiter, exit))),
+              ),
+            );
+            return yield* canonicalSummary(summary);
+          }),
+        );
+      }),
     );
   };
 
@@ -1245,6 +1246,7 @@ export const make = Effect.gen(function* () {
     // `generatedAtMs` is the scan marker. An empty ledger is a valid complete
     // zero snapshot and must not be confused with a never-scanned ledger.
     if (usageLedgerGeneratedAtMs <= 0) return null;
+    if (!isWithinLedgerRetention(input, usageLedgerGeneratedAtMs)) return null;
     // Preset reads are foreground-fast and may use a durable cached rate
     // table, but never perform a network fetch. Background/manual scans own
     // rate refreshes.
