@@ -5,21 +5,28 @@ import {
   CommandId,
   DEFAULT_MODEL_BY_PROVIDER,
   MessageId,
+  ProjectId,
   ProviderDriverKind,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ServerConfig } from "../../config.ts";
 import { forkParked } from "../../serverActivation.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
@@ -29,6 +36,9 @@ import type { ProviderPersistedThread } from "../Services/ProviderAdapter.ts";
 const CODEX = ProviderDriverKind.make("codex");
 const ACTIVE_RECONCILE_INTERVAL = Duration.seconds(30);
 const IDLE_RECONCILE_INTERVAL = Duration.minutes(2);
+const UNASSIGNED_CODEX_PROJECT_ID = ProjectId.make("codex-unassigned-threads");
+const UNASSIGNED_CODEX_PROJECT_TITLE = "Unassigned Codex threads";
+const UNASSIGNED_CODEX_DIRECTORY = "unassigned-codex-threads";
 const ResumeCursor = Schema.Struct({ threadId: Schema.String });
 const isResumeCursor = Schema.is(ResumeCursor);
 const ImportedRuntimePayload = Schema.Struct({
@@ -133,14 +143,45 @@ export function groupPersistedThreadDiscoveryCandidates(
 }
 
 export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedProviderThreads")(
-  function* (input: { readonly workspaceRoots: ReadonlySet<string> }) {
-    if (input.workspaceRoots.size === 0) return 0;
+  function* (input: { readonly workspaceRoots?: ReadonlySet<string> }) {
     const registry = yield* ProviderInstanceRegistry;
     const directory = yield* ProviderSessionDirectory;
     const snapshots = yield* ProjectionSnapshotQuery;
     const engine = yield* OrchestrationEngineService;
+    const config = yield* ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const instances = yield* registry.listInstances;
     const bindings = yield* directory.listBindings();
+    const shellSnapshot = yield* snapshots.getShellSnapshot();
+    const unassignedWorkspaceRoot = path.join(config.stateDir, UNASSIGNED_CODEX_DIRECTORY);
+    const unassignedProjectReady = yield* Ref.make(
+      shellSnapshot.projects.some((project) => project.id === UNASSIGNED_CODEX_PROJECT_ID),
+    );
+    const unassignedProjectSemaphore = yield* Semaphore.make(1);
+    const ensureUnassignedProject = unassignedProjectSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        if (yield* Ref.get(unassignedProjectReady)) return;
+
+        yield* fileSystem.makeDirectory(unassignedWorkspaceRoot, { recursive: true });
+        yield* engine.dispatch({
+          type: "project.create",
+          commandId: importCommandId("unassigned-project", "create"),
+          projectId: UNASSIGNED_CODEX_PROJECT_ID,
+          title: UNASSIGNED_CODEX_PROJECT_TITLE,
+          workspaceRoot: unassignedWorkspaceRoot,
+          createWorkspaceRootIfMissing: true,
+          defaultModelSelection: null,
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+        });
+        yield* Ref.set(unassignedProjectReady, true);
+      }),
+    );
+    const projectWorkspaceRoots = new Set(
+      shellSnapshot.projects.map((project) =>
+        normalizeProjectPathForComparison(project.workspaceRoot),
+      ),
+    );
     const discoveryCandidateGroups = groupPersistedThreadDiscoveryCandidates(instances);
     const continuationKeyByInstanceId = new Map(
       instances
@@ -248,7 +289,9 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
                   : (cursorByThreadIdByContinuation.get(continuationKey) ?? new Map()),
                 forceReadProviderThreadIds:
                   forceReadThreadIdsByContinuation.get(continuationKey) ?? new Set(),
-                workspaceRoots: input.workspaceRoots,
+                ...(input.workspaceRoots === undefined
+                  ? {}
+                  : { workspaceRoots: input.workspaceRoots }),
               });
               return { instance, model, discovered } as const;
             }).pipe(
@@ -274,14 +317,20 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
           yield* Effect.forEach(
             discovered,
             (thread) =>
-              reconcilePersistedThread({
-                instance,
-                thread,
-                model,
-                threadByProviderIdentity,
-                directory,
-                snapshots,
-                engine,
+              Effect.gen(function* () {
+                if (!projectWorkspaceRoots.has(normalizeProjectPathForComparison(thread.cwd))) {
+                  yield* ensureUnassignedProject;
+                }
+                yield* reconcilePersistedThread({
+                  instance,
+                  thread,
+                  model,
+                  threadByProviderIdentity,
+                  directory,
+                  snapshots,
+                  engine,
+                  unassignedProjectId: UNASSIGNED_CODEX_PROJECT_ID,
+                });
               }).pipe(
                 Effect.catchCause((cause) =>
                   recoverReconciliationCause(
@@ -329,6 +378,7 @@ export const reconcilePersistedThread = Effect.fn("reconcilePersistedProviderThr
     readonly directory: ProviderSessionDirectory["Service"];
     readonly snapshots: ProjectionSnapshotQuery["Service"];
     readonly engine: OrchestrationEngineService["Service"];
+    readonly unassignedProjectId?: ProjectId;
   }) {
     const continuationKey = input.instance.continuationIdentity.continuationKey;
     const continuationIdentity = continuationIdentityDigest(continuationKey);
@@ -344,8 +394,10 @@ export const reconcilePersistedThread = Effect.fn("reconcilePersistedProviderThr
     const matchingProject = yield* input.snapshots.getActiveProjectByWorkspaceRoot(
       input.thread.cwd,
     );
-    if (Option.isNone(matchingProject)) return;
-    const projectId = matchingProject.value.id;
+    const projectId = Option.isSome(matchingProject)
+      ? matchingProject.value.id
+      : input.unassignedProjectId;
+    if (projectId === undefined) return;
     const projectChanged =
       Option.isSome(existingThread) &&
       existingThread.value.projectId !== undefined &&
@@ -487,7 +539,7 @@ export const ProviderThreadReconcilerLive = Layer.effectDiscard(
     const changes = yield* registry.subscribeChanges;
     const reconcileSemaphore = yield* Semaphore.make(1);
     const reconcile = reconcileSemaphore.withPermits(1)(
-      reconcilePersistedProviderThreads({ workspaceRoots: new Set() }).pipe(
+      reconcilePersistedProviderThreads({}).pipe(
         Effect.catchCause((cause) =>
           recoverReconciliationCause(
             cause,

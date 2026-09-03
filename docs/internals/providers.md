@@ -43,7 +43,12 @@ assistant text. Persisted messages keep their serialized links.
 
 Adapters can optionally implement `discoverPersistedThreads` for conversations created outside T3
 Code. Codex implements this capability through [`CodexThreadDiscovery.ts`][codex-discovery], which
-lists durable Codex threads and reads completed user and assistant messages.
+lists durable Codex threads and reads completed user and assistant messages. The server-owned
+reconciler runs when provider instances change and periodically while they are available. It scans
+the configured Codex home without a client-supplied workspace filter, matches each thread to the
+project with the same working directory, and stores unmatched threads in **Unassigned Codex
+threads**. The optional workspace filter remains available for a project-open request as a fast
+path; it is not the source of truth for other clients.
 
 Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
 orchestration, contract, or client change is required for the common case.

@@ -118,8 +118,10 @@ Each of these four services exposes `drain` for exactly this.
 
 [`ProviderThreadReconciler`][reconciler] is a separate background fiber, not a drainable worker. It
 discovers durable conversations from adapters that support persisted-thread listing, currently
-Codex, and imports missing messages through the same event-sourced command path. It matches threads
-to projects by working directory and keeps unmatched conversations in **Unassigned Codex threads**.
+Codex, whenever the provider registry changes and on a bounded interval while the server runs. It
+imports missing messages through the same event-sourced command path, matches threads to projects
+by working directory, and keeps unmatched conversations in **Unassigned Codex threads**. Because
+this runs in the server, the same history is available to web, desktop, and mobile clients.
 
 Runtime receipts are a test-only mechanism. `RuntimeReceiptBusLive` in
 [`RuntimeReceiptBus.ts`][receipts] publishes nothing; only the test layer is PubSub-backed. Do not

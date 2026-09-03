@@ -1,26 +1,44 @@
 import {
   ProviderDriverKind,
   ProviderInstanceId,
+  ProjectId,
   ThreadId,
   TurnId,
   type OrchestrationCommand,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
-import type { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
-import type { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ServerConfig } from "../../config.ts";
+import {
+  OrchestrationEngineService,
+  type OrchestrationEngineService as OrchestrationEngineServiceShape,
+} from "../../orchestration/Services/OrchestrationEngine.ts";
+import {
+  ProjectionSnapshotQuery,
+  type ProjectionSnapshotQuery as ProjectionSnapshotQueryShape,
+} from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
-import type { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
-import type { ProviderPersistedThread } from "../Services/ProviderAdapter.ts";
+import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
+import {
+  ProviderSessionDirectory,
+  type ProviderSessionDirectory as ProviderSessionDirectoryShape,
+} from "../Services/ProviderSessionDirectory.ts";
+import type {
+  ProviderPersistedThread,
+  ProviderPersistedThreadDiscoveryInput,
+} from "../Services/ProviderAdapter.ts";
 import {
   groupPersistedThreadDiscoveryCandidates,
   providerThreadDiscoveryExclusions,
   continuationIdentityDigest,
   recoverReconciliationCause,
+  reconcilePersistedProviderThreads,
   reconcilePersistedThread,
   resolvePersistedContinuationKey,
 } from "./ProviderThreadReconciler.ts";
@@ -139,7 +157,69 @@ it.effect("does not recover a reconciliation interruption", () =>
   }),
 );
 
-it.effect("skips an unmatched Codex thread", () =>
+it.effect("discovers every Codex root through the server-owned reconciler", () =>
+  Effect.gen(function* () {
+    const commands: OrchestrationCommand[] = [];
+    let receivedInput: ProviderPersistedThreadDiscoveryInput | undefined;
+    const discoveryInstance = {
+      ...instance,
+      enabled: true,
+      snapshot: {
+        getSnapshot: Effect.succeed({
+          models: [{ slug: "gpt-5.6-sol", isDefault: true }],
+        }),
+      },
+      adapter: {
+        discoverPersistedThreads: (input?: ProviderPersistedThreadDiscoveryInput) =>
+          Effect.sync(() => {
+            receivedInput = input;
+            return [persistedThread];
+          }),
+      },
+    } as unknown as ProviderInstance;
+
+    const importedCount = yield* reconcilePersistedProviderThreads({}).pipe(
+      Effect.provideService(ProviderInstanceRegistry, {
+        listInstances: Effect.succeed([discoveryInstance]),
+      } as unknown as ProviderInstanceRegistry["Service"]),
+      Effect.provideService(ProviderSessionDirectory, {
+        listBindings: () => Effect.succeed([]),
+        upsert: () => Effect.void,
+      } as unknown as ProviderSessionDirectoryShape["Service"]),
+      Effect.provideService(ProjectionSnapshotQuery, {
+        getShellSnapshot: () => Effect.succeed({ projects: [] }),
+        getThreadShellById: () => Effect.succeed(Option.none()),
+        getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+      } as unknown as ProjectionSnapshotQueryShape["Service"]),
+      Effect.provideService(OrchestrationEngineService, {
+        dispatch: (command: OrchestrationCommand) =>
+          Effect.sync(() => {
+            commands.push(command);
+            return { sequence: commands.length };
+          }),
+      } as unknown as OrchestrationEngineServiceShape["Service"]),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-provider-thread-reconciler-test-",
+          }).pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    );
+
+    expect(importedCount).toBe(1);
+    expect(receivedInput?.workspaceRoots).toBeUndefined();
+    expect(commands.map((command) => command.type)).toEqual([
+      "project.create",
+      "thread.create",
+      "thread.message.import",
+      "thread.message.import",
+    ]);
+  }),
+);
+
+it.effect("imports an unmatched Codex thread into the unassigned project", () =>
   Effect.gen(function* () {
     const commands: OrchestrationCommand[] = [];
     const bindings: Array<Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]> = [];
@@ -152,7 +232,7 @@ it.effect("skips an unmatched Codex thread", () =>
       readEvents: () => Stream.empty,
       streamDomainEvents: Stream.empty,
       latestSequence: Effect.succeed(0),
-    } as OrchestrationEngineService["Service"];
+    } as unknown as OrchestrationEngineService["Service"];
     const directory = {
       upsert: (binding: Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]) =>
         Effect.sync(() => {
@@ -174,10 +254,19 @@ it.effect("skips an unmatched Codex thread", () =>
       directory,
       snapshots,
       engine,
+      unassignedProjectId: ProjectId.make("codex-unassigned-threads"),
     });
 
-    expect(commands).toEqual([]);
-    expect(bindings).toEqual([]);
+    expect(commands.map((command) => command.type)).toEqual([
+      "thread.create",
+      "thread.message.import",
+      "thread.message.import",
+    ]);
+    expect(commands[0]).toMatchObject({
+      type: "thread.create",
+      projectId: "codex-unassigned-threads",
+    });
+    expect(bindings).toHaveLength(1);
   }),
 );
 
