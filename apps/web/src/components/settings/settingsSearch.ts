@@ -203,16 +203,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["command menu dollar $ slash /"],
   },
   {
-    id: "composer-collapse-on-blur",
-    title: "Collapse composer when it loses focus",
+    id: "composer-collapse",
+    title: "Collapse composer",
     to: "/settings/general",
-    searchTerms: ["composer rest resting collapse blur focus click away shrink minimize"],
-  },
-  {
-    id: "composer-collapse-on-scroll",
-    title: "Collapse composer when scrolling",
-    to: "/settings/general",
-    searchTerms: ["composer rest resting collapse scroll wheel conversation timeline shrink"],
+    searchTerms: [
+      "composer rest resting blur focus click away scroll wheel conversation timeline shrink minimize",
+    ],
   },
   {
     id: "provider-update-checks",

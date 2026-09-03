@@ -128,6 +128,7 @@ import {
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
@@ -542,11 +543,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
         ? ["Show skills in slash menu"]
         : []),
-      ...(settings.composerCollapseOnBlur !== DEFAULT_UNIFIED_SETTINGS.composerCollapseOnBlur
-        ? ["Collapse composer when it loses focus"]
-        : []),
-      ...(settings.composerCollapseOnScroll !== DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll
-        ? ["Collapse composer when scrolling"]
+      ...(settings.composerCollapseOnBlur !== DEFAULT_UNIFIED_SETTINGS.composerCollapseOnBlur ||
+      settings.composerCollapseOnScroll !== DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll
+        ? ["Collapse composer"]
         : []),
       ...(settings.contextWindowMeterEnabled !== DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled
         ? ["Context window indicator"]
@@ -2345,41 +2344,17 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          {...searchableSetting("composer-collapse-on-blur")}
-          description="Rest the composer of an existing thread into a single line when you click or tab away from it."
+          {...searchableSetting("composer-collapse")}
+          description="Rest the composer of an existing thread into a single line when it loses focus, when you scroll the conversation, or both. Deselect both to keep it expanded."
           resetAction={
-            settings.composerCollapseOnBlur !== DEFAULT_UNIFIED_SETTINGS.composerCollapseOnBlur ? (
+            settings.composerCollapseOnBlur !== DEFAULT_UNIFIED_SETTINGS.composerCollapseOnBlur ||
+            settings.composerCollapseOnScroll !==
+              DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll ? (
               <SettingResetButton
-                label="collapse composer on blur"
+                label="collapse composer"
                 onClick={() =>
                   updateSettings({
                     composerCollapseOnBlur: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnBlur,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.composerCollapseOnBlur}
-              onCheckedChange={(checked) =>
-                updateSettings({ composerCollapseOnBlur: Boolean(checked) })
-              }
-              aria-label="Collapse composer when it loses focus"
-            />
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("composer-collapse-on-scroll")}
-          description="Rest a focused composer when you scroll the conversation. Scrolling toward the end while already there never collapses it."
-          resetAction={
-            settings.composerCollapseOnScroll !==
-            DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll ? (
-              <SettingResetButton
-                label="collapse composer on scroll"
-                onClick={() =>
-                  updateSettings({
                     composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
                   })
                 }
@@ -2387,13 +2362,24 @@ export function GeneralSettingsPanel() {
             ) : null
           }
           control={
-            <Switch
-              checked={settings.composerCollapseOnScroll}
-              onCheckedChange={(checked) =>
-                updateSettings({ composerCollapseOnScroll: Boolean(checked) })
+            <ToggleGroup
+              multiple
+              aria-label="Collapse composer"
+              variant="segmented"
+              value={[
+                ...(settings.composerCollapseOnBlur ? ["blur"] : []),
+                ...(settings.composerCollapseOnScroll ? ["scroll"] : []),
+              ]}
+              onValueChange={(next) =>
+                updateSettings({
+                  composerCollapseOnBlur: next.includes("blur"),
+                  composerCollapseOnScroll: next.includes("scroll"),
+                })
               }
-              aria-label="Collapse composer when scrolling"
-            />
+            >
+              <Toggle value="blur">On blur</Toggle>
+              <Toggle value="scroll">On scroll</Toggle>
+            </ToggleGroup>
           }
         />
 
