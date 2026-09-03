@@ -933,6 +933,20 @@ describe("resolveCodexThreadConfig", () => {
     ]);
   });
 
+  it("falls back to granular when every allowed string is more permissive than requested", () => {
+    const granular = {
+      granular: { mcp_elicitations: true, rules: true, sandbox_approval: true },
+    };
+    const resolved = resolveCodexThreadConfig("auto", {
+      allowedApprovalPolicies: ["never", granular],
+    });
+
+    NodeAssert.deepStrictEqual(resolved.config.approvalPolicy, granular);
+    NodeAssert.deepStrictEqual(resolved.downgrades, [
+      { setting: "approvalPolicy", requested: "on-request", applied: "granular" },
+    ]);
+  });
+
   it("prefers an allowed string policy over a granular one", () => {
     const resolved = resolveCodexThreadConfig("full-access", {
       allowedApprovalPolicies: [

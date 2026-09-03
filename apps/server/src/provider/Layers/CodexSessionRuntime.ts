@@ -609,8 +609,8 @@ function describeApprovalPolicy(policy: CodexApprovalPolicy): string {
   return typeof policy === "string" ? policy : "granular";
 }
 
-// A policy that allows only granular entries has no string the runtime mode maps to,
-// so the first allowed entry is the only value Codex will accept.
+// When no allowed string is at or below the request, a granular entry is the only
+// value Codex will accept without escalating past what the runtime mode asked for.
 function resolveAllowedApprovalPolicy(
   requested: CodexApprovalPolicy,
   allowed: ReadonlyArray<CodexApprovalPolicy> | null | undefined,
@@ -626,10 +626,7 @@ function resolveAllowedApprovalPolicy(
   if (allowed.includes(lowered)) {
     return lowered;
   }
-  if (allowed.some((policy) => typeof policy === "string")) {
-    return requested;
-  }
-  return allowed[0] ?? requested;
+  return allowed.find((policy) => typeof policy !== "string") ?? requested;
 }
 
 export function describeCodexThreadSettingDowngrades(
