@@ -2,6 +2,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import type {
+  BackgroundPolicySnapshot,
   EnvironmentId,
   ExecutionEnvironmentDescriptor,
   OrchestrationEvent,
@@ -16,19 +17,22 @@ import type {
   RelayAgentActivityPublishProofPayload,
   RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
-import { CommandId, ProviderInstanceId } from "@t3tools/contracts";
+import { AuthSessionId, CommandId, ProviderInstanceId, RpcClientId } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import { RELAY_ACTIVITY_PUBLISH_TYP, verifyRelayJwt } from "@t3tools/shared/relayJwt";
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
   OrchestrationEngineService,
@@ -59,6 +63,48 @@ const state: RelayAgentActivityState = {
 };
 
 const encodeSecret = (value: string): Uint8Array => new TextEncoder().encode(value);
+const BACKGROUND_NOW = DateTime.makeUnsafe("2026-05-25T00:00:00.000Z");
+
+function makeBackgroundPolicySnapshot(focused: boolean): BackgroundPolicySnapshot {
+  return {
+    hostPower: {
+      source: "unknown",
+      idle: "unknown",
+      idleSeconds: null,
+      locked: "unknown",
+      suspended: false,
+      onBattery: "unknown",
+      lowPowerMode: "unknown",
+      thermalState: "unknown",
+      stale: true,
+      updatedAt: BACKGROUND_NOW,
+    },
+    leases: [
+      {
+        sessionId: AuthSessionId.make("session-1"),
+        rpcClientId: RpcClientId.make(1),
+        clientId: "desktop-client",
+        clientKind: "desktop-renderer",
+        visible: true,
+        focused,
+        recentlyInteracted: true,
+        scopes: [],
+        updatedAt: BACKGROUND_NOW,
+        expiresAt: DateTime.add(BACKGROUND_NOW, { minutes: 1 }),
+      },
+    ],
+    activeForegroundLeaseCount: 1,
+    activeScopeKeys: [],
+    shouldRunOpportunisticWork: true,
+    updatedAt: BACKGROUND_NOW,
+  };
+}
+
+function makeBackgroundPolicyLayer(snapshot: Ref.Ref<BackgroundPolicySnapshot>) {
+  return Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+    snapshot: Ref.get(snapshot),
+  });
+}
 
 function makeMemorySecretStore() {
   const values = new Map<string, Uint8Array>();
@@ -373,6 +419,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
       environmentId: state.environmentId,
       threadId: state.threadId,
       state,
+      notify: false,
     } satisfies RelayAgentActivityPublishProofPayload;
     const proof = await Effect.runPromise(
       AgentAwarenessRelay.signRelayAgentActivityPublishProof({
@@ -392,7 +439,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           nowEpochSeconds: 150,
         }),
       ),
-    ).resolves.toMatchObject({ jti: "nonce-1", state });
+    ).resolves.toMatchObject({ jti: "nonce-1", state, notify: false });
     await expect(
       Effect.runPromise(
         verifyRelayJwt({
@@ -415,6 +462,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const events = yield* Queue.unbounded<OrchestrationEvent>();
+        const backgroundSnapshot = yield* Ref.make(makeBackgroundPolicySnapshot(false));
         const threadShellRequested = yield* Deferred.make<void>();
         const secrets = makeMemorySecretStore();
         const now = "2026-05-25T00:00:00.000Z";
@@ -515,6 +563,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           }),
           Layer.succeed(OrchestrationEngineService, orchestrationEngine),
           Layer.succeed(ProjectionSnapshotQuery, snapshotQuery),
+          makeBackgroundPolicyLayer(backgroundSnapshot),
         );
 
         yield* Effect.gen(function* () {
@@ -553,14 +602,19 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     ),
   );
 
-  it.effect("publishes agent activity to the relay transport URL, not the relay issuer", () =>
+  it.effect("publishes silently while a client is focused and notifies after focus is lost", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const originalFetch = globalThis.fetch;
         const context = yield* Effect.context<never>();
         const runFork = Effect.runForkWith(context);
         const events = yield* Queue.unbounded<OrchestrationEvent>();
-        const fetchSeen = yield* Deferred.make<URL>();
+        const backgroundSnapshot = yield* Ref.make(makeBackgroundPolicySnapshot(true));
+        const published = yield* Queue.unbounded<{
+          readonly url: URL;
+          readonly state: RelayAgentActivityState | null;
+          readonly notify: boolean;
+        }>();
         const userSpans: Array<string> = [];
         const productSpans: Array<string> = [];
         const collectingTracer = (spans: Array<string>) =>
@@ -580,6 +634,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         const projectId = "project-1" as ProjectId;
         const threadId = "thread-1" as ThreadId;
         const environmentId = "env-1" as EnvironmentId;
+        let hasPendingApproval = true;
 
         const project = {
           id: projectId,
@@ -624,10 +679,16 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
             updatedAt: now,
           },
           latestUserMessageAt: now,
-          hasPendingApprovals: false,
+          hasPendingApprovals: true,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
         } satisfies OrchestrationThreadShell;
+
+        const currentThread = () => ({
+          ...thread,
+          hasPendingApprovals: hasPendingApproval,
+          hasPendingUserInput: !hasPendingApproval,
+        });
 
         const descriptor = {
           environmentId,
@@ -642,15 +703,21 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           },
         } satisfies ExecutionEnvironmentDescriptor;
 
-        globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
-          const url = new URL(
-            typeof input === "string" || input instanceof URL
-              ? input
-              : (input as unknown as { readonly url: string }).url,
+        globalThis.fetch = (async (input, init) => {
+          const request = input instanceof Request ? input : new Request(input.toString(), init);
+          const payload = (await request.clone().json()) as {
+            readonly state: RelayAgentActivityState | null;
+            readonly notify: boolean;
+          };
+          runFork(
+            Queue.offer(published, {
+              url: new URL(request.url),
+              state: payload.state,
+              notify: payload.notify,
+            }),
           );
-          runFork(Deferred.succeed(fetchSeen, url));
-          return Promise.resolve(Response.json({ ok: true, deliveries: [] }));
-        }) as unknown as typeof fetch;
+          return Response.json({ ok: true, deliveries: [] });
+        }) as typeof fetch;
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             globalThis.fetch = originalFetch;
@@ -675,12 +742,13 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
               Effect.succeed({
                 snapshotSequence: 1,
                 projects: [project],
-                threads: [thread],
+                threads: [currentThread()],
                 updatedAt: now,
               } satisfies OrchestrationShellSnapshot),
-            getThreadShellById: () => Effect.succeed(Option.some(thread)),
+            getThreadShellById: () => Effect.succeed(Option.some(currentThread())),
             getProjectShellById: () => Effect.succeed(Option.some(project)),
           } as unknown as ProjectionSnapshotQueryShape),
+          makeBackgroundPolicyLayer(backgroundSnapshot),
         );
 
         yield* Effect.gen(function* () {
@@ -707,8 +775,34 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
             occurredAt: now,
           } as unknown as OrchestrationEvent);
 
-          const url = yield* Deferred.await(fetchSeen).pipe(Effect.timeout("2 seconds"));
-          expect(url.origin).toBe("https://transport.example.test");
+          const focusedPublish = yield* Queue.take(published).pipe(Effect.timeout("2 seconds"));
+          expect(focusedPublish.url.origin).toBe("https://transport.example.test");
+          expect(focusedPublish.notify).toBe(false);
+          expect(focusedPublish.state?.phase).toBe("waiting_for_approval");
+          expect(yield* Queue.size(published)).toBe(0);
+
+          hasPendingApproval = false;
+          yield* Ref.set(backgroundSnapshot, makeBackgroundPolicySnapshot(false));
+          yield* Queue.offer(events, {
+            type: "thread.activity-appended",
+            sequence: 2,
+            eventId: "evt-2",
+            commandId: CommandId.make("cmd-2"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            actor: { kind: "server" },
+            payload: {
+              threadId,
+              activity: {
+                kind: "user-input.requested",
+              },
+            },
+            occurredAt: now,
+          } as unknown as OrchestrationEvent);
+
+          const unfocusedPublish = yield* Queue.take(published).pipe(Effect.timeout("2 seconds"));
+          expect(unfocusedPublish.notify).toBe(true);
+          expect(unfocusedPublish.state?.phase).toBe("waiting_for_input");
           expect(productSpans).toContain("makePublishProof");
           expect(userSpans).not.toContain("makePublishProof");
         }).pipe(

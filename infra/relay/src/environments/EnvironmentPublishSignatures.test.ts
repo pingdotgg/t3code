@@ -1,9 +1,10 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type {
-  RelayAgentActivityPublishProofPayload,
-  RelayAgentActivityPublishRequest,
-  RelayAgentActivityState,
+import {
+  RelayAgentActivityPublishRequest as RelayAgentActivityPublishRequestSchema,
+  type RelayAgentActivityPublishProofPayload,
+  type RelayAgentActivityPublishRequest,
+  type RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
 import { RELAY_ACTIVITY_PUBLISH_TYP } from "@t3tools/shared/relayJwt";
 import { stableStringify } from "@t3tools/shared/relaySigning";
@@ -55,6 +56,7 @@ const state: RelayAgentActivityState = {
 const isEnvironmentPublishSignatureInvalid = Schema.is(
   EnvironmentPublishSignatures.EnvironmentPublishSignatureInvalid,
 );
+const decodePublishRequest = Schema.decodeUnknownEffect(RelayAgentActivityPublishRequestSchema);
 
 function signTestJwt(payload: object, privateKey: string): string {
   const header = Buffer.from(
@@ -77,9 +79,11 @@ const freshRequest = Effect.gen(function* () {
     environmentId: state.environmentId,
     threadId: state.threadId,
     state,
+    notify: true,
   } satisfies RelayAgentActivityPublishProofPayload;
   return {
     state,
+    notify: true,
     proof: signTestJwt(payload, keyPair.privateKey),
   } satisfies RelayAgentActivityPublishRequest;
 });
@@ -136,6 +140,34 @@ describe("EnvironmentPublishSignatures", () => {
     );
   });
 
+  it.effect("accepts proofs and requests from servers that predate notify", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const payload = {
+        iss: "t3-env:env",
+        aud: "https://relay.example.test",
+        sub: "env",
+        jti: "legacy-publish-jti",
+        iat: Math.floor(now.epochMilliseconds / 1_000),
+        exp: Math.floor(DateTime.add(now, { minutes: 5 }).epochMilliseconds / 1_000),
+        environmentId: state.environmentId,
+        threadId: state.threadId,
+        state,
+      } satisfies Omit<RelayAgentActivityPublishProofPayload, "notify">;
+      const request = yield* decodePublishRequest({
+        state,
+        proof: signTestJwt(payload, keyPair.privateKey),
+      });
+      const signatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
+      yield* signatures.verify({
+        environmentId: state.environmentId,
+        environmentPublicKey: keyPair.publicKey,
+        threadId: state.threadId,
+        request,
+      });
+    }).pipe(Effect.provide(layer())),
+  );
+
   it.effect("rejects top-level state tampering", () =>
     Effect.gen(function* () {
       const request = yield* freshRequest;
@@ -146,6 +178,33 @@ describe("EnvironmentPublishSignatures", () => {
           environmentPublicKey: keyPair.publicKey,
           threadId: state.threadId,
           request: { ...request, state: { ...state, headline: "Tampered" } },
+        }),
+      );
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(isEnvironmentPublishSignatureInvalid(result.failure)).toBe(true);
+        if (isEnvironmentPublishSignatureInvalid(result.failure)) {
+          expect(result.failure).toMatchObject({
+            environmentId: state.environmentId,
+            threadId: state.threadId,
+            reason: "invalid_signature_or_payload",
+            stage: "validate_claims",
+          });
+        }
+      }
+    }).pipe(Effect.provide(layer())),
+  );
+
+  it.effect("rejects notify tampering", () =>
+    Effect.gen(function* () {
+      const request = yield* freshRequest;
+      const signatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
+      const result = yield* Effect.result(
+        signatures.verify({
+          environmentId: state.environmentId,
+          environmentPublicKey: keyPair.publicKey,
+          threadId: state.threadId,
+          request: { ...request, notify: false },
         }),
       );
       expect(Result.isFailure(result)).toBe(true);

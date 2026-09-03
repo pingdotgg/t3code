@@ -223,6 +223,7 @@ describe("AgentActivityPublisher", () => {
       const result = yield* Effect.gen(function* () {
         const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
         return yield* publisher.publish({
+          notify: true,
           environmentId: "env",
           environmentPublicKey: "environment-public-key",
           threadId: "thread",
@@ -317,6 +318,7 @@ describe("AgentActivityPublisher", () => {
       const result = yield* Effect.gen(function* () {
         const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
         return yield* publisher.publish({
+          notify: true,
           environmentId: "env",
           environmentPublicKey: "environment-public-key",
           threadId: "thread",
@@ -423,6 +425,7 @@ describe("AgentActivityPublisher", () => {
       const result = yield* Effect.gen(function* () {
         const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
         return yield* publisher.publish({
+          notify: true,
           environmentId: "env",
           environmentPublicKey: "environment-public-key",
           threadId: "thread",
@@ -516,6 +519,61 @@ describe("AgentActivityPublisher", () => {
     });
   });
 
+  it.effect("skips the notification-only push when notify is false", () => {
+    let pushCalls = 0;
+
+    return Effect.gen(function* () {
+      const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+      yield* publisher.publish({
+        environmentId: "env",
+        environmentPublicKey: "environment-public-key",
+        threadId: "thread",
+        state: { ...state, phase: "waiting_for_input" },
+        notify: false,
+      });
+
+      expect(pushCalls).toBe(0);
+    }).pipe(
+      Effect.provide(
+        AgentActivityPublisher.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
+              Layer.succeed(
+                EnvironmentLinks.EnvironmentLinks,
+                makeEnvironmentLinks({
+                  listDeliveryUsersForEnvironment: () =>
+                    Effect.succeed([
+                      {
+                        userId: "dev:julius",
+                        notificationsEnabled: true,
+                        liveActivitiesEnabled: false,
+                      },
+                    ]),
+                }),
+              ),
+              Layer.succeed(
+                LiveActivities.LiveActivities,
+                makeLiveActivities({ listTargets: () => Effect.succeed([target("device-1")]) }),
+              ),
+              Layer.succeed(
+                ApnsDeliveries.ApnsDeliveries,
+                makeApnsDeliveries({
+                  sendForTarget: () => Effect.succeed(null),
+                  sendPushNotificationForTarget: () =>
+                    Effect.sync(() => {
+                      pushCalls += 1;
+                      return null;
+                    }),
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
   it.effect(
     "does not build Live Activity aggregates for links with Live Activities disabled",
     () => {
@@ -535,6 +593,7 @@ describe("AgentActivityPublisher", () => {
         const result = yield* Effect.gen(function* () {
           const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
           return yield* publisher.publish({
+            notify: true,
             environmentId: "env",
             environmentPublicKey: "environment-public-key",
             threadId: "thread",

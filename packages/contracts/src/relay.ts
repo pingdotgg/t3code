@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
@@ -196,6 +197,7 @@ export const RelayAgentActivityPublishProofPayload = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
   state: Schema.NullOr(RelayAgentActivityState),
+  notify: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type RelayAgentActivityPublishProofPayload =
   typeof RelayAgentActivityPublishProofPayload.Type;
@@ -204,6 +206,10 @@ export type RelayAgentActivityPublishProof = string;
 export const RelayAgentActivityPublishRequest = Schema.Struct({
   state: Schema.NullOr(RelayAgentActivityState).annotate({
     description: "Current agent-awareness state, or null to remove the published state.",
+  }),
+  notify: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))).annotate({
+    description:
+      "Whether this update should alert the user. False updates cards and Live Activities silently; the relay never sends a push for them. Publishers that omit it alert.",
   }),
   proof: TrimmedNonEmptyString.annotate({
     description: "Environment-signed JWT covering this published activity state.",

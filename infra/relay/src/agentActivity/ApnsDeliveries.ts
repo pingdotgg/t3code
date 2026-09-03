@@ -458,6 +458,7 @@ function chooseLiveActivityDelivery(input: {
 function chooseDelivery(input: {
   readonly target: LiveActivities.TargetRow;
   readonly aggregate: RelayAgentActivityAggregateState | null;
+  readonly notify: boolean;
   readonly nowMs: number;
 }): ChosenDelivery | null {
   const liveActivityDelivery = chooseLiveActivityDelivery(input);
@@ -466,6 +467,9 @@ function chooseDelivery(input: {
   }
   if (liveActivityDelivery) {
     return liveActivityDelivery;
+  }
+  if (!input.notify) {
+    return null;
   }
   const notification = notificationForAggregate(input);
   return notification && input.target.push_token
@@ -671,6 +675,7 @@ export class ApnsDeliveries extends Context.Service<
     readonly sendForTarget: (input: {
       readonly target: LiveActivities.TargetRow;
       readonly aggregate: RelayAgentActivityAggregateState | null;
+      readonly notify: boolean;
       readonly nowMs: number;
     }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
     readonly sendPushNotificationForTarget: (input: {
@@ -1209,6 +1214,7 @@ export const make = Effect.gen(function* () {
       const delivery = chooseDelivery({
         target: input.target,
         aggregate: input.aggregate,
+        notify: input.notify,
         nowMs: input.nowMs,
       });
       if (!delivery) {
@@ -1225,17 +1231,21 @@ export const make = Effect.gen(function* () {
         });
         return result;
       }
-      const notification = notificationForAggregate({
-        target: input.target,
-        aggregate: input.aggregate,
-        nowMs: input.nowMs,
-      });
+      // Silent publishes update the card without any alert or companion push.
+      const notification = input.notify
+        ? notificationForAggregate({
+            target: input.target,
+            aggregate: input.aggregate,
+            nowMs: input.nowMs,
+          })
+        : null;
       // The end event doubles as the "task finished" moment. When a companion
       // push notification is about to ring the device (below), the activity end
       // stays silent; otherwise the end itself carries the alert so LA-only
       // users still get the buzz.
-      const alert =
-        delivery.kind === "live_activity_end"
+      const alert = !input.notify
+        ? null
+        : delivery.kind === "live_activity_end"
           ? notification && input.target.push_token
             ? null
             : alertForTerminalAggregate({

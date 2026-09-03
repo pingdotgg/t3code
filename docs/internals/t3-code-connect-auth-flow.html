@@ -666,7 +666,9 @@ sequenceDiagram
           </pre>
           <p>
             The local server publishes a deliberately narrow projection. Failed runs use a fixed
-            redacted summary, and detail strings are capped before publication.
+            redacted summary, and detail strings are capped before publication. The signed
+            <code>notify</code> field tells the relay to update cards and Live Activities silently
+            when a client is focused with the host awake and unlocked.
           </p>
         </article>
       </section>

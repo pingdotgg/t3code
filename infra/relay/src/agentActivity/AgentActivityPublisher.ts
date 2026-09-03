@@ -39,6 +39,7 @@ export class AgentActivityPublisher extends Context.Service<
       readonly environmentPublicKey: string;
       readonly threadId: string;
       readonly state: RelayAgentActivityState | null;
+      readonly notify: boolean;
     }) => Effect.Effect<RelayPublishResponse, AgentActivityPublishError>;
     readonly replayForLiveActivityRegistration: (input: {
       readonly userId: string;
@@ -56,6 +57,7 @@ export const make = Effect.gen(function* () {
   const publishForDeliveryUser = Effect.fnUntraced(function* (input: {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
     readonly state: RelayAgentActivityState | null;
+    readonly notify: boolean;
     readonly nowMs: number;
   }) {
     const activeStates = yield* rows.listForUser({ userId: input.deliveryUser.userId });
@@ -67,6 +69,7 @@ export const make = Effect.gen(function* () {
         })
       : null;
     const notificationOnlyAggregate =
+      input.notify &&
       input.deliveryUser.notificationsEnabled &&
       !input.deliveryUser.liveActivitiesEnabled &&
       input.state !== null
@@ -85,6 +88,7 @@ export const make = Effect.gen(function* () {
             apnsDeliveries.sendForTarget({
               target,
               aggregate: liveActivityAggregate,
+              notify: input.notify,
               nowMs: input.nowMs,
             }),
             notificationOnlyAggregate === null
@@ -129,6 +133,7 @@ export const make = Effect.gen(function* () {
       return yield* apnsDeliveries.sendForTarget({
         target,
         aggregate,
+        notify: true,
         nowMs: now.epochMilliseconds,
       });
     }),
@@ -166,6 +171,7 @@ export const make = Effect.gen(function* () {
           publishForDeliveryUser({
             deliveryUser,
             state: input.state,
+            notify: input.notify,
             nowMs: now.epochMilliseconds,
           }),
         { concurrency: 4 },
