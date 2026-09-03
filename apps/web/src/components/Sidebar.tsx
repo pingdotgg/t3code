@@ -1288,7 +1288,27 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
           </span>
         </span>
-      ) : status === "ready" ? (
+      ) : isWokeStatus ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label="Dismiss Woke notification"
+                onClick={handleAcknowledgeWokeClick}
+                className={cn(
+                  "inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-sm text-xs font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring",
+                  topStatus.className,
+                )}
+              />
+            }
+          >
+            <AlarmClockIcon aria-hidden className="size-3" />
+            <span role="status">{topStatus.label}</span>
+          </TooltipTrigger>
+          <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
+        </Tooltip>
+      ) : status === "ready" && thread.latestTurn?.completedAt != null ? (
         <span
           role="status"
           aria-label={`Completed ${threadCompletedTimeLabel(thread)}`}
@@ -1346,14 +1366,60 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             <ProjectFavicon
               environmentId={thread.environmentId}
               cwd={props.projectCwd ?? ""}
+              projectName={props.projectTitle ?? thread.title}
               faviconPath={props.projectFaviconPath}
+              projectIcon={props.projectIcon}
               className="size-4 shrink-0"
-              fallbackIcon={MessageSquareIcon}
             />
             {title}
             {isRegeneratingTitle ? <span className="sr-only">Regenerating title</span> : null}
             {pinIndicator}
-            {compactStatus}
+            <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 transition-opacity",
+                  "group-has-[:focus-visible]/sidebar-row:pointer-events-none group-has-[:focus-visible]/sidebar-row:opacity-0 group-hover/sidebar-row:pointer-events-none group-hover/sidebar-row:opacity-0",
+                  snoozeMenuOpen && "pointer-events-none opacity-0",
+                )}
+              >
+                {compactStatus}
+              </span>
+              {prBadge || props.settlementSupported || showSnoozeButton ? (
+                <span
+                  className={cn(
+                    "pointer-events-none absolute right-0 flex items-center opacity-0 transition-opacity has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100",
+                    snoozeMenuOpen && "pointer-events-auto opacity-100",
+                  )}
+                >
+                  {prBadge}
+                  {showSnoozeButton ? (
+                    <SnoozePopoverButton
+                      open={snoozeMenuOpen}
+                      onOpenChange={setSnoozeMenuOpen}
+                      onSnooze={handleSnoozePreset}
+                      timestampFormat={props.timestampFormat}
+                    />
+                  ) : null}
+                  {props.settlementSupported ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <button
+                            type="button"
+                            aria-label="Settle thread"
+                            onClick={handleSettleClick}
+                            className="-mr-1 inline-flex cursor-pointer items-center rounded-md bg-transparent p-1.5 text-muted-foreground hover:text-foreground"
+                          />
+                        }
+                      >
+                        <CheckIcon className="size-3.5" />
+                      </TooltipTrigger>
+                      <TooltipPopup>Settle thread</TooltipPopup>
+                    </Tooltip>
+                  ) : null}
+                </span>
+              ) : null}
+            </span>
             {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
           </TooltipTrigger>
           {detailsTooltip}
