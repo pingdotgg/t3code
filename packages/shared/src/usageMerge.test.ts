@@ -119,6 +119,50 @@ describe("mergeUsage", () => {
     expect(merged.availableThroughDay).toBe("2026-08-29");
   });
 
+  it("keeps coverage for an all-missing complete zero summary", () => {
+    const empty = summary([], []);
+    const merged = mergeUsage(
+      [
+        environment("env-empty", {
+          ...empty,
+          sources: [
+            {
+              ...empty.sources[0],
+              fingerprint: {
+                hostId: "mac",
+                provider: "claude",
+                resolvedHomePath: "/missing",
+                volumeId: "vol-missing",
+              },
+              status: "missing",
+              message: "No transcript directory.",
+            },
+          ],
+        }),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.availableThroughDay).toBe("2026-08-31");
+  });
+
+  it("ignores duplicate-owner coverage when choosing the shared boundary", () => {
+    const owner = summary([bucket()], [{ provider: "claude", hostId: "mac", homePath: "/a" }]);
+    const duplicate = {
+      ...owner,
+      coverage: {
+        ...owner.coverage!,
+        availableThroughDay: "2026-08-01" as UsageDay,
+      },
+    };
+    const merged = mergeUsage(
+      [environment("env-a-owner", owner), environment("env-b-duplicate", duplicate)],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.availableThroughDay).toBe("2026-08-31");
+  });
+
   it("filters every aggregate to the shared cutoff and reports the oldest snapshot", () => {
     const first = summary(
       [

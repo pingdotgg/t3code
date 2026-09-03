@@ -111,6 +111,7 @@ export function UsagePage() {
       refresh();
     } else {
       setWindowSelection({ days: windowDays, window: nextWindow });
+      refresh(nextWindow);
     }
   };
   const windowLabel =
@@ -159,8 +160,13 @@ export function UsagePage() {
             </Toggle>
           ))}
         </ToggleGroup>
-        <Button onClick={refreshWindow} aria-label="Refresh usage" size="icon-sm" variant="ghost">
-          <RefreshCwIcon className={cn("size-3.5", isRefreshing && "animate-spin")} />
+        <Button
+          onClick={refreshWindow}
+          aria-label={isRefreshing ? "Refreshing usage" : "Refresh usage"}
+          size="icon-sm"
+          variant="ghost"
+        >
+          <RefreshCwIcon className={cn("size-3.5", isRefreshing && "opacity-50")} />
         </Button>
       </div>
       <div className="ms-auto flex min-w-0 items-center justify-end gap-1 lg:hidden">
@@ -202,8 +208,13 @@ export function UsagePage() {
             ))}
           </SelectPopup>
         </Select>
-        <Button onClick={refreshWindow} aria-label="Refresh usage" size="icon-sm" variant="ghost">
-          <RefreshCwIcon className={cn("size-3.5", isRefreshing && "animate-spin")} />
+        <Button
+          onClick={refreshWindow}
+          aria-label={isRefreshing ? "Refreshing usage" : "Refresh usage"}
+          size="icon-sm"
+          variant="ghost"
+        >
+          <RefreshCwIcon className={cn("size-3.5", isRefreshing && "opacity-50")} />
         </Button>
       </div>
     </div>

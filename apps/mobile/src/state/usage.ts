@@ -19,7 +19,7 @@ import {
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
@@ -74,7 +74,7 @@ export interface UsageView {
   /** True while a previously loaded snapshot is being refreshed. */
   readonly isRefreshing: boolean;
   readonly refreshError?: string | null;
-  readonly refresh: () => void;
+  readonly refresh: (requestedInput?: UsageSummaryInput) => void;
 }
 
 export function useUsage(input: UsageSummaryInput): UsageView {
@@ -111,44 +111,85 @@ export function useUsage(input: UsageSummaryInput): UsageView {
   const currentWindowKey = useRef(windowKey);
   currentWindowKey.current = windowKey;
   const currentRefreshId = useRef(0);
+  useEffect(() => {
+    // A refresh belongs to one window. Invalidate its completion and clear the
+    // state so switching away and back cannot resurrect an old spinner/error.
+    currentRefreshId.current += 1;
+    setManualRefreshState({
+      windowKey,
+      requestId: currentRefreshId.current,
+      refreshing: false,
+      error: null,
+    });
+  }, [windowKey]);
 
   // Explicit refresh is a server command, so it really rescans and publishes
   // a new last-good snapshot. The normal query remains snapshot-only.
-  const refresh = useCallback(() => {
-    const input = JSON.parse(windowKey) as UsageSummaryInput;
-    const requestId = currentRefreshId.current + 1;
-    currentRefreshId.current = requestId;
-    setManualRefreshState({ windowKey, requestId, refreshing: true, error: null });
-    void Promise.all(
-      environments.map((environment) =>
-        refreshUsageSummary({ environmentId: environment.environmentId, input }),
-      ),
-    )
-      .then((results) => {
-        if (currentWindowKey.current !== windowKey || currentRefreshId.current !== requestId)
-          return;
-        if (results.some((result) => result._tag === "Failure")) {
-          setManualRefreshState({
-            windowKey,
-            requestId,
-            refreshing: false,
-            error: "Refresh failed. Showing the last successful usage snapshot.",
-          });
-        } else {
-          setManualRefreshState({ windowKey, requestId, refreshing: false, error: null });
-        }
-      })
-      .catch(() => {
-        if (currentWindowKey.current === windowKey && currentRefreshId.current === requestId) {
-          setManualRefreshState({
-            windowKey,
-            requestId,
-            refreshing: false,
-            error: "Refresh failed. Showing the last successful usage snapshot.",
-          });
-        }
+  const refresh = useCallback(
+    (requestedInput?: UsageSummaryInput) => {
+      const input = requestedInput ?? (JSON.parse(windowKey) as UsageSummaryInput);
+      const requestWindowKey =
+        requestedInput === undefined
+          ? windowKey
+          : JSON.stringify({
+              sinceDay: input.sinceDay,
+              untilDay: input.untilDay,
+              timeZone: input.timeZone,
+              resolution: input.resolution,
+              sinceTime: input.sinceTime,
+              untilTime: input.untilTime,
+            });
+      const requestId = currentRefreshId.current + 1;
+      currentRefreshId.current = requestId;
+      setManualRefreshState({
+        windowKey: requestWindowKey,
+        requestId,
+        refreshing: true,
+        error: null,
       });
-  }, [environments, refreshUsageSummary, windowKey]);
+      void Promise.all(
+        environments.map((environment) =>
+          refreshUsageSummary({ environmentId: environment.environmentId, input }),
+        ),
+      )
+        .then((results) => {
+          if (
+            currentWindowKey.current !== requestWindowKey ||
+            currentRefreshId.current !== requestId
+          )
+            return;
+          if (results.some((result) => result._tag === "Failure")) {
+            setManualRefreshState({
+              windowKey: requestWindowKey,
+              requestId,
+              refreshing: false,
+              error: "Refresh failed. Showing the last successful usage snapshot.",
+            });
+          } else {
+            setManualRefreshState({
+              windowKey: requestWindowKey,
+              requestId,
+              refreshing: false,
+              error: null,
+            });
+          }
+        })
+        .catch(() => {
+          if (
+            currentWindowKey.current === requestWindowKey &&
+            currentRefreshId.current === requestId
+          ) {
+            setManualRefreshState({
+              windowKey: requestWindowKey,
+              requestId,
+              refreshing: false,
+              error: "Refresh failed. Showing the last successful usage snapshot.",
+            });
+          }
+        });
+    },
+    [environments, refreshUsageSummary, windowKey],
+  );
 
   const merged = useMemo(() => {
     const answered: EnvironmentUsage[] = environments.flatMap((environment) =>

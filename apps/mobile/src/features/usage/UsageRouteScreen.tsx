@@ -104,6 +104,7 @@ export function UsageRouteScreen() {
       refresh();
     } else {
       setWindowSelection({ days: windowDays, window: nextWindow });
+      refresh(nextWindow);
     }
   };
 
@@ -276,7 +277,7 @@ function ChartCard(props: {
         <Text className="text-xs text-foreground-tertiary">
           {props.isPast24Hours
             ? formatHourShort(props.days[props.days.length - 1] ?? "", props.timeZone)
-            : formatDayShort(props.untilDay)}
+            : formatDayShort(props.days[props.days.length - 1] ?? props.untilDay)}
         </Text>
       </View>
     </View>

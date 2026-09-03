@@ -82,6 +82,10 @@ export interface NormalizedUsageAggregate {
   readonly totals: UsageTokenTotals;
   /** Tokens from records priced by the model table, excluding reported costs. */
   readonly pricedTotals: UsageTokenTotals;
+  /** Cache tokens remain savings-eligible for provider-reported records. */
+  readonly savingsTotals: UsageTokenTotals;
+  /** v1 rows need the current rate table to determine whether they are priced. */
+  readonly legacyPricing?: boolean;
   readonly reportedCostUsd: number;
   readonly records: number;
   readonly unpricedRecords: number;
@@ -240,15 +244,16 @@ export class UsageAggregator {
     }
 
     const priced = priceUsage(this.#options.rates, aggregate.model, aggregate.pricedTotals, null);
+    const legacyUnpriced = aggregate.legacyPricing === true && priced.costSource === "unpriced";
     bucket.totals = addTotals(bucket.totals, aggregate.totals);
-    bucket.costUsd += aggregate.reportedCostUsd + priced.costUsd;
+    bucket.costUsd += aggregate.reportedCostUsd + (legacyUnpriced ? 0 : priced.costUsd);
     bucket.cacheSavingsUsd += cacheSavingsUsd(
       this.#options.rates,
       aggregate.model,
-      aggregate.pricedTotals,
+      aggregate.savingsTotals,
     );
     bucket.records += aggregate.records;
-    bucket.unpricedRecords += aggregate.unpricedRecords;
+    bucket.unpricedRecords += aggregate.unpricedRecords + (legacyUnpriced ? aggregate.records : 0);
     bucket.providerReportedRecords += aggregate.providerReportedRecords;
     for (const session of aggregate.sessions) bucket.sessions.add(session);
     return true;

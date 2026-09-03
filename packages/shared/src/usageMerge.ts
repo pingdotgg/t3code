@@ -274,7 +274,8 @@ export function mergeUsage(
       );
     }),
   );
-  const coverage = contributing.flatMap((environment) =>
+  const coverageEnvironments = contributing.length === 0 ? current : contributing;
+  const coverage = coverageEnvironments.flatMap((environment) =>
     environment.summary.coverage === undefined ? [] : [environment.summary.coverage],
   );
   const availableThroughDay =

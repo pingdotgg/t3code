@@ -1,5 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - the suite seeds and grows real
 // transcript trees on disk, outside the service's Effect FileSystem.
+// @effect-diagnostics globalDateInEffect:off - fixed wall-clock test fixtures and
+// scan-start assertions intentionally use JavaScript Date boundaries.
 // @effect-diagnostics preferSchemaOverJson:off
 // @effect-diagnostics globalDate:off
 import * as NodeFSP from "node:fs/promises";
@@ -16,16 +18,17 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "./UsageService.ts";
 
-function claudeLine(id: number, outputTokens: number): string {
+function claudeLine(id: number, outputTokens: number, timestamp = "2026-08-01T10:00:00Z"): string {
   return `${JSON.stringify({
     type: "assistant",
-    timestamp: "2026-08-01T10:00:00Z",
+    timestamp,
     requestId: `req_${id}`,
     sessionId: "session-1",
     message: {
@@ -228,7 +231,8 @@ describe("UsageService", () => {
       const canonical = currentCanonicalWindow();
 
       // Construction alone must not make later readers wait forever.
-      service.refreshSummary(canonical);
+      const discardedRefresh = service.refreshSummary(canonical);
+      assert.isTrue(discardedRefresh !== undefined);
       const refreshed = yield* service.refreshSummary(canonical);
       assert.strictEqual(totalOutputTokens(refreshed), 5);
       const read = yield* service.readSummary({ ...canonical, timeZone: "Australia/Adelaide" });
@@ -326,6 +330,46 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("prefers the current ledger over an older persisted common snapshot", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const baseDir = NodePath.join(home, "common-snapshot-state");
+      const layers = serviceLayers({
+        prefix: "usage-service-common-snapshot-test",
+        baseDir,
+        home,
+        settings,
+      });
+      const service = yield* UsageService.make.pipe(Effect.provide(layers));
+      const canonical = currentCanonicalWindow();
+      yield* service.refreshSummary(canonical);
+      const remote = { ...canonical, timeZone: "America/Los_Angeles" };
+      const stale = yield* service.readSummary(remote);
+      const snapshotKey = JSON.stringify([
+        remote.timeZone,
+        remote.sinceDay,
+        remote.untilDay,
+        remote.resolution ?? "day",
+        remote.sinceTime ?? null,
+        remote.untilTime ?? null,
+      ]);
+      const snapshotPath = NodePath.join(baseDir, "userdata", "usage-snapshot.json");
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          snapshotPath,
+          JSON.stringify({ version: 1, entries: [{ key: snapshotKey, summary: stale }] }),
+        ),
+      );
+      yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
+      yield* service.refreshSummary(canonical);
+
+      const restarted = yield* UsageService.make.pipe(Effect.provide(layers));
+      const current = yield* restarted.readSummary(remote);
+      assert.strictEqual(totalOutputTokens(current), 12);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("lets a first preset read join the in-flight canonical background scan", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
@@ -353,6 +397,26 @@ describe("UsageService", () => {
       assert.strictEqual(totalOutputTokens(result), 5);
       yield* Fiber.interrupt(background);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("refreshes once at startup and again after the 30-minute cadence", () =>
+    Effect.gen(function* () {
+      let refreshes = 0;
+      const background = yield* UsageService.backgroundRefreshSchedule(
+        Effect.sync(() => {
+          refreshes += 1;
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      assert.strictEqual(refreshes, 1);
+
+      yield* TestClock.adjust("29 minutes");
+      assert.strictEqual(refreshes, 1);
+      yield* TestClock.adjust("1 minute");
+      yield* Effect.yieldNow;
+      assert.strictEqual(refreshes, 2);
+      yield* Fiber.interrupt(background);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.live("turns a failed canonical waiter into a typed not-ready result", () =>
@@ -571,6 +635,158 @@ describe("UsageService", () => {
       assert.isTrue(
         Date.parse(result.coverage!.availableThroughTime!) <=
           Date.parse(result.coverage!.generatedAt),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("does not include records timestamped after scan start", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const future = new Date(Date.now() + 5 * 60_000).toISOString();
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5, future)));
+      const ratesGate = yield* Deferred.make<void>();
+      const ratesStarted = yield* Deferred.make<void>();
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-scan-start-filter-test",
+            home,
+            settings,
+            ratesGate,
+            ratesStarted,
+          }),
+        ),
+      );
+      const nowMs = Date.now();
+      const sinceMs = nowMs - 60 * 60_000;
+      const untilMs = nowMs + 60 * 60_000;
+      const input: UsageSummaryInput = {
+        timeZone: "UTC",
+        sinceDay: UsageDay.make(new Date(sinceMs).toISOString().slice(0, 10)),
+        untilDay: UsageDay.make(new Date(untilMs).toISOString().slice(0, 10)),
+        resolution: "hour",
+        sinceTime: new Date(sinceMs).toISOString(),
+        untilTime: new Date(untilMs).toISOString(),
+      };
+      const refresh = yield* service.refreshSummary(input).pipe(Effect.forkChild);
+      yield* Deferred.await(ratesStarted);
+      yield* Deferred.succeed(ratesGate, undefined);
+      const result = yield* Fiber.join(refresh);
+      assert.strictEqual(totalOutputTokens(result), 0);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("uses an exact scan for unaligned 24-hour windows", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          transcript,
+          claudeLine(1, 5, "2026-08-01T04:36:59.000Z") +
+            claudeLine(2, 7, "2026-08-01T04:37:00.000Z"),
+        ),
+      );
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-unaligned-hour-test", home, settings }),
+        ),
+      );
+      const result = yield* service.refreshSummary({
+        timeZone: "UTC",
+        sinceDay: UsageDay.make("2026-08-01"),
+        untilDay: UsageDay.make("2026-08-02"),
+        resolution: "hour",
+        sinceTime: "2026-08-01T04:37:00.000Z",
+        untilTime: "2026-08-02T04:37:00.000Z",
+      });
+      assert.strictEqual(totalOutputTokens(result), 7);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps v1 null-cost records priceable during migration", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const baseDir = NodePath.join(home, "v1-ledger-state");
+      const stateDir = NodePath.join(baseDir, "userdata");
+      yield* Effect.promise(() => NodeFSP.mkdir(stateDir, { recursive: true }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(stateDir, "usage-record-ledger.json"),
+          JSON.stringify({
+            version: 1,
+            generatedAtMs: Date.parse("2026-08-02T00:00:00.000Z"),
+            records: [
+              {
+                hostId: "mac",
+                provider: "claude",
+                resolvedHomePath: "/a/.claude",
+                volumeId: "vol-1",
+                record: {
+                  provider: "claude",
+                  timestampMs: Date.parse("2026-08-01T10:00:00.000Z"),
+                  model: "claude-fable-5",
+                  sessionId: "session-1",
+                  totals: {
+                    uncachedInputTokens: 0,
+                    cachedInputTokens: 0,
+                    cacheCreationTokens: 0,
+                    outputTokens: 5,
+                    reasoningTokens: 0,
+                  },
+                  reportedCostUsd: null,
+                  dedupeKey: "record-1",
+                },
+              },
+              {
+                hostId: "mac",
+                provider: "claude",
+                resolvedHomePath: "/a/.claude",
+                volumeId: "vol-1",
+                record: {
+                  provider: "claude",
+                  timestampMs: Date.parse("2026-08-01T10:01:00.000Z"),
+                  model: "unknown-model",
+                  sessionId: "session-1",
+                  totals: {
+                    uncachedInputTokens: 0,
+                    cachedInputTokens: 0,
+                    cacheCreationTokens: 0,
+                    outputTokens: 3,
+                    reasoningTokens: 0,
+                  },
+                  reportedCostUsd: null,
+                  dedupeKey: "record-2",
+                },
+              },
+            ],
+          }),
+        ),
+      );
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(stateDir, "usage-model-rates.json"),
+          JSON.stringify({
+            fetchedAtMs: Date.now(),
+            document: {
+              "claude-fable-5": { input_cost_per_token: 1, output_cost_per_token: 2 },
+            },
+          }),
+        ),
+      );
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-v1-migration-test", baseDir, home, settings }),
+        ),
+      );
+      const result = yield* service.readSummary(currentCanonicalWindow());
+      assert.strictEqual(totalOutputTokens(result), 8);
+      assert.strictEqual(
+        result.buckets.find((bucket) => bucket.model === "claude-fable-5")?.costUsd,
+        10,
+      );
+      assert.strictEqual(
+        result.buckets.find((bucket) => bucket.model === "unknown-model")?.unpricedRecords,
+        1,
       );
     }).pipe(Effect.scoped),
   );

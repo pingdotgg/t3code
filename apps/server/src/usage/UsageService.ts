@@ -154,6 +154,18 @@ const UsageLedgerAggregate = Schema.Struct({
     outputTokens: Schema.Number,
     reasoningTokens: Schema.Number,
   }),
+  /** Cache tokens remain savings-eligible for provider-reported records. */
+  savingsTotals: Schema.optional(
+    Schema.Struct({
+      uncachedInputTokens: Schema.Number,
+      cachedInputTokens: Schema.Number,
+      cacheCreationTokens: Schema.Number,
+      outputTokens: Schema.Number,
+      reasoningTokens: Schema.Number,
+    }),
+  ),
+  /** v1 rows need the current rate table to determine whether they are priced. */
+  legacyPricing: Schema.optional(Schema.Boolean),
   reportedCostUsd: Schema.Number,
   records: Schema.Number,
   unpricedRecords: Schema.Number,
@@ -200,6 +212,14 @@ const MAX_USAGE_SNAPSHOTS = 16;
 // after a UTC/local-midnight rollover without losing its first day.
 const USAGE_LEDGER_RETENTION_MS = 92 * DAY_MS;
 
+/** Runs the initial refresh immediately, then schedules one refresh per interval. */
+export const backgroundRefreshSchedule = (refresh: Effect.Effect<void>) =>
+  refresh.pipe(
+    Effect.andThen(
+      Effect.forever(Effect.sleep(BACKGROUND_REFRESH_INTERVAL).pipe(Effect.andThen(refresh))),
+    ),
+  );
+
 function serverTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
@@ -228,7 +248,16 @@ function snapshotKey(input: UsageSummaryInput): string {
 function isCommonPreset(input: UsageSummaryInput): boolean {
   if (input.resolution === "hour") {
     if (input.sinceTime === undefined || input.untilTime === undefined) return false;
-    return Date.parse(input.untilTime) - Date.parse(input.sinceTime) === DAY_MS;
+    const sinceTimeMs = Date.parse(input.sinceTime);
+    const untilTimeMs = Date.parse(input.untilTime);
+    const quarterHour = 15 * 60 * 1000;
+    return (
+      Number.isFinite(sinceTimeMs) &&
+      Number.isFinite(untilTimeMs) &&
+      sinceTimeMs % quarterHour === 0 &&
+      untilTimeMs % quarterHour === 0 &&
+      untilTimeMs - sinceTimeMs === DAY_MS
+    );
   }
   const days =
     (Date.parse(`${input.untilDay}T00:00:00Z`) - Date.parse(`${input.sinceDay}T00:00:00Z`)) /
@@ -293,11 +322,15 @@ function ledgerAggregateFromRecord(entry: {
     model: record.model,
     totals: record.totals,
     // v1 did not persist pricing provenance. Preserve token totals and any
-    // reported cost, but do not guess that unreported records were priced.
-    pricedTotals: EMPTY_TOTALS,
+    // reported cost; legacyPricing lets reads resolve null-cost rows safely.
+    pricedTotals: record.reportedCostUsd === null ? record.totals : EMPTY_TOTALS,
     reportedCostUsd: reported,
     records: 1,
-    unpricedRecords: record.reportedCostUsd === null ? 1 : 0,
+    // Keep null-cost rows in pricedTotals so a cached rate can recover their
+    // cost. Unknown models are counted as unpriced at read time.
+    unpricedRecords: 0,
+    savingsTotals: record.totals,
+    legacyPricing: record.reportedCostUsd === null,
     providerReportedRecords: record.reportedCostUsd === null ? 0 : 1,
     sessions: record.sessionId.length === 0 ? [] : [record.sessionId],
   };
@@ -319,6 +352,8 @@ function mergeLedgerAggregate(
     ...existing,
     totals: addTotals(existing.totals, incoming.totals),
     pricedTotals: addTotals(existing.pricedTotals, incoming.pricedTotals),
+    savingsTotals: addTotals(existing.savingsTotals, incoming.savingsTotals),
+    legacyPricing: existing.legacyPricing || incoming.legacyPricing,
     reportedCostUsd: existing.reportedCostUsd + incoming.reportedCostUsd,
     records: existing.records + incoming.records,
     unpricedRecords: existing.unpricedRecords + incoming.unpricedRecords,
@@ -336,6 +371,8 @@ interface LedgerAggregate {
   readonly model: string;
   readonly totals: UsageRecord["totals"];
   readonly pricedTotals: UsageRecord["totals"];
+  readonly savingsTotals: UsageRecord["totals"];
+  readonly legacyPricing: boolean;
   readonly reportedCostUsd: number;
   readonly records: number;
   readonly unpricedRecords: number;
@@ -581,7 +618,11 @@ export const make = Effect.gen(function* () {
           usageLedgerSources.set(sourceKey(source.fingerprint), source);
         }
         for (const entry of document.aggregates) {
-          usageLedger.set(ledgerAggregateKey(entry), entry);
+          usageLedger.set(ledgerAggregateKey(entry), {
+            ...entry,
+            savingsTotals: entry.savingsTotals ?? entry.totals,
+            legacyPricing: entry.legacyPricing ?? false,
+          });
         }
         return;
       }
@@ -884,6 +925,10 @@ export const make = Effect.gen(function* () {
         }
         scannedFiles += 1;
         for (const record of file.records) {
+          // The scan-start instant is the upper bound for both the summary and
+          // the durable ledger. Records appended while the walk is in flight
+          // belong to the next refresh.
+          if (record.timestampMs >= startedAtMs) continue;
           // Only sessions that contributed in-window count: the mtime slack
           // admits boundary files whose records fall outside the range.
           if (aggregator.add(record) && record.sessionId.length > 0) {
@@ -914,6 +959,8 @@ export const make = Effect.gen(function* () {
             model: record.model,
             totals: record.totals,
             pricedTotals: priced.costSource === "modelPriced" ? record.totals : EMPTY_TOTALS,
+            savingsTotals: record.totals,
+            legacyPricing: false,
             reportedCostUsd:
               priced.costSource === "providerReported" ? (record.reportedCostUsd ?? 0) : 0,
             records: 1,
@@ -961,7 +1008,9 @@ export const make = Effect.gen(function* () {
         ? input.untilDay < completeThroughDay
           ? input.untilDay
           : UsageDay.make(completeThroughDay)
-        : UsageDay.make(makeDayFormatter(input.timeZone)(hourlyWindow.untilTimeMs - 1));
+        : UsageDay.make(
+            makeDayFormatter(input.timeZone)(Math.min(hourlyWindow.untilTimeMs, startedAtMs) - 1),
+          );
     const availableThroughTime =
       hourlyWindow === null
         ? null
@@ -1225,16 +1274,21 @@ export const make = Effect.gen(function* () {
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
     const key = scanKey(input);
-    const cached = usageSnapshots.get(key);
-    if (cached !== undefined) return cached;
     if (isCommonPreset(input)) {
       const normalized = yield* readPresetFromLedger(input);
       if (normalized !== null) return normalized;
+      // Older servers may have persisted a common snapshot without a ledger.
+      // It is still a useful last-good fallback, but never wins over current
+      // canonical ledger data above.
+      const cached = usageSnapshots.get(key);
+      if (cached !== undefined) return cached;
       return yield* new UsageReadError({
         reason: "scanFailed",
         detail: "Usage preset is waiting for the next background snapshot.",
       });
     }
+    const cached = usageSnapshots.get(key);
+    if (cached !== undefined) return cached;
 
     const deferred = yield* Effect.uninterruptible(
       Effect.gen(function* () {
@@ -1304,10 +1358,7 @@ export const make = Effect.gen(function* () {
       Effect.ignore,
     );
 
-    yield* refresh;
-    return yield* Effect.forever(
-      Effect.sleep(BACKGROUND_REFRESH_INTERVAL).pipe(Effect.andThen(refresh)),
-    );
+    return yield* backgroundRefreshSchedule(refresh);
   });
 
   yield* Effect.uninterruptible(ensureUsageSnapshotsLoaded);

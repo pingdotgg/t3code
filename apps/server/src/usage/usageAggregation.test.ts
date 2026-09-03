@@ -172,6 +172,35 @@ describe("UsageAggregator", () => {
     expect(result.buckets[0]?.costSource).toBe("providerReported");
   });
 
+  it("keeps cache savings for provider-reported aggregate cells", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+    });
+    aggregator.addAggregate({
+      bucketStartMs: Date.parse("2026-08-07T04:00:00.000Z"),
+      provider: "claude",
+      model: "claude-fable-5",
+      totals: record().totals,
+      pricedTotals: {
+        uncachedInputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+      },
+      savingsTotals: record().totals,
+      reportedCostUsd: 1.25,
+      records: 1,
+      unpricedRecords: 0,
+      providerReportedRecords: 1,
+      sessions: ["session-a"],
+    });
+    expect(aggregator.finish().buckets[0]?.cacheSavingsUsd).toBeCloseTo(0.009, 9);
+  });
+
   it("drops records outside the window", () => {
     const result = aggregate([record({ timestampMs: Date.parse("2026-07-01T12:00:00Z") })]);
 
