@@ -282,7 +282,7 @@ describe("environment query lifecycle", () => {
   it.effect("retries settled failures without polling successful queries", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        vi.useFakeTimers();
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
         yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
 
         const expectedFailure = new TestQueryError({ message: "The ledger is not ready." });
@@ -320,6 +320,9 @@ describe("environment query lifecycle", () => {
   it.effect("cancels a failure retry while a query is already waiting", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+
         const expectedFailure = new TestQueryError({ message: "The ledger is not ready." });
         let executions = 0;
         const harness = yield* makeEnvironmentQueryHarness(
@@ -346,7 +349,7 @@ describe("environment query lifecycle", () => {
         expect(AsyncResult.isFailure(waiting)).toBe(true);
         expect(waiting.waiting).toBe(true);
 
-        yield* TestClock.adjust("5 seconds");
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(5_000));
         expect(executions).toBe(1);
       }),
     ),
