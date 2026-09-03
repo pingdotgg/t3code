@@ -275,6 +275,13 @@ describe("resolveMarkdownFileLinkTarget", () => {
     });
   });
 
+  it("keeps drive-root workspace comparisons case-insensitive", () => {
+    expect(resolveMarkdownFileLinkMeta("C:/Users/MIKE/project.ts", "c:/")).toMatchObject({
+      displayPath: "c:/Users/MIKE/project.ts",
+      workspaceRelativePath: "Users/MIKE/project.ts",
+    });
+  });
+
   it("normalizes slash-prefixed windows drive paths before resolving", () => {
     expect(
       resolveMarkdownFileLinkTarget(

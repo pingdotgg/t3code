@@ -15,7 +15,7 @@ function canonicalizeWindowsDrivePath(path: string): string {
 
 export function isWindowsFilesystemPath(path: string): boolean {
   const normalizedPath = canonicalizeWindowsDrivePath(normalizePathSeparators(path));
-  return /^[A-Za-z]:\//.test(normalizedPath) || normalizedPath.startsWith("//");
+  return /^[A-Za-z]:(?:\/|$)/.test(normalizedPath) || normalizedPath.startsWith("//");
 }
 
 function trimTrailingPathSeparators(path: string): string {
