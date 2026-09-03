@@ -4730,6 +4730,7 @@ function ChatViewContent(props: ChatViewProps) {
   const sendEnvMode = resolveSendEnvMode({
     requestedEnvMode: envMode,
     isGitRepo,
+    branch: gitStatusQuery.data?.refName,
   });
   const localCheckoutBranchMismatch = useMemo(
     () =>
