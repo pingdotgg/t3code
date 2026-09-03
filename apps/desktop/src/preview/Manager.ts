@@ -2745,9 +2745,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               tabId,
             );
             const aspectRatio = frame.width / frame.height;
+            // Don't fight the window manager: resizing restores maximized /
+            // fullscreen windows, so skip aspect-fit while enlarged.
+            const isEnlarged =
+              pictureInPictureWindow.isMaximized?.() === true ||
+              pictureInPictureWindow.isFullScreen?.() === true;
             if (
-              previousAspectRatio === undefined ||
-              Math.abs(previousAspectRatio - aspectRatio) > PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON
+              !isEnlarged &&
+              (previousAspectRatio === undefined ||
+                Math.abs(previousAspectRatio - aspectRatio) >
+                  PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON)
             ) {
               yield* attempt(
                 {
