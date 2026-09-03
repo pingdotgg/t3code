@@ -15,7 +15,7 @@ function canonicalizeWindowsDrivePath(path: string): string {
 
 export function isWindowsFilesystemPath(path: string): boolean {
   const normalizedPath = canonicalizeWindowsDrivePath(normalizePathSeparators(path));
-  return /^[A-Za-z]:(?:\/|$)/.test(normalizedPath) || normalizedPath.startsWith("//");
+  return /^[A-Za-z]:(?:\/|$)/.test(normalizedPath) || path.startsWith("\\\\");
 }
 
 function trimTrailingPathSeparators(path: string): string {
@@ -39,7 +39,7 @@ export function formatWorkspaceRelativePath(
       normalizePathSeparators(trimTrailingPathSeparators(workspaceRoot)),
     );
     const workspaceLabel = fileBasename(normalizedWorkspaceRoot);
-    const caseInsensitive = isWindowsFilesystemPath(normalizedWorkspaceRoot);
+    const caseInsensitive = isWindowsFilesystemPath(workspaceRoot);
     const pathForCompare = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath;
     const workspaceForCompare = caseInsensitive
       ? normalizedWorkspaceRoot.toLowerCase()

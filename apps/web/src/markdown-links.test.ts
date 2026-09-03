@@ -282,6 +282,18 @@ describe("resolveMarkdownFileLinkTarget", () => {
     });
   });
 
+  it("keeps backslash UNC workspace comparisons case-insensitive", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "\\\\server\\share\\PROJECT\\src\\main.ts",
+        "\\\\Server\\Share\\Project",
+      ),
+    ).toMatchObject({
+      displayPath: "Project/src/main.ts",
+      workspaceRelativePath: "src/main.ts",
+    });
+  });
+
   it("normalizes slash-prefixed windows drive paths before resolving", () => {
     expect(
       resolveMarkdownFileLinkTarget(
