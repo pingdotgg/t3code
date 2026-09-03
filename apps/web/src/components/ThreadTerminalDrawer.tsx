@@ -601,7 +601,10 @@ export function TerminalViewport({
       const copySelection = async (text: string, requestId: number) => {
         try {
           const didCopy = await writeTextToClipboard(text, "terminal selection");
-          if (didCopy) {
+          // A superseded request must stay silent: another selection or
+          // right-click started while this write was pending, so toasting
+          // now would confirm a no-longer-active selection.
+          if (didCopy && requestId === selectionActionRequestIdRef.current) {
             lastAutoCopiedText = text;
             toastManager.add({ type: "success", title: "Copied to clipboard" });
           }
@@ -621,13 +624,17 @@ export function TerminalViewport({
         if (!settings.copyOnSelect) return;
         if (normalizeTerminalSelectionText(text) === null) return;
         if (text === lastAutoCopiedText) return;
+        // Claim before the await so a repeat gesture started while this
+        // write is pending can't issue a second write and toast.
+        lastAutoCopiedText = text;
         try {
           const didCopy = await writeTextToClipboard(text, "terminal selection");
+          if (!didCopy && lastAutoCopiedText === text) lastAutoCopiedText = null;
           if (!didCopy) return;
         } catch {
+          if (lastAutoCopiedText === text) lastAutoCopiedText = null;
           return;
         }
-        lastAutoCopiedText = text;
         if (getClientSettings().copyOnSelectToast) {
           toastManager.add({ type: "success", title: "Copied to clipboard" });
         }

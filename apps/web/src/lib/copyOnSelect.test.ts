@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   getCopyableDomSelectionText,
+  isCopyOnSelectEditableTarget,
   normalizeTerminalSelectionText,
   sameDomSelectionSnapshot,
   shouldAutoCopyOnMouseUp,
@@ -21,14 +22,31 @@ class FakeElement {
   parentNode: FakeElement | null = null;
   constructor(
     readonly tagName = "DIV",
-    readonly interactive = false,
+    readonly kind: "plain" | "control" | "editable" = "plain",
     parent: FakeElement | null = null,
   ) {
     this.parentNode = parent;
   }
   closest(selector: string): FakeElement | null {
-    // Mirrors the interactive guard: only elements flagged interactive match.
-    if (this.interactive && selector.length > 0) return this;
+    // Mirrors the real selectors: controls match button/a/role queries,
+    // editables match form-field queries, plain elements match neither.
+    const parts = selector.split(",").map((part) => part.trim());
+    const selfMatch = parts.some((part) => {
+      if (part === "button" || part === "a" || part === "[role=button]") {
+        return this.kind === "control";
+      }
+      if (
+        part === "input" ||
+        part === "textarea" ||
+        part === "select" ||
+        part === "[contenteditable]" ||
+        part === "[data-no-copy-on-select]"
+      ) {
+        return this.kind === "editable";
+      }
+      return false;
+    });
+    if (selfMatch) return this;
     return this.parentNode?.closest(selector) ?? null;
   }
   contains(node: unknown): boolean {
@@ -148,7 +166,7 @@ describe("dom selection snapshots", () => {
 describe("getCopyableDomSelectionText", () => {
   it("returns selected text inside its container", () => {
     const container = new FakeElement();
-    const message = new FakeElement("DIV", false, container);
+    const message = new FakeElement("DIV", "plain", container);
     const node = textNode("hello", message);
     expect(
       getCopyableDomSelectionText(
@@ -158,9 +176,22 @@ describe("getCopyableDomSelectionText", () => {
     ).toBe("hello");
   });
 
+  it("allows selections inside links and other clickable chips", () => {
+    const container = new FakeElement();
+    const message = new FakeElement("DIV", "plain", container);
+    const link = new FakeElement("A", "control", message);
+    const node = textNode("docs", link);
+    expect(
+      getCopyableDomSelectionText(
+        selectionOf("docs", node, node),
+        container as unknown as HTMLElement,
+      ),
+    ).toBe("docs");
+  });
+
   it("rejects collapsed, multi-range, and whitespace-only selections", () => {
     const container = new FakeElement();
-    const node = textNode("hi", new FakeElement("DIV", false, container));
+    const node = textNode("hi", new FakeElement("DIV", "plain", container));
     const collapsed = { ...selectionOf("hi", node, node), isCollapsed: true } as Selection;
     expect(getCopyableDomSelectionText(collapsed, container as unknown as HTMLElement)).toBeNull();
     const multi = { ...selectionOf("hi", node, node), rangeCount: 2 } as Selection;
@@ -176,7 +207,7 @@ describe("getCopyableDomSelectionText", () => {
 
   it("rejects selections in editable elements and outside the container", () => {
     const container = new FakeElement();
-    const composer = new FakeElement("TEXTAREA", true, container);
+    const composer = new FakeElement("TEXTAREA", "editable", container);
     const composerNode = textNode("draft", composer);
     expect(
       getCopyableDomSelectionText(
@@ -193,5 +224,11 @@ describe("getCopyableDomSelectionText", () => {
         container as unknown as HTMLElement,
       ),
     ).toBeNull();
+  });
+});
+
+describe("isCopyOnSelectEditableTarget", () => {
+  it("ignores null targets without a DOM", () => {
+    expect(isCopyOnSelectEditableTarget(null)).toBe(false);
   });
 });

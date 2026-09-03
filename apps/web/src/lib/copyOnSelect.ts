@@ -7,9 +7,15 @@
  * Used by `useCopyOnSelect` (chat timeline) and `ThreadTerminalDrawer`.
  */
 
-/** Interactive elements whose mouseup must never trigger an auto-copy. */
-export const COPY_ON_SELECT_INTERACTIVE_SELECTOR =
-  "button, a, input, textarea, select, [role=button], [contenteditable], [data-no-copy-on-select]";
+/**
+ * Subtrees whose text must never auto-copy: form fields and explicitly
+ * opted-out regions. Links, buttons, and other clickable chips are
+ * intentionally NOT excluded — chat is full of selectable controls, and a
+ * drag across them is still a real selection. Clicks on those controls
+ * without a drag are filtered by gesture-identity comparison instead.
+ */
+export const COPY_ON_SELECT_EDITABLE_SELECTOR =
+  "input, textarea, select, [contenteditable], [data-no-copy-on-select]";
 
 /**
  * Herdr copies on mouse release after a drag or double-click. Only the
@@ -23,11 +29,11 @@ export function shouldAutoCopyOnMouseUp(event: MouseEvent): boolean {
   return true;
 }
 
-/** True when the mouseup landed on (or inside) an interactive element. */
-export function isCopyOnSelectInteractiveTarget(target: EventTarget | null): boolean {
+/** True when the target is inside an editable or opted-out element. */
+export function isCopyOnSelectEditableTarget(target: EventTarget | null): boolean {
   if (target === null || typeof Element === "undefined") return false;
   if (!(target instanceof Element)) return false;
-  return target.closest(COPY_ON_SELECT_INTERACTIVE_SELECTOR) !== null;
+  return target.closest(COPY_ON_SELECT_EDITABLE_SELECTOR) !== null;
 }
 
 /**
@@ -45,7 +51,7 @@ function nodeInEditable(node: Node | null): boolean {
   while (current !== null) {
     if (current.nodeType === 1) {
       const element = current as Element;
-      if (element.closest(COPY_ON_SELECT_INTERACTIVE_SELECTOR) !== null) return true;
+      if (element.closest(COPY_ON_SELECT_EDITABLE_SELECTOR) !== null) return true;
     }
     current = current.parentNode;
   }
@@ -55,8 +61,9 @@ function nodeInEditable(node: Node | null): boolean {
 /**
  * Returns the selected text when it is worth auto-copying, otherwise null.
  * Skips collapsed/multi-range selections, whitespace-only text, selections
- * rooted in editable or interactive elements, and (when given) selections
- * outside `container`.
+ * rooted in editable elements, and (when given) selections outside
+ * `container`. Selections inside links, buttons, and other clickable chips
+ * are allowed: only form fields opt out.
  */
 export function getCopyableDomSelectionText(
   selection: Selection | null,

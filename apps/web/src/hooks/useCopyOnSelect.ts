@@ -5,7 +5,7 @@ import * as React from "react";
 import { toastManager } from "../components/ui/toast";
 import {
   getCopyableDomSelectionText,
-  isCopyOnSelectInteractiveTarget,
+  isCopyOnSelectEditableTarget,
   sameDomSelectionSnapshot,
   shouldAutoCopyOnMouseUp,
   snapshotDomSelection,
@@ -16,15 +16,20 @@ import { useClientSettings } from "./useSettings";
 
 /**
  * Herdr-style copy-on-select for DOM surfaces (the chat timeline): releasing
- * a left-button drag or double-click inside `container` copies the selection
- * and shows the "copied to clipboard" toast.
+ * a left-button drag or double-click copies the selection and shows the
+ * "copied to clipboard" toast.
  *
- * Keyboard selections never trigger it (no mouseup), editable and
- * interactive targets are skipped, and only a gesture that created or
- * changed the selection may copy — a plain click over an existing selection
- * leaves the clipboard alone. Consecutive copies of identical text are
- * deduplicated so clicking around a stable selection stays quiet. The toast
- * only fires after a successful clipboard write — never optimistically.
+ * The gesture may end anywhere (composer, sidebar, another panel): as long
+ * as the press started on chat text and the released selection sits inside
+ * `container`, it copies — mirroring the terminal path, which also accepts
+ * release outside its surface. Keyboard selections never trigger it (no
+ * mouseup), editable targets never arm it, and only a gesture that created
+ * or changed the selection may copy — a plain click over an existing
+ * selection leaves the clipboard alone. The copied text is reserved before
+ * the async write starts so a repeated gesture can't double-copy while the
+ * first write is pending; the reservation is released if the write fails.
+ * The toast only fires after a successful clipboard write — never
+ * optimistically.
  */
 export function useCopyOnSelect(container: HTMLElement | null): void {
   const copyOnSelect = useClientSettings((settings) => settings.copyOnSelect);
@@ -39,13 +44,17 @@ export function useCopyOnSelect(container: HTMLElement | null): void {
 
   React.useEffect(() => {
     if (!container) return;
+    const view = container.ownerDocument.defaultView ?? window;
+    const pressStartedInContainer = (target: EventTarget | null): boolean =>
+      target instanceof Node && container.contains(target);
     const onMouseDown = (event: MouseEvent) => {
       gestureStartRef.current = { snapshot: null, armed: false };
       if (event.button !== 0) return;
       if (event.ctrlKey || event.metaKey || event.altKey) return;
-      if (isCopyOnSelectInteractiveTarget(event.target)) return;
+      if (!pressStartedInContainer(event.target)) return;
+      if (isCopyOnSelectEditableTarget(event.target)) return;
       gestureStartRef.current = {
-        snapshot: snapshotDomSelection(window.getSelection()),
+        snapshot: snapshotDomSelection(view.getSelection()),
         armed: true,
       };
     };
@@ -55,15 +64,19 @@ export function useCopyOnSelect(container: HTMLElement | null): void {
       if (!armed) return;
       if (!settingsRef.current.copyOnSelect) return;
       if (!shouldAutoCopyOnMouseUp(event)) return;
-      if (isCopyOnSelectInteractiveTarget(event.target)) return;
-      const selection = window.getSelection();
+      const selection = view.getSelection();
       if (sameDomSelectionSnapshot(startSnapshot, snapshotDomSelection(selection))) return;
       const text = getCopyableDomSelectionText(selection, container);
       if (text === null || text === lastCopiedRef.current) return;
+      // Reserve before the await so a repeated gesture while this write is
+      // pending can't issue a second write and toast.
+      lastCopiedRef.current = text;
       void writeTextToClipboard(text, "selection").then(
         (didCopy) => {
-          if (!didCopy) return;
-          lastCopiedRef.current = text;
+          if (!didCopy) {
+            if (lastCopiedRef.current === text) lastCopiedRef.current = null;
+            return;
+          }
           if (settingsRef.current.showToast) {
             toastManager.add({ type: "success", title: "Copied to clipboard" });
           }
@@ -71,14 +84,15 @@ export function useCopyOnSelect(container: HTMLElement | null): void {
         () => {
           // Silent on failure: no false toast when the clipboard API is
           // unavailable (e.g. plain-HTTP remote sessions).
+          if (lastCopiedRef.current === text) lastCopiedRef.current = null;
         },
       );
     };
-    container.addEventListener("mousedown", onMouseDown);
-    container.addEventListener("mouseup", onMouseUp);
+    view.addEventListener("mousedown", onMouseDown);
+    view.addEventListener("mouseup", onMouseUp);
     return () => {
-      container.removeEventListener("mousedown", onMouseDown);
-      container.removeEventListener("mouseup", onMouseUp);
+      view.removeEventListener("mousedown", onMouseDown);
+      view.removeEventListener("mouseup", onMouseUp);
     };
   }, [container]);
 }
