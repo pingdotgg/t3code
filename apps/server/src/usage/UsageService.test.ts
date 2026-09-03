@@ -503,6 +503,70 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("accepts a canonical negative-offset window late in the local day", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const baseDir = NodePath.join(home, "negative-offset-retention-state");
+      const stateDir = NodePath.join(baseDir, "userdata");
+      const totals = {
+        uncachedInputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 5,
+        reasoningTokens: 0,
+      };
+      yield* Effect.promise(() => NodeFSP.mkdir(stateDir, { recursive: true }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(stateDir, "usage-record-ledger.json"),
+          JSON.stringify({
+            version: 2,
+            // At 01:00 UTC, June 4 is still the previous local day in Los Angeles.
+            generatedAtMs: Date.parse("2026-09-03T01:00:00.000Z"),
+            aggregates: [
+              {
+                hostId: "mac",
+                provider: "claude",
+                resolvedHomePath: "/a/.claude",
+                volumeId: "vol-1",
+                bucketStartMs: Date.parse("2026-06-04T12:00:00.000Z"),
+                model: "claude-fable-5",
+                totals,
+                pricedTotals: totals,
+                savingsTotals: totals,
+                legacyPricing: false,
+                legacyPricingRecords: 0,
+                reportedCostUsd: 0,
+                records: 1,
+                unpricedRecords: 0,
+                providerReportedRecords: 0,
+                sessions: ["session-1"],
+              },
+            ],
+            sources: [],
+          }),
+        ),
+      );
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-negative-offset-retention-test",
+            baseDir,
+            home,
+            settings,
+          }),
+        ),
+      );
+      const result = yield* service.readSummary({
+        timeZone: "America/Los_Angeles",
+        sinceDay: UsageDay.make("2026-06-04"),
+        untilDay: UsageDay.make("2026-09-01"),
+        resolution: "day",
+      });
+      assert.strictEqual(totalOutputTokens(result), 5);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("serves a remote-timezone preset from the normalized ledger", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;

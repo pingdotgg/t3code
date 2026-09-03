@@ -275,16 +275,67 @@ function isCommonPreset(input: UsageSummaryInput): boolean {
   return days === 1 || days === 7 || days === 30 || days === 90;
 }
 
+function localStartOfDayMs(timeZone: string, day: string): number {
+  const targetMs = Date.parse(`${day}T00:00:00.000Z`);
+  if (!Number.isFinite(targetMs)) return Number.NaN;
+  let formatter: Intl.DateTimeFormat;
+  try {
+    formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
+  } catch {
+    formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
+  }
+
+  const [targetYear, targetMonth, targetDay] = day.split("-");
+  let candidateMs = targetMs;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const parts = Object.fromEntries(
+      formatter.formatToParts(new Date(candidateMs)).map(({ type, value }) => [type, value]),
+    );
+    if (
+      parts.year === targetYear &&
+      parts.month === targetMonth &&
+      parts.day === targetDay &&
+      parts.hour === "00" &&
+      parts.minute === "00" &&
+      parts.second === "00"
+    ) {
+      return candidateMs;
+    }
+    const localMs = Date.parse(
+      `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}Z`,
+    );
+    if (!Number.isFinite(localMs)) return Number.NaN;
+    const adjustedMs = targetMs - (localMs - targetMs);
+    if (adjustedMs === candidateMs) return candidateMs;
+    candidateMs = adjustedMs;
+  }
+  return candidateMs;
+}
+
 function isWithinLedgerRetention(input: UsageSummaryInput, nowMs: number): boolean {
   const sinceMs =
     input.resolution === "hour" && input.sinceTime !== undefined
       ? Date.parse(input.sinceTime)
-      : Date.parse(`${input.sinceDay}T00:00:00Z`);
-  // A daily calendar boundary can begin before UTC midnight in a positive
-  // offset zone. Requiring one extra day after the retention cutoff is
-  // conservative and keeps canonical 90-day windows inside the 92-day ledger.
-  const dailySafetyMs = input.resolution === "hour" ? 0 : DAY_MS;
-  return Number.isFinite(sinceMs) && sinceMs >= nowMs - USAGE_LEDGER_RETENTION_MS + dailySafetyMs;
+      : localStartOfDayMs(input.timeZone, input.sinceDay);
+  return Number.isFinite(sinceMs) && sinceMs >= nowMs - USAGE_LEDGER_RETENTION_MS;
 }
 
 function isCanonicalLedgerInput(input: UsageSummaryInput): boolean {
