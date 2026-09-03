@@ -468,6 +468,18 @@ export function PullRequestSummaryTab({
   const hiddenCommentCount = detail.comments.length - recentComments.length;
   const [commentOrder, setCommentOrder] = useState<"newest" | "oldest">("newest");
   const visibleComments = orderPullRequestComments(recentComments, commentOrder);
+  const showOldestCommentsButton =
+    hiddenCommentCount > 0 ? (
+      <Button
+        size="sm"
+        variant="outline"
+        className="w-full"
+        onClick={() => setShown({ url: detail.url, count: shownComments + COMMENT_PAGE })}
+      >
+        Show {Math.min(hiddenCommentCount, COMMENT_PAGE)} oldest{" "}
+        {hiddenCommentCount === 1 ? "comment" : "comments"}
+      </Button>
+    ) : null;
   // Read from the whole conversation, not the window shown below it: a verdict older than the
   // last thirty comments still stands.
   const reviewOutcomes = latestPullRequestReviewOutcomes(detail.comments, detail.commits);
@@ -864,22 +876,7 @@ export function PullRequestSummaryTab({
               <p className="py-2 text-xs text-muted-foreground">No comments yet.</p>
             ) : (
               <div className="space-y-3">
-                {hiddenCommentCount > 0 ? (
-                  // Hundreds of comments are hundreds of markdown renders, and the ones worth
-                  // opening a pull request for are the recent ones. The rest are one press away and
-                  // stay rendered once asked for.
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full"
-                    onClick={() =>
-                      setShown({ url: detail.url, count: shownComments + COMMENT_PAGE })
-                    }
-                  >
-                    Show {Math.min(hiddenCommentCount, COMMENT_PAGE)} earlier{" "}
-                    {hiddenCommentCount === 1 ? "comment" : "comments"}
-                  </Button>
-                ) : null}
+                {commentOrder === "oldest" ? showOldestCommentsButton : null}
                 {visibleComments.map((comment) => {
                   const thread = threadByCommentId.get(comment.id);
                   const body = visibleBody(comment.body);
@@ -991,6 +988,7 @@ export function PullRequestSummaryTab({
                     </article>
                   );
                 })}
+                {commentOrder === "newest" ? showOldestCommentsButton : null}
               </div>
             )}
           </>
