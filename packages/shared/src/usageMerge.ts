@@ -1,4 +1,4 @@
-// @effect-diagnostics globalDate:off
+// @effect-diagnostics globalDate:off -- Usage summaries use calendar-day boundaries in each environment's zone.
 /**
  * Merges per-environment usage summaries into the single view the page renders.
  *

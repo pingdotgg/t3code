@@ -1,6 +1,6 @@
-// @effect-diagnostics globalDate:off
-// @effect-diagnostics globalDateInEffect:off
-// @effect-diagnostics preferSchemaOverJson:off
+// @effect-diagnostics globalDate:off -- Transcript timestamps are converted to viewer-local calendar days.
+// @effect-diagnostics globalDateInEffect:off -- Date conversions use captured scan instants inside Effect workflows.
+// @effect-diagnostics preferSchemaOverJson:off -- Persisted usage caches use explicit JSON codecs for versioned files.
 /**
  * UsageService - scans provider transcripts and returns priced usage buckets.
  *
