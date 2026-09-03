@@ -291,7 +291,8 @@ export const make = Effect.gen(function* () {
   const resolveProjects = Effect.fn("UsageService.resolveProjects")(function* () {
     const projects = yield* projectRepository
       .listAll()
-      .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    if (projects === null) return undefined;
     const projectRoots = yield* Effect.forEach(
       projects,
       Effect.fnUntraced(function* (project) {
@@ -503,6 +504,7 @@ export const make = Effect.gen(function* () {
       concurrency: 2,
     });
 
+    const resolveProject = yield* resolveProjects();
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
@@ -510,7 +512,7 @@ export const make = Effect.gen(function* () {
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
       rates,
-      resolveProject: yield* resolveProjects(),
+      ...(resolveProject === undefined ? {} : { resolveProject }),
     });
 
     const sources: UsageSource[] = [];
@@ -681,9 +683,16 @@ export const make = Effect.gen(function* () {
       if (!claim.shared) worktreeToThread.set(worktree, claim.ref);
     }
 
-    const runtimes = yield* runtimeRepository
-      .list()
-      .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+    const runtimes = yield* runtimeRepository.list().pipe(
+      Effect.catchCause(
+        (cause) =>
+          new UsageReadError({
+            reason: "scanFailed",
+            detail: "Provider runtime state could not be read",
+            cause: Cause.squash(cause),
+          }),
+      ),
+    );
     for (const runtime of runtimes) {
       for (const sessionKey of runtimeUsageSessionKeys(
         runtime.providerName,
@@ -755,13 +764,14 @@ export const make = Effect.gen(function* () {
     const windowStartMs =
       (exactWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
 
+    const resolveProject = yield* resolveProjects();
     const accumulator = new ThreadUsageAccumulator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
       ...exactWindow,
       rates,
-      resolveProject: yield* resolveProjects(),
+      ...(resolveProject === undefined ? {} : { resolveProject }),
     });
 
     // Preferred transcript per session for title extraction: the main file,

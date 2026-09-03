@@ -120,7 +120,10 @@ export function summarizeThreadCost(
   }
 
   const pricedComponents = pricedCacheWriteUsd + cacheReadUsd + freshUsd;
-  const providerReportedUsd = Math.max(0, costUsd - pricedComponents);
+  const providerReportedUsd = Math.max(
+    0,
+    costUsd - (cacheWriteComplete ? pricedComponents : cacheReadUsd + freshUsd),
+  );
   return {
     costUsd,
     cacheWriteUsd: cacheWriteComplete ? cacheWriteUsd : null,

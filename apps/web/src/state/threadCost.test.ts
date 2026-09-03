@@ -92,10 +92,10 @@ describe("thread cost state", () => {
     expect(result.cachedInputTokens).toBe(220);
   });
 
-  it("marks cache-write cost unavailable when any matching row is unpriced", () => {
+  it("marks cache-write cost unavailable and keeps priced writes in the remainder", () => {
     const result = summarizeThreadCost([row({ cacheWriteUsd: null })], threadId);
 
     expect(result.cacheWriteUsd).toBeNull();
-    expect(result.providerReportedUsd).toBe(0.5);
+    expect(result.providerReportedUsd).toBe(1.5);
   });
 });

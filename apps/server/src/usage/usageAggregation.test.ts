@@ -329,5 +329,10 @@ describe("makeProjectResolver", () => {
   it("matches mixed slash styles and normalized segments", () => {
     expect(resolver("\\work\\app\\src")).toEqual({ projectId: appId, title: "App" });
     expect(resolver("/work/app/other/../src")).toEqual({ projectId: appId, title: "App" });
+
+    const windowsResolver = makeProjectResolver([
+      { projectId: appId, workspaceRoot: "C:\\Work\\App", title: "App", deleted: false },
+    ]);
+    expect(windowsResolver("c:/work/app/src")).toEqual({ projectId: appId, title: "App" });
   });
 });
