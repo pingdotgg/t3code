@@ -40,6 +40,36 @@ function claudeLine(id: number, outputTokens: number, timestamp = "2026-08-01T10
   })}\n`;
 }
 
+function codexLine(outputTokens: number): string {
+  return `${JSON.stringify({
+    type: "event_msg",
+    timestamp: "2026-08-01T10:00:05Z",
+    payload: {
+      type: "token_count",
+      info: { last_token_usage: { input_tokens: 100, output_tokens: outputTokens } },
+    },
+  })}\n`;
+}
+
+function codexSessionLines(outputTokens: number): string {
+  return (
+    [
+      {
+        type: "session_meta",
+        timestamp: "2026-08-01T10:00:00Z",
+        payload: { type: "session_meta", id: "codex-session-1" },
+      },
+      {
+        type: "turn_context",
+        timestamp: "2026-08-01T10:00:01Z",
+        payload: { type: "turn_context", model: "gpt-5.6-codex" },
+      },
+    ]
+      .map((line) => JSON.stringify(line))
+      .join("\n") + `\n${codexLine(outputTokens)}`
+  );
+}
+
 const WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
   sinceDay: UsageDay.make("2026-07-31"),
@@ -657,6 +687,31 @@ describe("UsageService", () => {
       const second = yield* UsageService.make.pipe(Effect.provide(layers));
       const remote = yield* second.readSummary({ ...canonical, timeZone: "Pacific/Kiritimati" });
       assert.strictEqual(totalOutputTokens(remote), 0);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("dedupes within a provider directory but not across directories", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const duplicateClaude = NodePath.join(NodePath.dirname(transcript), "duplicate.jsonl");
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      yield* Effect.promise(() => NodeFSP.writeFile(duplicateClaude, claudeLine(1, 5)));
+
+      const codexDir = NodePath.join(home, "codex", "sessions");
+      yield* Effect.promise(() => NodeFSP.mkdir(codexDir, { recursive: true }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(NodePath.join(codexDir, "rollout.jsonl"), codexSessionLines(5)),
+      );
+
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-directory-dedupe-test", home, settings }),
+        ),
+      );
+      const result = yield* service.refreshSummary(currentCanonicalWindow());
+      // The two Claude files represent one record, while the Codex record is
+      // from another provider directory and must remain independent.
+      assert.strictEqual(totalOutputTokens(result), 10);
     }).pipe(Effect.scoped),
   );
 

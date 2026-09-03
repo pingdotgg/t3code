@@ -663,6 +663,7 @@ export const make = Effect.gen(function* () {
       }),
       // A durable snapshot is an optimization. A failed write leaves the
       // previous last-good file intact and the next refresh retries it.
+      Effect.tapCause((cause) => Effect.logWarning("Failed to persist usage snapshots", { cause })),
       Effect.catchCause(() => Effect.void),
     );
   });
@@ -685,6 +686,7 @@ export const make = Effect.gen(function* () {
       Effect.map(() => {
         usageLedgerDirty = false;
       }),
+      Effect.tapCause((cause) => Effect.logWarning("Failed to persist usage ledger", { cause })),
       Effect.catchCause(() => Effect.void),
     );
   });
@@ -699,6 +701,9 @@ export const make = Effect.gen(function* () {
         cacheDirty = false;
       }),
       // A cache we cannot write is a slower next start, not a failed read.
+      Effect.tapCause((cause) =>
+        Effect.logWarning("Failed to persist usage scan cache", { cause }),
+      ),
       Effect.catchCause(() => Effect.void),
     );
   });
@@ -921,7 +926,6 @@ export const make = Effect.gen(function* () {
 
     const sources: UsageSource[] = [];
     const ledgerAggregates = new Map<string, LedgerAggregate>();
-    const ledgerSeen = new Set<string>();
     const ledgerStartMs = startedAtMs - USAGE_LEDGER_RETENTION_MS;
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
@@ -956,6 +960,10 @@ export const make = Effect.gen(function* () {
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
+      // Dedupe keys are scoped to one provider directory. Keep this set local
+      // so the hot path stores only the source key, while identical keys in
+      // another provider directory remain distinct records.
+      const ledgerSeen = new Set<string>();
 
       for (const file of files) {
         livePaths.add(file.path);
@@ -979,10 +987,7 @@ export const make = Effect.gen(function* () {
           // viewer zone. Keep quarter-hour cells so IANA offsets at :30/:45
           // and rolling windows aligned to the half hour can be rebucketed
           // without retaining every transcript record.
-          const dedupeKey =
-            record.dedupeKey === null
-              ? null
-              : `${hostId}\u0000${provider}\u0000${dir}\u0000${volumeId}\u0000${record.dedupeKey}`;
+          const dedupeKey = record.dedupeKey;
           if (dedupeKey !== null) {
             if (ledgerSeen.has(dedupeKey)) continue;
             ledgerSeen.add(dedupeKey);
@@ -1183,16 +1188,23 @@ export const make = Effect.gen(function* () {
             : canonicalSummary(summary);
         }
 
-        const waiter = Deferred.makeUnsafe<Exit.Exit<UsageSummary, UsageReadError>, never>();
-        canonicalRefreshWaiter = waiter;
-        const canonicalInput = isCanonicalLedgerInput(input)
-          ? input
-          : (yield* defaultDailyInputs)[0]!;
-        const summary = yield* scanAndPersist(canonicalInput).pipe(
-          Effect.onExit((exit) =>
-            Effect.sync(() => {
-              if (canonicalRefreshWaiter === waiter) canonicalRefreshWaiter = null;
-            }).pipe(Effect.andThen(Deferred.succeed(waiter, exit))),
+        const { waiter, canonicalInput } = yield* Effect.uninterruptibleMask(() =>
+          Effect.gen(function* () {
+            const waiter = Deferred.makeUnsafe<Exit.Exit<UsageSummary, UsageReadError>, never>();
+            canonicalRefreshWaiter = waiter;
+            const canonicalInput = isCanonicalLedgerInput(input)
+              ? input
+              : (yield* defaultDailyInputs)[0]!;
+            return { waiter, canonicalInput };
+          }),
+        );
+        const summary = yield* Effect.uninterruptibleMask((restore) =>
+          restore(scanAndPersist(canonicalInput)).pipe(
+            Effect.onExit((exit) =>
+              Effect.sync(() => {
+                if (canonicalRefreshWaiter === waiter) canonicalRefreshWaiter = null;
+              }).pipe(Effect.andThen(Deferred.succeed(waiter, exit))),
+            ),
           ),
         );
         return yield* canonicalSummary(summary);
