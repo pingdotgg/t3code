@@ -235,6 +235,10 @@
       "types": "./src/usageMerge.ts",
       "import": "./src/usageMerge.ts"
     },
+    "./usageRefreshState": {
+      "types": "./src/usageRefreshState.ts",
+      "import": "./src/usageRefreshState.ts"
+    },
     "./usageFormat": {
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"

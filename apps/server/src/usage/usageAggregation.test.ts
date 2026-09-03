@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { UsageAggregator } from "./usageAggregation.ts";
 import type { RateTable } from "./usagePricing.ts";
+import { EMPTY_TOTALS } from "./usageTranscripts.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
 
 const rates: RateTable = new Map([
@@ -199,6 +200,51 @@ describe("UsageAggregator", () => {
       sessions: ["session-a"],
     });
     expect(aggregator.finish().buckets[0]?.cacheSavingsUsd).toBeCloseTo(0.009, 9);
+  });
+
+  it("counts only legacy null-cost rows in a mixed provenance cell", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates: new Map(),
+    });
+    const bucketStartMs = Date.parse("2026-08-07T04:00:00.000Z");
+    aggregator.addAggregate({
+      bucketStartMs,
+      provider: "claude",
+      model: "legacy-model",
+      totals: { ...record().totals, outputTokens: 5 },
+      pricedTotals: { ...record().totals, outputTokens: 5 },
+      savingsTotals: { ...record().totals, outputTokens: 5 },
+      reportedCostUsd: 0,
+      records: 1,
+      unpricedRecords: 0,
+      providerReportedRecords: 0,
+      legacyPricing: true,
+      legacyPricingRecords: 1,
+      sessions: ["legacy-session"],
+    });
+    aggregator.addAggregate({
+      bucketStartMs,
+      provider: "claude",
+      model: "legacy-model",
+      totals: { ...EMPTY_TOTALS, outputTokens: 7 },
+      pricedTotals: EMPTY_TOTALS,
+      savingsTotals: { ...EMPTY_TOTALS, outputTokens: 7 },
+      reportedCostUsd: 1.5,
+      records: 1,
+      unpricedRecords: 0,
+      providerReportedRecords: 1,
+      legacyPricing: false,
+      legacyPricingRecords: 0,
+      sessions: ["provider-session"],
+    });
+
+    const bucket = aggregator.finish().buckets[0]!;
+    expect(bucket.records).toBe(2);
+    expect(bucket.unpricedRecords).toBe(1);
+    expect(bucket.costUsd).toBe(1.5);
   });
 
   it("drops records outside the window", () => {

@@ -17,6 +17,10 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  refreshStateForWindowChange,
+  type UsageRefreshState,
+} from "@t3tools/shared/usageRefreshState";
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
@@ -99,7 +103,7 @@ export function useUsage(input: UsageSummaryInput): UsageView {
   const refreshUsageSummary = useAtomCommand(serverEnvironment.refreshUsageSummary, {
     reportFailure: false,
   });
-  const [manualRefreshState, setManualRefreshState] = useState({
+  const [manualRefreshState, setManualRefreshState] = useState<UsageRefreshState>({
     windowKey,
     requestId: 0,
     refreshing: false,
@@ -108,17 +112,23 @@ export function useUsage(input: UsageSummaryInput): UsageView {
   const currentWindowKey = useRef(windowKey);
   currentWindowKey.current = windowKey;
   const currentRefreshId = useRef(0);
+  const pendingRefreshWindowKey = useRef(windowKey);
   useEffect(() => {
+    // A refresh started while selecting the next window already targets this
+    // committed key. Keep its request id and state so the completion can settle
+    // after React commits the selection.
+    const nextState = refreshStateForWindowChange(
+      manualRefreshState,
+      windowKey,
+      pendingRefreshWindowKey.current,
+    );
+    if (nextState === manualRefreshState) return;
     // A refresh belongs to one window. Invalidate its completion and clear the
     // state so switching away and back cannot resurrect an old spinner/error.
-    currentRefreshId.current += 1;
-    setManualRefreshState({
-      windowKey,
-      requestId: currentRefreshId.current,
-      refreshing: false,
-      error: null,
-    });
-  }, [windowKey]);
+    currentRefreshId.current = nextState.requestId;
+    pendingRefreshWindowKey.current = windowKey;
+    setManualRefreshState(nextState);
+  }, [manualRefreshState, windowKey]);
 
   // Explicit refresh is a server command, so it really rescans and publishes
   // a new last-good snapshot. The normal query remains snapshot-only.
@@ -138,6 +148,7 @@ export function useUsage(input: UsageSummaryInput): UsageView {
             });
       const requestId = currentRefreshId.current + 1;
       currentRefreshId.current = requestId;
+      pendingRefreshWindowKey.current = requestWindowKey;
       setManualRefreshState({
         windowKey: requestWindowKey,
         requestId,

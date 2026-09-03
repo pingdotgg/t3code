@@ -166,6 +166,8 @@ const UsageLedgerAggregate = Schema.Struct({
   ),
   /** v1 rows need the current rate table to determine whether they are priced. */
   legacyPricing: Schema.optional(Schema.Boolean),
+  /** Number of null-cost v1 rows represented by this aggregate. */
+  legacyPricingRecords: Schema.optional(Schema.Number),
   reportedCostUsd: Schema.Number,
   records: Schema.Number,
   unpricedRecords: Schema.Number,
@@ -331,6 +333,7 @@ function ledgerAggregateFromRecord(entry: {
     unpricedRecords: 0,
     savingsTotals: record.totals,
     legacyPricing: record.reportedCostUsd === null,
+    legacyPricingRecords: record.reportedCostUsd === null ? 1 : 0,
     providerReportedRecords: record.reportedCostUsd === null ? 0 : 1,
     sessions: record.sessionId.length === 0 ? [] : [record.sessionId],
   };
@@ -354,6 +357,7 @@ function mergeLedgerAggregate(
     pricedTotals: addTotals(existing.pricedTotals, incoming.pricedTotals),
     savingsTotals: addTotals(existing.savingsTotals, incoming.savingsTotals),
     legacyPricing: existing.legacyPricing || incoming.legacyPricing,
+    legacyPricingRecords: existing.legacyPricingRecords + incoming.legacyPricingRecords,
     reportedCostUsd: existing.reportedCostUsd + incoming.reportedCostUsd,
     records: existing.records + incoming.records,
     unpricedRecords: existing.unpricedRecords + incoming.unpricedRecords,
@@ -373,6 +377,7 @@ interface LedgerAggregate {
   readonly pricedTotals: UsageRecord["totals"];
   readonly savingsTotals: UsageRecord["totals"];
   readonly legacyPricing: boolean;
+  readonly legacyPricingRecords: number;
   readonly reportedCostUsd: number;
   readonly records: number;
   readonly unpricedRecords: number;
@@ -622,6 +627,7 @@ export const make = Effect.gen(function* () {
             ...entry,
             savingsTotals: entry.savingsTotals ?? entry.totals,
             legacyPricing: entry.legacyPricing ?? false,
+            legacyPricingRecords: entry.legacyPricingRecords ?? 0,
           });
         }
         return;
@@ -961,6 +967,7 @@ export const make = Effect.gen(function* () {
             pricedTotals: priced.costSource === "modelPriced" ? record.totals : EMPTY_TOTALS,
             savingsTotals: record.totals,
             legacyPricing: false,
+            legacyPricingRecords: 0,
             reportedCostUsd:
               priced.costSource === "providerReported" ? (record.reportedCostUsd ?? 0) : 0,
             records: 1,
