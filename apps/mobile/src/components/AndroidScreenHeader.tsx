@@ -3,14 +3,18 @@ import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
+import { StatusPulse } from "./StatusPulse";
 import { AppText as Text } from "./AppText";
 import { cn } from "../lib/cn";
 
 export interface AndroidHeaderAction {
+  readonly id?: string;
   readonly accessibilityLabel: string;
   readonly icon: AppSymbolName;
   readonly onPress: () => void;
   readonly disabled?: boolean;
+  readonly pulse?: boolean;
+  readonly tintColorClassName?: string;
 }
 
 export function AndroidHeaderIconButton(props: {
@@ -18,6 +22,8 @@ export function AndroidHeaderIconButton(props: {
   readonly icon: AppSymbolName;
   readonly onPress?: () => void;
   readonly disabled?: boolean;
+  readonly pulse?: boolean;
+  readonly tintColorClassName?: string;
 }) {
   return (
     <Pressable
@@ -31,12 +37,17 @@ export function AndroidHeaderIconButton(props: {
         props.disabled && "opacity-55",
       )}
     >
-      <SymbolView
-        name={props.icon}
-        size={20}
-        tintColorClassName={props.disabled ? "accent-icon-subtle" : "accent-foreground"}
-        type="monochrome"
-      />
+      <StatusPulse active={props.pulse === true && !props.disabled}>
+        <SymbolView
+          name={props.icon}
+          size={20}
+          tintColorClassName={
+            props.tintColorClassName ??
+            (props.disabled ? "accent-icon-subtle" : "accent-foreground")
+          }
+          type="monochrome"
+        />
+      </StatusPulse>
     </Pressable>
   );
 }
@@ -92,11 +103,13 @@ export function AndroidScreenHeader(props: {
 
         {props.actions?.map((action) => (
           <AndroidHeaderIconButton
-            key={action.accessibilityLabel}
+            key={action.id ?? action.accessibilityLabel}
             accessibilityLabel={action.accessibilityLabel}
             disabled={action.disabled}
             icon={action.icon}
             onPress={action.onPress}
+            pulse={action.pulse}
+            tintColorClassName={action.tintColorClassName}
           />
         ))}
         {props.trailing}

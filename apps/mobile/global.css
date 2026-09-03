@@ -67,6 +67,7 @@
       --color-icon: #262626;
       --color-icon-muted: #525252;
       --color-icon-subtle: #a3a3a3;
+      --color-terminal-active: #0d9488;
 
       /* Header / glass chrome */
       --color-header: rgba(255, 255, 255, 0.97);
@@ -166,6 +167,7 @@
       --color-icon: #f5f5f5;
       --color-icon-muted: #a3a3a3;
       --color-icon-subtle: #8e8e93;
+      --color-terminal-active: rgba(94, 234, 212, 0.9);
 
       /* Header / glass chrome */
       --color-header: rgba(10, 10, 10, 0.97);

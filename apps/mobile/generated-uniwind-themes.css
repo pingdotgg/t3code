@@ -160,6 +160,7 @@
       --color-icon: #501854;
       --color-icon-muted: #ac1668;
       --color-icon-subtle: #ac1668;
+      --color-terminal-active: #0d9488;
       --color-header: rgba(253, 247, 253, 0.97);
       --color-header-border: #efbdeb;
       --color-glass-surface: rgba(255, 255, 255, 0.74);
@@ -285,6 +286,7 @@
       --color-icon: #f9f8fb;
       --color-icon-muted: #d4c7e1;
       --color-icon-subtle: #e7d0dd;
+      --color-terminal-active: rgba(94, 234, 212, 0.9);
       --color-header: rgba(31, 26, 36, 0.97);
       --color-header-border: #27242c;
       --color-glass-surface: rgba(16, 10, 14, 0.74);
@@ -410,6 +412,7 @@
       --color-icon: #241523;
       --color-icon-muted: #746c73;
       --color-icon-subtle: #746c73;
+      --color-terminal-active: #0d9488;
       --color-header: rgba(243, 247, 244, 0.97);
       --color-header-border: #d5e6dd;
       --color-glass-surface: rgba(231, 233, 232, 0.74);
@@ -535,6 +538,7 @@
       --color-icon: #fffaff;
       --color-icon-muted: #919595;
       --color-icon-subtle: #919595;
+      --color-terminal-active: rgba(94, 234, 212, 0.9);
       --color-header: rgba(27, 40, 33, 0.97);
       --color-header-border: #36654c;
       --color-glass-surface: rgba(68, 77, 73, 0.74);
@@ -660,6 +664,7 @@
       --color-icon: #241523;
       --color-icon-muted: #746c75;
       --color-icon-subtle: #746c75;
+      --color-terminal-active: #0d9488;
       --color-header: rgba(245, 247, 248, 0.97);
       --color-header-border: #d8e4ee;
       --color-glass-surface: rgba(232, 233, 235, 0.74);
@@ -785,6 +790,7 @@
       --color-icon: #fffaff;
       --color-icon-muted: #8d8f97;
       --color-icon-subtle: #8d8f97;
+      --color-terminal-active: rgba(94, 234, 212, 0.9);
       --color-header: rgba(23, 33, 43, 0.97);
       --color-header-border: #36566f;
       --color-glass-surface: rgba(65, 72, 81, 0.74);
@@ -910,6 +916,7 @@
       --color-icon: #241523;
       --color-icon-muted: #766c74;
       --color-icon-subtle: #766c74;
+      --color-terminal-active: #0d9488;
       --color-header: rgba(249, 247, 245, 0.97);
       --color-header-border: #eee0d9;
       --color-glass-surface: rgba(236, 233, 233, 0.74);
@@ -1035,6 +1042,7 @@
       --color-icon: #fffaff;
       --color-icon-muted: #968e8f;
       --color-icon-subtle: #968e8f;
+      --color-terminal-active: rgba(94, 234, 212, 0.9);
       --color-header: rgba(41, 30, 26, 0.97);
       --color-header-border: #6e4934;
       --color-glass-surface: rgba(79, 69, 67, 0.74);
@@ -1160,6 +1168,7 @@
       --color-icon: #241523;
       --color-icon-muted: #766c76;
       --color-icon-subtle: #766c76;
+      --color-terminal-active: #0d9488;
       --color-header: rgba(248, 247, 249, 0.97);
       --color-header-border: #e5e0f0;
       --color-glass-surface: rgba(235, 233, 237, 0.74);
@@ -1285,6 +1294,7 @@
       --color-icon: #fffaff;
       --color-icon-muted: #8e8a95;
       --color-icon-subtle: #8e8a95;
+      --color-terminal-active: rgba(94, 234, 212, 0.9);
       --color-header: rgba(29, 25, 41, 0.97);
       --color-header-border: #4a3c70;
       --color-glass-surface: rgba(69, 66, 80, 0.74);

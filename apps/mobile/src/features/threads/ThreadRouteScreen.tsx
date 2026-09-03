@@ -49,6 +49,11 @@ import {
   stagePendingTerminalLaunch,
 } from "../terminal/terminalLaunchContext";
 import { terminalDebugLog } from "../terminal/terminalDebugLog";
+import {
+  countRunningTerminalSessions,
+  terminalActionAccessibilityLabel,
+  terminalRunningSessionLabel,
+} from "../terminal/terminalRunningStatus";
 import { ThreadDetailScreen } from "./ThreadDetailScreen";
 import {
   ThreadGitControls,
@@ -325,6 +330,8 @@ function ThreadRouteContent(
       }),
     [knownTerminalSessions, selectedThreadProject?.workspaceRoot],
   );
+  const runningTerminalCount = countRunningTerminalSessions(terminalMenuSessions);
+  const terminalRunningLabel = terminalRunningSessionLabel(runningTerminalCount);
   const selectedThreadDetailWorktreePath = selectedThreadDetail?.worktreePath ?? null;
   const handleReconnectEnvironment = useCallback(() => {
     if (!environmentId) {
@@ -698,9 +705,12 @@ function ThreadRouteContent(
     }
     if (selectedThreadProject?.workspaceRoot) {
       actions.push({
-        accessibilityLabel: "Open terminal",
+        id: "terminal",
+        accessibilityLabel: terminalActionAccessibilityLabel(runningTerminalCount),
         icon: "terminal",
         onPress: () => handleOpenTerminal(null),
+        pulse: terminalRunningLabel !== null,
+        tintColorClassName: terminalRunningLabel === null ? undefined : "accent-terminal-active",
       });
     }
     actions.push({
@@ -723,8 +733,10 @@ function ThreadRouteContent(
     handleOpenGitInspector,
     handleToggleInspector,
     props.onReturnToThread,
+    runningTerminalCount,
     selectedThreadCwd,
     selectedThreadProject?.workspaceRoot,
+    terminalRunningLabel,
   ]);
 
   // Deep links / cold starts land with Thread as the ONLY route, where the
@@ -817,6 +829,7 @@ function ThreadRouteContent(
     <>
       {activeInspectorRenderer ? <InspectorPaneRoleActivation /> : null}
       <NativeStackScreenOptions
+        optionsVersion={layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems}
         options={{
           // Android draws its own in-flow header (AndroidScreenHeader below);
           // the native stack header stays iOS-only.

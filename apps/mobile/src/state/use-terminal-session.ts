@@ -5,11 +5,21 @@ import {
   type KnownTerminalSession,
   type TerminalSessionState,
 } from "@t3tools/client-runtime/state/terminal";
+import { useAtomValue } from "@effect/atom-react";
 import { ThreadId, type EnvironmentId, type TerminalAttachInput } from "@t3tools/contracts";
 import { useMemo } from "react";
 
 import { useEnvironmentQuery } from "./query";
 import { terminalEnvironment } from "./terminal";
+import { createRunningTerminalState } from "./terminal-running-state";
+
+const runningTerminalState = createRunningTerminalState({
+  getMetadataAtom: (environmentId) =>
+    terminalEnvironment.metadata({
+      environmentId,
+      input: null,
+    }),
+});
 
 export function useAttachedTerminalSession(input: {
   readonly environmentId: EnvironmentId | null;
@@ -79,4 +89,13 @@ export function useKnownTerminalSessions(input: {
         }),
       );
   }, [input.environmentId, input.threadId, metadata.data]);
+}
+
+export function useThreadHasRunningTerminal(input: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}): boolean {
+  return useAtomValue(
+    runningTerminalState.threadHasRunningTerminalAtom(input.environmentId, input.threadId),
+  );
 }

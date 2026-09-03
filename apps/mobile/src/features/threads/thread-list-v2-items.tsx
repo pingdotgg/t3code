@@ -21,9 +21,15 @@ import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import { useThreadHasRunningTerminal } from "../../state/use-terminal-session";
 import { useThreadPr } from "../../state/use-thread-pr";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { TerminalRunningIndicator } from "../terminal/TerminalRunningIndicator";
+import {
+  threadRunningAccessibilityLabel,
+  threadRunningIndicatorPlacement,
+} from "../terminal/terminalRunningStatus";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import {
   resolveThreadListV2SnoozeMenuSelection,
@@ -407,6 +413,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   } = props;
   const snoozedRow = props.snoozed === true;
   const pinnedRow = props.pinned === true;
+  const hasRunningTerminal = useThreadHasRunningTerminal({
+    environmentId: thread.environmentId,
+    threadId: thread.id,
+  });
+  const threadAccessibilityLabel = threadRunningAccessibilityLabel({
+    title: thread.title,
+    hasRunningTerminal,
+  });
+  const terminalIndicatorPlacement = threadRunningIndicatorPlacement({
+    variant,
+    hasRunningTerminal,
+  });
 
   const pr = useThreadPr(thread, props.projectCwd ?? props.project?.workspaceRoot ?? null);
 
@@ -733,6 +751,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         </View>
       ) : null}
       <View className="mt-1 flex-row items-center gap-2">
+        {terminalIndicatorPlacement === "metadata" ? (
+          <TerminalRunningIndicator selected={selected} />
+        ) : null}
         {status === "failed" && thread.session?.lastError ? (
           <Text
             className={cn(
@@ -811,7 +832,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     variant === "card" ? (
       <Pressable
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={thread.title}
+        accessibilityLabel={threadAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         onPress={() => {
@@ -851,7 +872,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ) : (
       <Pressable
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={thread.title}
+        accessibilityLabel={threadAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         className={sidebarPane ? undefined : "bg-screen"}
@@ -923,6 +944,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               ? props.snoozeWakeLabelText
               : timeLabel}
           </Text>
+          {terminalIndicatorPlacement === "trailing" ? (
+            <TerminalRunningIndicator selected={selected} size={12} />
+          ) : null}
         </View>
       </Pressable>
     );

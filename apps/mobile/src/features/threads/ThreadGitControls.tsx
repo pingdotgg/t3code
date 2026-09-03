@@ -10,7 +10,10 @@ import {
   requiresDefaultBranchConfirmation,
   resolveQuickAction,
 } from "@t3tools/client-runtime/state/vcs";
+import type { MenuAction } from "@react-native-menu/menu";
 import { useNavigation } from "@react-navigation/native";
+import { AndroidHeaderIconButton } from "../../components/AndroidScreenHeader";
+import { ControlPillMenu } from "../../components/ControlPill";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useCallback, useMemo } from "react";
 import { Alert } from "react-native";
@@ -22,6 +25,11 @@ import {
   projectScriptMenuLabel,
   type TerminalMenuSession,
 } from "../terminal/terminalMenu";
+import {
+  countRunningTerminalSessions,
+  terminalActionAccessibilityLabel,
+  terminalRunningSessionLabel,
+} from "../terminal/terminalRunningStatus";
 
 function truncateMiddle(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
@@ -105,6 +113,98 @@ type ThreadGitControlsProps = ThreadGitMenuProps & {
   readonly onOpenNewTerminal: () => void;
   readonly onRunProjectScript: (script: ProjectScript) => Promise<void>;
 };
+
+function TerminalHeaderMenuButton(props: ThreadGitControlsProps) {
+  const runningTerminalCount = countRunningTerminalSessions(props.terminalSessions);
+  const terminalRunningLabel = terminalRunningSessionLabel(runningTerminalCount);
+  const actions = useMemo<MenuAction[]>(
+    () => [
+      ...(props.projectScripts.length > 0
+        ? props.projectScripts.map((script) => ({
+            id: `project-script:${script.id}`,
+            image: projectScriptMenuIcon(script.icon),
+            subtitle: script.command,
+            title: projectScriptMenuLabel(script),
+          }))
+        : [
+            {
+              id: "project-script:none",
+              image: "play",
+              title: "No project scripts",
+              subtitle: "This project has no saved scripts yet",
+              attributes: { disabled: true } as const,
+            },
+          ]),
+      ...props.terminalSessions.map((session) => ({
+        id: `terminal-session:${session.terminalId}`,
+        image: "terminal",
+        subtitle: [
+          getTerminalStatusLabel({
+            status: session.status,
+            hasRunningSubprocess: session.hasRunningSubprocess,
+          }),
+          basename(session.cwd),
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        title: session.displayLabel,
+      })),
+      {
+        id: "terminal-new",
+        image: "plus",
+        subtitle: "Start another shell for this thread",
+        title: "Open new terminal",
+      },
+    ],
+    [props.projectScripts, props.terminalSessions],
+  );
+  const handleAction = useCallback(
+    (event: { nativeEvent: { event: string } }) => {
+      const id = event.nativeEvent.event;
+      if (id === "terminal-new") {
+        props.onOpenNewTerminal();
+        return;
+      }
+      if (id.startsWith("terminal-session:")) {
+        props.onOpenTerminal(id.slice("terminal-session:".length));
+        return;
+      }
+      if (id.startsWith("project-script:")) {
+        const scriptId = id.slice("project-script:".length);
+        const script = props.projectScripts.find((candidate) => candidate.id === scriptId);
+        if (script) {
+          void props.onRunProjectScript(script);
+        }
+      }
+    },
+    [props.onOpenNewTerminal, props.onOpenTerminal, props.onRunProjectScript, props.projectScripts],
+  );
+
+  const button = (
+    <AndroidHeaderIconButton
+      accessibilityLabel={terminalActionAccessibilityLabel(runningTerminalCount)}
+      disabled={!props.canOpenTerminal}
+      icon="terminal"
+      pulse={terminalRunningLabel !== null}
+      tintColorClassName={terminalRunningLabel === null ? undefined : "accent-terminal-active"}
+    />
+  );
+
+  if (!props.canOpenTerminal) {
+    return button;
+  }
+
+  return (
+    <ControlPillMenu
+      actions={actions}
+      isAnchoredToRight
+      onPressAction={handleAction}
+      title="Terminal"
+    >
+      {button}
+    </ControlPillMenu>
+  );
+}
 
 function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const navigation = useNavigation();
@@ -252,60 +352,9 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
   return useMemo(
     () => ({
       terminal: {
-        accessibilityLabel: "Open terminal",
-        disabled: !props.canOpenTerminal,
-        icon: { name: "terminal", type: "sfSymbol" },
-        identifier: "thread-right-terminal",
-        label: "Terminal",
-        menu: {
-          items: [
-            ...props.projectScripts.map((script) => ({
-              description: script.command,
-              icon: { name: projectScriptMenuIcon(script.icon), type: "sfSymbol" as const },
-              label: projectScriptMenuLabel(script),
-              onPress: () => void props.onRunProjectScript(script),
-              type: "action" as const,
-            })),
-            ...(props.projectScripts.length === 0
-              ? [
-                  {
-                    description: "This project has no saved scripts yet",
-                    disabled: true,
-                    icon: { name: "play", type: "sfSymbol" as const },
-                    label: "No project scripts",
-                    onPress: () => {},
-                    type: "action" as const,
-                  },
-                ]
-              : []),
-            ...props.terminalSessions.map((session) => ({
-              description: [
-                getTerminalStatusLabel({
-                  status: session.status,
-                  hasRunningSubprocess: session.hasRunningSubprocess,
-                }),
-                basename(session.cwd),
-              ]
-                .filter(Boolean)
-                .join(" · "),
-              icon: { name: "terminal", type: "sfSymbol" as const },
-              label: session.displayLabel,
-              onPress: () => props.onOpenTerminal(session.terminalId),
-              type: "action" as const,
-            })),
-            {
-              description: "Start another shell for this thread",
-              icon: { name: "plus", type: "sfSymbol" },
-              label: "Open new terminal",
-              onPress: props.onOpenNewTerminal,
-              type: "action",
-            },
-          ],
-          title: "Terminal",
-        },
-        sharesBackground: true,
-        type: "menu",
-        variant: "plain",
+        element: <TerminalHeaderMenuButton {...props} />,
+        hidesSharedBackground: true,
+        type: "custom",
       },
       files: {
         accessibilityLabel: "Open files",
@@ -425,60 +474,9 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
         />
       ) : null}
       {showActionControls ? (
-        <NativeHeaderToolbar.Menu
-          icon="terminal"
-          disabled={!props.canOpenTerminal}
-          separateBackground
-        >
-          {props.projectScripts.length > 0 ? (
-            props.projectScripts.map((script) => (
-              <NativeHeaderToolbar.MenuAction
-                key={script.id}
-                icon={projectScriptMenuIcon(script.icon)}
-                onPress={() => void props.onRunProjectScript(script)}
-                subtitle={script.command}
-              >
-                <NativeHeaderToolbar.Label>
-                  {projectScriptMenuLabel(script)}
-                </NativeHeaderToolbar.Label>
-              </NativeHeaderToolbar.MenuAction>
-            ))
-          ) : (
-            <NativeHeaderToolbar.MenuAction
-              icon="play"
-              disabled
-              onPress={() => {}}
-              subtitle="This project has no saved scripts yet"
-            >
-              <NativeHeaderToolbar.Label>No project scripts</NativeHeaderToolbar.Label>
-            </NativeHeaderToolbar.MenuAction>
-          )}
-          {props.terminalSessions.map((session) => (
-            <NativeHeaderToolbar.MenuAction
-              key={session.terminalId}
-              icon="terminal"
-              onPress={() => props.onOpenTerminal(session.terminalId)}
-              subtitle={[
-                getTerminalStatusLabel({
-                  status: session.status,
-                  hasRunningSubprocess: session.hasRunningSubprocess,
-                }),
-                basename(session.cwd),
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            >
-              <NativeHeaderToolbar.Label>{session.displayLabel}</NativeHeaderToolbar.Label>
-            </NativeHeaderToolbar.MenuAction>
-          ))}
-          <NativeHeaderToolbar.MenuAction
-            icon="plus"
-            onPress={props.onOpenNewTerminal}
-            subtitle="Start another shell for this thread"
-          >
-            <NativeHeaderToolbar.Label>Open new terminal</NativeHeaderToolbar.Label>
-          </NativeHeaderToolbar.MenuAction>
-        </NativeHeaderToolbar.Menu>
+        <NativeHeaderToolbar.Custom hidesSharedBackground>
+          <TerminalHeaderMenuButton {...props} />
+        </NativeHeaderToolbar.Custom>
       ) : null}
       {showActionControls && props.showDirectFileControl ? (
         <NativeHeaderToolbar.Button
