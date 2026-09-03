@@ -345,6 +345,14 @@ import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "../../state/server";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
+import {
+  ComposerAddonSlot,
+  composerAddonBlockingIssue,
+  readComposerAddonSubmissionPayloads,
+  useComposerAddonContributions,
+  type ComposerAddonSubmissionSnapshot,
+  type ComposerAddonContext,
+} from "../../addons";
 
 const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
 
@@ -617,6 +625,8 @@ export interface ChatComposerHandle {
     selectedProvider: ProviderDriverKind;
     selectedModel: string;
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
+    addonSubmission: ComposerAddonSubmissionSnapshot;
+    addonBlockingIssue: string | null;
   };
   /** Validate the fully composed text immediately before a provider turn starts. */
   validateProviderInput: (providerInput: string) => boolean;
@@ -832,6 +842,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Store subscriptions (prompt / images / terminal contexts)
   // ------------------------------------------------------------------
   const composerDraft = useComposerThreadDraft(composerDraftTarget);
+  const composerAddonContext = useMemo<ComposerAddonContext>(
+    () => ({
+      targetKey: composerTargetKey(composerDraftTarget),
+      environmentId,
+      routeKind: routeKind === "draft" ? "draft" : "thread",
+      disabled: isConnecting || isSendBusy || projectSelectionRequired,
+    }),
+    [
+      composerDraftTarget,
+      environmentId,
+      isConnecting,
+      isSendBusy,
+      projectSelectionRequired,
+      routeKind,
+    ],
+  );
+  const composerAddonContributions = useComposerAddonContributions(composerAddonContext);
+  const composerAddonIssue = composerAddonBlockingIssue(composerAddonContributions);
   // Live target key, for async flows that must notice a thread switch that
   // happened while they awaited.
   const composerDraftTargetKeyRef = useRef("");
@@ -877,7 +905,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           })
       : null);
   const sendDisabledReason =
-    externalSendDisabledReason ?? (activePendingProgress ? null : attachmentBlockReason);
+    externalSendDisabledReason ??
+    (activePendingProgress ? null : (attachmentBlockReason ?? composerAddonIssue));
   const isSendDisabled = sendDisabledReason !== null;
 
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
@@ -3511,6 +3540,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedProvider,
         selectedModel,
         selectedProviderModels,
+        addonSubmission: readComposerAddonSubmissionPayloads(
+          composerTargetKey(composerDraftTarget),
+        ),
+        addonBlockingIssue: composerAddonIssue,
       }),
       validateProviderInput: (providerInput: string) => {
         const validationMessage = getComposerSubmissionValidationMessage({
@@ -3526,6 +3559,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [
       activeThread,
       addComposerAttachments,
+      composerAddonIssue,
       composerDraftTarget,
       composerCursor,
       composerTerminalContexts,
@@ -4305,6 +4339,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onInstanceModelChange={onProviderModelSelect}
                     />
                   )}
+
+                  {composerAddonContributions.length > 0 ? (
+                    <>
+                      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+                      <ComposerAddonSlot contributions={composerAddonContributions} />
+                    </>
+                  ) : null}
 
                   {isComposerFooterCompact ? (
                     <CompactComposerControlsMenu

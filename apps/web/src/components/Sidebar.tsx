@@ -59,6 +59,7 @@ import {
   XIcon,
 } from "lucide-react";
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -116,6 +117,13 @@ import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../s
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
 import { useEnvironmentQuery } from "../state/query";
+import {
+  clearComposerAddonSubmissionPayloads,
+  flattenSidebarAddonGroups,
+  groupThreadsWithAddonContributions,
+  useSidebarAddonThreadContributions,
+  type SidebarThreadAddonPresentation,
+} from "../addons";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   buildThreadRouteParams,
@@ -201,6 +209,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import {
   composerDraftHasUserContent,
+  composerTargetKey,
   DraftId,
   useComposerDraftStore,
   type ComposerThreadDraftState,
@@ -689,6 +698,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
       // it renders disappears, so discarding the open draft needs no
       // special-casing here.
       releaseComposerDraftUploads(draftId);
+      void clearComposerAddonSubmissionPayloads(composerTargetKey(draftId));
       clearDraftThread(draftId);
     },
     [clearDraftThread],
@@ -777,6 +787,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   onUnpin: (threadRef: ScopedThreadRef) => void;
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
   changeRequestSnapshot: ThreadChangeRequestSnapshot | null;
+  addonPresentation: SidebarThreadAddonPresentation | null;
   onChangeRequestSnapshot: (
     threadKey: string,
     snapshot: ThreadChangeRequestSnapshot | null,
@@ -1273,7 +1284,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item
-        className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
+        data-addon-child={props.addonPresentation?.kind === "child" || undefined}
+        className={cn(
+          "list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]",
+          props.addonPresentation?.kind === "child" &&
+            "relative ml-4 border-l border-sidebar-border/70 pl-1 before:absolute before:left-0 before:top-1/2 before:w-1.5 before:border-t before:border-sidebar-border/70",
+        )}
       >
         <Tooltip>
           <TooltipTrigger
@@ -1311,6 +1327,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               />
             </span>
             {title}
+            {props.addonPresentation?.contributions.map((contribution) => (
+              <Fragment key={`${contribution.addonId}:${contribution.contributionId}`}>
+                {contribution.compact}
+              </Fragment>
+            ))}
             {pinIndicator}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
@@ -1446,8 +1467,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               role="button"
               tabIndex={0}
               data-testid="sidebar-row-card"
+              data-addon-ids={props.addonPresentation?.contributions
+                .map((contribution) => contribution.addonId)
+                .join(" ")}
+              data-addon-parent={props.addonPresentation?.kind === "parent" || undefined}
               aria-busy={isRegeneratingTitle || undefined}
-              className={rowSurfaceClassName}
+              className={cn(
+                rowSurfaceClassName,
+                props.addonPresentation?.contributions.map(
+                  (contribution) => contribution.cardClassName,
+                ),
+              )}
               onClick={handleClick}
               onDoubleClick={handleDoubleClick}
               onKeyDown={handleKeyDown}
@@ -1605,6 +1635,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : (
                 <span className="flex-1" />
               )}
+              {props.addonPresentation?.contributions.map((contribution) => (
+                <Fragment key={`${contribution.addonId}:${contribution.contributionId}`}>
+                  {contribution.card}
+                </Fragment>
+              ))}
               {terminalStatusIcon}
               {prBadge}
               {diff ? (
@@ -2218,6 +2253,53 @@ export default function Sidebar() {
     };
   }, [nowMinute, scopedProjectKeys, serverConfigs, snoozeWakeTick, threads]);
 
+  const [optimisticPinnedOrder, setOptimisticPinnedOrder] = useState<{
+    readonly order: readonly string[];
+    readonly keysAtDrop: ReadonlyMap<string, string | null>;
+    readonly assignedKeys: ReadonlyMap<string, string>;
+  } | null>(null);
+  const orderedPinnedThreads = useMemo(() => {
+    if (optimisticPinnedOrder === null) return pinnedThreads;
+    return orderItemsByPreferredIds({
+      items: pinnedThreads,
+      preferredIds: optimisticPinnedOrder.order,
+      getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+    });
+  }, [optimisticPinnedOrder, pinnedThreads]);
+  const addonEligibleThreads = useMemo(
+    () => [...orderedPinnedThreads, ...activeThreads],
+    [activeThreads, orderedPinnedThreads],
+  );
+  const sidebarAddonContributions = useSidebarAddonThreadContributions(addonEligibleThreads);
+  const addonThreadGroups = useMemo(
+    () => groupThreadsWithAddonContributions(addonEligibleThreads, sidebarAddonContributions),
+    [addonEligibleThreads, sidebarAddonContributions],
+  );
+  const pinnedAddonThreadGroups = useMemo(() => {
+    const pinnedThreadKeys = new Set(
+      orderedPinnedThreads.map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+    );
+    return addonThreadGroups.filter((group) =>
+      pinnedThreadKeys.has(
+        scopedThreadKey(scopeThreadRef(group.thread.environmentId, group.thread.id)),
+      ),
+    );
+  }, [addonThreadGroups, orderedPinnedThreads]);
+  const activeAddonThreadGroups = useMemo(() => {
+    const activeThreadKeys = new Set(
+      activeThreads.map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+    );
+    return addonThreadGroups.filter((group) =>
+      activeThreadKeys.has(
+        scopedThreadKey(scopeThreadRef(group.thread.environmentId, group.thread.id)),
+      ),
+    );
+  }, [activeThreads, addonThreadGroups]);
+
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
@@ -2341,9 +2423,13 @@ export default function Sidebar() {
     return routeThread === undefined ? [] : [routeThread];
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
+  const addonOrderedThreads = useMemo(
+    () => flattenSidebarAddonGroups([...pinnedAddonThreadGroups, ...activeAddonThreadGroups]),
+    [activeAddonThreadGroups, pinnedAddonThreadGroups],
+  );
   const orderedThreads = useMemo(
-    () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
-    [pinnedThreads, activeThreads, visibleSnoozedThreads, renderedSettledThreads],
+    () => [...addonOrderedThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
+    [addonOrderedThreads, visibleSnoozedThreads, renderedSettledThreads],
   );
   const orderedThreadKeys = useMemo(
     () =>
@@ -2677,28 +2763,13 @@ export default function Sidebar() {
   const pinnedDndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
-  const [optimisticPinnedOrder, setOptimisticPinnedOrder] = useState<{
-    readonly order: readonly string[];
-    /** pinOrderKey per thread as of the drop — the baseline that tells a
-        concurrent client's write apart from one of our own landing. */
-    readonly keysAtDrop: ReadonlyMap<string, string | null>;
-    /** The keys this drop writes (one per planned assignment). The
-        override holds until all of them appear in canonical state. */
-    readonly assignedKeys: ReadonlyMap<string, string>;
-  } | null>(null);
-  const orderedPinnedThreads = useMemo(() => {
-    if (optimisticPinnedOrder === null) return pinnedThreads;
-    return orderItemsByPreferredIds({
-      items: pinnedThreads,
-      preferredIds: optimisticPinnedOrder.order,
-      getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-    });
-  }, [optimisticPinnedOrder, pinnedThreads]);
   useEffect(() => {
     if (optimisticPinnedOrder === null) return;
-    const canonical = pinnedThreads.filter((thread) =>
-      reorderablePinnedKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
-    );
+    const canonical = pinnedAddonThreadGroups
+      .map((group) => group.thread)
+      .filter((thread) =>
+        reorderablePinnedKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+      );
     const canonicalKeys = canonical.map((thread) =>
       scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
     );
@@ -2731,7 +2802,7 @@ export default function Sidebar() {
     if (membershipChanged || foreignKeyLanded || allAssignmentsLanded || orderConfirmed) {
       setOptimisticPinnedOrder(null);
     }
-  }, [optimisticPinnedOrder, pinnedThreads, reorderablePinnedKeys]);
+  }, [optimisticPinnedOrder, pinnedAddonThreadGroups, reorderablePinnedKeys]);
   const attemptPin = useCallback(
     (threadRef: ScopedThreadRef) => {
       void (async () => {
@@ -2778,9 +2849,13 @@ export default function Sidebar() {
       const activeKey = String(event.active.id);
       const overKey = event.over === null ? null : String(event.over.id);
       if (overKey === null || activeKey === overKey) return;
-      const reorderable = orderedPinnedThreads.filter((thread) =>
-        reorderablePinnedKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
-      );
+      const reorderable = pinnedAddonThreadGroups
+        .map((group) => group.thread)
+        .filter((thread) =>
+          reorderablePinnedKeys.has(
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          ),
+        );
       const keys = reorderable.map((thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       );
@@ -2837,7 +2912,7 @@ export default function Sidebar() {
         }
       })();
     },
-    [orderedPinnedThreads, reorderPinnedThread, reorderablePinnedKeys],
+    [pinnedAddonThreadGroups, reorderPinnedThread, reorderablePinnedKeys],
   );
   // One snooze per thread at a time — same double-dispatch guard as settle.
   const snoozingThreadKeysRef = useRef(new Set<string>());
@@ -3824,15 +3899,16 @@ export default function Sidebar() {
                     thread: EnvironmentThreadShell,
                     section: "pinned" | "active" | "snoozed" | "settled",
                     sortable?: SortablePinnedRowBag,
+                    addonPresentation?: SidebarThreadAddonPresentation,
                   ) => {
                     const threadKey = scopedThreadKey(
                       scopeThreadRef(thread.environmentId, thread.id),
                     );
-                    // Settled and snoozed are the ONLY things that collapse a
-                    // row: every other thread is a full card. Density comes
-                    // from users (or the auto rules) actually parking work,
-                    // not from the sidebar second-guessing what still matters.
-                    const isCard = section === "active" || section === "pinned";
+                    // Lifecycle shelves are compact, as are children whose
+                    // relationship is explicitly supplied by an addon.
+                    const isCard =
+                      (section === "active" || section === "pinned") &&
+                      addonPresentation?.kind !== "child";
                     const rowVariant = isCard ? "card" : "slim";
                     return (
                       <SidebarThreadRow
@@ -3928,6 +4004,7 @@ export default function Sidebar() {
                         onAcknowledgeWoke={acknowledgeWoke}
                         changeRequestSnapshot={changeRequestSnapshotByKey.get(threadKey) ?? null}
                         onChangeRequestSnapshot={setThreadChangeRequestSnapshot}
+                        addonPresentation={addonPresentation ?? null}
                       />
                     );
                   };
@@ -3949,7 +4026,7 @@ export default function Sidebar() {
                       routeDraftId={routeDraftIdForRows}
                       onNavigateToDraft={navigateToDraft}
                     />,
-                    pinnedThreads.length > 0 ? (
+                    pinnedAddonThreadGroups.length > 0 ? (
                       <li key="pinned-dnd" className="list-none">
                         <DndContext
                           sensors={pinnedDndSensors}
@@ -3958,9 +4035,11 @@ export default function Sidebar() {
                           onDragEnd={handlePinnedDragEnd}
                         >
                           <SortableContext
-                            items={orderedPinnedThreads
-                              .map((thread) =>
-                                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+                            items={pinnedAddonThreadGroups
+                              .map((group) =>
+                                scopedThreadKey(
+                                  scopeThreadRef(group.thread.environmentId, group.thread.id),
+                                ),
                               )
                               .filter((threadKey) => reorderablePinnedKeys.has(threadKey))}
                             strategy={verticalListSortingStrategy}
@@ -3970,17 +4049,52 @@ export default function Sidebar() {
                               aria-label="Pinned threads"
                               className="flex flex-col gap-px"
                             >
-                              {orderedPinnedThreads.map((thread) => {
+                              {pinnedAddonThreadGroups.map((group) => {
+                                const thread = group.thread;
                                 const threadKey = scopedThreadKey(
                                   scopeThreadRef(thread.environmentId, thread.id),
                                 );
                                 if (!reorderablePinnedKeys.has(threadKey)) {
-                                  return renderThreadRow(thread, "pinned");
+                                  return (
+                                    <Fragment key={threadKey}>
+                                      {renderThreadRow(
+                                        thread,
+                                        "pinned",
+                                        undefined,
+                                        group.presentation ?? undefined,
+                                      )}
+                                      {group.children.map((child) =>
+                                        renderThreadRow(
+                                          child.thread,
+                                          child.thread.pinnedAt != null ? "pinned" : "active",
+                                          undefined,
+                                          child.presentation,
+                                        ),
+                                      )}
+                                    </Fragment>
+                                  );
                                 }
                                 return (
-                                  <SortablePinnedThreadRow key={threadKey} id={threadKey}>
-                                    {(bag) => renderThreadRow(thread, "pinned", bag)}
-                                  </SortablePinnedThreadRow>
+                                  <Fragment key={threadKey}>
+                                    <SortablePinnedThreadRow id={threadKey}>
+                                      {(bag) =>
+                                        renderThreadRow(
+                                          thread,
+                                          "pinned",
+                                          bag,
+                                          group.presentation ?? undefined,
+                                        )
+                                      }
+                                    </SortablePinnedThreadRow>
+                                    {group.children.map((child) =>
+                                      renderThreadRow(
+                                        child.thread,
+                                        child.thread.pinnedAt != null ? "pinned" : "active",
+                                        undefined,
+                                        child.presentation,
+                                      ),
+                                    )}
+                                  </Fragment>
                                 );
                               })}
                             </ul>
@@ -3989,7 +4103,7 @@ export default function Sidebar() {
                       </li>
                     ) : null,
                   ];
-                  if (pinnedThreads.length > 0) {
+                  if (pinnedAddonThreadGroups.length > 0) {
                     items.push(
                       <li
                         key="pinned-divider"
@@ -3999,8 +4113,20 @@ export default function Sidebar() {
                       />,
                     );
                   }
-                  for (const thread of activeThreads) {
-                    items.push(renderThreadRow(thread, "active"));
+                  for (const group of activeAddonThreadGroups) {
+                    items.push(
+                      renderThreadRow(
+                        group.thread,
+                        "active",
+                        undefined,
+                        group.presentation ?? undefined,
+                      ),
+                    );
+                    for (const child of group.children) {
+                      items.push(
+                        renderThreadRow(child.thread, "active", undefined, child.presentation),
+                      );
+                    }
                   }
                   // Snoozed shelf: between the inbox and Settled — out of the
                   // way, never gone. The header always renders while anything
