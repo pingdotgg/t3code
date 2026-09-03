@@ -150,6 +150,7 @@ import {
   shouldUseCompactComposerFooter,
   shouldUseRestingComposerLayout,
 } from "../composerFooterLayout";
+import { measureRestingComposerControls } from "./restingComposerControlsMeasurement";
 import { observeResponsiveBreakpointFade, usePanelAnimationSettings } from "../../panelAnimations";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
 import { ProviderModelPicker } from "./ProviderModelPicker";
@@ -852,44 +853,6 @@ const terminalContextIdListsEqual = (
 ): boolean =>
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
 
-function elementOuterWidth(element: HTMLElement): number {
-  const width = element.getBoundingClientRect().width;
-  if (width === 0) return 0;
-  const style = getComputedStyle(element);
-  return (
-    width +
-    (Number.parseFloat(style.marginInlineStart) || 0) +
-    (Number.parseFloat(style.marginInlineEnd) || 0)
-  );
-}
-
-function elementInlineMarginWidth(element: HTMLElement): number {
-  const style = getComputedStyle(element);
-  return (
-    (Number.parseFloat(style.marginInlineStart) || 0) +
-    (Number.parseFloat(style.marginInlineEnd) || 0)
-  );
-}
-
-function providerModelPickerNaturalWidth(picker: HTMLElement): number {
-  const renderedWidth = picker.getBoundingClientRect().width;
-  if (renderedWidth === 0) return 0;
-  const style = getComputedStyle(picker);
-  const label = picker.querySelector<HTMLElement>('[data-chat-provider-model-picker-label="true"]');
-  const hiddenLabelWidth = label ? Math.max(0, label.scrollWidth - label.clientWidth) : 0;
-  const maxWidth = Number.parseFloat(style.maxWidth);
-  const naturalWidth = Math.min(
-    renderedWidth + hiddenLabelWidth,
-    Number.isFinite(maxWidth) ? maxWidth : Number.POSITIVE_INFINITY,
-  );
-  return naturalWidth + elementInlineMarginWidth(picker);
-}
-
-function providerModelPickerMinimumWidth(picker: HTMLElement): number {
-  const minWidth = Number.parseFloat(getComputedStyle(picker).minWidth) || 0;
-  return minWidth + elementInlineMarginWidth(picker);
-}
-
 function useRestingComposerControlsLayout(host: HTMLDivElement | null) {
   const controlsRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef(host);
@@ -903,41 +866,12 @@ function useRestingComposerControlsLayout(host: HTMLDivElement | null) {
     // composer pays no layout reads here despite the every-render effect.
     if (currentHost === null || !controls) return;
 
-    const blocks = Array.from(controls.querySelectorAll<HTMLElement>("[data-resting-block]"));
-
-    // Hidden blocks and the unused overflow trigger stay mounted out of flow
-    // at full size. The picker is the one flexible item: recover its intended
-    // width from the truncated label, then let it contract only after all
-    // trailing blocks have moved into overflow.
-    const gap = Number.parseFloat(getComputedStyle(controls).columnGap) || 0;
-    const picker = controls.querySelector<HTMLElement>("[data-chat-provider-model-picker]");
-    const leadingControl =
-      picker ?? controls.querySelector<HTMLElement>('[data-chat-provider-unavailable="true"]');
-    if (!leadingControl) return;
-    // Separators are display:none on phone widths; a hidden one takes no gap.
-    const separator = controls.querySelector<HTMLElement>("[data-resting-controls-separator]");
-    const separatorWidth = separator ? elementOuterWidth(separator) : 0;
-    const overflow = controls.querySelector<HTMLElement>("[data-resting-controls-overflow]");
-    const separatorAndGapWidth = separatorWidth > 0 ? separatorWidth + gap : 0;
-    const naturalFixedWidth =
-      (picker ? providerModelPickerNaturalWidth(picker) : elementOuterWidth(leadingControl)) +
-      separatorAndGapWidth;
-    const minimumFixedWidth =
-      (picker ? providerModelPickerMinimumWidth(picker) : elementOuterWidth(leadingControl)) +
-      separatorAndGapWidth;
-    const blockWidths = blocks.map(elementOuterWidth);
-    const overflowWidth = overflow ? elementOuterWidth(overflow) : 0;
+    const measurement = measureRestingComposerControls(controls);
+    if (!measurement) return;
     const hostWidth = currentHost.clientWidth;
 
     setLayout((current) => {
-      const next = resolveRestingComposerControlsLayout({
-        hostWidth,
-        gap,
-        naturalFixedWidth,
-        minimumFixedWidth,
-        blockWidths,
-        overflowWidth,
-      });
+      const next = resolveRestingComposerControlsLayout({ ...measurement, hostWidth });
       return next.hiddenCount === current.hiddenCount && next.visible === current.visible
         ? current
         : next;
@@ -3921,7 +3855,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             const hidden = index >= restingBlockDefs.length - restingHiddenBlockCount;
             return (
               <div
-                key={`${def.id}:${hidden ? "hidden" : "visible"}`}
+                key={def.id}
                 data-resting-block={def.id}
                 aria-hidden={hidden || undefined}
                 inert={hidden || undefined}
@@ -3936,7 +3870,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           })}
           {composerControlsInStrip ? (
             <div
-              key={hiddenRestingBlockIds.length > 0 ? "overflow:visible" : "overflow:hidden"}
               data-resting-controls-overflow
               aria-hidden={hiddenRestingBlockIds.length === 0 || undefined}
               inert={hiddenRestingBlockIds.length === 0 || undefined}
@@ -3949,6 +3882,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 interactionMode={interactionMode}
                 runtimeMode={runtimeMode}
                 size="xs"
+                hidden={hiddenRestingBlockIds.length === 0}
                 showInteractionModeToggle={
                   composerProviderControls.showInteractionModeToggle &&
                   hiddenRestingBlockIds.includes("mode")

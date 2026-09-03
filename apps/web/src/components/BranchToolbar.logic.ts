@@ -68,6 +68,20 @@ export function shouldShowComposerContextStrip(input: {
   );
 }
 
+// Labels collapse to icons when the strip's content no longer fits. A small
+// hysteresis on the way back out keeps the boundary from flapping.
+const CONTEXT_STRIP_COMPACT_EXPAND_HYSTERESIS_PX = 16;
+
+export function resolveContextStripLabelsCompact(input: {
+  compact: boolean;
+  neededWidth: number;
+  availableWidth: number;
+}): boolean {
+  return input.compact
+    ? input.neededWidth > input.availableWidth - CONTEXT_STRIP_COMPACT_EXPAND_HYSTERESIS_PX
+    : input.neededWidth > input.availableWidth;
+}
+
 export function resolveEnvModeLabel(mode: EnvMode): string {
   return mode === "worktree" ? "New worktree" : "Current checkout";
 }
