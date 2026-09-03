@@ -253,10 +253,7 @@ export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
                             const handled = Stream.fromEffect(
                               options.onExpectedFailure(cause),
                             ).pipe(Stream.drain);
-                            const waiting = cause.reasons.some(
-                              (reason) => reason._tag === "Fail" && isWaitingFailure(reason.error),
-                            );
-                            if (options.retryExpectedFailureAfter === undefined || waiting) {
+                            if (options.retryExpectedFailureAfter === undefined) {
                               return handled;
                             }
                             return handled.pipe(

@@ -321,9 +321,11 @@ describe("environment RPC", () => {
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.forkChild,
       );
-      for (let attempt = 0; attempt < 100 && observedFailures.length < 1; attempt += 1) {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (observedFailures.length >= 1) break;
         yield* Effect.yieldNow;
       }
+      yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
 
       expect(subscriptions).toEqual(["first"]);
       expect(observedFailures).toEqual([domainError]);
@@ -368,11 +370,10 @@ describe("environment RPC", () => {
         Effect.forkChild,
       );
       for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(expectedFailureCount)) >= 1) {
-          break;
-        }
+        if ((yield* Ref.get(expectedFailureCount)) >= 1) break;
         yield* Effect.yieldNow;
       }
+      yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
 
       expect(yield* Ref.get(subscriptionCount)).toBe(1);
       expect(yield* Ref.get(expectedFailureCount)).toBe(1);
