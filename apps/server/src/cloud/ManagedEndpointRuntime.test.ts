@@ -6,9 +6,11 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Queue from "effect/Queue";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as RelayClient from "@t3tools/shared/relayClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -60,6 +62,7 @@ function makeHandle(input: {
   readonly onKill: () => void;
   readonly isRunning?: () => boolean;
   readonly exitCode?: Effect.Effect<ChildProcessSpawner.ExitCode>;
+  readonly output?: Stream.Stream<Uint8Array>;
 }) {
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(input.pid),
@@ -73,13 +76,70 @@ function makeHandle(input: {
     stdin: Sink.drain,
     stdout: Stream.empty,
     stderr: Stream.empty,
-    all: Stream.empty,
+    all: input.output ?? Stream.empty,
     getInputFd: () => Sink.drain,
     getOutputFd: () => Stream.empty,
   });
 }
 
 describe("CloudManagedEndpointRuntime", () => {
+  it("retries connector startup failures but stops for unsupported runtimes", () => {
+    expect(
+      ManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus({
+        status: "failed",
+        failure: "not-installed",
+        reason: "The relay client is not installed.",
+      }),
+    ).toBe(true);
+    expect(
+      ManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus({
+        status: "failed",
+        failure: "spawn-failed",
+        reason: "spawn failed",
+      }),
+    ).toBe(true);
+    expect(
+      ManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus({
+        status: "failed",
+        failure: "unsupported-platform",
+        reason: "Relay client is unsupported on linux-arm.",
+      }),
+    ).toBe(false);
+    expect(
+      ManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus({ status: "unsupported" }),
+    ).toBe(false);
+  });
+
+  it.effect("serializes updates to persisted cloud link state", () =>
+    Effect.gen(function* () {
+      const firstEntered = yield* Deferred.make<void>();
+      const releaseFirst = yield* Deferred.make<void>();
+      const secondEntered = yield* Deferred.make<void>();
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        ChildProcessSpawner.make(() => Effect.die("unused")),
+      );
+
+      const first = yield* runtime
+        .withLinkStateLock(
+          Deferred.succeed(firstEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseFirst)),
+          ),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(firstEntered);
+
+      const second = yield* runtime
+        .withLinkStateLock(Deferred.succeed(secondEntered, undefined))
+        .pipe(Effect.forkChild);
+      expect(yield* Deferred.isDone(secondEntered)).toBe(false);
+
+      yield* Deferred.succeed(releaseFirst, undefined);
+      yield* Fiber.join(first);
+      yield* Fiber.join(second);
+      expect(yield* Deferred.isDone(secondEntered)).toBe(true);
+    }),
+  );
+
   it("classifies Cloudflare connection and warning output", () => {
     expect(
       ManagedEndpointRuntime.classifyRelayClientOutput(
@@ -106,6 +166,125 @@ describe("CloudManagedEndpointRuntime", () => {
       ManagedEndpointRuntime.classifyRelayClientOutput("2026-06-17T02:00:00Z PNC runtime panic"),
     ).toBe("warning");
   });
+
+  it("recognizes tunnel authorization failures without matching ordinary transport errors", () => {
+    expect(
+      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+        '2026-06-17T02:00:00Z ERR Register tunnel error from server side error="Unauthorized: Failed to get tunnel" connIndex=0',
+      ),
+    ).toBe(true);
+    expect(
+      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+        '2026-06-17T02:00:00Z ERR Register tunnel error from server side error="Unauthorized: Record for tunnel not found" connIndex=0',
+      ),
+    ).toBe(true);
+    expect(
+      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+        '2026-06-17T02:00:00Z ERR Register tunnel error from server side error="Unauthorized: Invalid tunnel secret" connIndex=0',
+      ),
+    ).toBe(true);
+    expect(
+      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+        '2026-06-17T02:00:00Z ERR Register tunnel error from server side error="connection timed out" connIndex=0',
+      ),
+    ).toBe(false);
+  });
+
+  it.effect("keeps recovery requests sent before the server starts consuming them", () =>
+    Effect.gen(function* () {
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        ChildProcessSpawner.make(() => Effect.die("unused")),
+      );
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "token",
+        tunnelId: "tunnel-1",
+      };
+
+      yield* runtime.requestRecovery(config);
+
+      expect(Option.getOrNull(yield* Stream.runHead(runtime.recoveryRequests))).toEqual(config);
+    }),
+  );
+
+  it.effect("recovers a rejected tunnel without waiting for the connector to exit", () =>
+    Effect.gen(function* () {
+      const output = yield* Queue.unbounded<Uint8Array>();
+      const firstBatchObserved = yield* Deferred.make<void>();
+      const secondBatchObserved = yield* Deferred.make<void>();
+      const recoveryRequested = yield* Deferred.make<RelayManagedEndpointRuntimeConfig>();
+      const recoveryRetried = yield* Deferred.make<RelayManagedEndpointRuntimeConfig>();
+      let recoveryRequestCount = 0;
+      const spawned: Array<number> = [];
+      const encoder = new TextEncoder();
+      const connectorOutput = Stream.fromQueue(output).pipe(
+        Stream.tap((chunk) => {
+          const line = new TextDecoder().decode(chunk);
+          if (line === "first checkpoint\n") {
+            return Deferred.succeed(firstBatchObserved, undefined).pipe(Effect.asVoid);
+          }
+          if (line === "second checkpoint\n") {
+            return Deferred.succeed(secondBatchObserved, undefined).pipe(Effect.asVoid);
+          }
+          return Effect.void;
+        }),
+      );
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const pid = 600;
+          spawned.push(pid);
+          const handle = makeHandle({ pid, onKill: () => {}, output: connectorOutput });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "token",
+        tunnelId: "deleted-tunnel",
+      };
+      const rejectedLine =
+        '2026-06-17T02:00:00Z ERR Register tunnel error from server side error="Unauthorized: Failed to get tunnel" connIndex=0\n';
+
+      yield* runtime.recoveryRequests.pipe(
+        Stream.runForEach((requested) => {
+          recoveryRequestCount += 1;
+          return Deferred.succeed(
+            recoveryRequestCount === 1 ? recoveryRequested : recoveryRetried,
+            requested,
+          ).pipe(Effect.asVoid);
+        }),
+        Effect.forkChild,
+      );
+      yield* runtime.applyConfig(config);
+
+      yield* Queue.offer(output, encoder.encode(rejectedLine.repeat(3)));
+      yield* Queue.offer(output, encoder.encode("first checkpoint\n"));
+      yield* Deferred.await(firstBatchObserved);
+      expect(yield* Deferred.isDone(recoveryRequested)).toBe(false);
+
+      yield* Queue.offer(
+        output,
+        encoder.encode(
+          "2026-06-17T02:00:00Z INF Registered tunnel connection connIndex=0\n" +
+            rejectedLine.repeat(3),
+        ),
+      );
+      yield* Queue.offer(output, encoder.encode("second checkpoint\n"));
+      yield* Deferred.await(secondBatchObserved);
+      expect(yield* Deferred.isDone(recoveryRequested)).toBe(false);
+
+      yield* Queue.offer(output, encoder.encode(rejectedLine));
+
+      expect(yield* Deferred.await(recoveryRequested)).toEqual(config);
+
+      yield* Queue.offer(output, encoder.encode(rejectedLine.repeat(4)));
+
+      expect(yield* Deferred.await(recoveryRetried)).toEqual(config);
+      expect(spawned).toEqual([600]);
+    }),
+  );
 
   it.effect("starts, deduplicates, rotates, and stops the Cloudflare connector", () =>
     Effect.gen(function* () {
@@ -154,8 +333,8 @@ describe("CloudManagedEndpointRuntime", () => {
 
       expect(spawned.map((command) => command.command)).toEqual(["cloudflared", "cloudflared"]);
       expect(spawned.map((command) => command.args)).toEqual([
-        ["tunnel", "run"],
-        ["tunnel", "run"],
+        ["tunnel", "--no-autoupdate", "--loglevel", "info", "--output", "default", "run"],
+        ["tunnel", "--no-autoupdate", "--loglevel", "info", "--output", "default", "run"],
       ]);
       expect(spawned.map((command) => command.options.env?.TUNNEL_TOKEN)).toEqual([
         "token-1",
@@ -388,6 +567,7 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(status).toEqual({
         status: "failed",
         providerKind: "cloudflare_tunnel",
+        failure: "not-installed",
         reason: "The relay client is not installed.",
       });
       expect(spawn).not.toHaveBeenCalled();

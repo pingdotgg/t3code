@@ -125,6 +125,56 @@ connector, and attempts to revoke the relay-side environment record. It retains 
 authorization so `t3 connect link` can re-enable exposure without another browser flow. `t3 connect
 logout` performs the same cleanup and removes the stored CLI authorization.
 
+### Managed tunnel lifecycle
+
+Every linked environment stores a relay-issued environment credential. When setup installs a tunnel
+and when the server starts, the server uses that credential to register recovery support for the
+existing tunnel and its current loopback HTTP origin. A healthy boot with a previously confirmed
+origin makes no Cloudflare API calls. The first registration of an older allocation, or a
+registration after the local server port changes, makes one logical ingress configuration request.
+The host retries transient registration failures for the life of the server with jittered exponential
+backoff capped at 30 seconds. Each retry can make one logical ingress configuration request after an
+origin change. The Cloudflare SDK can also retry each logical request internally.
+
+The host stores a confirmed-origin marker with the full connector config. A later boot starts the
+connector before relay registration only when that marker matches both the current config and the
+current local origin. A missing marker or changed port keeps the connector stopped until the relay
+confirms or updates the ingress route. This lets a known configuration start during a relay outage
+without sending traffic to an old local port.
+
+If the connector exits or repeatedly reports that Cloudflare rejected its tunnel, the server uses
+the same environment credential to request a replacement. This also recovers a tunnel deleted
+while a laptop was asleep, even when the connector keeps running. Environments linked through web
+or mobile settings do not need a stored CLI credential. The relay keeps the existing hostname and
+DNS record, so a replacement tunnel does not change the public endpoint. Each registration and
+recovery request includes a short-lived host signature that binds the cloud user and the current
+tunnel or local T3 server address.
+
+The existing five-minute maintenance job can run tunnel cleanup in `off`, `dry-run`, or `enabled`
+mode through `RELAY_TUNNEL_CLEANUP_MODE`. The default is `off`. Dry-run mode lists and counts
+candidates without deleting them. Enabled mode removes a recoverable host's tunnel when Cloudflare
+reports that it has been down for at least five minutes. Tunnels that never connected are candidates
+when they are at least five minutes old. Cleanup usually runs five to ten minutes after a tunnel goes
+down because the five-minute grace period and five-minute schedule can align. Backlogs can add more
+time.
+
+One sweep makes at most ten logical tunnel-list requests and attempts at most 100 deletions. A
+deletion can use a status read and a delete, for at most 210 logical Cloudflare SDK operations in a
+full sweep. The SDK can retry each operation internally, so this is not an exact network request
+limit. The whole sweep has a two-minute deadline and stops early after a structured Cloudflare rate
+limit response. Page rotation and alternating `down` and `inactive` priority keep large backlogs
+moving across later sweeps.
+
+For tunnels with existing allocation records, cleanup only deletes tunnels for hosts that registered
+recovery with the public key on their current environment link. Older allocation records remain
+untouched. The reaper treats an expired same-namespace tunnel with no allocation record as an orphan
+because legacy-host protection requires an allocation record. It rechecks the tunnel's Cloudflare
+status and deletes it after the inactivity grace period. It still skips incomplete allocations with
+no recorded tunnel ID because provisioning can be between tunnel creation and the database update.
+Allocations that point at another tunnel ID are skipped for the same ownership reason. These
+allocation skips can leave stale tunnels for manual cleanup, but they prevent a cleanup sweep from
+deleting a tunnel that a concurrent provision owns.
+
 The background service has an independent lifecycle. Connect setup may offer to install it, but
 logout leaves it running; manage it with `t3 service status`, `install`, `update`, and `uninstall`.
 
