@@ -151,6 +151,7 @@ import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { ComposerControl, ComposerControlIcon, ComposerSelectControl } from "./ComposerControl";
+import { ComposerNoProviderControl } from "./ComposerNoProviderControl";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import {
   searchSlashCommandItems,
@@ -4269,17 +4270,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   className="-m-1 -ms-3.5 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 ps-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                 >
                   {noProviderAvailable ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      disabled
-                      data-chat-provider-unavailable="true"
-                      className="shrink-0 gap-2 px-2 text-secondary-label sm:px-3"
-                    >
-                      <CircleAlertIcon className="size-4" />
-                      No provider available
-                    </Button>
+                    <ComposerNoProviderControl />
                   ) : (
                     <ProviderModelPicker
                       compact={isComposerFooterCompact}
