@@ -261,6 +261,26 @@ describe("foldThreadRows", () => {
     expect(rows[0]?.title).toBe("Nested worktree");
   });
 
+  it("matches worktrees across slash styles and normalized segments", () => {
+    const groups = accumulate([
+      [
+        record({ sessionId: "mixed", cwd: "\\work\\app\\.wt\\thread-1\\packages\\web" }),
+        { sessionKey: "claude:mixed", agentId: null },
+      ],
+    ]);
+    const attribution: ThreadAttribution = {
+      sessionToThread: new Map(),
+      worktreeToThread: new Map([
+        ["/work/app/other/../.wt/thread-1/", { threadId, title: "Normalized worktree" }],
+      ]),
+    };
+
+    const { rows } = foldThreadRows(groups, attribution, { cap: 40 });
+
+    expect(rows[0]?.threadId).toBe(threadId);
+    expect(rows[0]?.title).toBe("Normalized worktree");
+  });
+
   it("attributes a Grok session without a cwd through its resume cursor", () => {
     const groups = accumulate([
       [
