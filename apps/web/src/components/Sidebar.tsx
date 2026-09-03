@@ -1351,6 +1351,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           <TooltipTrigger
             render={
               <div
+                ref={rowRef}
                 role="button"
                 tabIndex={0}
                 data-testid="sidebar-row-compact"
@@ -1378,7 +1379,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               <span
                 className={cn(
                   "inline-flex items-center gap-1 transition-opacity",
-                  "group-has-[:focus-visible]/sidebar-row:pointer-events-none group-has-[:focus-visible]/sidebar-row:opacity-0 group-hover/sidebar-row:pointer-events-none group-hover/sidebar-row:opacity-0",
+                  !isWokeStatus &&
+                    "group-has-[:focus-visible]/sidebar-row:pointer-events-none group-has-[:focus-visible]/sidebar-row:absolute group-has-[:focus-visible]/sidebar-row:right-0 group-has-[:focus-visible]/sidebar-row:opacity-0 group-hover/sidebar-row:pointer-events-none group-hover/sidebar-row:absolute group-hover/sidebar-row:right-0 group-hover/sidebar-row:opacity-0",
                   snoozeMenuOpen && "pointer-events-none opacity-0",
                 )}
               >
@@ -1387,8 +1389,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {prBadge || props.settlementSupported || showSnoozeButton ? (
                 <span
                   className={cn(
-                    "pointer-events-none absolute right-0 flex items-center opacity-0 transition-opacity has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100",
-                    snoozeMenuOpen && "pointer-events-auto opacity-100",
+                    "pointer-events-none absolute right-0 flex items-center opacity-0 transition-opacity has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:static has-[:focus-visible]:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:static group-hover/sidebar-row:opacity-100",
+                    snoozeMenuOpen && "pointer-events-auto static opacity-100",
                   )}
                 >
                   {prBadge}
