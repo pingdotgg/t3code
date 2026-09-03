@@ -93,14 +93,15 @@ describe("parseGrokInspectSkills", () => {
 });
 
 describe("discoverGrokSkills", () => {
-  it.effect("spawns the inspect probe in the configured cwd", () => {
+  it.effect("spawns in the configured cwd and rejects a failed probe", () => {
     const spawnCwds: Array<string | undefined> = [];
+    let exitCode = 0;
     const spawner = ChildProcessSpawner.make((command) => {
       spawnCwds.push(command._tag === "StandardCommand" ? command.options.cwd : undefined);
       return Effect.succeed(
         ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
-          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
           isRunning: Effect.succeed(false),
           kill: () => Effect.void,
           unref: Effect.succeed(Effect.void),
@@ -130,6 +131,13 @@ describe("discoverGrokSkills", () => {
 
       expect(spawnCwds).toEqual(["/workspaces/demo"]);
       expect(skills.map((skill) => skill.name)).toEqual(["kept"]);
+
+      exitCode = 1;
+      const failed = yield* discoverGrokSkills({ binaryPath: "grok" }).pipe(
+        Effect.result,
+        Effect.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+      );
+      expect(failed._tag).toBe("Failure");
     });
   });
 });

@@ -346,6 +346,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "../../state/server";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 
+const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
+
 const runtimeModeConfig: Record<
   RuntimeMode,
   { label: string; description: string; icon: LucideIcon }
@@ -1130,6 +1132,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     reportFailure: false,
   });
   const workspaceRefreshKeyRef = useRef<string | null>(null);
+  const workspaceRefreshRetryRef = useRef<{ key: string; notBefore: number } | null>(null);
   const hadWorkspaceSnapshotRef = useRef(false);
   useEffect(() => {
     const hasWorkspaceSnapshot = Boolean(
@@ -1138,6 +1141,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
     if (hadWorkspaceSnapshotRef.current && !hasWorkspaceSnapshot) {
       workspaceRefreshKeyRef.current = null;
+      workspaceRefreshRetryRef.current = null;
     }
     hadWorkspaceSnapshotRef.current = hasWorkspaceSnapshot;
   }, [gitCwd, selectedProviderStatus]);
@@ -1150,28 +1154,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (workspaceRefreshKeyRef.current === key) return;
     if (hasWorkspaceSnapshot) {
       workspaceRefreshKeyRef.current = key;
+      workspaceRefreshRetryRef.current = null;
       return;
     }
+    const retry = workspaceRefreshRetryRef.current;
+    if (retry?.key === key && Date.now() < retry.notBefore) return;
     workspaceRefreshKeyRef.current = key;
+    const retryLater = () => {
+      if (workspaceRefreshKeyRef.current !== key) return;
+      workspaceRefreshKeyRef.current = null;
+      workspaceRefreshRetryRef.current = {
+        key,
+        notBefore: Date.now() + WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS,
+      };
+    };
     void refreshProviders({
       environmentId,
       input: { instanceId: selectedProviderEntry.instanceId, cwd: gitCwd },
-    }).then(
-      (result) => {
-        const hasWorkspaceSnapshot =
-          result._tag === "Success" &&
-          result.value.providers
-            .find((provider) => provider.instanceId === selectedProviderEntry.instanceId)
-            ?.workspaceSnapshots?.some((snapshot) => snapshot.cwd === gitCwd);
-        if (!hasWorkspaceSnapshot && workspaceRefreshKeyRef.current === key) {
-          workspaceRefreshKeyRef.current = null;
-        }
-      },
-      () => {
-        if (workspaceRefreshKeyRef.current === key) workspaceRefreshKeyRef.current = null;
-      },
-    );
-  }, [environmentId, gitCwd, refreshProviders, selectedProviderEntry]);
+    }).then((result) => {
+      const hasWorkspaceSnapshot =
+        result._tag === "Success" &&
+        result.value.providers
+          .find((provider) => provider.instanceId === selectedProviderEntry.instanceId)
+          ?.workspaceSnapshots?.some((snapshot) => snapshot.cwd === gitCwd);
+      if (!hasWorkspaceSnapshot && workspaceRefreshKeyRef.current === key) {
+        retryLater();
+      }
+    }, retryLater);
+  }, [environmentId, gitCwd, prompt, refreshProviders, selectedProviderEntry]);
   const selectedProviderModels = useMemo<ReadonlyArray<ServerProvider["models"][number]>>(
     () => selectedProviderEntry?.models ?? [],
     [selectedProviderEntry],

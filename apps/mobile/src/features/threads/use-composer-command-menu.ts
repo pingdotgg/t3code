@@ -13,13 +13,18 @@ import {
   dedupeProviderSkillsByName,
   getProviderSkillsForSlashMenu,
   isProviderSkillUserInvocable,
+  resolveProviderSkillsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useComposerPathSearch } from "../../state/queries";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
+
+const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
 
 export function composerSelectionAtEnd(draftMessage: string): ComposerEditorSelection {
   return { start: draftMessage.length, end: draftMessage.length };
@@ -68,6 +73,72 @@ export function useComposerCommandMenu({
     previousOwnerKeyRef.current = ownerKey;
     setSelection(composerSelectionAtEnd(draftMessage));
   }, [draftMessage, ownerKey]);
+
+  const skills = useMemo(
+    () =>
+      selectedProviderStatus ? resolveProviderSkillsForCwd(selectedProviderStatus, projectCwd) : [],
+    [projectCwd, selectedProviderStatus],
+  );
+  const slashCommands = selectedProviderStatus?.slashCommands ?? [];
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  const selectedProviderInstanceId = selectedProviderStatus?.instanceId;
+  const hasWorkspaceSnapshot = Boolean(
+    projectCwd &&
+    selectedProviderStatus?.workspaceSnapshots?.some((snapshot) => snapshot.cwd === projectCwd),
+  );
+  const workspaceRefreshKeyRef = useRef<string | null>(null);
+  const workspaceRefreshRetryRef = useRef<{ key: string; notBefore: number } | null>(null);
+  const hadWorkspaceSnapshotRef = useRef(false);
+  useEffect(() => {
+    if (hadWorkspaceSnapshotRef.current && !hasWorkspaceSnapshot) {
+      workspaceRefreshKeyRef.current = null;
+      workspaceRefreshRetryRef.current = null;
+    }
+    hadWorkspaceSnapshotRef.current = hasWorkspaceSnapshot;
+  }, [hasWorkspaceSnapshot]);
+  useEffect(() => {
+    if (!environmentId || !projectCwd || !selectedProviderInstanceId) return;
+    const key = `${environmentId}:${selectedProviderInstanceId}:${projectCwd}`;
+    if (workspaceRefreshKeyRef.current === key) return;
+    if (hasWorkspaceSnapshot) {
+      workspaceRefreshKeyRef.current = key;
+      workspaceRefreshRetryRef.current = null;
+      return;
+    }
+    const retry = workspaceRefreshRetryRef.current;
+    if (retry?.key === key && Date.now() < retry.notBefore) return;
+    workspaceRefreshKeyRef.current = key;
+    const retryLater = () => {
+      if (workspaceRefreshKeyRef.current !== key) return;
+      workspaceRefreshKeyRef.current = null;
+      workspaceRefreshRetryRef.current = {
+        key,
+        notBefore: Date.now() + WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS,
+      };
+    };
+    void refreshProviders({
+      environmentId,
+      input: { instanceId: selectedProviderInstanceId, cwd: projectCwd },
+    }).then((result) => {
+      const refreshed =
+        result._tag === "Success" &&
+        result.value.providers
+          .find((provider) => provider.instanceId === selectedProviderInstanceId)
+          ?.workspaceSnapshots?.some((snapshot) => snapshot.cwd === projectCwd);
+      if (!refreshed && workspaceRefreshKeyRef.current === key) {
+        retryLater();
+      }
+    }, retryLater);
+  }, [
+    draftMessage,
+    environmentId,
+    hasWorkspaceSnapshot,
+    projectCwd,
+    refreshProviders,
+    selectedProviderInstanceId,
+  ]);
 
   const trigger = useMemo(() => {
     if (!enabled || selection.start !== selection.end) {
@@ -120,8 +191,7 @@ export function useComposerCommandMenu({
       // locally and skills insert a `$` mention the server dispatches from
       // any position, so only provider commands are position-gated.
       const providerCommands: ComposerCommandItem[] = [];
-      const expandableCommands =
-        trigger.rangeStart === 0 ? (selectedProviderStatus?.slashCommands ?? []) : [];
+      const expandableCommands = trigger.rangeStart === 0 ? slashCommands : [];
       for (const command of expandableCommands) {
         if (!command.name.toLowerCase().includes(q)) continue;
         // Codex feedback uploads an existing thread's session and logs.
@@ -141,7 +211,7 @@ export function useComposerCommandMenu({
         });
       }
 
-      const skillItems = getProviderSkillsForSlashMenu(selectedProviderStatus?.skills ?? [], true)
+      const skillItems = getProviderSkillsForSlashMenu(skills, true)
         .filter((skill) => matchesSlashSkillQuery(skill, q))
         .map((skill) => ({
           id: `skill:${skill.name}`,
@@ -155,9 +225,7 @@ export function useComposerCommandMenu({
     }
 
     if (trigger.kind === "skill") {
-      const enabledSkills = dedupeProviderSkillsByName(
-        (selectedProviderStatus?.skills ?? []).filter(isProviderSkillUserInvocable),
-      );
+      const enabledSkills = dedupeProviderSkillsByName(skills.filter(isProviderSkillUserInvocable));
       const normalizedQuery = normalizeSearchQuery(trigger.query, {
         trimLeadingPattern: /^\$+/,
       });
@@ -254,7 +322,15 @@ export function useComposerCommandMenu({
     }
 
     return [];
-  }, [hasThread, onUpdateInteractionMode, pathSearch.entries, selectedProviderStatus, trigger]);
+  }, [
+    hasThread,
+    onUpdateInteractionMode,
+    pathSearch.entries,
+    selectedProviderStatus,
+    skills,
+    slashCommands,
+    trigger,
+  ]);
 
   const onSelect = useCallback(
     (item: ComposerCommandItem) => {
@@ -299,6 +375,7 @@ export function useComposerCommandMenu({
     onSelectionChange,
     trigger,
     items,
+    skills,
     isLoading: pathSearch.isPending,
     onSelect,
   };
