@@ -1,0 +1,164 @@
+import { DevinSettings, ProviderDriverKind } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import { HttpClient } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/unstable/process";
+
+import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
+import { makeDevinTextGeneration } from "../../textGeneration/DevinTextGeneration.ts";
+import { ProviderDriverError } from "../Errors.ts";
+import { makeDevinAdapter } from "../Layers/DevinAdapter.ts";
+import {
+  buildInitialDevinProviderSnapshot,
+  checkDevinProviderStatus,
+  enrichDevinSnapshot,
+} from "../Layers/DevinProvider.ts";
+import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
+import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import {
+  type ProviderContinuationIdentity,
+  type ProviderDriver,
+  type ProviderInstance,
+} from "../ProviderDriver.ts";
+import { withInstanceIdentity } from "./instanceIdentity.ts";
+import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import {
+  makeManualOnlyProviderMaintenanceCapabilities,
+  makeStaticProviderMaintenanceResolver,
+  resolveProviderMaintenanceCapabilitiesEffect,
+} from "../providerMaintenance.ts";
+import {
+  haveProviderSnapshotSettingsChanged,
+  makeProviderSnapshotSettingsSource,
+  type ProviderSnapshotSettings,
+} from "../providerUpdateSettings.ts";
+import { resolveDevinRuntimeProfile } from "./DevinProfile.ts";
+
+const decodeDevinSettings = Schema.decodeSync(DevinSettings);
+
+const DRIVER_KIND = ProviderDriverKind.make("devin");
+const UPDATE = makeStaticProviderMaintenanceResolver(
+  makeManualOnlyProviderMaintenanceCapabilities({
+    provider: DRIVER_KIND,
+    packageName: null,
+  }),
+);
+
+export type DevinDriverEnv =
+  | BackgroundPolicy.BackgroundPolicy
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
+  | FileSystem.FileSystem
+  | HttpClient.HttpClient
+  | Path.Path
+  | ProviderEventLoggers
+  | ServerConfig
+  | ServerSettingsService;
+
+export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
+  driverKind: DRIVER_KIND,
+  metadata: {
+    displayName: "Devin",
+    supportsMultipleInstances: true,
+  },
+  configSchema: DevinSettings,
+  defaultConfig: (): DevinSettings => decodeDevinSettings({}),
+  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
+    Effect.gen(function* () {
+      const crypto = yield* Crypto.Crypto;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const httpClient = yield* HttpClient.HttpClient;
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const { cwd } = serverConfig;
+      const baseEnv = mergeProviderInstanceEnvironment(environment);
+      const resolvedProfile = yield* resolveDevinRuntimeProfile({
+        settings: config,
+        environment: baseEnv,
+      });
+      const continuationIdentity: ProviderContinuationIdentity = {
+        driverKind: DRIVER_KIND,
+        continuationKey: resolvedProfile.identity,
+      };
+      const stampIdentity = withInstanceIdentity({
+        instanceId,
+        driverKind: DRIVER_KIND,
+        displayName,
+        accentColor,
+        continuationGroupKey: continuationIdentity.continuationKey,
+      });
+      const effectiveConfig = { ...config, enabled } satisfies DevinSettings;
+      const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+        binaryPath: effectiveConfig.binaryPath,
+        env: resolvedProfile.environment,
+      });
+
+      const adapter = yield* makeDevinAdapter(effectiveConfig, {
+        environment: resolvedProfile.environment,
+        instanceId,
+        attachmentsDir: serverConfig.attachmentsDir,
+      });
+      const textGeneration = yield* makeDevinTextGeneration(
+        effectiveConfig,
+        resolvedProfile.environment,
+      );
+
+      const checkProvider = checkDevinProviderStatus(
+        effectiveConfig,
+        resolvedProfile.environment,
+        cwd,
+      ).pipe(
+        Effect.map(stampIdentity),
+        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(Path.Path, path),
+      );
+
+      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
+      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<DevinSettings>>({
+        maintenanceCapabilities,
+        getSettings: snapshotSettings.getSettings,
+        streamSettings: snapshotSettings.streamSettings,
+        haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+        initialSnapshot: (settings) =>
+          buildInitialDevinProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
+        checkProvider,
+        enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
+          enrichDevinSnapshot({
+            snapshot: currentSnapshot,
+            maintenanceCapabilities,
+            enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+            publishSnapshot,
+            httpClient,
+          }),
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail: `Failed to build Devin snapshot: ${cause.message ?? String(cause)}`,
+              cause,
+            }),
+        ),
+      );
+
+      return {
+        instanceId,
+        driverKind: DRIVER_KIND,
+        continuationIdentity,
+        displayName,
+        accentColor,
+        enabled,
+        snapshot,
+        adapter,
+        textGeneration,
+      } satisfies ProviderInstance;
+    }),
+};

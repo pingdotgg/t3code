@@ -108,6 +108,16 @@ export type AcpParsedSessionEvent =
       readonly itemId?: string;
       readonly text: string;
       readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "AvailableCommandsChanged";
+      readonly availableCommands: ReadonlyArray<EffectAcpSchema.AvailableCommand>;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "ConfigOptionsChanged";
+      readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+      readonly rawPayload: unknown;
     };
 
 type AcpSessionSetupResponse =
@@ -836,6 +846,24 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
           rawPayload: params,
         });
       }
+      break;
+    }
+    case "available_commands_update": {
+      if (Array.isArray(upd.availableCommands) && upd.availableCommands.length > 0) {
+        events.push({
+          _tag: "AvailableCommandsChanged",
+          availableCommands: upd.availableCommands,
+          rawPayload: params,
+        });
+      }
+      break;
+    }
+    case "config_option_update": {
+      events.push({
+        _tag: "ConfigOptionsChanged",
+        configOptions: Array.isArray(upd.configOptions) ? upd.configOptions : [],
+        rawPayload: params,
+      });
       break;
     }
     default:
