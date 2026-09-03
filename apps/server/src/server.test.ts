@@ -6276,7 +6276,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               eventId: EventId.make("goal-cleared-event"),
               provider: ProviderDriverKind.make("codex"),
               providerInstanceId,
-              createdAt: "2026-01-01T00:00:01.000Z",
+              createdAt: "2026-04-24T03:07:01.000Z",
               threadId,
               payload: {},
             });
@@ -6480,6 +6480,53 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       if (updated?.type === "updated") {
         assert.equal(updated.goal.objective, "Final Goal");
       }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("subscribeCodexGoal drops a stale buffered clear after the snapshot", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("goal-stale-clear-thread");
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const currentGoal = {
+        objective: "Current Goal",
+        status: "active" as const,
+        tokenBudget: null,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        createdAt: 1_777_000_000,
+        updatedAt: 1_777_000_100,
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerService: {
+            getCodexGoal: () => Effect.yieldNow.pipe(Effect.andThen(Effect.succeed(currentGoal))),
+            streamEvents: Stream.make({
+              type: "thread.goal.cleared",
+              eventId: EventId.make("goal-stale-clear-event"),
+              provider: ProviderDriverKind.make("codex"),
+              providerInstanceId,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              threadId,
+              payload: {},
+            }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const streamed = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.subscribeCodexGoal]({ threadId, providerInstanceId }).pipe(
+            Stream.runCollect,
+          ),
+        ),
+      );
+
+      assert.deepEqual(
+        Array.from(streamed).map((event) => event.type),
+        ["snapshot"],
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -198,6 +198,8 @@ function codexGoalOperationError(operation: CodexGoalOperation, threadId: Thread
     new CodexGoalOperationError({ operation, threadId, cause });
 }
 
+type BufferedCodexGoalEvent = CodexGoalStreamEvent & { readonly updatedAt: number };
+
 function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesError): {
   readonly failure: ProjectEntriesFailure;
   readonly normalizedCwd?: string;
@@ -2658,16 +2660,18 @@ const makeWsRpcLayer = (
                       return Result.failVoid;
                     }
                     if (event.type === "thread.goal.updated") {
-                      return Result.succeed<CodexGoalStreamEvent>({
+                      return Result.succeed<BufferedCodexGoalEvent>({
                         type: "updated",
                         threadId: input.threadId,
                         goal: event.payload.goal,
+                        updatedAt: event.payload.goal.updatedAt,
                       });
                     }
                     if (event.type === "thread.goal.cleared") {
-                      return Result.succeed<CodexGoalStreamEvent>({
+                      return Result.succeed<BufferedCodexGoalEvent>({
                         type: "cleared",
                         threadId: input.threadId,
+                        updatedAt: Math.floor(Date.parse(event.createdAt) / 1000),
                       });
                     }
                     return Result.failVoid;
@@ -2683,7 +2687,15 @@ const makeWsRpcLayer = (
                 threadId: input.threadId,
                 goal,
               };
-              return Stream.concat(Stream.make(snapshot), Stream.fromQueue(liveGoalEvents));
+              const snapshotUpdatedAt = goal?.updatedAt ?? Number.NEGATIVE_INFINITY;
+              const liveGoalStream = Stream.fromQueue(liveGoalEvents).pipe(
+                Stream.filter(({ updatedAt }) => updatedAt > snapshotUpdatedAt),
+                Stream.map(({ updatedAt: _, ...event }) => event),
+              ) as Stream.Stream<
+                CodexGoalStreamEvent,
+                CodexGoalOperationError | EnvironmentAuthorizationError
+              >;
+              return Stream.concat(Stream.make(snapshot), liveGoalStream);
             }),
             { "rpc.aggregate": "codex-goal" },
           ),
