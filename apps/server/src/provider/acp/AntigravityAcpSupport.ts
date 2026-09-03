@@ -73,13 +73,9 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
       transformStdout: makeAntigravityStdoutTransform(
         input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {},
       ),
-      ...(input.onAuthorizationUrl
-        ? {
-            onStderr: makeAntigravityStderrHandler({
-              onAuthorizationUrl: input.onAuthorizationUrl,
-            }),
-          }
-        : {}),
+      onStderr: makeAntigravityStderrHandler(
+        input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {},
+      ),
       transformSessionUpdate: normalizeAntigravitySessionUpdate,
     }).pipe(
       Layer.provide(

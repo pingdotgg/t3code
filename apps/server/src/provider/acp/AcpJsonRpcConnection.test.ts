@@ -18,6 +18,7 @@ import { describe, expect } from "vite-plus/test";
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
@@ -342,6 +343,28 @@ describe("AcpSessionRuntime", () => {
           })
           .pipe(Effect.flip),
       ).toBe(events[0]?.error);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("fails a pending request when the stderr handler rejects the runtime", () =>
+    Effect.gen(function* () {
+      const failure = new EffectAcpErrors.AcpTransportError({
+        detail: "Sign in before continuing.",
+        cause: undefined,
+      });
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: { ...mockRuntimeOptions.spawn, env: { T3_ACP_FLOOD_STDERR: "1" } },
+        onStderr: () => Effect.fail(failure),
+      });
+      expect(yield* runtime.start().pipe(Effect.flip)).toBe(failure);
+      const events = yield* runtime.getEvents().pipe(
+        Stream.filter((event) => event._tag === "ConnectionTerminated"),
+        Stream.take(1),
+        Stream.runCollect,
+      );
+      expect(events[0]?.error).toBe(failure);
+      expect(yield* runtime.initialize().pipe(Effect.flip)).toBe(failure);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
