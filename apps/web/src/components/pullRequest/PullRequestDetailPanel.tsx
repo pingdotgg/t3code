@@ -63,7 +63,7 @@ import { useProjects } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
-import { pullRequestEnvironment } from "~/state/pullRequests";
+import { pullRequestEnvironment, useSharedPullRequestSummary } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { vcsEnvironment } from "~/state/vcs";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -445,6 +445,7 @@ function PullRequestBaseFreshnessWarning({
 
 export function PullRequestDetailPanel({
   environmentId,
+  threadRef = null,
   reference,
   refreshToken: forcedRefreshToken = 0,
   onActed,
@@ -454,6 +455,13 @@ export function PullRequestDetailPanel({
   composerDraftTarget,
 }: {
   environmentId: EnvironmentId;
+  /**
+   * The thread this panel sits beside, if any. Links that are not the pull
+   * request itself (check details, host permalinks) can open in that thread's
+   * in-app browser when the user has asked for it; the page has no thread, so
+   * there they always go to the system browser.
+   */
+  threadRef?: ScopedThreadRef | null;
   reference: PullRequestRef;
   /**
    * Bumped by whatever holds the panel when a reader asks for everything on screen to be read
@@ -468,14 +476,8 @@ export function PullRequestDetailPanel({
   onActed?: () => void;
   /** Page-owned detail columns use this to clear the selected pull request. */
   onClose?: () => void;
-  /** Keeps surrounding thread state in step with refreshed host state. */
-  onStateChange?: (status: {
-    projectId: string;
-    repository: string;
-    number: number;
-    state: PullRequestState;
-    isDraft: boolean;
-  }) => void;
+  /** Keeps surrounding inferred thread state in step with refreshed host state. */
+  onStateChange?: (status: { repository: string; number: number; state: PullRequestState }) => void;
   /**
    * Beside a thread, the checkout affordance disappears: the panel is showing that thread's
    * own pull request, so the branch is already under the reader's feet — and checking it out
@@ -598,11 +600,19 @@ export function PullRequestDetailPanel({
     reference.repository,
     reference.number,
   ]);
-  const coreDetail = resolveDisplayedPullRequestDetail({
+  const resolvedCoreDetail = resolveDisplayedPullRequestDetail({
     live: detailQuery.data,
     cached: cachedDetail,
     reference,
   });
+  const sharedSummary = useSharedPullRequestSummary(environmentId, reference, resolvedCoreDetail);
+  const coreDetail = useMemo(
+    () =>
+      resolvedCoreDetail === null || sharedSummary === null || sharedSummary === resolvedCoreDetail
+        ? resolvedCoreDetail
+        : { ...resolvedCoreDetail, ...sharedSummary },
+    [resolvedCoreDetail, sharedSummary],
+  );
   const activity = activityQuery.data;
   const detail = useMemo(
     () =>
@@ -666,16 +676,14 @@ export function PullRequestDetailPanel({
     }
     activityRevision.current = next;
   }, [activityQuery.refresh, coreDetail, pullRequestKey]);
-  useEffect(() => {
-    if (!detail) return;
+  useLayoutEffect(() => {
+    if (!resolvedCoreDetail) return;
     onStateChange?.({
-      projectId: detail.projectId,
-      repository: detail.repository,
-      number: detail.number,
-      state: detail.state,
-      isDraft: detail.isDraft,
+      repository: resolvedCoreDetail.repository,
+      number: resolvedCoreDetail.number,
+      state: resolvedCoreDetail.state,
     });
-  }, [detail, onStateChange]);
+  }, [onStateChange, resolvedCoreDetail]);
   // Core detail is cheap enough to re-read while this stays open. Activity is heavier, so the
   // revision effect above reads it only after this same pull request reports a change. Keyed by
   // the pull request rather than by the panel, because this one panel shows a different pull
@@ -1296,8 +1304,8 @@ export function PullRequestDetailPanel({
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-background">
-      <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 border-b border-border/60">
-        <div className="ml-4 grid h-7 min-w-0 items-center">
+      <div className="@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 border-b border-border/60">
+        <div className="ml-4 grid h-7 min-w-0 items-center overflow-hidden">
           <div
             aria-hidden={condensed}
             inert={condensed}
@@ -1402,7 +1410,7 @@ export function PullRequestDetailPanel({
             ) : null}
           </div>
         </div>
-        <div className="mr-4 flex h-7 min-w-0 flex-nowrap items-center justify-end gap-1">
+        <div className="mr-4 flex h-7 shrink-0 items-center justify-end gap-1">
           {detail ? (
             <>
               {/* Checking a pull request out is the reason to open one here at all, so it is a
@@ -1415,9 +1423,17 @@ export function PullRequestDetailPanel({
                   <MenuTrigger
                     disabled={handoff !== null}
                     render={
-                      <Button size="xs" variant="outline">
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        aria-label={
+                          handoff?.startsWith("checkout") ? "Checking out..." : "Check out"
+                        }
+                      >
                         <GitBranchIcon aria-hidden className="size-3.5" />
-                        {handoff?.startsWith("checkout") ? "Checking out..." : "Check out"}
+                        <span className="@max-[35rem]/pr-header:hidden">
+                          {handoff?.startsWith("checkout") ? "Checking out..." : "Check out"}
+                        </span>
                         <ChevronDownIcon aria-hidden className="size-3.5 text-muted-foreground" />
                       </Button>
                     }
@@ -1453,17 +1469,39 @@ export function PullRequestDetailPanel({
                 </Menu>
               ) : null}
               {workflowApprovalsRequired > 0 && can("approve-workflows") ? (
-                <Button
-                  size="xs"
-                  variant="warning-outline"
-                  disabled={actionPending}
-                  onClick={() => setConfirmation({ open: true, action: "approve-workflows" })}
-                >
-                  <PlayIcon className="size-3.5" />
-                  {pendingAction === "approve-workflows"
-                    ? "Approving..."
-                    : "Approve workflows to run"}
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="inline-flex shrink-0">
+                        <Button
+                          size="xs"
+                          variant="warning-outline"
+                          disabled={actionPending}
+                          onClick={() =>
+                            setConfirmation({ open: true, action: "approve-workflows" })
+                          }
+                          aria-label={
+                            pendingAction === "approve-workflows"
+                              ? "Approving..."
+                              : "Approve workflows to run"
+                          }
+                        >
+                          <PlayIcon aria-hidden className="size-3.5" />
+                          <span className="@max-[40rem]/pr-header:hidden">
+                            {pendingAction === "approve-workflows"
+                              ? "Approving..."
+                              : "Approve workflows to run"}
+                          </span>
+                        </Button>
+                      </span>
+                    }
+                  />
+                  <TooltipPopup side="top">
+                    {pendingAction === "approve-workflows"
+                      ? "Approving..."
+                      : "Approve workflows to run"}
+                  </TooltipPopup>
+                </Tooltip>
               ) : null}
               {/* Said where the Merge button is, because it is the answer to why nobody has
                   pressed it: the merge is already asked for, and the host is holding it. */}
@@ -1471,62 +1509,150 @@ export function PullRequestDetailPanel({
                 <Tooltip>
                   <TooltipTrigger
                     render={
-                      <Badge size="control" variant="info">
+                      <Badge
+                        size="control"
+                        variant="info"
+                        role="img"
+                        aria-label={armedAutoMergeLabel}
+                      >
                         <GitMergeIcon aria-hidden className="size-3.5" />
-                        {armedAutoMergeLabel}
+                        <span className="@max-[30rem]/pr-header:hidden">{armedAutoMergeLabel}</span>
                       </Badge>
                     }
                   />
                   <TooltipPopup side="top">
-                    The host will merge this on its own once its requirements are met
+                    {armedAutoMergeLabel}: the host will merge this on its own once its requirements
+                    are met
                   </TooltipPopup>
                 </Tooltip>
               ) : null}
               {primaryAction === "resolve" ? (
-                <Button
-                  size="xs"
-                  variant="destructive-outline"
-                  disabled={handoff !== null}
-                  onClick={startResolveConflicts}
-                >
-                  <TriangleAlertIcon className="size-3.5" />
-                  {handoff === "conflicts" ? "Preparing..." : "Resolve conflicts"}
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="inline-flex shrink-0">
+                        <Button
+                          size="xs"
+                          variant="destructive-outline"
+                          disabled={handoff !== null}
+                          onClick={startResolveConflicts}
+                          aria-label={
+                            handoff === "conflicts" ? "Preparing..." : "Resolve conflicts"
+                          }
+                        >
+                          <TriangleAlertIcon aria-hidden className="size-3.5" />
+                          <span className="@max-[30rem]/pr-header:hidden">
+                            {handoff === "conflicts" ? "Preparing..." : "Resolve conflicts"}
+                          </span>
+                        </Button>
+                      </span>
+                    }
+                  />
+                  <TooltipPopup side="top">
+                    {handoff === "conflicts" ? "Preparing..." : "Resolve conflicts"}
+                  </TooltipPopup>
+                </Tooltip>
               ) : primaryAction === "ready" ? (
-                <Button size="xs" disabled={actionPending} onClick={() => void perform("ready")}>
-                  Ready for review
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="inline-flex shrink-0">
+                        <Button
+                          size="xs"
+                          disabled={actionPending}
+                          onClick={() => void perform("ready")}
+                          aria-label="Ready for review"
+                        >
+                          <GitPullRequestIcon
+                            aria-hidden
+                            className="hidden size-3.5 @max-[30rem]/pr-header:inline"
+                          />
+                          <span className="@max-[30rem]/pr-header:hidden">Ready for review</span>
+                        </Button>
+                      </span>
+                    }
+                  />
+                  <TooltipPopup side="top">Ready for review</TooltipPopup>
+                </Tooltip>
               ) : primaryAction === "enable-auto-merge" ? (
-                <Button
-                  size="xs"
-                  disabled={actionPending}
-                  onClick={() => setConfirmation({ open: true, action: "enable-auto-merge" })}
-                >
-                  <GitMergeIcon className="size-3.5" />
-                  {pendingAction === "enable-auto-merge" ? "Enabling..." : pendingAutoMergeLabel}
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="inline-flex shrink-0">
+                        <Button
+                          size="xs"
+                          disabled={actionPending}
+                          onClick={() =>
+                            setConfirmation({ open: true, action: "enable-auto-merge" })
+                          }
+                          aria-label={
+                            pendingAction === "enable-auto-merge"
+                              ? "Enabling..."
+                              : pendingAutoMergeLabel
+                          }
+                        >
+                          <GitMergeIcon aria-hidden className="size-3.5" />
+                          <span className="@max-[30rem]/pr-header:hidden">
+                            {pendingAction === "enable-auto-merge"
+                              ? "Enabling..."
+                              : pendingAutoMergeLabel}
+                          </span>
+                        </Button>
+                      </span>
+                    }
+                  />
+                  <TooltipPopup side="top">
+                    {pendingAction === "enable-auto-merge" ? "Enabling..." : pendingAutoMergeLabel}
+                  </TooltipPopup>
+                </Tooltip>
               ) : primaryAction === "auto-merge-armed" ? (
                 <Tooltip>
                   <TooltipTrigger
                     render={
-                      <Badge size="control" variant="info">
-                        <GitMergeIcon className="size-3.5" />
-                        {armedAutoMergeLabel}
+                      <Badge
+                        size="control"
+                        variant="info"
+                        role="img"
+                        aria-label={armedAutoMergeLabel}
+                      >
+                        <GitMergeIcon aria-hidden className="size-3.5" />
+                        <span className="@max-[30rem]/pr-header:hidden">{armedAutoMergeLabel}</span>
                       </Badge>
                     }
                   />
                   <TooltipPopup side="top">
-                    The host will merge this on its own once its requirements are met
+                    {armedAutoMergeLabel}: the host will merge this on its own once its requirements
+                    are met
                   </TooltipPopup>
                 </Tooltip>
               ) : primaryAction === "merge" ? (
-                <Button
-                  size="xs"
-                  disabled={actionPending}
-                  onClick={() => setConfirmation({ open: true, action: "merge" })}
-                >
-                  {pendingAction === "merge" ? "Merging..." : selectedMergeMethodLabel}
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="inline-flex shrink-0">
+                        <Button
+                          size="xs"
+                          disabled={actionPending}
+                          onClick={() => setConfirmation({ open: true, action: "merge" })}
+                          aria-label={
+                            pendingAction === "merge" ? "Merging..." : selectedMergeMethodLabel
+                          }
+                        >
+                          <GitMergeIcon
+                            aria-hidden
+                            className="hidden size-3.5 @max-[30rem]/pr-header:inline"
+                          />
+                          <span className="@max-[30rem]/pr-header:hidden">
+                            {pendingAction === "merge" ? "Merging..." : selectedMergeMethodLabel}
+                          </span>
+                        </Button>
+                      </span>
+                    }
+                  />
+                  <TooltipPopup side="top">
+                    {pendingAction === "merge" ? "Merging..." : selectedMergeMethodLabel}
+                  </TooltipPopup>
+                </Tooltip>
               ) : (primaryAction === "merged" || primaryAction === "closed") &&
                 statePresentation !== null ? (
                 <Badge size="control" variant="outline" className={statePresentation.toneClassName}>
@@ -1857,10 +1983,17 @@ export function PullRequestDetailPanel({
             {detail ? (
               <div className="col-span-2 mt-1 min-w-0 px-4 pb-4">
                 {titleDraft === null ? (
-                  <div className="group flex min-w-0 items-start gap-1">
-                    <h1 className="min-w-0 flex-1 text-base font-semibold leading-snug">
-                      {detail.title}
-                    </h1>
+                  <div className="group flex min-w-0 items-center gap-1">
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <h1 className="min-w-0 flex-1 truncate text-base font-semibold leading-snug">
+                            {detail.title}
+                          </h1>
+                        }
+                      />
+                      <TooltipPopup side="top">{detail.title}</TooltipPopup>
+                    </Tooltip>
                     {canEditPullRequestChangeRequest(detail) ? (
                       <Button
                         size="icon-xs"
@@ -2027,7 +2160,11 @@ export function PullRequestDetailPanel({
                 aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
               >
                 {checksState !== null ? (
-                  <PullRequestChecksPopover checks={detail.checks} checksState={checksState} />
+                  <PullRequestChecksPopover
+                    checks={detail.checks}
+                    checksState={checksState}
+                    threadRef={threadRef}
+                  />
                 ) : (
                   <CircleDotIcon aria-hidden className="size-3.5" />
                 )}
@@ -2151,6 +2288,7 @@ export function PullRequestDetailPanel({
               <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
                 <PullRequestSummaryTab
                   environmentId={environmentId}
+                  threadRef={threadRef}
                   reference={reference}
                   detail={detail}
                   activityPending={activityPending}
@@ -2178,6 +2316,7 @@ export function PullRequestDetailPanel({
                   <PullRequestTimelineTab
                     detail={detail}
                     environmentId={environmentId}
+                    threadRef={threadRef}
                     reference={reference}
                     order={timelineOrder}
                     onOpenCommit={openCommit}

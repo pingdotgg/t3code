@@ -1,14 +1,19 @@
 # Customize a project icon
 
 T3 Code selects a project icon automatically. It checks `t3.json`, common favicon and app icon
-paths, and icon links in project HTML files.
+paths, and icon links in project HTML files. If it does not find an image, it chooses a built-in
+emoji from the project name.
 
-To choose a different icon:
+To choose a different icon or emoji:
 
 1. Open **Settings** and select **Projects**.
 2. Select the project.
-3. Under **Appearance**, select **Choose a project file**.
-4. Search for an image file and select it.
+3. Next to **Project icon**, select **Choose icon**.
+4. Search the full Lucide icon set and choose a color, or switch to **Emoji** and choose or paste
+   an emoji.
+
+To use an image from the project instead, select **Choose file**, search for an image, and select
+it.
 
 T3 Code supports SVG, PNG, ICO, JPEG, GIF, AVIF, and WebP files. The selected path applies to
 each checkout in the project group and appears on your connected clients.
