@@ -200,6 +200,26 @@ it("cuts the visible text short before giving up the interactive elements", () =
   expect(metadata.interactiveElements).toEqual(snapshot.interactiveElements);
 });
 
+it("caps a runaway URL before touching page content", () => {
+  const snapshot = snapshotFixture({
+    url: `data:text/html,${"x".repeat(200_000)}`,
+    visibleText: "visible ".repeat(100),
+    interactiveElements: [element("Save")],
+    accessibilityTree: { nodes: [{ role: "main" }] },
+  });
+  const { metadata, serialized } = McpHttpServer.boundPreviewSnapshotMetadata(snapshot);
+
+  expect(Buffer.byteLength(serialized, "utf8")).toBeLessThanOrEqual(
+    McpHttpServer.PREVIEW_SNAPSHOT_METADATA_MAX_BYTES,
+  );
+  expect(metadata.url).toBe(snapshot.url.slice(0, 2_048));
+  expect(metadata.truncation?.trimmed).toEqual(["url"]);
+  expect(metadata.truncation?.omitted).toEqual([]);
+  expect(metadata.visibleText).toBe(snapshot.visibleText);
+  expect(metadata.interactiveElements).toEqual(snapshot.interactiveElements);
+  expect(metadata.accessibilityTree).toEqual(snapshot.accessibilityTree);
+});
+
 it("gives up the interactive elements last when they alone exceed the limit", () => {
   const snapshot = snapshotFixture({
     visibleText: "visible ".repeat(2_000),

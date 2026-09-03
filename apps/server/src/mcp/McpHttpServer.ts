@@ -35,6 +35,8 @@ import {
  * as an image and is never reduced.
  */
 export const PREVIEW_SNAPSHOT_METADATA_MAX_BYTES = 100_000;
+/** Longest title or URL kept once a snapshot has to be reduced at all. */
+const PREVIEW_SNAPSHOT_IDENTIFIER_MAX_CHARS = 2_048;
 
 type PreviewSnapshotMetadata = Omit<PreviewAutomationSnapshot, "screenshot"> & {
   readonly screenshot: Omit<PreviewAutomationSnapshot["screenshot"], "data">;
@@ -95,6 +97,23 @@ export function boundPreviewSnapshotMetadata(snapshot: PreviewAutomationSnapshot
     omitted.push(field);
     return measure();
   };
+
+  // The title and URL are identifiers, not content. Past this length (a data:
+  // URL, a runaway title) they carry nothing the agent needs, and either could
+  // be the whole overrun by itself, so they are capped before any content goes.
+  for (const field of ["title", "url"] as const) {
+    if (metadata[field].length > PREVIEW_SNAPSHOT_IDENTIFIER_MAX_CHARS) {
+      metadata = {
+        ...metadata,
+        [field]: cutText(metadata[field], PREVIEW_SNAPSHOT_IDENTIFIER_MAX_CHARS),
+      };
+      trimmed.push(field);
+      bytes = measure();
+    }
+  }
+  if (bytes <= PREVIEW_SNAPSHOT_METADATA_MAX_BYTES) {
+    return { metadata, serialized };
+  }
 
   if (metadata.accessibilityTree !== null && metadata.accessibilityTree !== undefined) {
     bytes = omit("accessibilityTree");
