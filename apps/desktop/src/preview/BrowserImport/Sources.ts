@@ -359,7 +359,7 @@ const withCookieCounts = (
  * `Default` would report a browser whose cookies live in `Profile 1` as having
  * nothing to import — and it is then left out of the menu entirely.
  */
-export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProfiles")(function* (
+const listSourceProfilesInDirectory = Effect.fnUntraced(function* (
   definition: BrowserImportSourceDefinition,
   context: BrowserImportPathContext,
 ): Effect.fn.Return<ReadonlyArray<BrowserImportSourceProfile>, never, FileSystem.FileSystem> {
@@ -427,6 +427,41 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
     context,
     found.filter((profile) => profile !== undefined),
   );
+});
+
+/**
+ * Include Firefox's Snap home alongside its native home. Snap profiles use
+ * absolute directories so cookie reads and lock checks keep pointing at the
+ * installation they came from, even when both installs use the same name.
+ */
+export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProfiles")(function* (
+  definition: BrowserImportSourceDefinition,
+  context: BrowserImportPathContext,
+): Effect.fn.Return<ReadonlyArray<BrowserImportSourceProfile>, never, FileSystem.FileSystem> {
+  if (definition.engine !== "firefox" || context.platform !== "linux") {
+    return yield* listSourceProfilesInDirectory(definition, context);
+  }
+
+  const root = definition.userDataDirectory(context);
+  if (root === undefined) return [];
+  const roots = [
+    root,
+    context.path.join(context.home, "snap", "firefox", "common", ".mozilla", "firefox"),
+  ];
+  const profiles = new Map<string, BrowserImportSourceProfile>();
+  for (const directory of roots) {
+    const found = yield* listSourceProfilesInDirectory(
+      { ...definition, userDataDirectory: () => directory },
+      context,
+    );
+    for (const profile of found) {
+      const absolute = context.path.resolve(directory, profile.directory);
+      if (!profiles.has(absolute)) {
+        profiles.set(absolute, directory === root ? profile : { ...profile, directory: absolute });
+      }
+    }
+  }
+  return [...profiles.values()];
 });
 
 /**

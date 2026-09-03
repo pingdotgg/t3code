@@ -398,6 +398,85 @@ describe("cookieDatabaseCandidatePaths", () => {
 
 const firefox = BROWSER_IMPORT_SOURCES.find((source) => source.id === "firefox")!;
 
+describe("Firefox Snap profiles", () => {
+  it.effect("finds Snap profiles with or without profiles.ini and checks their locks", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-firefox-snap-" });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcessEnvironment, { HOME: home }),
+          Effect.provideService(HostProcessPlatform, "linux"),
+        );
+        const root = `${home}/snap/firefox/common/.mozilla/firefox`;
+        const directory = `${root}/abcd.default`;
+        yield* fileSystem.makeDirectory(directory, { recursive: true });
+        yield* writeFirefoxCookieDatabase(`${directory}/cookies.sqlite`, 2, 1);
+        yield* fileSystem.writeFileString(
+          `${root}/profiles.ini`,
+          "[Profile0]\nName=Personal\nIsRelative=1\nPath=abcd.default\n",
+        );
+
+        assert.isTrue(yield* isSourceInstalled(firefox, context));
+        assert.deepEqual(yield* listSourceProfiles(firefox, context), [
+          { directory, name: "Personal", cookieCount: 2 },
+        ]);
+        assert.equal(
+          yield* resolveCookieDatabase(firefox, context, directory),
+          `${directory}/cookies.sqlite`,
+        );
+        assert.isFalse(yield* isSourceRunning(firefox, context));
+        yield* fileSystem.symlink("foreign-host:+4242", `${directory}/lock`);
+        assert.isTrue(yield* isSourceRunning(firefox, context));
+        yield* fileSystem.remove(`${directory}/lock`);
+        assert.isFalse(yield* isSourceRunning(firefox, context));
+
+        yield* fileSystem.remove(`${root}/profiles.ini`);
+        assert.deepEqual(yield* listSourceProfiles(firefox, context), [
+          { directory, name: "abcd.default", cookieCount: 2 },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("keeps matching profile names in native and Snap installs distinct", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-firefox-snap-" });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcessEnvironment, { HOME: home }),
+          Effect.provideService(HostProcessPlatform, "linux"),
+        );
+        const native = `${home}/.mozilla/firefox`;
+        const snap = `${home}/snap/firefox/common/.mozilla/firefox`;
+        for (const root of [native, snap]) {
+          yield* fileSystem.makeDirectory(`${root}/abcd.default`, { recursive: true });
+          yield* writeFirefoxCookieDatabase(`${root}/abcd.default/cookies.sqlite`, 1, 0);
+          yield* fileSystem.writeFileString(
+            `${root}/profiles.ini`,
+            "[Profile0]\nName=Personal\nIsRelative=1\nPath=abcd.default\n" +
+              `[Profile1]\nName=Shared\nIsRelative=0\nPath=${snap}/abcd.default\n`,
+          );
+        }
+
+        const profiles = yield* listSourceProfiles(firefox, context);
+        assert.deepEqual(
+          profiles.map((profile) => profile.directory),
+          ["abcd.default", `${snap}/abcd.default`],
+        );
+        const databases = yield* Effect.forEach(profiles, (profile) =>
+          resolveCookieDatabase(firefox, context, profile.directory),
+        );
+        assert.deepEqual(databases, [
+          `${native}/abcd.default/cookies.sqlite`,
+          `${snap}/abcd.default/cookies.sqlite`,
+        ]);
+      }),
+    ),
+  );
+});
+
 describe("listSourceProfiles Firefox fallback", () => {
   const cases = [
     { platform: "linux" as const, profileDirectory: "linux.default" },
