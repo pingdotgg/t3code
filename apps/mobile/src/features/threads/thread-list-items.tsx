@@ -492,8 +492,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       ? {
           kind: "done",
           label: "Done",
-          pillClassName: "bg-emerald-500/12 dark:bg-emerald-500/16",
-          textClassName: "text-emerald-700 dark:text-emerald-300",
+          pillClassName: "bg-adaptive-emerald-500-a12-a16",
+          textClassName: "text-adaptive-emerald-700-300",
           iconColor: "#10b981",
           iconBackground: "rgba(16,185,129,0.18)",
           pulse: false,

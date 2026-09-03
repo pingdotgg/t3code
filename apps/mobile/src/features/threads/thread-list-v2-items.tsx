@@ -439,7 +439,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const status = resolveThreadListV2Status(thread);
   const statusLabel =
     STATUS_LABEL_BY_STATUS[status] ??
-    (isUnread ? { label: "Done", className: "text-emerald-700 dark:text-emerald-300" } : undefined);
+    (isUnread ? { label: "Done", className: "text-adaptive-emerald-700-300" } : undefined);
   // Settled rows label by the same stamp they sort by, so order and label
   // can't disagree. updatedAt is always present, so the resolver never
   // returns null here.
