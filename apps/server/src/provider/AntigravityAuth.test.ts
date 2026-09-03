@@ -54,6 +54,7 @@ const phase = (auth: AntigravityAuth, value: ProviderAuthState["phase"], session
 const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
   options: {
     readonly interactive?: boolean;
+    readonly authorizationUrls?: ReadonlyArray<string>;
     readonly supportsLogout?: boolean;
     readonly forwardCallback?: Effect.Effect<void, ProviderSetupError>;
   } = {},
@@ -62,12 +63,16 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
   const discovered = yield* Deferred.make<void>();
   const closed = yield* Deferred.make<void>();
   const events: string[] = [];
+  let receiveAuthorizationUrl:
+    | ((url: string) => Effect.Effect<void, AcpErrors.AcpError>)
+    | undefined;
   let forwarded = 0;
   let catalog = ["previous-account-model"];
   const auth = yield* makeAntigravityAuth({
     instanceId,
     makeRuntime: (input) =>
       Effect.gen(function* () {
+        receiveAuthorizationUrl = input.onAuthorizationUrl;
         events.push("process-open");
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
@@ -87,7 +92,9 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
             Effect.gen(function* () {
               events.push("authenticate");
               if (options.interactive !== false && input.onAuthorizationUrl) {
-                yield* input.onAuthorizationUrl(authorizationUrl);
+                for (const url of options.authorizationUrls ?? [authorizationUrl]) {
+                  yield* input.onAuthorizationUrl(url);
+                }
               }
               yield* Deferred.await(authenticated);
               events.push("session-new");
@@ -124,10 +131,62 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     events,
     catalog: () => catalog,
     forwarded: () => forwarded,
+    receiveAuthorizationUrl: (url: string) =>
+      Effect.suspend(() =>
+        receiveAuthorizationUrl
+          ? receiveAuthorizationUrl(url)
+          : Effect.die("Authorization URL receiver is not ready."),
+      ),
   };
 });
 
 it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
+  it.effect("accepts the same authorization URL from stderr and stdout", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        authorizationUrls: [authorizationUrl, authorizationUrl],
+      });
+      yield* harness.auth.controller.start(owner);
+      const waiting = yield* phase(harness.auth, "waiting");
+      assert.equal(waiting.authorizationUrl, authorizationUrl);
+
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.succeed(harness.discovered, undefined);
+      yield* phase(harness.auth, "succeeded");
+    }),
+  );
+
+  it.effect("accepts a delayed duplicate after callback completion starts", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const state = yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* harness.auth.controller.complete(owner, {
+        flowId: state.flowId!,
+        callbackUrl,
+      });
+
+      yield* harness.receiveAuthorizationUrl(authorizationUrl);
+
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.succeed(harness.discovered, undefined);
+      yield* phase(harness.auth, "succeeded");
+    }),
+  );
+
+  it.effect("rejects a different second authorization URL", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        authorizationUrls: [authorizationUrl, `${authorizationUrl}&scope=another-request`],
+      });
+      yield* harness.auth.controller.start(owner);
+
+      const failed = yield* phase(harness.auth, "failed");
+      assert.isNull(failed.authorizationUrl);
+      assert.deepEqual(harness.catalog(), ["previous-account-model"]);
+    }),
+  );
+
   it.effect("keeps a remote flow private and waits for native auth and catalog discovery", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

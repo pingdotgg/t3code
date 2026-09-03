@@ -66,7 +66,8 @@ const defaultSessionLoadTimeout = Duration.seconds(90);
 const defaultSessionLoadReplayIdleGap = Duration.seconds(2);
 const defaultCancelTimeout = Duration.seconds(15);
 const maxStartupMetadataUpdates = 32;
-const maxStderrChunkLength = 8_192;
+// Antigravity can emit an accepted 16 KiB Google authorization URL on stderr.
+const maxStderrChunkLength = 32_768;
 
 export interface AcpSpawnInput {
   readonly command: string;

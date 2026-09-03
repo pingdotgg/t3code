@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
@@ -407,6 +408,27 @@ it.layer(testLayer)("Antigravity provider snapshots", (it) => {
         expect(snapshot.models).toEqual(buildAntigravityModelsFromSession(sessionSetupResult));
         expect(snapshot.slashCommands).toEqual(commands);
         expect(snapshot.workspaceSnapshots?.[0]?.cwd).toBe("/workspace");
+      }),
+    ),
+  );
+
+  it.effect("allows a slow packaged runtime health check to finish", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.initialize;
+        yield* Ref.set(harness.probe, Effect.sleep("20 seconds").pipe(Effect.as(initializeResult)));
+
+        const refresh = yield* harness.provider.snapshot.refresh.pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("20 seconds");
+        const snapshot = yield* Fiber.join(refresh);
+
+        expect(snapshot).toMatchObject({
+          installed: true,
+          status: "warning",
+          auth: { status: "unknown" },
+        });
       }),
     ),
   );

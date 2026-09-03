@@ -327,7 +327,7 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("drains large stderr output and bounds optional logging chunks", () =>
+  it.effect("drains large stderr output and keeps auth-sized logging chunks", () =>
     Effect.gen(function* () {
       const lengths: Array<number> = [];
       for (const logStderr of [false, true]) {
@@ -348,7 +348,8 @@ describe("AcpSessionRuntime", () => {
         }).pipe(Effect.scoped);
       }
       expect(lengths.length).toBeGreaterThan(0);
-      expect(Math.max(...lengths)).toBeLessThanOrEqual(8_192);
+      expect(Math.max(...lengths)).toBeGreaterThanOrEqual(16_384);
+      expect(Math.max(...lengths)).toBeLessThanOrEqual(32_768);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
