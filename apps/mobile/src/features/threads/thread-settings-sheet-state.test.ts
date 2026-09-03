@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ProviderInstanceId, type ProviderOptionSelection } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  ServerProvider,
+  type ProviderOptionSelection,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 import type { ModelOption } from "../../lib/modelOptions";
-import { modelMatchesCatalogQuery, pendingModelAfterPress } from "./thread-settings-sheet-state";
+import {
+  canCommitPendingModel,
+  modelMatchesCatalogQuery,
+  pendingModelAfterPress,
+  providerSetupCandidates,
+} from "./thread-settings-sheet-state";
 
 function modelOption(
   model: string,
@@ -95,5 +105,95 @@ describe("thread settings sheet state", () => {
         pressedIsApplied: false,
       }),
     ).toBe(pressed);
+  });
+
+  it("cannot save a staged model after sign-out removes it from the catalog", () => {
+    const pending = modelOption("gemini-native");
+    const group = { providerKey: "codex", providerLabel: "Codex", models: [pending] };
+
+    expect(canCommitPendingModel(pending, [group])).toBe(true);
+    expect(canCommitPendingModel(pending, [])).toBe(false);
+    expect(
+      canCommitPendingModel(pending, [
+        {
+          ...group,
+          models: [{ ...pending, isUnavailable: true }],
+        },
+      ]),
+    ).toBe(false);
+  });
+});
+
+const decodeServerProvider = Schema.decodeSync(ServerProvider);
+
+function setupProvider(overrides: Partial<ServerProvider> = {}): ServerProvider {
+  return decodeServerProvider({
+    instanceId: "antigravity",
+    driver: "antigravity",
+    displayName: "Antigravity",
+    enabled: false,
+    installed: false,
+    version: null,
+    status: "disabled",
+    auth: { status: "unauthenticated" },
+    checkedAt: "2026-09-02T00:00:00.000Z",
+    setup: { canAuthenticate: true, canInstall: true },
+    models: [],
+    ...overrides,
+  });
+}
+
+describe("providerSetupCandidates", () => {
+  const unfiltered = { providerFilter: null, query: "" };
+
+  it("offers setup without a selectable model and after sign-out", () => {
+    const disabled = setupProvider();
+    const signedOut = setupProvider({ enabled: true, installed: true });
+
+    expect(providerSetupCandidates({ providers: [disabled], ...unfiltered })).toEqual([disabled]);
+    expect(providerSetupCandidates({ providers: [signedOut], ...unfiltered })).toEqual([signedOut]);
+  });
+
+  it("uses the selected environment's status for identical instance IDs", () => {
+    const offlineAccount = setupProvider();
+    const readyAccount = setupProvider({
+      enabled: true,
+      installed: true,
+      auth: { status: "authenticated" },
+      models: [{ slug: "gemini-native", name: "Gemini", isCustom: false, capabilities: null }],
+    });
+
+    expect(providerSetupCandidates({ providers: [offlineAccount], ...unfiltered })).toHaveLength(1);
+    expect(providerSetupCandidates({ providers: [readyAccount], ...unfiltered })).toEqual([]);
+  });
+
+  it("limits existing threads to their provider and respects search", () => {
+    const personal = setupProvider();
+    const work = setupProvider({
+      instanceId: ProviderInstanceId.make("google_work"),
+      displayName: "Work Google",
+    });
+
+    expect(
+      providerSetupCandidates({
+        providers: [personal, work],
+        ...unfiltered,
+        instanceId: work.instanceId,
+      }),
+    ).toEqual([work]);
+    expect(
+      providerSetupCandidates({
+        providers: [personal, work],
+        providerFilter: work.instanceId,
+        query: "work",
+      }),
+    ).toEqual([work]);
+    expect(
+      providerSetupCandidates({
+        providers: [personal, work],
+        providerFilter: null,
+        query: "no-match",
+      }),
+    ).toEqual([]);
   });
 });

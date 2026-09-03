@@ -36,6 +36,24 @@ describe("effect-acp errors", () => {
     });
   });
 
+  it.effect("preserves typed ACP failures carried by the RPC protocol", () => {
+    const original = new AcpError.AcpTransportError({
+      detail: "Sign in to the agent.",
+      cause: undefined,
+    });
+    const failure = new RpcClientError.RpcClientError({
+      reason: new RpcClientError.RpcClientDefect({
+        message: "ACP protocol terminated.",
+        cause: original,
+      }),
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* callRpc("initialize", Effect.fail(failure)).pipe(Effect.flip);
+      expect(error).toBe(original);
+    });
+  });
+
   it.effect("preserves protocol request errors as request errors", () => {
     const failure = AcpSchema.Error.make({
       code: -32602,

@@ -7,10 +7,10 @@ import {
 
 type RefreshProvidersTarget = {
   readonly environmentId: EnvironmentId;
-  readonly input: Record<never, never>;
+  readonly input: { readonly refreshModels: true };
 };
 
-/** Deduplicates taps while the server refresh command is still running. */
+/** Explicit model-picker refresh. Repeated taps share the pending discovery. */
 export function createProviderCatalogRefreshRunner<Result>(
   refreshProviders: (target: RefreshProvidersTarget) => Promise<Result>,
 ) {
@@ -18,7 +18,7 @@ export function createProviderCatalogRefreshRunner<Result>(
 
   return (environmentId: EnvironmentId): Promise<Result> => {
     if (pending) return pending;
-    pending = refreshProviders({ environmentId, input: {} }).finally(() => {
+    pending = refreshProviders({ environmentId, input: { refreshModels: true } }).finally(() => {
       pending = null;
     });
     return pending;

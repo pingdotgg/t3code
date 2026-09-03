@@ -6,6 +6,10 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 
 import * as AcpAgent from "../../src/agent.ts";
 
+if (process.env.ACP_MOCK_STDOUT_PREFIX !== undefined) {
+  process.stdout.write(process.env.ACP_MOCK_STDOUT_PREFIX);
+}
+
 if (process.env.ACP_MOCK_MALFORMED_OUTPUT === "1") {
   process.stdout.write("{not-json}\n");
   process.exit(Number(process.env.ACP_MOCK_MALFORMED_OUTPUT_EXIT_CODE ?? "0"));

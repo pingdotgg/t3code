@@ -27,27 +27,27 @@ describe("AcpCoreRuntimeEvents", () => {
       },
     };
 
-    expect(
-      makeAcpRequestOpenedEvent({
-        stamp,
-        provider: ProviderDriverKind.make("cursor"),
-        threadId: "thread-1" as never,
-        turnId,
-        requestId: RuntimeRequestId.make("request-1"),
-        permissionRequest,
-        detail: "cat package.json",
-        args: { command: ["cat", "package.json"] },
-        source: "acp.jsonrpc",
-        method: "session/request_permission",
-        rawPayload: { sessionId: "session-1" },
-      }),
-    ).toMatchObject({
+    const openedEvent = makeAcpRequestOpenedEvent({
+      stamp,
+      provider: ProviderDriverKind.make("cursor"),
+      threadId: "thread-1" as never,
+      turnId,
+      requestId: RuntimeRequestId.make("request-1"),
+      permissionRequest,
+      detail: "cat package.json",
+      args: { command: ["cat", "package.json"] },
+      source: "acp.jsonrpc",
+      method: "session/request_permission",
+      rawPayload: { sessionId: "session-1" },
+    });
+    expect(openedEvent).toMatchObject({
       type: "request.opened",
       payload: {
         requestType: "exec_command_approval",
         detail: "cat package.json",
       },
     });
+    expect(openedEvent).not.toHaveProperty("payload.options");
 
     expect(
       makeAcpRequestResolvedEvent({
@@ -65,6 +65,36 @@ describe("AcpCoreRuntimeEvents", () => {
         requestType: "exec_command_approval",
         decision: "accept",
       },
+    });
+  });
+
+  it("preserves a native file approval without a remembered-allow choice", () => {
+    const event = makeAcpRequestOpenedEvent({
+      stamp: { eventId: "approval-1" as never, createdAt: "2026-09-02T00:00:00.000Z" },
+      provider: ProviderDriverKind.make("antigravity"),
+      threadId: "thread-1" as never,
+      turnId: TurnId.make("turn-1"),
+      requestId: RuntimeRequestId.make("request-1"),
+      permissionRequest: { kind: "edit" },
+      approvalOptions: [
+        { decision: "accept", label: "Allow once" },
+        { decision: "decline", label: "Reject" },
+      ],
+      detail: "Edit package.json",
+      args: {},
+      source: "acp.jsonrpc",
+      method: "session/request_permission",
+      rawPayload: { sessionId: "session-1" },
+    });
+
+    expect(event.payload).toEqual({
+      requestType: "file_change_approval",
+      detail: "Edit package.json",
+      args: {},
+      options: [
+        { decision: "accept", label: "Allow once" },
+        { decision: "decline", label: "Reject" },
+      ],
     });
   });
 
@@ -189,6 +219,26 @@ describe("AcpCoreRuntimeEvents", () => {
       payload: {
         itemType: "assistant_message",
         status: "inProgress",
+      },
+    });
+  });
+
+  it("maps thoughts to the reasoning stream", () => {
+    expect(
+      makeAcpContentDeltaEvent({
+        stamp: { eventId: "thought-1" as never, createdAt: "2026-09-02T00:00:00.000Z" },
+        provider: ProviderDriverKind.make("cursor"),
+        threadId: "thread-1" as never,
+        turnId: TurnId.make("turn-1"),
+        streamKind: "reasoning_text",
+        text: "Inspect the current implementation first.",
+        rawPayload: { sessionId: "session-1" },
+      }),
+    ).toMatchObject({
+      type: "content.delta",
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "Inspect the current implementation first.",
       },
     });
   });

@@ -29,13 +29,32 @@ const mergeProviderModels = (
   ];
 };
 
+/**
+ * Built-in drivers in presentation order. Codex and Claude lead, the opt-in
+ * providers follow, and unknown or fork drivers sort after every built-in.
+ */
+const BUILT_IN_DRIVER_ORDER: ReadonlyArray<string> = [
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "grok",
+  "opencode",
+  "antigravity",
+];
+
+const driverRank = (driver: string): number => {
+  const index = BUILT_IN_DRIVER_ORDER.indexOf(driver);
+  return index === -1 ? BUILT_IN_DRIVER_ORDER.length : index;
+};
+
 export const orderProviderSnapshots = (
   providers: ReadonlyArray<ServerProvider>,
 ): ReadonlyArray<ServerProvider> =>
   [...providers].toSorted(
     (left, right) =>
-      (left.displayName ?? "").localeCompare(right.displayName ?? "") ||
+      driverRank(left.driver) - driverRank(right.driver) ||
       left.driver.localeCompare(right.driver) ||
+      (left.displayName ?? "").localeCompare(right.displayName ?? "") ||
       left.instanceId.localeCompare(right.instanceId),
   );
 

@@ -17,14 +17,16 @@ export interface PendingApprovalCardProps {
   ) => Promise<unknown>;
 }
 
-const DEFAULT_APPROVAL_OPTIONS = [
+const DEFAULT_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
   { decision: "accept", label: "Allow once" },
   { decision: "acceptForSession", label: "Allow session" },
   { decision: "decline", label: "Decline" },
-] satisfies ReadonlyArray<ProviderApprovalOption>;
+];
 
 export function PendingApprovalCard(props: PendingApprovalCardProps) {
-  const options = props.approval.options ?? DEFAULT_APPROVAL_OPTIONS;
+  const options: ReadonlyArray<ProviderApprovalOption> =
+    props.approval.options ?? DEFAULT_APPROVAL_OPTIONS;
+  const warning = options.find((option) => option.warning)?.warning;
   // Opaque for the same reason as PendingUserInputCard: nothing blurs the feed
   // behind this card, so a translucent surface bleeds messages through it.
   return (
@@ -38,6 +40,11 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
       {props.approval.detail ? (
         <Text className="font-sans text-sm leading-normal text-adaptive-neutral-600-400">
           {props.approval.detail}
+        </Text>
+      ) : null}
+      {warning ? (
+        <Text className="font-sans text-xs leading-normal text-adaptive-amber-700-300">
+          {warning}
         </Text>
       ) : null}
       <View className="flex-row flex-wrap gap-2.5">

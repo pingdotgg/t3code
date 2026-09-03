@@ -16,6 +16,7 @@ import {
   buildPendingUserInputAnswers,
   buildThreadFeed,
   derivePendingApprovals,
+  derivePendingUserInputs,
   deriveThreadFeedPresentation,
   isPendingUserInputOptionSelected,
   setPendingUserInputCustomAnswer,
@@ -74,15 +75,48 @@ const multiSelectQuestion = {
   multiSelect: true,
 } as const;
 
+const nativeQuestion = {
+  id: "choice",
+  header: "File",
+  question: "Which file should be used?",
+  options: [
+    { label: "Use this", description: "First file", value: " choice " },
+    { label: "Use this", description: "Second file", value: "choice" },
+  ],
+  multiSelect: false,
+  allowCustomAnswer: false,
+} as const;
+
 describe("pending user input answers", () => {
+  it("preserves native choice values and custom-answer rules from activities", () => {
+    const requested = makeActivity({
+      id: EventId.make("native-question"),
+      kind: "user-input.requested",
+      summary: "User input requested",
+      createdAt: "2026-09-02T00:00:00.000Z",
+      payload: {
+        requestId: "interaction_1",
+        questions: [nativeQuestion, singleSelectQuestion],
+      },
+    });
+
+    expect(derivePendingUserInputs([requested])).toEqual([
+      {
+        requestId: "interaction_1",
+        createdAt: requested.createdAt,
+        questions: [nativeQuestion, singleSelectQuestion],
+      },
+    ]);
+  });
+
   it("replaces single-select options and toggles multi-select options", () => {
     expect(
       togglePendingUserInputOptionSelection(
         singleSelectQuestion,
-        { selectedOptionLabels: ["Go"] },
+        { selectedOptionValues: ["Go"] },
         "Node.js",
       ),
-    ).toEqual({ customAnswer: "", selectedOptionLabels: ["Node.js"] });
+    ).toEqual({ customAnswer: "", selectedOptionValues: ["Node.js"] });
 
     const orders = togglePendingUserInputOptionSelection(multiSelectQuestion, undefined, "Orders");
     const ordersAndListings = togglePendingUserInputOptionSelection(
@@ -92,18 +126,18 @@ describe("pending user input answers", () => {
     );
     expect(ordersAndListings).toEqual({
       customAnswer: "",
-      selectedOptionLabels: ["Orders", "Listings"],
+      selectedOptionValues: ["Orders", "Listings"],
     });
     expect(
       togglePendingUserInputOptionSelection(multiSelectQuestion, ordersAndListings, "Orders"),
-    ).toEqual({ customAnswer: "", selectedOptionLabels: ["Listings"] });
+    ).toEqual({ customAnswer: "", selectedOptionValues: ["Listings"] });
 
     const paddedOrders = togglePendingUserInputOptionSelection(
       multiSelectQuestion,
       undefined,
       "  Orders  ",
     );
-    expect(paddedOrders).toEqual({ customAnswer: "", selectedOptionLabels: ["Orders"] });
+    expect(paddedOrders).toEqual({ customAnswer: "", selectedOptionValues: ["Orders"] });
     expect(
       togglePendingUserInputOptionSelection(multiSelectQuestion, paddedOrders, "  Orders  "),
     ).toEqual({ customAnswer: "" });
@@ -112,8 +146,8 @@ describe("pending user input answers", () => {
   it("builds array answers for multi-select questions", () => {
     expect(
       buildPendingUserInputAnswers([singleSelectQuestion, multiSelectQuestion], {
-        runtime: { selectedOptionLabels: ["Go"] },
-        scope: { selectedOptionLabels: ["Orders", "Listings"] },
+        runtime: { selectedOptionValues: ["Go"] },
+        scope: { selectedOptionValues: ["Orders", "Listings"] },
       }),
     ).toEqual({
       runtime: "Go",
@@ -124,22 +158,84 @@ describe("pending user input answers", () => {
   it("clears selected options while a custom answer is active", () => {
     expect(
       setPendingUserInputCustomAnswer(
-        { selectedOptionLabels: ["Orders", "Listings"] },
+        multiSelectQuestion,
+        { selectedOptionValues: ["Orders", "Listings"] },
         "Orders first",
       ),
     ).toEqual({ customAnswer: "Orders first" });
   });
 
-  it("matches selected chips against normalized option labels", () => {
+  it("matches selected options against normalized legacy labels", () => {
     expect(
-      isPendingUserInputOptionSelected({ selectedOptionLabels: ["Orders"] }, "  Orders  "),
+      isPendingUserInputOptionSelected(
+        multiSelectQuestion,
+        { selectedOptionValues: ["Orders"] },
+        "  Orders  ",
+      ),
     ).toBe(true);
     expect(
       isPendingUserInputOptionSelected(
-        { selectedOptionLabels: ["Orders"], customAnswer: "Orders first" },
+        multiSelectQuestion,
+        { selectedOptionValues: ["Orders"], customAnswer: "Orders first" },
         "  Orders  ",
       ),
     ).toBe(false);
+  });
+
+  it("keeps custom answers enabled for legacy questions", () => {
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion], {
+        runtime: { selectedOptionValues: ["Go"], customAnswer: "  Use Bun  " },
+      }),
+    ).toEqual({ runtime: "Use Bun" });
+  });
+
+  it("keeps duplicate labels and whitespace-sensitive native values separate", () => {
+    const first = togglePendingUserInputOptionSelection(nativeQuestion, undefined, " choice ");
+    expect(isPendingUserInputOptionSelected(nativeQuestion, first, " choice ")).toBe(true);
+    expect(isPendingUserInputOptionSelected(nativeQuestion, first, "choice")).toBe(false);
+    expect(buildPendingUserInputAnswers([nativeQuestion], { choice: first })).toEqual({
+      choice: " choice ",
+    });
+
+    const second = togglePendingUserInputOptionSelection(nativeQuestion, first, "choice");
+    expect(isPendingUserInputOptionSelected(nativeQuestion, second, " choice ")).toBe(false);
+    expect(isPendingUserInputOptionSelected(nativeQuestion, second, "choice")).toBe(true);
+    expect(buildPendingUserInputAnswers([nativeQuestion], { choice: second })).toEqual({
+      choice: "choice",
+    });
+  });
+
+  it("keeps exact native values in multi-select answers", () => {
+    const question = { ...nativeQuestion, multiSelect: true };
+    const first = togglePendingUserInputOptionSelection(question, undefined, " choice ");
+    const both = togglePendingUserInputOptionSelection(question, first, "choice");
+    expect(buildPendingUserInputAnswers([question], { choice: both })).toEqual({
+      choice: [" choice ", "choice"],
+    });
+
+    const second = togglePendingUserInputOptionSelection(question, both, " choice ");
+    expect(buildPendingUserInputAnswers([question], { choice: second })).toEqual({
+      choice: ["choice"],
+    });
+  });
+
+  it("ignores custom answers when a question only accepts choices", () => {
+    const draft = { selectedOptionValues: [" choice "], customAnswer: "Other" };
+    expect(setPendingUserInputCustomAnswer(nativeQuestion, draft, "Custom text")).toBe(draft);
+    expect(isPendingUserInputOptionSelected(nativeQuestion, draft, " choice ")).toBe(true);
+    expect(buildPendingUserInputAnswers([nativeQuestion], { choice: draft })).toEqual({
+      choice: " choice ",
+    });
+  });
+
+  it.each([
+    { customAnswer: "Other" },
+    { selectedOptionValues: ["Use this"] },
+    { selectedOptionValues: ["not offered"] },
+    { selectedOptionValues: ["  choice  "] },
+  ])("requires an offered value for a choice-only question: %j", (draft) => {
+    expect(buildPendingUserInputAnswers([nativeQuestion], { choice: draft })).toBeNull();
   });
 });
 

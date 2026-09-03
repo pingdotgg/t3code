@@ -44,12 +44,8 @@ export async function tryCopyTextWithHaptic(
       await Clipboard.setStringAsync(value);
       return true;
     } catch (cause) {
-      console.error(
-        new CopyTextClipboardWriteError({
-          target,
-          cause,
-        }),
-      );
+      const error = new CopyTextClipboardWriteError({ target, cause });
+      console.error(error.message, { _tag: error._tag, target, stack: error.stack });
       return false;
     }
   })();
@@ -62,13 +58,8 @@ export async function tryCopyTextWithHaptic(
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
     } catch (cause) {
-      console.error(
-        new CopyTextHapticFeedbackError({
-          target,
-          feedback,
-          cause,
-        }),
-      );
+      const error = new CopyTextHapticFeedbackError({ target, feedback, cause });
+      console.error(error.message, { _tag: error._tag, target, feedback, stack: error.stack });
     }
   })();
 

@@ -1,5 +1,6 @@
 import * as Path from "effect/Path";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -31,6 +32,10 @@ const ExtRequest = jsonRpcRequest("x/test", Schema.Struct({ hello: Schema.String
 const ExtResponse = jsonRpcResponse(Schema.Struct({ ok: Schema.Boolean }));
 const PromptRequest = jsonRpcRequest("session/prompt", AcpSchema.PromptRequest);
 const PromptResponse = jsonRpcResponse(AcpSchema.PromptResponse);
+const SessionUpdateNotification = jsonRpcNotification(
+  "session/update",
+  AcpSchema.SessionNotification,
+);
 const decodePromptRequestLine = Schema.decodeEffect(Schema.fromJsonString(PromptRequest));
 const XAiPromptCompleteNotification = jsonRpcNotification(
   "_x.ai/session/prompt_complete",
@@ -59,6 +64,15 @@ const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/acp-mock-peer.ts"),
 );
 const mockPeerArgs = (path: string) => [path];
+const mockStartupNotice = "Mock ACP startup notice";
+const stripMockStartupNotice = (stdout: ChildProcessSpawner.ChildProcessHandle["stdout"]) =>
+  stdout.pipe(
+    Stream.decodeText,
+    Stream.splitLines,
+    Stream.filter((line) => line !== mockStartupNotice),
+    Stream.map((line) => `${line}\n`),
+    Stream.encodeText,
+  );
 
 function concatBytes(chunks: ReadonlyArray<Uint8Array>): Uint8Array {
   const batch = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
@@ -81,6 +95,196 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       });
       return yield* spawner.spawn(command);
     });
+
+  it.effect("transforms fragmented stdout before parsing and preserves UTF-8", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle({ ACP_MOCK_STDOUT_PREFIX: `${mockStartupNotice}\n` });
+      yield* Effect.gen(function* () {
+        const acp = yield* AcpClient.AcpClient;
+        const initialized = yield* acp.agent.initialize({ protocolVersion: 1 });
+        assert.equal(initialized.protocolVersion, 1);
+
+        const echoed = yield* acp.raw.request("x/echo", { message: "café" });
+        assert.deepEqual(echoed, {
+          echoedMethod: "x/echo",
+          echoedParams: { message: "café" },
+        });
+      }).pipe(
+        Effect.provide(
+          AcpClient.layerChildProcess(handle, {
+            transformStdout: (stdout) =>
+              stdout.pipe(
+                Stream.flatMap((chunk) =>
+                  Stream.fromIterable(Array.from(chunk, (byte) => Uint8Array.of(byte))),
+                ),
+                stripMockStartupNotice,
+              ),
+          }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("reports malformed JSON that remains after a stdout transform", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle({
+        ACP_MOCK_STDOUT_PREFIX: `${mockStartupNotice}\n`,
+        ACP_MOCK_MALFORMED_OUTPUT: "1",
+      });
+      const termination = yield* Deferred.make<AcpError.AcpError>();
+      const error = yield* Deferred.await(termination).pipe(
+        Effect.provide(
+          AcpClient.layerChildProcess(handle, {
+            transformStdout: stripMockStartupNotice,
+            onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+          }),
+        ),
+      );
+
+      if (error._tag !== "AcpProtocolParseError") {
+        return assert.fail(`Expected a parse error, got ${error._tag}`);
+      }
+      assert.equal(error.operation, "decode-wire-message");
+    }),
+  );
+
+  it.effect("preserves stdout transform errors without logging rejected input", () =>
+    Effect.gen(function* () {
+      const privateNotice = "Mock sign-in URL: https://example.test/login?token=mock-private-token";
+      const handle = yield* makeHandle({ ACP_MOCK_STDOUT_PREFIX: `${privateNotice}\n` });
+      const termination = yield* Deferred.make<AcpError.AcpError>();
+      const logs = yield* Ref.make<Array<unknown>>([]);
+      const expectedError = new AcpError.AcpTransportError({
+        operation: "read-input-stream",
+        detail: "Sign in to the mock agent.",
+        cause: undefined,
+      });
+      const error = yield* Effect.gen(function* () {
+        const acp = yield* AcpClient.AcpClient;
+        const failure = yield* acp.agent.initialize({ protocolVersion: 1 }).pipe(Effect.flip);
+        assert.strictEqual(yield* Deferred.await(termination), expectedError);
+        return failure;
+      }).pipe(
+        Effect.provide(
+          AcpClient.layerChildProcess(handle, {
+            logIncoming: true,
+            logger: (event) => Ref.update(logs, (current) => [...current, event]),
+            transformStdout: (stdout) =>
+              stdout.pipe(
+                Stream.decodeText,
+                Stream.splitLines,
+                Stream.mapEffect((line) =>
+                  line === privateNotice ? Effect.fail(expectedError) : Effect.succeed(`${line}\n`),
+                ),
+                Stream.encodeText,
+              ),
+            onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+          }),
+        ),
+      );
+
+      assert.strictEqual(error, expectedError);
+      assert.isEmpty(yield* Ref.get(logs));
+    }),
+  );
+
+  it.effect("retains only transformed session updates in raw notifications and handlers", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const delivered = yield* Deferred.make<AcpSchema.SessionNotification>();
+      const imageData = "A".repeat(1_048_576);
+      const normalized = {
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Image data omitted." },
+        },
+      } satisfies AcpSchema.SessionNotification;
+      let transformCalls = 0;
+      const acp = yield* AcpClient.make(stdio, {
+        transformSessionUpdate: (notification) => {
+          if (
+            notification.update.sessionUpdate !== "agent_message_chunk" ||
+            notification.update.content.type !== "image"
+          ) {
+            return notification;
+          }
+          assert.equal(notification.update.content.data, imageData);
+          transformCalls += 1;
+          return normalized;
+        },
+      });
+      yield* acp.handleSessionUpdate((notification) =>
+        Deferred.succeed(delivered, notification).pipe(Effect.asVoid),
+      );
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(SessionUpdateNotification, {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "session-1",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "image", data: imageData, mimeType: "image/png" },
+            },
+          },
+        }),
+      );
+
+      assert.strictEqual(yield* Deferred.await(delivered), normalized);
+      const [retained] = yield* acp.raw.notifications.pipe(Stream.take(1), Stream.runCollect);
+      assert.deepEqual(retained, {
+        _tag: "SessionUpdate",
+        method: "session/update",
+        params: normalized,
+      });
+      assert.equal(transformCalls, 1);
+    }),
+  );
+
+  it.effect("reports idle child termination and rejects later requests and notifications", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle();
+      const termination = yield* Deferred.make<AcpError.AcpError>();
+      yield* Effect.gen(function* () {
+        const acp = yield* AcpClient.AcpClient;
+        yield* acp.agent.initialize({ protocolVersion: 1 });
+        yield* handle.kill();
+
+        const error = yield* Deferred.await(termination);
+        if (error._tag !== "AcpProcessExitedError") {
+          return assert.fail(`Expected a process exit, got ${error._tag}`);
+        }
+        assert.equal(error.pid, handle.pid);
+        assert.equal(error.code, yield* handle.exitCode);
+        const rawRequestError = yield* acp.raw.request("x/echo", {}).pipe(
+          Effect.match({
+            onFailure: (failure) => failure,
+            onSuccess: () => assert.fail("Expected the request to fail after process exit"),
+          }),
+        );
+        assert.strictEqual(rawRequestError, error);
+        assert.strictEqual(yield* acp.raw.notify("x/notify", {}).pipe(Effect.flip), error);
+        assert.strictEqual(
+          yield* acp.agent.cancel({ sessionId: "mock-session-1" }).pipe(Effect.flip),
+          error,
+        );
+
+        const requestError = yield* acp.agent
+          .createSession({ cwd: process.cwd(), mcpServers: [] })
+          .pipe(Effect.flip);
+        assert.strictEqual(requestError, error);
+      }).pipe(
+        Effect.provide(
+          AcpClient.layerChildProcess(handle, {
+            onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+          }),
+        ),
+      );
+    }),
+  );
 
   it.effect("initializes, prompts, receives updates, and handles permission requests", () =>
     Effect.gen(function* () {

@@ -175,9 +175,14 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       const secret = "acp-core-notification-secret-sentinel";
       const { stdio, input } = yield* makeInMemoryStdio();
       const termination = yield* Deferred.make<AcpError.AcpError>();
+      let transformCalls = 0;
       yield* AcpProtocol.makeAcpPatchedProtocol({
         stdio,
         serverRequestMethods: new Set(),
+        transformSessionUpdate: (notification) => {
+          transformCalls += 1;
+          return notification;
+        },
         onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
       });
 
@@ -199,6 +204,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       );
 
       const error = yield* Deferred.await(termination);
+      assert.equal(transformCalls, 0);
       assert.instanceOf(error, AcpError.AcpProtocolParseError);
       const parseError = error as AcpError.AcpProtocolParseError;
       const { cause, ...directDiagnostics } = parseError;
@@ -719,4 +725,46 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       assert.equal(error.code, 0);
     }),
   );
+
+  for (const operation of ["request", "notification"] as const) {
+    it.effect(`rejects a ${operation} if the connection ends while its logger is running`, () =>
+      Effect.gen(function* () {
+        const { stdio, input, output } = yield* makeInMemoryStdio();
+        const writeStarted = yield* Deferred.make<void>();
+        const releaseWrite = yield* Deferred.make<void>();
+        const terminated = yield* Deferred.make<AcpError.AcpError>();
+        const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+          stdio,
+          serverRequestMethods: new Set(),
+          logOutgoing: true,
+          logger: (event) =>
+            event.stage === "raw"
+              ? Deferred.succeed(writeStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseWrite)),
+                )
+              : Effect.void,
+          onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
+        });
+        const send = yield* (
+          operation === "request"
+            ? transport.request("x/test", { hello: "world" })
+            : transport.notify("session/cancel", { sessionId: "session-1" })
+        ).pipe(Effect.forkScoped);
+
+        yield* Deferred.await(writeStarted);
+        yield* Queue.end(input);
+        const error = yield* Deferred.await(terminated);
+        yield* Deferred.succeed(releaseWrite, undefined);
+
+        const failure = yield* Fiber.join(send).pipe(
+          Effect.match({
+            onFailure: (failure) => failure,
+            onSuccess: () => assert.fail("Expected the send to fail after termination"),
+          }),
+        );
+        assert.strictEqual(failure, error);
+        assert.equal(yield* Queue.size(output), 0);
+      }),
+    );
+  }
 });

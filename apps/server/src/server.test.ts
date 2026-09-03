@@ -29,8 +29,11 @@ import {
   ORCHESTRATION_WS_METHODS,
   type PreviewEvent,
   ProjectId,
+  type ProviderAuthState,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderInstallState,
+  ProviderSetupError,
   ResolvedKeybindingRule,
   ThreadId,
   TurnId,
@@ -112,6 +115,13 @@ import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
+import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts";
+import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
+import {
+  AntigravityInstallation,
+  AntigravityInstallationError,
+} from "./provider/AntigravityInstallation.ts";
+import type { ProviderInstance } from "./provider/ProviderDriver.ts";
 import { ProviderAdapterRequestError } from "./provider/Errors.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -191,6 +201,47 @@ const defaultModelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5-codex",
 } as const;
+
+const providerSetupInstanceId = ProviderInstanceId.make("antigravity-custom-profile");
+const providerSetupDriver = ProviderDriverKind.make("antigravity");
+const providerSetupInstallState: ProviderInstallState = {
+  driver: providerSetupDriver,
+  operationId: "install-operation",
+  phase: "downloading",
+  downloadedBytes: 128,
+  totalBytes: 256,
+  version: "test-release",
+  installedVersion: null,
+  canRemove: false,
+  message: null,
+};
+const providerSetupAuthState: ProviderAuthState = {
+  instanceId: providerSetupInstanceId,
+  phase: "idle",
+  flowId: null,
+  authorizationUrl: null,
+  expiresAt: null,
+  message: null,
+};
+const providerSetupInstance: ProviderInstance = {
+  instanceId: providerSetupInstanceId,
+  driverKind: providerSetupDriver,
+  enabled: false,
+  displayName: "Google account",
+  continuationIdentity: {
+    driverKind: providerSetupDriver,
+    continuationKey: providerSetupInstanceId,
+  },
+  get adapter(): never {
+    throw new Error("Provider setup must not start a chat session.");
+  },
+  get snapshot(): never {
+    throw new Error("Installation routing must not probe the provider.");
+  },
+  get textGeneration(): never {
+    throw new Error("Provider setup must not generate text.");
+  },
+};
 
 const makeLiveToolActivityEvent = (
   sequence: number,
@@ -437,6 +488,9 @@ const buildAppUnderTest = (options?: {
     environmentTheme?: Partial<EnvironmentTheme.EnvironmentThemeService["Service"]>;
     providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
     providerService?: Partial<ProviderService.ProviderService["Service"]>;
+    providerAuth?: Partial<ProviderAuthService["Service"]>;
+    providerInstanceRegistry?: Partial<ProviderInstanceRegistry["Service"]>;
+    antigravityInstallation?: Partial<AntigravityInstallation["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
@@ -705,6 +759,18 @@ const buildAppUnderTest = (options?: {
           Layer.mock(ProviderService.ProviderService)({
             uploadFeedback: () => Effect.die("Provider feedback is not stubbed in this test"),
             ...options?.layers?.providerService,
+          }),
+          Layer.mock(ProviderAuthService)({
+            ...options?.layers?.providerAuth,
+          }),
+          Layer.mock(ProviderInstanceRegistry)({
+            getInstance: () => Effect.succeed(undefined),
+            listInstances: Effect.succeed([]),
+            ...options?.layers?.providerInstanceRegistry,
+          }),
+          Layer.mock(AntigravityInstallation)({
+            managedDirectory: "unused-test-antigravity-runtime",
+            ...options?.layers?.antigravityInstallation,
           }),
         ),
       ),
@@ -4979,6 +5045,307 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           failureMessage.includes("An error occurred during Open"),
       );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("provider setup lets read-only clients observe installation but not change setup", () =>
+    Effect.gen(function* () {
+      let installStarts = 0;
+      let authCalls = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          providerInstanceRegistry: {
+            getInstance: (instanceId) =>
+              Effect.succeed(
+                instanceId === providerSetupInstanceId ? providerSetupInstance : undefined,
+              ),
+          },
+          antigravityInstallation: {
+            start: Effect.sync(() => {
+              installStarts += 1;
+              return providerSetupInstallState;
+            }),
+            changes: Stream.succeed(providerSetupInstallState),
+          },
+          providerAuth: {
+            start: () =>
+              Effect.sync(() => {
+                authCalls += 1;
+                return providerSetupAuthState;
+              }),
+            subscribe: () =>
+              Stream.fromEffect(
+                Effect.sync(() => {
+                  authCalls += 1;
+                  return providerSetupAuthState;
+                }),
+              ),
+          },
+        },
+      });
+      const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "orchestration:read",
+      });
+      assert.equal(token.response.status, 200);
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${token.body.access_token ?? ""}` },
+      });
+      const { ticket } = yield* responseJsonEffect<{ readonly ticket: string }>(ticketResponse);
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const observed = yield* client[WS_METHODS.providerInstallSubscribe]({
+              instanceId: providerSetupInstanceId,
+            }).pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+            assert.deepEqual(observed, providerSetupInstallState);
+            const errors = [
+              yield* client[WS_METHODS.providerInstallStart]({
+                instanceId: providerSetupInstanceId,
+              }).pipe(Effect.flip),
+              yield* client[WS_METHODS.providerAuthStart]({
+                instanceId: providerSetupInstanceId,
+              }).pipe(Effect.flip),
+              yield* client[WS_METHODS.providerAuthSubscribe]({
+                instanceId: providerSetupInstanceId,
+              }).pipe(Stream.runHead, Effect.flip),
+            ];
+            for (const error of errors) {
+              assert.equal(error._tag, "EnvironmentAuthorizationError");
+              if (error._tag === "EnvironmentAuthorizationError") {
+                assert.equal(error.requiredScope, "orchestration:operate");
+              }
+            }
+          }),
+        ),
+      );
+      assert.equal(installStarts, 0);
+      assert.equal(authCalls, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("provider setup binds private sign-in to the authenticated websocket session", () =>
+    Effect.gen(function* () {
+      const flowId = "private-sign-in-flow";
+      const callbackUrl = "http://127.0.0.1:51234/?state=test-state&code=test-code";
+      const waiting: ProviderAuthState = {
+        ...providerSetupAuthState,
+        phase: "waiting",
+        flowId,
+        authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth?state=test-state",
+        expiresAt: "2026-09-02T00:05:00.000Z",
+      };
+      const calls: Array<{
+        readonly operation: string;
+        readonly instanceId: ProviderInstanceId;
+        readonly ownerSessionId: string;
+      }> = [];
+      const forwardedCallbacks: string[] = [];
+      const logoutInstances: ProviderInstanceId[] = [];
+      let flowOwner = "";
+      yield* buildAppUnderTest({
+        layers: {
+          providerAuth: {
+            start: (input, ownerSessionId) =>
+              Effect.sync(() => {
+                flowOwner = ownerSessionId;
+                calls.push({ operation: "start", instanceId: input.instanceId, ownerSessionId });
+                return waiting;
+              }),
+            subscribe: (input, ownerSessionId) =>
+              Stream.fromEffect(
+                Effect.sync(() => {
+                  calls.push({
+                    operation: "subscribe",
+                    instanceId: input.instanceId,
+                    ownerSessionId,
+                  });
+                  return ownerSessionId === flowOwner
+                    ? waiting
+                    : { ...waiting, flowId: null, authorizationUrl: null, expiresAt: null };
+                }),
+              ),
+            complete: (input, ownerSessionId) =>
+              Effect.gen(function* () {
+                calls.push({ operation: "complete", instanceId: input.instanceId, ownerSessionId });
+                if (ownerSessionId !== flowOwner) {
+                  return yield* new ProviderSetupError({
+                    instanceId: input.instanceId,
+                    operation: "complete",
+                    detail: "This sign-in belongs to another client.",
+                  });
+                }
+                assert.equal(input.flowId, flowId);
+                forwardedCallbacks.push(input.callbackUrl);
+                return { ...waiting, phase: "verifying" as const, authorizationUrl: null };
+              }),
+            cancel: (input, ownerSessionId) =>
+              Effect.sync(() => {
+                assert.equal(input.flowId, flowId);
+                calls.push({ operation: "cancel", instanceId: input.instanceId, ownerSessionId });
+                return { ...providerSetupAuthState, phase: "cancelled" as const, flowId };
+              }),
+            logout: (input) =>
+              Effect.sync(() => {
+                logoutInstances.push(input.instanceId);
+                return providerSetupAuthState;
+              }),
+          },
+        },
+      });
+      const firstCookie = yield* getAuthenticatedSessionCookieHeader();
+      const secondCookie = yield* getAuthenticatedSessionCookieHeader();
+      const firstClients = yield* HttpClient.get("/api/auth/clients", {
+        headers: { cookie: firstCookie },
+      }).pipe(
+        Effect.flatMap(
+          responseJsonEffect<
+            ReadonlyArray<{ readonly sessionId: string; readonly current: boolean }>
+          >,
+        ),
+      );
+      const secondClients = yield* HttpClient.get("/api/auth/clients", {
+        headers: { cookie: secondCookie },
+      }).pipe(
+        Effect.flatMap(
+          responseJsonEffect<
+            ReadonlyArray<{ readonly sessionId: string; readonly current: boolean }>
+          >,
+        ),
+      );
+      const firstOwner = firstClients.find((session) => session.current)?.sessionId;
+      const secondOwner = secondClients.find((session) => session.current)?.sessionId;
+      assert.isString(firstOwner);
+      assert.isString(secondOwner);
+      assert.notEqual(firstOwner, secondOwner);
+      const baseWsUrl = yield* getWsServerUrl("/ws", { authenticated: false });
+      const target = {
+        instanceId: providerSetupInstanceId,
+        ownerSessionId: "client-supplied-owner",
+      };
+      yield* Effect.scoped(
+        withWsRpcClient(appendSessionCookieToWsUrl(baseWsUrl, firstCookie), (client) =>
+          Effect.gen(function* () {
+            const started = yield* client[WS_METHODS.providerAuthStart](target);
+            assert.equal(started.flowId, flowId);
+            const ownState = yield* client[WS_METHODS.providerAuthSubscribe](target).pipe(
+              Stream.runHead,
+              Effect.map(Option.getOrThrow),
+            );
+            assert.equal(ownState.authorizationUrl, waiting.authorizationUrl);
+            yield* Effect.scoped(
+              withWsRpcClient(appendSessionCookieToWsUrl(baseWsUrl, secondCookie), (otherClient) =>
+                Effect.gen(function* () {
+                  const otherState = yield* otherClient[WS_METHODS.providerAuthSubscribe](
+                    target,
+                  ).pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+                  assert.isNull(otherState.authorizationUrl);
+                  assert.isNull(otherState.flowId);
+                  const forged = { ...target, ownerSessionId: firstOwner, flowId, callbackUrl };
+                  const denied = yield* otherClient[WS_METHODS.providerAuthComplete](forged).pipe(
+                    Effect.flip,
+                  );
+                  assert.equal(denied._tag, "ProviderSetupError");
+                  assert.deepEqual(forwardedCallbacks, []);
+                }),
+              ),
+            );
+            const completed = yield* client[WS_METHODS.providerAuthComplete]({
+              ...target,
+              flowId,
+              callbackUrl,
+            });
+            assert.equal(completed.phase, "verifying");
+            const cancelled = yield* client[WS_METHODS.providerAuthCancel]({ ...target, flowId });
+            assert.equal(cancelled.phase, "cancelled");
+            const signedOut = yield* client[WS_METHODS.providerAuthLogout](target);
+            assert.equal(signedOut.phase, "idle");
+          }),
+        ),
+      );
+      assert.deepEqual(forwardedCallbacks, [callbackUrl]);
+      assert.deepEqual(logoutInstances, [providerSetupInstanceId]);
+      assert.isTrue(calls.every((call) => call.instanceId === providerSetupInstanceId));
+      assert.deepEqual(
+        calls.map((call) => call.ownerSessionId),
+        [firstOwner, firstOwner, secondOwner, secondOwner, firstOwner, firstOwner],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "provider setup routes installation operations and returns only safe typed errors",
+    () =>
+      Effect.gen(function* () {
+        const calls: string[] = [];
+        let state = providerSetupInstallState;
+        yield* buildAppUnderTest({
+          layers: {
+            providerInstanceRegistry: {
+              getInstance: (instanceId) =>
+                Effect.succeed(
+                  instanceId === providerSetupInstanceId ? providerSetupInstance : undefined,
+                ),
+            },
+            antigravityInstallation: {
+              start: Effect.sync(() => {
+                calls.push("start");
+                return state;
+              }),
+              cancel: (operationId) =>
+                Effect.gen(function* () {
+                  calls.push(`cancel:${operationId}`);
+                  if (operationId !== state.operationId) {
+                    return yield* new AntigravityInstallationError({
+                      operation: "cancel",
+                      detail: "This installation is no longer running.",
+                      cause: new Error("Private download diagnostics."),
+                    });
+                  }
+                  state = { ...state, phase: "cancelled" };
+                  return state;
+                }),
+              changes: Stream.fromEffect(Effect.sync(() => state)),
+            },
+          },
+        });
+        const wsUrl = yield* getWsServerUrl("/ws");
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              const unknownInstance = yield* client[WS_METHODS.providerInstallStart]({
+                instanceId: ProviderInstanceId.make("unknown-instance"),
+              }).pipe(Effect.flip);
+              assert.equal(unknownInstance._tag, "ProviderSetupError");
+              assert.deepEqual(calls, []);
+              const started = yield* client[WS_METHODS.providerInstallStart]({
+                instanceId: providerSetupInstanceId,
+              });
+              assert.deepEqual(started, providerSetupInstallState);
+              const stale = yield* client[WS_METHODS.providerInstallCancel]({
+                instanceId: providerSetupInstanceId,
+                operationId: "old-operation",
+              }).pipe(Effect.flip);
+              assert.equal(stale._tag, "ProviderSetupError");
+              if (stale._tag === "ProviderSetupError") {
+                assert.equal(stale.instanceId, providerSetupInstanceId);
+                assert.equal(stale.operation, "cancel");
+                assert.equal(stale.detail, "This installation is no longer running.");
+                assert.notProperty(stale, "cause");
+              }
+              const cancelled = yield* client[WS_METHODS.providerInstallCancel]({
+                instanceId: providerSetupInstanceId,
+                operationId: "install-operation",
+              });
+              assert.equal(cancelled.phase, "cancelled");
+              const observed = yield* client[WS_METHODS.providerInstallSubscribe]({
+                instanceId: providerSetupInstanceId,
+              }).pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+              assert.deepEqual(observed, cancelled);
+            }),
+          ),
+        );
+        assert.deepEqual(calls, ["start", "cancel:old-operation", "cancel:install-operation"]);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("routes websocket rpc subscribeServerConfig streams snapshot then update", () =>

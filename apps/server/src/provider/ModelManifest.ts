@@ -216,7 +216,52 @@ export function applyModelManifest(
   manifest: ModelManifestData,
   driverKind: ProviderDriverKind,
 ): ServerProviderDraft {
-  return { ...draft, models: classifyModels(draft.models, manifest, driverKind) };
+  return {
+    ...draft,
+    models: applyManifestDefault(
+      classifyModels(draft.models, manifest, driverKind),
+      manifest,
+      driverKind,
+    ),
+  };
+}
+
+/** The manifest's chat default for `driverKind`, when it names one. */
+export function manifestDefaultModel(
+  manifest: ModelManifestData,
+  driverKind: ProviderDriverKind,
+): string | undefined {
+  return manifest.providers?.[driverKind]?.defaults?.chat;
+}
+
+/**
+ * Moves `isDefault` to the manifest's chat default when the catalog carries
+ * it. Providers that learn their default from the runtime (Antigravity takes
+ * Google's current model) can be overridden here without a release. Aliases
+ * that pointed at the old default move with the flag so the shared
+ * "provider default" alias keeps resolving.
+ */
+export function applyManifestDefault(
+  models: ReadonlyArray<ServerProviderModel>,
+  manifest: ModelManifestData,
+  driverKind: ProviderDriverKind,
+): ReadonlyArray<ServerProviderModel> {
+  const slug = manifestDefaultModel(manifest, driverKind);
+  if (slug === undefined || !models.some((model) => model.slug === slug)) return models;
+  const previous = models.find((model) => model.isDefault && model.slug !== slug);
+  if (!previous) return models;
+  const movedAliases = previous.aliases ?? [];
+  return models.map((model) => {
+    if (model.slug === previous.slug) {
+      const { isDefault: _isDefault, aliases: _aliases, ...rest } = model;
+      return rest;
+    }
+    if (model.slug === slug) {
+      const aliases = [...new Set([...(model.aliases ?? []), ...movedAliases])];
+      return { ...model, isDefault: true, ...(aliases.length > 0 ? { aliases } : {}) };
+    }
+    return model;
+  });
 }
 
 /** Model-level half of `applyModelManifest`, exported for focused tests. */
