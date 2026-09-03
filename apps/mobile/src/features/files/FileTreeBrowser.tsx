@@ -1,14 +1,7 @@
 import type { ProjectEntry } from "@t3tools/contracts";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  FlatList,
-  Platform,
-  Pressable,
-  RefreshControl,
-  View,
-} from "react-native";
+import { ActivityIndicator, FlatList, Pressable, RefreshControl, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
@@ -261,10 +254,10 @@ export function FileTreeBrowser(props: {
       windowSize={5}
       contentContainerStyle={{
         paddingTop: 8,
-        // On iOS the list runs under a native header with automatic content
-        // insets, which already reserve the bottom safe area; Android gets
-        // nothing from that prop and needs the inset here.
-        paddingBottom: Platform.OS === "android" ? Math.max(insets.bottom, 8) + 8 : 8,
+        // With automatic content insets iOS already reserves the bottom safe
+        // area; Android and pre-glass iOS (`"never"` above) get nothing from
+        // that prop and need the inset here.
+        paddingBottom: NATIVE_LIQUID_GLASS_SUPPORTED ? 8 : Math.max(insets.bottom, 8) + 8,
       }}
       refreshControl={<RefreshControl refreshing={props.isPending} onRefresh={props.onRefresh} />}
       renderItem={renderItem}
