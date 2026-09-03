@@ -29,6 +29,7 @@ const clientSettings: ClientSettings = {
   contextWindowMeterEnabled: false,
   dismissedProviderUpdateNotificationKeys: [],
   diffIgnoreWhitespace: true,
+  diffLayout: "stacked",
   environmentIdentificationMode: "artwork",
   favorites: [],
   fontFamilyCode: "",
