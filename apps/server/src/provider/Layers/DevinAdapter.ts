@@ -50,7 +50,11 @@ import {
   makeAcpRequestResolvedEvent,
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
-import { type AcpParsedSessionEvent, parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
+import {
+  type AcpParsedSessionEvent,
+  type AcpPermissionRequest,
+  parsePermissionRequest,
+} from "../acp/AcpRuntimeModel.ts";
 import {
   applyDevinAcpModelSelection,
   buildDevinModelsFromSessionModelState,
@@ -73,6 +77,22 @@ import { type DevinAdapterShape } from "../Services/DevinAdapter.ts";
 const PROVIDER = ProviderDriverKind.make("devin");
 const DEVIN_PROMPT_TIMEOUT_MS = 600_000;
 
+interface DevinPendingApproval {
+  readonly request: EffectAcpSchema.RequestPermissionRequest;
+  readonly decision: Deferred.Deferred<ProviderApprovalDecision>;
+  readonly turnId: TurnId | undefined;
+  readonly runtimeRequestId: RuntimeRequestId;
+  readonly permissionRequest: AcpPermissionRequest;
+  readonly detail: string;
+}
+
+interface DevinPendingUserInput {
+  readonly request: EffectAcpSchema.ElicitationRequest;
+  readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
+  readonly turnId: TurnId | undefined;
+  readonly runtimeRequestId: RuntimeRequestId;
+}
+
 interface DevinSessionContext {
   readonly threadId: ThreadId;
   session: ProviderSession;
@@ -86,20 +106,8 @@ interface DevinSessionContext {
   activeTurnId: TurnId | undefined;
   turns: Array<{ id: TurnId; items: Array<unknown> }>;
   stopped: boolean;
-  pendingApprovals: Map<
-    ApprovalRequestId,
-    {
-      readonly request: EffectAcpSchema.RequestPermissionRequest;
-      readonly decision: Deferred.Deferred<ProviderApprovalDecision>;
-    }
-  >;
-  pendingUserInputs: Map<
-    ApprovalRequestId,
-    {
-      readonly request: EffectAcpSchema.ElicitationRequest;
-      readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
-    }
-  >;
+  pendingApprovals: Map<ApprovalRequestId, DevinPendingApproval>;
+  pendingUserInputs: Map<ApprovalRequestId, DevinPendingUserInput>;
 }
 
 export interface DevinAdapterLiveOptions {
@@ -119,17 +127,11 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
     const sessions = new Map<ThreadId, DevinSessionContext>();
     const pendingApprovalsByRequestId = new Map<
       ApprovalRequestId,
-      {
-        readonly decision: Deferred.Deferred<ProviderApprovalDecision>;
-        readonly threadId: ThreadId;
-      }
+      DevinPendingApproval & { readonly threadId: ThreadId }
     >();
     const pendingUserInputsByRequestId = new Map<
       ApprovalRequestId,
-      {
-        readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
-        readonly threadId: ThreadId;
-      }
+      DevinPendingUserInput & { readonly threadId: ThreadId }
     >();
     const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
@@ -361,18 +363,41 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
         }
         ctx.stopped = true;
 
-        for (const [requestId, { decision, threadId }] of Array.from(pendingApprovalsByRequestId)) {
-          if (threadId === ctx.threadId) {
-            yield* Deferred.interrupt(decision).pipe(Effect.ignore);
-            pendingApprovalsByRequestId.delete(requestId);
+        for (const [requestId, pending] of ctx.pendingApprovals) {
+          const interrupted = yield* Deferred.interrupt(pending.decision);
+          pendingApprovalsByRequestId.delete(requestId);
+          if (interrupted) {
+            const stamp = yield* makeEventStamp();
+            yield* offerRuntimeEvent(
+              makeAcpRequestResolvedEvent({
+                stamp,
+                provider: PROVIDER,
+                threadId: ctx.threadId,
+                turnId: pending.turnId,
+                requestId: pending.runtimeRequestId,
+                permissionRequest: pending.permissionRequest,
+                decision: "cancel",
+              }),
+            );
           }
         }
         ctx.pendingApprovals.clear();
 
-        for (const [requestId, { answers, threadId }] of Array.from(pendingUserInputsByRequestId)) {
-          if (threadId === ctx.threadId) {
-            yield* Deferred.interrupt(answers).pipe(Effect.ignore);
-            pendingUserInputsByRequestId.delete(requestId);
+        for (const [requestId, pending] of ctx.pendingUserInputs) {
+          const interrupted = yield* Deferred.interrupt(pending.answers);
+          pendingUserInputsByRequestId.delete(requestId);
+          if (interrupted) {
+            const stamp = yield* makeEventStamp();
+            const answers: ProviderUserInputAnswers = {};
+            yield* offerRuntimeEvent({
+              type: "user-input.resolved",
+              ...stamp,
+              provider: PROVIDER,
+              threadId: ctx.threadId,
+              turnId: pending.turnId,
+              requestId: pending.runtimeRequestId,
+              payload: { answers },
+            });
           }
         }
         ctx.pendingUserInputs.clear();
@@ -554,20 +579,8 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
           // Handlers are registered before `acp.start()` so permission and
           // elicitation requests that arrive during startup have a handler.
           // They look up the live session context once it is published.
-          const pendingApprovals = new Map<
-            ApprovalRequestId,
-            {
-              readonly request: EffectAcpSchema.RequestPermissionRequest;
-              readonly decision: Deferred.Deferred<ProviderApprovalDecision>;
-            }
-          >();
-          const pendingUserInputs = new Map<
-            ApprovalRequestId,
-            {
-              readonly request: EffectAcpSchema.ElicitationRequest;
-              readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
-            }
-          >();
+          const pendingApprovals = new Map<ApprovalRequestId, DevinPendingApproval>();
+          const pendingUserInputs = new Map<ApprovalRequestId, DevinPendingUserInput>();
 
           const handleRequestPermissionCallback = (
             request: EffectAcpSchema.RequestPermissionRequest,
@@ -598,11 +611,22 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                   (typeof request.sessionId === "string"
                     ? `Session ${request.sessionId}`
                     : "[unknown]");
-                pendingApprovals.set(requestId, { request, decision });
+                const approvalContext = {
+                  request,
+                  decision,
+                  turnId,
+                  runtimeRequestId,
+                  permissionRequest,
+                  detail,
+                };
+                pendingApprovals.set(requestId, approvalContext);
                 if (ctx) {
-                  ctx.pendingApprovals.set(requestId, { request, decision });
+                  ctx.pendingApprovals.set(requestId, approvalContext);
                 }
-                pendingApprovalsByRequestId.set(requestId, { decision, threadId: input.threadId });
+                pendingApprovalsByRequestId.set(requestId, {
+                  ...approvalContext,
+                  threadId: input.threadId,
+                });
 
                 yield* offerRuntimeEvent(
                   makeAcpRequestOpenedEvent({
@@ -675,11 +699,20 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                 const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
                 const runtimeRequestId = RuntimeRequestId.make(requestId);
                 const answers = yield* Deferred.make<ProviderUserInputAnswers>();
-                pendingUserInputs.set(requestId, { request, answers });
+                const userInputContext = {
+                  request,
+                  answers,
+                  turnId,
+                  runtimeRequestId,
+                };
+                pendingUserInputs.set(requestId, userInputContext);
                 if (ctx) {
-                  ctx.pendingUserInputs.set(requestId, { request, answers });
+                  ctx.pendingUserInputs.set(requestId, userInputContext);
                 }
-                pendingUserInputsByRequestId.set(requestId, { answers, threadId: input.threadId });
+                pendingUserInputsByRequestId.set(requestId, {
+                  ...userInputContext,
+                  threadId: input.threadId,
+                });
 
                 const questions = elicitQuestionsFromRequest(request);
                 const stamp = yield* makeEventStamp();
@@ -1074,6 +1107,11 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
         if (!pending) {
           return;
         }
+        const ctx = sessions.get(pending.threadId);
+        if (ctx?.stopped) {
+          pendingApprovalsByRequestId.delete(_requestId);
+          return;
+        }
         yield* Deferred.succeed(pending.decision, _decision).pipe(Effect.ignore);
       });
 
@@ -1085,6 +1123,11 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
       Effect.gen(function* () {
         const pending = pendingUserInputsByRequestId.get(_requestId);
         if (!pending) {
+          return;
+        }
+        const ctx = sessions.get(pending.threadId);
+        if (ctx?.stopped) {
+          pendingUserInputsByRequestId.delete(_requestId);
           return;
         }
         yield* Deferred.succeed(pending.answers, _answers).pipe(Effect.ignore);
