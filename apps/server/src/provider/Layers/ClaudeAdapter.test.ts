@@ -489,6 +489,70 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("forwards custom model effort into query options", () => {
+    const harness = makeHarness({
+      claudeConfig: {
+        customModels: ["custom-model"],
+        customModelProfiles: {
+          "custom-model": {
+            capabilities: { reasoning: { levels: ["xhigh", "max"] } },
+          },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "custom-model",
+          [{ id: "effort", value: "max" }],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(harness.getLastCreateQueryInput()?.options.effort, "max");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("omits effort for custom model Default", () => {
+    const harness = makeHarness({
+      claudeConfig: {
+        customModels: ["custom-model"],
+        customModelProfiles: {
+          "custom-model": {
+            capabilities: { reasoning: { levels: ["low", "xhigh"] } },
+          },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "custom-model",
+          [{ id: "effort", value: "default" }],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(harness.getLastCreateQueryInput()?.options.effort, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("runs Claude SDK sessions with the configured CLAUDE_CONFIG_DIR", () => {
     const harness = makeHarness({ claudeConfig: { homePath: "~/.claude-work" } });
     return Effect.gen(function* () {

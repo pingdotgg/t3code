@@ -1,8 +1,4 @@
-import {
-  type ClaudeSettings,
-  type ModelCapabilities,
-  type ServerProviderSlashCommand,
-} from "@t3tools/contracts";
+import { type ClaudeSettings, type ServerProviderSlashCommand } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -10,7 +6,6 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   query as claudeQuery,
@@ -25,7 +20,6 @@ import {
   DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   parseGenericCliVersion,
-  providerModelsFromSettings,
   spawnAndCollect,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
@@ -37,11 +31,8 @@ import {
   type ClaudeModelCatalog,
   formatClaudeVersionUpgradeMessage,
   resolveClaudeModelsForVersion,
+  scopeClaudeModelCatalog,
 } from "../ClaudeModelCatalog.ts";
-
-const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
-  optionDescriptors: [],
-});
 
 const CLAUDE_PRESENTATION = {
   displayName: "Claude",
@@ -402,11 +393,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const allModels = providerModelsFromSettings(
-    modelCatalog.models.map((entry) => entry.model),
+  const scopedModelCatalog = scopeClaudeModelCatalog(
+    modelCatalog,
     claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+    claudeSettings.customModelProfiles,
   );
+  const allModels = scopedModelCatalog.models.map((entry) => entry.model);
 
   if (!claudeSettings.enabled) {
     return buildServerProvider({
@@ -492,12 +484,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const models = providerModelsFromSettings(
-    resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
-    claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+  const models = resolveClaudeModelsForVersion(scopedModelCatalog, parsedVersion);
+  const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(
+    scopedModelCatalog,
+    parsedVersion,
   );
-  const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
@@ -564,11 +555,11 @@ export const makePendingClaudeProvider = (
 ): Effect.Effect<ServerProviderDraft> =>
   Effect.gen(function* () {
     const checkedAt = yield* nowIso;
-    const models = providerModelsFromSettings(
-      modelCatalog.models.map((entry) => entry.model),
+    const models = scopeClaudeModelCatalog(
+      modelCatalog,
       claudeSettings.customModels,
-      DEFAULT_CLAUDE_MODEL_CAPABILITIES,
-    );
+      claudeSettings.customModelProfiles,
+    ).models.map((entry) => entry.model);
 
     if (!claudeSettings.enabled) {
       return buildServerProvider({

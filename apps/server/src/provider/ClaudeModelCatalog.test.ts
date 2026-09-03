@@ -5,11 +5,15 @@ import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import type { ModelManifestData } from "./ModelManifest.ts";
 import {
   formatClaudeVersionUpgradeMessage,
+  getClaudeCatalogModelCapabilities,
+  isClaudeCatalogCustomEffortProfile,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
+  resolveClaudeCatalogEffort,
   resolveClaudeModelCatalog,
   resolveClaudeModelsForVersion,
   resolveClaudeModelSlug,
+  scopeClaudeModelCatalog,
 } from "./ClaudeModelCatalog.ts";
 
 /**
@@ -111,6 +115,73 @@ describe("Claude model catalog", () => {
         model: "synthetic",
       }),
       "claude-synthetic-next[large]",
+    );
+  });
+
+  it("scopes custom aliases and attaches configured effort profiles", () => {
+    const catalog = scopeClaudeModelCatalog(
+      resolveClaudeModelCatalog(manifest()),
+      ["synthetic", "custom-model", "custom-model"],
+      {
+        "custom-model": {
+          capabilities: { reasoning: { levels: ["low", "xhigh"] } },
+        },
+      },
+    );
+
+    assert.strictEqual(resolveClaudeModelSlug(catalog, "synthetic"), "synthetic");
+    assert.isTrue(isClaudeCatalogCustomEffortProfile(catalog, "custom-model"));
+    assert.deepStrictEqual(
+      getClaudeCatalogModelCapabilities(catalog, "custom-model").optionDescriptors?.[0],
+      {
+        id: "effort",
+        label: "Reasoning",
+        type: "select",
+        options: [
+          { id: "default", label: "Default", isDefault: true },
+          { id: "low", label: "Low" },
+          { id: "xhigh", label: "Extra High" },
+        ],
+        currentValue: "default",
+      },
+    );
+    assert.strictEqual(resolveClaudeCatalogEffort(catalog, "custom-model", undefined), "default");
+    assert.strictEqual(normalizeClaudeCatalogEffort(catalog, "xhigh", "custom-model"), "xhigh");
+    assert.deepStrictEqual(
+      catalog.models.filter((entry) => entry.model.slug === "custom-model").length,
+      1,
+    );
+  });
+
+  it("keeps built-in catalog capabilities when a custom profile uses the same slug", () => {
+    const catalog = scopeClaudeModelCatalog(
+      resolveClaudeModelCatalog(manifest()),
+      ["claude-synthetic-next"],
+      {
+        "claude-synthetic-next": {
+          capabilities: { reasoning: { levels: ["low"] } },
+        },
+      },
+    );
+
+    assert.isFalse(isClaudeCatalogCustomEffortProfile(catalog, "claude-synthetic-next"));
+    assert.strictEqual(
+      resolveClaudeCatalogEffort(catalog, "claude-synthetic-next", undefined),
+      "extreme",
+    );
+  });
+
+  it("does not treat prototype keys as configured profiles", () => {
+    const catalog = scopeClaudeModelCatalog(resolveClaudeModelCatalog(manifest()), ["toString"], {
+      "other-model": {
+        capabilities: { reasoning: { levels: ["high"] } },
+      },
+    });
+
+    assert.isFalse(isClaudeCatalogCustomEffortProfile(catalog, "toString"));
+    assert.deepStrictEqual(
+      getClaudeCatalogModelCapabilities(catalog, "toString").optionDescriptors,
+      [],
     );
   });
 

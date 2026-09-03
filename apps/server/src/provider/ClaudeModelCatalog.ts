@@ -1,4 +1,7 @@
 import {
+  CUSTOM_MODEL_REASONING_DEFAULT,
+  type CustomModelProfile,
+  type CustomModelProfiles,
   type ModelCapabilities,
   type ModelSelection,
   ProviderDriverKind,
@@ -32,6 +35,7 @@ export interface ClaudeCatalogModel {
   readonly model: ServerProviderModel;
   readonly runtime: ClaudeCodeProfile;
   readonly compatibility: ClaudeCodeCompatibility;
+  readonly customEffortProfile: boolean;
 }
 
 export interface ClaudeModelCatalog {
@@ -51,6 +55,7 @@ function tryResolveClaudeModelCatalog(manifest: ModelManifestData): ClaudeModelC
       model: entry.model,
       runtime: profile.value.claudeCode ?? {},
       compatibility: adapter.value.claudeCode ?? {},
+      customEffortProfile: false,
     });
   }
 
@@ -70,33 +75,85 @@ export function resolveClaudeModelCatalog(manifest: ModelManifestData): ClaudeMo
 
 export const BUNDLED_CLAUDE_MODEL_CATALOG = resolveClaudeModelCatalog(BUNDLED_MODEL_MANIFEST);
 
-/** Keeps custom model aliases opaque while preserving canonical built-in models and capabilities. */
+const CUSTOM_MODEL_REASONING_LABELS: Readonly<Record<string, string>> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra High",
+  max: "Max",
+};
+
+function customModelCapabilities(profile: CustomModelProfile | undefined): ModelCapabilities {
+  if (!profile) return EMPTY_CAPABILITIES;
+  return {
+    optionDescriptors: [
+      {
+        id: "effort",
+        label: "Reasoning",
+        type: "select",
+        options: [
+          { id: CUSTOM_MODEL_REASONING_DEFAULT, label: "Default", isDefault: true },
+          ...profile.capabilities.reasoning.levels.map((level) => ({
+            id: level,
+            label: CUSTOM_MODEL_REASONING_LABELS[level] ?? level,
+          })),
+        ],
+        currentValue: CUSTOM_MODEL_REASONING_DEFAULT,
+      },
+    ],
+  };
+}
+
+/** Keeps custom model aliases opaque and attaches settings-owned custom model profiles. */
 export function scopeClaudeModelCatalog(
   catalog: ClaudeModelCatalog,
   customModels: ReadonlyArray<string>,
+  customModelProfiles?: CustomModelProfiles,
 ): ClaudeModelCatalog {
-  const customAliases = new Set(
-    customModels.flatMap((model) => {
-      const slug = normalizeCustomModelSlug(model);
-      return slug ? [slug.toLowerCase()] : [];
-    }),
-  );
-  if (customAliases.size === 0) return catalog;
+  const customSlugs = customModels.flatMap((model) => {
+    const slug = normalizeCustomModelSlug(model);
+    return slug ? [slug] : [];
+  });
+  if (customSlugs.length === 0) return catalog;
 
-  return {
-    models: catalog.models.map((entry) => {
-      if (!entry.model.aliases?.some((alias) => customAliases.has(alias.toLowerCase()))) {
-        return entry;
-      }
-      return {
-        ...entry,
+  const customAliases = new Set(customSlugs.map((slug) => slug.toLowerCase()));
+  const builtInSlugs = new Set(catalog.models.map((entry) => entry.model.slug));
+  const seenCustom = new Set<string>();
+  const builtIns = catalog.models.map((entry) => {
+    if (!entry.model.aliases?.some((alias) => customAliases.has(alias.toLowerCase()))) {
+      return entry;
+    }
+    return {
+      ...entry,
+      model: {
+        ...entry.model,
+        aliases: entry.model.aliases.filter((alias) => !customAliases.has(alias.toLowerCase())),
+      },
+    };
+  });
+  const custom = customSlugs.flatMap((slug): ReadonlyArray<ClaudeCatalogModel> => {
+    if (builtInSlugs.has(slug) || seenCustom.has(slug)) return [];
+    seenCustom.add(slug);
+    const profile =
+      customModelProfiles && Object.prototype.hasOwnProperty.call(customModelProfiles, slug)
+        ? customModelProfiles[slug]
+        : undefined;
+    return [
+      {
         model: {
-          ...entry.model,
-          aliases: entry.model.aliases.filter((alias) => !customAliases.has(alias.toLowerCase())),
+          slug,
+          name: slug,
+          isCustom: true,
+          capabilities: customModelCapabilities(profile),
         },
-      };
-    }),
-  };
+        runtime: {},
+        compatibility: {},
+        customEffortProfile: profile !== undefined,
+      },
+    ];
+  });
+
+  return { models: [...builtIns, ...custom] };
 }
 
 export function resolveClaudeCatalogModel(
@@ -115,6 +172,13 @@ export function resolveClaudeCatalogModel(
 
 export function resolveClaudeModelSlug(catalog: ClaudeModelCatalog, slugOrAlias: string): string {
   return resolveClaudeCatalogModel(catalog, slugOrAlias)?.model.slug ?? slugOrAlias;
+}
+
+export function isClaudeCatalogCustomEffortProfile(
+  catalog: ClaudeModelCatalog,
+  slugOrAlias: string | null | undefined,
+): boolean {
+  return resolveClaudeCatalogModel(catalog, slugOrAlias)?.customEffortProfile === true;
 }
 
 export function getClaudeCatalogModelCapabilities(

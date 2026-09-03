@@ -696,6 +696,58 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ]);
       });
 
+      it("treats refreshed custom model capabilities as authoritative", () => {
+        const customModel = {
+          slug: "custom-model",
+          name: "custom-model",
+          isCustom: true,
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("effort", "Reasoning", [
+                { id: "high", label: "High", isDefault: true },
+              ]),
+            ],
+          }),
+        } as const;
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          driver: ProviderDriverKind.make("claudeAgent"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-04-14T00:00:00.000Z",
+          version: "2.1.0",
+          models: [customModel],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          checkedAt: "2026-04-14T00:01:00.000Z",
+          models: [{ ...customModel, capabilities: null }],
+        } satisfies ServerProvider;
+
+        assert.strictEqual(
+          mergeProviderSnapshot(previousProvider, refreshedProvider).models[0]?.capabilities,
+          null,
+        );
+
+        const codexProvider = {
+          ...previousProvider,
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
+        } satisfies ServerProvider;
+        const pendingCodexProvider = {
+          ...codexProvider,
+          models: [{ ...customModel, capabilities: null }],
+        } satisfies ServerProvider;
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(codexProvider, pendingCodexProvider).models[0]?.capabilities,
+          customModel.capabilities,
+        );
+      });
+
       it("drops stale OpenCode models missing from a successful refresh", () => {
         const previousProvider = {
           instanceId: ProviderInstanceId.make("opencode"),

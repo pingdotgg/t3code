@@ -54,6 +54,7 @@ export const SYNTHETIC_CLAUDE_MODEL_CATALOG: ClaudeModelCatalog = {
       },
       runtime,
       compatibility: {},
+      customEffortProfile: false,
     },
     {
       model: {
@@ -66,6 +67,7 @@ export const SYNTHETIC_CLAUDE_MODEL_CATALOG: ClaudeModelCatalog = {
       },
       runtime,
       compatibility: {},
+      customEffortProfile: false,
     },
     {
       model: {
@@ -78,6 +80,7 @@ export const SYNTHETIC_CLAUDE_MODEL_CATALOG: ClaudeModelCatalog = {
       },
       runtime: {},
       compatibility: {},
+      customEffortProfile: false,
     },
   ],
 };

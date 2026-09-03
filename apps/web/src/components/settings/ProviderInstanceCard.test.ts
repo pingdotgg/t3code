@@ -8,7 +8,11 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 
-import { deriveProviderModelsForDisplay, ProviderInstanceCard } from "./ProviderInstanceCard";
+import {
+  deriveProviderModelsForDisplay,
+  nextCustomModelsConfig,
+  ProviderInstanceCard,
+} from "./ProviderInstanceCard";
 
 describe("deriveProviderModelsForDisplay", () => {
   it("uses current config custom models instead of stale live custom rows", () => {
@@ -39,6 +43,57 @@ describe("deriveProviderModelsForDisplay", () => {
         customModels: ["kept-custom"],
       }).map((model) => model.slug),
     ).toEqual(["server-model", "kept-custom"]);
+  });
+
+  it("prunes deleted Claude custom model profiles", () => {
+    expect(
+      nextCustomModelsConfig(
+        {
+          customModels: ["kept", "removed"],
+          customModelProfiles: {
+            kept: { capabilities: { reasoning: { levels: ["high"] } } },
+            removed: { capabilities: { reasoning: { levels: ["low"] } } },
+          },
+        },
+        ["kept"],
+        true,
+      ),
+    ).toEqual({
+      customModels: ["kept"],
+      customModelProfiles: {
+        kept: { capabilities: { reasoning: { levels: ["high"] } } },
+      },
+    });
+  });
+
+  it("removes an empty Claude custom model profile map", () => {
+    expect(
+      nextCustomModelsConfig(
+        {
+          customModels: ["removed"],
+          customModelProfiles: {
+            removed: { capabilities: { reasoning: { levels: ["high"] } } },
+          },
+        },
+        [],
+        true,
+      ),
+    ).toEqual({ customModels: [] });
+  });
+
+  it("preserves opaque profiles for non-Claude providers", () => {
+    expect(
+      nextCustomModelsConfig(
+        {
+          customModels: ["removed"],
+          customModelProfiles: { removed: { future: true } },
+        },
+        [],
+      ),
+    ).toEqual({
+      customModels: [],
+      customModelProfiles: { removed: { future: true } },
+    });
   });
 
   it("shows a redacted provider email in the editor header status line", () => {

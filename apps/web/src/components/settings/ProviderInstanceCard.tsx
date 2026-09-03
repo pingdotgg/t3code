@@ -135,6 +135,33 @@ function nextConfigBlobWithValue(
   return base;
 }
 
+export function nextCustomModelsConfig(
+  config: unknown,
+  customModels: ReadonlyArray<string>,
+  pruneCustomModelProfiles = false,
+): Record<string, unknown> {
+  const nextConfig = nextConfigBlobWithValue(config, "customModels", [...customModels]);
+  const profiles = nextConfig.customModelProfiles;
+  if (
+    !pruneCustomModelProfiles ||
+    profiles === null ||
+    typeof profiles !== "object" ||
+    Array.isArray(profiles)
+  ) {
+    return nextConfig;
+  }
+  const retained = new Set(customModels.map((model) => model.trim()));
+  const retainedProfiles = Object.fromEntries(
+    Object.entries(profiles).filter(([slug]) => retained.has(slug)),
+  );
+  if (Object.keys(retainedProfiles).length > 0) {
+    nextConfig.customModelProfiles = retainedProfiles;
+  } else {
+    delete nextConfig.customModelProfiles;
+  }
+  return nextConfig;
+}
+
 export function deriveProviderModelsForDisplay(input: {
   readonly liveModels: ReadonlyArray<ServerProviderModel> | undefined;
   readonly customModels: ReadonlyArray<string>;
@@ -523,7 +550,7 @@ export function ProviderInstanceCard({
   };
 
   const updateCustomModels = (next: ReadonlyArray<string>) => {
-    const nextConfig = nextConfigBlobWithValue(instance.config, "customModels", [...next]);
+    const nextConfig = nextCustomModelsConfig(instance.config, next, driverKind === "claudeAgent");
     const { config: _omit, ...rest } = instance;
     onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
   };

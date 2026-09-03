@@ -13,7 +13,11 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { type ClaudeSettings, type ModelSelection } from "@t3tools/contracts";
+import {
+  CUSTOM_MODEL_REASONING_DEFAULT,
+  type ClaudeSettings,
+  type ModelSelection,
+} from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
@@ -40,6 +44,7 @@ import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
   getClaudeCatalogModelCapabilities,
+  isClaudeCatalogCustomEffortProfile,
   isClaudeCatalogUltracodeEffort,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
@@ -70,7 +75,13 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
   const scopedModelCatalog = modelCatalog.pipe(
-    Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
+    Effect.map((catalog) =>
+      scopeClaudeModelCatalog(
+        catalog,
+        claudeSettings.customModels,
+        claudeSettings.customModelProfiles,
+      ),
+    ),
   );
 
   const readStreamAsString = <E>(
@@ -151,12 +162,16 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       resolvedModelSelection.model,
       rawEffortSelection,
     );
-    const cliEffort = normalizeClaudeCatalogEffort(
+    const customProfiled = isClaudeCatalogCustomEffortProfile(
       catalog,
-      resolvedEffort,
       resolvedModelSelection.model,
     );
-    const ultracode = isClaudeCatalogUltracodeEffort(resolvedEffort);
+    const cliEffort = customProfiled
+      ? resolvedEffort === CUSTOM_MODEL_REASONING_DEFAULT
+        ? undefined
+        : resolvedEffort
+      : normalizeClaudeCatalogEffort(catalog, resolvedEffort, resolvedModelSelection.model);
+    const ultracode = !customProfiled && isClaudeCatalogUltracodeEffort(resolvedEffort);
     const thinkingDescriptor = findDescriptor("thinking");
     const fastModeDescriptor = findDescriptor("fastMode");
     const thinking =

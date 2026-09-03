@@ -476,6 +476,51 @@ export type CodexSettings = typeof CodexSettings.Type;
 // the update that introduced it.
 const CLAUDE_AUTO_COMPACT_WINDOW_PATTERN = /^(?:|[1-9]\d{5}|1000000)$/;
 
+export const CUSTOM_MODEL_REASONING_DEFAULT = "default";
+export const CUSTOM_MODEL_REASONING_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+const CustomModelReasoningLevel = TrimmedNonEmptyString.check(
+  Schema.makeFilter(
+    (level) =>
+      CUSTOM_MODEL_REASONING_LEVELS.some((candidate) => candidate === level) ||
+      `Unsupported custom model reasoning level ${JSON.stringify(level)}. Expected one of: ${CUSTOM_MODEL_REASONING_LEVELS.join(", ")}.`,
+  ),
+);
+
+export const CustomModelProfile = Schema.Struct({
+  capabilities: Schema.Struct({
+    reasoning: Schema.Struct({
+      levels: Schema.Array(CustomModelReasoningLevel)
+        .check(Schema.isNonEmpty())
+        .check(
+          Schema.makeFilter(
+            (levels) =>
+              new Set(levels).size === levels.length || "Reasoning levels must be unique.",
+          ),
+        ),
+    }),
+  }),
+});
+export type CustomModelProfile = typeof CustomModelProfile.Type;
+
+export const CustomModelProfiles = Schema.Record(TrimmedNonEmptyString, CustomModelProfile);
+export type CustomModelProfiles = typeof CustomModelProfiles.Type;
+
+const customModelProfilesMatchModels = Schema.makeFilter(
+  (settings: {
+    readonly customModels?: ReadonlyArray<string>;
+    readonly customModelProfiles?: CustomModelProfiles;
+  }) => {
+    const customModels = new Set((settings.customModels ?? []).map((model) => model.trim()));
+    for (const slug of Object.keys(settings.customModelProfiles ?? {})) {
+      if (!customModels.has(slug)) {
+        return `Custom model profile ${JSON.stringify(slug)} has no matching customModels entry.`;
+      }
+    }
+    return true;
+  },
+);
+
 export const ClaudeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -501,6 +546,9 @@ export const ClaudeSettings = makeProviderSettingsSchema(
     customModels: Schema.Array(Schema.String).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    customModelProfiles: Schema.optionalKey(
+      CustomModelProfiles.pipe(Schema.annotateKey({ providerSettingsForm: { hidden: true } })),
     ),
     launchArgs: Schema.String.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
@@ -531,7 +579,15 @@ export const ClaudeSettings = makeProviderSettingsSchema(
   {
     order: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs"],
   },
-);
+)
+  .check(customModelProfilesMatchModels)
+  .pipe(
+    Schema.annotate({
+      providerSettingsFormSchema: {
+        order: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs"],
+      },
+    }),
+  );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
 
 export const CursorSettings = makeProviderSettingsSchema(

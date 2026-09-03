@@ -309,6 +309,72 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("forwards configured custom model effort", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: { title: "Use custom effort", body: "Body" },
+        }),
+        argsMustContain: "--model custom-model --effort xhigh",
+        claudeConfig: {
+          customModels: ["custom-model"],
+          customModelProfiles: {
+            "custom-model": {
+              capabilities: { reasoning: { levels: ["low", "xhigh"] } },
+            },
+          },
+        },
+      },
+      (textGeneration) =>
+        textGeneration.generatePrContent({
+          cwd: process.cwd(),
+          baseBranch: "main",
+          headBranch: "feature/custom-effort",
+          commitSummary: "Use custom effort",
+          diffSummary: "1 file changed",
+          diffPatch: "diff --git a/README.md b/README.md",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            "custom-model",
+            [{ id: "effort", value: "xhigh" }],
+          ),
+        }),
+    ),
+  );
+
+  it.effect("omits effort for configured custom model Default", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: { title: "Use default effort", body: "Body" },
+        }),
+        argsMustNotContain: "--effort",
+        claudeConfig: {
+          customModels: ["custom-model"],
+          customModelProfiles: {
+            "custom-model": {
+              capabilities: { reasoning: { levels: ["low", "xhigh"] } },
+            },
+          },
+        },
+      },
+      (textGeneration) =>
+        textGeneration.generatePrContent({
+          cwd: process.cwd(),
+          baseBranch: "main",
+          headBranch: "feature/custom-default",
+          commitSummary: "Use default effort",
+          diffSummary: "1 file changed",
+          diffPatch: "diff --git a/README.md b/README.md",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            "custom-model",
+            [{ id: "effort", value: "default" }],
+          ),
+        }),
+    ),
+  );
+
   it.effect(
     "keeps canonical built-in capabilities when a custom model collides with its alias",
     () =>

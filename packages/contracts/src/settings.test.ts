@@ -21,6 +21,78 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("Claude custom model profiles", () => {
+  it("trims supported levels and preserves their order", () => {
+    const settings = decodeClaudeSettings({
+      customModels: ["custom-model"],
+      customModelProfiles: {
+        "custom-model": {
+          capabilities: { reasoning: { levels: ["  low  ", "xhigh"] } },
+        },
+      },
+    });
+
+    expect(settings.customModelProfiles?.["custom-model"]?.capabilities.reasoning.levels).toEqual([
+      "low",
+      "xhigh",
+    ]);
+  });
+
+  it.each([
+    { levels: [] },
+    { levels: [""] },
+    { levels: ["high", " high "] },
+    { levels: ["default"] },
+  ])("rejects invalid reasoning levels: $levels", ({ levels }) => {
+    expect(() =>
+      decodeClaudeSettings({
+        customModels: ["custom-model"],
+        customModelProfiles: {
+          "custom-model": { capabilities: { reasoning: { levels } } },
+        },
+      }),
+    ).toThrow();
+  });
+
+  it("requires profiles to match a configured custom model", () => {
+    expect(() =>
+      decodeClaudeSettings({
+        customModels: ["kept-model"],
+        customModelProfiles: {
+          orphan: { capabilities: { reasoning: { levels: ["high"] } } },
+        },
+      }),
+    ).toThrow();
+  });
+
+  it("keeps named provider config opaque at the server settings boundary", () => {
+    const instanceId = ProviderInstanceId.make("claude_custom");
+    const decoded = decodeServerSettings({
+      providerInstances: {
+        [instanceId]: {
+          driver: "claudeAgent",
+          config: {
+            customModels: [],
+            customModelProfiles: {
+              orphan: { capabilities: { reasoning: { levels: ["high"] } } },
+            },
+          },
+        },
+      },
+    });
+
+    expect(decoded.providerInstances[instanceId]?.config).toEqual({
+      customModels: [],
+      customModelProfiles: {
+        orphan: { capabilities: { reasoning: { levels: ["high"] } } },
+      },
+    });
+    expect(
+      decodeServerSettingsPatch({ providerInstances: decoded.providerInstances }).providerInstances,
+    ).toEqual(decoded.providerInstances);
+  });
+});
+
 describe("ClaudeSettings auto-compaction", () => {
   it("uses Claude's default threshold when no override is configured", () => {
     expect(decodeClaudeSettings({}).autoCompactWindow).toBe("");

@@ -24,6 +24,8 @@ import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import {
   ApprovalRequestId,
   type CanonicalItemType,
+  CUSTOM_MODEL_REASONING_DEFAULT,
+  CUSTOM_MODEL_REASONING_LEVELS,
   type CanonicalRequestType,
   type ClaudeSettings,
   EventId,
@@ -86,6 +88,7 @@ import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
   getClaudeCatalogModelCapabilities,
+  isClaudeCatalogCustomEffortProfile,
   isClaudeCatalogUltracodeEffort,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
@@ -114,6 +117,7 @@ type ClaudeToolResultStreamKind = Extract<
   "command_output" | "file_change_output"
 >;
 type ClaudeSdkEffort = NonNullable<ClaudeQueryOptions["effort"]>;
+type ClaudeCustomEffort = (typeof CUSTOM_MODEL_REASONING_LEVELS)[number];
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
@@ -396,6 +400,12 @@ function getEffectiveClaudeAgentEffort(
 ): ClaudeSdkEffort | null {
   const normalized = normalizeClaudeCatalogEffort(catalog, effort, model);
   return normalized ? (normalized as ClaudeSdkEffort) : null;
+}
+
+const customModelReasoningLevels = new Set<string>(CUSTOM_MODEL_REASONING_LEVELS);
+
+function getCustomClaudeAgentEffort(effort: string | null | undefined): ClaudeCustomEffort | null {
+  return effort && customModelReasoningLevels.has(effort) ? (effort as ClaudeCustomEffort) : null;
 }
 
 function isClaudeInterruptedMessage(message: string): boolean {
@@ -1725,7 +1735,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("claudeAgent");
   const modelCatalogEffect = (
     options?.modelCatalog ?? Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG)
-  ).pipe(Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)));
+  ).pipe(
+    Effect.map((catalog) =>
+      scopeClaudeModelCatalog(
+        catalog,
+        claudeSettings.customModels,
+        claudeSettings.customModelProfiles,
+      ),
+    ),
+  );
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig;
@@ -4310,6 +4328,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const rawEffort = getModelSelectionStringOptionValue(modelSelection, "effort");
       const effort =
         resolveClaudeCatalogEffort(modelCatalog, modelSelection?.model, rawEffort) ?? null;
+      const customProfiled = isClaudeCatalogCustomEffortProfile(
+        modelCatalog,
+        modelSelection?.model,
+      );
       const fastModeSupported = descriptors.some(
         (descriptor) => descriptor.type === "boolean" && descriptor.id === "fastMode",
       );
@@ -4322,12 +4344,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const thinking = thinkingSupported
         ? getModelSelectionBooleanOptionValue(modelSelection, "thinking")
         : undefined;
-      const ultracode = isClaudeCatalogUltracodeEffort(effort);
-      const effectiveEffort = getEffectiveClaudeAgentEffort(
-        modelCatalog,
-        effort,
-        modelSelection?.model,
-      );
+      const ultracode = !customProfiled && isClaudeCatalogUltracodeEffort(effort);
+      const customEffort = customProfiled
+        ? getCustomClaudeAgentEffort(effort === CUSTOM_MODEL_REASONING_DEFAULT ? null : effort)
+        : null;
+      const effectiveEffort = customProfiled
+        ? customEffort
+        : getEffectiveClaudeAgentEffort(modelCatalog, effort, modelSelection?.model);
       const runtimeModeToPermission: Record<string, PermissionMode> = {
         "auto-accept-edits": "acceptEdits",
         auto: "auto",
@@ -4596,9 +4619,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         modelSelection.model,
         getModelSelectionStringOptionValue(modelSelection, "effort"),
       );
-      context.currentEffort =
-        getEffectiveClaudeAgentEffort(modelCatalog, turnEffort ?? null, modelSelection.model) ??
-        undefined;
+      const customProfiled = isClaudeCatalogCustomEffortProfile(modelCatalog, modelSelection.model);
+      context.currentEffort = customProfiled
+        ? (getCustomClaudeAgentEffort(
+            turnEffort === CUSTOM_MODEL_REASONING_DEFAULT ? null : turnEffort,
+          ) ?? undefined)
+        : (getEffectiveClaudeAgentEffort(modelCatalog, turnEffort ?? null, modelSelection.model) ??
+          undefined);
     }
 
     // Apply interaction mode by switching the SDK's permission mode.
