@@ -34,7 +34,7 @@ const linkTargetMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("~/browser/browserLinkTarget", () => ({
-  getBrowserLinkTargetPreference: linkTargetMocks.preference,
+  resolveBrowserLinkTargetPreference: async () => linkTargetMocks.preference(),
   isWebUrl: (url: string) => /^https?:/u.test(url),
 }));
 

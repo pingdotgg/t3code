@@ -10,7 +10,7 @@
  */
 import type { BrowserLinkTarget } from "@t3tools/contracts";
 
-import { getClientSettings } from "~/hooks/useSettings";
+import { ensureClientSettingsHydrated, getClientSettings } from "~/hooks/useSettings";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 
 export interface ResolveLinkTargetInput {
@@ -50,8 +50,14 @@ export function isWebUrl(url: string): boolean {
   }
 }
 
-/** Non-hook accessor for the configured default, for the imperative open paths. */
-export function getBrowserLinkTargetPreference(): BrowserLinkTarget {
+/**
+ * The configured default, once client settings have actually loaded. Before
+ * hydration the snapshot is the schema default ("system"), so a link clicked
+ * in the first moments after launch would ignore a persisted "app" — opening
+ * is asynchronous anyway, so waiting costs nothing the user can see.
+ */
+export async function resolveBrowserLinkTargetPreference(): Promise<BrowserLinkTarget> {
+  await ensureClientSettingsHydrated();
   return getClientSettings().browserLinkTarget;
 }
 

@@ -13,6 +13,7 @@ import { useEnvironmentQuery } from "~/state/query";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { toastManager } from "../ui/toast";
 import {
   PullRequestCheckStatusIcon,
   pullRequestCheckStatusLabel,
@@ -82,7 +83,11 @@ function ChecksBody({
               type="button"
               className="shrink-0 text-primary hover:underline"
               onClick={() => {
-                if (check.url) void openLink(check.url).catch(() => undefined);
+                if (!check.url) return;
+                void openLink(check.url).catch((error: unknown) => {
+                  console.error(error);
+                  toastManager.add({ type: "error", title: "Unable to open check details" });
+                });
               }}
             >
               Details

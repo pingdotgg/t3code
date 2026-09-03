@@ -119,7 +119,7 @@ import { LRUCache } from "../lib/lruCache";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { useTheme } from "../hooks/useTheme";
-import { getClientSettings } from "../hooks/useSettings";
+import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
   chatMarkdownClipboardPayload,
   serializeTableElementToCsv,
@@ -173,7 +173,7 @@ import {
   openUrlInPreview,
   BrowserPreviewUnavailableError,
 } from "../browser/openFileInPreview";
-import { getBrowserLinkTargetPreference, resolveLinkTarget } from "../browser/browserLinkTarget";
+import { resolveLinkTarget } from "../browser/browserLinkTarget";
 
 interface ChatMarkdownProps {
   text: string;
@@ -2121,6 +2121,10 @@ function ChatMarkdown({
     event.clipboardData.setData("text/html", payload.html);
   }, []);
   const openChangeRequestLink = useOpenChangeRequestLink(threadRef);
+  // Subscribed rather than read at click time: the anchor has to decide
+  // synchronously whether to intercept its `_blank`, and a subscription is what
+  // makes a persisted "app" apply once settings hydrate after launch.
+  const linkTargetPreference = useClientSettings((settings) => settings.browserLinkTarget);
   const resolveThreadPullRequest = useCallback(
     (href: string): ThreadLinkedPullRequest | null => {
       if (
@@ -2484,7 +2488,7 @@ function ChatMarkdown({
                   resolveLinkTarget({
                     url: href,
                     event,
-                    preference: getBrowserLinkTargetPreference(),
+                    preference: linkTargetPreference,
                     canOpenInApp: canOpenInPreview,
                   }) !== "app"
                 ) {
@@ -2492,13 +2496,15 @@ function ChatMarkdown({
                 }
                 event.preventDefault();
                 event.stopPropagation();
+                // The click was taken from the shell, so an in-app open that fails
+                // hands the link to the system browser instead of dropping it.
                 void openExternalLinkInPreview(href).then((result) => {
-                  if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-                    reportMarkdownActionFailure(
-                      { operation: "open-link-in-preview", target: href },
-                      result.cause,
-                    );
-                  }
+                  if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+                  reportMarkdownActionFailure(
+                    { operation: "open-link-in-preview", target: href },
+                    result.cause,
+                  );
+                  void readLocalApi()?.shell.openExternal(href);
                 });
               }}
               onContextMenu={(event) => {
@@ -2736,6 +2742,7 @@ function ChatMarkdown({
     inlineCodeFileLinkMetaByText,
     imageBaseDir,
     isStreaming,
+    linkTargetPreference,
     markdownFileLinkMetaByHref,
     onTaskListChange,
     onUseArtifactTemplate,

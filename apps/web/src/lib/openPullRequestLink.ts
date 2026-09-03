@@ -345,7 +345,7 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
 
       // No project to show it in, so it is an ordinary link and follows the
       // "Open links in" setting; the modifier still forces the system browser.
-      void openLink(prUrl, event).catch((error: unknown) => {
+      void openLink(prUrl, { event, threadRef: targetThreadRef }).catch((error: unknown) => {
         console.error(error);
         toastManager.add(
           stackedThreadToast({
@@ -357,6 +357,6 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
       });
       return false;
     },
-    [openChangeRequest],
+    [openChangeRequest, openLink],
   );
 }

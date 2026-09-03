@@ -94,6 +94,7 @@ function reviewStateLabel(state: string): string {
 interface CommentEditing {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef | null;
   readonly canEdit: (comment: PullRequestComment) => boolean;
   readonly editingId: string | null;
   readonly saving: boolean;
@@ -135,6 +136,7 @@ function CommentBody({
         text={comment.body}
         cwd={editing.cwd}
         environmentId={editing.environmentId}
+        threadRef={editing.threadRef}
       />
       {editing.canEdit(comment) ? (
         <Button
@@ -554,6 +556,7 @@ export function PullRequestSummaryTab({
   const commentEditing: CommentEditing = {
     cwd: detail.workspaceRoot,
     environmentId,
+    threadRef,
     canEdit: (comment) => canEditPullRequestComment(detail, comment),
     editingId: editingCommentId,
     saving: commentSaving,
@@ -742,6 +745,7 @@ export function PullRequestSummaryTab({
                 text={detail.body.trim().length > 0 ? detail.body : "_No description provided._"}
                 cwd={detail.workspaceRoot}
                 environmentId={environmentId}
+                threadRef={threadRef}
               />
               {canEditPullRequestChangeRequest(detail) ? (
                 <Button

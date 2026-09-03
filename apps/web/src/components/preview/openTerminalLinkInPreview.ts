@@ -7,7 +7,7 @@ import {
   browserDefaultOpenViewport,
   resolveBrowserDefaults,
 } from "~/browser/browserDefaults";
-import { getBrowserLinkTargetPreference, isWebUrl } from "~/browser/browserLinkTarget";
+import { isWebUrl, resolveBrowserLinkTargetPreference } from "~/browser/browserLinkTarget";
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
 import { recordVisitForThread } from "~/browserHistoryStore";
 import { applyPreviewServerSnapshot, isPreviewSupportedInRuntime } from "~/previewStateStore";
@@ -47,10 +47,10 @@ export async function openTerminalLinkInPreview<E>(
   input: OpenTerminalLinkInPreviewInput<E>,
 ): Promise<void> {
   const supportsPreview =
-    getBrowserLinkTargetPreference() === "app" &&
     isWebUrl(input.url) &&
     isPreviewSupportedInRuntime() &&
-    input.threadRef.threadId.length > 0;
+    input.threadRef.threadId.length > 0 &&
+    (await resolveBrowserLinkTargetPreference()) === "app";
 
   if (!supportsPreview) {
     input.fallbackToBrowser();
