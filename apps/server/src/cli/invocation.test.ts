@@ -46,7 +46,7 @@ it("treats stable installs as direct invocations", () => {
   assert.isNull(detectCliRunner(""));
 });
 
-it("tells package runners, installed packages, and checkouts apart", () => {
+it("tells package runners, global installs, and everything else apart", () => {
   assert.equal(
     detectServerInstall("/home/theo/.npm/_npx/abc123/node_modules/t3/dist/bin.mjs"),
     "npx",
@@ -59,11 +59,28 @@ it("tells package runners, installed packages, and checkouts apart", () => {
     detectServerInstall("/tmp/bunx-1000-t3@latest/node_modules/t3/dist/bin.mjs"),
     "bunx",
   );
-  assert.equal(detectServerInstall("/usr/local/lib/node_modules/t3/dist/bin.mjs"), "global");
+  assert.equal(detectServerInstall("/usr/local/lib/node_modules/t3/dist/bin.mjs"), "npm-global");
+  assert.equal(
+    detectServerInstall("/home/theo/.nvm/versions/node/v24.13.1/lib/node_modules/t3/dist/bin.mjs"),
+    "npm-global",
+  );
   assert.equal(
     detectServerInstall("C:\\Users\\theo\\AppData\\Roaming\\npm\\node_modules\\t3\\dist\\bin.mjs"),
-    "global",
+    "npm-global",
   );
+  assert.equal(
+    detectServerInstall(
+      "/home/theo/.local/share/pnpm/global/5/.pnpm/t3@0.0.35/node_modules/t3/dist/bin.mjs",
+    ),
+    "pnpm-global",
+  );
+  assert.equal(
+    detectServerInstall("/home/theo/.bun/install/global/node_modules/t3/dist/bin.mjs"),
+    "bun-global",
+  );
+  // Nothing global updates these, so no command is suggested.
+  assert.isNull(detectServerInstall("/srv/project/node_modules/t3/dist/bin.mjs"));
+  assert.isNull(detectServerInstall("/home/theo/.t3/runtime/0.0.31/node_modules/t3/dist/bin.mjs"));
   assert.isNull(detectServerInstall("/home/theo/Code/work/t3code/apps/server/dist/bin.mjs"));
   assert.isNull(detectServerInstall(""));
 });

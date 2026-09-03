@@ -186,6 +186,7 @@ const makeIdentity = Effect.gen(function* () {
 
 export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
+  const fileSystem = yield* FileSystem.FileSystem;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const identity = yield* ServerEnvironmentIdentity;
@@ -208,9 +209,15 @@ export const make = Effect.gen(function* () {
   const desktopAppUpdate =
     serverSelfUpdate === "desktop-managed" && serverConfig.desktopTelemetryControlFd !== undefined;
   // Only a server with no self-update path hands the user a command, so only
-  // that server needs to say which command will land on its install.
+  // that server needs to say which command will land on its install. The bin
+  // a global install runs is a symlink into the package, so resolve it first.
+  const entryPath = processArguments[1] ?? "";
   const serverInstall =
-    serverSelfUpdate === null ? detectServerInstall(processArguments[1] ?? "") : null;
+    serverSelfUpdate === null
+      ? detectServerInstall(
+          yield* fileSystem.realPath(entryPath).pipe(Effect.orElseSucceed(() => entryPath)),
+        )
+      : null;
 
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,

@@ -31,7 +31,9 @@ describe("versionSkew", () => {
   });
 
   it("hands out the update command that matches the server install", () => {
-    expect(manualServerUpdateCommand("0.0.35", "global")).toBe("npm i -g t3@0.0.35");
+    expect(manualServerUpdateCommand("0.0.35", "npm-global")).toBe("npm i -g t3@0.0.35");
+    expect(manualServerUpdateCommand("0.0.35", "pnpm-global")).toBe("pnpm add -g t3@0.0.35");
+    expect(manualServerUpdateCommand("0.0.35", "bun-global")).toBe("bun add -g t3@0.0.35");
     expect(manualServerUpdateCommand("0.0.35", "npx")).toBe("npx t3@0.0.35");
     expect(manualServerUpdateCommand("0.0.35", "pnpm-dlx")).toBe("pnpm dlx t3@0.0.35");
     expect(manualServerUpdateCommand("0.0.35", "bunx")).toBe("bunx t3@0.0.35");

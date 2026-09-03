@@ -136,8 +136,12 @@ export function manualServerUpdateCommand(
   install: ServerInstallKind | undefined,
 ): string {
   switch (install) {
-    case "global":
+    case "npm-global":
       return `npm i -g t3@${targetVersion}`;
+    case "pnpm-global":
+      return `pnpm add -g t3@${targetVersion}`;
+    case "bun-global":
+      return `bun add -g t3@${targetVersion}`;
     case "pnpm-dlx":
       return `pnpm dlx t3@${targetVersion}`;
     case "bunx":

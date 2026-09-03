@@ -288,17 +288,21 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(npx.capabilities.serverSelfUpdate).toBeUndefined();
       expect(npx.capabilities.serverInstall).toBe("npx");
 
-      const global = yield* describeWith({}, "/usr/local/lib/node_modules/t3/dist/bin.mjs");
-      expect(global.capabilities.serverInstall).toBe("global");
+      // A global install runs through a bin symlink; the install is read off
+      // the package it points into.
+      const packageDir = `${baseDir}/lib/node_modules/t3/dist`;
+      yield* fileSystem.makeDirectory(packageDir, { recursive: true });
+      yield* fileSystem.writeFileString(`${packageDir}/bin.mjs`, "");
+      yield* fileSystem.makeDirectory(`${baseDir}/bin`, { recursive: true });
+      yield* fileSystem.symlink(`${packageDir}/bin.mjs`, `${baseDir}/bin/t3`);
+      const global = yield* describeWith({}, `${baseDir}/bin/t3`);
+      expect(global.capabilities.serverInstall).toBe("npm-global");
 
       const checkout = yield* describeWith({}, "/home/theo/Code/t3code/apps/server/src/bin.ts");
       expect(checkout.capabilities.serverInstall).toBeUndefined();
 
       // A desktop-managed server updates through the app, so it never hands out a command.
-      const desktop = yield* describeWith(
-        { mode: "desktop" },
-        "/usr/local/lib/node_modules/t3/dist/bin.mjs",
-      );
+      const desktop = yield* describeWith({ mode: "desktop" }, `${baseDir}/bin/t3`);
       expect(desktop.capabilities.serverSelfUpdate).toBe("desktop-managed");
       expect(desktop.capabilities.serverInstall).toBeUndefined();
     }),
