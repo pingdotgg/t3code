@@ -169,6 +169,9 @@ in web or desktop provider settings, or **Refresh models** in the mobile model p
 uses saved Google sign-in and does not open a login page. If sign-in is required, use the
 provider's setup controls. Automatic status checks verify the installation only.
 
+The packaged runtime can be slow to start, especially on Windows. Health checks, model refresh,
+and sign-out each allow up to 90 seconds before reporting a timeout.
+
 If Google reports `SUBSCRIPTION_REQUIRED`, an account restriction, or a usage limit, read the
 provider's message. A finished turn can contain an upstream error instead of completed work.
 Use any retry time Google supplies. T3 Code does not switch to an API key to get past the limit.

@@ -11,10 +11,13 @@ import {
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
@@ -108,7 +111,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   const first = yield* makeExecutable("runtime 'one");
   const second = yield* makeExecutable("runtime two");
   const signedOut = yield* makeExecutable("runtime signed-out", true);
-  const controls = { selected: first, failResolution: false };
+  const controls = { selected: first, failResolution: false, beforeAcquire: Effect.void };
   const acquisitions: Array<{ binaryPath: string | undefined; path: string | undefined }> = [];
   const releases: Array<string | null> = [];
   const launches: Array<{
@@ -129,6 +132,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     acquire: (binaryPath, environment) =>
       Effect.gen(function* () {
         acquisitions.push({ binaryPath, path: environment?.PATH });
+        yield* controls.beforeAcquire;
         if (controls.failResolution) {
           return yield* new AntigravityInstallationError({
             operation: "resolve",
@@ -246,6 +250,26 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
       expect(h.acquisitions).toEqual([]);
       expect(h.launches).toEqual([]);
       expect(yield* h.fs.exists(h.profileDirectory)).toBe(false);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)("refreshes models after slow process startup", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const entered = yield* Deferred.make<void>();
+      const ready = yield* Deferred.make<void>();
+      h.controls.beforeAcquire = Deferred.succeed(entered, undefined).pipe(
+        Effect.andThen(Deferred.await(ready)),
+      );
+      const refresh = yield* h.refresh().pipe(Effect.forkScoped);
+      yield* Deferred.await(entered);
+      yield* TestClock.adjust("70 seconds");
+      yield* Deferred.succeed(ready, undefined);
+      yield* Fiber.join(refresh);
+      const snapshot = yield* h.instance.snapshot.getSnapshot;
+      expect(snapshot.auth.status).toBe("authenticated");
+      expect(snapshot.models.length).toBeGreaterThan(0);
+      yield* h.assertClosed;
     }).pipe(Effect.scoped),
   );
 

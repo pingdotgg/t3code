@@ -332,7 +332,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         },
         Effect.scoped,
         Effect.timeoutOrElse({
-          duration: "60 seconds",
+          duration: "90 seconds",
           orElse: () =>
             Effect.fail(
               new ProviderDriverError({
