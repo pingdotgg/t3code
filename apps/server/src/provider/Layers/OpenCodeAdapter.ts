@@ -1633,16 +1633,13 @@ export function makeOpenCodeAdapter(
         Effect.as(true),
         Effect.orElseSucceed(() => false),
       );
-      if (replied) {
-        return "replied" as const;
+      if (!replied) {
+        // Fall back to the dialog. The id stays resolved so a recovered copy
+        // of this ask cannot reopen after the user answers;
+        // `pendingPermissions` gates re-asks while the dialog is open.
+        context.autoRepliedRequestIds.delete(request.id);
       }
-      // Fall back to the dialog. The id stays resolved so a recovered copy of
-      // this ask cannot reopen after the user answers; `pendingPermissions`
-      // gates re-asks while the dialog is open.
-      context.autoRepliedRequestIds.delete(request.id);
-      return context.emittedTerminalRequestIds.has(request.id)
-        ? ("already-terminal" as const)
-        : ("fallback" as const);
+      return replied;
     });
 
     const emitPendingOpenCodeRequest = Effect.fn("emitPendingOpenCodeRequest")(function* (
@@ -1658,11 +1655,11 @@ export function makeOpenCodeAdapter(
         if (context.pendingPermissions.has(request.id)) {
           return;
         }
-        if (context.session.runtimeMode === "full-access") {
-          const outcome = yield* autoReplyFullAccess(context, request);
-          if (outcome !== "fallback") {
-            return;
-          }
+        if (
+          context.session.runtimeMode === "full-access" &&
+          (yield* autoReplyFullAccess(context, request))
+        ) {
+          return;
         }
         const base = yield* buildEventBase({
           threadId: context.session.threadId,

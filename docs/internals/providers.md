@@ -77,6 +77,12 @@ connection, while OpenCode stores MCP connections by directory. Sharing these ch
 without changing MCP routing would let two threads in one directory replace each other's
 connection.
 
+Chat adapters send the runtime mode as a session ruleset, but upstream OpenCode evaluates
+doom-loop and subagent asks against the agent ruleset only. In full access the adapter answers
+those asks itself so the user never sees an approval they already granted. It replies `once`
+rather than `always` because OpenCode stores `always` grants per directory, and on a shared
+external server that would widen what a supervised thread in the same directory may do.
+
 OpenCode loads its catalog through the HTTP API when an enabled provider instance starts. The
 provider registry keeps the snapshot in memory and persists it in the existing per-instance cache.
 Each `subscribeServerConfig` connection refreshes all providers, so a client reconnect reloads the
@@ -125,8 +131,7 @@ attachment to the provider adapter. Each adapter decides what its provider inges
 Claude receives the attachment directory as an allowed additional directory. Codex keeps its
 configured sandbox policy, so access depends on that policy and the selected runtime mode. OpenCode
 allows all paths in full-access mode and requests approval for directories outside the workspace in
-restricted modes. Upstream OpenCode evaluates doom-loop and subagent asks against the agent ruleset
-only, ignoring the session ruleset T3 sends, so the adapter answers those asks itself in full access. Cursor and Grok use their own provider permission rules.
+restricted modes. Cursor and Grok use their own provider permission rules.
 
 The server does not copy attachments into a project or bypass provider approval rules. If an agent
 cannot read an attachment, the user must approve the access or select a runtime mode that permits it.
