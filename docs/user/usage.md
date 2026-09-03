@@ -7,8 +7,9 @@ separate from this local estimate.
 
 Claude Code accounting keeps the final progressive snapshot for each response and prices every
 attempt in a model-fallback sequence. Five-minute and one-hour cache writes use their distinct
-public rates when the transcript provides the TTL. Thinking tokens remain part of output rather
-than being charged twice.
+public rates when the transcript provides the TTL. Applicable long-context tiers use each
+request's recorded input-token total. Thinking tokens remain part of output rather than being
+charged twice.
 
 Grok Build totals come from persisted session updates. Interactive turns that never wrote a
 completed-turn record will not appear.
