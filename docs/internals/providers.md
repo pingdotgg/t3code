@@ -214,6 +214,12 @@ connection, while OpenCode stores MCP connections by directory. Sharing these ch
 without changing MCP routing would let two threads in one directory replace each other's
 connection.
 
+Chat adapters send the runtime mode as a session ruleset, but upstream OpenCode evaluates
+doom-loop and subagent asks against the agent ruleset only. In full access the adapter answers
+those asks itself so the user never sees an approval they already granted. It replies `once`
+rather than `always` because OpenCode stores `always` grants per directory, and on a shared
+external server that would widen what a supervised thread in the same directory may do.
+
 OpenCode loads its catalog through the HTTP API when an enabled provider instance starts. The
 provider registry keeps the snapshot in memory and persists it in the existing per-instance cache.
 Each `subscribeServerConfig` connection refreshes all providers, so a client reconnect reloads the
