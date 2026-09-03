@@ -34,6 +34,31 @@ When you set this field, T3 Code points Claude Code at that directory with the
 `CLAUDE_CONFIG_DIR` environment variable. It does not change `HOME`, so your system keychain and
 the rest of your environment stay as they are.
 
+## My Claude Login Expired
+
+If Claude Code's credential expires or is rejected, a turn fails with an error
+such as:
+
+```text
+Failed to authenticate. API Error: 401 OAuth access token has expired. Re-authenticate to continue.
+```
+
+```text
+Failed to authenticate. API Error: 401 Invalid authentication credentials
+```
+
+You do not need to leave T3 Code. T3 Code recognizes these authentication
+failures automatically and offers a **Re-authenticate** button on the error
+banner (and on the provider's status banner when it reports "unauthenticated").
+Clicking it opens an integrated terminal and runs `claude auth login` for that
+provider, using its configured binary and Claude HOME. Follow the prompt — open
+the printed URL, approve access, and paste the authorization code back into the
+terminal. Once it finishes, retry your turn.
+
+The re-authenticate action runs against the same Claude provider you were using,
+so multi-account and custom-home setups (below) re-authenticate the correct
+account.
+
 ## Reduce Context Usage
 
 In Settings, open your Claude provider and set **Auto-compact after** to a token count between

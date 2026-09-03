@@ -12,6 +12,7 @@ import {
   type PreviewAnnotationPayload,
   ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderReauthentication,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
@@ -367,6 +368,7 @@ import {
   shouldOpenProactivePullRequest,
   shouldOpenProactiveTurnDiff,
   getStartedThreadModelChangeBlockReason,
+  isProviderAuthError,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
@@ -380,6 +382,7 @@ import {
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
   resolveDraftHeroState,
+  resolveThreadErrorProviderStatus,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
@@ -444,6 +447,7 @@ const ATTACHMENT_ONLY_BOOTSTRAP_PROMPT =
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
+
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
@@ -2961,6 +2965,23 @@ function ChatViewContent(props: ChatViewProps) {
       providerInstanceEntries,
     ],
   );
+  // The thread error banner's re-authenticate action must target the provider
+  // instance that actually ran the failing turn (the thread session's
+  // provider), not whatever the composer currently has selected — otherwise
+  // switching the picker after a failure could re-authenticate the wrong
+  // Claude instance. When the failing session's instance is unknown we suppress
+  // the action instead of guessing; we only fall back to the active provider
+  // for older sessions that never recorded a provider instance.
+  const sessionProviderInstanceId = activeThread?.session?.providerInstanceId ?? null;
+  const threadErrorProviderStatus = useMemo(
+    () =>
+      resolveThreadErrorProviderStatus({
+        sessionProviderInstanceId,
+        providerStatuses,
+        activeProviderStatus,
+      }),
+    [sessionProviderInstanceId, providerStatuses, activeProviderStatus],
+  );
   const [resumeCompactionPermanentlyDismissed, setResumeCompactionPermanentlyDismissed] =
     useLocalStorage(
       `t3code:resume-compaction-dismissed:${environmentId}:${activeProviderInstanceId ?? "claudeAgent"}`,
@@ -3442,6 +3463,35 @@ function ChatViewContent(props: ChatViewProps) {
       terminalUiState.activeTerminalId,
       writeTerminal,
     ],
+  );
+
+  const reauthenticateProvider = useCallback(
+    (reauthentication: ServerProviderReauthentication) => {
+      // Reuse the project-script launcher so re-authentication runs through
+      // the same proven "open/reuse a terminal, focus it, write the command"
+      // path. A fresh terminal keeps the interactive OAuth prompt (URL +
+      // pasted code) from colliding with an in-flight shell, and
+      // `rememberAsLastInvoked: false` keeps this synthetic command out of the
+      // per-project "last run script" state.
+      void runProjectScript(
+        {
+          id: "__t3-code-reauthenticate__",
+          name: reauthentication.label ?? "Re-authenticate",
+          command: reauthentication.command,
+          icon: "configure",
+          runOnWorktreeCreate: false,
+        },
+        {
+          preferNewTerminal: true,
+          rememberAsLastInvoked: false,
+          // Carry the provider's isolation env (e.g. CLAUDE_CONFIG_DIR for a
+          // custom Claude home) so the login refreshes the correct instance's
+          // credentials rather than the default config dir.
+          ...(reauthentication.env ? { env: { ...reauthentication.env } } : {}),
+        },
+      );
+    },
+    [runProjectScript],
   );
 
   const persistProjectScripts = useCallback(
@@ -7607,14 +7657,30 @@ function ChatViewContent(props: ChatViewProps) {
           />
         </WorkspacePageHeader>
 
-        <ThreadErrorBanner
-          error={visibleThreadError}
-          onDismiss={() => {
+        {/* Error banner. When the failure looks like a provider credential
+            problem (e.g. Claude's `401 Invalid authentication credentials`),
+            offer the in-app re-authenticate action automatically. */}
+        {(() => {
+          const dismissThreadErrorBanner = () => {
             setThreadError(activeThread.id, null);
             dismissThreadErrorBannerForSession(threadErrorBannerKey);
             setThreadErrorBannerDismissTick((tick) => tick + 1);
-          }}
-        />
+          };
+          const reauth = threadErrorProviderStatus?.reauthentication;
+          if (!reauth || !isProviderAuthError(visibleThreadError)) {
+            return (
+              <ThreadErrorBanner error={visibleThreadError} onDismiss={dismissThreadErrorBanner} />
+            );
+          }
+          return (
+            <ThreadErrorBanner
+              error={visibleThreadError}
+              onDismiss={dismissThreadErrorBanner}
+              onReauthenticate={() => reauthenticateProvider(reauth)}
+              {...(reauth.label ? { reauthenticateLabel: reauth.label } : {})}
+            />
+          );
+        })()}
         {/* Main content area with optional plan sidebar */}
         <div className="flex min-h-0 min-w-0 flex-1">
           {/* Chat column */}
@@ -7645,6 +7711,7 @@ function ChatViewContent(props: ChatViewProps) {
               <ProviderStatusBanner
                 status={visibleProviderStatus}
                 onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
+                onReauthenticate={reauthenticateProvider}
                 onOpenProviderSetup={openProviderSetup}
               />
             </div>

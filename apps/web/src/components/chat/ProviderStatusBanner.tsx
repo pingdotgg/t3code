@@ -1,6 +1,10 @@
-import { type ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  type ProviderInstanceId,
+  type ServerProvider,
+  type ServerProviderReauthentication,
+} from "@t3tools/contracts";
 import { memo } from "react";
-import { InfoIcon, XIcon } from "lucide-react";
+import { InfoIcon, KeyRoundIcon, XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { formatProviderDriverKindLabel } from "../../providerModels";
@@ -54,10 +58,18 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   onDismiss,
   onOpenProviderSetup,
   status,
+  onReauthenticate,
 }: {
   onDismiss: () => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   status: ServerProvider | null;
+  /**
+   * Invoked when the user clicks the in-app "Re-authenticate" action. Only
+   * offered when the provider is unauthenticated and advertised a
+   * `reauthentication` descriptor. Runs the login command inside the thread's
+   * integrated terminal.
+   */
+  onReauthenticate?: (reauthentication: ServerProviderReauthentication) => void;
 }) {
   if (!status || status.status === "ready" || status.status === "disabled") {
     return null;
@@ -65,10 +77,17 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
 
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
+  const reauthentication = status.reauthentication ?? null;
+  const canReauthenticate =
+    isUnauthenticated && Boolean(reauthentication) && Boolean(onReauthenticate);
   const title = isUnauthenticated
     ? `${providerName} is unauthenticated`
     : `${providerName} provider status`;
-  const message = getProviderStatusMessage(status);
+  // When an in-app re-auth action is available, steer the copy toward it;
+  // otherwise defer to the shared status-message helper for every other case.
+  const message = canReauthenticate
+    ? "Re-authenticate to keep using this provider."
+    : getProviderStatusMessage(status);
 
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
@@ -104,6 +123,17 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
             </Button>
           ) : null}
         </div>
+        {canReauthenticate && reauthentication ? (
+          <Button
+            variant="outline"
+            size="xs"
+            className="shrink-0"
+            onClick={() => onReauthenticate?.(reauthentication)}
+          >
+            <KeyRoundIcon aria-hidden />
+            {reauthentication.label ?? "Re-authenticate"}
+          </Button>
+        ) : null}
         <Button
           aria-label={`Dismiss ${providerName} provider ${status.status}`}
           className="absolute top-2 right-2 size-6 text-muted-foreground hover:text-foreground"

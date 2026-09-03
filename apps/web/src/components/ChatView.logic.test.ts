@@ -34,12 +34,14 @@ import {
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
+  isProviderAuthError,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   resolveBackgroundDraftWorkspaceOptions,
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
   resolveDraftPromotionNavigationTarget,
+  resolveThreadErrorProviderStatus,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   resolveDraftHeroState,
@@ -1545,5 +1547,95 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingApproval: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingUserInput: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, threadError: "failed" })).toBe(true);
+  });
+});
+
+describe("isProviderAuthError", () => {
+  it("matches the Claude auth failures that should offer in-app re-authentication", () => {
+    // The exact messages Claude Code surfaces mid-turn when its credential is
+    // expired or rejected — both must trigger the Re-authenticate affordance.
+    expect(
+      isProviderAuthError(
+        "LLM error: Failed to authenticate. API Error: 401 OAuth access token has expired. Re-authenticate to continue.",
+      ),
+    ).toBe(true);
+    expect(
+      isProviderAuthError(
+        "Failed to authenticate. API Error: 401 Invalid authentication credentials",
+      ),
+    ).toBe(true);
+    expect(
+      isProviderAuthError(
+        "LLM error: Failed to authenticate. API Error: 401 Invalid authentication credentials",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not flag generic, non-credential failures", () => {
+    // Guards against the over-broad heuristic a prior review flagged: bare
+    // status codes / provider mentions must NOT surface the action.
+    expect(isProviderAuthError(null)).toBe(false);
+    expect(isProviderAuthError(undefined)).toBe(false);
+    expect(isProviderAuthError("")).toBe(false);
+    expect(isProviderAuthError("Request failed with status 401")).toBe(false);
+    expect(isProviderAuthError("Tool execution failed: exit code 1")).toBe(false);
+    expect(isProviderAuthError("Configured OAuth provider settings")).toBe(false);
+    expect(isProviderAuthError("Set your api key in settings")).toBe(false);
+    // API-key auth problems are not fixed by the OAuth `setup-token` flow, so
+    // they must not trigger the re-authenticate action — even when the message
+    // also carries otherwise-matching "authentication failed" wording.
+    expect(isProviderAuthError("API Error: 401 Invalid API key")).toBe(false);
+    expect(isProviderAuthError("Authentication failed: API key is invalid")).toBe(false);
+    expect(isProviderAuthError("Failed to authenticate. Your API key is invalid.")).toBe(false);
+    // A tool credential failure ("invalid token") is not fixed by Claude OAuth
+    // re-authentication, so the bare-token wording must not trigger it — while
+    // Claude's credential-specific phrasing (access/bearer token, credentials)
+    // still does.
+    expect(isProviderAuthError("GitHub API request failed: invalid token")).toBe(false);
+    expect(isProviderAuthError("API Error: 401 Invalid access token")).toBe(true);
+    expect(isProviderAuthError("API Error: 401 Invalid bearer token")).toBe(true);
+  });
+});
+
+describe("resolveThreadErrorProviderStatus", () => {
+  const claude = { instanceId: "claudeAgent", reauthentication: { command: "claude auth login" } };
+  const claudeWork = {
+    instanceId: "claude_work",
+    reauthentication: { command: "claude auth login" },
+  };
+
+  it("targets the failing turn's session provider instance when present", () => {
+    expect(
+      resolveThreadErrorProviderStatus({
+        sessionProviderInstanceId: "claude_work",
+        providerStatuses: [claude, claudeWork],
+        activeProviderStatus: claude,
+      }),
+    ).toBe(claudeWork);
+  });
+
+  it("suppresses the action when the session instance id is unknown", () => {
+    // The session recorded a provider instance, but it is no longer in the
+    // status list. Falling back to the composer-selected `activeProviderStatus`
+    // would re-authenticate the wrong instance, so we must resolve to null.
+    expect(
+      resolveThreadErrorProviderStatus({
+        sessionProviderInstanceId: "claude_gone",
+        providerStatuses: [claude, claudeWork],
+        activeProviderStatus: claude,
+      }),
+    ).toBeNull();
+  });
+
+  it("falls back to the active provider only when the session has no instance id", () => {
+    // Older sessions without instance tracking: the active provider is the best
+    // (and only) signal we have.
+    expect(
+      resolveThreadErrorProviderStatus({
+        sessionProviderInstanceId: null,
+        providerStatuses: [claude, claudeWork],
+        activeProviderStatus: claude,
+      }),
+    ).toBe(claude);
   });
 });

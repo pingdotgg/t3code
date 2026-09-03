@@ -63,6 +63,64 @@ export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+/**
+ * Heuristic for whether a thread/turn error stems from an expired, missing, or
+ * rejected provider credential — the signal that makes an in-app
+ * "Re-authenticate" action worth offering automatically.
+ *
+ * This must match the auth failures Claude Code surfaces mid-turn, e.g.:
+ *   - "Failed to authenticate. API Error: 401 OAuth access token has expired.
+ *      Re-authenticate to continue."
+ *   - "Failed to authenticate. API Error: 401 Invalid authentication
+ *      credentials"
+ *
+ * It stays deliberately narrow: it keys off OAuth-credential-specific phrasing
+ * ("failed to authenticate", "invalid authentication", expired/invalid token
+ * or credentials, re-authenticate, please sign in) rather than bare tokens
+ * like `401`/`403`/`oauth`, which also appear in generic tool or HTTP failures.
+ * It intentionally does NOT match "api key" phrasing: an invalid Anthropic API
+ * key is not fixed by the OAuth `claude auth login` flow this action runs.
+ * Covered by regression tests in ChatView.logic.test.ts.
+ */
+export function isProviderAuthError(message: string | null | undefined): boolean {
+  if (!message) return false;
+  // An API-key problem is not fixed by the OAuth `claude auth login` flow this
+  // action runs, so reject api-key wording first — otherwise a message like
+  // "Authentication failed: API key is invalid" would match the positive
+  // expression below on "authentication failed" and offer a login that can't help.
+  if (/\bapi[- ]?key\b/i.test(message)) return false;
+  return /(?:re-?authenticate|\breauth\b|failed to authenticate|not (?:logged in|authenticated)|unauthenticated|authentication (?:failed|error|required)|invalid authentication|access token (?:has )?expired|expired[\w ]*token|invalid[\w ]*(?:credential|access token|bearer token)|please (?:log ?in|sign ?in)|(?:log|sign) ?in again)/i.test(
+    message,
+  );
+}
+
+/**
+ * Resolves which provider status the thread error banner's re-authenticate
+ * action should target after a failing turn.
+ *
+ * When the failing turn's session recorded a provider instance, the action must
+ * target *that* instance — not whatever the composer currently has selected —
+ * otherwise switching the picker after a failure would re-authenticate the
+ * wrong instance. If that instance is not present in `providerStatuses`, we
+ * return `null` to suppress the action rather than guessing.
+ *
+ * Only when the session has no recorded provider instance (older sessions
+ * without instance tracking) do we fall back to the active provider status.
+ */
+export function resolveThreadErrorProviderStatus<T extends { instanceId: string }>(input: {
+  sessionProviderInstanceId: string | null;
+  providerStatuses: ReadonlyArray<T>;
+  activeProviderStatus: T | null;
+}): T | null {
+  const { sessionProviderInstanceId, providerStatuses, activeProviderStatus } = input;
+  if (sessionProviderInstanceId) {
+    return (
+      providerStatuses.find((status) => status.instanceId === sessionProviderInstanceId) ?? null
+    );
+  }
+  return activeProviderStatus;
+}
+
 export function agentControlledBrowserCloseConfirmation(
   surfaces: readonly RightPanelSurface[],
   desktopByTabId: Readonly<Record<string, Pick<DesktopPreviewOverlay, "controller"> | undefined>>,

@@ -190,9 +190,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         initialSnapshot: (settings) =>
           modelManifest.current.pipe(
             Effect.flatMap((manifest) =>
-              makePendingClaudeProvider(settings.provider, resolveClaudeModelCatalog(manifest)),
+              makePendingClaudeProvider(
+                settings.provider,
+                resolveClaudeModelCatalog(manifest),
+                processEnv,
+              ),
             ),
             Effect.map(stampIdentity),
+            Effect.provideService(Path.Path, path),
           ),
         checkProvider,
         enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>

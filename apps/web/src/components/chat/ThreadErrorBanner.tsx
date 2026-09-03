@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
-import { CircleAlertIcon, XIcon } from "lucide-react";
+import { CircleAlertIcon, KeyRoundIcon, XIcon } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export function getThreadErrorBannerKey(threadKey: string, error: string | null): string | null {
@@ -36,9 +36,19 @@ export function isThreadErrorBannerDismissedForSession(bannerKey: string | null)
 export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error,
   onDismiss,
+  onReauthenticate,
+  reauthenticateLabel,
 }: {
   error: string | null;
   onDismiss?: () => void;
+  /**
+   * When provided, renders a "Re-authenticate" action alongside the error.
+   * The caller decides when to offer it — typically when the error looks like
+   * an expired/failed provider credential and the active provider advertises
+   * an in-app re-authentication command.
+   */
+  onReauthenticate?: () => void;
+  reauthenticateLabel?: string;
 }) {
   if (!error) return null;
   return (
@@ -53,11 +63,19 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
             </TooltipPopup>
           </Tooltip>
         </AlertDescription>
-        {onDismiss && (
+        {(onReauthenticate || onDismiss) && (
           <AlertAction>
-            <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
-              <XIcon className="text-destructive" />
-            </Button>
+            {onReauthenticate && (
+              <Button variant="outline" size="xs" onClick={onReauthenticate}>
+                <KeyRoundIcon aria-hidden />
+                {reauthenticateLabel ?? "Re-authenticate"}
+              </Button>
+            )}
+            {onDismiss && (
+              <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
+                <XIcon className="text-destructive" />
+              </Button>
+            )}
           </AlertAction>
         )}
       </Alert>
