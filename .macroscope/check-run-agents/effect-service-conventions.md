@@ -15,6 +15,11 @@ include:
   - "packages/**/*.tsx"
   - "infra/**/*.ts"
   - "infra/**/*.tsx"
+labels:
+  - vouch:trusted
+requires:
+  - Check
+maxBudgetPerPR: 25
 conclusion: failure
 showToolCalls: true
 ---

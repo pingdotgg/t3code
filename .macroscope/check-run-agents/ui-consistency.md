@@ -11,6 +11,11 @@ include:
   - "apps/web/src/**/*.css"
 exclude:
   - "apps/web/src/**/*.test.tsx"
+labels:
+  - vouch:trusted
+requires:
+  - Check
+maxBudgetPerPR: 25
 conclusion: failure
 maxBudgetPerRun: 10
 ---
