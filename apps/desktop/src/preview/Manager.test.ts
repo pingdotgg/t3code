@@ -3207,6 +3207,7 @@ describe("PreviewManager", () => {
         // which would leave the composer stuck on "Capturing…".
         const result = yield* Fiber.join(pick);
         expect(result?.annotation.screenshot).toBeNull();
+        expect(result?.screenshotFailed).toBe(true);
         expect(result?.submission).toBe("send");
         expect(webviewSend).toHaveBeenCalledWith("preview:annotation-captured");
       }),

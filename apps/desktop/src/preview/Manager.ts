@@ -2464,11 +2464,21 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           const submission = args[2] === "send" ? "send" : "attach";
           runFork(
             captureAnnotationScreenshot(tabId, wc, cropRect).pipe(
+              // The renderer cannot tell a dropped crop from a comment-only
+              // pick by the null alone, so a failed or timed-out capture is
+              // flagged on the result.
               Effect.match({
-                onFailure: () => payload,
-                onSuccess: (screenshot) => ({ ...payload, screenshot }),
+                onFailure: (): PreviewAnnotationSubmissionResult => ({
+                  annotation: payload,
+                  submission,
+                  screenshotFailed: true,
+                }),
+                onSuccess: (screenshot): PreviewAnnotationSubmissionResult =>
+                  screenshot === null
+                    ? { annotation: payload, submission, screenshotFailed: true }
+                    : { annotation: { ...payload, screenshot }, submission },
               }),
-              Effect.flatMap((annotation) => {
+              Effect.flatMap((result) => {
                 // A capture that outlives its session must not touch the
                 // overlay: the preload tears down on the captured signal, and
                 // by now it may be running a newer pick.
@@ -2478,7 +2488,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                   () => {
                     if (!wc.isDestroyed()) wc.send(ANNOTATION_CAPTURED_CHANNEL);
                   },
-                ).pipe(Effect.ignore, Effect.andThen(finishPick({ annotation, submission })));
+                ).pipe(Effect.ignore, Effect.andThen(finishPick(result)));
               }),
             ),
           );
