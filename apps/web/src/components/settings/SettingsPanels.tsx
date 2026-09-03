@@ -173,7 +173,7 @@ const TIMESTAMP_FORMAT_LABELS = {
 } as const;
 
 const COMPOSER_COLLAPSE_TRIGGER_LABELS = {
-  blur: "On blur",
+  blur: "On unfocus",
   scroll: "On scroll",
 } as const;
 type ComposerCollapseTrigger = keyof typeof COMPOSER_COLLAPSE_TRIGGER_LABELS;
