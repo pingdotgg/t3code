@@ -15,12 +15,12 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
-import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
+import { useAtomCommand } from "./use-atom-command";
 
 export interface EnvironmentUsageStatus {
   readonly environmentId: EnvironmentId;
@@ -95,18 +95,22 @@ export function useUsage(input: UsageSummaryInput): UsageView {
   );
   const atom = usageByWindowAtom(windowKey);
   const environments = useAtomValue(atom);
+  const refreshUsageSummary = useAtomCommand(serverEnvironment.refreshUsageSummary, {
+    reportFailure: false,
+  });
+  const [manualRefreshing, setManualRefreshing] = useState(false);
 
-  // Refreshing only the derived atom would re-read the per-environment SWR
-  // queries within their stale window and change nothing. Refresh each
-  // environment's query so the button always rescans.
+  // Explicit refresh is a server command, so it really rescans and publishes
+  // a new last-good snapshot. The normal query remains snapshot-only.
   const refresh = useCallback(() => {
     const input = JSON.parse(windowKey) as UsageSummaryInput;
-    for (const environment of environments) {
-      appAtomRegistry.refresh(
-        serverEnvironment.usageSummary({ environmentId: environment.environmentId, input }),
-      );
-    }
-  }, [environments, windowKey]);
+    setManualRefreshing(true);
+    void Promise.all(
+      environments.map((environment) =>
+        refreshUsageSummary({ environmentId: environment.environmentId, input }),
+      ),
+    ).finally(() => setManualRefreshing(false));
+  }, [environments, refreshUsageSummary, windowKey]);
 
   const merged = useMemo(() => {
     const answered: EnvironmentUsage[] = environments.flatMap((environment) =>
@@ -127,9 +131,9 @@ export function useUsage(input: UsageSummaryInput): UsageView {
   const stillReporting = environments.filter(
     (environment) => environment.summary === null && environment.error === null,
   ).length;
-  const isRefreshing = environments.some(
-    (environment) => environment.isPending && environment.summary !== null,
-  );
+  const isRefreshing =
+    environments.some((environment) => environment.isPending && environment.summary !== null) ||
+    manualRefreshing;
 
   return {
     merged,

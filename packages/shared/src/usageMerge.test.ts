@@ -119,6 +119,43 @@ describe("mergeUsage", () => {
     expect(merged.availableThroughDay).toBe("2026-08-29");
   });
 
+  it("filters every aggregate to the shared cutoff and reports the oldest snapshot", () => {
+    const first = summary(
+      [
+        bucket({ day: "2026-08-28" as UsageDay, costUsd: 3, model: "old-model" }),
+        bucket({ day: "2026-08-29" as UsageDay, costUsd: 4, model: "old-model" }),
+      ],
+      [{ provider: "claude", hostId: "mac", homePath: "/a", distinctSessions: 1 }],
+    );
+    const second = summary(
+      [
+        bucket({ day: "2026-08-28" as UsageDay, costUsd: 5, model: "other-model" }),
+        bucket({ day: "2026-08-31" as UsageDay, costUsd: 99, model: "future-model" }),
+      ],
+      [{ provider: "claude", hostId: "linux", homePath: "/b", distinctSessions: 2 }],
+    );
+    const merged = mergeUsage(
+      [
+        environment("env-a", {
+          ...first,
+          coverage: {
+            ...first.coverage!,
+            availableThroughDay: "2026-08-29" as UsageDay,
+            generatedAt: "2026-08-28T12:00:00.000Z",
+          },
+        }),
+        environment("env-b", second),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(12);
+    expect(merged.models.map((model) => model.model)).not.toContain("future-model");
+    expect(merged.daily.map((day) => day.day)).toEqual(["2026-08-28", "2026-08-29"]);
+    expect(merged.sessions).toBe(1);
+    expect(merged.lastUpdatedAt).toBe("2026-08-28T12:00:00.000Z");
+  });
+
   it("excludes an unbounded legacy summary instead of guessing its coverage", () => {
     const legacy = summary([], [{ provider: "claude", hostId: "mac", homePath: "/a" }]);
     const { coverage: _coverage, ...withoutCoverage } = legacy;

@@ -36,6 +36,12 @@ export interface TranscriptFile {
   readonly mtimeMs: number;
 }
 
+export interface TranscriptWalkResult {
+  readonly files: readonly TranscriptFile[];
+  /** False when any directory or file stat could not be read. */
+  readonly complete: boolean;
+}
+
 /**
  * Where a parse stopped, with enough state to continue from there.
  *
@@ -89,20 +95,21 @@ function fnv1a(buffer: Buffer): number {
 /**
  * Lists `.jsonl` transcripts under `root` last modified at or after `sinceMs`.
  *
- * Errors on individual entries are swallowed: session files rotate and get
- * removed while the walk is in flight, and a partial listing is far better than
- * failing the page.
+ * Errors on individual entries are reported through `complete`: session files
+ * rotate and get removed while the walk is in flight, but a partial listing
+ * must never replace a last-good usage snapshot.
  *
  * `fileName` restricts the walk to a single basename (Grok's `updates.jsonl`).
  * Grok sessions also ship multi-megabyte `chat_history` and `events` logs that
  * never carry usage, so the basename filter keeps a cold scan off those files.
  */
-export async function listTranscriptFiles(
+export async function listTranscriptFilesDetailed(
   root: string,
   sinceMs: number,
   options?: { readonly fileName?: string },
-): Promise<readonly TranscriptFile[]> {
+): Promise<TranscriptWalkResult> {
   const found: TranscriptFile[] = [];
+  let complete = true;
   const fileName = options?.fileName;
 
   const walk = async (dir: string): Promise<void> => {
@@ -110,6 +117,7 @@ export async function listTranscriptFiles(
     try {
       entries = await NodeFSP.readdir(dir, { withFileTypes: true });
     } catch {
+      complete = false;
       return;
     }
     for (const entry of entries) {
@@ -129,13 +137,23 @@ export async function listTranscriptFiles(
           found.push({ path: child, size: stats.size, mtimeMs: stats.mtimeMs });
         }
       } catch {
-        // Vanished between readdir and stat.
+        // A vanished file is a concurrently changing corpus, not an empty
+        // transcript. Do not publish a snapshot from an incomplete walk.
+        complete = false;
       }
     }
   };
 
   await walk(root);
-  return found;
+  return { files: found, complete };
+}
+
+export async function listTranscriptFiles(
+  root: string,
+  sinceMs: number,
+  options?: { readonly fileName?: string },
+): Promise<readonly TranscriptFile[]> {
+  return (await listTranscriptFilesDetailed(root, sinceMs, options)).files;
 }
 
 /**
@@ -151,6 +169,24 @@ export async function readDirectoryVolumeId(path: string): Promise<string> {
     return `${stats.dev}:${stats.ino}`;
   } catch {
     return "";
+  }
+}
+
+export async function readDirectoryVolumeIdDetailed(path: string): Promise<{
+  readonly volumeId: string;
+  readonly status: "ok" | "missing" | "failed";
+}> {
+  try {
+    const stats = await NodeFSP.stat(path);
+    return { volumeId: `${stats.dev}:${stats.ino}`, status: "ok" };
+  } catch (error) {
+    return {
+      volumeId: "",
+      status:
+        typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT"
+          ? "missing"
+          : "failed",
+    };
   }
 }
 

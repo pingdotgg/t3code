@@ -5,6 +5,7 @@ import {
   enumerateHourStarts,
   formatCount,
   formatCoverageTime,
+  formatDateTimeShort,
   formatDayShort,
   formatHourShort,
   formatPercent,
@@ -44,7 +45,7 @@ export function UsageRouteScreen() {
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
-  const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
+  const { merged, environments, isPending, isPartial, isRefreshing, refresh } = useUsage(window);
 
   const days = useMemo(
     () => enumerateDays(window.sinceDay, window.untilDay),
@@ -85,10 +86,6 @@ export function UsageRouteScreen() {
     [isPast24Hours, merged.daily, merged.hourly],
   );
 
-  // The pull spinner tracks re-scans of environments that have answered
-  // before. The initial scan renders its own placeholder, and an unreachable
-  // environment stays pending forever — neither may pin the spinner on.
-  const refreshing = environments.some((entry) => entry.isPending && entry.summary !== null);
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
@@ -123,7 +120,7 @@ export function UsageRouteScreen() {
         className="flex-1"
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshWindow} />}
+        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={refreshWindow} />}
       >
         <SegmentedControl
           options={WINDOW_OPTIONS.map((option) => ({ value: option.days, label: option.label }))}
@@ -135,6 +132,7 @@ export function UsageRouteScreen() {
           environments={environments}
           merged={merged}
           isPartial={isPartial}
+          isRefreshing={isRefreshing}
           timeZone={window.timeZone}
         />
 
@@ -478,6 +476,7 @@ function UsageCoverageNotice(props: {
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly merged: MergedUsage;
   readonly isPartial: boolean;
+  readonly isRefreshing: boolean;
   readonly timeZone: string;
 }) {
   const failed = props.environments.filter((environment) => environment.error !== null);
@@ -492,6 +491,7 @@ function UsageCoverageNotice(props: {
     stale.length === 0 &&
     duplicateSources.length === 0 &&
     !props.isPartial &&
+    !props.isRefreshing &&
     !hasCoverage
   ) {
     return null;
@@ -512,6 +512,14 @@ function UsageCoverageNotice(props: {
       {props.isPartial ? (
         <Text className="text-sm text-foreground-muted">
           Some environments are still reporting. Totals are partial.
+        </Text>
+      ) : null}
+      {props.isRefreshing ? (
+        <Text className="text-sm text-foreground-muted">Refreshing usage in the background.</Text>
+      ) : null}
+      {props.merged.lastUpdatedAt !== null ? (
+        <Text className="text-sm text-foreground-muted">
+          Last updated {formatDateTimeShort(props.merged.lastUpdatedAt, props.timeZone)}.
         </Text>
       ) : null}
       {failed.map((environment) => (

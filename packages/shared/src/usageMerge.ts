@@ -143,6 +143,8 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
 function ownedContribution(
   environment: EnvironmentUsage,
   ownerByFingerprint: ReadonlyMap<string, EnvironmentId>,
+  availableThroughDay: string | null,
+  availableThroughTime: string | null,
 ): {
   readonly buckets: readonly UsageBucket[];
   readonly sessionsByProvider: ReadonlyMap<UsageProviderKind, number>;
@@ -155,16 +157,32 @@ function ownedContribution(
     if (ownerByFingerprint.get(key) === environment.environmentId) {
       const provider = source.fingerprint.provider;
       ownedProviders.add(provider);
-      // Distinct within a directory. Summing per-bucket session counts instead
-      // would count a session once per day and model it spans.
-      sessionsByProvider.set(
-        provider,
-        (sessionsByProvider.get(provider) ?? 0) + source.distinctSessions,
-      );
+      // Distinct within a directory. A source count from a newer snapshot also
+      // includes records beyond the common cutoff, so only use it when this
+      // snapshot itself ends at that cutoff. Mixed-boundary merges keep the
+      // bounded bucket totals truthful rather than claiming a wider session
+      // count than the shared boundary proves.
+      const coverage = environment.summary.coverage;
+      const atCommonBoundary =
+        coverage !== undefined &&
+        coverage.availableThroughDay === availableThroughDay &&
+        coverage.availableThroughTime === availableThroughTime;
+      if (atCommonBoundary) {
+        sessionsByProvider.set(
+          provider,
+          (sessionsByProvider.get(provider) ?? 0) + source.distinctSessions,
+        );
+      }
     }
   }
   return {
-    buckets: environment.summary.buckets.filter((bucket) => ownedProviders.has(bucket.provider)),
+    buckets: environment.summary.buckets.filter(
+      (bucket) =>
+        ownedProviders.has(bucket.provider) &&
+        (availableThroughTime !== null
+          ? bucket.hourStart !== undefined && bucket.hourStart < availableThroughTime
+          : availableThroughDay === null || bucket.day <= availableThroughDay),
+    ),
     sessionsByProvider,
   };
 }
@@ -264,7 +282,7 @@ export function mergeUsage(
     coverage.length === 0
       ? null
       : coverage.reduce(
-          (latest, entry) => (entry.generatedAt > latest ? entry.generatedAt : latest),
+          (oldest, entry) => (entry.generatedAt < oldest ? entry.generatedAt : oldest),
           coverage[0]!.generatedAt,
         );
 
@@ -309,7 +327,12 @@ export function mergeUsage(
   const contributingEnvironments: EnvironmentId[] = [];
 
   for (const environment of current) {
-    const { buckets, sessionsByProvider } = ownedContribution(environment, ownerByFingerprint);
+    const { buckets, sessionsByProvider } = ownedContribution(
+      environment,
+      ownerByFingerprint,
+      availableThroughDay,
+      availableThroughTime,
+    );
     if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
 
     for (const [providerKind, providerSessions] of sessionsByProvider) {

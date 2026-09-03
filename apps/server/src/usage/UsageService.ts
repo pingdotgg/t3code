@@ -36,12 +36,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
+import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -51,8 +51,8 @@ import { UsageAggregator } from "./usageAggregation.ts";
 import { makeDayFormatter } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
-  listTranscriptFiles,
-  readDirectoryVolumeId,
+  listTranscriptFilesDetailed,
+  readDirectoryVolumeIdDetailed,
   readTranscriptRecords,
 } from "./usageTranscriptReader.ts";
 import {
@@ -120,7 +120,9 @@ const encodeUsageSnapshotFile = Schema.encodeEffect(
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HALF_HOUR_MS = 30 * 60 * 1000;
 const BACKGROUND_REFRESH_INTERVAL = "30 minutes";
+const BACKGROUND_REFRESH_TIMEOUT = "5 minutes";
 const BACKGROUND_REFRESH_WINDOWS = [1, 7, 30, 90] as const;
+const MAX_USAGE_SNAPSHOTS = 16;
 
 function serverTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -199,6 +201,7 @@ export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcessEnvironment;
+  const startup = yield* Effect.serviceOption(ServerRuntimeStartup.ServerRuntimeStartup);
 
   const fileCache: ScanCache = new Map();
   let cacheDirty = false;
@@ -346,12 +349,28 @@ export const make = Effect.gen(function* () {
       for (const entry of document.entries) {
         usageSnapshots.set(entry.key, entry.summary);
       }
+      for (const [key] of [...usageSnapshots.entries()]
+        .toSorted(([, left], [, right]) =>
+          (right.coverage?.generatedAt ?? right.readAt).localeCompare(
+            left.coverage?.generatedAt ?? left.readAt,
+          ),
+        )
+        .slice(MAX_USAGE_SNAPSHOTS)) {
+        usageSnapshots.delete(key);
+      }
     }),
   );
 
   const persistUsageSnapshots = Effect.fn("UsageService.persistUsageSnapshots")(function* () {
     if (!snapshotsDirty) return;
-    const entries = [...usageSnapshots.entries()].map(([key, summary]) => ({ key, summary }));
+    const entries = [...usageSnapshots.entries()]
+      .toSorted(([, left], [, right]) =>
+        (right.coverage?.generatedAt ?? right.readAt).localeCompare(
+          left.coverage?.generatedAt ?? left.readAt,
+        ),
+      )
+      .slice(0, MAX_USAGE_SNAPSHOTS)
+      .map(([key, summary]) => ({ key, summary }));
     yield* encodeUsageSnapshotFile({ version: 1, entries }).pipe(
       Effect.flatMap((serialized) =>
         writeFileStringAtomically({ filePath: usageSnapshotPath, contents: serialized }).pipe(
@@ -395,7 +414,7 @@ export const make = Effect.gen(function* () {
     size: number,
     mtimeMs: number,
     provider: UsageProviderKind,
-  ): Effect.Effect<readonly UsageRecord[]> =>
+  ): Effect.Effect<{ readonly records: readonly UsageRecord[]; readonly complete: boolean }> =>
     Effect.gen(function* () {
       const cached = fileCache.get(filePath);
       // Provider is part of the identity: if both providers were ever pointed
@@ -406,9 +425,13 @@ export const make = Effect.gen(function* () {
         cached.mtimeMs === mtimeMs &&
         cached.provider === provider
       ) {
-        return cached.tailRecords.length === 0
-          ? cached.records
-          : [...cached.records, ...cached.tailRecords];
+        return {
+          records:
+            cached.tailRecords.length === 0
+              ? cached.records
+              : [...cached.records, ...cached.tailRecords],
+          complete: true,
+        };
       }
 
       // Only a strictly grown file may resume. Same size with a new mtime, or
@@ -423,7 +446,7 @@ export const make = Effect.gen(function* () {
       );
       // A read failure is not an empty transcript: caching it under this
       // (size, mtime) would silently drop the file's usage until it changes.
-      if (parsed === null) return [];
+      if (parsed === null) return { records: [], complete: false };
 
       // Stored already de-duplicated within the file, which is 99% of all
       // duplicates. The aggregator still runs the cross-file dedupe pass. One
@@ -443,7 +466,10 @@ export const make = Effect.gen(function* () {
         position: parsed.position,
       });
       cacheDirty = true;
-      return tailRecords.length === 0 ? records : [...records, ...tailRecords];
+      return {
+        records: tailRecords.length === 0 ? records : [...records, ...tailRecords],
+        complete: true,
+      };
     });
 
   /** One provider directory's walk and parse, before rates are involved. */
@@ -455,6 +481,7 @@ export const make = Effect.gen(function* () {
     readonly files:
       | readonly { readonly path: string; readonly records: readonly UsageRecord[] }[]
       | null;
+    readonly complete: boolean;
   }
 
   const collectDirs = Effect.fn("UsageService.collectDirs")(function* (windowStartMs: number) {
@@ -463,23 +490,37 @@ export const make = Effect.gen(function* () {
     const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
     const scanned: ScannedDir[] = [];
     for (const { provider, dir, fileName } of dirs) {
-      const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
+      const volume = yield* Effect.promise(() => readDirectoryVolumeIdDetailed(dir));
       const exists = yield* fileSystem
         .exists(dir)
         .pipe(Effect.catchCause(() => Effect.succeed(false)));
       if (!exists) {
-        scanned.push({ provider, dir, volumeId, files: null });
+        scanned.push({
+          provider,
+          dir,
+          volumeId: volume.volumeId,
+          files: null,
+          // A missing provider home is an expected source state. Once the
+          // root exists, walk/read failures are reported through `complete`.
+          complete: true,
+        });
         continue;
       }
-      const files = yield* Effect.promise(() =>
-        listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
+      const walk = yield* Effect.promise(() =>
+        listTranscriptFilesDetailed(
+          dir,
+          windowStartMs,
+          fileName === undefined ? undefined : { fileName },
+        ),
       );
+      let complete = volume.status === "ok" && walk.complete;
       const parsedFiles: { path: string; records: readonly UsageRecord[] }[] = [];
-      for (const file of files) {
-        const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
-        parsedFiles.push({ path: file.path, records });
+      for (const file of walk.files) {
+        const result = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+        if (!result.complete) complete = false;
+        parsedFiles.push({ path: file.path, records: result.records });
       }
-      scanned.push({ provider, dir, volumeId, files: parsedFiles });
+      scanned.push({ provider, dir, volumeId: volume.volumeId, files: parsedFiles, complete });
     }
     return scanned;
   });
@@ -554,7 +595,9 @@ export const make = Effect.gen(function* () {
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
 
-    for (const { provider, dir, volumeId, files } of scannedDirs) {
+    let scanComplete = true;
+    for (const { provider, dir, volumeId, files, complete } of scannedDirs) {
+      if (!complete) scanComplete = false;
       if (files === null) {
         sources.push({
           fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
@@ -599,6 +642,14 @@ export const make = Effect.gen(function* () {
         malformedRecords: 0,
         distinctSessions: sessionIds.size,
         message: null,
+      });
+    }
+
+    if (!scanComplete) {
+      return yield* new UsageReadError({
+        reason: "scanFailed",
+        detail:
+          "Usage refresh could not read every transcript file; the last-good snapshot remains active.",
       });
     }
 
@@ -661,6 +712,15 @@ export const make = Effect.gen(function* () {
       Effect.tap((summary) =>
         Effect.sync(() => {
           usageSnapshots.set(scanKey(input), summary);
+          while (usageSnapshots.size > MAX_USAGE_SNAPSHOTS) {
+            const oldest = [...usageSnapshots.entries()].toSorted(([, left], [, right]) =>
+              (left.coverage?.generatedAt ?? left.readAt).localeCompare(
+                right.coverage?.generatedAt ?? right.readAt,
+              ),
+            )[0];
+            if (oldest === undefined) break;
+            usageSnapshots.delete(oldest[0]);
+          }
           snapshotsDirty = true;
         }).pipe(Effect.andThen(persistUsageSnapshots)),
       ),
@@ -736,23 +796,39 @@ export const make = Effect.gen(function* () {
   const startBackgroundRefresh = Effect.gen(function* () {
     const refresh = Effect.gen(function* () {
       const inputs = yield* defaultDailyInputs;
-      yield* Effect.forEach(inputs, (input) => scanAndPersist(input).pipe(Effect.ignore), {
-        concurrency: 1,
-        discard: true,
-      });
+      yield* Effect.forEach(
+        inputs,
+        (input) =>
+          scanAndPersist(input).pipe(Effect.timeout(BACKGROUND_REFRESH_TIMEOUT), Effect.ignore),
+        {
+          concurrency: 1,
+          discard: true,
+        },
+      );
     }).pipe(
       Effect.tapCause((cause) => Effect.logWarning("Usage background refresh failed", { cause })),
       Effect.ignore,
     );
 
     yield* refresh;
-    yield* refresh.pipe(Effect.repeat(Schedule.spaced(BACKGROUND_REFRESH_INTERVAL)));
+    return yield* Effect.forever(
+      Effect.sleep(BACKGROUND_REFRESH_INTERVAL).pipe(Effect.andThen(refresh)),
+    );
   });
 
   yield* Effect.uninterruptible(ensureUsageSnapshotsLoaded);
-  // Let command readiness and the first client connection settle before doing
-  // any transcript work. The fiber remains scoped to this server instance.
-  yield* Effect.forkScoped(startBackgroundRefresh.pipe(Effect.delay("5 seconds")));
+  // Wait for command readiness before doing any transcript work. The fiber
+  // remains scoped to this server instance and is independent of page mounts.
+  yield* Effect.forkScoped(
+    Option.match(startup, {
+      // Test layers intentionally omit startup orchestration. Keeping the
+      // scheduler off there avoids background filesystem work racing fixtures;
+      // the production layer always supplies this gate.
+      onNone: () => Effect.never,
+      onSome: (runtimeStartup) =>
+        runtimeStartup.awaitCommandReady.pipe(Effect.andThen(startBackgroundRefresh)),
+    }).pipe(Effect.ignore),
+  );
   return { readSummary, refreshSummary, startBackgroundRefresh } as const;
 });
 
