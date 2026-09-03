@@ -65,8 +65,16 @@ export function useThreadActionMenu(input: {
   /** Fallback for "Copy path" when the thread has no worktree. */
   readonly projectCwd: string | null;
   readonly onStartRename: () => void;
+  readonly forkEntry?: {
+    readonly enabled: boolean;
+    readonly disabledReason: string | null;
+    readonly sideChats: ReadonlyArray<{ readonly id: string; readonly title: string }>;
+    readonly onOpenSideChat: () => void;
+    readonly onForkThread: () => void;
+    readonly onOpenExistingSideChat: (threadId: ThreadId) => void;
+  };
 }) {
-  const { threadRef, projectCwd, onStartRename } = input;
+  const { threadRef, projectCwd, onStartRename, forkEntry } = input;
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -146,6 +154,15 @@ export function useThreadActionMenu(input: {
           isRegeneratingTitle,
           isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
           supports,
+          ...(forkEntry
+            ? {
+                forking: {
+                  enabled: forkEntry.enabled,
+                  disabledReason: forkEntry.disabledReason,
+                  sideChats: forkEntry.sideChats,
+                },
+              }
+            : {}),
           snoozePresets,
         });
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
@@ -177,6 +194,12 @@ export function useThreadActionMenu(input: {
                 },
               },
             }),
+          );
+          return;
+        }
+        if (action.startsWith("open-existing-side-chat:")) {
+          forkEntry?.onOpenExistingSideChat(
+            action.slice("open-existing-side-chat:".length) as ThreadId,
           );
           return;
         }
@@ -222,6 +245,12 @@ export function useThreadActionMenu(input: {
             }
             return;
           }
+          case "open-side-chat":
+            forkEntry?.onOpenSideChat();
+            return;
+          case "fork-thread":
+            forkEntry?.onForkThread();
+            return;
           case "settle":
             await reportFailure("Failed to settle thread", () => settleThread(threadRef));
             return;
@@ -337,6 +366,7 @@ export function useThreadActionMenu(input: {
       copyPathToClipboard,
       copyThreadIdToClipboard,
       deleteThread,
+      forkEntry,
       handleNewThread,
       logicalProjectKeyByPhysicalKey,
       markThreadUnread,

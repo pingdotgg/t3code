@@ -7,13 +7,19 @@ import {
 } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
-import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId, TurnId, type ProjectScript } from "@t3tools/contracts";
 import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { Platform, ScrollView, View } from "react-native";
+import { Alert, Platform, ScrollView, View } from "react-native";
+import type { MenuAction } from "@react-native-menu/menu";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useEnvironmentQuery } from "../../state/query";
@@ -23,8 +29,10 @@ import { vcsEnvironment } from "../../state/vcs";
 import { EmptyState } from "../../components/EmptyState";
 import {
   AndroidScreenHeader,
+  AndroidHeaderIconButton,
   type AndroidHeaderAction,
 } from "../../components/AndroidScreenHeader";
+import { ControlPillMenu } from "../../components/ControlPill";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
@@ -57,6 +65,7 @@ import {
 } from "./ThreadGitControls";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useSideChatsByParent, useThreadShell } from "../../state/entities";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
@@ -75,6 +84,13 @@ import {
   ThreadInspectorContentStack,
   type ThreadInspectorMode,
 } from "./thread-inspector-content-stack";
+import { uuidv4 } from "../../lib/uuid";
+import {
+  buildMobileSideChatMenuItems,
+  canForkMobileAssistantMessage,
+  resolveMobileThreadForkCapability,
+} from "./sideChats.logic";
+import { useThreadDeleteAction } from "../home/useThreadListActions";
 
 interface ThreadInspectorSelection {
   readonly routeThreadIdentity: string | null;
@@ -214,6 +230,10 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const forkThread = useAtomCommand(threadEnvironment.fork, { reportFailure: false });
+  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
@@ -280,6 +300,7 @@ function ThreadRouteContent(
     }, [props.renderInspector]),
   );
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
+  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
@@ -295,6 +316,36 @@ function ThreadRouteContent(
         : null,
     [composer.interactionMode, composer.modelSelection, composer.runtimeMode, selectedThread],
   );
+  const selectedThreadRef = useMemo(
+    () =>
+      selectedThread === null
+        ? null
+        : scopeThreadRef(selectedThread.environmentId, selectedThread.id),
+    [selectedThread],
+  );
+  const sideChats = useSideChatsByParent(selectedThreadRef);
+  const sideChatMenuItems = useMemo(() => buildMobileSideChatMenuItems({ sideChats }), [sideChats]);
+  const forkParentRef = useMemo(() => {
+    const sourceThreadId = selectedThread?.fork?.sourceThreadId;
+    return sourceThreadId && selectedThread
+      ? scopeThreadRef(selectedThread.environmentId, sourceThreadId)
+      : null;
+  }, [selectedThread]);
+  const forkParent = useThreadShell(forkParentRef);
+  const forkCapability = selectedThread
+    ? resolveMobileThreadForkCapability(selectedThread, serverConfig)
+    : undefined;
+  const forkSourceThreadRef = useRef(selectedThread);
+  forkSourceThreadRef.current = selectedThread;
+  const forkCapabilityRef = useRef(forkCapability);
+  forkCapabilityRef.current = forkCapability;
+  const latestForkTurnRef = useRef(selectedThread?.latestTurn ?? null);
+  latestForkTurnRef.current = selectedThread?.latestTurn ?? null;
+  const forkThreadRef = useRef(forkThread);
+  forkThreadRef.current = forkThread;
+  const forkInFlightRef = useRef(false);
+  const navigationRef = useRef(navigation);
+  navigationRef.current = navigation;
 
   /* ─── Native header theming ──────────────────────────────────────── */
   const usesNativeHeaderGlass = NATIVE_LIQUID_GLASS_SUPPORTED;
@@ -497,6 +548,106 @@ function ThreadRouteContent(
     });
   }, [interruptThreadTurn, selectedThread]);
 
+  const handleForkAssistantMessage = useCallback(
+    async (input: {
+      readonly messageId: MessageId;
+      readonly turnId: TurnId;
+      readonly sideChat: boolean;
+    }) => {
+      const sourceThread = forkSourceThreadRef.current;
+      if (
+        !sourceThread ||
+        !canForkMobileAssistantMessage({
+          capability: forkCapabilityRef.current,
+          completed: true,
+          messageTurnId: input.turnId,
+          latestTurn: latestForkTurnRef.current,
+        })
+      ) {
+        return;
+      }
+      if (forkInFlightRef.current) return;
+      forkInFlightRef.current = true;
+      try {
+        const nextThreadId = ThreadId.make(uuidv4());
+        const result = await forkThreadRef.current({
+          environmentId: sourceThread.environmentId,
+          input: {
+            threadId: nextThreadId,
+            sourceThreadId: sourceThread.id,
+            sourceTurnId: input.turnId,
+            sourceMessageId: input.messageId,
+            sideChat: input.sideChat,
+            createdAt: new Date().toISOString(),
+          },
+        });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            Alert.alert(
+              input.sideChat ? "Could not open side chat" : "Could not fork thread",
+              error instanceof Error ? error.message : "An error occurred.",
+            );
+          }
+          return;
+        }
+        navigationRef.current.navigate("Thread", {
+          environmentId: String(sourceThread.environmentId),
+          threadId: String(nextThreadId),
+        });
+      } finally {
+        forkInFlightRef.current = false;
+      }
+    },
+    [],
+  );
+
+  const handlePromoteSideChat = useCallback(async () => {
+    if (!selectedThread || selectedThread.sideChat !== true) return;
+    const result = await updateThreadMetadata({
+      environmentId: selectedThread.environmentId,
+      input: { threadId: selectedThread.id, sideChat: false },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      Alert.alert(
+        "Could not promote side chat",
+        error instanceof Error ? error.message : "An error occurred.",
+      );
+    }
+  }, [selectedThread, updateThreadMetadata]);
+
+  const handleDeletedSideChat = useCallback(() => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    navigation.dispatch(StackActions.replace("Home"));
+  }, [navigation]);
+  const confirmDeleteSideChat = useThreadDeleteAction(handleDeletedSideChat);
+  const handleDeleteSideChat = useCallback(() => {
+    if (selectedThread?.sideChat === true) confirmDeleteSideChat(selectedThread);
+  }, [confirmDeleteSideChat, selectedThread]);
+
+  const openSideChatThread = useCallback(
+    (sideChatThreadId: ThreadId) => {
+      if (!selectedThread) return;
+      navigation.navigate("Thread", {
+        environmentId: String(selectedThread.environmentId),
+        threadId: String(sideChatThreadId),
+      });
+    },
+    [navigation, selectedThread],
+  );
+
+  const openForkParent = useCallback(() => {
+    if (!forkParentRef) return;
+    navigation.navigate("Thread", {
+      environmentId: String(forkParentRef.environmentId),
+      threadId: String(forkParentRef.threadId),
+    });
+  }, [forkParentRef, navigation]);
+
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
       terminalDebugLog("terminal-menu:open-existing", {
@@ -632,11 +783,109 @@ function ThreadRouteContent(
     onOpenTerminal: handleOpenTerminal,
     onOpenNewTerminal: handleOpenNewTerminal,
     onRunProjectScript: handleRunProjectScript,
+    threadMenu: {
+      ...(selectedThread?.sideChat === true
+        ? {
+            onDelete: handleDeleteSideChat,
+            onPromote: () => void handlePromoteSideChat(),
+          }
+        : {}),
+      sideChats: sideChatMenuItems.map((item) => {
+        const sideChatThreadId = ThreadId.make(item.id.slice("side-chat:".length));
+        return {
+          id: sideChatThreadId,
+          title: item.title,
+          onOpen: () => openSideChatThread(sideChatThreadId),
+        };
+      }),
+    },
     onPull: gitActions.onPullSelectedThreadBranch,
     onRunAction: gitActions.onRunSelectedThreadGitAction,
   };
-  const threadCenterHeaderItems = useThreadGitCenterHeaderItems(threadGitControlProps);
-  const compactRightHeaderItems = useThreadGitRightHeaderItems(threadGitControlProps);
+  const threadHeaderMenuItem = useMemo<Record<string, unknown> | null>(() => {
+    const items: Array<Record<string, unknown>> = [];
+    if (selectedThread?.sideChat === true) {
+      items.push({
+        type: "action",
+        label: "Promote to thread",
+        icon: { type: "sfSymbol", name: "arrow.up.right" },
+        onPress: () => void handlePromoteSideChat(),
+      });
+    }
+    if (sideChatMenuItems.length > 0) {
+      items.push({
+        type: "submenu",
+        label: "Side chats",
+        icon: { type: "sfSymbol", name: "text.bubble" },
+        items: sideChatMenuItems.map((item) => ({
+          type: "action",
+          label: item.title,
+          onPress: () => openSideChatThread(ThreadId.make(item.id.slice("side-chat:".length))),
+        })),
+      });
+    }
+    if (selectedThread?.sideChat === true) {
+      items.push({
+        type: "action",
+        label: "Delete",
+        destructive: true,
+        icon: { type: "sfSymbol", name: "trash" },
+        onPress: handleDeleteSideChat,
+      });
+    }
+    if (items.length === 0) return null;
+    return withNativeGlassHeaderItem({
+      type: "menu",
+      label: "",
+      accessibilityLabel: "Thread actions",
+      icon: { type: "sfSymbol", name: "ellipsis" },
+      menu: { title: "Thread", items },
+    });
+  }, [
+    handleDeleteSideChat,
+    handlePromoteSideChat,
+    openSideChatThread,
+    selectedThread?.sideChat,
+    sideChatMenuItems,
+  ]);
+  const gitCenterHeaderItems = useThreadGitCenterHeaderItems(threadGitControlProps);
+  const gitRightHeaderItems = useThreadGitRightHeaderItems(threadGitControlProps);
+  const threadCenterHeaderItems = useMemo<NativeHeaderItems>(
+    () =>
+      threadHeaderMenuItem ? [threadHeaderMenuItem, ...gitCenterHeaderItems] : gitCenterHeaderItems,
+    [gitCenterHeaderItems, threadHeaderMenuItem],
+  );
+  const compactRightHeaderItems = useMemo<NativeHeaderItems>(
+    () =>
+      threadHeaderMenuItem ? [threadHeaderMenuItem, ...gitRightHeaderItems] : gitRightHeaderItems,
+    [gitRightHeaderItems, threadHeaderMenuItem],
+  );
+  const threadHeaderOptionsVersion = JSON.stringify([
+    selectedThread?.sideChat === true,
+    sideChatMenuItems.map((item) => [item.id, item.title]),
+  ]);
+  const androidThreadMenuActions = useMemo<MenuAction[]>(() => {
+    const actions: MenuAction[] = [];
+    if (selectedThread?.sideChat === true) {
+      actions.push({ id: "promote", title: "Promote to thread" });
+    }
+    if (sideChatMenuItems.length > 0) {
+      actions.push({
+        id: "side-chats",
+        title: "Side chats",
+        subactions: sideChatMenuItems.map((item) => ({ id: item.id, title: item.title })),
+      });
+    }
+    if (selectedThread?.sideChat === true) {
+      actions.push({
+        id: "delete",
+        title: "Delete",
+        image: "trash",
+        attributes: { destructive: true },
+      });
+    }
+    return actions;
+  }, [selectedThread?.sideChat, sideChatMenuItems]);
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
     () => [
       {
@@ -758,7 +1007,6 @@ function ThreadRouteContent(
     detailDeleted: selectedThreadDetailState.status === "deleted",
     connectionState: routeConnectionState,
   });
-  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = (showActionControls: boolean) => (
     <>
       <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
@@ -808,6 +1056,16 @@ function ThreadRouteContent(
           onSelectUserInputOption={requests.onSelectUserInputOption}
           onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}
           onSubmitUserInput={requests.onSubmitUserInput}
+          forkCapability={forkCapability}
+          onForkAssistantMessage={handleForkAssistantMessage}
+          {...(forkParentRef
+            ? {
+                forkOrigin: {
+                  title: forkParent?.title ?? "thread",
+                  onPress: openForkParent,
+                },
+              }
+            : {})}
         />
       </View>
     </>
@@ -817,6 +1075,7 @@ function ThreadRouteContent(
     <>
       {activeInspectorRenderer ? <InspectorPaneRoleActivation /> : null}
       <NativeStackScreenOptions
+        optionsVersion={threadHeaderOptionsVersion}
         options={{
           // Android draws its own in-flow header (AndroidScreenHeader below);
           // the native stack header stays iOS-only.
@@ -858,6 +1117,29 @@ function ThreadRouteContent(
           subtitle={headerSubtitle}
           onBack={layout.usesSplitView ? undefined : () => navigation.goBack()}
           actions={androidHeaderActions}
+          trailing={
+            androidThreadMenuActions.length > 0 ? (
+              <ControlPillMenu
+                title="Thread"
+                actions={androidThreadMenuActions}
+                onPressAction={({ nativeEvent }) => {
+                  if (nativeEvent.event === "promote") {
+                    void handlePromoteSideChat();
+                    return;
+                  }
+                  if (nativeEvent.event === "delete") {
+                    handleDeleteSideChat();
+                    return;
+                  }
+                  if (nativeEvent.event.startsWith("side-chat:")) {
+                    openSideChatThread(ThreadId.make(nativeEvent.event.slice("side-chat:".length)));
+                  }
+                }}
+              >
+                <AndroidHeaderIconButton accessibilityLabel="Thread actions" icon="ellipsis" />
+              </ControlPillMenu>
+            ) : undefined
+          }
         />
       ) : null}
 

@@ -282,6 +282,23 @@ describe("sortThreadsForListV2", () => {
 });
 
 describe("buildThreadListV2Items", () => {
+  it("does not place side chats in the v2 list", () => {
+    const main = makeThread({ id: ThreadId.make("main"), title: "Main" });
+    const sideChat = makeThread({
+      id: ThreadId.make("side"),
+      title: "Side chat",
+      sideChat: true,
+    });
+    const layout = buildThreadListV2Items({
+      threads: [main, sideChat],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual([main.id]);
+  });
+
   it("places a persisted settled thread in the settled shelf", () => {
     const thread = makeThread({
       id: ThreadId.make("linked-merged"),

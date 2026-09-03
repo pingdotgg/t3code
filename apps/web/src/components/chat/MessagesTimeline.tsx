@@ -3,6 +3,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type ScopedThreadRef,
+  type ServerProviderSessionFork,
   type ServerProviderSkill,
   type ToolActivityIcon,
   type TurnId,
@@ -84,6 +85,7 @@ import {
   DownloadIcon,
   EyeIcon,
   GlobeIcon,
+  GitForkIcon,
   HammerIcon,
   MessageCircleIcon,
   MousePointerClickIcon,
@@ -99,6 +101,7 @@ import {
 import { Button } from "../ui/button";
 import { useAssetUrlRefresh, useAssetUrlState } from "../../assets/assetUrls";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import {
   buildAttachmentVideoAsset,
@@ -174,6 +177,7 @@ import {
   parseReviewCommentMessageSegments,
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
+import { canForkCompletedAssistantMessage } from "../../threadForking.logic";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -205,6 +209,12 @@ interface TimelineRowSharedState {
   workGroupViewState: WorkGroupViewState;
   agentPanelModel: AgentPanelModel;
   onOpenAgents: () => void;
+  forkCapability: ServerProviderSessionFork | undefined;
+  latestCompletedTurnId: TurnId | null;
+  incompleteLatestTurnId: TurnId | null;
+  onForkAssistantMessage:
+    | ((input: { messageId: MessageId; turnId: TurnId; sideChat: boolean }) => void)
+    | undefined;
 }
 
 interface TimelineRowActivityState {
@@ -331,6 +341,12 @@ interface MessagesTimelineProps {
   topFadeEnabled?: boolean;
   /** Non-null when older turns exist beyond the loaded window. */
   loadEarlier?: CitationHistoryPage | null;
+  forkCapability?: ServerProviderSessionFork | undefined;
+  latestCompletedTurnId?: TurnId | null;
+  onForkAssistantMessage?:
+    | ((input: { messageId: MessageId; turnId: TurnId; sideChat: boolean }) => void)
+    | undefined;
+  transcriptHeader?: ReactNode;
 }
 
 // ---------------------------------------------------------------------------
@@ -375,6 +391,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   loadEarlier = null,
+  forkCapability,
+  latestCompletedTurnId = null,
+  onForkAssistantMessage,
+  transcriptHeader,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const citationThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
@@ -656,6 +676,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workGroupViewState,
       agentPanelModel,
       onOpenAgents,
+      forkCapability,
+      latestCompletedTurnId,
+      incompleteLatestTurnId:
+        latestTurn && (latestTurn.state !== "completed" || latestTurn.completedAt === null)
+          ? latestTurn.turnId
+          : null,
+      onForkAssistantMessage,
     }),
     [
       readyCitationRequest,
@@ -680,6 +707,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workGroupViewState,
       agentPanelModel,
       onOpenAgents,
+      forkCapability,
+      latestCompletedTurnId,
+      latestTurn?.completedAt,
+      latestTurn?.state,
+      latestTurn?.turnId,
+      onForkAssistantMessage,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -704,12 +737,17 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
 
   if (rows.length === 0 && !isWorking) {
-    if (hideEmptyPlaceholder) {
+    if (hideEmptyPlaceholder && !transcriptHeader) {
       return null;
     }
     return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-placeholder text-sm">Send a message to start the conversation.</p>
+      <div className="flex h-full min-h-0 flex-col overflow-y-auto px-3 sm:px-5">
+        {transcriptHeader}
+        <div className="flex min-h-0 flex-1 items-center justify-center">
+          {hideEmptyPlaceholder ? null : (
+            <p className="text-placeholder text-sm">Send a message to start the conversation.</p>
+          )}
+        </div>
       </div>
     );
   }
@@ -762,17 +800,20 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               topFadeEnabled && "topbar-scroll-fade",
             )}
             ListHeaderComponent={
-              loadEarlier !== null ? (
-                <TimelineLoadEarlierHeader
-                  loading={loadEarlier.loading}
-                  onLoadEarlier={loadEarlier.onLoadEarlier}
-                  fade={topFadeEnabled}
-                />
-              ) : topFadeEnabled ? (
-                TIMELINE_LIST_FADE_HEADER
-              ) : (
-                TIMELINE_LIST_HEADER
-              )
+              <>
+                {loadEarlier !== null ? (
+                  <TimelineLoadEarlierHeader
+                    loading={loadEarlier.loading}
+                    onLoadEarlier={loadEarlier.onLoadEarlier}
+                    fade={topFadeEnabled}
+                  />
+                ) : topFadeEnabled ? (
+                  TIMELINE_LIST_FADE_HEADER
+                ) : (
+                  TIMELINE_LIST_HEADER
+                )}
+                {transcriptHeader}
+              </>
             }
             ListFooterComponent={timelineListFooter}
           />
@@ -1522,6 +1563,7 @@ function AssistantMessageMeta({
         showCopyButton={showCopyButton}
         streaming={copyStreaming}
       />
+      <AssistantForkMenu message={message} />
       {!message.streaming && (
         <Tooltip>
           <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
@@ -1556,6 +1598,38 @@ function AssistantCopyButton({
   }
 
   return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />;
+}
+
+function AssistantForkMenu({ message }: { message: ChatMessage }) {
+  const ctx = use(TimelineRowCtx);
+  const turnId = message.turnId;
+  const visible = canForkCompletedAssistantMessage({
+    capability: ctx.forkCapability,
+    completed: !message.streaming && turnId !== ctx.incompleteLatestTurnId,
+    messageTurnId: turnId,
+    latestCompletedTurnId: ctx.latestCompletedTurnId,
+  });
+  if (!visible || turnId === null || !ctx.onForkAssistantMessage) return null;
+
+  const fork = (sideChat: boolean) => {
+    ctx.onForkAssistantMessage?.({ messageId: message.id, turnId, sideChat });
+  };
+
+  return (
+    <Menu>
+      <MenuTrigger
+        render={
+          <Button type="button" size="xs" variant="ghost" aria-label="Fork from this response" />
+        }
+      >
+        <GitForkIcon className="size-3" />
+      </MenuTrigger>
+      <MenuPopup align="start" side="top" sideOffset={6} className="min-w-40">
+        <MenuItem onClick={() => fork(true)}>Open side chat</MenuItem>
+        <MenuItem onClick={() => fork(false)}>Fork to new thread</MenuItem>
+      </MenuPopup>
+    </Menu>
+  );
 }
 
 function ProposedPlanTimelineRow({

@@ -492,6 +492,42 @@ describe("rightPanelStore", () => {
     expect(state.activeSurfaceId).toBe(pullRequestSurfaceId(first));
   });
 
+  it("keys side-chat surfaces by child thread", () => {
+    const first = ThreadId.make("thread-side-1");
+    const second = ThreadId.make("thread-side-2");
+    useRightPanelStore.getState().openSideChat(refA, first);
+    useRightPanelStore.getState().openSideChat(refA, second);
+    useRightPanelStore.getState().openSideChat(refA, first);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: `side-chat:${first}`,
+      surfaces: [
+        { id: `side-chat:${first}`, kind: "side-chat", threadId: first },
+        { id: `side-chat:${second}`, kind: "side-chat", threadId: second },
+      ],
+    });
+  });
+
+  it("reconciles side-chat surfaces without removing other tabs", () => {
+    const existing = ThreadId.make("thread-side-existing");
+    const stale = ThreadId.make("thread-side-stale");
+    useRightPanelStore.getState().open(refA, "agents");
+    useRightPanelStore.getState().openSideChat(refA, existing);
+    useRightPanelStore.getState().openSideChat(refA, stale);
+
+    useRightPanelStore.getState().reconcileSideChatSurfaces(refA, new Set([existing]));
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: `side-chat:${existing}`,
+      surfaces: [
+        { id: "agents", kind: "agents" },
+        { id: `side-chat:${existing}`, kind: "side-chat", threadId: existing },
+      ],
+    });
+  });
+
   it("keeps one pull request read from two servers as two tabs", () => {
     const local = {
       environmentId: "local",

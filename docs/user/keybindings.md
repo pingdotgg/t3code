@@ -69,6 +69,12 @@ shortcut is `mod+shift+s`, and it does not run while the terminal has focus.
 already pinned. Its default shortcut is `mod+shift+p`, and it does not run while the terminal has
 focus. See [Organizing threads](./thread-sidebar.md) for how pinned threads are ordered.
 
+`chat.sideChat` opens a side chat from the active conversation's latest completed turn and defaults to
+`mod+shift+b`. `chat.forkThread` creates a normal fork from the same point and has no default
+shortcut. Both commands are unavailable when the active provider cannot fork sessions or the
+conversation has no completed turn. When a side-chat pane is active, both commands fork that side
+chat. See [Side chats and forks](./side-chats-and-forks.md).
+
 The command palette searches settings, active thread titles, projects, branches, user messages, and
 final agent responses across connected environments. A setting result opens its exact control or
 section. Message matches show one labeled excerpt while keeping the thread's project, branch, and

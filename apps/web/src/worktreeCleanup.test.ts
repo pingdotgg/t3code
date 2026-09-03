@@ -69,6 +69,19 @@ describe("getOrphanedWorktreePathForThread", () => {
     expect(result).toBeNull();
   });
 
+  it("returns null when a side chat links to the same worktree", () => {
+    const threads = [
+      makeThread({ worktreePath: "/tmp/repo/worktrees/feature-a" }),
+      makeThread({
+        id: ThreadId.make("thread-side-chat"),
+        sideChat: true,
+        worktreePath: "/tmp/repo/worktrees/feature-a",
+      }),
+    ];
+
+    expect(getOrphanedWorktreePathForThread(threads, ThreadId.make("thread-1"))).toBeNull();
+  });
+
   it("ignores threads linked to different worktrees", () => {
     const threads = [
       makeThread({

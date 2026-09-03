@@ -26,6 +26,7 @@ import * as Order from "effect/Order";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import { visibleTopLevelThreads } from "../threads/sideChats.logic";
 
 export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual">;
 
@@ -96,7 +97,7 @@ export function sortHomeProjectScopes(input: {
     );
   };
 
-  for (const thread of input.threads) {
+  for (const thread of visibleTopLevelThreads(input.threads)) {
     if (thread.archivedAt !== null) continue;
     recordActivity(
       scopeKeyByProjectRef.get(scopedProjectKey(thread.environmentId, thread.projectId)),
@@ -273,7 +274,7 @@ export function buildHomeThreadGroups(input: {
     groups.get(groupKey)?.pendingTasks.push(pendingTask);
   }
 
-  for (const thread of input.threads) {
+  for (const thread of visibleTopLevelThreads(input.threads)) {
     if (thread.archivedAt !== null) {
       continue;
     }

@@ -34,7 +34,7 @@ import {
   type EnvironmentMachineKind,
   type ProjectIconOverride,
   type ScopedThreadRef,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
@@ -103,6 +103,7 @@ import {
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
+import { useThreadForkActions } from "../hooks/useThreadFork";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
@@ -111,7 +112,7 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useThreadShells } from "../state/entities";
+import { readSideChatsByParent, useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
@@ -123,9 +124,11 @@ import {
   resolveThreadRouteTarget,
 } from "../threadRoutes";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
+import { resolveForkEntryAvailability } from "../threadForking.logic";
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { useRightPanelStore } from "../rightPanelStore";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
 import {
   animatePinnedLayoutChanges,
@@ -1805,6 +1808,7 @@ export default function Sidebar() {
     archiveThread,
     deleteThread,
   } = useThreadActions();
+  const threadFork = useThreadForkActions(null);
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -3172,6 +3176,16 @@ export default function Sidebar() {
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
+        const providerInstanceId =
+          thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+        const forkCapability = serverConfigs
+          .get(thread.environmentId)
+          ?.providers.find((provider) => provider.instanceId === providerInstanceId)?.sessionFork;
+        const forkEntry = resolveForkEntryAvailability({
+          capability: forkCapability,
+          latestTurn: thread.latestTurn,
+        });
+        const sideChats = readSideChatsByParent(threadRef);
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
         const clicked = await settlePromise(() =>
@@ -3191,6 +3205,11 @@ export default function Sidebar() {
                 pinning: supportsPinning,
                 titleRegeneration: supportsTitleRegeneration,
               },
+              forking: {
+                enabled: forkEntry.enabled,
+                disabledReason: forkEntry.disabledReason,
+                sideChats,
+              },
               snoozePresets,
             }),
             position,
@@ -3202,6 +3221,15 @@ export default function Sidebar() {
             (candidate) => `snooze:${candidate.id}` === clicked.value,
           );
           if (preset) attemptSnooze(threadRef, preset);
+          return;
+        }
+        if (clicked.value?.startsWith("open-existing-side-chat:")) {
+          useRightPanelStore
+            .getState()
+            .openSideChat(
+              threadRef,
+              ThreadId.make(clicked.value.slice("open-existing-side-chat:".length)),
+            );
           return;
         }
         switch (clicked.value) {
@@ -3239,6 +3267,16 @@ export default function Sidebar() {
             }
             return;
           }
+          case "open-side-chat":
+            if (forkEntry.target) {
+              void threadFork.forkTarget(thread, forkEntry.target, true);
+            }
+            return;
+          case "fork-thread":
+            if (forkEntry.target) {
+              void threadFork.forkTarget(thread, forkEntry.target, false);
+            }
+            return;
           case "settle":
             attemptSettle(threadRef);
             return;
@@ -3379,6 +3417,7 @@ export default function Sidebar() {
       projectCwdByKey,
       serverConfigs,
       startThreadRename,
+      threadFork.forkTarget,
       updateThreadMetadata,
       timestampFormat,
     ],

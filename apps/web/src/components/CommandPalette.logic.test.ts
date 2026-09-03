@@ -171,6 +171,21 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 }
 
 describe("buildThreadActionItems", () => {
+  it("keeps side chats out of recent-thread and search results", () => {
+    const items = buildThreadActionItems({
+      threads: [
+        makeThread({ id: ThreadId.make("thread-main"), title: "Main thread" }),
+        makeThread({ id: ThreadId.make("thread-side"), title: "Side chat", sideChat: true }),
+      ],
+      projectTitleById: new Map([[PROJECT_ID, "Project"]]),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async () => undefined,
+    });
+
+    expect(items.map((item) => item.value)).toEqual(["thread:thread-main"]);
+  });
+
   it("orders threads by most recent activity and formats timestamps from updatedAt", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-25T12:00:00.000Z"));

@@ -72,6 +72,32 @@ function buildGroups(
 }
 
 describe("buildHomeThreadGroups", () => {
+  it("does not place side chats in the home list", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-1"),
+      title: "Project",
+    });
+    const main = makeThread({
+      environmentId,
+      id: ThreadId.make("thread-main"),
+      projectId: project.id,
+      title: "Main",
+    });
+    const sideChat = makeThread({
+      environmentId,
+      id: ThreadId.make("thread-side"),
+      projectId: project.id,
+      title: "Side chat",
+      sideChat: true,
+    });
+
+    expect(buildGroups([project], [main, sideChat])[0]?.threads.map((thread) => thread.id)).toEqual(
+      [main.id],
+    );
+  });
+
   it("builds one v2 scope for the same repository across environments", () => {
     const localEnvironmentId = EnvironmentId.make("environment-local");
     const remoteEnvironmentId = EnvironmentId.make("environment-remote");
