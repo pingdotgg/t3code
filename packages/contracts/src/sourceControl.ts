@@ -33,6 +33,9 @@ export const ChangeRequest = Schema.Struct({
   isCrossRepository: Schema.optional(Schema.Boolean),
   headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   headRepositoryOwnerLogin: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // The commit the change request was opened from, where the forge reports it.
+  // Absent leaves every consumer on its pre-existing behaviour.
+  headRefOid: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type ChangeRequest = typeof ChangeRequest.Type;
 
