@@ -2084,10 +2084,15 @@ export const make = Effect.gen(function* () {
       ...(localBranchExists ? {} : { remoteName }),
     });
     let cached = yield* Cache.get(prLookupCache, cacheKey);
+    // The cached head context may have resolved on a different remote than
+    // the saved upstream: a branch tracking origin/main but pushed to a fork
+    // is looked up on the fork. Verify against the remote the lookup used.
+    const identityRemoteName = (headContext: BranchHeadContext) =>
+      headContext.remoteName ?? remoteName ?? undefined;
     const currentIdentity = yield* resolvePrLookupRepositoryIdentity(
       cacheCwd,
       branch,
-      remoteName ?? undefined,
+      identityRemoteName(cached.headContext),
     );
     const canVerifyIdentity = (headContext: BranchHeadContext, identity: typeof currentIdentity) =>
       !(
@@ -2110,7 +2115,7 @@ export const make = Effect.gen(function* () {
       const refreshedIdentity = yield* resolvePrLookupRepositoryIdentity(
         cacheCwd,
         branch,
-        remoteName ?? undefined,
+        identityRemoteName(cached.headContext),
       );
       if (
         !canVerifyIdentity(cached.headContext, refreshedIdentity) ||
