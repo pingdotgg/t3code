@@ -21,6 +21,7 @@ import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import { useThreadDisplayBranch } from "../../state/use-thread-display-branch";
 import { useThreadPr } from "../../state/use-thread-pr";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
@@ -427,6 +428,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const pinnedRow = props.pinned === true;
 
   const pr = useThreadPr(thread);
+  // Local threads created before the checkout was known persist branch=null;
+  // fall back to the live checkout so a phone-created row reads like PC.
+  const displayBranch = useThreadDisplayBranch(thread, props.project?.workspaceRoot ?? null);
 
   const theme = useUniwindTheme();
   const screenColor = theme["--color-screen"];
@@ -765,7 +769,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           >
             {thread.session.lastError}
           </Text>
-        ) : thread.branch || props.environmentLabel ? (
+        ) : displayBranch || props.environmentLabel ? (
           /* "branch · machine" share one truncating line. The machine sits
              last so a tight fit cuts the repetitive label, not the branch —
              and machine-only fills the row for non-git projects. The glyph
@@ -780,7 +784,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               )}
               numberOfLines={1}
             >
-              {thread.branch ? (
+              {displayBranch ? (
                 <Text
                   className={cn(
                     "text-xs",
@@ -788,10 +792,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   )}
                   style={{ fontFamily: MONO_FONT }}
                 >
-                  {thread.branch}
+                  {displayBranch}
                 </Text>
               ) : null}
-              {thread.branch && props.environmentLabel ? "  ·  " : null}
+              {displayBranch && props.environmentLabel ? "  ·  " : null}
               {props.environmentLabel ? (
                 <Text
                   className={cn(

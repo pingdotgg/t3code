@@ -23,6 +23,7 @@ import { relativeTime } from "../../lib/time";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import { useThreadDisplayBranch } from "../../state/use-thread-display-branch";
 import { useThreadPr, type ThreadPrPresentation } from "../../state/use-thread-pr";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
@@ -441,6 +442,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly thread: EnvironmentThreadShell;
   readonly environmentLabel: string | null;
   readonly environmentMachine?: EnvironmentMachineKind;
+  readonly projectCwd: string | null;
   /** A message for this thread is waiting in the outbox. */
   readonly hasQueuedMessages?: boolean;
   readonly searchMatch?: EnvironmentThreadSearchMatch;
@@ -487,6 +489,9 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   } = props;
   const status = resolveThreadStatus(thread);
   const pr = useThreadPr(thread);
+  // Same live-checkout fallback as the v2 rows: phone-created local threads
+  // can persist branch=null, and should still read like PC rows.
+  const displayBranch = useThreadDisplayBranch(thread, props.projectCwd);
   const timestamp = relativeTime(
     thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
   );
@@ -497,7 +502,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   ]
     .filter(Boolean)
     .join(", ");
-  const subtitleParts = [props.environmentLabel, thread.branch].filter((part): part is string =>
+  const subtitleParts = [props.environmentLabel, displayBranch].filter((part): part is string =>
     Boolean(part),
   );
 
