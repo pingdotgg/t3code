@@ -34,13 +34,11 @@ export const CodexGoalThreadInput = Schema.Struct({
   threadId: ThreadId,
 });
 export type CodexGoalThreadInput = typeof CodexGoalThreadInput.Type;
-
 export const CodexGoalSubscriptionInput = Schema.Struct({
   threadId: ThreadId,
   providerInstanceId: ProviderInstanceId,
 });
 export type CodexGoalSubscriptionInput = typeof CodexGoalSubscriptionInput.Type;
-
 export const CodexGoalSetInput = Schema.Struct({
   threadId: ThreadId,
   objective: Schema.optionalKey(CodexGoalObjective),
