@@ -27,11 +27,16 @@ const encode = (value: string) => Stream.make(new TextEncoder().encode(value));
  * test set the outcome of the `off` (pre-clear) and `serve` calls separately —
  * they are the same subcommand and are told apart by the trailing `off`.
  */
-const spawnerLayer = (input: { readonly off?: CallResult; readonly serve?: CallResult }) =>
+const spawnerLayer = (input: {
+  readonly off?: CallResult;
+  readonly serve?: CallResult;
+  readonly calls?: Array<ReadonlyArray<string>>;
+}) =>
   Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
       const args = "args" in command ? (command.args as ReadonlyArray<string>) : [];
+      input.calls?.push(args);
       const result: CallResult = args.includes("status")
         ? { exitCode: 0 }
         : args.includes("off")
@@ -99,6 +104,20 @@ describe("shareDevServer", () => {
 
       assert.equal(shared.host, "host.example.ts.net");
       assert.equal(shared.url, "https://host.example.ts.net:5788/");
+    }),
+  );
+
+  // Vite binds `localhost`, which modern Node resolves to `::1` first, so a
+  // 127.0.0.1 target would proxy to a loopback nothing listens on.
+  it.effect("proxies to the localhost name Vite binds, not 127.0.0.1", () =>
+    Effect.gen(function* () {
+      const calls: Array<ReadonlyArray<string>> = [];
+      yield* shareDevServer({ webPort: 5788 }).pipe(
+        Effect.provide(spawnerLayer({ off: { exitCode: 0 }, calls })),
+      );
+
+      const serveCall = calls.find((args) => args.includes("--bg"));
+      assert.deepEqual(serveCall, ["serve", "--bg", "--https=5788", "http://localhost:5788"]);
     }),
   );
 
