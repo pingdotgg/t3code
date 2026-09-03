@@ -364,41 +364,15 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
         ctx.stopped = true;
 
         for (const [requestId, pending] of ctx.pendingApprovals) {
-          const interrupted = yield* Deferred.interrupt(pending.decision);
+          yield* Deferred.succeed(pending.decision, "cancel" as const).pipe(Effect.ignore);
           pendingApprovalsByRequestId.delete(requestId);
-          if (interrupted) {
-            const stamp = yield* makeEventStamp();
-            yield* offerRuntimeEvent(
-              makeAcpRequestResolvedEvent({
-                stamp,
-                provider: PROVIDER,
-                threadId: ctx.threadId,
-                turnId: pending.turnId,
-                requestId: pending.runtimeRequestId,
-                permissionRequest: pending.permissionRequest,
-                decision: "cancel",
-              }),
-            );
-          }
         }
         ctx.pendingApprovals.clear();
 
         for (const [requestId, pending] of ctx.pendingUserInputs) {
-          const interrupted = yield* Deferred.interrupt(pending.answers);
+          const answers: ProviderUserInputAnswers = {};
+          yield* Deferred.succeed(pending.answers, answers).pipe(Effect.ignore);
           pendingUserInputsByRequestId.delete(requestId);
-          if (interrupted) {
-            const stamp = yield* makeEventStamp();
-            const answers: ProviderUserInputAnswers = {};
-            yield* offerRuntimeEvent({
-              type: "user-input.resolved",
-              ...stamp,
-              provider: PROVIDER,
-              threadId: ctx.threadId,
-              turnId: pending.turnId,
-              requestId: pending.runtimeRequestId,
-              payload: { answers },
-            });
-          }
         }
         ctx.pendingUserInputs.clear();
 
