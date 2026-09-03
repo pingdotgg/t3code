@@ -276,8 +276,15 @@ function isCommonPreset(input: UsageSummaryInput): boolean {
 }
 
 function isWithinLedgerRetention(input: UsageSummaryInput, nowMs: number): boolean {
-  const sinceMs = Date.parse(`${input.sinceDay}T00:00:00Z`);
-  return Number.isFinite(sinceMs) && sinceMs >= nowMs - USAGE_LEDGER_RETENTION_MS;
+  const sinceMs =
+    input.resolution === "hour" && input.sinceTime !== undefined
+      ? Date.parse(input.sinceTime)
+      : Date.parse(`${input.sinceDay}T00:00:00Z`);
+  // A daily calendar boundary can begin before UTC midnight in a positive
+  // offset zone. Requiring one extra day after the retention cutoff is
+  // conservative and keeps canonical 90-day windows inside the 92-day ledger.
+  const dailySafetyMs = input.resolution === "hour" ? 0 : DAY_MS;
+  return Number.isFinite(sinceMs) && sinceMs >= nowMs - USAGE_LEDGER_RETENTION_MS + dailySafetyMs;
 }
 
 function isCanonicalLedgerInput(input: UsageSummaryInput): boolean {
