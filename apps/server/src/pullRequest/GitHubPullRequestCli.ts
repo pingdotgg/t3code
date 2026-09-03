@@ -18,6 +18,7 @@ import {
   type PullRequestReviewVerdict,
   type PullRequestReviewerCandidateList,
   type PullRequestReviewerKind,
+  type PullRequestLabelCandidateList,
   type PullRequestThreadCommentsResult,
   type PullRequestUpdateMethod,
 } from "@t3tools/contracts";
@@ -34,6 +35,7 @@ import {
   decodePullRequestActivityJson,
   decodePullRequestDetailJson,
   decodePullRequestFilesJson,
+  decodePullRequestHeadsJson,
   decodePullRequestListJson,
   decodePullRequestNodeIdJson,
   decodePullRequestSearchJson,
@@ -41,6 +43,9 @@ import {
   decodeReactionSubjectScopeJson,
   decodeRepositoryAccessJson,
   decodeReviewerCandidatesJson,
+  decodeLabelCandidatesJson,
+  buildLabelRequestJson,
+  LABEL_CANDIDATES_GRAPHQL_QUERY,
   decodeReviewDismissalsJson,
   decodeReviewThreadCommentsJson,
   decodeReviewThreadsJson,
@@ -56,6 +61,7 @@ import {
   PULL_REQUEST_NODE_ID_GRAPHQL_QUERY,
   REACTION_SUBJECT_PULL_REQUEST_GRAPHQL_QUERY,
   REMOVE_REACTION_GRAPHQL_MUTATION,
+  REVERT_PULL_REQUEST_GRAPHQL_MUTATION,
   gitHubReactionContent,
   REPOSITORY_ACCESS_JSON_FIELDS,
   RESOLVE_REVIEW_THREAD_GRAPHQL_MUTATION,
@@ -71,13 +77,16 @@ import {
   UPDATE_REVIEW_COMMENT_GRAPHQL_MUTATION,
   VIEWER_PERMISSIONS_GRAPHQL_QUERY,
   decodeViewerPermissionsJson,
+  decodeWorkflowRunApprovalsJson,
   type GitHubBaseComparison,
   type GitHubPullRequestDetail,
   type GitHubPullRequestActivity,
+  type GitHubPullRequestHead,
   type GitHubPullRequestListItem,
   type GitHubPullRequestSearchItem,
   type GitHubReviewThreadComments,
   type GitHubRepositoryAccess,
+  type GitHubWorkflowRunApproval,
   type GitHubReviewThreadEntry,
   type GitHubReviewThreadPage,
   type GitHubViewerAccess,
@@ -120,6 +129,25 @@ export class GitHubViewerLoginUnavailableError extends Schema.TaggedErrorClass<G
 
   override get message(): string {
     return `GitHub CLI failed in getViewerLogin: ${this.detail}`;
+  }
+}
+
+/** Not a decode failure: gh answered, but the pull request carried no update time. */
+export class GitHubPullRequestUpdatedAtUnavailableError extends Schema.TaggedErrorClass<GitHubPullRequestUpdatedAtUnavailableError>()(
+  "GitHubPullRequestUpdatedAtUnavailableError",
+  {
+    command: Schema.Literal("gh"),
+    cwd: Schema.String,
+    repository: Schema.String,
+    number: Schema.Int,
+  },
+) {
+  get detail(): string {
+    return `Pull request ${this.repository}#${this.number} reported no update time.`;
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in getPullRequestSummary: ${this.detail}`;
   }
 }
 
@@ -240,6 +268,69 @@ export class GitHubSubjectScopeError extends Schema.TaggedErrorClass<GitHubSubje
   }
 }
 
+/** GitHub answered successfully, but approving every returned workflow would be unsafe. */
+export class GitHubWorkflowApprovalRefusedError extends Schema.TaggedErrorClass<GitHubWorkflowApprovalRefusedError>()(
+  "GitHubWorkflowApprovalRefusedError",
+  {
+    command: Schema.Literal("gh"),
+    cwd: Schema.String,
+    number: Schema.Int,
+    reason: Schema.Literals(["head-list-truncated", "head-not-unique", "run-list-truncated"]),
+    observedCount: Schema.Int,
+    limit: Schema.Int,
+  },
+) {
+  get detail(): string {
+    if (this.reason === "head-list-truncated") {
+      return `GitHub returned more than ${this.limit} pull requests for this head branch.`;
+    }
+    if (this.reason === "head-not-unique") {
+      return `The head revision matched ${this.observedCount} pull requests instead of uniquely matching #${this.number}.`;
+    }
+    return `GitHub returned more than ${this.limit} workflow runs awaiting approval.`;
+  }
+
+  override get message(): string {
+    return `GitHub CLI refused listWorkflowRunsRequiringApproval: ${this.detail}`;
+  }
+}
+
+/** GitHub omitted the immutable head identity needed to scope an approval safely. */
+export class GitHubWorkflowApprovalHeadUnavailableError extends Schema.TaggedErrorClass<GitHubWorkflowApprovalHeadUnavailableError>()(
+  "GitHubWorkflowApprovalHeadUnavailableError",
+  {
+    command: Schema.Literal("gh"),
+    cwd: Schema.String,
+    number: Schema.Int,
+  },
+) {
+  get detail(): string {
+    return `GitHub did not report a complete head revision for #${this.number}.`;
+  }
+
+  override get message(): string {
+    return `GitHub CLI refused approve-workflows: ${this.detail}`;
+  }
+}
+
+/** The pull request moved after its approval candidates were read. */
+export class GitHubWorkflowApprovalHeadChangedError extends Schema.TaggedErrorClass<GitHubWorkflowApprovalHeadChangedError>()(
+  "GitHubWorkflowApprovalHeadChangedError",
+  {
+    command: Schema.Literal("gh"),
+    cwd: Schema.String,
+    number: Schema.Int,
+  },
+) {
+  get detail(): string {
+    return `The head revision of #${this.number} changed before its workflows could be approved.`;
+  }
+
+  override get message(): string {
+    return `GitHub CLI refused approve-workflows: ${this.detail}`;
+  }
+}
+
 export type GitHubPullRequestCliError =
   | GitHubCli.GitHubCliError
   | GitHubPullRequestReadError
@@ -249,8 +340,12 @@ export type GitHubPullRequestCliError =
   | GitHubDiffFileContentsUnavailableError
   | GitHubRepositorySelectorError
   | GitHubSubjectScopeError
+  | GitHubWorkflowApprovalRefusedError
+  | GitHubWorkflowApprovalHeadUnavailableError
+  | GitHubWorkflowApprovalHeadChangedError
   | SourceControlRateLimit.SourceControlRateLimitPausedError
-  | GitHubViewerLoginUnavailableError;
+  | GitHubViewerLoginUnavailableError
+  | GitHubPullRequestUpdatedAtUnavailableError;
 
 /** A large pull request can produce a multi-megabyte patch; past this it is truncated. */
 const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -360,12 +455,41 @@ export class GitHubPullRequestCli extends Context.Service<
       }>;
     }) => Effect.Effect<ReadonlyArray<GitHubPullRequestStat>, GitHubPullRequestCliError>;
 
+    readonly getPullRequestSummary: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+    }) => Effect.Effect<
+      {
+        readonly number: number;
+        readonly title: string;
+        readonly url: string;
+        readonly headBranch: string;
+        readonly baseBranch: string;
+        readonly state: "open" | "closed" | "merged";
+        readonly updatedAt: string;
+      },
+      GitHubPullRequestCliError
+    >;
+
     readonly getPullRequestDetail: (input: {
       readonly cwd: string;
       readonly repository: string;
       readonly host: string;
       readonly number: number;
     }) => Effect.Effect<GitHubPullRequestDetail, GitHubPullRequestCliError>;
+
+    readonly listWorkflowRunsRequiringApproval: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+      readonly headSha: string;
+      readonly headBranch: string;
+      readonly headRepositoryOwner: string;
+      readonly isCrossRepository: true;
+    }) => Effect.Effect<ReadonlyArray<GitHubWorkflowRunApproval>, GitHubPullRequestCliError>;
 
     /**
      * How far the branch trails its base, and whether this viewer may update it. Its own read
@@ -475,6 +599,24 @@ export class GitHubPullRequestCli extends Context.Service<
       }>;
       /** False deletes the same collection a request posts to, which takes the request back. */
       readonly requested: boolean;
+    }) => Effect.Effect<void, GitHubPullRequestCliError>;
+
+    /** The repository's labels, and which of them this pull request already wears. */
+    readonly listLabelCandidates: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+    }) => Effect.Effect<PullRequestLabelCandidateList, GitHubPullRequestCliError>;
+
+    readonly setLabels: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+      readonly labels: ReadonlyArray<string>;
+      /** False takes each label off; true adds each to whatever is already there. */
+      readonly applied: boolean;
     }) => Effect.Effect<void, GitHubPullRequestCliError>;
 
     readonly runPullRequestAction: (input: {
@@ -826,6 +968,12 @@ function actionArgs(
       return ["close"];
     case "reopen":
       return ["reopen"];
+    case "revert":
+      throw new Error("Revert requires a GraphQL mutation");
+    // Handled separately because it may approve several workflow runs rather than mutate the
+    // pull request itself.
+    case "approve-workflows":
+      throw new Error("Workflow approval requires run discovery");
   }
 }
 
@@ -1156,6 +1304,158 @@ export const make = Effect.gen(function* () {
         return { oldContents, newContents };
       });
 
+  const getPullRequestDetail: GitHubPullRequestCli["Service"]["getPullRequestDetail"] = (input) =>
+    github
+      .execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "view",
+          String(input.number),
+          ...repositoryArgs(input),
+          "--json",
+          PULL_REQUEST_DETAIL_JSON_FIELDS,
+        ],
+      })
+      .pipe(
+        Effect.flatMap((result) => {
+          const decoded = decodePullRequestDetailJson(result.stdout.trim());
+          return Result.isSuccess(decoded)
+            ? Effect.succeed(decoded.success)
+            : Effect.fail(
+                new GitHubPullRequestReadError({
+                  command: "gh",
+                  cwd: input.cwd,
+                  operation: "getPullRequestDetail",
+                  cause: decoded.failure,
+                }),
+              );
+        }),
+      );
+
+  const workflowApprovalLimit = 1_000;
+  const workflowApprovalProbeLimit = String(workflowApprovalLimit + 1);
+  const workflowApprovalReadError = (cwd: string, cause: unknown) =>
+    new GitHubPullRequestReadError({
+      command: "gh",
+      cwd,
+      operation: "listWorkflowRunsRequiringApproval",
+      cause,
+    });
+  const listWorkflowRunsRequiringApproval: GitHubPullRequestCli["Service"]["listWorkflowRunsRequiringApproval"] =
+    (input) =>
+      github
+        .execute({
+          cwd: input.cwd,
+          args: [
+            "pr",
+            "list",
+            ...repositoryArgs(input),
+            "--state",
+            "open",
+            "--head",
+            input.headBranch,
+            "--limit",
+            workflowApprovalProbeLimit,
+            "--json",
+            "number,headRefOid,isCrossRepository,headRepositoryOwner",
+          ],
+        })
+        .pipe(
+          Effect.flatMap(
+            (
+              result,
+            ): Effect.Effect<
+              GitHubPullRequestHead,
+              GitHubPullRequestReadError | GitHubWorkflowApprovalRefusedError
+            > => {
+              const decoded = decodePullRequestHeadsJson(result.stdout.trim());
+              if (!Result.isSuccess(decoded)) {
+                return Effect.fail(workflowApprovalReadError(input.cwd, decoded.failure));
+              }
+              const exactHeads = decoded.success.filter(
+                (pullRequest) =>
+                  pullRequest.headSha === input.headSha &&
+                  pullRequest.isCrossRepository === true &&
+                  pullRequest.headRepositoryOwner?.toLowerCase() ===
+                    input.headRepositoryOwner.toLowerCase(),
+              );
+              if (decoded.success.length > workflowApprovalLimit) {
+                return Effect.fail(
+                  new GitHubWorkflowApprovalRefusedError({
+                    command: "gh",
+                    cwd: input.cwd,
+                    number: input.number,
+                    reason: "head-list-truncated",
+                    observedCount: decoded.success.length,
+                    limit: workflowApprovalLimit,
+                  }),
+                );
+              }
+              if (exactHeads.length !== 1 || exactHeads[0]?.number !== input.number) {
+                return Effect.fail(
+                  new GitHubWorkflowApprovalRefusedError({
+                    command: "gh",
+                    cwd: input.cwd,
+                    number: input.number,
+                    reason: "head-not-unique",
+                    observedCount: exactHeads.length,
+                    limit: workflowApprovalLimit,
+                  }),
+                );
+              }
+              return Effect.succeed(exactHeads[0]);
+            },
+          ),
+          Effect.flatMap(() =>
+            github.execute({
+              cwd: input.cwd,
+              args: [
+                "run",
+                "list",
+                ...repositoryArgs(input),
+                "--commit",
+                input.headSha,
+                "--branch",
+                input.headBranch,
+                "--event",
+                "pull_request",
+                "--status",
+                "action_required",
+                "--limit",
+                workflowApprovalProbeLimit,
+                "--json",
+                "databaseId,workflowName,url",
+              ],
+            }),
+          ),
+          Effect.flatMap(
+            (
+              result,
+            ): Effect.Effect<
+              ReadonlyArray<GitHubWorkflowRunApproval>,
+              GitHubPullRequestReadError | GitHubWorkflowApprovalRefusedError
+            > => {
+              const decoded = decodeWorkflowRunApprovalsJson(result.stdout.trim());
+              if (!Result.isSuccess(decoded)) {
+                return Effect.fail(workflowApprovalReadError(input.cwd, decoded.failure));
+              }
+              return decoded.success.length > workflowApprovalLimit
+                ? Effect.fail(
+                    new GitHubWorkflowApprovalRefusedError({
+                      command: "gh",
+                      cwd: input.cwd,
+                      number: input.number,
+                      reason: "run-list-truncated",
+                      observedCount: decoded.success.length,
+                      limit: workflowApprovalLimit,
+                    }),
+                  )
+                : Effect.succeed(decoded.success);
+            },
+          ),
+        );
+
   return GitHubPullRequestCli.of({
     getViewerLogin: (input) =>
       github.execute({ cwd: input.cwd, args: ["api", "user", "--jq", ".login"] }).pipe(
@@ -1326,34 +1626,37 @@ export const make = Effect.gen(function* () {
       ).pipe(Effect.map((results) => results.flat()));
     },
 
-    getPullRequestDetail: (input) =>
+    getPullRequestSummary: (input) =>
       github
-        .execute({
+        .getPullRequest({
           cwd: input.cwd,
-          args: [
-            "pr",
-            "view",
-            String(input.number),
-            ...repositoryArgs(input),
-            "--json",
-            PULL_REQUEST_DETAIL_JSON_FIELDS,
-          ],
+          reference: `https://${input.host}/${input.repository}/pull/${input.number}`,
         })
         .pipe(
-          Effect.flatMap((result) => {
-            const decoded = decodePullRequestDetailJson(result.stdout.trim());
-            return Result.isSuccess(decoded)
-              ? Effect.succeed(decoded.success)
-              : Effect.fail(
-                  new GitHubPullRequestReadError({
+          Effect.flatMap((summary) =>
+            summary.updatedAt === undefined
+              ? Effect.fail(
+                  new GitHubPullRequestUpdatedAtUnavailableError({
                     command: "gh",
                     cwd: input.cwd,
-                    operation: "getPullRequestDetail",
-                    cause: decoded.failure,
+                    repository: input.repository,
+                    number: input.number,
                   }),
-                );
-          }),
+                )
+              : Effect.succeed({
+                  number: summary.number,
+                  title: summary.title,
+                  url: summary.url,
+                  headBranch: summary.headRefName,
+                  baseBranch: summary.baseRefName,
+                  state: summary.state ?? "open",
+                  updatedAt: summary.updatedAt,
+                }),
+          ),
         ),
+
+    getPullRequestDetail,
+    listWorkflowRunsRequiringApproval,
 
     getPullRequestBaseComparison: (input) => {
       const { owner, name } = parseRepositorySelector(input.repository);
@@ -1696,7 +1999,157 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.asVoid);
     },
 
+    listLabelCandidates: (input) => {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      return graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "listLabelCandidates",
+        allowReserve: true,
+        variables: [
+          ["-f", `owner=${owner}`],
+          ["-f", `name=${name}`],
+          ["-F", `number=${input.number}`],
+        ],
+        query: LABEL_CANDIDATES_GRAPHQL_QUERY,
+        decode: decodeLabelCandidatesJson,
+      });
+    },
+
+    setLabels: (input) => {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      // A pull request is an issue to the labels API. Adding posts a list and leaves what was
+      // already there; taking off is one delete per label, since the endpoint names one in its
+      // path. The name goes into the path encoded, because a label may carry a space or a slash.
+      const issue = `repos/${owner}/${name}/issues/${input.number}/labels`;
+      if (input.applied) {
+        return github
+          .execute({
+            cwd: input.cwd,
+            args: ["api", "--method", "POST", "--hostname", input.host, issue, "--input", "-"],
+            stdin: buildLabelRequestJson(input.labels),
+          })
+          .pipe(Effect.asVoid);
+      }
+      return Effect.forEach(
+        input.labels,
+        (label) =>
+          github.execute({
+            cwd: input.cwd,
+            args: [
+              "api",
+              "--method",
+              "DELETE",
+              "--hostname",
+              input.host,
+              `${issue}/${encodeURIComponent(label)}`,
+            ],
+          }),
+        { concurrency: 1, discard: true },
+      );
+    },
+
     runPullRequestAction: (input) => {
+      if (input.action === "revert") {
+        return pullRequestNodeId({ ...input, operation: "revertPullRequest" }).pipe(
+          Effect.flatMap((pullRequestId) =>
+            graphql({
+              cwd: input.cwd,
+              host: input.host,
+              query: REVERT_PULL_REQUEST_GRAPHQL_MUTATION,
+              variables: { pullRequestId },
+            }),
+          ),
+        );
+      }
+      if (input.action === "approve-workflows") {
+        const { owner, name } = parseRepositorySelector(input.repository);
+        return getPullRequestDetail(input).pipe(
+          Effect.flatMap((detail) => {
+            if (detail.isCrossRepository !== true) return Effect.void;
+            if (detail.headSha == null || detail.headRepositoryOwner == null) {
+              return Effect.fail(
+                new GitHubWorkflowApprovalHeadUnavailableError({
+                  command: "gh",
+                  cwd: input.cwd,
+                  number: input.number,
+                }),
+              );
+            }
+            const expectedHeadSha = detail.headSha;
+            const expectedHeadBranch = detail.headBranch;
+            const expectedHeadRepositoryOwner = detail.headRepositoryOwner;
+            return listWorkflowRunsRequiringApproval({
+              ...input,
+              headSha: expectedHeadSha,
+              headBranch: expectedHeadBranch,
+              headRepositoryOwner: expectedHeadRepositoryOwner,
+              isCrossRepository: true,
+            }).pipe(
+              Effect.flatMap((runs) =>
+                Effect.forEach(
+                  runs,
+                  (run) =>
+                    getPullRequestDetail(input).pipe(
+                      Effect.flatMap((current) => {
+                        if (current.headSha == null || current.headRepositoryOwner == null) {
+                          return Effect.fail(
+                            new GitHubWorkflowApprovalHeadUnavailableError({
+                              command: "gh",
+                              cwd: input.cwd,
+                              number: input.number,
+                            }),
+                          );
+                        }
+                        if (
+                          current.isCrossRepository !== true ||
+                          current.headSha !== expectedHeadSha ||
+                          current.headBranch !== expectedHeadBranch ||
+                          current.headRepositoryOwner.toLowerCase() !==
+                            expectedHeadRepositoryOwner.toLowerCase()
+                        ) {
+                          return Effect.fail(
+                            new GitHubWorkflowApprovalHeadChangedError({
+                              command: "gh",
+                              cwd: input.cwd,
+                              number: input.number,
+                            }),
+                          );
+                        }
+                        return listWorkflowRunsRequiringApproval({
+                          ...input,
+                          headSha: current.headSha,
+                          headBranch: current.headBranch,
+                          headRepositoryOwner: current.headRepositoryOwner,
+                          isCrossRepository: true,
+                        });
+                      }),
+                      Effect.flatMap((currentRuns) =>
+                        currentRuns.some((current) => current.id === run.id)
+                          ? github
+                              .execute({
+                                cwd: input.cwd,
+                                args: [
+                                  "api",
+                                  "--method",
+                                  "POST",
+                                  "--hostname",
+                                  input.host,
+                                  `repos/${owner}/${name}/actions/runs/${run.id}/approve`,
+                                  "--silent",
+                                ],
+                              })
+                              .pipe(Effect.asVoid)
+                          : Effect.void,
+                      ),
+                    ),
+                  { concurrency: 1, discard: true },
+                ),
+              ),
+            );
+          }),
+        );
+      }
       const [subcommand, ...flags] = actionArgs(
         input.action,
         input.mergeMethod,

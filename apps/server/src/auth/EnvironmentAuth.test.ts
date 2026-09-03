@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
@@ -34,6 +35,7 @@ const makeEnvironmentAuthLayer = (overrides?: Partial<ServerConfig.ServerConfig[
   EnvironmentAuth.layer.pipe(
     Layer.provide(SqlitePersistenceMemory),
     Layer.provide(ServerSecretStore.layer),
+    Layer.provide(ServerEnvironment.identityLayer),
     Layer.provide(makeServerConfigLayer(overrides)),
   );
 
@@ -107,6 +109,20 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       ]);
       expect(verified.subject).toBe("one-time-token");
     }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
+  );
+
+  it.effect("prefers a bearer token over a stale legacy cookie", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const bearer = yield* serverAuth.issueSession();
+      const verified = yield* serverAuth.authenticateHttpRequest({
+        cookies: { [sessions.legacyCookieName ?? "t3_session"]: "stale" },
+        headers: { authorization: `Bearer ${bearer.token}` },
+      } as never);
+
+      expect(verified.sessionId).toBe(bearer.sessionId);
+    }).pipe(Effect.provide(makeEnvironmentAuthLayer({ mode: "web", host: "192.168.1.50" }))),
   );
 
   it.effect("does not exchange ordinary pairing grants for administrative access tokens", () =>

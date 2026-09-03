@@ -156,7 +156,10 @@ export default defineConfig(() => {
     assetsInclude: ["**/*.wasm"],
     plugins: [
       devCompressionPlugin(),
-      tanstackRouter(),
+      // Route components load as split chunks so settings, pull-request, and
+      // usage code stay out of the cold-start payload; the router prefetches
+      // them on navigation intent (see getRouter's defaultPreload).
+      tanstackRouter({ autoCodeSplitting: true }),
       react(),
       babel({
         // We need to be explicit about the parser options after moving to @vitejs/plugin-react v6.0.0
@@ -256,6 +259,11 @@ export default defineConfig(() => {
             },
           }
         : {}),
+    },
+    // @tailwindcss/vite only emits a CSS sourcemap when devSourcemap is on; without it
+    // rolldown flags the transform as SOURCEMAP_BROKEN on every sourcemapped build.
+    css: {
+      devSourcemap: buildSourcemap !== false,
     },
     build: {
       outDir: "dist",

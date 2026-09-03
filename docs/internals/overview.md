@@ -18,13 +18,13 @@ there, never in the client.
 ┌──────────────────▼─────────────────────────────┐
 │ apps/server                                    │
 │  orchestration engine (event-sourced)          │
-│  provider driver registry (5 built-in drivers) │
+│  provider driver registry (6 built-in drivers) │
 │  checkpointing, VCS, terminals, filesystem     │
 └──────────────────┬─────────────────────────────┘
                    │ per-driver transport
 ┌──────────────────▼─────────────────────────────┐
 │ Agent CLIs: Codex, Claude, Cursor, Grok,       │
-│ OpenCode                                       │
+│ OpenCode, Antigravity                          │
 └────────────────────────────────────────────────┘
 ```
 
@@ -73,7 +73,8 @@ processing is totally ordered. For each envelope `processEnvelope`:
 3. inside one SQL transaction, appends events to the event store, applies them to the in-memory read
    model via [`projector.ts`][projector], projects them into persisted tables, and writes the
    accepted receipt;
-4. after commit, swaps in the new read model and publishes committed events to subscribers.
+4. after commit, swaps in the new read model, cleans up attachments, and publishes committed events
+   to subscribers. Attachment cleanup failures are logged and do not reject committed commands.
 
 Because persistence and projection share a transaction, the read model cannot durably disagree with
 the event log. On dispatch failure the engine rereads persisted events past the starting sequence and
@@ -88,17 +89,32 @@ A turn is complete when its session leaves `running` status, projected by
 `settledTurnStateForSessionStatus` in [`projector.ts`][projector]. Checkpoint work settling later
 does not define turn end.
 
+Thread settlement is server-owned. Each server's own settings control PR and inactivity
+settlement. Those keys are user preferences, so clients write them to every connected environment
+(`SHARED_SERVER_SETTING_KEYS` in `packages/client-runtime/src/state/sharedSettings.ts`) and warn
+when a connected environment drifts.
+[`ThreadSettlementReactor`][settlement] checks threads at startup, when those settings change, and
+once per minute, including when no client is connected. It dispatches the guarded internal
+`thread.auto-settle` command, which uses the existing settlement event lifecycle. Automatic
+settlement excludes live background work and requires a comparable PR timestamp for immediate PR
+settlement. The command carries the latest activity timestamp and rejects any later event for its
+thread after the reactor's snapshot.
+Clients render the persisted settlement state and do not derive settlement from PR or inactivity
+state. A committed `thread.settled` event also lets `ProviderCommandReactor` stop an idle provider
+session.
+
 ## Drainable workers
 
 Follow-up work runs asynchronously in queue-backed workers built on [`DrainableWorker`][worker]:
 [`ProviderRuntimeIngestion`][ingest] normalizes provider runtime streams into orchestration commands,
-[`ProviderCommandReactor`][cmd] dispatches provider calls in response to intent events, and
-[`CheckpointReactor`][checkpoint] captures and reverts workspace checkpoints.
+[`ProviderCommandReactor`][cmd] dispatches provider calls in response to intent events,
+[`CheckpointReactor`][checkpoint] captures and reverts workspace checkpoints, and
+[`ThreadSettlementReactor`][settlement] evaluates server-owned automatic settlement rules.
 
 `DrainableWorker` pairs a transactional queue with a transactional count of outstanding items.
 `enqueue` atomically offers and increments; processing always decrements. `drain` retries until the
 count reaches zero, so a test can await "queue empty and current item finished" instead of sleeping.
-Each of the three services exposes `drain` for exactly this.
+Each of these four services exposes `drain` for exactly this.
 
 Runtime receipts are a test-only mechanism. `RuntimeReceiptBusLive` in
 [`RuntimeReceiptBus.ts`][receipts] publishes nothing; only the test layer is PubSub-backed. Do not
@@ -106,8 +122,8 @@ build production behavior on receipts.
 
 ## Provider drivers
 
-Five drivers ship built in, registered in [`builtInDrivers.ts`][drivers] as `BUILT_IN_DRIVERS`:
-Codex, Claude, Cursor, Grok, and OpenCode. A driver declares its kind and config schema and creates a
+Six drivers ship built in, registered in [`builtInDrivers.ts`][drivers] as `BUILT_IN_DRIVERS`:
+Codex, Claude, Cursor, Grok, OpenCode, and Antigravity. A driver declares its kind and config schema and creates a
 scoped adapter; `ProviderInstanceRegistry` owns live instances and `ProviderAdapterRegistry` resolves
 an instance to its adapter, so `ProviderService` routes session and turn operations without knowing
 which agent is behind them. See [providers.md](./providers.md).
@@ -150,5 +166,6 @@ already dispatch.
 [ingest]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
 [cmd]: ../../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
 [checkpoint]: ../../apps/server/src/orchestration/Layers/CheckpointReactor.ts
+[settlement]: ../../apps/server/src/orchestration/ThreadSettlementReactor.ts
 [receipts]: ../../apps/server/src/orchestration/Layers/RuntimeReceiptBus.ts
 [drivers]: ../../apps/server/src/provider/builtInDrivers.ts

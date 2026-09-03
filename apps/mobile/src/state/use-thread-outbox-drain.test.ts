@@ -80,6 +80,11 @@ vi.mock("./entities", () => ({
   useThreadShells: () => [],
 }));
 
+vi.mock("./server", async () => {
+  const { Atom } = await import("effect/unstable/reactivity");
+  return { serverEnvironment: { configValueAtom: Atom.family(() => Atom.make(null)) } };
+});
+
 vi.mock("./threads", () => ({
   threadEnvironment: {},
 }));
@@ -193,6 +198,7 @@ beforeEach(() => {
 afterEach(() => {
   appAtomRegistry.set(harness.manager.queuedMessagesByThreadKeyAtom, {});
   appAtomRegistry.set(composerDrafts.composerDraftsAtom, {});
+  appAtomRegistry.set(composerDrafts.composerCloudDraftsAtom, { accountId: null, signedOut: {} });
   appAtomRegistry.set(editingQueuedMessageIdsAtom, {});
   harness.draftFile.setWriteError(null);
   harness.removePersistedFile.mockClear();
@@ -321,6 +327,72 @@ describe("thread outbox attachment preparation", () => {
 });
 
 describe("thread outbox drain delivery cleanup", () => {
+  it("removes an acknowledged outbox item even when the sign-out archive write fails", async () => {
+    const message = queuedMessage({ messageId: "archive-write-failure", text: "Delivered" });
+    await harness.manager.enqueue(message);
+    await composerDrafts.archiveCloudComposerDrafts("account-a", new Set([message.environmentId]));
+    harness.draftFile.setWriteError(new Error("Draft storage unavailable"));
+
+    await expect(
+      completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId)),
+    ).resolves.toBe("removed");
+    expect(remainingMessages()).toEqual([]);
+
+    harness.draftFile.setWriteError(null);
+    await composerDrafts.flushComposerDrafts();
+    appAtomRegistry.set(composerDrafts.composerCloudDraftsAtom, { accountId: null, signedOut: {} });
+    composerDrafts.resetComposerDraftsLoadState();
+    await composerDrafts.restoreCloudComposerDrafts("account-a");
+    expect(remainingMessages()).toEqual([]);
+  });
+
+  it.each([false, true])(
+    "does not restore a message delivered after the sign-out snapshot (outbox already cleared: %s)",
+    async (cleared) => {
+      const message = queuedMessage({
+        messageId: "delivered-during-sign-out",
+        text: "Already delivered",
+      });
+      await harness.manager.enqueue(message);
+      const deliveryRevision = harness.manager.revisionOf(message.messageId);
+      await composerDrafts.archiveCloudComposerDrafts(
+        "account-a",
+        new Set([message.environmentId]),
+      );
+      expect(
+        appAtomRegistry.get(composerDrafts.composerCloudDraftsAtom).signedOut["account-a"]
+          ?.queuedMessages,
+      ).toEqual([message]);
+
+      if (cleared) await harness.manager.clearEnvironment(message.environmentId);
+      await expect(completeQueuedMessageDelivery(message, deliveryRevision)).resolves.toBe(
+        cleared ? "edited" : "removed",
+      );
+
+      // Restart before signing back in: the archived copy must be removed on disk too.
+      appAtomRegistry.set(composerDrafts.composerCloudDraftsAtom, {
+        accountId: null,
+        signedOut: {},
+      });
+      composerDrafts.resetComposerDraftsLoadState();
+      await composerDrafts.restoreCloudComposerDrafts("account-a");
+      expect(remainingMessages()).toEqual([]);
+    },
+  );
+
+  it("preserves an archived edit when an older payload finishes delivery", async () => {
+    const message = queuedMessage({ messageId: "edited-during-sign-out", text: "Original" });
+    await harness.manager.enqueue(message);
+    const deliveryRevision = harness.manager.revisionOf(message.messageId);
+    const edited = { ...message, text: "Keep this edit" };
+    await harness.manager.update(edited);
+    await composerDrafts.archiveCloudComposerDrafts("account-a", new Set([message.environmentId]));
+    await harness.manager.clearEnvironment(message.environmentId);
+    await expect(completeQueuedMessageDelivery(message, deliveryRevision)).resolves.toBe("edited");
+    await composerDrafts.restoreCloudComposerDrafts("account-a");
+    expect(remainingMessages()).toEqual([edited]);
+  });
+
   it("retries only cleanup after an acknowledged send removal fails", async () => {
     const message = queuedMessage({ messageId: "message-acknowledged", text: "delivered" });
     const acknowledged = new Set([message.messageId]);

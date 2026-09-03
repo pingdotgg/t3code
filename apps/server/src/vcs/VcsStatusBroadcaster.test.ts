@@ -142,6 +142,67 @@ function makeBackgroundPolicyLayer(shouldRunScopeWork: (scope: BackgroundScope) 
 }
 
 describe("VcsStatusBroadcaster", () => {
+  it.effect(
+    "automatically pulls an enabled clean default branch when status detects it is behind",
+    () => {
+      let remoteStatus: VcsStatusRemoteResult = { ...baseRemoteStatus, behindCount: 2 };
+      let pullCalls = 0;
+      let configuredWorkspaceRoot = "";
+      const localStatus: VcsStatusLocalResult = {
+        ...baseLocalStatus,
+        isDefaultRef: true,
+        refName: "main",
+      };
+      const testLayer = VcsStatusBroadcaster.layer.pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(makeBackgroundPolicyLayer(() => true)),
+        Layer.provide(
+          Layer.succeed(VcsStatusBroadcaster.VcsAutoPullPolicy, {
+            isEnabled: (cwd) => Effect.succeed(cwd === configuredWorkspaceRoot),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(GitWorkflowService.GitWorkflowService)({
+            localStatus: () => Effect.succeed(localStatus),
+            remoteStatus: () => Effect.succeed(remoteStatus),
+            invalidateLocalStatus: () => Effect.void,
+            invalidateRemoteStatus: () => Effect.void,
+            invalidateStatus: () => Effect.void,
+            pullCurrentBranch: () =>
+              Effect.sync(() => {
+                pullCalls += 1;
+                remoteStatus = { ...remoteStatus, behindCount: 0 };
+                return {
+                  status: "pulled" as const,
+                  refName: "main",
+                  upstreamRef: "origin/main",
+                };
+              }),
+          }),
+        ),
+      );
+
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const realDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-vcs-auto-pull-real-",
+        });
+        const linkParent = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-vcs-auto-pull-link-",
+        });
+        configuredWorkspaceRoot = path.join(linkParent, "repo-link");
+        yield* fileSystem.symlink(realDir, configuredWorkspaceRoot);
+
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const status = yield* broadcaster.refreshStatus(configuredWorkspaceRoot);
+
+        assert.equal(pullCalls, 1);
+        assert.equal(status.behindCount, 0);
+      }).pipe(Effect.provide(testLayer));
+    },
+  );
+
   it.effect("reuses the cached VCS status across repeated reads", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,

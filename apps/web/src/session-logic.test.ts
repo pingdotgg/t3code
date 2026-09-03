@@ -7,6 +7,7 @@ import {
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { resolveWorkEntryToolPresentation } from "@t3tools/client-runtime/work-log/presentation";
 
 import {
   deriveActiveWorkStartedAt,
@@ -249,6 +250,30 @@ describe("derivePendingApprovals", () => {
 });
 
 describe("derivePendingUserInputs", () => {
+  it("preserves native choice values and the custom-answer restriction", () => {
+    const question = {
+      id: "interaction-result",
+      header: "Result",
+      question: "Which result should be used?",
+      options: [
+        { value: " first\t", label: "Result", description: "First result" },
+        { value: "second", label: "Result", description: "Second result" },
+      ],
+      allowCustomAnswer: false,
+      multiSelect: false,
+    };
+    const activities = [
+      makeActivity({
+        id: "native-user-input",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        payload: { requestId: "req-native-choice", questions: [question] },
+      }),
+    ];
+
+    expect(derivePendingUserInputs(activities)[0]?.questions).toEqual([question]);
+  });
+
   it("tracks open structured prompts and removes resolved ones", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1239,6 +1264,13 @@ describe("deriveWorkLogEntries", () => {
         payload: {
           itemType: "mcp_tool_call",
           title: "t3-code · preview_status",
+          toolSurface: "browser",
+          toolIcon: { _tag: "website", pageUrl: "https://example.com/checkout" },
+          toolSource: {
+            key: "browser-use:browser",
+            name: "Browser",
+            kind: "browser",
+          },
           data: { item },
         },
       }),
@@ -1246,8 +1278,48 @@ describe("deriveWorkLogEntries", () => {
 
     const [entry] = deriveWorkLogEntries(activities);
     expect(entry?.toolTitle).toBe("t3-code · preview_status");
+    expect(entry?.toolSurface).toBe("browser");
+    expect(entry?.toolIcon).toEqual({
+      _tag: "website",
+      pageUrl: "https://example.com/checkout",
+    });
+    expect(entry?.toolSource).toEqual({
+      key: "browser-use:browser",
+      name: "Browser",
+      kind: "browser",
+    });
     expect(entry?.toolData).toEqual(item);
   });
+
+  it.each([
+    ["inProgress", "Clicking in the preview browser"],
+    ["completed", "Clicked in the preview browser"],
+    ["failed", "Failed to click in the preview browser"],
+  ] as const)(
+    "preserves Claude MCP identity behind generic titles while %s",
+    (status, displayName) => {
+      const data = {
+        toolName: "mcp__t3_code__preview_click",
+        input: { selector: "#submit" },
+        ...(status === "inProgress"
+          ? {}
+          : { result: { type: "tool_result", is_error: status === "failed", content: "Result" } }),
+      };
+      const [entry] = deriveWorkLogEntries([
+        makeActivity({
+          kind: status === "inProgress" ? "tool.updated" : "tool.completed",
+          summary: "MCP tool call",
+          payload: { itemType: "mcp_tool_call", title: "MCP tool call", status, data },
+        }),
+      ]);
+
+      expect(entry).toMatchObject({ toolTitle: "MCP tool call", toolData: data });
+      expect(resolveWorkEntryToolPresentation(entry!)).toEqual({
+        displayName,
+        icon: "browser",
+      });
+    },
+  );
 
   it("keeps MCP payloads while collapsing lifecycle updates", () => {
     const item = {
@@ -1265,6 +1337,7 @@ describe("deriveWorkLogEntries", () => {
         payload: {
           itemType: "mcp_tool_call",
           toolCallId: "call-1",
+          toolSurface: "browser",
           data: { item },
         },
       }),
@@ -1275,6 +1348,7 @@ describe("deriveWorkLogEntries", () => {
         payload: {
           itemType: "mcp_tool_call",
           toolCallId: "call-1",
+          toolIcon: { _tag: "website", pageUrl: "https://example.com/result" },
         },
       }),
     ];
@@ -1282,6 +1356,14 @@ describe("deriveWorkLogEntries", () => {
     const [entry] = deriveWorkLogEntries(activities);
     expect(entry?.toolData).toEqual(item);
     expect(entry?.toolCallId).toBe("call-1");
+    expect(entry?.toolSurface).toBe("browser");
+    expect(entry?.toolIcon).toEqual({
+      _tag: "website",
+      pageUrl: "https://example.com/result",
+    });
+    expect(resolveWorkEntryToolPresentation(entry!)?.displayName).toBe(
+      "Took a snapshot of the preview page",
+    );
   });
 
   it("collapses interleaved lifecycle updates by tool call id", () => {
@@ -1650,6 +1732,44 @@ describe("deriveWorkLogEntries", () => {
       toolTitle: "Read File",
       detail: 'import * as Effect from "effect/Effect"',
       itemType: "dynamic_tool_call",
+    });
+  });
+
+  it("keeps viewed image metadata while collapsing a streamed Claude Read", () => {
+    const imagePath = `/workspace/${"nested folder/".repeat(16)}reference image.webp`;
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "image-read-update",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Image view",
+        payload: {
+          toolCallId: "tool-read-image",
+          itemType: "image_view",
+          detail: `${imagePath.slice(0, 177)}...`,
+          data: { imagePath },
+        },
+      }),
+      makeActivity({
+        id: "image-read-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Image view",
+        payload: {
+          toolCallId: "tool-read-image",
+          itemType: "image_view",
+          detail: `${imagePath.slice(0, 177)}...`,
+          data: {},
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "image-read-complete",
+      itemType: "image_view",
+      viewedImagePath: imagePath,
     });
   });
 

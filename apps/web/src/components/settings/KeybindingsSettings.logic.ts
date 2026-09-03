@@ -68,6 +68,14 @@ export function whenAstToExpression(node: KeybindingWhenNode | undefined): strin
   }
 }
 
+export function whenNodeRemoveLabel(node: KeybindingWhenNode, depth: number): string {
+  if (depth === 0) return "Clear all conditions";
+  if (node.type === "identifier" || (node.type === "not" && node.node.type === "identifier")) {
+    return "Remove condition";
+  }
+  return "Remove group and its conditions";
+}
+
 function wrapWhenExpression(node: KeybindingWhenNode): string {
   if (node.type === "identifier" || node.type === "not") return whenAstToExpression(node);
   return `(${whenAstToExpression(node)})`;
