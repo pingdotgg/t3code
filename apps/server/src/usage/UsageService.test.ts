@@ -808,9 +808,9 @@ describe("UsageService", () => {
   it.live("derives a canonical follower response for its requested timezone", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
-      yield* Effect.promise(() =>
-        NodeFSP.writeFile(transcript, claudeLine(1, 5, "2026-06-05T12:30:00Z")),
-      );
+      const leader = currentCanonicalWindow();
+      const recordTimestamp = `${leader.sinceDay}T12:30:00Z`;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5, recordTimestamp)));
       const ratesGate = yield* Deferred.make<void>();
       const ratesStarted = yield* Deferred.make<void>();
       const service = yield* UsageService.make.pipe(
@@ -824,7 +824,6 @@ describe("UsageService", () => {
           }),
         ),
       );
-      const leader = currentCanonicalWindow();
       const follower = { ...leader, timeZone: "Pacific/Kiritimati" };
       const leaderFiber = yield* service.refreshSummary(leader).pipe(Effect.forkChild);
       yield* Deferred.await(ratesStarted);
@@ -833,7 +832,17 @@ describe("UsageService", () => {
       yield* Fiber.join(leaderFiber);
       const result = yield* Fiber.join(followerFiber);
       assert.strictEqual(result.timeZone, follower.timeZone);
-      assert.strictEqual(result.buckets[0]?.day, "2026-06-06");
+      const parts = Object.fromEntries(
+        new Intl.DateTimeFormat("en-CA", {
+          timeZone: follower.timeZone,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        })
+          .formatToParts(new Date(recordTimestamp))
+          .map(({ type, value }) => [type, value]),
+      );
+      assert.strictEqual(result.buckets[0]?.day, `${parts.year}-${parts.month}-${parts.day}`);
     }).pipe(Effect.scoped),
   );
 
