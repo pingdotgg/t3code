@@ -43,41 +43,80 @@ describe("preview IPC methods", () => {
   });
 
   it("derives distinct partition scopes when identifiers contain the delimiter", () => {
-    const first = PreviewIpc.resolvePartitionScope("a", "b::c");
-    const second = PreviewIpc.resolvePartitionScope("a::b", "c");
+    const first = PreviewIpc.resolvePartitionScope("a", "project", "b::c");
+    const second = PreviewIpc.resolvePartitionScope("a::b", "project", "c");
 
-    expect(first).toEqual({ scope: '["a","b::c"]', persistent: true, namespace: "profile" });
-    expect(second).toEqual({ scope: '["a::b","c"]', persistent: true, namespace: "profile" });
+    expect(first).toEqual({
+      scope: JSON.stringify([JSON.stringify(["a", "project"]), "b::c"]),
+      persistent: true,
+      namespace: "profile",
+    });
+    expect(second).toEqual({
+      scope: JSON.stringify([JSON.stringify(["a::b", "project"]), "c"]),
+      persistent: true,
+      namespace: "profile",
+    });
     expect(first.scope).not.toBe(second.scope);
   });
 
   it("preserves lone surrogates without collapsing them to replacement characters", () => {
-    const highSurrogate = PreviewIpc.resolvePartitionScope("environment", "profile-\ud800");
-    const lowSurrogate = PreviewIpc.resolvePartitionScope("environment", "profile-\udc00");
-    const replacement = PreviewIpc.resolvePartitionScope("environment", "profile-�");
+    const highSurrogate = PreviewIpc.resolvePartitionScope(
+      "environment",
+      "project",
+      "profile-\ud800",
+    );
+    const lowSurrogate = PreviewIpc.resolvePartitionScope(
+      "environment",
+      "project",
+      "profile-\udc00",
+    );
+    const replacement = PreviewIpc.resolvePartitionScope("environment", "project", "profile-�");
 
-    expect(highSurrogate.scope).toBe('["environment","profile-\\ud800"]');
-    expect(lowSurrogate.scope).toBe('["environment","profile-\\udc00"]');
+    expect(highSurrogate.scope).toBe(
+      JSON.stringify([JSON.stringify(["environment", "project"]), "profile-\ud800"]),
+    );
+    expect(lowSurrogate.scope).toBe(
+      JSON.stringify([JSON.stringify(["environment", "project"]), "profile-\udc00"]),
+    );
     expect(highSurrogate.scope).not.toBe(lowSurrogate.scope);
     expect(highSurrogate.scope).not.toBe(replacement.scope);
     expect(lowSurrogate.scope).not.toBe(replacement.scope);
   });
 
-  it("keeps the legacy default partition scope and incognito persistence", () => {
-    expect(PreviewIpc.resolvePartitionScope("environment::legacy", undefined)).toEqual({
-      scope: "environment::legacy",
+  it("keeps the default partition persistent and separates incognito", () => {
+    expect(PreviewIpc.resolvePartitionScope("environment::legacy", "project", undefined)).toEqual({
+      scope: '["environment::legacy","project"]',
       persistent: true,
     });
     expect(
-      PreviewIpc.resolvePartitionScope("environment::legacy", DEFAULT_BROWSER_PROFILE_ID),
-    ).toEqual({ scope: "environment::legacy", persistent: true });
-    expect(
-      PreviewIpc.resolvePartitionScope("environment::legacy", INCOGNITO_BROWSER_PROFILE_ID),
+      PreviewIpc.resolvePartitionScope(
+        "environment::legacy",
+        "project",
+        DEFAULT_BROWSER_PROFILE_ID,
+      ),
     ).toEqual({
-      scope: '["environment::legacy","incognito"]',
+      scope: '["environment::legacy","project"]',
+      persistent: true,
+    });
+    expect(
+      PreviewIpc.resolvePartitionScope(
+        "environment::legacy",
+        "project",
+        INCOGNITO_BROWSER_PROFILE_ID,
+      ),
+    ).toEqual({
+      scope: JSON.stringify(['["environment::legacy","project"]', "incognito"]),
       persistent: false,
       namespace: "profile",
     });
+  });
+
+  it("keeps projects in one environment on separate default partitions", () => {
+    expect(
+      PreviewIpc.resolvePartitionScope("environment", "project-a", DEFAULT_BROWSER_PROFILE_ID),
+    ).not.toEqual(
+      PreviewIpc.resolvePartitionScope("environment", "project-b", DEFAULT_BROWSER_PROFILE_ID),
+    );
   });
 
   effectIt.effect("rejects invalid webContents ids before resolving the preview service", () =>

@@ -39,6 +39,7 @@ import {
 } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
+import { rememberPreviewProjectRef } from "../../browser/previewProjectRefs";
 import { isElectron } from "../../env";
 import {
   useClientSettings,
@@ -753,6 +754,8 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
 
       const draftStore = useComposerDraftStore.getState();
       for (const member of members) {
+        const projectRef = scopeProjectRef(member.environmentId, member.id);
+        rememberPreviewProjectRef(projectRef);
         const memberThreads = projectThreads.filter(
           (thread) =>
             thread.environmentId === member.environmentId && thread.projectId === member.id,
@@ -771,7 +774,6 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
           reportFailure(`Failed to remove "${member.title}"`, result);
           return;
         }
-        const projectRef = scopeProjectRef(member.environmentId, member.id);
         releaseProjectDraftUploads(
           projectRef,
           memberThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),

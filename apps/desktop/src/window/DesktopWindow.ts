@@ -333,7 +333,6 @@ export const make = Effect.gen(function* () {
     Electron.BrowserWindow,
     DesktopWindowError
   > {
-    yield* previewManager.getBrowserSession();
     const applicationUrl = getDesktopUrl(environment.isDevelopment);
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths, environment.platform);

@@ -1,6 +1,6 @@
 "use client";
 
-import type { DesktopPreviewColorScheme, EnvironmentId } from "@t3tools/contracts";
+import type { DesktopPreviewColorScheme, EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { Minus, MoreVertical, Plus as PlusIcon, RotateCcw } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
@@ -32,6 +32,8 @@ const COLOR_SCHEME_OPTIONS: ReadonlyArray<{
 ];
 
 interface Props {
+  environmentId: EnvironmentId;
+  projectId: ProjectId | null;
   /** Active preview tab id. Tab-targeting actions are disabled without it. */
   tabId: string | null;
   /**
@@ -52,8 +54,6 @@ interface Props {
   nativePictureInPicture: boolean;
   /** Toggles the optional native always-on-top preview window. */
   onNativePictureInPicture: () => void;
-  /** Environment the tab belongs to; scopes storage clearing to its partitions. */
-  environmentId: EnvironmentId;
   /** Profile the tab was opened under, if the server recorded one. */
   /**
    * Required: the IPC layer reads an absent profile as "every profile", so a
@@ -71,6 +71,8 @@ interface Props {
  * when the desktop bridge is present, so we can call it unconditionally.
  */
 export function PreviewMoreMenu({
+  environmentId,
+  projectId,
   tabId,
   hasWebContents,
   zoomFactor,
@@ -79,7 +81,6 @@ export function PreviewMoreMenu({
   onToggleDeviceToolbar,
   nativePictureInPicture,
   onNativePictureInPicture,
-  environmentId,
   profileId,
   profileName,
 }: Props) {
@@ -192,38 +193,49 @@ export function PreviewMoreMenu({
             </Button>
           </span>
         </MenuItem>
-        <MenuSeparator />
-        {/*
-          Grouped so the heading has a `MenuGroup` ancestor — `MenuGroupLabel`
-          reads its context and throws without one. The heading also answers
-          which profile the tab is in, which is otherwise invisible: it is fixed
-          at open and nothing else in the chrome shows it.
-        */}
-        <MenuGroup>
-          {/*
-            The heading carries the profile so the actions below can keep
-            fixed-length labels: repeating a name of up to 48 characters in
-            each one drove the popup far past its width.
-          */}
-          {profileName ? (
-            // Truncation sits on the label itself: it renders a block box, so
-            // `text-overflow` on an inline child inside it never applies and a
-            // long name would push the popup past its width instead.
-            <MenuGroupLabel className="max-w-64 truncate">Profile: {profileName}</MenuGroupLabel>
-          ) : null}
-          <MenuItem
-            onClick={() =>
-              void bridge.clearCookies(environmentId, profileId).catch(() => undefined)
-            }
-          >
-            Clear cookies
-          </MenuItem>
-          <MenuItem
-            onClick={() => void bridge.clearCache(environmentId, profileId).catch(() => undefined)}
-          >
-            Clear cache
-          </MenuItem>
-        </MenuGroup>
+        {projectId !== null ? (
+          <>
+            <MenuSeparator />
+            {/*
+              Grouped so the heading has a `MenuGroup` ancestor —
+              `MenuGroupLabel` reads its context and throws without one. The
+              heading also answers which profile the tab is in, which is
+              otherwise invisible: it is fixed at open and nothing else in the
+              chrome shows it.
+            */}
+            <MenuGroup>
+              {/*
+                The heading carries the profile so the actions below can keep
+                fixed-length labels: repeating a name of up to 48 characters in
+                each one drove the popup far past its width.
+              */}
+              {profileName ? (
+                // Truncation sits on the label itself: it renders a block box, so
+                // `text-overflow` on an inline child inside it never applies and a
+                // long name would push the popup past its width instead.
+                <MenuGroupLabel className="max-w-64 truncate">
+                  Profile: {profileName}
+                </MenuGroupLabel>
+              ) : null}
+              <MenuItem
+                onClick={() =>
+                  void bridge
+                    .clearCookies(environmentId, profileId, projectId)
+                    .catch(() => undefined)
+                }
+              >
+                Clear cookies
+              </MenuItem>
+              <MenuItem
+                onClick={() =>
+                  void bridge.clearCache(environmentId, profileId, projectId).catch(() => undefined)
+                }
+              >
+                Clear cache
+              </MenuItem>
+            </MenuGroup>
+          </>
+        ) : null}
       </MenuPopup>
     </Menu>
   );

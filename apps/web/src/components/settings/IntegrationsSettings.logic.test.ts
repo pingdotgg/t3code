@@ -1,39 +1,63 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@t3tools/contracts";
 
 import { browserProfileRemovalAvailable, clearBrowserProfileData } from "./IntegrationsSettings";
 
 const environmentId = "environment-a" as EnvironmentId;
 const secondEnvironmentId = "environment-b" as EnvironmentId;
+const projectRef = {
+  environmentId,
+  projectId: "project-a" as ProjectId,
+} satisfies ScopedProjectRef;
+const secondProjectRef = {
+  environmentId: secondEnvironmentId,
+  projectId: "project-b" as ProjectId,
+} satisfies ScopedProjectRef;
 
 describe("clearBrowserProfileData", () => {
-  it("waits for cookie and cache cleanup", async () => {
+  it("waits for legacy and project-scoped cookie and cache cleanup", async () => {
     const clearCookies = vi.fn().mockResolvedValue(undefined);
     const clearCache = vi.fn().mockResolvedValue(undefined);
 
-    await clearBrowserProfileData({ clearCookies, clearCache }, [environmentId], "profile-a");
+    await clearBrowserProfileData(
+      { clearCookies, clearCache },
+      [environmentId],
+      [projectRef],
+      "profile-a",
+    );
 
-    expect(clearCookies).toHaveBeenCalledWith(environmentId, "profile-a");
-    expect(clearCache).toHaveBeenCalledWith(environmentId, "profile-a");
+    expect(clearCookies.mock.calls).toEqual([
+      [environmentId, "profile-a"],
+      [environmentId, "profile-a", "project-a"],
+    ]);
+    expect(clearCache.mock.calls).toEqual([
+      [environmentId, "profile-a"],
+      [environmentId, "profile-a", "project-a"],
+    ]);
   });
 
-  it("clears every known environment before succeeding", async () => {
+  it("clears every known environment and project before succeeding", async () => {
     const clearCookies = vi.fn().mockResolvedValue(undefined);
     const clearCache = vi.fn().mockResolvedValue(undefined);
 
     await clearBrowserProfileData(
       { clearCookies, clearCache },
       [environmentId, secondEnvironmentId],
+      [projectRef, secondProjectRef],
       "profile-a",
     );
 
     expect(clearCookies.mock.calls).toEqual([
       [environmentId, "profile-a"],
       [secondEnvironmentId, "profile-a"],
+      [environmentId, "profile-a", "project-a"],
+      [secondEnvironmentId, "profile-a", "project-b"],
     ]);
     expect(clearCache.mock.calls).toEqual([
       [environmentId, "profile-a"],
       [secondEnvironmentId, "profile-a"],
+      [environmentId, "profile-a", "project-a"],
+      [secondEnvironmentId, "profile-a", "project-b"],
     ]);
   });
 
@@ -46,6 +70,7 @@ describe("clearBrowserProfileData", () => {
           clearCache: vi.fn().mockResolvedValue(undefined),
         },
         [environmentId],
+        [],
         "profile-a",
       ),
     ).rejects.toBe(failure);
@@ -57,8 +82,8 @@ describe("clearBrowserProfileData", () => {
       clearCache: vi.fn().mockResolvedValue(undefined),
     };
 
-    await expect(clearBrowserProfileData(bridge, [], "profile-a")).rejects.toThrow();
-    await expect(clearBrowserProfileData(null, [environmentId], "profile-a")).rejects.toThrow();
+    await expect(clearBrowserProfileData(bridge, [], [], "profile-a")).rejects.toThrow();
+    await expect(clearBrowserProfileData(null, [environmentId], [], "profile-a")).rejects.toThrow();
     expect(bridge.clearCookies).not.toHaveBeenCalled();
     expect(bridge.clearCache).not.toHaveBeenCalled();
   });

@@ -1,5 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { previewBrowserScope } from "@t3tools/shared/preview";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -206,6 +208,33 @@ describe("BrowserSession", () => {
         `Failed to create a desktop preview browser session for scope environment-b (partition ${partition}).`,
       );
       assert.notInclude(error.message, cause.message);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("isolates partitions by environment and project", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const projectA = previewBrowserScope(
+        EnvironmentId.make("environment-a"),
+        ProjectId.make("project-1"),
+      );
+      const projectB = previewBrowserScope(
+        EnvironmentId.make("environment-a"),
+        ProjectId.make("project-2"),
+      );
+      const first = yield* browserSessions.getPartition(projectA);
+      const second = yield* browserSessions.getPartition(projectB);
+      const third = yield* browserSessions.getPartition("environment-a");
+      const colonLeft = yield* browserSessions.getPartition(
+        previewBrowserScope(EnvironmentId.make("a:b"), ProjectId.make("c")),
+      );
+      const colonRight = yield* browserSessions.getPartition(
+        previewBrowserScope(EnvironmentId.make("a"), ProjectId.make("b:c")),
+      );
+      assert.notEqual(first, second);
+      assert.notEqual(first, third);
+      assert.notEqual(second, third);
+      assert.notEqual(colonLeft, colonRight);
     }).pipe(Effect.provide(layer)),
   );
 

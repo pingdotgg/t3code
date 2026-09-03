@@ -18,7 +18,9 @@ import {
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab } from "./desktopTabLifetime";
+import { hostedBrowserWebviewKey, latchHostedBrowserWebviewSrc } from "./hostedBrowserWebviewGuest";
 import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewStyle";
+import { usePreviewProjectId } from "./previewProjectId";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
 import {
@@ -66,8 +68,8 @@ export function HostedBrowserWebview(props: {
     zoomFactor,
     profileId,
   } = props;
-  const config = usePreviewWebviewConfig(threadRef.environmentId, profileId);
-  const [initialSrc] = useState(() => initialUrl ?? "about:blank");
+  const projectId = usePreviewProjectId(threadRef);
+  const config = usePreviewWebviewConfig(threadRef.environmentId, projectId, profileId);
   const tabLeaseRef = useRef<AcquiredDesktopTab | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const webviewRef = useRef<ElectronWebview | null>(null);
@@ -103,12 +105,7 @@ export function HostedBrowserWebview(props: {
   }, [runtimeTabId]);
 
   const [webviewGeneration, setWebviewGeneration] = useState(0);
-  const [recoverySrc, setRecoverySrc] = useState(initialSrc);
-  const latestUrlRef = useRef(initialUrl);
-
-  useEffect(() => {
-    latestUrlRef.current = initialUrl;
-  }, [initialUrl]);
+  const guestSrcRef = useRef<{ readonly key: string; readonly src: string } | null>(null);
 
   const setWebviewRef = useCallback((node: HTMLElement | null) => {
     webviewRef.current = node as ElectronWebview | null;
@@ -147,7 +144,6 @@ export function HostedBrowserWebview(props: {
       recoveryTimeout = setTimeout(() => {
         recoveryTimeout = null;
         if (!disposed) {
-          setRecoverySrc(latestUrlRef.current ?? initialSrc);
           setWebviewGeneration((generation) => generation + 1);
         }
       }, recovery.delayMs);
@@ -163,7 +159,7 @@ export function HostedBrowserWebview(props: {
       webview.removeEventListener("dom-ready", register);
       webview.removeEventListener("render-process-gone", recoverGuest);
     };
-  }, [config, initialSrc, runtimeTabId, webviewGeneration]);
+  }, [config, runtimeTabId, webviewGeneration]);
 
   const active = presentation.visible && presentation.rect !== null;
   const lastRect = presentation.rect;
@@ -262,6 +258,13 @@ export function HostedBrowserWebview(props: {
     rect: lastRect,
     hiddenSize,
   });
+  const webviewKey = hostedBrowserWebviewKey(config.partition, webviewGeneration);
+  guestSrcRef.current = latchHostedBrowserWebviewSrc(
+    guestSrcRef.current,
+    webviewKey,
+    initialUrl ?? "about:blank",
+  );
+  const webviewSrc = guestSrcRef.current.src;
 
   return (
     <div
@@ -283,7 +286,7 @@ export function HostedBrowserWebview(props: {
           />
         ) : null}
         <webview
-          key={webviewGeneration}
+          key={webviewKey}
           ref={setWebviewRef}
           // Must be an attribute on the element itself: Electron reads it when the
           // guest attaches, so setting it from the ref callback lands too late and
@@ -291,7 +294,7 @@ export function HostedBrowserWebview(props: {
           // boolean, but react-dom drops boolean values for unrecognized attributes,
           // so the literal string has to be spread past the type.
           {...({ allowpopups: "true" } as unknown as { readonly allowpopups?: boolean })}
-          src={webviewGeneration === 0 ? initialSrc : recoverySrc}
+          src={webviewSrc}
           partition={config.partition}
           webpreferences={config.webPreferences}
           {...(config.preloadUrl ? { preload: config.preloadUrl } : {})}

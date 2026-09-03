@@ -22,6 +22,8 @@ import {
   DesktopPreviewWebviewConfigSchema,
   PreviewAnnotationSubmissionResultSchema,
   PreviewAutomationSnapshot,
+  EnvironmentId,
+  ProjectId,
   DEFAULT_BROWSER_PROFILE_ID,
   INCOGNITO_BROWSER_PROFILE_ID,
 } from "@t3tools/contracts";
@@ -31,6 +33,7 @@ import * as NodeURL from "node:url";
 
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
+import { previewBrowserScope } from "@t3tools/shared/preview";
 import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -201,9 +204,15 @@ export const clearCookies = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL,
   payload: DesktopPreviewClearDataInputSchema,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.clearCookies")(function* ({ environmentId, profileId }) {
+  handler: Effect.fn("desktop.ipc.preview.clearCookies")(function* ({
+    environmentId,
+    projectId,
+    profileId,
+  }) {
     const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.clearCookies(yield* resolveClearPartitions(manager, environmentId, profileId));
+    yield* manager.clearCookies(
+      yield* resolveClearPartitions(manager, environmentId, projectId, profileId),
+    );
   }),
 });
 
@@ -211,52 +220,92 @@ export const clearCache = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL,
   payload: DesktopPreviewClearDataInputSchema,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.clearCache")(function* ({ environmentId, profileId }) {
+  handler: Effect.fn("desktop.ipc.preview.clearCache")(function* ({
+    environmentId,
+    projectId,
+    profileId,
+  }) {
     const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.clearCache(yield* resolveClearPartitions(manager, environmentId, profileId));
+    yield* manager.clearCache(
+      yield* resolveClearPartitions(manager, environmentId, projectId, profileId),
+    );
   }),
 });
 
 /**
- * Partition scope for an (environment, profile) pair.
+ * Partition scope for an (environment, project, profile) tuple.
  *
- * The default profile keeps the bare environment id it used before profiles
- * existed, so upgrading does not strand anyone's existing logins in an
- * orphaned partition. Incognito derives a non-persistent partition.
+ * The default profile keeps the project-scoped partition. Incognito derives a
+ * non-persistent partition, and named profiles get a separate namespace so
+ * their storage cannot overlap with either the default or another profile.
  */
 export function resolvePartitionScope(
   environmentId: string,
+  projectId: string,
   profileId: string | undefined,
 ): {
   readonly scope: string;
   readonly persistent: boolean;
   readonly namespace?: "profile";
 } {
+  const projectScope = previewBrowserScope(
+    EnvironmentId.make(environmentId),
+    ProjectId.make(projectId),
+  );
   if (profileId === undefined || profileId === DEFAULT_BROWSER_PROFILE_ID) {
-    return { scope: environmentId, persistent: true };
+    return { scope: projectScope, persistent: true };
   }
   // JSON's tuple framing is injective for strings, including lone UTF-16
   // surrogates (which it escapes). URI encoding throws on those supported ids,
   // while replacing them with U+FFFD would collapse distinct identities.
   return {
-    scope: JSON.stringify([environmentId, profileId]),
+    scope: JSON.stringify([projectScope, profileId]),
     persistent: profileId !== INCOGNITO_BROWSER_PROFILE_ID,
     namespace: "profile" as const,
   };
 }
 
+const resolveLegacyPartitionScope = (
+  environmentId: string,
+  profileId: string | undefined,
+): {
+  readonly scope: string;
+  readonly persistent: boolean;
+  readonly namespace?: "profile";
+} => {
+  if (profileId === undefined || profileId === DEFAULT_BROWSER_PROFILE_ID) {
+    return { scope: environmentId, persistent: true };
+  }
+  return {
+    scope: JSON.stringify([environmentId, profileId]),
+    persistent: profileId !== INCOGNITO_BROWSER_PROFILE_ID,
+    namespace: "profile",
+  };
+};
+
 /**
- * Clearing without a profile keeps the historical "everything" behaviour for
- * an explicit all-profiles action; naming a profile confines it to that
- * profile's partition so one profile's sign-out cannot reach the others.
+ * Resolve the one partition addressed by a clear action. The default profile
+ * is explicit when the profile field is omitted, so a project-aware clear
+ * cannot reach another project's or another profile's storage. Calls without
+ * a project retain the profile settings' pre-project compatibility path.
  */
 const resolveClearPartitions = Effect.fn("desktop.ipc.preview.resolveClearPartitions")(function* (
   manager: PreviewManager.PreviewManager["Service"],
   environmentId: string,
+  projectId: string | undefined,
   profileId: string | undefined,
 ) {
-  if (profileId === undefined) return undefined;
-  const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
+  if (projectId === undefined) {
+    if (profileId === undefined) return undefined;
+    const { scope, persistent, namespace } = resolveLegacyPartitionScope(environmentId, profileId);
+    yield* manager.getBrowserSession(scope, persistent, namespace);
+    return [yield* manager.getBrowserPartition(scope, persistent, namespace)];
+  }
+  const { scope, persistent, namespace } = resolvePartitionScope(
+    environmentId,
+    projectId,
+    profileId,
+  );
   // Loading the session is what puts the partition in the map the clear walks.
   // Deriving the partition string alone leaves nothing to match, so clearing a
   // profile with no tab open this run — after a restart, or when deleting a
@@ -269,9 +318,17 @@ export const getPreviewConfig = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_GET_CONFIG_CHANNEL,
   payload: DesktopPreviewConfigInputSchema,
   result: DesktopPreviewWebviewConfigSchema,
-  handler: Effect.fn("desktop.ipc.preview.getConfig")(function* ({ environmentId, profileId }) {
+  handler: Effect.fn("desktop.ipc.preview.getConfig")(function* ({
+    environmentId,
+    projectId,
+    profileId,
+  }) {
     const manager = yield* PreviewManager.PreviewManager;
-    const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
+    const { scope, persistent, namespace } = resolvePartitionScope(
+      environmentId,
+      projectId,
+      profileId,
+    );
     // Creating the session first is what installs the UA rewrite and permission
     // handlers; a guest that attached to an untouched partition would run with
     // Electron's default UA and Chromium's default permission behaviour.
