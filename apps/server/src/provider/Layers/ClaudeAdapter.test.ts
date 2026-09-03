@@ -4315,6 +4315,55 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("tears down a rejected resume even when startSession is interrupted", () => {
+    const deadSessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      // session.started is the receipt that the query exists and its stream is
+      // forked, so the interrupt below lands inside the resume wait.
+      const started = yield* Stream.take(adapter.streamEvents, 1).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const starting = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: { threadId: RESUME_THREAD_ID, resume: deadSessionId, turnCount: 0 },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkChild);
+      yield* Fiber.join(started);
+      assert.equal(harness.getCreateQueryInputs().length, 1);
+
+      // The stream fiber is detached, so it must clean up on its own: nothing
+      // is waiting on the retry any more.
+      yield* Fiber.interrupt(starting);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        num_turns: 0,
+        session_id: deadSessionId,
+        errors: [`No conversation found with session ID: ${deadSessionId}`],
+        uuid: "resume-rejected",
+      } as unknown as SDKMessage);
+      harness.query.finish();
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      assert.equal(harness.query.closeCalls, 1);
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("fails a resume start whose session dies before it says anything", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

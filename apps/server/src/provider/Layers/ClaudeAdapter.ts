@@ -3732,7 +3732,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     context: ClaudeSessionContext,
     exit: Exit.Exit<void, ProviderAdapterProcessError>,
   ) {
-    if (context.stopped || context.resumeRejected) {
+    if (context.stopped) {
+      return;
+    }
+
+    // A rejected resume belongs to startSession's retry, not to the thread, so
+    // its exit stays silent. Tear it down here rather than leaving that to the
+    // retry, which never runs if startSession was interrupted while waiting.
+    if (context.resumeRejected) {
+      yield* stopSessionInternal(context, { emitExitEvent: false });
       return;
     }
 
@@ -3901,8 +3909,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     return Effect.succeed(context);
   };
 
-  const startSessionAttempt: ClaudeAdapterShape["startSession"] = Effect.fn("startSessionAttempt")(
-    function* (input) {
+  const startSessionAttempt = Effect.fn("startSessionAttempt")(function* (
+    input: Parameters<ClaudeAdapterShape["startSession"]>[0],
+  ) {
       const modelCatalog = yield* modelCatalogEffect;
       if (input.provider !== undefined && input.provider !== PROVIDER) {
         return yield* new ProviderAdapterValidationError({
@@ -4618,10 +4627,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
 
       return {
-        ...session,
+        session: { ...session },
+        // Read from the context, not the session map: a rejected session tears
+        // itself down, so by now it may already be gone from the map.
+        resumeRejected: context.resumeRejected,
       };
-    },
-  );
+  });
 
   /**
    * A rejected resume is definitive: retrying the id would leave the thread
@@ -4629,8 +4640,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
    */
   const startSession: ClaudeAdapterShape["startSession"] = Effect.fn("startSession")(
     function* (input) {
-      const session = yield* startSessionAttempt(input);
-      if (sessions.get(input.threadId)?.resumeRejected !== true) {
+      const { session, resumeRejected } = yield* startSessionAttempt(input);
+      if (!resumeRejected) {
         return session;
       }
       yield* Effect.logWarning("claude.session.resume-rejected", {
@@ -4638,7 +4649,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         reason: "Claude holds no conversation for the resume id; starting a fresh session",
       });
       const { resumeCursor: _unresumable, ...withoutResumeCursor } = input;
-      return yield* startSessionAttempt(withoutResumeCursor);
+      return (yield* startSessionAttempt(withoutResumeCursor)).session;
     },
   );
 
