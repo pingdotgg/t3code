@@ -2799,6 +2799,8 @@ export default function Sidebar() {
   const attemptPin = useCallback(
     (threadRef: ScopedThreadRef) => {
       const threadKey = scopedThreadKey(threadRef);
+      const activeFlight = pinFlightRef.current;
+      if (activeFlight !== null) finishPinFlight(activeFlight.threadKey);
       const sourceElement = document.querySelector<HTMLElement>(
         `[data-thread-key="${window.CSS.escape(threadKey)}"]`,
       );
