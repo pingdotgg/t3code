@@ -38,38 +38,31 @@ export function renderMermaidDiagram(
 export function MermaidDiagram({
   code,
   theme,
-  fenceTitle,
   fallback,
 }: {
   code: string;
   theme: MermaidTheme;
-  fenceTitle: string | null;
   fallback: ReactNode;
 }) {
   const reactId = useId();
   const diagramId = `t3-mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const renderSequenceRef = useRef(0);
   const diagramRef = useRef<HTMLDivElement>(null);
-  const inputKey = `${theme}\0${code}`;
-  const [renderState, setRenderState] = useState<{
-    inputKey: string;
-    result: RenderResult;
-  } | null>(null);
-  const result = renderState?.inputKey === inputKey ? renderState.result : null;
+  const [result, setResult] = useState<RenderResult | null>(null);
 
   useEffect(() => {
     let active = true;
     const renderId = `${diagramId}-${renderSequenceRef.current++}`;
     void renderMermaidDiagram(renderId, code, theme, () => active).then(
       (nextResult) => {
-        if (active && nextResult) setRenderState({ inputKey, result: nextResult });
+        if (active && nextResult) setResult(nextResult);
       },
       () => undefined,
     );
     return () => {
       active = false;
     };
-  }, [code, diagramId, inputKey, theme]);
+  }, [code, diagramId, theme]);
 
   useLayoutEffect(() => {
     const svg = diagramRef.current?.querySelector("svg");
@@ -78,23 +71,16 @@ export function MermaidDiagram({
       svg.style.width = `${Math.ceil(width)}px`;
       svg.style.maxWidth = "none";
     }
-  }, [result]);
+  });
 
   if (!result) return fallback;
 
   return (
-    <figure
+    <div
+      ref={diagramRef}
       className="chat-markdown-mermaid"
       data-markdown-copy={serializeMarkdownCodeFence(code, "mermaid")}
-    >
-      {fenceTitle ? (
-        <figcaption className="chat-markdown-mermaid-title">{fenceTitle}</figcaption>
-      ) : null}
-      <div
-        ref={diagramRef}
-        className="chat-markdown-mermaid-canvas"
-        dangerouslySetInnerHTML={{ __html: result.svg }}
-      />
-    </figure>
+      dangerouslySetInnerHTML={{ __html: result.svg }}
+    />
   );
 }

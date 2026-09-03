@@ -824,12 +824,14 @@ function MarkdownCodeBlock({
   language,
   fenceTitle,
   theme,
+  showWrapAction = true,
   children,
 }: {
   code: string;
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
+  showWrapAction?: boolean;
   children: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
@@ -891,24 +893,26 @@ function MarkdownCodeBlock({
           />
         </span>
         <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="chat-markdown-chrome-action"
-                  aria-pressed={wrapped}
-                  onClick={() => setWrapped((value) => !value)}
-                  aria-label={wrapLabel}
-                />
-              }
-            >
-              <WrapTextIcon className="size-3" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
-          </Tooltip>
+          {showWrapAction ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="chat-markdown-chrome-action"
+                    aria-pressed={wrapped}
+                    onClick={() => setWrapped((value) => !value)}
+                    aria-label={wrapLabel}
+                  />
+                }
+              >
+                <WrapTextIcon className="size-3" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
+            </Tooltip>
+          ) : null}
           <Tooltip>
             <TooltipTrigger
               render={
@@ -2715,35 +2719,38 @@ function ChatMarkdown({
         const language = extractFenceLanguage(codeBlock.className);
         const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
         const codeFallback = (
+          <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
+            <Suspense fallback={<pre {...props}>{children}</pre>}>
+              <SuspenseShikiCodeBlock
+                className={codeBlock.className}
+                code={codeBlock.code}
+                themeName={diffThemeName}
+                isStreaming={isStreaming}
+              />
+            </Suspense>
+          </RenderErrorBoundary>
+        );
+        const renderMermaid = !isStreaming && language.toLowerCase() === "mermaid";
+        return (
           <MarkdownCodeBlock
             code={codeBlock.code}
             language={language}
             fenceTitle={fenceTitle}
             theme={resolvedTheme}
+            showWrapAction={!renderMermaid}
           >
-            <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
-              <Suspense fallback={<pre {...props}>{children}</pre>}>
-                <SuspenseShikiCodeBlock
-                  className={codeBlock.className}
-                  code={codeBlock.code}
-                  themeName={diffThemeName}
-                  isStreaming={isStreaming}
-                />
-              </Suspense>
-            </RenderErrorBoundary>
+            {renderMermaid ? (
+              <MermaidDiagram
+                key={codeBlock.code}
+                code={codeBlock.code}
+                theme={resolvedTheme}
+                fallback={codeFallback}
+              />
+            ) : (
+              codeFallback
+            )}
           </MarkdownCodeBlock>
         );
-        if (!isStreaming && language.toLowerCase() === "mermaid") {
-          return (
-            <MermaidDiagram
-              code={codeBlock.code}
-              theme={resolvedTheme}
-              fenceTitle={fenceTitle}
-              fallback={codeFallback}
-            />
-          );
-        }
-        return codeFallback;
       },
     };
   }, [
