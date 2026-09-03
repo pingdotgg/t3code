@@ -26,48 +26,38 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "./UsageService.ts";
 
-function claudeLine(id: number, outputTokens: number, timestamp = "2026-08-01T10:00:00Z"): string {
+function claudeLine(
+  id: number,
+  outputTokens: number,
+  timestamp = "2026-08-01T10:00:00Z",
+  messageId = `msg_${id}`,
+  requestId = `req_${id}`,
+): string {
   return `${JSON.stringify({
     type: "assistant",
     timestamp,
-    requestId: `req_${id}`,
+    requestId,
     sessionId: "session-1",
     message: {
-      id: `msg_${id}`,
+      id: messageId,
       model: "claude-fable-5",
       usage: { input_tokens: 10, output_tokens: outputTokens },
     },
   })}\n`;
 }
 
-function codexLine(outputTokens: number): string {
+function grokLine(outputTokens: number): string {
   return `${JSON.stringify({
-    type: "event_msg",
-    timestamp: "2026-08-01T10:00:05Z",
-    payload: {
-      type: "token_count",
-      info: { last_token_usage: { input_tokens: 100, output_tokens: outputTokens } },
+    timestamp: 1785578405,
+    params: {
+      sessionId: "session",
+      update: {
+        sessionUpdate: "turn_completed",
+        prompt_id: "prompt",
+        usage: { inputTokens: 10, outputTokens },
+      },
     },
   })}\n`;
-}
-
-function codexSessionLines(outputTokens: number): string {
-  return (
-    [
-      {
-        type: "session_meta",
-        timestamp: "2026-08-01T10:00:00Z",
-        payload: { type: "session_meta", id: "codex-session-1" },
-      },
-      {
-        type: "turn_context",
-        timestamp: "2026-08-01T10:00:01Z",
-        payload: { type: "turn_context", model: "gpt-5.6-codex" },
-      },
-    ]
-      .map((line) => JSON.stringify(line))
-      .join("\n") + `\n${codexLine(outputTokens)}`
-  );
 }
 
 const WINDOW: UsageSummaryInput = {
@@ -565,6 +555,32 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("clears an interrupted canonical waiter so the next refresh can run", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const ratesGate = yield* Deferred.make<void>();
+      const ratesStarted = yield* Deferred.make<void>();
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-canonical-interrupt-test",
+            home,
+            settings,
+            ratesGate,
+            ratesStarted,
+          }),
+        ),
+      );
+      const background = yield* service.startBackgroundRefresh.pipe(Effect.forkChild);
+      yield* Deferred.await(ratesStarted);
+      yield* Fiber.interrupt(background);
+      yield* Deferred.succeed(ratesGate, undefined);
+
+      const result = yield* service.refreshSummary(currentCanonicalWindow());
+      assert.strictEqual(totalOutputTokens(result), 0);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("refreshes once at startup and again after the 30-minute cadence", () =>
     Effect.gen(function* () {
       let refreshes = 0;
@@ -694,24 +710,47 @@ describe("UsageService", () => {
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
       const duplicateClaude = NodePath.join(NodePath.dirname(transcript), "duplicate.jsonl");
-      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
-      yield* Effect.promise(() => NodeFSP.writeFile(duplicateClaude, claudeLine(1, 5)));
+      const sharedKeyClaude = claudeLine(1, 5, "2026-08-01T10:00:00Z", "session:prompt", "grok");
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, sharedKeyClaude));
+      yield* Effect.promise(() => NodeFSP.writeFile(duplicateClaude, sharedKeyClaude));
 
-      const codexDir = NodePath.join(home, "codex", "sessions");
-      yield* Effect.promise(() => NodeFSP.mkdir(codexDir, { recursive: true }));
+      const grokDir = NodePath.join(home, "grok", "sessions");
+      yield* Effect.promise(() => NodeFSP.mkdir(grokDir, { recursive: true }));
       yield* Effect.promise(() =>
-        NodeFSP.writeFile(NodePath.join(codexDir, "rollout.jsonl"), codexSessionLines(5)),
+        NodeFSP.writeFile(NodePath.join(grokDir, "updates.jsonl"), grokLine(5)),
       );
 
       const service = yield* UsageService.make.pipe(
         Effect.provide(
-          serviceLayers({ prefix: "usage-service-directory-dedupe-test", home, settings }),
+          serviceLayers({
+            prefix: "usage-service-directory-dedupe-test",
+            baseDir: NodePath.join(home, "directory-dedupe-state"),
+            home,
+            settings,
+          }),
         ),
       );
       const result = yield* service.refreshSummary(currentCanonicalWindow());
-      // The two Claude files represent one record, while the Codex record is
-      // from another provider directory and must remain independent.
-      assert.strictEqual(totalOutputTokens(result), 10);
+      // Claude and Grok deliberately produce the same non-null dedupe key,
+      // while the duplicate Claude file is in the same provider directory.
+      // The cross-directory record must survive, but the intra-directory one
+      // must be dropped.
+      // The viewer aggregate deliberately de-duplicates globally. The
+      // canonical ledger preserves both provider-directory records.
+      assert.strictEqual(totalOutputTokens(result), 5);
+      const raw = yield* Effect.promise(() =>
+        NodeFSP.readFile(
+          NodePath.join(home, "directory-dedupe-state", "userdata", "usage-record-ledger.json"),
+          "utf8",
+        ),
+      );
+      const document = JSON.parse(raw) as {
+        aggregates?: readonly { records?: number; provider?: string }[];
+      };
+      assert.strictEqual(
+        document.aggregates?.filter((aggregate) => aggregate.records === 1).length,
+        2,
+      );
     }).pipe(Effect.scoped),
   );
 

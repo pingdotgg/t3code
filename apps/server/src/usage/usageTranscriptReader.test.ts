@@ -217,23 +217,22 @@ describe("readTranscriptRecords resume", () => {
     assert.strictEqual(result.failedFiles, 1);
   });
 
-  it("keeps a readable sibling visible when a nested directory cannot be read", async () => {
+  it("keeps a readable sibling visible when a nested directory disappears", async () => {
     const sibling = NodePath.join(dir, "sibling.jsonl");
-    const nested = NodePath.join(dir, "unreadable");
+    const nested = NodePath.join(dir, "vanishing");
     await NodeFSP.writeFile(sibling, claudeLine(1, 5));
     await NodeFSP.mkdir(nested);
     await NodeFSP.writeFile(NodePath.join(nested, "nested.jsonl"), claudeLine(2, 7));
-    await NodeFSP.chmod(nested, 0o000);
-    try {
-      const result = await listTranscriptFilesDetailed(dir, 0);
-      assert.isFalse(result.complete);
-      assert.strictEqual(result.failedFiles, 1);
-      assert.deepStrictEqual(
-        result.files.map((file) => NodePath.basename(file.path)),
-        ["sibling.jsonl"],
-      );
-    } finally {
-      await NodeFSP.chmod(nested, 0o700);
-    }
+    const result = await listTranscriptFilesDetailed(dir, 0, {
+      beforeDirectoryRead: async (path) => {
+        if (path === nested) await NodeFSP.rm(nested, { recursive: true, force: true });
+      },
+    });
+    assert.isFalse(result.complete);
+    assert.strictEqual(result.missingFiles, 1);
+    assert.deepStrictEqual(
+      result.files.map((file) => NodePath.basename(file.path)),
+      ["sibling.jsonl"],
+    );
   });
 });

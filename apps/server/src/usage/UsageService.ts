@@ -960,10 +960,10 @@ export const make = Effect.gen(function* () {
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
-      // Dedupe keys are scoped to one provider directory. Keep this set local
-      // so the hot path stores only the source key, while identical keys in
-      // another provider directory remain distinct records.
-      const ledgerSeen = new Set<string>();
+      // Dedupe keys are scoped to each transcript directory. Keep one bare-key
+      // set per directory so identical keys in another provider/project
+      // directory remain distinct without allocating a long composite key.
+      const ledgerSeenByDirectory = new Map<string, Set<string>>();
 
       for (const file of files) {
         livePaths.add(file.path);
@@ -989,6 +989,12 @@ export const make = Effect.gen(function* () {
           // without retaining every transcript record.
           const dedupeKey = record.dedupeKey;
           if (dedupeKey !== null) {
+            const directory = path.dirname(file.path);
+            let ledgerSeen = ledgerSeenByDirectory.get(directory);
+            if (ledgerSeen === undefined) {
+              ledgerSeen = new Set<string>();
+              ledgerSeenByDirectory.set(directory, ledgerSeen);
+            }
             if (ledgerSeen.has(dedupeKey)) continue;
             ledgerSeen.add(dedupeKey);
           }
@@ -1159,56 +1165,51 @@ export const make = Effect.gen(function* () {
     // unauthorized RPC can construct and discard this effect before it ever
     // executes, which would otherwise wedge all later canonical refreshes.
     return Effect.suspend(() =>
-      Effect.gen(function* () {
-        const canonicalSummary = (summary: UsageSummary) =>
-          requestedCommonPreset && !isCanonicalLedgerInput(input)
-            ? readPresetFromLedger(input).pipe(
-                Effect.flatMap((preset) =>
-                  preset === null
-                    ? Effect.fail(
-                        new UsageReadError({
-                          reason: "scanFailed",
-                          detail: "The canonical usage refresh did not complete.",
-                        }),
-                      )
-                    : Effect.succeed(preset),
-                ),
-              )
-            : Effect.succeed(summary);
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const canonicalSummary = (summary: UsageSummary) =>
+            requestedCommonPreset && !isCanonicalLedgerInput(input)
+              ? readPresetFromLedger(input).pipe(
+                  Effect.flatMap((preset) =>
+                    preset === null
+                      ? Effect.fail(
+                          new UsageReadError({
+                            reason: "scanFailed",
+                            detail: "The canonical usage refresh did not complete.",
+                          }),
+                        )
+                      : Effect.succeed(preset),
+                  ),
+                )
+              : Effect.succeed(summary);
 
-        if (canonicalRefreshWaiter !== null) {
-          const summary = yield* awaitCanonicalRefresh();
-          return yield* summary === null
-            ? Effect.fail(
-                new UsageReadError({
-                  reason: "scanFailed",
-                  detail: "The canonical usage refresh did not complete.",
-                }),
-              )
-            : canonicalSummary(summary);
-        }
+          if (canonicalRefreshWaiter !== null) {
+            const summary = yield* restore(awaitCanonicalRefresh());
+            return yield* summary === null
+              ? Effect.fail(
+                  new UsageReadError({
+                    reason: "scanFailed",
+                    detail: "The canonical usage refresh did not complete.",
+                  }),
+                )
+              : canonicalSummary(summary);
+          }
 
-        const { waiter, canonicalInput } = yield* Effect.uninterruptibleMask(() =>
-          Effect.gen(function* () {
-            const waiter = Deferred.makeUnsafe<Exit.Exit<UsageSummary, UsageReadError>, never>();
-            canonicalRefreshWaiter = waiter;
-            const canonicalInput = isCanonicalLedgerInput(input)
-              ? input
-              : (yield* defaultDailyInputs)[0]!;
-            return { waiter, canonicalInput };
-          }),
-        );
-        const summary = yield* Effect.uninterruptibleMask((restore) =>
-          restore(scanAndPersist(canonicalInput)).pipe(
+          const waiter = Deferred.makeUnsafe<Exit.Exit<UsageSummary, UsageReadError>, never>();
+          canonicalRefreshWaiter = waiter;
+          const canonicalInput = isCanonicalLedgerInput(input)
+            ? input
+            : (yield* defaultDailyInputs)[0]!;
+          const summary = yield* restore(scanAndPersist(canonicalInput)).pipe(
             Effect.onExit((exit) =>
               Effect.sync(() => {
                 if (canonicalRefreshWaiter === waiter) canonicalRefreshWaiter = null;
               }).pipe(Effect.andThen(Deferred.succeed(waiter, exit))),
             ),
-          ),
-        );
-        return yield* canonicalSummary(summary);
-      }),
+          );
+          return yield* canonicalSummary(summary);
+        }),
+      ),
     );
   };
 

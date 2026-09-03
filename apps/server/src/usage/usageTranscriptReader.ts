@@ -124,7 +124,11 @@ function isNotFoundError(error: unknown): boolean {
 export async function listTranscriptFilesDetailed(
   root: string,
   sinceMs: number,
-  options?: { readonly fileName?: string },
+  options?: {
+    readonly fileName?: string;
+    /** Test seam for a directory disappearing after its parent is listed. */
+    readonly beforeDirectoryRead?: (path: string) => Promise<void>;
+  },
 ): Promise<TranscriptWalkResult> {
   const found: TranscriptFile[] = [];
   let complete = true;
@@ -145,6 +149,7 @@ export async function listTranscriptFilesDetailed(
     for (const entry of entries) {
       const child = NodePath.join(dir, entry.name);
       if (entry.isDirectory()) {
+        await options?.beforeDirectoryRead?.(child);
         await walk(child);
         continue;
       }
