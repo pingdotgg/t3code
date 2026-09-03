@@ -112,7 +112,12 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { readSideChatsByParent, useProjects, useThreadShells } from "../state/entities";
+import {
+  readSideChatsByParent,
+  readThreadDetail,
+  useProjects,
+  useThreadShells,
+} from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
@@ -124,7 +129,10 @@ import {
   resolveThreadRouteTarget,
 } from "../threadRoutes";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
-import { resolveForkEntryAvailability } from "../threadForking.logic";
+import {
+  completedTurnIdsFromCheckpoints,
+  resolveForkEntryAvailability,
+} from "../threadForking.logic";
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -3181,9 +3189,16 @@ export default function Sidebar() {
         const forkCapability = serverConfigs
           .get(thread.environmentId)
           ?.providers.find((provider) => provider.instanceId === providerInstanceId)?.sessionFork;
+        const threadDetail = readThreadDetail(threadRef);
         const forkEntry = resolveForkEntryAvailability({
           capability: forkCapability,
           latestTurn: thread.latestTurn,
+          ...(threadDetail
+            ? {
+                messages: threadDetail.messages,
+                completedTurnIds: completedTurnIdsFromCheckpoints(threadDetail.checkpoints),
+              }
+            : {}),
         });
         const sideChats = readSideChatsByParent(threadRef);
         // Presets resolve at menu-open time (same as the popover).
@@ -3224,6 +3239,12 @@ export default function Sidebar() {
           return;
         }
         if (clicked.value?.startsWith("open-existing-side-chat:")) {
+          if (routeThreadKeyRef.current !== threadKey) {
+            await router.navigate({
+              to: "/$environmentId/$threadId",
+              params: buildThreadRouteParams(threadRef),
+            });
+          }
           useRightPanelStore
             .getState()
             .openSideChat(
@@ -3415,9 +3436,10 @@ export default function Sidebar() {
       markThreadUnread,
       openProjectSettings,
       projectCwdByKey,
+      router,
       serverConfigs,
       startThreadRename,
-      threadFork.forkTarget,
+      threadFork,
       updateThreadMetadata,
       timestampFormat,
     ],

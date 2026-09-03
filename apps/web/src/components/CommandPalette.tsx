@@ -1065,6 +1065,7 @@ function OpenCommandPaletteDialog(props: {
 
   const openProjectFromSearch = useMemo(
     () => async (project: (typeof projects)[number]) => {
+      const primaryThreads = threads.filter((thread) => thread.sideChat !== true);
       const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
       const groupedProjectKeys = group
         ? new Set(
@@ -1075,7 +1076,7 @@ function OpenCommandPaletteDialog(props: {
         : null;
       const latestThread = groupedProjectKeys
         ? (sortThreads(
-            threads.filter(
+            primaryThreads.filter(
               (thread) =>
                 thread.archivedAt === null &&
                 groupedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
@@ -1083,7 +1084,7 @@ function OpenCommandPaletteDialog(props: {
             clientSettings.sidebarThreadSortOrder,
           )[0] ?? null)
         : getLatestThreadForProject(
-            threads.filter((thread) => thread.environmentId === project.environmentId),
+            primaryThreads.filter((thread) => thread.environmentId === project.environmentId),
             project.id,
             clientSettings.sidebarThreadSortOrder,
           );
@@ -1914,7 +1915,9 @@ function OpenCommandPaletteDialog(props: {
       );
       if (existing) {
         const latestThread = getLatestThreadForProject(
-          threads.filter((thread) => thread.environmentId === existing.environmentId),
+          threads.filter(
+            (thread) => thread.environmentId === existing.environmentId && thread.sideChat !== true,
+          ),
           existing.id,
           clientSettings.sidebarThreadSortOrder,
         );

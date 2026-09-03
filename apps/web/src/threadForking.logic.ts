@@ -1,5 +1,6 @@
 import type {
   MessageId,
+  OrchestrationCheckpointSummary,
   OrchestrationLatestTurn,
   OrchestrationMessage,
   ServerProviderSessionFork,
@@ -11,6 +12,16 @@ export type ForkCapability = ServerProviderSessionFork | undefined;
 export interface ThreadForkTarget {
   readonly turnId: TurnId;
   readonly messageId: MessageId;
+}
+
+export function completedTurnIdsFromCheckpoints(
+  checkpoints: ReadonlyArray<Pick<OrchestrationCheckpointSummary, "status" | "turnId">>,
+): ReadonlySet<TurnId> {
+  return new Set(
+    checkpoints
+      .filter((checkpoint) => checkpoint.status === "ready")
+      .map((checkpoint) => checkpoint.turnId),
+  );
 }
 
 export function resolveLatestCompletedForkTarget(
@@ -32,13 +43,15 @@ export function resolveLatestCompletedForkTarget(
 function resolveLatestCompletedMessageTarget(
   messages: ReadonlyArray<Pick<OrchestrationMessage, "id" | "role" | "streaming" | "turnId">>,
   excludedTurnId: TurnId,
+  completedTurnIds: ReadonlySet<TurnId>,
 ): ThreadForkTarget | null {
   const message = messages.findLast(
     (candidate) =>
       candidate.role === "assistant" &&
       !candidate.streaming &&
       candidate.turnId !== null &&
-      candidate.turnId !== excludedTurnId,
+      candidate.turnId !== excludedTurnId &&
+      completedTurnIds.has(candidate.turnId),
   );
   return message?.turnId ? { turnId: message.turnId, messageId: message.id } : null;
 }
@@ -49,6 +62,7 @@ export function resolveForkEntryAvailability(input: {
   readonly messages?: ReadonlyArray<
     Pick<OrchestrationMessage, "id" | "role" | "streaming" | "turnId">
   >;
+  readonly completedTurnIds?: ReadonlySet<TurnId>;
 }): {
   readonly enabled: boolean;
   readonly target: ThreadForkTarget | null;
@@ -67,7 +81,11 @@ export function resolveForkEntryAvailability(input: {
     (input.capability === "any-turn" &&
     input.latestTurn != null &&
     input.latestTurn.state !== "completed"
-      ? resolveLatestCompletedMessageTarget(input.messages ?? [], input.latestTurn.turnId)
+      ? resolveLatestCompletedMessageTarget(
+          input.messages ?? [],
+          input.latestTurn.turnId,
+          input.completedTurnIds ?? new Set(),
+        )
       : null);
   if (target === null) {
     return {

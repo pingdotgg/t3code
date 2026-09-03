@@ -932,6 +932,152 @@ describe("ProviderCommandReactor", () => {
     expect(harness.sendTurn).toHaveBeenCalledTimes(1);
   });
 
+  it("starts an unstarted fork on the source thread's current provider instance", async () => {
+    const harness = await createHarness();
+    const sourceThreadId = ThreadId.make("thread-1");
+    const forkThreadId = ThreadId.make("thread-fork-source-moved");
+    const forkWithCurrentSelectionThreadId = ThreadId.make(
+      "thread-fork-source-moved-current-selection",
+    );
+    const currentInstanceId = ProviderInstanceId.make("codex-work");
+    const currentModel = "gpt-5.6-sol";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-fork-before-source-moved"),
+        threadId: forkThreadId,
+        sourceThreadId,
+        sideChat: false,
+        createdAt: "2026-09-03T12:00:10.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-fork-before-source-moved-current-selection"),
+        threadId: forkWithCurrentSelectionThreadId,
+        sourceThreadId,
+        sideChat: false,
+        createdAt: "2026-09-03T12:00:10.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-source-model-moved"),
+        threadId: sourceThreadId,
+        modelSelection: {
+          instanceId: currentInstanceId,
+          model: currentModel,
+        },
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-source-session-moved"),
+        threadId: sourceThreadId,
+        session: {
+          threadId: sourceThreadId,
+          status: "ready",
+          providerName: ProviderDriverKind.make("codex"),
+          providerInstanceId: currentInstanceId,
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-09-03T12:00:11.000Z",
+        },
+        createdAt: "2026-09-03T12:00:11.000Z",
+      }),
+    );
+    harness.runtimeSessions.push({
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: currentInstanceId,
+      status: "ready",
+      runtimeMode: "approval-required",
+      cwd: "/tmp/provider-project",
+      model: currentModel,
+      threadId: sourceThreadId,
+      resumeCursor: { opaque: "source-current" },
+      createdAt: "2026-09-03T12:00:11.000Z",
+      updatedAt: "2026-09-03T12:00:11.000Z",
+    });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-start-fork-after-source-moved"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-fork-source-moved"),
+          role: "user",
+          text: "Continue from the source's current provider session.",
+          attachments: [],
+        },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-09-03T12:00:12.000Z",
+      }),
+    );
+    await harness.drain();
+
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      threadId: forkThreadId,
+      providerInstanceId: currentInstanceId,
+      modelSelection: {
+        instanceId: currentInstanceId,
+        model: currentModel,
+      },
+      forkFrom: { threadId: sourceThreadId },
+    });
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId: forkThreadId,
+      modelSelection: {
+        instanceId: currentInstanceId,
+        model: currentModel,
+      },
+    });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-start-fork-with-source-current-selection"),
+        threadId: forkWithCurrentSelectionThreadId,
+        message: {
+          messageId: asMessageId("message-fork-source-current-selection"),
+          role: "user",
+          text: "Continue with the source's selected provider instance.",
+          attachments: [],
+        },
+        modelSelection: {
+          instanceId: currentInstanceId,
+          model: currentModel,
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-09-03T12:00:13.000Z",
+      }),
+    );
+    await harness.drain();
+
+    expect(harness.startSession).toHaveBeenCalledTimes(2);
+    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+      threadId: forkWithCurrentSelectionThreadId,
+      providerInstanceId: currentInstanceId,
+      modelSelection: {
+        instanceId: currentInstanceId,
+        model: currentModel,
+      },
+      forkFrom: { threadId: sourceThreadId },
+    });
+  });
+
   it("rejects model changes before a fork's inherited session starts", async () => {
     const harness = await createHarness();
     const forkThreadId = ThreadId.make("thread-fork-model-change");

@@ -7558,23 +7558,26 @@ function ChatViewContent(props: ChatViewProps) {
   }, []);
   const forkEntry = useMemo(
     () =>
-      isServerThread
+      isServerThread && activeThread
         ? {
             enabled: threadFork.latest.enabled,
             disabledReason: threadFork.latest.disabledReason,
             sideChats,
-            onOpenSideChat: () => void threadFork.forkLatest(true),
-            onForkThread: () => void threadFork.forkLatest(false),
+            source: activeThread,
+            target: threadFork.latest.target,
+            onForkTarget: threadFork.forkTarget,
             onOpenExistingSideChat: openExistingSideChat,
           }
         : undefined,
     [
+      activeThread,
       isServerThread,
       openExistingSideChat,
       sideChats,
-      threadFork.forkLatest,
+      threadFork.forkTarget,
       threadFork.latest.disabledReason,
       threadFork.latest.enabled,
+      threadFork.latest.target,
     ],
   );
 

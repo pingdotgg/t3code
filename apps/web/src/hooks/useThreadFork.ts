@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type {
   MessageId,
+  OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationLatestTurn,
   EnvironmentId,
@@ -23,6 +24,7 @@ import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   canForkCompletedAssistantMessage,
+  completedTurnIdsFromCheckpoints,
   resolveForkEntryAvailability,
   type ThreadForkTarget,
 } from "../threadForking.logic";
@@ -33,6 +35,7 @@ interface ForkableThread {
   readonly id: ThreadId;
   readonly latestTurn: OrchestrationLatestTurn | null;
   readonly messages: ReadonlyArray<OrchestrationMessage>;
+  readonly checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>;
   readonly modelSelection: { readonly instanceId: ProviderInstanceId };
   readonly session: { readonly providerInstanceId?: ProviderInstanceId | undefined } | null;
 }
@@ -64,9 +67,14 @@ export function useThreadForkActions(
       resolveForkEntryAvailability({
         capability,
         latestTurn: sourceThread?.latestTurn,
-        ...(sourceThread ? { messages: sourceThread.messages } : {}),
+        ...(sourceThread
+          ? {
+              messages: sourceThread.messages,
+              completedTurnIds: completedTurnIdsFromCheckpoints(sourceThread.checkpoints),
+            }
+          : {}),
       }),
-    [capability, sourceThread?.latestTurn, sourceThread?.messages],
+    [capability, sourceThread],
   );
 
   const sourceThreadRef = useRef(sourceThread);

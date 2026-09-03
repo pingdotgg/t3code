@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
+import { resolveSelectableModel } from "@t3tools/shared/model";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -540,6 +541,12 @@ const make = Effect.gen(function* () {
     const forkBinding =
       thread.fork == null ? null : yield* providerService.getSessionBinding(threadId);
     const forkHasOwnResumeCursor = forkBinding?.resumeCursor != null;
+    const forkSource =
+      thread.fork != null && !forkHasOwnResumeCursor
+        ? yield* resolveThread(thread.fork.sourceThreadId)
+        : undefined;
+    const forkSourceInstanceId =
+      forkSource?.session?.providerInstanceId ?? forkSource?.modelSelection.instanceId;
     const resolveActiveSession = (threadId: ThreadId) =>
       providerService
         .listSessions()
@@ -568,18 +575,49 @@ const make = Effect.gen(function* () {
       activeSession.providerInstanceId !== undefined
         ? activeSession.providerInstanceId
         : (forkBinding?.providerInstanceId ?? thread.modelSelection.instanceId);
-    const desiredModelSelection = requestedModelSelection ?? thread.modelSelection;
+    const baseDesiredModelSelection = requestedModelSelection ?? thread.modelSelection;
+    const desiredModelSelection =
+      forkSource !== undefined &&
+      forkSourceInstanceId !== undefined &&
+      baseDesiredModelSelection.instanceId !== forkSourceInstanceId
+        ? yield* Effect.gen(function* () {
+            const sourceProvider = (yield* providerRegistry.getProviders).find(
+              (provider) => provider.instanceId === forkSourceInstanceId,
+            );
+            const resolvedModel = sourceProvider
+              ? resolveSelectableModel(
+                  sourceProvider.driver,
+                  baseDesiredModelSelection.model,
+                  sourceProvider.models,
+                )
+              : null;
+            return resolvedModel === null
+              ? { ...forkSource.modelSelection, instanceId: forkSourceInstanceId }
+              : {
+                  ...baseDesiredModelSelection,
+                  instanceId: forkSourceInstanceId,
+                  model: resolvedModel,
+                };
+          })
+        : baseDesiredModelSelection;
     const desiredInstanceId = desiredModelSelection.instanceId;
     const inheritedForkInstanceId =
+      forkSourceInstanceId ??
       forkBinding?.providerInstanceId ??
       thread.session?.providerInstanceId ??
       thread.modelSelection.instanceId;
+    const requestedSelectionMatchesMovedForkSource =
+      requestedModelSelection !== undefined &&
+      forkSourceInstanceId !== undefined &&
+      forkSourceInstanceId !== thread.modelSelection.instanceId &&
+      requestedModelSelection.instanceId === forkSourceInstanceId;
     if (
       thread.fork != null &&
       !forkHasOwnResumeCursor &&
       (desiredInstanceId !== inheritedForkInstanceId ||
         (requestedModelSelection !== undefined &&
-          !Equal.equals(requestedModelSelection, thread.modelSelection)))
+          !Equal.equals(requestedModelSelection, thread.modelSelection) &&
+          !requestedSelectionMatchesMovedForkSource))
     ) {
       return yield* new ProviderAdapterRequestError({
         provider: providerErrorLabelFromInstanceHint({
@@ -797,7 +835,7 @@ const make = Effect.gen(function* () {
         !shouldRestartForModelSelectionChange
       ) {
         yield* refreshWorkspaceSnapshot;
-        return existingSessionThreadId;
+        return desiredModelSelection;
       }
 
       const resumeCursor = shouldRestartForModelChange
@@ -834,7 +872,7 @@ const make = Effect.gen(function* () {
         cwd: restartedSession.cwd,
       });
       yield* bindSessionToThread(restartedSession);
-      return restartedSession.threadId;
+      return desiredModelSelection;
     }
 
     if (!(yield* sourceStillAtRecordedForkBoundary())) {
@@ -872,7 +910,7 @@ const make = Effect.gen(function* () {
       return yield* boundaryError;
     }
     yield* bindSessionToThread(startedSession);
-    return startedSession.threadId;
+    return desiredModelSelection;
   });
 
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
@@ -889,12 +927,12 @@ const make = Effect.gen(function* () {
         new Error(`Thread '${input.threadId}' was not found in read model.`),
       );
     }
-    yield* ensureSessionForThread(input.threadId, input.createdAt, {
+    const effectiveModelSelection = yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       pendingTurnStart: true,
     });
     if (input.modelSelection !== undefined) {
-      threadModelSelections.set(input.threadId, input.modelSelection);
+      threadModelSelections.set(input.threadId, effectiveModelSelection);
     }
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
@@ -915,7 +953,9 @@ const make = Effect.gen(function* () {
           : (yield* providerService.getCapabilities(activeSession.providerInstanceId))
               .sessionModelSwitch;
     const requestedModelSelection =
-      input.modelSelection ?? threadModelSelections.get(input.threadId) ?? thread.modelSelection;
+      input.modelSelection !== undefined
+        ? effectiveModelSelection
+        : (threadModelSelections.get(input.threadId) ?? thread.modelSelection);
     const modelForTurn =
       sessionModelSwitch === "unsupported" && input.modelSelection === undefined
         ? activeSession?.model !== undefined
@@ -924,7 +964,9 @@ const make = Effect.gen(function* () {
               model: activeSession.model,
             }
           : requestedModelSelection
-        : input.modelSelection;
+        : input.modelSelection !== undefined
+          ? effectiveModelSelection
+          : undefined;
 
     return {
       threadId: input.threadId,

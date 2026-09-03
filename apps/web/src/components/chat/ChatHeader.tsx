@@ -34,7 +34,7 @@ import { OpenInPicker } from "./OpenInPicker";
 import { useRemoteOpenState, type RemoteOpenMode } from "../../remoteOpen";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
-import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
+import { type ThreadActionMenuForkEntry, useThreadActionMenu } from "~/hooks/useThreadActionMenu";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { observeResponsiveBreakpointFade, usePanelAnimationSettings } from "../../panelAnimations";
@@ -66,16 +66,7 @@ interface ChatHeaderProps {
   rightPanelOpen: boolean;
   gitCwd: string | null;
   presentation?: "page" | "side-chat";
-  forkEntry?:
-    | {
-        readonly enabled: boolean;
-        readonly disabledReason: string | null;
-        readonly sideChats: ReadonlyArray<{ readonly id: ThreadId; readonly title: string }>;
-        readonly onOpenSideChat: () => void;
-        readonly onForkThread: () => void;
-        readonly onOpenExistingSideChat: (threadId: ThreadId) => void;
-      }
-    | undefined;
+  forkEntry?: ThreadActionMenuForkEntry | undefined;
   onPromoteSideChat?: (() => void) | undefined;
   readonly onOpenPullRequest?: ((number: number) => void) | undefined;
   onNewThreadInProject: () => void;

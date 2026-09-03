@@ -205,6 +205,10 @@ export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | 
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
 }
 
+export function readThreadDetail(ref: ScopedThreadRef): EnvironmentThread | null {
+  return appAtomRegistry.get(environmentThreadDetails.detailAtom(ref));
+}
+
 /** Resolves after a newly-created thread reaches the shell projection. */
 export function waitForThreadShell(
   ref: ScopedThreadRef,

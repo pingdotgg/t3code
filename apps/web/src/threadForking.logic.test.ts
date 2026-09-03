@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   canForkCompletedAssistantMessage,
+  completedTurnIdsFromCheckpoints,
   resolveForkEntryAvailability,
   runPromoteSideChat,
 } from "./threadForking.logic";
@@ -68,6 +69,7 @@ describe("thread fork entry availability", () => {
               turnId: completedTurn.turnId,
             },
           ],
+          completedTurnIds: new Set([previousTurnId]),
         }),
       ).toEqual({
         enabled: true,
@@ -76,6 +78,53 @@ describe("thread fork entry availability", () => {
       });
     },
   );
+
+  it("ignores finalized assistant messages from interrupted and failed turns", () => {
+    const completedTurnId = TurnId.make("turn-completed");
+    const interruptedTurnId = TurnId.make("turn-interrupted");
+    const failedTurnId = TurnId.make("turn-failed");
+
+    expect(
+      resolveForkEntryAvailability({
+        capability: "any-turn",
+        latestTurn: { ...completedTurn, state: "running", completedAt: null },
+        messages: [
+          {
+            id: MessageId.make("message-completed"),
+            role: "assistant",
+            streaming: false,
+            turnId: completedTurnId,
+          },
+          {
+            id: MessageId.make("message-interrupted"),
+            role: "assistant",
+            streaming: false,
+            turnId: interruptedTurnId,
+          },
+          {
+            id: MessageId.make("message-failed"),
+            role: "assistant",
+            streaming: false,
+            turnId: failedTurnId,
+          },
+        ],
+        completedTurnIds: new Set([completedTurnId]),
+      }),
+    ).toMatchObject({
+      enabled: true,
+      target: { turnId: completedTurnId, messageId: MessageId.make("message-completed") },
+    });
+  });
+
+  it("derives completed turn ids only from ready checkpoints", () => {
+    expect(
+      completedTurnIdsFromCheckpoints([
+        { turnId: TurnId.make("turn-ready"), status: "ready" },
+        { turnId: TurnId.make("turn-interrupted"), status: "missing" },
+        { turnId: TurnId.make("turn-error"), status: "error" },
+      ]),
+    ).toEqual(new Set([TurnId.make("turn-ready")]));
+  });
 
   it("allows every completed response for any-turn providers and only the latest for latest-turn providers", () => {
     expect(
