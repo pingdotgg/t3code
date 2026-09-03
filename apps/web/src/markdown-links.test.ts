@@ -254,6 +254,27 @@ describe("resolveMarkdownFileLinkTarget", () => {
     });
   });
 
+  it("does not classify a case-distinct POSIX sibling as a workspace file", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "/tmp/t3code-case-test/project/probe.txt",
+        "/tmp/t3code-case-test/Project",
+      ),
+    ).toMatchObject({
+      displayPath: "/tmp/t3code-case-test/project/probe.txt",
+      workspaceRelativePath: null,
+    });
+  });
+
+  it("keeps Windows workspace comparisons case-insensitive", () => {
+    expect(
+      resolveMarkdownFileLinkMeta("C:/Users/MIKE/Project/src/main.ts", "c:/users/mike/project"),
+    ).toMatchObject({
+      displayPath: "project/src/main.ts",
+      workspaceRelativePath: "src/main.ts",
+    });
+  });
+
   it("normalizes slash-prefixed windows drive paths before resolving", () => {
     expect(
       resolveMarkdownFileLinkTarget(
