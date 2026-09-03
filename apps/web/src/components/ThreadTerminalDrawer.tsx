@@ -322,7 +322,7 @@ export function TerminalViewport({
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
-  const runTerminalWrite = useAtomCommand(terminalEnvironment.write, {
+  const runTerminalWrite = useAtomCommand(terminalEnvironment.input, {
     reportFailure: false,
   });
   const runTerminalResize = useAtomCommand(terminalEnvironment.resize, {
