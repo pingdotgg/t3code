@@ -250,6 +250,26 @@ describe("derivePendingApprovals", () => {
 });
 
 describe("derivePendingUserInputs", () => {
+  it("keeps free-text questions without suggested answers", () => {
+    const question = {
+      id: "0",
+      header: "Question",
+      question: "What should it be named?",
+      options: [],
+      allowCustomAnswer: true,
+      multiSelect: false,
+    };
+    const activities = [
+      makeActivity({
+        id: "async-question",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        payload: { requestId: "async-1", responseMode: "message", questions: [question] },
+      }),
+    ];
+    expect(derivePendingUserInputs(activities)[0]?.questions).toEqual([question]);
+  });
+
   it("preserves native choice values and the custom-answer restriction", () => {
     const question = {
       id: "interaction-result",

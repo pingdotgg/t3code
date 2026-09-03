@@ -330,6 +330,60 @@ function stripNullDefaults(value: Schema.Json): Schema.Json {
   ) as Schema.Json;
 }
 
+// Codex 0.153 adds async questions to agent messages. Keep older protocol
+// fields until the next full refresh, including every thread history namespace.
+function addAsyncQuestionFields(value: Schema.Json): Schema.Json {
+  if (Array.isArray(value)) {
+    return value.map(addAsyncQuestionFields);
+  }
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  const properties = "properties" in value ? value.properties : undefined;
+  const itemType =
+    properties && typeof properties === "object" && "type" in properties
+      ? properties.type
+      : undefined;
+  if (
+    properties &&
+    typeof properties === "object" &&
+    itemType &&
+    typeof itemType === "object" &&
+    "enum" in itemType &&
+    Array.isArray(itemType.enum) &&
+    itemType.enum.includes("agentMessage")
+  ) {
+    return {
+      ...value,
+      properties: {
+        ...properties,
+        delivery: { anyOf: [{ type: "string", enum: ["async"] }, { type: "null" }] },
+        questions: {
+          anyOf: [
+            {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  title: { type: "string" },
+                  options: {
+                    anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }],
+                  },
+                },
+                required: ["title"],
+              },
+            },
+            { type: "null" },
+          ],
+        },
+      },
+    };
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [key, addAsyncQuestionFields(child)]),
+  );
+}
+
 function toPascalCaseMethod(method: string) {
   return method
     .split("/")
@@ -648,7 +702,7 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
   for (const [name, schema] of Object.entries(aggregateSchemas).toSorted(([left], [right]) =>
     left.localeCompare(right),
   )) {
-    generator.addSchema(name, schema as never);
+    generator.addSchema(name, addAsyncQuestionFields(schema) as never);
   }
 
   const generatedEntries = new Map<string, string>();
