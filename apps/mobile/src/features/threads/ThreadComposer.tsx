@@ -128,6 +128,8 @@ export interface ThreadComposerProps {
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
+  /** Optimistic Stop feedback: disables Stop while the interrupt settles (#8618). */
+  readonly isStoppingThread: boolean;
   readonly onSendMessage: () => Promise<MessageId | null>;
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
@@ -737,9 +739,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 />
                 {showStopAction ? (
                   <ComposerActionButton
-                    accessibilityLabel="Stop agent"
+                    accessibilityLabel={props.isStoppingThread ? "Stopping agent" : "Stop agent"}
                     icon="stop.fill"
                     variant="danger"
+                    disabled={props.isStoppingThread}
                     onPress={props.onStopThread}
                   />
                 ) : (
@@ -828,9 +831,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   />
                   {showStopAction ? (
                     <ComposerActionButton
-                      accessibilityLabel="Stop agent"
+                      accessibilityLabel={props.isStoppingThread ? "Stopping agent" : "Stop agent"}
                       icon="stop.fill"
                       variant="danger"
+                      disabled={props.isStoppingThread}
                       onPress={props.onStopThread}
                     />
                   ) : voicePresentation.showsSend ? (

@@ -1839,6 +1839,99 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
+  it.effect(
+    "marks the session-pinned turn interrupted when the interrupt request omits turnId",
+    () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const now = "2026-01-01T00:00:00.000Z";
+        const threadId = ThreadId.make("thread-interrupt-no-turn-id");
+        const turnId = TurnId.make("turn-no-turn-id-1");
+
+        yield* eventStore.append({
+          type: "thread.created",
+          eventId: EventId.make("evt-nti1"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-nti1"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-nti1"),
+          metadata: {},
+          payload: {
+            threadId,
+            projectId: ProjectId.make("project-no-turn-id"),
+            title: "Interrupt without turn id",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-nti2"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-01-01T00:00:01.000Z",
+          commandId: CommandId.make("cmd-nti2"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-nti2"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: turnId,
+              lastError: null,
+              updatedAt: "2026-01-01T00:00:01.000Z",
+            },
+          },
+        });
+
+        // Remote snapshots lag, so Stop can persist an interrupt request
+        // without a turnId — the pinned turn must still be settled (#8618).
+        yield* eventStore.append({
+          type: "thread.turn-interrupt-requested",
+          eventId: EventId.make("evt-nti3"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-01-01T00:00:02.000Z",
+          commandId: CommandId.make("cmd-nti3"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-nti3"),
+          metadata: {},
+          payload: {
+            threadId,
+            createdAt: "2026-01-01T00:00:02.000Z",
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          readonly state: string;
+          readonly completedAt: string | null;
+        }>`
+          SELECT state, completed_at AS "completedAt"
+          FROM projection_turns
+          WHERE thread_id = ${threadId} AND turn_id = ${turnId}
+        `;
+        assert.deepEqual(rows, [{ state: "interrupted", completedAt: "2026-01-01T00:00:02.000Z" }]);
+      }),
+  );
+
   it.effect("settles a superseded running turn when a new turn becomes active", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;

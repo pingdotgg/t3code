@@ -254,6 +254,10 @@
     "./nodeSqliteClient": {
       "types": "./src/nodeSqliteClient.ts",
       "import": "./src/nodeSqliteClient.ts"
+    },
+    "./stripTerminalEscapes": {
+      "types": "./src/stripTerminalEscapes.ts",
+      "import": "./src/stripTerminalEscapes.ts"
     }
   },
   "scripts": {

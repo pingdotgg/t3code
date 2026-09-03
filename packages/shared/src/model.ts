@@ -8,6 +8,8 @@ import {
   type ProviderOptionSelection,
 } from "@t3tools/contracts";
 
+import { sanitizeTerminalValue } from "./stripTerminalEscapes.ts";
+
 const DEFAULT_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");
 
 export interface SelectableModelOption {
@@ -44,7 +46,9 @@ export function getProviderOptionStringSelectionValue(
   id: string,
 ): string | undefined {
   const value = getProviderOptionSelectionValue(selections, id);
-  return typeof value === "string" ? value : undefined;
+  if (typeof value !== "string") return undefined;
+  const sanitized = sanitizeTerminalValue(value);
+  return sanitized.length > 0 ? sanitized : undefined;
 }
 
 export function getProviderOptionBooleanSelectionValue(
@@ -244,7 +248,7 @@ export function normalizeCustomModelSlug(model: string | null | undefined): stri
     return null;
   }
 
-  return model.trim() || null;
+  return sanitizeTerminalValue(model) || null;
 }
 
 export function resolveSelectableModel(
@@ -290,7 +294,8 @@ export function resolveSelectableModel(
 /** Trim a string, returning null for empty/missing values. */
 export function trimOrNull<T extends string>(value: T | null | undefined): T | null {
   if (typeof value !== "string") return null;
-  const trimmed = value.trim() as T;
+  const sanitized = sanitizeTerminalValue(value);
+  const trimmed = sanitized.trim() as T;
   return trimmed || null;
 }
 

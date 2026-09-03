@@ -214,6 +214,18 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const [isStoppingThread, setIsStoppingThread] = useState(false);
+  const selectedThreadSessionStatus = selectedThread?.session?.status ?? null;
+  const selectedThreadIdentity = selectedThread
+    ? scopedThreadKey(selectedThread.environmentId, selectedThread.id)
+    : null;
+  useEffect(() => {
+    // "Stopping" holds until the session leaves running/starting; per-thread
+    // so a switch never leaks the state onto another thread.
+    if (selectedThreadSessionStatus !== "running" && selectedThreadSessionStatus !== "starting") {
+      setIsStoppingThread(false);
+    }
+  }, [selectedThreadIdentity, selectedThreadSessionStatus]);
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
@@ -486,7 +498,11 @@ function ThreadRouteContent(
     ) {
       return;
     }
-    return interruptThreadTurn({
+    // Optimistic stopping feedback for remote links: holds until the session
+    // leaves running/starting (reset effect below); a failed interrupt clears
+    // it immediately so Stop never sticks (#8618).
+    setIsStoppingThread(true);
+    void interruptThreadTurn({
       environmentId: selectedThread.environmentId,
       input: {
         threadId: selectedThread.id,
@@ -494,6 +510,10 @@ function ThreadRouteContent(
           ? { turnId: selectedThread.session.activeTurnId }
           : {}),
       },
+    }).then((result) => {
+      if (result._tag === "Failure") {
+        setIsStoppingThread(false);
+      }
     });
   }, [interruptThreadTurn, selectedThread]);
 
@@ -799,6 +819,7 @@ function ThreadRouteContent(
           onRemoveDraftImage={composer.onRemoveDraftImage}
           serverConfig={serverConfig}
           onStopThread={handleStopThread}
+          isStoppingThread={isStoppingThread}
           onSendMessage={composer.onSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}
           onUpdateThreadModelSelection={composer.onUpdateModelSelection}

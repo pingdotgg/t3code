@@ -11,6 +11,7 @@ import {
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
+import { sanitizeTerminalValue } from "@t3tools/shared/stripTerminalEscapes";
 
 import * as ServerConfig from "../config.ts";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
@@ -230,8 +231,10 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             cwd: input.cwd,
           });
         }
-        const selectedAgent = getModelSelectionStringOptionValue(input.modelSelection, "agent");
-        const selectedVariant = getModelSelectionStringOptionValue(input.modelSelection, "variant");
+        const rawAgent = getModelSelectionStringOptionValue(input.modelSelection, "agent");
+        const rawVariant = getModelSelectionStringOptionValue(input.modelSelection, "variant");
+        const selectedAgent = rawAgent ? sanitizeTerminalValue(rawAgent) : undefined;
+        const selectedVariant = rawVariant ? sanitizeTerminalValue(rawVariant) : undefined;
         const promptContext = {
           operation: input.operation,
           cwd: input.cwd,

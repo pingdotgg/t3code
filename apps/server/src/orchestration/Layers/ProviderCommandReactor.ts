@@ -7,6 +7,7 @@ import {
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
+  type OrchestrationLatestTurn,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
@@ -1296,6 +1297,149 @@ const make = Effect.gen(function* () {
       .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
   });
 
+  /**
+   * Grace period before a repeat Stop escalates to a full session stop. The
+   * provider settles the turn asynchronously after a successful interrupt, so
+   * the first Stop must not tear the session down — but when the same turn is
+   * still pinned running well after a previous Stop, the provider ignored the
+   * abort and the repeat Stop has to release it (#8618, #4713).
+   */
+  const INTERRUPT_ESCALATION_GRACE_MS = 5_000;
+  const recentTurnInterrupts = new Map<string, { turnId: TurnId | null; requestedAtMs: number }>();
+
+  const releaseWedgedSession = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId | null;
+    readonly reason: string;
+    readonly createdAt: string;
+  }) {
+    // Best-effort kill of a possibly-wedged provider session (e.g. a CLI
+    // child that ignored the abort and still holds the turn open).
+    yield* providerService.stopSession({ threadId: input.threadId }).pipe(
+      Effect.catchCause((stopCause) =>
+        Cause.hasInterruptsOnly(stopCause)
+          ? Effect.interrupt
+          : Effect.logWarning(
+              "provider command reactor failed to stop wedged session after interrupt",
+              {
+                threadId: input.threadId,
+                cause: Cause.pretty(stopCause),
+              },
+            ),
+      ),
+    );
+    const latestThread = yield* resolveThread(input.threadId);
+    const latestSession = latestThread?.session;
+    if (!latestSession || latestSession.status !== "running") {
+      return;
+    }
+    if (
+      input.turnId !== null &&
+      latestSession.activeTurnId !== null &&
+      latestSession.activeTurnId !== input.turnId
+    ) {
+      // A new turn started while stopping; leave it alone.
+      return;
+    }
+    yield* setThreadSession({
+      threadId: input.threadId,
+      session: {
+        ...latestSession,
+        status: "stopped",
+        activeTurnId: null,
+        lastError: input.reason,
+        updatedAt: input.createdAt,
+      },
+      createdAt: input.createdAt,
+    });
+    yield* appendProviderFailureActivity({
+      threadId: input.threadId,
+      kind: "provider.turn.interrupt.failed",
+      summary: "Provider turn interrupt timed out",
+      detail: input.reason,
+      turnId: input.turnId,
+      createdAt: input.createdAt,
+    });
+  });
+
+  /**
+   * Releases sessions a successful interrupt left behind. Returns true when
+   * the session was released and the normal interrupt path must be skipped:
+   *
+   * - the pinned turn already reached a terminal state but the session still
+   *   claims running (the #4713 zombie: every further Stop is accepted but
+   *   has nothing to act on), or
+   * - the same turn is still pinned running well after a previous Stop, so
+   *   the provider ignored the abort and this repeat Stop escalates.
+   *
+   * Otherwise records this request so a later repeat Stop can escalate, and
+   * returns false.
+   */
+  const maybeReleaseWedgedSession = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly session: OrchestrationSession;
+    readonly latestTurn: OrchestrationLatestTurn | null;
+    readonly createdAt: string;
+  }) {
+    if (input.session.status !== "running") {
+      return false;
+    }
+    const activeTurnId = input.session.activeTurnId;
+    const latestTurn = input.latestTurn;
+    // The pinned turn already reached a terminal state but the session still
+    // claims running — release it now (#4713, #8802). The completedAt guard
+    // matters: this very event's own projection also settles the turn with
+    // completedAt === createdAt, and that healthy in-flight interrupt must
+    // proceed to the provider instead of being mistaken for a zombie.
+    if (
+      latestTurn !== null &&
+      (activeTurnId === null || latestTurn.turnId === activeTurnId) &&
+      latestTurn.state !== "running" &&
+      latestTurn.completedAt !== null &&
+      latestTurn.completedAt < input.createdAt
+    ) {
+      recentTurnInterrupts.delete(input.threadId);
+      yield* releaseWedgedSession({
+        threadId: input.threadId,
+        turnId: activeTurnId,
+        reason:
+          `Turn ${latestTurn.turnId} already ${latestTurn.state} but the session stayed ` +
+          `running; Stop released it.`,
+        createdAt: input.createdAt,
+      });
+      return true;
+    }
+    const requestedAtMs = Date.parse(input.createdAt);
+    const previous = recentTurnInterrupts.get(input.threadId);
+    // The same session is still pinned running well after a previous Stop
+    // (or has no pinned turn at all) — the provider ignored the abort, so
+    // this repeat Stop escalates to a full session stop (#8618).
+    if (
+      previous !== undefined &&
+      previous.turnId === activeTurnId &&
+      Number.isFinite(requestedAtMs) &&
+      requestedAtMs - previous.requestedAtMs >= INTERRUPT_ESCALATION_GRACE_MS
+    ) {
+      recentTurnInterrupts.delete(input.threadId);
+      yield* releaseWedgedSession({
+        threadId: input.threadId,
+        turnId: activeTurnId,
+        reason:
+          `Stop did not settle the session within ` +
+          `${INTERRUPT_ESCALATION_GRACE_MS / 1000}s; the session was stopped.`,
+        createdAt: input.createdAt,
+      });
+      return true;
+    }
+    // Remember this request so a later repeat Stop can escalate.
+    if (Number.isFinite(requestedAtMs)) {
+      recentTurnInterrupts.set(input.threadId, { turnId: activeTurnId, requestedAtMs });
+    } else {
+      recentTurnInterrupts.delete(input.threadId);
+    }
+    return false;
+  });
+
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-interrupt-requested" }>,
   ) {
@@ -1313,6 +1457,21 @@ const make = Effect.gen(function* () {
         turnId: event.payload.turnId ?? null,
         createdAt: event.payload.createdAt,
       });
+    }
+
+    // A successful interrupt settles the turn asynchronously, but a wedged
+    // provider can leave the session pinned at running forever while every
+    // further Stop is accepted with no effect (#4713, #8802, #8618). Release
+    // such sessions here instead of waiting for a session-set that never
+    // comes.
+    const released = yield* maybeReleaseWedgedSession({
+      threadId: event.payload.threadId,
+      session,
+      latestTurn: thread.latestTurn,
+      createdAt: event.payload.createdAt,
+    });
+    if (released) {
+      return;
     }
 
     const recoverInterruptFailure = (cause: Cause.Cause<unknown>) => {
@@ -1539,6 +1698,7 @@ const make = Effect.gen(function* () {
         return;
       }
       case "thread.turn-start-requested":
+        recentTurnInterrupts.delete(event.payload.threadId);
         yield* processTurnStartRequested(event);
         return;
       case "thread.turn-interrupt-requested":
@@ -1551,9 +1711,11 @@ const make = Effect.gen(function* () {
         yield* processUserInputResponseRequested(event);
         return;
       case "thread.session-stop-requested":
+        recentTurnInterrupts.delete(event.payload.threadId);
         yield* processSessionStopRequested(event);
         return;
       case "thread.settled": {
+        recentTurnInterrupts.delete(event.payload.threadId);
         const thread = yield* projectionSnapshotQuery.getThreadShellById(event.payload.threadId);
         if (
           Option.isNone(thread) ||

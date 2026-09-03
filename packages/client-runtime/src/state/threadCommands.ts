@@ -178,7 +178,14 @@ export function createThreadEnvironmentAtoms<R, E>(
       label: "environment-data:commands:thread:interrupt-turn",
       execute: (input: InterruptThreadTurnInput) => interruptThreadTurn(input),
       scheduler,
-      concurrency,
+      // Stop is pressed repeatedly while a turn winds down (especially on
+      // high-latency remote links). singleFlight shares the in-flight request
+      // per thread instead of serializing every click behind it (#8618).
+      concurrency: {
+        mode: "singleFlight" as const,
+        key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
+          JSON.stringify([environmentId, input.threadId]),
+      },
     }),
     respondToApproval: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:respond-to-approval",

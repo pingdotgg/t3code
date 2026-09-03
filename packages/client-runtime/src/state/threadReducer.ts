@@ -278,11 +278,15 @@ export function applyThreadDetailEvent(
       };
 
     case "thread.turn-interrupt-requested": {
-      if (event.payload.turnId === undefined) {
+      // Remote snapshots lag, so Stop often arrives without a turnId (see
+      // buildThreadTurnInterruptInput). Fall back to the session's pinned
+      // turn instead of ignoring the interrupt (#8618).
+      const effectiveTurnId = event.payload.turnId ?? thread.session?.activeTurnId ?? null;
+      if (effectiveTurnId === null) {
         return { kind: "unchanged" };
       }
       const latestTurn = thread.latestTurn;
-      if (latestTurn === null || latestTurn.turnId !== event.payload.turnId) {
+      if (latestTurn === null || latestTurn.turnId !== effectiveTurnId) {
         return { kind: "unchanged" };
       }
       return {

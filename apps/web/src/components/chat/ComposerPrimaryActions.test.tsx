@@ -44,12 +44,17 @@ function renderPendingActions(isRunning: boolean) {
   );
 }
 
-function renderRunningActions(showSendWhileRunning: boolean, hasSendableContent: boolean) {
+function renderRunningActions(
+  showSendWhileRunning: boolean,
+  hasSendableContent: boolean,
+  isStopping = false,
+) {
   return renderToStaticMarkup(
     createElement(ComposerPrimaryActions, {
       compact: true,
       pendingAction: null,
       isRunning: true,
+      isStopping,
       showPlanFollowUpPrompt: false,
       promptHasText: hasSendableContent,
       isSendBusy: false,
@@ -235,5 +240,13 @@ describe("ComposerPrimaryActions", () => {
 
     expect(markup).toContain('aria-label="Stop generation"');
     expect(markup).not.toContain('aria-label="Send message"');
+  });
+
+  it("disables stop and announces Stopping generation while the interrupt settles", () => {
+    const markup = renderRunningActions(false, false, true);
+
+    expect(markup).toContain('aria-label="Stopping generation"');
+    expect(markup).toContain("disabled");
+    expect(markup).not.toContain('aria-label="Stop generation"');
   });
 });
