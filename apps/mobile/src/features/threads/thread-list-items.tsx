@@ -276,9 +276,6 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
 }) {
   const compact = props.variant === "compact";
-  const theme = useUniwindTheme();
-  const separatorColor = theme["--color-separator"];
-  const pressedBackgroundColor = theme["--color-subtle"];
 
   const { pendingTask, onSelectPendingTask, onDeletePendingTask } = props;
   const timestamp = relativeTime(pendingTask.message.createdAt);
@@ -345,12 +342,8 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
         }}
       >
         <View
-          style={{
-            gap: 3,
-            borderBottomWidth: props.isLast ? 0 : 1,
-            borderBottomColor: separatorColor,
-            paddingBottom: 10,
-          }}
+          className={props.isLast ? undefined : "border-b border-separator"}
+          style={{ gap: 3, paddingBottom: 10 }}
         >
           <View className="flex-row items-center justify-between gap-2">
             <Text className="flex-1 text-lg font-t3-bold text-foreground" numberOfLines={1}>
@@ -376,16 +369,16 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
       accessibilityHint="Opens the queued task for editing"
       accessibilityLabel={pendingTask.title}
       accessibilityRole="button"
+      className="active:bg-subtle"
       onPress={() => onSelectPendingTask(pendingTask)}
-      style={({ pressed }) => ({
-        backgroundColor: pressed ? pressedBackgroundColor : "transparent",
+      style={{
         borderRadius: SIDEBAR_ROW_RADIUS,
         cursor: "pointer",
         minHeight: 64,
         justifyContent: "center",
         paddingHorizontal: 12,
         paddingVertical: 10,
-      })}
+      }}
     >
       <View className="gap-[3px]">
         <View className="flex-row items-center justify-between gap-2">
@@ -455,7 +448,6 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const [hovered, setHovered] = useRecyclingState(false);
 
   const theme = useUniwindTheme();
-  const separatorColor = theme["--color-separator"];
   const screenColor = theme["--color-screen"];
   const drawerColor = theme["--color-drawer"];
   const pressedBackgroundColor = theme["--color-subtle"];
@@ -604,12 +596,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
           }}
         >
           <View
-            style={{
-              gap: 3,
-              borderBottomWidth: props.isLast ? 0 : 1,
-              borderBottomColor: separatorColor,
-              paddingBottom: 10,
-            }}
+            className={props.isLast ? undefined : "border-b border-separator"}
+            style={{ gap: 3, paddingBottom: 10 }}
           >
             <View className="flex-row items-center justify-between gap-2">
               <Text className="flex-1 text-lg font-t3-bold text-foreground" numberOfLines={1}>
