@@ -2,7 +2,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult, AtomRegistry } from "effect/unstable/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
-import { threadCommandConcurrency, threadTurnCommandConcurrency } from "./threadCommands.ts";
+import { threadCommandConcurrency, threadPinCommandConcurrency } from "./threadCommands.ts";
 import { createAtomCommandScheduler } from "./runtime.ts";
 
 const target = {
@@ -29,14 +29,14 @@ describe("thread command concurrency", () => {
 
     const bootstrap = scheduler.schedule(
       registry,
-      threadTurnCommandConcurrency,
+      threadCommandConcurrency,
       bootstrapTurnTarget,
       async () => {
         await worktreeReady;
         return AsyncResult.success(undefined);
       },
     );
-    const pin = scheduler.schedule(registry, threadCommandConcurrency, target, async () => {
+    const pin = scheduler.schedule(registry, threadPinCommandConcurrency, target, async () => {
       pinDispatched = true;
       return AsyncResult.success(undefined);
     });
@@ -48,8 +48,34 @@ describe("thread command concurrency", () => {
     registry.dispose();
   });
 
-  it("keeps ordinary turns and pin operations in the same serial lane", () => {
-    expect(threadTurnCommandConcurrency.mode).toBe("serial");
-    expect(threadTurnCommandConcurrency.key(target)).toBe(threadCommandConcurrency.key(target));
+  it("keeps destructive commands serialized behind worktree bootstrap", async () => {
+    const scheduler = createAtomCommandScheduler();
+    const registry = AtomRegistry.make();
+    let finishWorktree: (() => void) | undefined;
+    const worktreeReady = new Promise<void>((resolve) => {
+      finishWorktree = resolve;
+    });
+    let deleteDispatched = false;
+
+    const bootstrap = scheduler.schedule(registry, threadCommandConcurrency, target, async () => {
+      await worktreeReady;
+      return AsyncResult.success(undefined);
+    });
+    const deleteThread = scheduler.schedule(
+      registry,
+      threadCommandConcurrency,
+      target,
+      async () => {
+        deleteDispatched = true;
+        return AsyncResult.success(undefined);
+      },
+    );
+
+    await Promise.resolve();
+    expect(deleteDispatched).toBe(false);
+    finishWorktree?.();
+    await Promise.all([bootstrap, deleteThread]);
+    expect(deleteDispatched).toBe(true);
+    registry.dispose();
   });
 });

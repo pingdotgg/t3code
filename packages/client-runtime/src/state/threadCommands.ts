@@ -62,20 +62,10 @@ export const threadCommandConcurrency = {
     JSON.stringify([environmentId, input.threadId]),
 };
 
-export const threadTurnCommandConcurrency = {
+export const threadPinCommandConcurrency = {
   mode: "serial" as const,
-  key: ({
-    environmentId,
-    input,
-  }: ThreadCommandTarget & {
-    readonly input: {
-      readonly threadId: string;
-      readonly bootstrap?: { readonly prepareWorktree?: unknown } | undefined;
-    };
-  }) =>
-    input.bootstrap?.prepareWorktree === undefined
-      ? threadCommandConcurrency.key({ environmentId, input })
-      : JSON.stringify([environmentId, input.threadId, "worktree-bootstrap"]),
+  key: ({ environmentId, input }: ThreadCommandTarget) =>
+    JSON.stringify([environmentId, input.threadId, "pin"]),
 };
 
 export type {
@@ -159,19 +149,19 @@ export function createThreadEnvironmentAtoms<R, E>(
       label: "environment-data:commands:thread:pin",
       execute: (input: PinThreadInput) => pinThread(input),
       scheduler,
-      concurrency,
+      concurrency: threadPinCommandConcurrency,
     }),
     unpin: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unpin",
       execute: (input: UnpinThreadInput) => unpinThread(input),
       scheduler,
-      concurrency,
+      concurrency: threadPinCommandConcurrency,
     }),
     reorderPin: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:reorder-pin",
       execute: (input: ReorderPinnedThreadInput) => reorderPinnedThread(input),
       scheduler,
-      concurrency,
+      concurrency: threadPinCommandConcurrency,
     }),
     updateMetadata: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:update-metadata",
@@ -195,7 +185,7 @@ export function createThreadEnvironmentAtoms<R, E>(
       label: "environment-data:commands:thread:start-turn",
       execute: (input: StartThreadTurnInput) => startThreadTurn(input),
       scheduler,
-      concurrency: threadTurnCommandConcurrency,
+      concurrency,
     }),
     interruptTurn: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:interrupt-turn",
