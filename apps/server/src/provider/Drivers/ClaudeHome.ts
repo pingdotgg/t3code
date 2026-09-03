@@ -66,5 +66,5 @@ export const claudeSignedOutMessage = (input: {
     input.configDir !== undefined
       ? ` from ${quotePath(input.cwd)}, with CLAUDE_CONFIG_DIR set to ${quotePath(input.configDir)}`
       : "";
-  return `Claude could not authenticate. For subscription login, run \`claude auth login\` on this environment's machine${configuration}, then start a new thread. For API-key authentication, check this instance's configured credentials.`;
+  return `Claude could not authenticate. For subscription login, run \`claude auth login\` on this environment's machine${configuration}, then send the message again. For API-key authentication, check this instance's configured credentials.`;
 };
