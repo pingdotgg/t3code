@@ -19,6 +19,7 @@ import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
+import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
@@ -37,18 +38,6 @@ interface FileBrowserPanelProps {
   onRefreshSelectedFile?: () => void;
   workspaceMutationId: string | null;
 }
-
-const TREE_UNSAFE_CSS = `
-  :host {
-    --trees-bg-override: transparent;
-    --trees-selected-bg-override: color-mix(in srgb, currentColor 12%, transparent);
-    --trees-hover-bg-override: color-mix(in srgb, currentColor 7%, transparent);
-    --trees-border-color-override: color-mix(in srgb, currentColor 14%, transparent);
-    --trees-font-family-override: var(--font-sans);
-    --trees-font-size-override: 12px;
-  }
-  button[data-type='item'] { border-radius: 5px; }
-`;
 
 function treePath(entry: ProjectEntry): string {
   return entry.kind === "directory" ? `${entry.path}/` : entry.path;
@@ -255,7 +244,7 @@ export default function FileBrowserPanel({
     },
     paths: [],
     search: false,
-    unsafeCSS: TREE_UNSAFE_CSS,
+    unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
   });
   const search = useFileTreeSearch(model);
   const allDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
@@ -429,10 +418,7 @@ export default function FileBrowserPanel({
           model={model}
           aria-label={`${projectName} files`}
           className="min-h-0 flex-1 overflow-hidden"
-          style={{
-            colorScheme: resolvedTheme,
-            ["--trees-fg-override" as string]: "var(--contrast-foreground)",
-          }}
+          style={pierreTreeStyle(resolvedTheme)}
         />
       )}
     </div>
