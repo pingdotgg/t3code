@@ -325,7 +325,7 @@ describe("environment RPC", () => {
         if (observedFailures.length >= 1) break;
         yield* Effect.yieldNow;
       }
-      yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
 
       expect(subscriptions).toEqual(["first"]);
       expect(observedFailures).toEqual([domainError]);
@@ -373,7 +373,7 @@ describe("environment RPC", () => {
         if ((yield* Ref.get(expectedFailureCount)) >= 1) break;
         yield* Effect.yieldNow;
       }
-      yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
 
       expect(yield* Ref.get(subscriptionCount)).toBe(1);
       expect(yield* Ref.get(expectedFailureCount)).toBe(1);
