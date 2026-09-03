@@ -201,8 +201,7 @@ export function npmGlobalPrefixFromCommandPath(
   if (packageIndex < 0 || normalized.slice(0, packageIndex).includes("/node_modules/")) {
     return null;
   }
-  const prefix = slashPath.slice(0, packageIndex);
-  return prefix.length > 0 ? prefix : null;
+  return packageIndex === 0 ? "/" : slashPath.slice(0, packageIndex);
 }
 
 // `<prefix>/Cellar/<name>/<version>/…` or `<prefix>/Caskroom/<name>/<version>/…`.

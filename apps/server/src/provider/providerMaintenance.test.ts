@@ -286,6 +286,12 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         "@openai/codex",
       ),
     ).toBeNull();
+    expect(
+      npmGlobalPrefixFromCommandPath(
+        "/lib/node_modules/@openai/codex/bin/codex.js",
+        "@openai/codex",
+      ),
+    ).toBe("/");
     // Neither is a project-local dependency.
     expect(
       npmGlobalPrefixFromCommandPath(
