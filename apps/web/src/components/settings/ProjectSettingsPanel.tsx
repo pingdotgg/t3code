@@ -873,7 +873,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                   Choose icon
                 </Button>
                 <Button
-                  size="xs"
+                  size="sm"
                   variant="outline"
                   type="button"
                   aria-label="Choose a project icon file"
