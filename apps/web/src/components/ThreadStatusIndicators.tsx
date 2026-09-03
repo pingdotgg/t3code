@@ -12,7 +12,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { useProject } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
-import { linkedPullRequestDetailAtom } from "../state/pullRequests";
+import { linkedPullRequestDetailAtom, useSharedPullRequestSummary } from "../state/pullRequests";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { vcsEnvironment } from "../state/vcs";
 import { useUiStateStore } from "../uiStateStore";
@@ -39,32 +39,6 @@ export interface TerminalStatusIndicator {
 
 export type ThreadPr = VcsStatusResult["pr"];
 
-export type ThreadPullRequestRefreshSource = "linked-detail" | "vcs";
-
-/** Refresh only when the panel has newer state for this thread's own pull request. */
-export function threadPullRequestRefreshSource(input: {
-  readonly panel: {
-    readonly repository: string;
-    readonly number: number;
-    readonly state: NonNullable<ThreadPr>["state"];
-  };
-  readonly thread: {
-    readonly repository: string | null;
-    readonly number: number | null;
-    readonly state: NonNullable<ThreadPr>["state"] | null;
-    readonly linked: boolean;
-  };
-}): ThreadPullRequestRefreshSource | null {
-  if (
-    input.thread.repository?.toLowerCase() !== input.panel.repository.toLowerCase() ||
-    input.thread.number !== input.panel.number ||
-    input.thread.state === input.panel.state
-  ) {
-    return null;
-  }
-  return input.thread.linked ? "linked-detail" : "vcs";
-}
-
 export interface LinkedThreadPullRequestStatus {
   readonly pr: NonNullable<ThreadPr>;
   readonly sourceControlProvider: NonNullable<VcsStatusResult["sourceControlProvider"]>;
@@ -74,7 +48,7 @@ export function useLinkedThreadPullRequest(
   environmentId: EnvironmentId | null,
   linkedPullRequest: ThreadLinkedPullRequest | null | undefined,
 ): LinkedThreadPullRequestStatus | null {
-  const detail = useEnvironmentQuery(
+  const queried = useEnvironmentQuery(
     environmentId === null || linkedPullRequest == null
       ? null
       : linkedPullRequestDetailAtom({
@@ -86,6 +60,7 @@ export function useLinkedThreadPullRequest(
           },
         }),
   ).data;
+  const detail = useSharedPullRequestSummary(environmentId, linkedPullRequest ?? null, queried);
 
   return useMemo(
     () =>
