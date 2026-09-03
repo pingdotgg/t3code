@@ -6,7 +6,10 @@ import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 
 import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
+import { usePrimaryEnvironmentId } from "../../state/environments";
+import { serverEnvironment } from "../../state/server";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   enumerateDays,
   enumerateHourStarts,
@@ -65,6 +68,10 @@ export function UsagePage() {
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
   const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
 
   // Hold the content until every environment is terminal. Rendering merged
   // totals while devices are still answering makes every number on the page
@@ -107,6 +114,15 @@ export function UsagePage() {
     });
   };
   const refreshWindow = () => {
+    // On Limits the button re-probes every provider (and usage-limit source)
+    // on the primary environment; the live snapshots then flow in over the
+    // config stream, so nothing else needs to move.
+    if (showingLimits) {
+      if (primaryEnvironmentId) {
+        void refreshProviders({ environmentId: primaryEnvironmentId, input: {} });
+      }
+      return;
+    }
     const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
       nextWindow.sinceDay === window.sinceDay &&
@@ -154,32 +170,32 @@ export function UsagePage() {
             </Toggle>
           ))}
         </ToggleGroup>
-        {/* Kept mounted while hidden so the metric toggle stays put when Limits
-            drops the period controls; unmounting them shifted it ~300px. */}
-        <div
-          className={cn("flex items-center gap-2", showingLimits && "invisible")}
-          aria-hidden={showingLimits || undefined}
-          inert={showingLimits || undefined}
+        {/* The period does not apply to Limits, so it stays in place but
+            disabled; unmounting it shifted the metric toggle ~300px. */}
+        <ToggleGroup
+          aria-label="Usage period"
+          variant="segmented"
+          value={[String(windowDays)]}
+          disabled={showingLimits}
+          onValueChange={(next) => {
+            const value = next[0];
+            if (value) selectWindow(Number(value));
+          }}
         >
-          <ToggleGroup
-            aria-label="Usage period"
-            variant="segmented"
-            value={[String(windowDays)]}
-            onValueChange={(next) => {
-              const value = next[0];
-              if (value) selectWindow(Number(value));
-            }}
-          >
-            {WINDOW_OPTIONS.map((option) => (
-              <Toggle key={option.days} value={String(option.days)}>
-                {option.label}
-              </Toggle>
-            ))}
-          </ToggleGroup>
-          <Button onClick={refreshWindow} aria-label="Refresh usage" size="icon-sm" variant="ghost">
-            <RefreshCwIcon className="size-3.5" />
-          </Button>
-        </div>
+          {WINDOW_OPTIONS.map((option) => (
+            <Toggle key={option.days} value={String(option.days)}>
+              {option.label}
+            </Toggle>
+          ))}
+        </ToggleGroup>
+        <Button
+          onClick={refreshWindow}
+          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          size="icon-sm"
+          variant="ghost"
+        >
+          <RefreshCwIcon className="size-3.5" />
+        </Button>
       </div>
       <div className="ms-auto flex min-w-0 items-center justify-end gap-1 lg:hidden">
         <Select
@@ -206,34 +222,37 @@ export function UsagePage() {
             ))}
           </SelectPopup>
         </Select>
-        <div
-          className={cn("flex items-center gap-1", showingLimits && "invisible")}
-          aria-hidden={showingLimits || undefined}
-          inert={showingLimits || undefined}
+        <Select
+          value={String(windowDays)}
+          disabled={showingLimits}
+          onValueChange={(value) => selectWindow(Number(value))}
         >
-          <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
-            <SelectTrigger
-              aria-label="Usage period"
-              size="compact"
-              variant="ghost"
-              className="w-auto min-w-0"
-            >
-              <SelectValue>
-                {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              {WINDOW_OPTIONS.map((option) => (
-                <SelectItem key={option.days} value={String(option.days)}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-          <Button onClick={refreshWindow} aria-label="Refresh usage" size="icon-sm" variant="ghost">
-            <RefreshCwIcon className="size-3.5" />
-          </Button>
-        </div>
+          <SelectTrigger
+            aria-label="Usage period"
+            size="compact"
+            variant="ghost"
+            className="w-auto min-w-0"
+          >
+            <SelectValue>
+              {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {WINDOW_OPTIONS.map((option) => (
+              <SelectItem key={option.days} value={String(option.days)}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+        <Button
+          onClick={refreshWindow}
+          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          size="icon-sm"
+          variant="ghost"
+        >
+          <RefreshCwIcon className="size-3.5" />
+        </Button>
       </div>
     </div>
   );

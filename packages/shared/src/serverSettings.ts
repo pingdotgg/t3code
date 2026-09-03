@@ -188,6 +188,11 @@ export function applyServerSettingsPatch(
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
       : {}),
+    // Whole-map replacement like `providerInstances`: a deep merge could
+    // never remove a source.
+    ...(patch.usageLimitSources !== undefined
+      ? { usageLimitSources: patch.usageLimitSources }
+      : {}),
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }
       : {}),

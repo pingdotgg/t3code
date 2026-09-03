@@ -2,6 +2,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
+  UsageLimitSourceId,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -296,6 +297,25 @@ describe("serverSettings helpers", () => {
       enabled: true,
       config: { homePath: "~/.codex" },
     });
+  });
+
+  it("replaces usageLimitSources maps so a removed source is gone", () => {
+    const hubId = UsageLimitSourceId.make("cliproxy-hub");
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      usageLimitSources: {
+        [hubId]: {
+          kind: "cliproxy" as const,
+          url: "http://127.0.0.1:8318",
+          managementKey: "secret",
+          enabled: true,
+        },
+      },
+    };
+
+    expect(applyServerSettingsPatch(current, { usageLimitSources: {} }).usageLimitSources).toEqual(
+      {},
+    );
   });
 
   it("stores background activity profiles as a versioned object and syncs legacy aliases", () => {

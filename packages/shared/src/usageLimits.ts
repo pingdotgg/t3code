@@ -11,6 +11,8 @@ import {
   type ServerProvider,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
+  type UsageLimitSourceSnapshot,
+  type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 
 const MINUTE = 60_000;
@@ -62,6 +64,46 @@ export function collectLimitsGroups(
     groups.push({ environmentId, environmentLabel: presentation.entry.target.label, providers });
   }
   return groups.length > 1 ? groups : groups.map((group) => ({ ...group, environmentLabel: null }));
+}
+
+/**
+ * Every usage-limit source across connected environments, keyed so two
+ * environments pointing at the same hub still get their own rows. The label
+ * carries the environment only when more than one environment has sources.
+ */
+export function collectLimitSources(
+  presentations: ReadonlyMap<
+    EnvironmentId,
+    {
+      readonly entry: { readonly target: { readonly label: string } };
+      readonly serverConfig: {
+        readonly usageLimitSources?: UsageLimitSourceSnapshots | undefined;
+      } | null;
+    }
+  >,
+): ReadonlyArray<UsageLimitSourceSnapshot & { readonly key: string }> {
+  const perEnvironment: Array<{
+    readonly environmentId: EnvironmentId;
+    readonly environmentLabel: string;
+    readonly sources: UsageLimitSourceSnapshots;
+  }> = [];
+  for (const [environmentId, presentation] of presentations) {
+    const sources = presentation.serverConfig?.usageLimitSources ?? [];
+    if (sources.length === 0) continue;
+    perEnvironment.push({
+      environmentId,
+      environmentLabel: presentation.entry.target.label,
+      sources,
+    });
+  }
+  const labelEnvironment = perEnvironment.length > 1;
+  return perEnvironment.flatMap(({ environmentId, environmentLabel, sources }) =>
+    sources.map((source) => ({
+      ...source,
+      key: `${environmentId}:${source.id}`,
+      label: labelEnvironment ? `${environmentLabel} · ${source.label}` : source.label,
+    })),
+  );
 }
 
 /** The instance's configured name, else the driver's, else its raw kind. */

@@ -1,6 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { ServerProvider, ServerProviderUsageWindow } from "@t3tools/contracts";
+import type {
+  ServerProvider,
+  ServerProviderUsageWindow,
+  UsageLimitSourceAccount,
+} from "@t3tools/contracts";
 import {
+  collectLimitSources,
   collectLimitsGroups,
   elapsedShare,
   formatResetsIn,
@@ -8,6 +13,7 @@ import {
   paceOf,
   providerLimitsLabel,
 } from "@t3tools/shared/usageLimits";
+import { useState } from "react";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
@@ -59,22 +65,22 @@ function WindowBar(props: { readonly window: ServerProviderUsageWindow; readonly
   );
 }
 
-function ProviderLimits(props: {
-  readonly provider: ServerProvider;
+function AccountLimits(props: {
+  readonly label: string;
+  readonly detail: string | undefined;
+  readonly limits: ServerProvider["usageLimits"];
   readonly now: number;
   readonly first: boolean;
 }) {
-  const { provider, now } = props;
-  const limits = provider.usageLimits;
+  const { limits, now } = props;
   if (!limits) return null;
   const notice = limitsNotice(limits);
-  const label = providerLimitsLabel(provider, () => undefined);
   return (
     <View className={props.first ? "gap-3 p-4" : "gap-3 border-t border-border-subtle p-4"}>
       <View className="flex-row items-baseline gap-2">
-        <Text className="text-lg text-foreground">{label}</Text>
-        {provider.auth.label ? (
-          <Text className="text-sm text-foreground-muted">{provider.auth.label}</Text>
+        <Text className="text-lg text-foreground">{props.label}</Text>
+        {props.detail ? (
+          <Text className="text-sm text-foreground-muted">{props.detail}</Text>
         ) : null}
       </View>
       {notice ? (
@@ -86,6 +92,43 @@ function ProviderLimits(props: {
   );
 }
 
+function ProviderLimits(props: {
+  readonly provider: ServerProvider;
+  readonly now: number;
+  readonly first: boolean;
+}) {
+  const { provider } = props;
+  return (
+    <AccountLimits
+      label={providerLimitsLabel(provider, () => undefined)}
+      detail={provider.auth.label}
+      limits={provider.usageLimits}
+      now={props.now}
+      first={props.first}
+    />
+  );
+}
+
+const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
+
+/** Emails stay off the phone screen; the plan and driver identify the row. */
+function SourceAccountLimits(props: {
+  readonly account: UsageLimitSourceAccount;
+  readonly now: number;
+  readonly first: boolean;
+}) {
+  const { account } = props;
+  return (
+    <AccountLimits
+      label={DRIVER_LABEL[account.driver] ?? String(account.driver)}
+      detail={account.plan}
+      limits={account.usageLimits}
+      now={props.now}
+      first={props.first}
+    />
+  );
+}
+
 /**
  * Subscription quota windows from every connected environment's providers,
  * read from the config each environment already streams. Countdowns anchor to
@@ -94,11 +137,31 @@ function ProviderLimits(props: {
 export function UsageLimitsSection() {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const groups = collectLimitsGroups(presentations);
-  const now = Date.now();
-  if (groups.length === 0) return null;
+  const sources = collectLimitSources(presentations);
+  // Anchored once per mount on purpose: countdowns must not tick.
+  const [now] = useState(() => Date.now());
+  if (groups.length === 0 && sources.length === 0) return null;
 
   return (
     <>
+      {sources.map((source) => (
+        <SettingsSection key={source.key} title={`${source.label} · CLIProxyAPI`} card>
+          {source.error ? (
+            <Text className="p-4 text-sm text-foreground-muted">{source.error}</Text>
+          ) : source.accounts.length === 0 ? (
+            <Text className="p-4 text-sm text-foreground-muted">No accounts reported.</Text>
+          ) : (
+            source.accounts.map((account, index) => (
+              <SourceAccountLimits
+                key={account.id}
+                account={account}
+                now={now}
+                first={index === 0}
+              />
+            ))
+          )}
+        </SettingsSection>
+      ))}
       {groups.map((group) => (
         <SettingsSection
           key={group.environmentId}

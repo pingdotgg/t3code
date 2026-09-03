@@ -2,6 +2,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  collectLimitSources,
   collectLimitsGroups,
   elapsedShare,
   formatResetsIn,
@@ -134,6 +135,47 @@ describe("collectLimitsGroups", () => {
     expect(collectLimitsGroups(two as never).map((group) => group.environmentLabel)).toEqual([
       "Laptop",
       "Desktop",
+    ]);
+  });
+});
+
+describe("collectLimitSources", () => {
+  const source = {
+    id: "cliproxy-hub" as never,
+    kind: "cliproxy" as const,
+    label: "hub",
+    checkedAt: "2026-09-03T11:00:00.000Z",
+    accounts: [],
+  };
+
+  it("keys sources per environment and names the environment only when several have some", () => {
+    const one = new Map([
+      [
+        "env-a",
+        { entry: { target: { label: "Laptop" } }, serverConfig: { usageLimitSources: [source] } },
+      ],
+      [
+        "env-b",
+        { entry: { target: { label: "Desktop" } }, serverConfig: { usageLimitSources: [] } },
+      ],
+    ] as const);
+    expect(collectLimitSources(one as never).map((entry) => [entry.key, entry.label])).toEqual([
+      ["env-a:cliproxy-hub", "hub"],
+    ]);
+
+    const two = new Map([
+      [
+        "env-a",
+        { entry: { target: { label: "Laptop" } }, serverConfig: { usageLimitSources: [source] } },
+      ],
+      [
+        "env-b",
+        { entry: { target: { label: "Desktop" } }, serverConfig: { usageLimitSources: [source] } },
+      ],
+    ] as const);
+    expect(collectLimitSources(two as never).map((entry) => entry.label)).toEqual([
+      "Laptop · hub",
+      "Desktop · hub",
     ]);
   });
 });

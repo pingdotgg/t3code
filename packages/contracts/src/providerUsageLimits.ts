@@ -6,6 +6,8 @@ import {
   NonNegativeInt,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { ProviderDriverKind } from "./providerInstance.ts";
+import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 
 /**
  * One rolling quota window a subscription provider reports for the signed-in
@@ -54,3 +56,37 @@ export const ProviderUsageLimitsUpdate = Schema.Struct({
   windows: Schema.Array(ServerProviderUsageWindow),
 });
 export type ProviderUsageLimitsUpdate = typeof ProviderUsageLimitsUpdate.Type;
+
+/**
+ * One account a usage-limit source reports on. `driver` is the provider the
+ * account belongs to, for the icon and colour clients already have; the
+ * account itself is not something this environment can run turns on.
+ */
+export const UsageLimitSourceAccount = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  driver: ProviderDriverKind,
+  /** The signed-in address, when the source names one; clients blur it like provider auth. */
+  email: Schema.optional(TrimmedNonEmptyString),
+  /** Plan as the matching provider would label it (`ChatGPT Pro 20x Subscription`). */
+  plan: Schema.optional(TrimmedNonEmptyString),
+  usageLimits: ServerProviderUsageLimits,
+});
+export type UsageLimitSourceAccount = typeof UsageLimitSourceAccount.Type;
+
+/**
+ * The published state of one configured `usageLimitSources` entry. A source
+ * that could not be read keeps `error` beside an empty account list rather
+ * than vanishing, so the user can see it is configured but failing.
+ */
+export const UsageLimitSourceSnapshot = Schema.Struct({
+  id: UsageLimitSourceId,
+  kind: Schema.Literal("cliproxy"),
+  label: TrimmedNonEmptyString,
+  checkedAt: IsoDateTime,
+  accounts: ForwardCompatibleArray(UsageLimitSourceAccount),
+  error: Schema.optional(TrimmedNonEmptyString),
+});
+export type UsageLimitSourceSnapshot = typeof UsageLimitSourceSnapshot.Type;
+
+export const UsageLimitSourceSnapshots = ForwardCompatibleArray(UsageLimitSourceSnapshot);
+export type UsageLimitSourceSnapshots = typeof UsageLimitSourceSnapshots.Type;

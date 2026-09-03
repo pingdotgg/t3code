@@ -1,10 +1,14 @@
 import type {
   ServerProvider,
   ServerProviderUsageWindow,
+  UsageLimitSourceAccount,
+  UsageLimitSourceId,
+  UsageLimitSourceSnapshot,
   UsageProviderKind,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  collectLimitSources,
   collectLimitsGroups,
   elapsedShare,
   formatResetsIn,
@@ -13,15 +17,32 @@ import {
   paceOf,
   providerLimitsLabel,
 } from "@t3tools/shared/usageLimits";
-import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
-import { Fragment } from "react";
+import { GaugeIcon, PlusIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
+import { Fragment, useState } from "react";
 
-import { usePrimarySettings } from "../../hooks/useSettings";
+import {
+  usePrimarySettings,
+  usePrimarySettingsAvailable,
+  useUpdatePrimarySettings,
+} from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../settings/providerDriverMeta";
+import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
+import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
 const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
@@ -132,16 +153,17 @@ function WindowBar({
   );
 }
 
-/** One provider's windows as rows: label and percent, bar, pace and countdown. */
-function ProviderWindows({
-  provider,
+/** One account's windows as rows: label and percent, bar, pace and countdown. */
+function LimitWindows({
+  driver,
+  windows,
   now,
 }: {
-  readonly provider: ServerProvider;
+  readonly driver: ServerProvider["driver"];
+  readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
   readonly now: number;
 }) {
-  const windows = provider.usageLimits?.windows ?? [];
-  const color = barColor(provider.driver);
+  const color = barColor(driver);
   return (
     <div className="grid grid-cols-[11rem_minmax(0,1fr)_7rem] gap-x-4 gap-y-1">
       {windows.map((window, index) => {
@@ -171,6 +193,55 @@ function ProviderWindows({
   );
 }
 
+/**
+ * Heading shared by local providers and source accounts: icon, name, plan,
+ * and the signed-in email blurred until clicked, as provider settings do.
+ */
+function AccountHeading({
+  driver,
+  label,
+  plan,
+  email,
+  accentColor,
+  badge,
+}: {
+  readonly driver: ServerProvider["driver"];
+  readonly label: string;
+  readonly plan: string | undefined;
+  readonly email: string | undefined;
+  readonly accentColor?: string | undefined;
+  readonly badge?: string | undefined;
+}) {
+  return (
+    <h2 className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
+      <ProviderInstanceIcon
+        driverKind={driver}
+        displayName={label}
+        accentColor={accentColor}
+        showBadge={Boolean(accentColor)}
+        indicatorBackground="var(--background)"
+        className="size-5"
+        iconClassName="size-4 text-foreground/80"
+      />
+      <span className="truncate">{label}</span>
+      {plan ? <span className="shrink-0 font-normal text-muted-foreground">· {plan}</span> : null}
+      {email ? (
+        <RedactedSensitiveText
+          value={email}
+          ariaLabel="Toggle account email visibility"
+          revealTooltip="Click to reveal email"
+          hideTooltip="Click to hide email"
+        />
+      ) : null}
+      {badge ? (
+        <Badge variant="outline" size="sm" className="ms-auto shrink-0 font-normal">
+          {badge}
+        </Badge>
+      ) : null}
+    </h2>
+  );
+}
+
 function ProviderLimits({
   provider,
   now,
@@ -181,32 +252,136 @@ function ProviderLimits({
   const limits = provider.usageLimits;
   if (!limits) return null;
   const notice = limitsNotice(limits);
-  const label = providerLimitsLabel(provider, (driver) => getDriverOption(driver)?.label);
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
-        <ProviderInstanceIcon
-          driverKind={provider.driver}
-          displayName={label}
-          accentColor={provider.accentColor}
-          showBadge={Boolean(provider.accentColor)}
-          indicatorBackground="var(--background)"
-          className="size-5"
-          iconClassName="size-4 text-foreground/80"
-        />
-        <span className="truncate">{label}</span>
-        {provider.auth.label ? (
-          <span className="shrink-0 font-normal text-muted-foreground">
-            · {provider.auth.label}
-          </span>
-        ) : null}
-      </h2>
+      <AccountHeading
+        driver={provider.driver}
+        label={providerLimitsLabel(provider, (driver) => getDriverOption(driver)?.label)}
+        plan={provider.auth.label}
+        email={provider.auth.email}
+        accentColor={provider.accentColor}
+      />
       {notice ? (
         <span className="text-xs text-muted-foreground">{notice}</span>
       ) : (
-        <ProviderWindows provider={provider} now={now} />
+        <LimitWindows driver={provider.driver} windows={limits.windows} now={now} />
       )}
     </section>
+  );
+}
+
+/** One account pooled by a usage-limit source, drawn like a provider row. */
+function SourceAccountLimits({
+  account,
+  sourceKind,
+  now,
+}: {
+  readonly account: UsageLimitSourceAccount;
+  readonly sourceKind: string;
+  readonly now: number;
+}) {
+  const notice = limitsNotice(account.usageLimits);
+  return (
+    <section className="flex flex-col gap-3">
+      <AccountHeading
+        driver={account.driver}
+        label={getDriverOption(account.driver)?.label ?? String(account.driver)}
+        plan={account.plan}
+        email={account.email}
+        badge={`via ${sourceKind}`}
+      />
+      {notice ? (
+        <span className="text-xs text-muted-foreground">{notice}</span>
+      ) : (
+        <LimitWindows driver={account.driver} windows={account.usageLimits.windows} now={now} />
+      )}
+    </section>
+  );
+}
+
+/**
+ * Accounts a configured source (a CLIProxyAPI hub) pools, grouped under the
+ * source's name. Unlike provider rows these are read-only: nothing on this
+ * environment can run a turn against them.
+ */
+const SOURCE_KIND_LABEL: Record<UsageLimitSourceSnapshot["kind"], string> = {
+  cliproxy: "CLIProxyAPI",
+};
+
+/**
+ * Removing a hub also deletes its management key from the server, so it
+ * asks first and says so. A bare icon that acted on click was too easy to
+ * hit while reaching for the row beside it.
+ */
+function RemoveSourceButton({
+  source,
+  onConfirm,
+}: {
+  readonly source: UsageLimitSourceSnapshot;
+  readonly onConfirm: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button size="xs" variant="ghost" onClick={() => setOpen(true)}>
+        Remove
+      </Button>
+      <AlertDialog open={open} onOpenChange={setOpen}>
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove {source.label}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The hub's management key is deleted from this server. Its accounts leave the Limits
+              view; the hub itself is untouched. Add it again with the URL and key to bring them
+              back.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setOpen(false);
+                onConfirm();
+              }}
+            >
+              Remove hub
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
+    </>
+  );
+}
+
+function SourceLimits({
+  source,
+  now,
+  onRemove,
+}: {
+  readonly source: UsageLimitSourceSnapshot;
+  readonly now: number;
+  readonly onRemove: (() => void) | null;
+}) {
+  const kind = SOURCE_KIND_LABEL[source.kind];
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-xs tracking-wide text-muted-foreground uppercase">
+          {source.label} · {kind}
+        </h2>
+        {onRemove ? <RemoveSourceButton source={source} onConfirm={onRemove} /> : null}
+      </div>
+      {source.error ? (
+        <span className="text-xs text-muted-foreground">{source.error}</span>
+      ) : source.accounts.length === 0 ? (
+        <span className="text-xs text-muted-foreground">No accounts reported.</span>
+      ) : (
+        source.accounts.map((account) => (
+          <SourceAccountLimits key={account.id} account={account} sourceKind={kind} now={now} />
+        ))
+      )}
+    </div>
   );
 }
 
@@ -218,18 +393,46 @@ function ProviderLimits({
 export function UsageLimitsSection() {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const groups = collectLimitsGroups(presentations);
-  const now = Date.now();
+  const sources = collectLimitSources(presentations);
+  const configuredSources = usePrimarySettings((settings) => settings.usageLimitSources);
+  const canEditSources = usePrimarySettingsAvailable();
+  const updateSettings = useUpdatePrimarySettings();
+  const [adding, setAdding] = useState(false);
+  // Anchored once per mount on purpose: countdowns must not tick (see below).
+  const [now] = useState(() => Date.now());
 
-  if (groups.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        No provider on a connected environment reports subscription limits.
-      </p>
-    );
-  }
+  const removeSource = (id: UsageLimitSourceId) => {
+    const rest = Object.fromEntries(
+      Object.entries(configuredSources).filter(([key]) => key !== id),
+    ) as typeof configuredSources;
+    updateSettings({ usageLimitSources: rest });
+  };
+
+  const addHubButton = canEditSources ? (
+    <Button size="xs" variant="outline" onClick={() => setAdding(true)}>
+      <PlusIcon className="size-3" aria-hidden />
+      Add CLIProxyAPI hub
+    </Button>
+  ) : null;
 
   return (
     <div className="flex flex-col gap-8">
+      {groups.length === 0 && sources.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No provider on a connected environment reports subscription limits.
+        </p>
+      ) : null}
+      {sources.map((source) => (
+        <SourceLimits
+          key={source.key}
+          source={source}
+          now={now}
+          // Only the primary environment's own sources can be edited from here.
+          onRemove={
+            canEditSources && source.id in configuredSources ? () => removeSource(source.id) : null
+          }
+        />
+      ))}
       {groups.map((group) => (
         <div key={group.environmentId} className="flex flex-col gap-6">
           {group.environmentLabel ? (
@@ -242,6 +445,12 @@ export function UsageLimitsSection() {
           ))}
         </div>
       ))}
+      {addHubButton ? <div>{addHubButton}</div> : null}
+      <AddUsageLimitSourceDialog
+        open={adding}
+        onOpenChange={setAdding}
+        existing={configuredSources}
+      />
     </div>
   );
 }
