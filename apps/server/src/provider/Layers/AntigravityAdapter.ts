@@ -72,10 +72,10 @@ import {
 import {
   antigravityApprovalOptions,
   antigravitySubagentResult,
+  classifyAntigravitySubagentToolCall,
   extractAntigravityUserInputQuestion,
   isAntigravityOpenCommand,
   isAntigravitySubagentReplayStart,
-  isAntigravitySubagentToolCall,
   isAntigravityUserInputRequest,
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
@@ -196,7 +196,8 @@ interface SessionContext {
   readonly approvals: Map<ApprovalRequestId, PendingApproval>;
   readonly questions: Map<ApprovalRequestId, PendingQuestion>;
   readonly commands: Map<string, OpenCommand>;
-  readonly subagents: Map<string, OpenSubagent>;
+  /** Keep only IDs after settlement or MCP exclusion so merged late updates cannot change identity. */
+  readonly subagents: Map<string, OpenSubagent | "finished" | "mcp">;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   session: ProviderSession;
   activeTurnId: TurnId | undefined;
@@ -391,6 +392,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
     context.commandLock.withPermit(
       Effect.gen(function* () {
         for (const [id, subagent] of context.subagents) {
+          if (subagent === "finished" || subagent === "mcp") continue;
           yield* emit({
             type: "task.updated",
             ...(yield* stamp),
@@ -403,8 +405,8 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
               ...(error ? { error } : {}),
             },
           });
+          context.subagents.set(id, "finished");
         }
-        context.subagents.clear();
       }),
     );
 
@@ -428,6 +430,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
             context.disconnected ? "failed" : "cancelled",
             context.disconnected ? "Antigravity process stopped." : undefined,
           );
+          context.subagents.clear();
           yield* emit({
             type: "session.exited",
             ...(yield* stamp),
@@ -602,8 +605,13 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         yield* context.commandLock.withPermit(
           Effect.gen(function* () {
             const toolCall = normalizeAntigravityToolCall(event.toolCall);
-            const subagent = context.subagents.get(toolCall.toolCallId);
-            if (subagent || isAntigravitySubagentToolCall(toolCall, event.rawPayload)) {
+            const tracked = context.subagents.get(toolCall.toolCallId);
+            if (tracked === "finished") return;
+            const kind = classifyAntigravitySubagentToolCall(toolCall, event.rawPayload);
+            const isMcp = tracked === "mcp" || kind === "mcp";
+            if (isMcp) context.subagents.set(toolCall.toolCallId, "mcp");
+            const subagent = tracked === "mcp" ? undefined : tracked;
+            if (!isMcp && (subagent || kind === "subagent")) {
               const turnId = subagent?.turnId ?? context.activeTurnId;
               const linkage = subagentLinkage(toolCall.toolCallId);
               // Replay starts claim completion before the result says whether the call failed.
@@ -628,7 +636,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                     ...(summary ? { summary } : {}),
                   },
                 });
-                context.subagents.delete(toolCall.toolCallId);
+                context.subagents.set(toolCall.toolCallId, "finished");
               } else {
                 const status = toolCall.status === "pending" ? "pending" : "running";
                 if (subagent?.status !== status) {

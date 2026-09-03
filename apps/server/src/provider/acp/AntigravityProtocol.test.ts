@@ -8,7 +8,7 @@ import {
   antigravityApprovalOptions,
   antigravitySubagentResult,
   isAntigravitySubagentReplayStart,
-  isAntigravitySubagentToolCall,
+  classifyAntigravitySubagentToolCall,
   isAntigravityUserInputRequest,
   makeAntigravityUserInputResponse,
   normalizeAntigravitySessionUpdate,
@@ -24,13 +24,13 @@ describe("native Antigravity subagent tools", () => {
   it("recognizes only native invocation titles and excludes MCP tools", () => {
     const toolCall = { toolCallId: "trajectory:4", kind: "other", data: {} };
     for (const title of ["Running start_subagent", "Run start_subagent?"]) {
-      expect(isAntigravitySubagentToolCall({ ...toolCall, title }, {})).toBe(true);
+      expect(classifyAntigravitySubagentToolCall({ ...toolCall, title }, {})).toBe("subagent");
       expect(
-        isAntigravitySubagentToolCall(
+        classifyAntigravitySubagentToolCall(
           { ...toolCall, title },
           { update: { _meta: { is_mcp_tool_call: true } } },
         ),
-      ).toBe(false);
+      ).toBe("mcp");
     }
     for (const title of [
       "Running subagent",
@@ -38,14 +38,14 @@ describe("native Antigravity subagent tools", () => {
       "Run command",
       "Running manage_task",
     ]) {
-      expect(isAntigravitySubagentToolCall({ ...toolCall, title }, {})).toBe(false);
+      expect(classifyAntigravitySubagentToolCall({ ...toolCall, title }, {})).toBeUndefined();
     }
     expect(
-      isAntigravitySubagentToolCall(
+      classifyAntigravitySubagentToolCall(
         { ...toolCall, title: "Running start_subagent", kind: "execute" },
         {},
       ),
-    ).toBe(false);
+    ).toBeUndefined();
   });
 
   it("recognizes history starts and bounds the native result", () => {

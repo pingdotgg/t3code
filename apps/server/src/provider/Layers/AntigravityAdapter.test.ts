@@ -26,7 +26,11 @@ import { ServerConfig } from "../../config.ts";
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../antigravityAuthSupport.ts";
 import type { AcpSessionRuntimeEvent } from "../acp/AcpSessionRuntime.ts";
 import { makeAntigravityAcpRuntime } from "../acp/AntigravityAcpSupport.ts";
-import { parseSessionUpdateEvent } from "../acp/AcpRuntimeModel.ts";
+import {
+  mergeToolCallState,
+  parseSessionUpdateEvent,
+  type AcpToolCallState,
+} from "../acp/AcpRuntimeModel.ts";
 import { makeAntigravityAdapter, type AntigravityAdapterOptions } from "./AntigravityAdapter.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-test");
@@ -55,12 +59,13 @@ function nativeToolUpdate(
     AcpSchema.SessionNotification["update"],
     { sessionUpdate: "tool_call" | "tool_call_update" }
   >,
+  previous?: AcpToolCallState,
 ) {
   const event = parseSessionUpdateEvent({ sessionId: nativeSessionId, update }).events.find(
     (event) => event._tag === "ToolCallUpdated",
   );
   if (!event) throw new Error("Expected a native tool update");
-  return event;
+  return { ...event, toolCall: mergeToolCallState(previous, event.toolCall) };
 }
 
 const makeHarness = Effect.fn("makeAntigravityAdapterHarness")(function* (options?: {
@@ -900,6 +905,135 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       yield* Fiber.join(sending);
       yield* h.waitForEvent((event) => event.type === "turn.completed");
       expect(h.seen.filter((event) => event.type === "task.updated")).toHaveLength(0);
+    }),
+  );
+
+  for (const settlement of ["cancelled", "interrupted", "completed"] as const) {
+    it.effect(`does not reopen a ${settlement} subagent on late merged updates`, () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.adapter.startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+        });
+        const first = yield* h.adapter
+          .sendTurn({ threadId, input: "Start review" })
+          .pipe(Effect.forkChild);
+        const firstPrompt = yield* h.nextPrompt;
+        const started = nativeToolUpdate({
+          sessionUpdate: "tool_call",
+          toolCallId: "old:4",
+          title: "Running start_subagent",
+          kind: "other",
+          status: "in_progress",
+          rawInput: {},
+        });
+        yield* h.emitNative(started);
+        yield* h.waitForEvent((event) => event.type === "task.progress");
+        if (settlement === "cancelled") {
+          yield* h.adapter.interruptTurn(threadId);
+        } else {
+          if (settlement === "completed") {
+            yield* h.emitNative(
+              nativeToolUpdate(
+                {
+                  sessionUpdate: "tool_call_update",
+                  toolCallId: "old:4",
+                  status: "completed",
+                  rawOutput: "Original result.",
+                },
+                started.toolCall,
+              ),
+            );
+          }
+          yield* Deferred.succeed(firstPrompt.result, { stopReason: "end_turn" });
+        }
+        yield* Fiber.join(first);
+        yield* h.waitForEvent((event) => event.type === "turn.completed");
+        const second = yield* h.adapter
+          .sendTurn({ threadId, input: "Next review" })
+          .pipe(Effect.forkChild);
+        const secondPrompt = yield* h.nextPrompt;
+        for (const status of ["in_progress", "completed"] as const) {
+          yield* h.emitNative(
+            nativeToolUpdate(
+              {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "old:4",
+                status,
+                rawOutput: "Late result.",
+              },
+              started.toolCall,
+            ),
+          );
+        }
+        yield* h.emitNative(
+          nativeToolUpdate({
+            sessionUpdate: "tool_call",
+            toolCallId: "new:4",
+            title: "Running start_subagent",
+            kind: "other",
+            status: "completed",
+            rawOutput: "New result.",
+          }),
+        );
+        const completed = yield* h.waitForEvent((event) => event.type === "task.completed");
+        expect(completed.payload.taskId).toBe("new:4");
+        yield* Deferred.succeed(secondPrompt.result, { stopReason: "end_turn" });
+        yield* Fiber.join(second);
+        yield* h.waitForEvent((event) => event.type === "turn.completed");
+        expect(h.seen.filter((event) => event.type === "task.progress")).toHaveLength(1);
+        expect(
+          h.seen.filter(
+            (event) => event.type === "task.completed" && event.payload.taskId === "old:4",
+          ),
+        ).toHaveLength(settlement === "completed" ? 1 : 0);
+      }),
+    );
+  }
+
+  it.effect("keeps MCP identity when later updates omit metadata", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const sending = yield* h.adapter
+        .sendTurn({ threadId, input: "Run an MCP tool" })
+        .pipe(Effect.forkChild);
+      const prompt = yield* h.nextPrompt;
+      const started = nativeToolUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId: "mcp-4",
+        title: "Running start_subagent",
+        kind: "other",
+        status: "in_progress",
+        rawInput: { arguments: {} },
+        _meta: { is_mcp_tool_call: true },
+      });
+      yield* h.emitNative(started);
+      for (const status of ["in_progress", "completed"] as const) {
+        yield* h.emitNative(
+          nativeToolUpdate(
+            {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "mcp-4",
+              status,
+              rawOutput: "MCP output.",
+            },
+            started.toolCall,
+          ),
+        );
+      }
+      yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
+      yield* Fiber.join(sending);
+      yield* h.waitForEvent((event) => event.type === "turn.completed");
+      expect(h.seen.filter((event) => event.type.startsWith("task."))).toHaveLength(0);
+      expect(h.seen.filter((event) => event.type === "item.updated")).toHaveLength(2);
+      expect(h.seen.filter((event) => event.type === "item.completed")).toHaveLength(1);
     }),
   );
 

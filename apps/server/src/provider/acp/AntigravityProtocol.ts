@@ -351,17 +351,18 @@ export function isAntigravityOpenCommand(toolCall: AcpToolCallState): boolean {
 }
 
 /** ACP 1.1.1 exposes subagent invocations as ordinary tools, without child IDs or models. */
-export function isAntigravitySubagentToolCall(
+export function classifyAntigravitySubagentToolCall(
   toolCall: AcpToolCallState,
   rawPayload: unknown,
-): boolean {
+): "subagent" | "mcp" | undefined {
+  if (
+    (toolCall.kind !== undefined && toolCall.kind !== "other") ||
+    (toolCall.title !== "Running start_subagent" && toolCall.title !== "Run start_subagent?")
+  )
+    return undefined;
   const update = Predicate.isObject(rawPayload) ? rawPayload.update : undefined;
   const meta = Predicate.isObject(update) ? update._meta : undefined;
-  if (Predicate.isObject(meta) && meta.is_mcp_tool_call === true) return false;
-  return (
-    (toolCall.kind === undefined || toolCall.kind === "other") &&
-    (toolCall.title === "Running start_subagent" || toolCall.title === "Run start_subagent?")
-  );
+  return Predicate.isObject(meta) && meta.is_mcp_tool_call === true ? "mcp" : "subagent";
 }
 
 /** History sends a completed start before the separate result and its final status. */
