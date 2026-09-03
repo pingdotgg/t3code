@@ -36,7 +36,7 @@ import {
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { InfoIcon, MoreVertical, Plus as PlusIcon } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
@@ -793,19 +793,18 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   // Refreshed without blanking the last result: the menu shows the cached list
   // straight away so it doesn't reflow on open, and the source list is stable
   // (names only) since choosing what to import happens in the wizard, not here.
-  const loadSources = () => {
+  const loadSources = useCallback(() => {
     if (!previewBridge) return;
     void previewBridge
       .listBrowserImportSources()
       .then(setSources)
       .catch(() => setSources((previous) => previous ?? []));
-  };
+  }, []);
 
   // Loaded once so the first open is instant instead of flashing a spinner.
   useEffect(() => {
     loadSources();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadSources]);
 
   // Runs one import for the wizard. A new profile is registered only once the
   // import succeeds — the cookies land in its partition first — so a blocked
