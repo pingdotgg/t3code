@@ -105,7 +105,7 @@ describe("GitHubCli.layer", () => {
           "view",
           "#42",
           "--json",
-          "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "number,title,url,baseRefName,headRefName,headRefOid,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
         ],
         cwd: "/repo",
         timeoutMs: 30_000,
