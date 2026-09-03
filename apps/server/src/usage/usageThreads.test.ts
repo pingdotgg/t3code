@@ -441,4 +441,30 @@ describe("foldThreadRows", () => {
     expect(outside.rows.map((row) => row.key)).toHaveLength(1);
     expect(outside.rows[0]?.key).toContain("claude:session-b");
   });
+
+  it("excludes unknown project attribution from the outside-project filter", () => {
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      resolveProject: () => null,
+    });
+    accumulator.add(record({ sessionId: "outside", cwd: "/elsewhere" }), {
+      sessionKey: "claude:outside",
+      agentId: null,
+    });
+    accumulator.add(record({ provider: "grok", sessionId: "unknown", cwd: "" }), {
+      sessionKey: "grok:unknown",
+      agentId: null,
+    });
+
+    const outside = foldThreadRows(accumulator.finish(), NO_ATTRIBUTION, {
+      cap: 40,
+      projectFilter: null,
+    });
+
+    expect(outside.rows).toHaveLength(1);
+    expect(outside.rows[0]?.key).toContain("claude:outside");
+  });
 });

@@ -51,6 +51,7 @@ export interface SessionUsageGroup {
   readonly cwd: string;
   readonly projectId: ProjectId | null;
   readonly projectKey: string | null;
+  readonly projectAttribution: "project" | "outside" | "unknown";
   readonly project: string;
   readonly totals: UsageTokenTotals;
   readonly costUsd: number;
@@ -65,6 +66,7 @@ interface MutableSessionGroup {
   cwd: string;
   projectId: ProjectId | null;
   projectKey: string | null;
+  projectAttribution: "project" | "outside" | "unknown";
   project: string;
   totals: UsageTokenTotals;
   costUsd: number;
@@ -129,6 +131,12 @@ export class ThreadUsageAccumulator {
       return false;
 
     const resolvedProject = this.#options.resolveProject?.(record.cwd) ?? null;
+    const projectAttribution =
+      resolvedProject !== null
+        ? "project"
+        : this.#options.resolveProject === undefined || record.cwd.length === 0
+          ? "unknown"
+          : "outside";
     const projectKey =
       resolvedProject === null ? null : `id:${resolvedProject.projectId.replaceAll("\u0000", "")}`;
     const groupKey = JSON.stringify([context.sessionKey, record.cwd]);
@@ -141,6 +149,7 @@ export class ThreadUsageAccumulator {
         cwd: record.cwd,
         projectId: resolvedProject?.projectId ?? null,
         projectKey,
+        projectAttribution,
         project: resolvedProject?.title ?? "",
         totals: EMPTY_TOTALS,
         costUsd: 0,
@@ -188,6 +197,7 @@ export class ThreadUsageAccumulator {
       cwd: group.cwd,
       projectId: group.projectId,
       projectKey: group.projectKey,
+      projectAttribution: group.projectAttribution,
       project: group.project,
       totals: group.totals,
       costUsd: group.costUsd,
@@ -345,7 +355,13 @@ export function foldThreadRows(
   const byKey = new Map<string, MutableThreadRow>();
 
   for (const group of groups) {
-    if (options.projectFilter !== undefined && group.projectKey !== options.projectFilter) continue;
+    if (
+      options.projectFilter !== undefined &&
+      (options.projectFilter === null
+        ? group.projectAttribution !== "outside"
+        : group.projectKey !== options.projectFilter)
+    )
+      continue;
 
     const ref =
       attribution.sessionToThread.get(group.sessionKey) ??
