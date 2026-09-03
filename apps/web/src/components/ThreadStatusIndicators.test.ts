@@ -1,4 +1,4 @@
-import { ProjectId, type VcsStatusResult } from "@t3tools/contracts";
+import { ProjectId, type PullRequestSummary, type VcsStatusResult } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { AtomRegistry } from "effect/unstable/reactivity";
@@ -10,10 +10,10 @@ import {
   resolveDisplayedThreadPrProvider,
   resolveThreadPr,
   settledPrHoverColorClass,
-  threadPullRequestRefreshSource,
   threadChangeRequestSnapshotsAtom,
   type ThreadChangeRequestSnapshot,
 } from "./ThreadStatusIndicators";
+import { newestPullRequestSummary } from "../state/pullRequests";
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   return {
@@ -57,58 +57,44 @@ function snapshotFor(
   return { branch, pr, sourceControlProvider };
 }
 
-describe("threadPullRequestRefreshSource", () => {
-  const panel = { repository: "pingdotgg/t3code", number: 42, state: "merged" as const };
+function pullRequestSummary(
+  state: PullRequestSummary["state"],
+  updatedAt: string,
+): PullRequestSummary {
+  return {
+    provider: "github",
+    projectId: ProjectId.make("project-1"),
+    repository: "pingdotgg/t3code",
+    number: 42,
+    title: "Feature PR",
+    url: "https://github.com/pingdotgg/t3code/pull/42",
+    state,
+    headBranch: "feature/current",
+    baseBranch: "main",
+    updatedAt,
+  };
+}
 
-  it("refreshes the VCS stream when the open panel is newer than an inferred sidebar PR", () => {
-    expect(
-      threadPullRequestRefreshSource({
-        panel,
-        thread: { repository: "pingdotgg/t3code", number: 42, state: "open", linked: false },
-      }),
-    ).toBe("vcs");
+describe("shared pull request state", () => {
+  it("shows a panel-observed merge instead of an older sidebar summary", () => {
+    const open = pullRequestSummary("open", "2026-09-03T01:00:00.000Z");
+    const merged = pullRequestSummary("merged", "2026-09-03T01:01:00.000Z");
+
+    expect(newestPullRequestSummary(open, merged)).toBe(merged);
   });
 
-  it("refreshes linked detail when the open panel is newer than a linked sidebar PR", () => {
-    expect(
-      threadPullRequestRefreshSource({
-        panel,
-        thread: { repository: "pingdotgg/t3code", number: 42, state: "open", linked: true },
-      }),
-    ).toBe("linked-detail");
+  it("never lets a stale open response regress a merged observation", () => {
+    const merged = pullRequestSummary("merged", "2026-09-03T01:01:00.000Z");
+    const staleOpen = pullRequestSummary("open", "2026-09-03T01:00:00.000Z");
+
+    expect(newestPullRequestSummary(merged, staleOpen)).toBe(merged);
   });
 
-  it("refreshes when the sidebar has not resolved state yet", () => {
-    expect(
-      threadPullRequestRefreshSource({
-        panel,
-        thread: { repository: "pingdotgg/t3code", number: 42, state: null, linked: false },
-      }),
-    ).toBe("vcs");
-  });
+  it("accepts a newer open state after a closed pull request is reopened", () => {
+    const closed = pullRequestSummary("closed", "2026-09-03T01:00:00.000Z");
+    const reopened = pullRequestSummary("open", "2026-09-03T01:01:00.000Z");
 
-  it("does nothing once sidebar state matches or the panel shows another PR", () => {
-    expect(
-      threadPullRequestRefreshSource({
-        panel,
-        thread: { repository: "pingdotgg/t3code", number: 42, state: "merged", linked: false },
-      }),
-    ).toBeNull();
-    expect(
-      threadPullRequestRefreshSource({
-        panel,
-        thread: { repository: "pingdotgg/t3code", number: 41, state: "open", linked: false },
-      }),
-    ).toBeNull();
-  });
-
-  it("matches repository identity without case sensitivity", () => {
-    expect(
-      threadPullRequestRefreshSource({
-        panel: { ...panel, repository: "PingDotGG/T3Code" },
-        thread: { repository: "pingdotgg/t3code", number: 42, state: "open", linked: false },
-      }),
-    ).toBe("vcs");
+    expect(newestPullRequestSummary(closed, reopened)).toBe(reopened);
   });
 });
 

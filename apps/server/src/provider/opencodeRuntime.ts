@@ -563,11 +563,23 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const spawnCommand = yield* resolveCommand(input.binaryPath, input.args, input.environment);
       const child = yield* spawner.spawn(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+          detached: hostPlatform !== "win32",
           shell: spawnCommand.shell,
           ...(input.cwd ? { cwd: input.cwd } : {}),
           ...(input.environment ? { env: input.environment } : { extendEnv: true }),
         }),
       );
+      const terminateCommandGroup =
+        hostPlatform === "win32"
+          ? child.kill({ killSignal: "SIGKILL" }).pipe(Effect.asVoid)
+          : Effect.sync(() => {
+              try {
+                process.kill(-Number(child.pid), "SIGKILL");
+              } catch {
+                // The command and its process group may already have exited.
+              }
+            });
+      yield* Effect.addFinalizer(() => terminateCommandGroup.pipe(Effect.ignore));
       const collectOptions =
         input.maxOutputBytes === undefined ? undefined : { maxBytes: input.maxOutputBytes };
       const [stdout, stderr, code] = yield* Effect.all(

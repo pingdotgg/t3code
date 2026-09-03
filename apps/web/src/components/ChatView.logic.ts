@@ -1,4 +1,5 @@
 import {
+  ANTIGRAVITY_DEFAULT_MODEL,
   type AssetCreateUrlInput,
   type AssetCreateUrlResult,
   type ChatFileAttachment,
@@ -8,7 +9,8 @@ import {
   type MessageId,
   type ModelSelection,
   type ProviderInteractionMode,
-  type ProviderDriverKind,
+  ProviderDriverKind,
+  type ProviderInstanceId,
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
@@ -32,6 +34,7 @@ import {
   type SessionPhase,
   type Thread,
   type ThreadShell,
+  type TurnDiffSummary,
 } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
@@ -45,6 +48,13 @@ import {
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 import type { ComposerSubmissionIntent } from "../composer-logic";
 import type { TimelineEntry } from "../session-logic";
+import type { DesktopPreviewOverlay } from "../previewStateStore";
+import type { RightPanelSurface } from "../rightPanelStore";
+import {
+  NO_PROVIDER_MODEL_SELECTION,
+  resolveSelectableProviderInstanceEntry,
+  type ProviderInstanceEntry,
+} from "../providerInstances";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
@@ -52,6 +62,51 @@ export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
+
+export function agentControlledBrowserCloseConfirmation(
+  surfaces: readonly RightPanelSurface[],
+  desktopByTabId: Readonly<Record<string, Pick<DesktopPreviewOverlay, "controller"> | undefined>>,
+): string | null {
+  const activeBrowserCount = surfaces.filter(
+    (surface) =>
+      surface.kind === "preview" &&
+      surface.resourceId !== null &&
+      desktopByTabId[surface.resourceId]?.controller === "agent",
+  ).length;
+  if (activeBrowserCount === 0) return null;
+  if (activeBrowserCount === 1) {
+    return [
+      "Close browser while the agent is using it?",
+      "The agent is actively controlling this browser. Closing it may interrupt the current browser action.",
+    ].join("\n");
+  }
+  return [
+    `Close ${activeBrowserCount} browsers while the agent is using them?`,
+    "The agent is actively controlling these browsers. Closing them may interrupt the current browser actions.",
+  ].join("\n");
+}
+
+export function shouldOpenProactivePullRequest(
+  previousTargetKey: string | null | undefined,
+  targetKey: string | null,
+): boolean {
+  return previousTargetKey !== undefined && targetKey !== null && targetKey !== previousTargetKey;
+}
+
+export function shouldOpenProactiveTurnDiff(input: {
+  previousRunningTurnId: TurnId | null | undefined;
+  runningTurnId: TurnId | null;
+  settledTurnId: TurnId | null;
+  turnCompleted: boolean;
+}): boolean {
+  return (
+    input.previousRunningTurnId !== undefined &&
+    input.previousRunningTurnId !== null &&
+    input.runningTurnId === null &&
+    input.turnCompleted &&
+    input.settledTurnId === input.previousRunningTurnId
+  );
+}
 
 export function codexArtifactTemplatePromptToAppend(
   currentDraft: string,
@@ -270,6 +325,151 @@ export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "sessi
   };
 }
 
+/** Use the same enabled instance for the composer, provider status, and chat actions. */
+export function resolveComposerProviderSelection(input: {
+  entries: ReadonlyArray<ProviderInstanceEntry>;
+  candidateInstanceIds: ReadonlyArray<ProviderInstanceId | null | undefined>;
+  lockedProvider: ProviderDriverKind | null;
+  lockedInstanceId: ProviderInstanceId | null | undefined;
+}) {
+  const requestedInstanceId = input.candidateInstanceIds.find(
+    (candidate) => candidate != null && candidate !== NO_PROVIDER_MODEL_SELECTION.instanceId,
+  );
+  const requestedDriverKind =
+    input.lockedProvider ??
+    input.entries.find((entry) => entry.instanceId === requestedInstanceId)?.driverKind ??
+    input.entries[0]?.driverKind ??
+    ProviderDriverKind.make("unconfigured");
+  const lockedContinuationGroupKey = input.lockedProvider
+    ? (input.entries.find((entry) => entry.instanceId === input.lockedInstanceId)
+        ?.continuationGroupKey ?? null)
+    : null;
+  // Missing metadata must not move Antigravity history into another Google profile.
+  const requiresExactInstance =
+    input.lockedProvider === "antigravity" &&
+    input.lockedInstanceId != null &&
+    lockedContinuationGroupKey === null;
+  const compatibleEntries = input.entries.filter(
+    (entry) =>
+      (!input.lockedProvider || entry.driverKind === input.lockedProvider) &&
+      (!lockedContinuationGroupKey || entry.continuationGroupKey === lockedContinuationGroupKey) &&
+      (!requiresExactInstance || entry.instanceId === input.lockedInstanceId),
+  );
+  const selectedProviderEntry =
+    input.candidateInstanceIds
+      .map((candidate) =>
+        compatibleEntries.find(
+          (entry) => entry.instanceId === candidate && entry.enabled && entry.isAvailable,
+        ),
+      )
+      .find((entry) => entry !== undefined) ??
+    resolveSelectableProviderInstanceEntry(
+      compatibleEntries.filter((entry) => entry.driverKind === requestedDriverKind),
+      undefined,
+    ) ??
+    resolveSelectableProviderInstanceEntry(compatibleEntries, undefined);
+  const unavailableProviderInstanceId = selectedProviderEntry
+    ? undefined
+    : input.lockedProvider
+      ? (input.lockedInstanceId ?? requestedInstanceId)
+      : requestedInstanceId;
+  return {
+    selectedProviderEntry,
+    requestedDriverKind,
+    lockedContinuationGroupKey,
+    unavailableProviderInstanceId,
+  };
+}
+
+/** Keep restored drafts and every plan control on the selected instance's supported mode. */
+export function resolveComposerInteractionMode(input: {
+  planModeEnabled: boolean;
+  provider: Pick<ServerProvider, "showInteractionModeToggle"> | null | undefined;
+  interactionMode: ProviderInteractionMode;
+}): { enabled: boolean; interactionMode: ProviderInteractionMode } {
+  const enabled =
+    input.planModeEnabled &&
+    input.provider != null &&
+    input.provider.showInteractionModeToggle !== false;
+  return {
+    enabled,
+    interactionMode: enabled ? input.interactionMode : "default",
+  };
+}
+
+export function getAntigravitySendBlockReason(
+  provider:
+    | Pick<ServerProvider, "driver" | "installed" | "auth" | "models" | "status">
+    | null
+    | undefined,
+  model: string,
+): string | null {
+  if (provider?.driver !== "antigravity") return null;
+  if (!provider.installed) {
+    return "Install Antigravity in provider settings before sending.";
+  }
+  if (provider.auth.status !== "authenticated") {
+    return "Sign in to Antigravity in provider settings before sending.";
+  }
+  if (provider.models.length === 0) {
+    return "Refresh Antigravity models in provider settings before sending.";
+  }
+  const slug = model.trim();
+  if (slug.length === 0) return "Choose an Antigravity model before sending.";
+  // A saved model that left the catalog is kept in the picker as unavailable
+  // so the user sees what the thread used. The server rejects it at turn
+  // start, so block here unless the provider is in an error state, where a
+  // retry with the same model is the right move.
+  if (
+    provider.status === "ready" &&
+    slug !== ANTIGRAVITY_DEFAULT_MODEL &&
+    !provider.models.some((entry) => entry.slug === slug || entry.aliases?.includes(slug))
+  ) {
+    return "That Antigravity model is no longer available. Choose another model.";
+  }
+  return null;
+}
+
+export function buildRevertTurnCountByUserMessageId(input: {
+  supportsConversationRollback: boolean;
+  timelineEntries: ReadonlyArray<TimelineEntry>;
+  turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
+  inferredCheckpointTurnCountByTurnId: Readonly<Record<string, number | undefined>>;
+}) {
+  const byUserMessageId = new Map<MessageId, number>();
+  if (!input.supportsConversationRollback) {
+    return byUserMessageId;
+  }
+  for (let index = 0; index < input.timelineEntries.length; index += 1) {
+    const entry = input.timelineEntries[index];
+    if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
+      continue;
+    }
+
+    for (let nextIndex = index + 1; nextIndex < input.timelineEntries.length; nextIndex += 1) {
+      const nextEntry = input.timelineEntries[nextIndex];
+      if (!nextEntry || nextEntry.kind !== "message") {
+        continue;
+      }
+      if (nextEntry.message.role === "user") {
+        break;
+      }
+      const summary = input.turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
+      if (!summary) {
+        continue;
+      }
+      const turnCount =
+        summary.checkpointTurnCount ?? input.inferredCheckpointTurnCountByTurnId[summary.turnId];
+      if (typeof turnCount !== "number") {
+        break;
+      }
+      byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
+      break;
+    }
+  }
+  return byUserMessageId;
+}
+
 export function reconcileMountedTerminalThreadIds(input: {
   currentThreadIds: ReadonlyArray<string>;
   openThreadIds: ReadonlyArray<string>;
@@ -350,15 +550,6 @@ export async function resolveFileAttachmentUrl(input: {
   const url = resolveAssetUrl(input.httpBaseUrl, result.value.relativeUrl);
   if (url === null) throw new Error("The environment returned an invalid attachment URL.");
   return url;
-}
-
-export function isVideoPreviewRequestCurrent(
-  requestThreadKey: string,
-  currentThreadKey: string,
-  requestId: number,
-  currentRequestId: number,
-): boolean {
-  return requestThreadKey === currentThreadKey && requestId === currentRequestId;
 }
 
 export function revokeUserMessagePreviewUrls(message: ChatMessage): void {

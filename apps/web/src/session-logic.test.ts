@@ -250,6 +250,30 @@ describe("derivePendingApprovals", () => {
 });
 
 describe("derivePendingUserInputs", () => {
+  it("preserves native choice values and the custom-answer restriction", () => {
+    const question = {
+      id: "interaction-result",
+      header: "Result",
+      question: "Which result should be used?",
+      options: [
+        { value: " first\t", label: "Result", description: "First result" },
+        { value: "second", label: "Result", description: "Second result" },
+      ],
+      allowCustomAnswer: false,
+      multiSelect: false,
+    };
+    const activities = [
+      makeActivity({
+        id: "native-user-input",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        payload: { requestId: "req-native-choice", questions: [question] },
+      }),
+    ];
+
+    expect(derivePendingUserInputs(activities)[0]?.questions).toEqual([question]);
+  });
+
   it("tracks open structured prompts and removes resolved ones", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1240,6 +1264,13 @@ describe("deriveWorkLogEntries", () => {
         payload: {
           itemType: "mcp_tool_call",
           title: "t3-code · preview_status",
+          toolSurface: "browser",
+          toolIcon: { _tag: "website", pageUrl: "https://example.com/checkout" },
+          toolSource: {
+            key: "browser-use:browser",
+            name: "Browser",
+            kind: "browser",
+          },
           data: { item },
         },
       }),
@@ -1247,6 +1278,16 @@ describe("deriveWorkLogEntries", () => {
 
     const [entry] = deriveWorkLogEntries(activities);
     expect(entry?.toolTitle).toBe("t3-code · preview_status");
+    expect(entry?.toolSurface).toBe("browser");
+    expect(entry?.toolIcon).toEqual({
+      _tag: "website",
+      pageUrl: "https://example.com/checkout",
+    });
+    expect(entry?.toolSource).toEqual({
+      key: "browser-use:browser",
+      name: "Browser",
+      kind: "browser",
+    });
     expect(entry?.toolData).toEqual(item);
   });
 
@@ -1296,6 +1337,7 @@ describe("deriveWorkLogEntries", () => {
         payload: {
           itemType: "mcp_tool_call",
           toolCallId: "call-1",
+          toolSurface: "browser",
           data: { item },
         },
       }),
@@ -1306,6 +1348,7 @@ describe("deriveWorkLogEntries", () => {
         payload: {
           itemType: "mcp_tool_call",
           toolCallId: "call-1",
+          toolIcon: { _tag: "website", pageUrl: "https://example.com/result" },
         },
       }),
     ];
@@ -1313,6 +1356,11 @@ describe("deriveWorkLogEntries", () => {
     const [entry] = deriveWorkLogEntries(activities);
     expect(entry?.toolData).toEqual(item);
     expect(entry?.toolCallId).toBe("call-1");
+    expect(entry?.toolSurface).toBe("browser");
+    expect(entry?.toolIcon).toEqual({
+      _tag: "website",
+      pageUrl: "https://example.com/result",
+    });
     expect(resolveWorkEntryToolPresentation(entry!)?.displayName).toBe(
       "Took a snapshot of the preview page",
     );

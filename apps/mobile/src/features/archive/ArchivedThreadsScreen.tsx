@@ -3,7 +3,11 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import { LegendList } from "@legendapp/list/react-native";
-import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type EnvironmentMachineKind,
+  resolveEnvironmentMachineKind,
+} from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { SymbolView } from "../../components/AppSymbol";
@@ -24,10 +28,12 @@ import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSw
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { EmptyState } from "../../components/EmptyState";
+import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { relativeTime } from "../../lib/time";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { useServerConfigs } from "../../state/entities";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import {
   createNativeMailSearchToolbarItem,
@@ -45,6 +51,7 @@ type ArchivedThreadListItem =
       readonly kind: "project";
       readonly key: string;
       readonly environmentLabel: string | null;
+      readonly environmentMachine: EnvironmentMachineKind;
       readonly project: EnvironmentProject;
     }
   | {
@@ -360,6 +367,7 @@ function ArchivedThreadsHeader(props: {
 
 function ProjectGroupLabel(props: {
   readonly environmentLabel: string | null;
+  readonly environmentMachine: EnvironmentMachineKind;
   readonly project: EnvironmentProject;
 }) {
   return (
@@ -378,9 +386,16 @@ function ProjectGroupLabel(props: {
         {props.project.title}
       </Text>
       {props.environmentLabel ? (
-        <Text className="max-w-[42%] text-2xs text-foreground-tertiary" numberOfLines={1}>
-          {props.environmentLabel}
-        </Text>
+        <View className="max-w-[42%] flex-row items-center gap-1">
+          <EnvironmentMachineSymbol
+            kind={props.environmentMachine}
+            size={10}
+            tintColorClassName="accent-foreground-tertiary"
+          />
+          <Text className="shrink text-2xs text-foreground-tertiary" numberOfLines={1}>
+            {props.environmentLabel}
+          </Text>
+        </View>
       ) : null}
     </View>
   );
@@ -517,6 +532,7 @@ export function ArchivedThreadsScreen(props: {
       ),
     [props.environments],
   );
+  const serverConfigs = useServerConfigs();
   const listItems = useMemo<ReadonlyArray<ArchivedThreadListItem>>(() => {
     const items: ArchivedThreadListItem[] = [];
     for (const group of props.groups) {
@@ -525,6 +541,9 @@ export function ArchivedThreadsScreen(props: {
         kind: "project",
         key: `${group.key}:project`,
         environmentLabel,
+        environmentMachine: resolveEnvironmentMachineKind(
+          serverConfigs.get(group.project.environmentId) ?? null,
+        ),
         project: group.project,
       });
 
@@ -540,7 +559,7 @@ export function ArchivedThreadsScreen(props: {
       });
     }
     return items;
-  }, [environmentLabelsById, props.groups]);
+  }, [environmentLabelsById, props.groups, serverConfigs]);
   const handleSwipeableWillOpen = useCallback((methods: SwipeableMethods) => {
     if (openSwipeableRef.current && openSwipeableRef.current !== methods) {
       openSwipeableRef.current.close();
@@ -559,7 +578,11 @@ export function ArchivedThreadsScreen(props: {
       if (item.kind === "project") {
         return (
           <View className="pt-4">
-            <ProjectGroupLabel environmentLabel={item.environmentLabel} project={item.project} />
+            <ProjectGroupLabel
+              environmentLabel={item.environmentLabel}
+              environmentMachine={item.environmentMachine}
+              project={item.project}
+            />
           </View>
         );
       }

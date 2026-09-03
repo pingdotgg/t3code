@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "updatedAt": "2026-09-03T09:58:00Z",
   "currentModels": {
     "codex": [
       "gpt-5.6-luna",
@@ -8,7 +9,8 @@
       "gpt-daybreak-blue-latest",
       "gpt-daybreak-red-latest"
     ],
-    "claudeAgent": ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"]
+    "claudeAgent": ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"],
+    "antigravity": ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"]
   },
   "providers": {
     "claudeAgent": {
@@ -24,17 +26,36 @@
                 "label": "Reasoning",
                 "type": "select",
                 "options": [
-                  { "id": "low", "label": "Low" },
-                  { "id": "medium", "label": "Medium" },
-                  { "id": "high", "label": "High", "isDefault": true },
-                  { "id": "xhigh", "label": "Extra High" },
-                  { "id": "max", "label": "Max" },
+                  {
+                    "id": "low",
+                    "label": "Low"
+                  },
+                  {
+                    "id": "medium",
+                    "label": "Medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "High",
+                    "isDefault": true
+                  },
+                  {
+                    "id": "xhigh",
+                    "label": "Extra High"
+                  },
+                  {
+                    "id": "max",
+                    "label": "Max"
+                  },
                   {
                     "id": "ultracode",
                     "label": "Ultracode",
                     "description": "xhigh effort plus multi-agent workflow orchestration"
                   },
-                  { "id": "ultrathink", "label": "Ultrathink" }
+                  {
+                    "id": "ultrathink",
+                    "label": "Ultrathink"
+                  }
                 ],
                 "promptInjectedValues": ["ultrathink"]
               },
@@ -43,17 +64,34 @@
                 "label": "Context Window",
                 "type": "select",
                 "options": [
-                  { "id": "200k", "label": "200k" },
-                  { "id": "1m", "label": "1M", "isDefault": true }
+                  {
+                    "id": "200k",
+                    "label": "200k"
+                  },
+                  {
+                    "id": "1m",
+                    "label": "1M",
+                    "isDefault": true
+                  }
                 ]
               }
             ]
           },
           "adapter": {
             "claudeCode": {
-              "effortMap": { "ultracode": "xhigh", "ultrathink": null },
-              "modelSuffixes": { "contextWindow": { "1m": "[1m]" } },
-              "contextWindowTokens": { "200k": 200000, "1m": 1000000 }
+              "effortMap": {
+                "ultracode": "xhigh",
+                "ultrathink": null
+              },
+              "modelSuffixes": {
+                "contextWindow": {
+                  "1m": "[1m]"
+                }
+              },
+              "contextWindowTokens": {
+                "200k": 200000,
+                "1m": 1000000
+              }
             }
           }
         },
@@ -65,37 +103,77 @@
                 "label": "Reasoning",
                 "type": "select",
                 "options": [
-                  { "id": "low", "label": "Low" },
-                  { "id": "medium", "label": "Medium" },
-                  { "id": "high", "label": "High", "isDefault": true },
-                  { "id": "xhigh", "label": "Extra High" },
-                  { "id": "max", "label": "Max" },
+                  {
+                    "id": "low",
+                    "label": "Low"
+                  },
+                  {
+                    "id": "medium",
+                    "label": "Medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "High",
+                    "isDefault": true
+                  },
+                  {
+                    "id": "xhigh",
+                    "label": "Extra High"
+                  },
+                  {
+                    "id": "max",
+                    "label": "Max"
+                  },
                   {
                     "id": "ultracode",
                     "label": "Ultracode",
                     "description": "xhigh effort plus multi-agent workflow orchestration"
                   },
-                  { "id": "ultrathink", "label": "Ultrathink" }
+                  {
+                    "id": "ultrathink",
+                    "label": "Ultrathink"
+                  }
                 ],
                 "promptInjectedValues": ["ultrathink"]
               },
-              { "id": "fastMode", "label": "Fast Mode", "type": "boolean" },
+              {
+                "id": "fastMode",
+                "label": "Fast Mode",
+                "type": "boolean"
+              },
               {
                 "id": "contextWindow",
                 "label": "Context Window",
                 "type": "select",
                 "options": [
-                  { "id": "200k", "label": "200k" },
-                  { "id": "1m", "label": "1M", "isDefault": true }
+                  {
+                    "id": "200k",
+                    "label": "200k"
+                  },
+                  {
+                    "id": "1m",
+                    "label": "1M",
+                    "isDefault": true
+                  }
                 ]
               }
             ]
           },
           "adapter": {
             "claudeCode": {
-              "effortMap": { "ultracode": "xhigh", "ultrathink": null },
-              "modelSuffixes": { "contextWindow": { "1m": "[1m]" } },
-              "contextWindowTokens": { "200k": 200000, "1m": 1000000 }
+              "effortMap": {
+                "ultracode": "xhigh",
+                "ultrathink": null
+              },
+              "modelSuffixes": {
+                "contextWindow": {
+                  "1m": "[1m]"
+                }
+              },
+              "contextWindowTokens": {
+                "200k": 200000,
+                "1m": 1000000
+              }
             }
           }
         },
@@ -107,26 +185,52 @@
                 "label": "Reasoning",
                 "type": "select",
                 "options": [
-                  { "id": "low", "label": "Low" },
-                  { "id": "medium", "label": "Medium" },
-                  { "id": "high", "label": "High", "isDefault": true },
-                  { "id": "xhigh", "label": "Extra High" },
-                  { "id": "max", "label": "Max" },
+                  {
+                    "id": "low",
+                    "label": "Low"
+                  },
+                  {
+                    "id": "medium",
+                    "label": "Medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "High",
+                    "isDefault": true
+                  },
+                  {
+                    "id": "xhigh",
+                    "label": "Extra High"
+                  },
+                  {
+                    "id": "max",
+                    "label": "Max"
+                  },
                   {
                     "id": "ultracode",
                     "label": "Ultracode",
                     "description": "xhigh effort plus multi-agent workflow orchestration"
                   },
-                  { "id": "ultrathink", "label": "Ultrathink" }
+                  {
+                    "id": "ultrathink",
+                    "label": "Ultrathink"
+                  }
                 ],
                 "promptInjectedValues": ["ultrathink"]
               },
-              { "id": "fastMode", "label": "Fast Mode", "type": "boolean" }
+              {
+                "id": "fastMode",
+                "label": "Fast Mode",
+                "type": "boolean"
+              }
             ]
           },
           "adapter": {
             "claudeCode": {
-              "effortMap": { "ultracode": "xhigh", "ultrathink": null },
+              "effortMap": {
+                "ultracode": "xhigh",
+                "ultrathink": null
+              },
               "fixedContextWindowTokens": 1000000
             }
           }
@@ -139,21 +243,47 @@
                 "label": "Reasoning",
                 "type": "select",
                 "options": [
-                  { "id": "low", "label": "Low" },
-                  { "id": "medium", "label": "Medium" },
-                  { "id": "high", "label": "High" },
-                  { "id": "xhigh", "label": "Extra High", "isDefault": true },
-                  { "id": "max", "label": "Max" },
-                  { "id": "ultrathink", "label": "Ultrathink" }
+                  {
+                    "id": "low",
+                    "label": "Low"
+                  },
+                  {
+                    "id": "medium",
+                    "label": "Medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "High"
+                  },
+                  {
+                    "id": "xhigh",
+                    "label": "Extra High",
+                    "isDefault": true
+                  },
+                  {
+                    "id": "max",
+                    "label": "Max"
+                  },
+                  {
+                    "id": "ultrathink",
+                    "label": "Ultrathink"
+                  }
                 ],
                 "promptInjectedValues": ["ultrathink"]
               },
-              { "id": "fastMode", "label": "Fast Mode", "type": "boolean" }
+              {
+                "id": "fastMode",
+                "label": "Fast Mode",
+                "type": "boolean"
+              }
             ]
           },
           "adapter": {
             "claudeCode": {
-              "effortMap": { "xhigh": "max", "ultrathink": null },
+              "effortMap": {
+                "xhigh": "max",
+                "ultrathink": null
+              },
               "fixedContextWindowTokens": 1000000
             }
           }
@@ -166,31 +296,67 @@
                 "label": "Reasoning",
                 "type": "select",
                 "options": [
-                  { "id": "low", "label": "Low" },
-                  { "id": "medium", "label": "Medium" },
-                  { "id": "high", "label": "High", "isDefault": true },
-                  { "id": "max", "label": "Max" },
-                  { "id": "ultrathink", "label": "Ultrathink" }
+                  {
+                    "id": "low",
+                    "label": "Low"
+                  },
+                  {
+                    "id": "medium",
+                    "label": "Medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "High",
+                    "isDefault": true
+                  },
+                  {
+                    "id": "max",
+                    "label": "Max"
+                  },
+                  {
+                    "id": "ultrathink",
+                    "label": "Ultrathink"
+                  }
                 ],
                 "promptInjectedValues": ["ultrathink"]
               },
-              { "id": "fastMode", "label": "Fast Mode", "type": "boolean" },
+              {
+                "id": "fastMode",
+                "label": "Fast Mode",
+                "type": "boolean"
+              },
               {
                 "id": "contextWindow",
                 "label": "Context Window",
                 "type": "select",
                 "options": [
-                  { "id": "200k", "label": "200k" },
-                  { "id": "1m", "label": "1M", "isDefault": true }
+                  {
+                    "id": "200k",
+                    "label": "200k"
+                  },
+                  {
+                    "id": "1m",
+                    "label": "1M",
+                    "isDefault": true
+                  }
                 ]
               }
             ]
           },
           "adapter": {
             "claudeCode": {
-              "effortMap": { "ultrathink": null },
-              "modelSuffixes": { "contextWindow": { "1m": "[1m]" } },
-              "contextWindowTokens": { "200k": 200000, "1m": 1000000 }
+              "effortMap": {
+                "ultrathink": null
+              },
+              "modelSuffixes": {
+                "contextWindow": {
+                  "1m": "[1m]"
+                }
+              },
+              "contextWindowTokens": {
+                "200k": 200000,
+                "1m": 1000000
+              }
             }
           }
         },
@@ -202,16 +368,35 @@
                 "label": "Reasoning",
                 "type": "select",
                 "options": [
-                  { "id": "low", "label": "Low" },
-                  { "id": "medium", "label": "Medium" },
-                  { "id": "high", "label": "High", "isDefault": true },
-                  { "id": "max", "label": "Max" }
+                  {
+                    "id": "low",
+                    "label": "Low"
+                  },
+                  {
+                    "id": "medium",
+                    "label": "Medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "High",
+                    "isDefault": true
+                  },
+                  {
+                    "id": "max",
+                    "label": "Max"
+                  }
                 ]
               },
-              { "id": "fastMode", "label": "Fast Mode", "type": "boolean" }
+              {
+                "id": "fastMode",
+                "label": "Fast Mode",
+                "type": "boolean"
+              }
             ]
           },
-          "adapter": { "claudeCode": {} }
+          "adapter": {
+            "claudeCode": {}
+          }
         },
         "sonnet-5": {
           "capabilities": {
@@ -221,12 +406,31 @@
                 "label": "Reasoning",
                 "type": "select",
                 "options": [
-                  { "id": "low", "label": "Low" },
-                  { "id": "medium", "label": "Medium" },
-                  { "id": "high", "label": "High", "isDefault": true },
-                  { "id": "xhigh", "label": "Extra High" },
-                  { "id": "max", "label": "Max" },
-                  { "id": "ultrathink", "label": "Ultrathink" }
+                  {
+                    "id": "low",
+                    "label": "Low"
+                  },
+                  {
+                    "id": "medium",
+                    "label": "Medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "High",
+                    "isDefault": true
+                  },
+                  {
+                    "id": "xhigh",
+                    "label": "Extra High"
+                  },
+                  {
+                    "id": "max",
+                    "label": "Max"
+                  },
+                  {
+                    "id": "ultrathink",
+                    "label": "Ultrathink"
+                  }
                 ],
                 "promptInjectedValues": ["ultrathink"]
               },
@@ -235,17 +439,33 @@
                 "label": "Context Window",
                 "type": "select",
                 "options": [
-                  { "id": "200k", "label": "200k", "isDefault": true },
-                  { "id": "1m", "label": "1M" }
+                  {
+                    "id": "200k",
+                    "label": "200k",
+                    "isDefault": true
+                  },
+                  {
+                    "id": "1m",
+                    "label": "1M"
+                  }
                 ]
               }
             ]
           },
           "adapter": {
             "claudeCode": {
-              "effortMap": { "ultrathink": null },
-              "modelSuffixes": { "contextWindow": { "1m": "[1m]" } },
-              "contextWindowTokens": { "200k": 200000, "1m": 1000000 }
+              "effortMap": {
+                "ultrathink": null
+              },
+              "modelSuffixes": {
+                "contextWindow": {
+                  "1m": "[1m]"
+                }
+              },
+              "contextWindowTokens": {
+                "200k": 200000,
+                "1m": 1000000
+              }
             }
           }
         },
@@ -257,11 +477,27 @@
                 "label": "Reasoning",
                 "type": "select",
                 "options": [
-                  { "id": "low", "label": "Low" },
-                  { "id": "medium", "label": "Medium" },
-                  { "id": "high", "label": "High", "isDefault": true },
-                  { "id": "max", "label": "Max" },
-                  { "id": "ultrathink", "label": "Ultrathink" }
+                  {
+                    "id": "low",
+                    "label": "Low"
+                  },
+                  {
+                    "id": "medium",
+                    "label": "Medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "High",
+                    "isDefault": true
+                  },
+                  {
+                    "id": "max",
+                    "label": "Max"
+                  },
+                  {
+                    "id": "ultrathink",
+                    "label": "Ultrathink"
+                  }
                 ],
                 "promptInjectedValues": ["ultrathink"]
               },
@@ -270,25 +506,50 @@
                 "label": "Context Window",
                 "type": "select",
                 "options": [
-                  { "id": "200k", "label": "200k", "isDefault": true },
-                  { "id": "1m", "label": "1M" }
+                  {
+                    "id": "200k",
+                    "label": "200k",
+                    "isDefault": true
+                  },
+                  {
+                    "id": "1m",
+                    "label": "1M"
+                  }
                 ]
               }
             ]
           },
           "adapter": {
             "claudeCode": {
-              "effortMap": { "max": "high", "ultrathink": null },
-              "modelSuffixes": { "contextWindow": { "1m": "[1m]" } },
-              "contextWindowTokens": { "200k": 200000, "1m": 1000000 }
+              "effortMap": {
+                "max": "high",
+                "ultrathink": null
+              },
+              "modelSuffixes": {
+                "contextWindow": {
+                  "1m": "[1m]"
+                }
+              },
+              "contextWindowTokens": {
+                "200k": 200000,
+                "1m": 1000000
+              }
             }
           }
         },
         "haiku-4-5": {
           "capabilities": {
-            "optionDescriptors": [{ "id": "thinking", "label": "Thinking", "type": "boolean" }]
+            "optionDescriptors": [
+              {
+                "id": "thinking",
+                "label": "Thinking",
+                "type": "boolean"
+              }
+            ]
           },
-          "adapter": { "claudeCode": {} }
+          "adapter": {
+            "claudeCode": {}
+          }
         }
       },
       "models": [
@@ -299,14 +560,22 @@
           "status": "current",
           "badge": "new",
           "profile": "fable-5",
-          "adapter": { "claudeCode": { "minVersion": "2.1.257" } }
+          "adapter": {
+            "claudeCode": {
+              "minVersion": "2.1.257"
+            }
+          }
         },
         {
           "slug": "claude-fable-5",
           "name": "Claude Fable 5",
           "status": "legacy",
           "profile": "fable-5",
-          "adapter": { "claudeCode": { "minVersion": "2.1.169" } }
+          "adapter": {
+            "claudeCode": {
+              "minVersion": "2.1.169"
+            }
+          }
         },
         {
           "slug": "claude-opus-5",
@@ -314,7 +583,11 @@
           "aliases": ["opus", "opus-5", "claude-opus-5.0", "claude-opus-5-0"],
           "status": "current",
           "profile": "opus-5",
-          "adapter": { "claudeCode": { "minVersion": "2.1.219" } }
+          "adapter": {
+            "claudeCode": {
+              "minVersion": "2.1.219"
+            }
+          }
         },
         {
           "slug": "claude-opus-4-8",
@@ -322,7 +595,11 @@
           "aliases": ["opus-4.8", "claude-opus-4.8"],
           "status": "legacy",
           "profile": "opus-4-8",
-          "adapter": { "claudeCode": { "minVersion": "2.1.154" } }
+          "adapter": {
+            "claudeCode": {
+              "minVersion": "2.1.154"
+            }
+          }
         },
         {
           "slug": "claude-opus-4-7",
@@ -330,7 +607,11 @@
           "aliases": ["opus-4.7", "claude-opus-4.7"],
           "status": "legacy",
           "profile": "opus-4-7",
-          "adapter": { "claudeCode": { "minVersion": "2.1.111" } }
+          "adapter": {
+            "claudeCode": {
+              "minVersion": "2.1.111"
+            }
+          }
         },
         {
           "slug": "claude-opus-4-6",
@@ -365,6 +646,29 @@
           "aliases": ["haiku", "haiku-4.5", "claude-haiku-4.5", "claude-haiku-4-5-20251001"],
           "status": "legacy",
           "profile": "haiku-4-5"
+        }
+      ]
+    },
+    "antigravity": {
+      "defaults": {
+        "chat": "gemini-3.8-flash-high"
+      },
+      "profiles": {},
+      "models": [
+        {
+          "slug": "gemini-3.8-flash-high",
+          "name": "Gemini 3.8 Flash (High)",
+          "status": "current"
+        },
+        {
+          "slug": "gemini-3.8-flash-medium",
+          "name": "Gemini 3.8 Flash (Medium)",
+          "status": "current"
+        },
+        {
+          "slug": "gemini-3.8-flash-low",
+          "name": "Gemini 3.8 Flash (Low)",
+          "status": "current"
         }
       ]
     }

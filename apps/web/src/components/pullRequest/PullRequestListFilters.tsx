@@ -2,6 +2,7 @@ import type {
   EnvironmentId,
   ProjectId,
   PullRequestInvolvement,
+  ProjectIconOverride,
   PullRequestListFilters,
   PullRequestListState,
   SourceControlProviderKind,
@@ -58,6 +59,8 @@ export interface PullRequestFilterOption<Value extends string> {
   readonly favicon?: {
     readonly environmentId: EnvironmentId;
     readonly cwd: string;
+    readonly faviconPath?: string | null;
+    readonly projectIcon?: ProjectIconOverride | null;
   };
   /** Why it cannot be chosen, carried onto the item as its title. */
   readonly unavailable?: string | undefined;
@@ -72,6 +75,9 @@ export function PullRequestFilterOptionIcon<Value extends string>({
     <ProjectFavicon
       environmentId={option.favicon.environmentId}
       cwd={option.favicon.cwd}
+      projectName={option.label}
+      faviconPath={option.favicon.faviconPath}
+      projectIcon={option.favicon.projectIcon}
       fallbackIcon={FolderGit2Icon}
       className="size-3.5"
     />
@@ -450,6 +456,8 @@ export function PullRequestFiltersMenu({
     readonly environmentId: EnvironmentId;
     readonly title: string;
     readonly workspaceRoot: string;
+    readonly faviconPath?: string | null;
+    readonly projectIcon?: ProjectIconOverride | null;
   }>;
   projectId: ProjectId | undefined;
   /**
@@ -505,7 +513,12 @@ export function PullRequestFiltersMenu({
         value: pullRequestProjectKey(project),
         label: project.title,
         Icon: FolderGit2Icon,
-        favicon: { environmentId: project.environmentId, cwd: project.workspaceRoot },
+        favicon: {
+          environmentId: project.environmentId,
+          cwd: project.workspaceRoot,
+          faviconPath: project.faviconPath ?? null,
+          projectIcon: project.projectIcon ?? null,
+        },
         ...(unavailable.has(pullRequestProjectKey(project))
           ? { unavailable: unavailable.get(pullRequestProjectKey(project)) }
           : {}),
@@ -524,7 +537,7 @@ export function PullRequestFiltersMenu({
         <ListFilterIcon className="size-4" />
         <span>Filters</span>
         {filterCount > 0 ? (
-          <span className="rounded-full bg-primary/10 px-1.5 text-xs text-primary tabular-nums">
+          <span className="rounded-full bg-muted px-1.5 text-xs text-muted-foreground tabular-nums">
             {filterCount}
           </span>
         ) : null}

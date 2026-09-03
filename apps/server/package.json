@@ -32,7 +32,8 @@
     "effect": "catalog:",
     "msgpackr-extract": "3.0.4",
     "node-pty": "^1.1.0",
-    "yaml": "catalog:"
+    "yaml": "catalog:",
+    "yauzl": "^3.4.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
@@ -42,6 +43,7 @@
     "@t3tools/web": "workspace:*",
     "@types/bun": "1.3.14",
     "@types/node": "catalog:",
+    "@types/yauzl": "^3.4.0",
     "effect-acp": "workspace:*",
     "effect-codex-app-server": "workspace:*",
     "vite-plus": "catalog:"
