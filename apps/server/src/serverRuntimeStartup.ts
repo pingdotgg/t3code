@@ -482,9 +482,11 @@ export const reconcileProviderSessions = Effect.gen(function* () {
     // Quitting the T3 Code desktop app also stops its embedded backend, but
     // unlike a managed self-update it does not write a continuation marker.
     // On the next app launch, the projected active turn and persisted provider
-    // cursor still prove that the interrupted session can be resumed. The same
-    // startup path also covers standalone backend restarts. A stale explicit
-    // update marker remains authoritative and must not resume a different turn.
+    // cursor make the interrupted session a continuation candidate. Before a
+    // turn is sent, ProviderService verifies that recovery retained the same
+    // provider conversation. The same startup path also covers standalone
+    // backend restarts. A stale explicit update marker remains authoritative
+    // and must not resume a different turn.
     const restartContinuationEligible =
       continuationMarked ||
       (!continuationMarkerPresent &&
@@ -551,6 +553,11 @@ export const reconcileProviderSessions = Effect.gen(function* () {
       thread.archivedAt === null &&
       thread.deletedAt === null
     ) {
+      const recoveryTurnId = continuationTurnId ?? session.activeTurnId;
+      if (recoveryTurnId === null) {
+        yield* settleAsError(ORPHANED_PROVIDER_SESSION_ERROR);
+        continue;
+      }
       const prepared = yield* Effect.gen(function* () {
         yield* directory.upsert({
           ...binding.value,
@@ -558,6 +565,7 @@ export const reconcileProviderSessions = Effect.gen(function* () {
           runtimePayload: {
             ...readRuntimePayload(binding.value.runtimePayload),
             activeTurnId: null,
+            [SERVER_UPDATE_CONTINUATION_KEY]: recoveryTurnId,
           },
         });
         const resumedAt = DateTime.formatIso(yield* DateTime.now);
@@ -597,17 +605,20 @@ export const reconcileProviderSessions = Effect.gen(function* () {
               });
             }
             const capabilities = yield* providerService.getCapabilities(providerInstanceId);
-            yield* providerService.sendTurn({
-              threadId: thread.id,
-              ...(capabilities.promptlessTurnContinuation === true
-                ? { continuation: true }
-                : { input: SERVER_UPDATE_CONTINUATION_PROMPT }),
-              interactionMode: thread.interactionMode,
-            });
+            yield* providerService.sendTurn(
+              {
+                threadId: thread.id,
+                ...(capabilities.promptlessTurnContinuation === true
+                  ? { continuation: true }
+                  : { input: SERVER_UPDATE_CONTINUATION_PROMPT }),
+                interactionMode: thread.interactionMode,
+              },
+              { requireResumeCursor: binding.value.resumeCursor },
+            );
           });
           const continuationExit = yield* Effect.exit(continuation);
           if (Exit.isSuccess(continuationExit) || Cause.hasInterrupts(continuationExit.cause)) {
-            if (Exit.isSuccess(continuationExit) && continuationMarkerPresent) {
+            if (Exit.isSuccess(continuationExit)) {
               yield* clearContinuationMarkers(directory, [thread.id]).pipe(
                 Effect.uninterruptible,
                 Effect.catchCause((cause) =>

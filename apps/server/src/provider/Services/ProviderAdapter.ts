@@ -62,6 +62,13 @@ export interface ProviderAdapterShape<TError> {
   ) => Effect.Effect<ProviderSession, TError>;
 
   /**
+   * Confirms that a recovered session still represents the persisted provider
+   * conversation. Used by automatic restart recovery to avoid sending a
+   * continuation turn into a newly-created empty session.
+   */
+  readonly isSameResumeCursor?: (persisted: unknown, recovered: unknown) => boolean;
+
+  /**
    * Send a turn to an active provider session.
    */
   readonly sendTurn: (

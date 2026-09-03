@@ -315,7 +315,11 @@ const verifyOrdinaryRestartContinuation = (markerCleared: boolean) =>
       TurnId.make("turn-continue-after-restart"),
     );
     const continuationSent = yield* Deferred.make<void>();
+    const continuationCleared = yield* Deferred.make<void>();
     const sends: ProviderSendTurnInput[] = [];
+    const sendOptions: Array<
+      Parameters<ProviderService.ProviderService["Service"]["sendTurn"]>[1]
+    > = [];
     const dispatched: OrchestrationCommand[] = [];
     const upserts: ProviderSessionDirectory.ProviderRuntimeBinding[] = [];
     const providerService: ProviderService.ProviderService["Service"] = {
@@ -325,9 +329,10 @@ const verifyOrdinaryRestartContinuation = (markerCleared: boolean) =>
           sessionModelSwitch: "in-session",
           promptlessTurnContinuation: true,
         }),
-      sendTurn: (input) =>
+      sendTurn: (input, options) =>
         Effect.sync(() => {
           sends.push(input);
+          sendOptions.push(options);
           return {
             threadId: input.threadId,
             turnId: TurnId.make("continued-after-restart"),
@@ -354,7 +359,22 @@ const verifyOrdinaryRestartContinuation = (markerCleared: boolean) =>
               },
             }),
           ),
-        upsert: (binding) => Effect.sync(() => upserts.push(binding)),
+        upsert: (binding) =>
+          Effect.sync(() => {
+            upserts.push(binding);
+            const payload = binding.runtimePayload;
+            return (
+              payload !== null &&
+              typeof payload === "object" &&
+              !Array.isArray(payload) &&
+              "continueAfterServerUpdate" in payload &&
+              payload.continueAfterServerUpdate === null
+            );
+          }).pipe(
+            Effect.flatMap((cleared) =>
+              cleared ? Deferred.succeed(continuationCleared, undefined) : Effect.void,
+            ),
+          ),
         getProvider: () => Effect.die("unused"),
         listThreadIds: () => Effect.die("unused"),
         listBindings: () => Effect.die("unused"),
@@ -365,9 +385,13 @@ const verifyOrdinaryRestartContinuation = (markerCleared: boolean) =>
         ),
     });
     yield* Deferred.await(continuationSent);
+    yield* Deferred.await(continuationCleared);
 
     assert.deepStrictEqual(sends, [
       { threadId: thread.id, continuation: true, interactionMode: "default" },
+    ]);
+    assert.deepStrictEqual(sendOptions, [
+      { requireResumeCursor: { threadId: "provider-thread-resume" } },
     ]);
     assert.deepStrictEqual(
       dispatched.map((command) =>
@@ -387,7 +411,12 @@ const verifyOrdinaryRestartContinuation = (markerCleared: boolean) =>
         {
           activeTurnId: null,
           lastRuntimeEvent: "provider.sendTurn",
-          ...(markerCleared ? { continueAfterServerUpdate: null } : {}),
+          continueAfterServerUpdate: thread.session.activeTurnId,
+        },
+        {
+          activeTurnId: thread.session.activeTurnId,
+          lastRuntimeEvent: "provider.sendTurn",
+          continueAfterServerUpdate: null,
         },
       ],
     );

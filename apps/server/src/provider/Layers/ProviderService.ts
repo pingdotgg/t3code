@@ -412,6 +412,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const recoverSessionForThread = Effect.fn("recoverSessionForThread")(function* (input: {
     readonly binding: ProviderSessionDirectory.ProviderRuntimeBinding;
     readonly operation: string;
+    readonly requireResumeCursor?: unknown;
   }) {
     const bindingInstanceId = yield* requireBindingInstanceId(input.operation, input.binding);
     yield* Effect.annotateCurrentSpan({
@@ -431,6 +432,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           (session) => session.threadId === input.binding.threadId,
         );
         if (existing) {
+          if (
+            input.requireResumeCursor !== undefined &&
+            adapter.isSameResumeCursor?.(input.requireResumeCursor, existing.resumeCursor) !== true
+          ) {
+            return yield* toValidationError(
+              input.operation,
+              `Cannot automatically continue thread '${input.binding.threadId}' because its active provider session does not match the persisted conversation.`,
+            );
+          }
           yield* upsertSessionBinding(
             { ...existing, providerInstanceId: bindingInstanceId },
             input.binding.threadId,
@@ -474,6 +484,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         );
       }
 
+      if (
+        input.requireResumeCursor !== undefined &&
+        adapter.isSameResumeCursor?.(input.requireResumeCursor, resumed.resumeCursor) !== true
+      ) {
+        yield* adapter.stopSession(input.binding.threadId).pipe(Effect.ignore);
+        yield* clearMcpSession(input.binding.threadId);
+        return yield* toValidationError(
+          input.operation,
+          `Cannot automatically continue thread '${input.binding.threadId}' because the provider did not resume the persisted conversation.`,
+        );
+      }
+
       yield* upsertSessionBinding(
         { ...resumed, providerInstanceId: bindingInstanceId },
         input.binding.threadId,
@@ -498,6 +520,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly threadId: ThreadId;
     readonly operation: string;
     readonly allowRecovery: boolean;
+    readonly requireResumeCursor?: unknown;
   }) {
     const bindingOption = yield* directory.getBinding(input.threadId);
     const binding = Option.getOrUndefined(bindingOption);
@@ -512,6 +535,20 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
     const hasRequestedSession = yield* adapter.hasSession(input.threadId);
     if (hasRequestedSession) {
+      if (input.requireResumeCursor !== undefined) {
+        const activeSessions = yield* adapter.listSessions();
+        const activeSession = activeSessions.find((session) => session.threadId === input.threadId);
+        if (
+          activeSession === undefined ||
+          adapter.isSameResumeCursor?.(input.requireResumeCursor, activeSession.resumeCursor) !==
+            true
+        ) {
+          return yield* toValidationError(
+            input.operation,
+            `Cannot automatically continue thread '${input.threadId}' because its active provider session does not match the persisted conversation.`,
+          );
+        }
+      }
       return {
         adapter,
         instanceId,
@@ -534,6 +571,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     const recovered = yield* recoverSessionForThread({
       binding,
       operation: input.operation,
+      ...(input.requireResumeCursor !== undefined
+        ? { requireResumeCursor: input.requireResumeCursor }
+        : {}),
     });
     return {
       adapter: recovered.adapter,
@@ -715,7 +755,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
-  const sendTurn: ProviderServiceMethod<"sendTurn"> = Effect.fn("sendTurn")(function* (rawInput) {
+  const sendTurnImpl = function* (
+    rawInput: Parameters<ProviderServiceMethod<"sendTurn">>[0],
+    options: Parameters<ProviderServiceMethod<"sendTurn">>[1],
+  ) {
     const parsed = yield* decodeInputOrValidationError({
       operation: "ProviderService.sendTurn",
       schema: ProviderSendTurnInput,
@@ -781,6 +824,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         threadId: input.threadId,
         operation: "ProviderService.sendTurn",
         allowRecovery: false,
+        ...(options?.requireResumeCursor !== undefined
+          ? { requireResumeCursor: options.requireResumeCursor }
+          : {}),
       });
       if (
         input.continuation === true &&
@@ -798,6 +844,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           threadId: input.threadId,
           operation: "ProviderService.sendTurn",
           allowRecovery: true,
+          ...(options?.requireResumeCursor !== undefined
+            ? { requireResumeCursor: options.requireResumeCursor }
+            : {}),
         });
       }
       metricProvider = routed.adapter.provider;
@@ -852,7 +901,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           }),
       }),
     );
-  });
+  };
+  const sendTurn: ProviderServiceMethod<"sendTurn"> = Effect.fn("sendTurn")(sendTurnImpl);
 
   const interruptTurn: ProviderServiceMethod<"interruptTurn"> = Effect.fn("interruptTurn")(
     function* (rawInput) {

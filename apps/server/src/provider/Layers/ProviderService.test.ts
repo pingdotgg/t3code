@@ -246,6 +246,17 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
       ...(provider === CODEX_DRIVER ? { promptlessTurnContinuation: true } : {}),
     },
     startSession,
+    isSameResumeCursor: (persisted, recovered) => {
+      const readOpaque = (value: unknown) =>
+        typeof value === "object" &&
+        value !== null &&
+        !Array.isArray(value) &&
+        typeof (value as { opaque?: unknown }).opaque === "string"
+          ? (value as { opaque: string }).opaque
+          : undefined;
+      const persistedOpaque = readOpaque(persisted);
+      return persistedOpaque !== undefined && persistedOpaque === readOpaque(recovered);
+    },
     sendTurn,
     interruptTurn,
     respondToRequest,
@@ -1464,11 +1475,14 @@ routing.layer("ProviderServiceLive routing", (it) => {
       routing.codex.startSession.mockClear();
       routing.codex.sendTurn.mockClear();
 
-      yield* provider.sendTurn({
-        threadId: initial.threadId,
-        input: "resume",
-        attachments: [],
-      });
+      yield* provider.sendTurn(
+        {
+          threadId: initial.threadId,
+          input: "resume",
+          attachments: [],
+        },
+        { requireResumeCursor: initial.resumeCursor },
+      );
 
       assert.equal(routing.codex.startSession.mock.calls.length, 1);
       const resumedStartInput = routing.codex.startSession.mock.calls[0]?.[0];
@@ -1486,6 +1500,47 @@ routing.layer("ProviderServiceLive routing", (it) => {
         assert.equal(startPayload.threadId, initial.threadId);
       }
       assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("rejects automatic continuation when recovery starts a fresh conversation", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-strict-resume-mismatch");
+      const initial = yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: "/tmp/project-strict-resume",
+        runtimeMode: "full-access",
+      });
+
+      yield* routing.codex.stopAll();
+      routing.codex.startSession.mockClear();
+      routing.codex.sendTurn.mockClear();
+      routing.codex.stopSession.mockClear();
+      routing.codex.startSession.mockImplementationOnce(() =>
+        Effect.succeed({
+          ...initial,
+          resumeCursor: { opaque: "fresh-provider-conversation" },
+        }),
+      );
+
+      const failure = yield* provider
+        .sendTurn(
+          {
+            threadId,
+            input: "Continue where you left off.",
+            attachments: [],
+          },
+          { requireResumeCursor: initial.resumeCursor },
+        )
+        .pipe(Effect.flip);
+
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.match(failure.message, /did not resume the persisted conversation/u);
+      assert.equal(routing.codex.sendTurn.mock.calls.length, 0);
+      assert.deepStrictEqual(routing.codex.stopSession.mock.calls, [[threadId]]);
     }),
   );
 

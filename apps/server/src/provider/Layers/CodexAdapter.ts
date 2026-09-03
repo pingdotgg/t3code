@@ -2324,6 +2324,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       promptlessTurnContinuation: true,
     },
     startSession,
+    isSameResumeCursor: (persisted, recovered) =>
+      isCodexResumeCursorSchema(persisted) &&
+      isCodexResumeCursorSchema(recovered) &&
+      persisted.threadId === recovered.threadId,
     sendTurn,
     interruptTurn,
     readThread,
