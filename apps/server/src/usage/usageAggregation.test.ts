@@ -74,23 +74,21 @@ describe("UsageAggregator", () => {
     ).toThrow("requires exact time bounds");
   });
 
-  it("keeps only the first record for a repeated dedupe key", () => {
+  it("keeps repeated keys because callers own source-scoped dedupe", () => {
     const result = aggregate([
       record({ dedupeKey: "msg_1:" }),
       record({ dedupeKey: "msg_1:" }),
       record({ dedupeKey: "msg_1:" }),
     ]);
 
-    expect(result.duplicatesDropped).toBe(2);
+    expect(result.buckets[0]?.records).toBe(3);
+    expect(result.buckets[0]?.totals.outputTokens).toBe(150);
     expect(result.buckets).toHaveLength(1);
-    expect(result.buckets[0]?.records).toBe(1);
-    expect(result.buckets[0]?.totals.outputTokens).toBe(50);
   });
 
   it("still sums records that carry no dedupe key", () => {
     const result = aggregate([record(), record()]);
 
-    expect(result.duplicatesDropped).toBe(0);
     expect(result.buckets[0]?.totals.outputTokens).toBe(100);
   });
 
@@ -275,7 +273,7 @@ describe("UsageAggregator", () => {
     });
 
     expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(true);
-    expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(false);
+    expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(true);
     expect(aggregator.add(record({ timestampMs: Date.parse("2026-07-01T12:00:00Z") }))).toBe(false);
   });
 

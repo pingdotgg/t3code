@@ -185,6 +185,13 @@ const UsageLedgerFile = Schema.Struct({
   aggregates: Schema.Array(UsageLedgerAggregate),
   sources: Schema.Array(UsageSourceSchema),
 });
+
+/** Optional lifecycle hook used by the server usage tests. */
+export class UsageRefreshHooks extends Context.Reference<{
+  readonly beforeCanonicalScan: Effect.Effect<void>;
+}>("@t3tools/UsageRefreshHooks", {
+  defaultValue: () => ({ beforeCanonicalScan: Effect.void }),
+}) {}
 const decodeUsageSnapshotFile = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     UsageSnapshotFile as unknown as Schema.Codec<typeof UsageSnapshotFile.Type>,
@@ -440,6 +447,7 @@ export const layerTest = Layer.succeed(
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const refreshHooks = yield* UsageRefreshHooks;
   const config = yield* ServerConfig;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
@@ -972,6 +980,12 @@ export const make = Effect.gen(function* () {
           continue;
         }
         scannedFiles += 1;
+        const directory = path.dirname(file.path);
+        let ledgerSeen = ledgerSeenByDirectory.get(directory);
+        if (ledgerSeen === undefined) {
+          ledgerSeen = new Set<string>();
+          ledgerSeenByDirectory.set(directory, ledgerSeen);
+        }
         for (const record of file.records) {
           // The scan-start instant is the upper bound for both the summary and
           // the durable ledger. Records appended while the walk is in flight
@@ -981,22 +995,13 @@ export const make = Effect.gen(function* () {
           // admits boundary files whose records fall outside the range.
           const dedupeKey = record.dedupeKey;
           if (dedupeKey !== null) {
-            const directory = path.dirname(file.path);
-            let ledgerSeen = ledgerSeenByDirectory.get(directory);
-            if (ledgerSeen === undefined) {
-              ledgerSeen = new Set<string>();
-              ledgerSeenByDirectory.set(directory, ledgerSeen);
-            }
             if (ledgerSeen.has(dedupeKey)) continue;
             ledgerSeen.add(dedupeKey);
           }
 
-          // The viewer aggregate and canonical ledger must make the same
-          // directory-scoped dedupe decision. Hide the key from the
-          // aggregator after this decision so its global seen set cannot
-          // collapse equal keys from another transcript directory.
-          const summaryRecord = dedupeKey === null ? record : { ...record, dedupeKey: null };
-          if (aggregator.add(summaryRecord) && record.sessionId.length > 0) {
+          // The viewer aggregate and canonical ledger share the same
+          // directory-scoped dedupe decision above.
+          if (aggregator.add(record) && record.sessionId.length > 0) {
             sessionIds.add(record.sessionId);
           }
 
@@ -1206,6 +1211,7 @@ export const make = Effect.gen(function* () {
           const canonicalInput = isCanonicalLedgerInput(input)
             ? input
             : (yield* defaultDailyInputs)[0]!;
+          yield* refreshHooks.beforeCanonicalScan;
           const summary = yield* restore(scanAndPersist(canonicalInput)).pipe(
             Effect.onExit((exit) =>
               Effect.sync(() => {

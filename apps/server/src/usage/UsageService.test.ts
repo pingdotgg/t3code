@@ -544,26 +544,41 @@ describe("UsageService", () => {
   it.live("clears an interrupted canonical waiter so the next refresh can run", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
-      const ratesGate = yield* Deferred.make<void>();
-      const ratesStarted = yield* Deferred.make<void>();
+      const beforeScanGate = yield* Deferred.make<void>();
+      const beforeScanStarted = yield* Deferred.make<void>();
+      const manualPreset: UsageSummaryInput = {
+        timeZone: "UTC",
+        sinceDay: UsageDay.make("2026-08-01"),
+        untilDay: UsageDay.make("2026-08-07"),
+      };
       const service = yield* UsageService.make.pipe(
         Effect.provide(
           serviceLayers({
             prefix: "usage-service-canonical-interrupt-test",
             home,
             settings,
-            ratesGate,
-            ratesStarted,
           }),
         ),
+        Effect.provideService(UsageService.UsageRefreshHooks, {
+          beforeCanonicalScan: Effect.gen(function* () {
+            yield* Deferred.succeed(beforeScanStarted, undefined);
+            yield* Deferred.await(beforeScanGate);
+          }),
+        }),
       );
-      const background = yield* service.startBackgroundRefresh.pipe(Effect.forkChild);
-      yield* Deferred.await(ratesStarted);
-      yield* Fiber.interrupt(background);
-      yield* Deferred.succeed(ratesGate, undefined);
+      const refresh = yield* service.refreshSummary(manualPreset).pipe(Effect.forkChild);
+      yield* Deferred.await(beforeScanStarted);
+      const interrupt = yield* Fiber.interrupt(refresh).pipe(Effect.forkDetach);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(beforeScanGate, undefined);
+      yield* Effect.yieldNow;
+      yield* Fiber.join(interrupt).pipe(Effect.timeout("5 seconds"));
 
-      const result = yield* service.refreshSummary(currentCanonicalWindow());
-      assert.strictEqual(totalOutputTokens(result), 0);
+      const result = yield* service
+        .refreshSummary(currentCanonicalWindow())
+        .pipe(Effect.timeout("5 seconds"), Effect.exit);
+      assert.isTrue(Exit.isSuccess(result));
+      if (Exit.isSuccess(result)) assert.strictEqual(totalOutputTokens(result.value), 0);
     }).pipe(Effect.scoped),
   );
 

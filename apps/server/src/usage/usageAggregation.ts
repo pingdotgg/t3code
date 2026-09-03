@@ -68,8 +68,6 @@ export interface AggregateOptions {
 
 export interface AggregateResult {
   readonly buckets: readonly UsageBucket[];
-  /** Records dropped because an earlier record carried the same dedupe key. */
-  readonly duplicatesDropped: number;
   /** Records whose day fell outside the requested window. */
   readonly outOfWindow: number;
 }
@@ -96,19 +94,15 @@ export interface NormalizedUsageAggregate {
 }
 
 /**
- * Accumulates records across many files.
- *
- * De-duplication is global across the whole scan, not per file: Claude Code
- * copies a message's records forward when a session is resumed or forked, so
- * the same `dedupeKey` legitimately appears in several transcripts.
+ * Accumulates records across many files. Callers own transcript identity and
+ * must deduplicate records before adding them when their source format has a
+ * stable dedupe key.
  */
 export class UsageAggregator {
   readonly #buckets = new Map<string, MutableBucket>();
-  readonly #seen = new Set<string>();
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
   readonly #options: AggregateOptions;
-  #duplicatesDropped = 0;
   #outOfWindow = 0;
 
   constructor(options: AggregateOptions) {
@@ -133,14 +127,6 @@ export class UsageAggregator {
    * that landed rather than everything the mtime prefilter happened to admit.
    */
   add(record: UsageRecord): boolean {
-    if (record.dedupeKey !== null) {
-      if (this.#seen.has(record.dedupeKey)) {
-        this.#duplicatesDropped += 1;
-        return false;
-      }
-      this.#seen.add(record.dedupeKey);
-    }
-
     if (
       this.#hourlyWindow !== null &&
       (record.timestampMs < this.#hourlyWindow.sinceTimeMs ||
@@ -310,7 +296,6 @@ export class UsageAggregator {
 
     return {
       buckets,
-      duplicatesDropped: this.#duplicatesDropped,
       outOfWindow: this.#outOfWindow,
     };
   }
