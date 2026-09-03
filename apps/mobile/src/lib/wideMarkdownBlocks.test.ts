@@ -41,6 +41,14 @@ describe("hasWideMarkdownBlock", () => {
     );
   });
 
+  it("detects blockquotes only when the native renderer needs width pinning", () => {
+    expect(hasWideMarkdownBlock("> quoted", { includeBlockquotes: true })).toBe(true);
+    expect(hasWideMarkdownBlock("  > quoted", { includeBlockquotes: true })).toBe(true);
+    expect(hasWideMarkdownBlock("> quoted")).toBe(false);
+    expect(hasWideMarkdownBlock("prose > quoted", { includeBlockquotes: true })).toBe(false);
+    expect(hasWideMarkdownBlock("    > indented code", { includeBlockquotes: true })).toBe(false);
+  });
+
   it("detects GFM tables", () => {
     expect(hasWideMarkdownBlock("| a | b |\n| --- | --- |\n| 1 | 2 |")).toBe(true);
     expect(hasWideMarkdownBlock("a | b\n:-- | --:\n1 | 2")).toBe(true);

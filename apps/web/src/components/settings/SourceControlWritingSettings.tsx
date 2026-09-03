@@ -20,7 +20,12 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
-import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SETTINGS_PICKER_TRIGGER_CLASSNAME,
+  SettingResetButton,
+  SettingsRow,
+  SettingsSection,
+} from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; description: string }> =
@@ -74,6 +79,7 @@ export function SourceControlWritingSettingsSection() {
   return (
     <SettingsSection title="Text generation">
       <SettingsRow
+        serverScoped
         {...searchableSetting("source-control-writing-style")}
         description={MODE_OPTIONS[style.mode].description}
         resetAction={
@@ -104,7 +110,11 @@ export function SourceControlWritingSettingsSection() {
               });
             }}
           >
-            <SelectTrigger className="w-full sm:w-56" aria-label="Source control writing style">
+            <SelectTrigger
+              size="sm"
+              className="w-full sm:w-56"
+              aria-label="Source control writing style"
+            >
               <SelectValue>{MODE_OPTIONS[style.mode].label}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -138,6 +148,7 @@ export function SourceControlWritingSettingsSection() {
       </SettingsRow>
 
       <SettingsRow
+        serverScoped
         {...searchableSetting("follow-change-request-templates")}
         description="Structures change request descriptions using the current repository's template when one is available."
         resetAction={
@@ -170,6 +181,7 @@ export function SourceControlWritingSettingsSection() {
       />
 
       <SettingsRow
+        serverScoped
         {...searchableSetting("source-control-writer-model")}
         description="Optional model override for change descriptions, change request titles and descriptions, and branch or bookmark names. Off uses the global text generation model."
         control={
@@ -182,7 +194,7 @@ export function SourceControlWritingSettingsSection() {
                 instanceEntries={instanceEntries}
                 modelOptionsByInstance={modelOptionsByInstance}
                 triggerVariant="outline"
-                triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                 triggerAriaLabel="Source control writer model"
                 onInstanceModelChange={(instanceId, model) => {
                   updateSettings({

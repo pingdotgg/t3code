@@ -9,9 +9,11 @@ import {
   ArrowDownUpIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  GitPullRequestClosedIcon,
   HammerIcon,
   MessageSquareIcon,
   PencilIcon,
+  RotateCcwIcon,
   SendIcon,
   TagIcon,
   UsersIcon,
@@ -39,6 +41,7 @@ import {
   pullRequestReviewOutcomeRingClassName,
   pullRequestReviewOutcomeStaleLabel,
 } from "./pullRequestPresentation";
+import { PullRequestLabelPicker } from "./PullRequestLabelPicker";
 import { PullRequestReviewerPicker } from "./PullRequestReviewerPicker";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import {
@@ -308,20 +311,43 @@ function Section({
 function CommentComposer({
   environmentId,
   detail,
+  actionPending,
+  onCommentAction,
   onCommented,
 }: {
   environmentId: EnvironmentId;
   detail: PullRequestDetailView;
+  actionPending: boolean;
+  onCommentAction: (
+    body: string,
+    action: "close" | "reopen",
+  ) => Promise<{ readonly commentPosted: boolean }>;
   onCommented: () => void;
 }) {
   const [body, setBody] = useState("");
-  const [posting, setPosting] = useState(false);
+  const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
   const postComment = useAtomCommand(pullRequestEnvironment.comment, { reportFailure: false });
+  const followUpAction =
+    detail.state === "open" &&
+    detail.capabilities.actions.includes("close") &&
+    detail.viewerPermissions.actions.includes("close")
+      ? ("close" as const)
+      : detail.state === "closed" &&
+          detail.capabilities.actions.includes("reopen") &&
+          detail.viewerPermissions.actions.includes("reopen")
+        ? ("reopen" as const)
+        : null;
 
-  const submit = async () => {
+  const submit = async (action: "comment" | "close" | "reopen") => {
     const trimmed = body.trim();
-    if (trimmed.length === 0 || posting) return;
-    setPosting(true);
+    if (trimmed.length === 0 || submitting !== null || actionPending) return;
+    setSubmitting(action);
+    if (action !== "comment") {
+      const result = await onCommentAction(trimmed, action);
+      if (result.commentPosted) setBody("");
+      setSubmitting(null);
+      return;
+    }
     const result = await postComment({
       environmentId,
       input: {
@@ -331,12 +357,13 @@ function CommentComposer({
         body: trimmed,
       },
     });
-    setPosting(false);
     if (result._tag === "Failure") {
+      setSubmitting(null);
       toastManager.add({ type: "error", title: "Could not post the comment" });
       return;
     }
     setBody("");
+    setSubmitting(null);
     onCommented();
   };
 
@@ -345,22 +372,43 @@ function CommentComposer({
       <Textarea
         // Locked while posting: the body is cleared on success, which would otherwise throw
         // away a new draft typed while the request was still in flight.
-        disabled={posting}
+        disabled={submitting !== null || actionPending}
         value={body}
         rows={3}
         placeholder="Leave a comment"
         aria-label="Comment on this pull request"
         onChange={(event) => setBody(event.target.value)}
       />
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        {followUpAction === null ? null : (
+          <Button
+            size="xs"
+            variant={followUpAction === "close" ? "destructive-outline" : "outline"}
+            disabled={body.trim().length === 0 || submitting !== null || actionPending}
+            onClick={() => void submit(followUpAction)}
+          >
+            {followUpAction === "close" ? (
+              <GitPullRequestClosedIcon className="size-3.5" />
+            ) : (
+              <RotateCcwIcon className="size-3.5" />
+            )}
+            {submitting === followUpAction
+              ? followUpAction === "close"
+                ? "Closing..."
+                : "Reopening..."
+              : followUpAction === "close"
+                ? "Close with comment"
+                : "Reopen with comment"}
+          </Button>
+        )}
         <Button
           size="xs"
           variant="outline"
-          disabled={body.trim().length === 0 || posting}
-          onClick={() => void submit()}
+          disabled={body.trim().length === 0 || submitting !== null || actionPending}
+          onClick={() => void submit("comment")}
         >
           <SendIcon className="size-3.5" />
-          {posting ? "Posting..." : "Comment"}
+          {submitting === "comment" ? "Posting..." : "Comment"}
         </Button>
       </div>
     </div>
@@ -383,6 +431,8 @@ export function PullRequestSummaryTab({
   fixFindingLabel = "Fix in a thread",
   fixCheckLabel = "Fix",
   onFixFinding,
+  actionPending,
+  onCommentAction,
   onRefresh,
 }: {
   environmentId: EnvironmentId;
@@ -395,6 +445,11 @@ export function PullRequestSummaryTab({
   fixFindingLabel?: string;
   fixCheckLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
+  actionPending: boolean;
+  onCommentAction: (
+    body: string,
+    action: "close" | "reopen",
+  ) => Promise<{ readonly commentPosted: boolean }>;
   onRefresh: () => void;
 }) {
   // Keyed by the pull request, so opening another one starts at the end of its conversation
@@ -610,25 +665,39 @@ export function PullRequestSummaryTab({
               ) : null}
             </span>
           </MetaRow>
-          {detail.labels.length > 0 ? (
+          {/* The row is shown empty only where a label could be put on it from here; on a host
+              with none to offer, an empty row is a row about nothing. */}
+          {detail.labels.length > 0 || detail.capabilities.labels === true ? (
             <MetaRow icon={<TagIcon className="size-3.5" />} label="Labels">
               <span className="flex min-w-0 flex-wrap items-center gap-1">
-                {detail.labels.map((label) => {
-                  const dot = pullRequestLabelColor(label.color);
-                  return (
-                    <span
-                      key={label.name}
-                      className="inline-flex max-w-48 items-center gap-1.5 rounded-full border border-border/70 bg-muted/40 py-0.5 pl-1.5 pr-2 text-xs"
-                    >
+                {detail.labels.length === 0 ? (
+                  <span className="text-muted-foreground">None</span>
+                ) : (
+                  detail.labels.map((label) => {
+                    const dot = pullRequestLabelColor(label.color);
+                    return (
                       <span
-                        aria-hidden
-                        className="size-2 shrink-0 rounded-full bg-muted-foreground"
-                        {...(dot ? { style: { backgroundColor: dot } } : {})}
-                      />
-                      <span className="truncate">{label.name}</span>
-                    </span>
-                  );
-                })}
+                        key={label.name}
+                        className="inline-flex max-w-48 items-center gap-1.5 rounded-full border border-border/70 bg-muted/40 py-0.5 pl-1.5 pr-2 text-xs"
+                      >
+                        <span
+                          aria-hidden
+                          className="size-2 shrink-0 rounded-full bg-muted-foreground"
+                          {...(dot ? { style: { backgroundColor: dot } } : {})}
+                        />
+                        <span className="truncate">{label.name}</span>
+                      </span>
+                    );
+                  })
+                )}
+                {detail.capabilities.labels === true ? (
+                  <PullRequestLabelPicker
+                    environmentId={environmentId}
+                    reference={reference}
+                    allowed={detail.viewerPermissions.labels !== false}
+                    onChanged={onRefresh}
+                  />
+                ) : null}
               </span>
             </MetaRow>
           ) : null}
@@ -718,7 +787,7 @@ export function PullRequestSummaryTab({
                     <PullRequestCheckStatusIcon status={check.status} />
                     <span className="min-w-0 flex-1 truncate">{check.name}</span>
                     <span className="shrink-0 text-muted-foreground">
-                      {pullRequestCheckStatusLabel(check.status)}
+                      {pullRequestCheckStatusLabel(check)}
                     </span>
                   </button>
                   {/* Only where there is something to fix. A passing check has no failure to
@@ -919,6 +988,8 @@ export function PullRequestSummaryTab({
             key={`${environmentId}:${detail.projectId}/${detail.repository}#${detail.number}`}
             environmentId={environmentId}
             detail={detail}
+            actionPending={actionPending}
+            onCommentAction={onCommentAction}
             onCommented={onRefresh}
           />
         ) : null}
