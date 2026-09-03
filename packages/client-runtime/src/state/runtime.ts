@@ -2,6 +2,7 @@ import { EnvironmentId, type EnvironmentId as EnvironmentIdType } from "@t3tools
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -51,6 +52,8 @@ interface EnvironmentQueryAtomOptions<Input, A, E, R> extends EnvironmentAtomOpt
   readonly staleTimeMs?: number;
   readonly idleTtlMs?: number;
   readonly refreshIntervalMs?: number;
+  /** Revalidate settled failures without adding a refresh loop for successes. */
+  readonly refreshOnFailureMs?: number;
 }
 
 interface EnvironmentSubscriptionAtomOptions<Input, A, E, R> {
@@ -565,10 +568,46 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         }),
         Atom.setIdleTTL(idleTtlMs),
       );
+    const refreshOnFailureMs = options.refreshOnFailureMs;
+    let retryFiber: Fiber.Fiber<void, never> | undefined;
+    let disposed = false;
+    const refreshableQueryAtom =
+      refreshOnFailureMs === undefined
+        ? queryAtom
+        : queryAtom.pipe(
+            Atom.transform(
+              (get) => {
+                const result = get(queryAtom);
+                get.addFinalizer(() => {
+                  disposed = true;
+                  retryFiber?.interruptUnsafe();
+                  retryFiber = undefined;
+                });
+                if (result._tag === "Failure" && retryFiber === undefined) {
+                  disposed = false;
+                  retryFiber = Effect.runFork(
+                    Effect.sleep(refreshOnFailureMs).pipe(
+                      Effect.andThen(
+                        Effect.sync(() => {
+                          retryFiber = undefined;
+                          if (!disposed) get.refresh(queryAtom);
+                        }),
+                      ),
+                    ),
+                  );
+                } else if (result._tag !== "Failure" && retryFiber !== undefined) {
+                  retryFiber.interruptUnsafe();
+                  retryFiber = undefined;
+                }
+                return result;
+              },
+              { initialValueTarget: queryAtom },
+            ),
+          );
     return (
       options.refreshIntervalMs === undefined
-        ? queryAtom
-        : queryAtom.pipe(Atom.withRefresh(options.refreshIntervalMs))
+        ? refreshableQueryAtom
+        : refreshableQueryAtom.pipe(Atom.withRefresh(options.refreshIntervalMs))
     ).pipe(Atom.setIdleTTL(idleTtlMs), Atom.withLabel(`${options.label}:${key}`));
   });
   return (target) => family(environmentRpcKey(target));
@@ -615,6 +654,7 @@ export function createEnvironmentRpcQueryAtomFamily<R, ER, TTag extends Environm
     readonly staleTimeMs?: number;
     readonly idleTtlMs?: number;
     readonly refreshIntervalMs?: number;
+    readonly refreshOnFailureMs?: number;
   },
 ) {
   return createEnvironmentQueryAtomFamily(runtime, {
@@ -624,6 +664,9 @@ export function createEnvironmentRpcQueryAtomFamily<R, ER, TTag extends Environm
     ...(options.refreshIntervalMs === undefined
       ? {}
       : { refreshIntervalMs: options.refreshIntervalMs }),
+    ...(options.refreshOnFailureMs === undefined
+      ? {}
+      : { refreshOnFailureMs: options.refreshOnFailureMs }),
     execute: (input: EnvironmentRpcInput<TTag>) => request(options.tag, input),
   });
 }
