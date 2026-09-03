@@ -47,7 +47,7 @@ export const CwdChip = memo(function CwdChip(props: {
     <Tooltip>
       <TooltipTrigger
         render={
-          <span className="me-1.5 inline-flex max-w-40 shrink-0 truncate rounded border border-border/60 bg-muted/40 px-1 align-[1px] text-[0.625rem] leading-4 text-muted-foreground">
+          <span className="me-1.5 inline-block max-w-40 shrink-0 truncate rounded border border-border/60 bg-muted/40 px-1 align-[1px] text-[0.625rem] leading-4 text-muted-foreground">
             {label}
           </span>
         }
@@ -208,9 +208,11 @@ export const ToolFileDiffs = memo(function ToolFileDiffs(props: {
     () =>
       props.files.map((file) => ({
         file,
-        renderable: file.diff ? getRenderablePatch(file.diff, `tool-row:${props.cacheKey}`) : null,
+        renderable: file.diff
+          ? getRenderablePatch(file.diff, `tool-row:${props.resolvedTheme}:${props.cacheKey}`)
+          : null,
       })),
-    [props.cacheKey, props.files],
+    [props.cacheKey, props.files, props.resolvedTheme],
   );
   return (
     <div className="flex min-w-0 flex-col gap-2">
