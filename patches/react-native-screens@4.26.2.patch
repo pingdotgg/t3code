@@ -1106,6 +1106,55 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
    [self updateViewControllerIfNeeded];
  
    if (needsNavigationControllerLayout) {
+diff --git a/ios/RNSScreenStack.mm b/ios/RNSScreenStack.mm
+--- a/ios/RNSScreenStack.mm
++++ b/ios/RNSScreenStack.mm
+@@ -1074,6 +1074,15 @@ RNS_IGNORE_SUPER_CALL_END
+   return scrollView.contentSize.width > scrollView.frame.size.width;
+ }
+ 
++// Whether a horizontally scrollable ScrollView is resting at its leading edge, so a
++// pan in the back-gesture direction has nothing left to scroll. Checked in the
++// ScrollView's own coordinate space: React Native mirrors the view for RTL layout,
++// which keeps the leading edge at the minimum content offset in both directions.
++- (BOOL)scrollViewIsAtLeadingEdge:(UIScrollView *)scrollView
++{
++  return scrollView.contentOffset.x <= -scrollView.adjustedContentInset.left + 1.0;
++}
++
+ // Custom method for compatibility with iOS < 13.4
+ // RNSScreenStackView is a UIGestureRecognizerDelegate for three types of gesture recognizers:
+ // RNSPanGestureRecognizer, RNSScreenEdgeGestureRecognizer, _UIParallaxTransitionPanGestureRecognizer
+@@ -1167,9 +1176,11 @@ RNS_IGNORE_SUPER_CALL_END
+     if (gestureRecognizer == _controller.interactiveContentPopGestureRecognizer &&
+         [self isScrollViewPanGestureRecognizer:otherGestureRecognizer]) {
+       // ScrollView should take precedence when scrolling horizontally (it should be required to fail).
+-      // However, if it does not allow for horizontal scrolling, there should be no such restriction,
++      // However, if it does not allow for horizontal scrolling, or is already resting at its leading
++      // edge so a back swipe has nothing left to scroll, there should be no such restriction,
+       // and swiping horizontally should dismiss the screen.
+-      return [self scrollViewHasHorizontalPart:static_cast<UIScrollView *>(otherGestureRecognizer.view)];
++      UIScrollView *scrollView = static_cast<UIScrollView *>(otherGestureRecognizer.view);
++      return [self scrollViewHasHorizontalPart:scrollView] && ![self scrollViewIsAtLeadingEdge:scrollView];
+     }
+   }
+ 
+@@ -1189,6 +1200,15 @@ RNS_IGNORE_SUPER_CALL_END
+     // gestureRecognizer:shouldRequireFailureOfGestureRecognizer
+     isEdgeSwipeGestureRecognizer =
+         isEdgeSwipeGestureRecognizer && gestureRecognizer != _controller.interactiveContentPopGestureRecognizer;
++
++    // The exception is a horizontal ScrollView resting at its leading edge: its pan recognizer would
++    // still begin (and merely bounce) on a back swipe, so it must yield to the pop gesture the same
++    // way plain content does.
++    if (gestureRecognizer == _controller.interactiveContentPopGestureRecognizer &&
++        [self isScrollViewPanGestureRecognizer:otherGestureRecognizer]) {
++      UIScrollView *scrollView = static_cast<UIScrollView *>(otherGestureRecognizer.view);
++      return [self scrollViewHasHorizontalPart:scrollView] && [self scrollViewIsAtLeadingEdge:scrollView];
++    }
+   }
+ #endif // check for iOS >= 26
+ 
 diff --git a/ios/RNSScreenStackHeaderSubview.mm b/ios/RNSScreenStackHeaderSubview.mm
 index add33c4807e038dcd846f6c72b2fc472ded02809..489afa5fa2da09c1ec6986d1832b58bb595396ae 100644
 --- a/ios/RNSScreenStackHeaderSubview.mm
