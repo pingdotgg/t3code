@@ -223,7 +223,7 @@ describe("buildElementContextBlock + appendElementContextsToPrompt", () => {
     expect(block).toContain("- <SubmitButton> (Button.tsx:12):");
     expect(block).toContain("  url: https://example.com/dashboard");
     expect(block).toContain("  selector: button.submit");
-    expect(block).toContain("  source: /repo/src/Button.tsx:12:5");
+    expect(block).toContain("  component defined at: /repo/src/Button.tsx:12:5");
     expect(block).toContain("  html:");
     expect(block).toContain("  styles:");
   });
@@ -237,7 +237,7 @@ describe("buildElementContextBlock + appendElementContextsToPrompt", () => {
         "- <SubmitButton> (Button.tsx:12):",
         "  url: https://example.com/dashboard",
         "  selector: button.submit",
-        "  source: /repo/src/Button.tsx:12:5",
+        "  component defined at: /repo/src/Button.tsx:12:5",
         "  html:",
         '  <button class="submit">Save</button>',
         "  styles:",
