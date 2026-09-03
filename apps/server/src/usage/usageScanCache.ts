@@ -29,7 +29,8 @@ import type { CodexScanState, UsageRecord } from "./usageTranscripts.ts";
 // v4: records carry the session's cwd for project attribution; v3 entries
 // would pin every cached file to "no project" forever.
 // v5: Claude records retain cache TTLs and expanded fallback iterations.
-export const USAGE_SCAN_CACHE_VERSION = 5 as const;
+// v6: Claude iterations without their own model inherit the serving model.
+export const USAGE_SCAN_CACHE_VERSION = 6 as const;
 
 export interface CachedFile {
   readonly size: number;

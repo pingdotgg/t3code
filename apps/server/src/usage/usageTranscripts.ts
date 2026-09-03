@@ -153,11 +153,9 @@ export function parseClaudeLineRecords(line: string): readonly UsageRecord[] {
 
   return attempts.flatMap((attempt, index) => {
     const attemptModel =
-      typeof attempt["model"] === "string"
+      typeof attempt["model"] === "string" && attempt["model"].length > 0
         ? attempt["model"]
-        : iterations.length === 0
-          ? model
-          : "";
+        : model;
     if (attemptModel.length === 0) return [];
 
     const cacheCreation =
