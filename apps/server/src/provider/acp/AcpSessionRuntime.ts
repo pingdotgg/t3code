@@ -731,25 +731,25 @@ export const make = (
     });
 
     const applyPendingStartupUpdates = (started: AcpStartedState): Effect.Effect<void, never> =>
-      startupUpdateSemaphore.withPermit(
-        Ref.modify(pendingStartupUpdatesRef, (pending) => [pending, []]).pipe(
-          Effect.flatMap((pending) =>
-            pending.length === 0
-              ? Effect.void
-              : Effect.forEach(pending, (notification) =>
-                  applySessionUpdate({
-                    queue: eventQueue,
-                    modeStateRef,
-                    configOptionsRef,
-                    availableCommandsRef,
-                    toolCallsRef,
-                    assistantSegmentRef,
-                    assistantItemRuntimeId,
-                    sessionId: started.sessionId,
-                    params: notification,
-                  }),
-                ).pipe(Effect.asVoid),
-          ),
+      Ref.modify(pendingStartupUpdatesRef, (pending) => [pending, []]).pipe(
+        Effect.flatMap((pending) =>
+          pending.length === 0
+            ? Effect.void
+            : Effect.forEach(pending, (notification) =>
+                notification.sessionId === started.sessionId
+                  ? applySessionUpdate({
+                      queue: eventQueue,
+                      modeStateRef,
+                      configOptionsRef,
+                      availableCommandsRef,
+                      toolCallsRef,
+                      assistantSegmentRef,
+                      assistantItemRuntimeId,
+                      sessionId: started.sessionId,
+                      params: notification,
+                    })
+                  : Effect.void,
+              ).pipe(Effect.asVoid),
         ),
       );
 
@@ -768,9 +768,12 @@ export const make = (
             return [
               startOnce.pipe(
                 Effect.tap((result) =>
-                  Ref.set(startStateRef, { _tag: "Started", result }).pipe(
-                    Effect.tap(() => applyPendingStartupUpdates(result)),
-                    Effect.andThen(Deferred.succeed(deferred, result)),
+                  startupUpdateSemaphore.withPermit(
+                    Effect.gen(function* () {
+                      yield* applyPendingStartupUpdates(result);
+                      yield* Ref.set(startStateRef, { _tag: "Started", result });
+                      yield* Deferred.succeed(deferred, result);
+                    }),
                   ),
                 ),
                 Effect.onError((cause) =>
@@ -969,18 +972,6 @@ function availableCommandsFromSetup(
     : [];
 }
 
-function mergeSessionConfigOptions(
-  current: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
-  next: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
-): ReadonlyArray<EffectAcpSchema.SessionConfigOption> {
-  if (next.length === 0) return current;
-  const byId = new Map(current.map((option) => [option.id, option]));
-  for (const option of next) {
-    byId.set(option.id, option);
-  }
-  return [...byId.values()];
-}
-
 function configOptionCurrentValueMatches(
   configOption: EffectAcpSchema.SessionConfigOption,
   value: string | boolean,
@@ -1017,6 +1008,9 @@ const applySessionUpdate = ({
   readonly params: EffectAcpSchema.SessionNotification;
 }): Effect.Effect<void> =>
   Effect.gen(function* () {
+    if (params.sessionId !== sessionId) {
+      return;
+    }
     const parsed = parseSessionUpdateEvent(params);
     if (parsed.modeId) {
       yield* Ref.update(modeStateRef, (current) =>
@@ -1025,9 +1019,7 @@ const applySessionUpdate = ({
     }
     for (const event of parsed.events) {
       if (event._tag === "ConfigOptionsChanged") {
-        yield* Ref.update(configOptionsRef, (current) =>
-          mergeSessionConfigOptions(current, event.configOptions),
-        );
+        yield* Ref.set(configOptionsRef, event.configOptions);
         continue;
       }
       if (event._tag === "AvailableCommandsChanged") {

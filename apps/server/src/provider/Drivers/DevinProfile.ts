@@ -29,13 +29,14 @@ function resolveConfigPath(path: Path.Path, value: string): string {
 
 function buildProfileIdentity(input: {
   readonly settings: DevinSettings;
+  readonly resolvedHomePath: string | undefined;
   readonly resolvedConfigPath: string | undefined;
   readonly environmentNames: ReadonlyArray<string>;
 }): string {
   const parts = [
     `devin`,
     `binary=${input.settings.binaryPath.trim()}`,
-    `home=${input.settings.homePath.trim() || "default"}`,
+    `home=${input.resolvedHomePath || "default"}`,
     `config=${input.resolvedConfigPath || ""}`,
     `agent=${input.settings.agentType.trim() || "default"}`,
     `sandbox=${input.settings.sandbox}`,
@@ -70,15 +71,17 @@ export const resolveDevinRuntimeProfile = Effect.fn("resolveDevinRuntimeProfile"
       next[DEVIN_CONFIG_ENV] = resolvedConfigPath;
     }
 
-    const environmentNames = Object.keys(input.environment ?? {})
-      .filter((name) => name.startsWith("DEVIN_") || name.startsWith("XDG_"))
-      .sort();
+    const environmentNames = Object.entries(input.environment ?? {})
+      .filter(([name]) => name.startsWith("DEVIN_") || name.startsWith("XDG_"))
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, value]) => `${name}=${value ?? ""}`);
 
     return {
       environment: next,
       ...(resolvedConfigPath ? { configPath: resolvedConfigPath } : {}),
       identity: buildProfileIdentity({
         settings,
+        resolvedHomePath,
         resolvedConfigPath,
         environmentNames,
       }),

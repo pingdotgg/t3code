@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  type ChatAttachment,
   type DevinSettings,
   EventId,
   ProviderDriverKind,
@@ -11,15 +12,19 @@ import {
   type ProviderSessionStartInput,
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
+  RuntimeRequestId,
   ThreadId,
   TurnId,
+  type UserInputQuestion,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
@@ -30,7 +35,10 @@ import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpSchema from "effect-acp/schema";
+import * as NodeURL from "node:url";
 
+import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 
 import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
@@ -38,9 +46,11 @@ import {
   makeAcpAssistantItemEvent,
   makeAcpContentDeltaEvent,
   makeAcpPlanUpdatedEvent,
+  makeAcpRequestOpenedEvent,
+  makeAcpRequestResolvedEvent,
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
-import { type AcpParsedSessionEvent } from "../acp/AcpRuntimeModel.ts";
+import { type AcpParsedSessionEvent, parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import {
   applyDevinAcpModelSelection,
   buildDevinModelsFromSessionModelState,
@@ -68,6 +78,7 @@ interface DevinSessionContext {
   session: ProviderSession;
   readonly scope: Scope.Closeable;
   readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
+  readonly acpSessionId: string;
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   currentModelId: string | undefined;
   protocolMap: Map<string, string>;
@@ -75,11 +86,26 @@ interface DevinSessionContext {
   activeTurnId: TurnId | undefined;
   turns: Array<{ id: TurnId; items: Array<unknown> }>;
   stopped: boolean;
+  pendingApprovals: Map<
+    ApprovalRequestId,
+    {
+      readonly request: EffectAcpSchema.RequestPermissionRequest;
+      readonly decision: Deferred.Deferred<ProviderApprovalDecision>;
+    }
+  >;
+  pendingUserInputs: Map<
+    ApprovalRequestId,
+    {
+      readonly request: EffectAcpSchema.ElicitationRequest;
+      readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
+    }
+  >;
 }
 
 export interface DevinAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly instanceId?: ProviderInstanceId;
+  readonly attachmentsDir?: string;
 }
 
 export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAdapterLiveOptions) {
@@ -88,6 +114,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
     const path = yield* Path.Path;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const crypto = yield* Crypto.Crypto;
+    const fileSystem = yield* FileSystem.FileSystem;
 
     const sessions = new Map<ThreadId, DevinSessionContext>();
     const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
@@ -122,6 +149,176 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
         ),
       );
 
+    const selectDevinAutoPermissionOptionId = (
+      request: EffectAcpSchema.RequestPermissionRequest,
+    ): string | undefined => {
+      const allowAlways = request.options.find((option) => option.kind === "allow_always");
+      if (allowAlways?.optionId.trim()) {
+        return allowAlways.optionId.trim();
+      }
+      const allowOnce = request.options.find((option) => option.kind === "allow_once");
+      return allowOnce?.optionId.trim() ?? request.options[0]?.optionId.trim();
+    };
+
+    const selectDevinPermissionOptionId = (
+      request: EffectAcpSchema.RequestPermissionRequest,
+      decision: ProviderApprovalDecision,
+    ): string | undefined => {
+      switch (decision) {
+        case "acceptAlways":
+          return request.options.find((option) => option.kind === "allow_always")?.optionId;
+        case "acceptForSession":
+        case "accept":
+          return (
+            request.options.find((option) => option.kind === "allow_once")?.optionId ??
+            request.options.find((option) => option.kind === "allow_always")?.optionId
+          );
+        case "decline":
+          return (
+            request.options.find((option) => option.kind === "reject_once")?.optionId ??
+            request.options.find((option) => option.kind === "reject_always")?.optionId
+          );
+        case "cancel":
+          return undefined;
+      }
+    };
+
+    const elicitQuestionsFromRequest = (
+      request: Extract<EffectAcpSchema.ElicitationRequest, { readonly mode: "form" }>,
+    ): Array<UserInputQuestion> => {
+      const properties = request.requestedSchema.properties ?? {};
+      return Object.entries(properties).map(([id, property]) => {
+        const options: Array<{ readonly label: string; readonly description: string }> = [];
+        if ("enum" in property && Array.isArray(property.enum)) {
+          for (const value of property.enum) {
+            const label = String(value);
+            options.push({ label, description: label });
+          }
+        } else if ("oneOf" in property && Array.isArray(property.oneOf)) {
+          for (const option of property.oneOf) {
+            options.push({ label: option.title, description: option.title });
+          }
+        } else if (property.type === "boolean") {
+          options.push({ label: "Yes", description: "Yes" }, { label: "No", description: "No" });
+        }
+        const header = property.title?.trim() || id;
+        const question = property.description?.trim() || header;
+        return {
+          id,
+          header,
+          question,
+          options,
+          multiSelect: property.type === "array",
+        } satisfies UserInputQuestion;
+      });
+    };
+
+    const buildAutoElicitationContent = (
+      request: Extract<EffectAcpSchema.ElicitationRequest, { readonly mode: "form" }>,
+    ): Record<string, EffectAcpSchema.ElicitationContentValue> => {
+      const properties = request.requestedSchema.properties ?? {};
+      const content: Record<string, EffectAcpSchema.ElicitationContentValue> = {};
+      for (const [id, property] of Object.entries(properties)) {
+        if ("default" in property && property.default !== undefined && property.default !== null) {
+          content[id] = property.default as EffectAcpSchema.ElicitationContentValue;
+          continue;
+        }
+        switch (property.type) {
+          case "string": {
+            if ("enum" in property && Array.isArray(property.enum) && property.enum.length > 0) {
+              content[id] = property.enum[0]!;
+            } else if (
+              "oneOf" in property &&
+              Array.isArray(property.oneOf) &&
+              property.oneOf.length > 0
+            ) {
+              content[id] = property.oneOf[0]!.const;
+            } else {
+              content[id] = "";
+            }
+            break;
+          }
+          case "integer":
+          case "number": {
+            content[id] = 0;
+            break;
+          }
+          case "boolean": {
+            content[id] = false;
+            break;
+          }
+          case "array": {
+            if ("default" in property && Array.isArray(property.default)) {
+              content[id] = property.default as ReadonlyArray<string>;
+            } else {
+              content[id] = [];
+            }
+            break;
+          }
+          default:
+            content[id] = "";
+        }
+      }
+      return content;
+    };
+
+    const contentBlockForAttachment = (attachment: ChatAttachment) =>
+      Effect.gen(function* () {
+        const attachmentsDir = options?.attachmentsDir;
+        if (attachmentsDir === undefined) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "sendTurn",
+            issue: "attachmentsDir is not configured; cannot send attachments.",
+          });
+        }
+        const attachmentPath = resolveAttachmentPath({
+          attachmentsDir,
+          attachment,
+        });
+        if (!attachmentPath) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "session/prompt",
+            detail: `Invalid attachment id '${attachment.id}'.`,
+          });
+        }
+        switch (attachment.type) {
+          case "image": {
+            const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterRequestError({
+                    provider: PROVIDER,
+                    method: "session/prompt",
+                    detail: cause.message,
+                    cause,
+                  }),
+              ),
+            );
+            return {
+              type: "image" as const,
+              data: Buffer.from(bytes).toString("base64"),
+              mimeType: attachment.mimeType,
+            } satisfies EffectAcpSchema.ContentBlock;
+          }
+          case "file":
+            return {
+              type: "resource_link" as const,
+              name: attachment.name,
+              mimeType: attachment.mimeType,
+              size: attachment.sizeBytes,
+              uri: NodeURL.pathToFileURL(attachmentPath).href,
+            } satisfies EffectAcpSchema.ContentBlock;
+          default:
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "session/prompt",
+              detail: `Unsupported Devin attachment type '${attachment.type}'.`,
+            });
+        }
+      });
+
     const getThreadSemaphore = (threadId: string) =>
       SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
         const existing: Option.Option<Semaphore.Semaphore> = Option.fromNullishOr(
@@ -145,12 +342,17 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
 
     const stopSessionInternal = (ctx: DevinSessionContext) =>
       Effect.gen(function* () {
+        if (ctx.stopped) {
+          return;
+        }
         ctx.stopped = true;
         if (ctx.notificationFiber) {
           yield* Fiber.interrupt(ctx.notificationFiber);
         }
         yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
-        sessions.delete(ctx.threadId);
+        if (sessions.get(ctx.threadId) === ctx) {
+          sessions.delete(ctx.threadId);
+        }
         const stamp = yield* makeEventStamp();
         yield* offerRuntimeEvent({
           type: "session.exited",
@@ -284,6 +486,11 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
           );
 
+          const resumeSessionId =
+            typeof input.resumeCursor === "string" && input.resumeCursor.trim().length > 0
+              ? input.resumeCursor.trim()
+              : undefined;
+
           const acp = yield* makeDevinAcpRuntime({
             devinSettings: {
               binaryPath: devinSettings.binaryPath,
@@ -296,6 +503,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
             cwd,
+            ...(resumeSessionId ? { resumeSessionId } : {}),
             runtimeMode: input.runtimeMode,
             clientInfo: { name: "t3-code", version: "0.0.0" },
           }).pipe(
@@ -312,26 +520,171 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             ),
           );
 
-          yield* acp.handleRequestPermission((request) =>
+          // Handlers are registered before `acp.start()` so permission and
+          // elicitation requests that arrive during startup have a handler.
+          // They look up the live session context once it is published.
+          const pendingApprovals = new Map<
+            ApprovalRequestId,
+            {
+              readonly request: EffectAcpSchema.RequestPermissionRequest;
+              readonly decision: Deferred.Deferred<ProviderApprovalDecision>;
+            }
+          >();
+          const pendingUserInputs = new Map<
+            ApprovalRequestId,
+            {
+              readonly request: EffectAcpSchema.ElicitationRequest;
+              readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
+            }
+          >();
+
+          const handleRequestPermissionCallback = (
+            request: EffectAcpSchema.RequestPermissionRequest,
+          ) =>
             mapAcpCallbackFailure(
-              Effect.sync(() => {
-                const option = request.options[0];
-                if (!option) {
+              Effect.gen(function* () {
+                const ctx = sessions.get(input.threadId);
+                const turnId = ctx?.activeTurnId;
+
+                if (input.runtimeMode === "full-access") {
+                  const autoOptionId = selectDevinAutoPermissionOptionId(request);
+                  if (autoOptionId !== undefined) {
+                    return {
+                      outcome: {
+                        outcome: "selected" as const,
+                        optionId: autoOptionId,
+                      },
+                    };
+                  }
+                }
+
+                const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
+                const runtimeRequestId = RuntimeRequestId.make(requestId);
+                const decision = yield* Deferred.make<ProviderApprovalDecision>();
+                const permissionRequest = parsePermissionRequest(request);
+                const detail =
+                  permissionRequest.detail ??
+                  (typeof request.sessionId === "string"
+                    ? `Session ${request.sessionId}`
+                    : "[unknown]");
+                pendingApprovals.set(requestId, { request, decision });
+                if (ctx) {
+                  ctx.pendingApprovals.set(requestId, { request, decision });
+                }
+
+                yield* offerRuntimeEvent(
+                  makeAcpRequestOpenedEvent({
+                    stamp: yield* makeEventStamp(),
+                    provider: PROVIDER,
+                    threadId: input.threadId,
+                    turnId,
+                    requestId: runtimeRequestId,
+                    permissionRequest,
+                    detail,
+                    args: request,
+                    source: "acp.jsonrpc",
+                    method: "session/request_permission",
+                    rawPayload: request,
+                  }),
+                );
+
+                const resolved = yield* Deferred.await(decision);
+                pendingApprovals.delete(requestId);
+                ctx?.pendingApprovals.delete(requestId);
+
+                yield* offerRuntimeEvent(
+                  makeAcpRequestResolvedEvent({
+                    stamp: yield* makeEventStamp(),
+                    provider: PROVIDER,
+                    threadId: input.threadId,
+                    turnId,
+                    requestId: runtimeRequestId,
+                    permissionRequest,
+                    decision: resolved,
+                  }),
+                );
+
+                const optionId = selectDevinPermissionOptionId(request, resolved);
+                if (resolved === "cancel" || optionId === undefined) {
                   return { outcome: { outcome: "cancelled" as const } };
                 }
                 return {
                   outcome: {
                     outcome: "selected" as const,
-                    optionId: option.optionId,
+                    optionId,
                   },
                 };
               }),
-            ),
-          );
+            );
 
-          yield* acp.handleElicitation(() =>
-            mapAcpCallbackFailure(Effect.succeed({ action: { action: "decline" as const } })),
-          );
+          const handleElicitationCallback = (request: EffectAcpSchema.ElicitationRequest) =>
+            mapAcpCallbackFailure(
+              Effect.gen(function* () {
+                const ctx = sessions.get(input.threadId);
+                const turnId = ctx?.activeTurnId;
+
+                if (input.runtimeMode === "full-access") {
+                  if (request.mode === "url") {
+                    return { action: { action: "decline" as const } };
+                  }
+                  return {
+                    action: {
+                      action: "accept" as const,
+                      content: buildAutoElicitationContent(request),
+                    },
+                  };
+                }
+
+                if (request.mode === "url") {
+                  return { action: { action: "decline" as const } };
+                }
+
+                const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
+                const runtimeRequestId = RuntimeRequestId.make(requestId);
+                const answers = yield* Deferred.make<ProviderUserInputAnswers>();
+                pendingUserInputs.set(requestId, { request, answers });
+                if (ctx) {
+                  ctx.pendingUserInputs.set(requestId, { request, answers });
+                }
+
+                const questions = elicitQuestionsFromRequest(request);
+                const stamp = yield* makeEventStamp();
+                yield* offerRuntimeEvent({
+                  type: "user-input.requested",
+                  ...stamp,
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  turnId,
+                  requestId: runtimeRequestId,
+                  payload: { questions },
+                });
+
+                const resolved = yield* Deferred.await(answers);
+                pendingUserInputs.delete(requestId);
+                ctx?.pendingUserInputs.delete(requestId);
+
+                const content = resolved as Record<string, EffectAcpSchema.ElicitationContentValue>;
+                yield* offerRuntimeEvent({
+                  type: "user-input.resolved",
+                  ...stamp,
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  turnId,
+                  requestId: runtimeRequestId,
+                  payload: { answers: content },
+                });
+
+                return {
+                  action: {
+                    action: "accept" as const,
+                    content,
+                  },
+                };
+              }),
+            );
+
+          yield* acp.handleRequestPermission(handleRequestPermissionCallback);
+          yield* acp.handleElicitation(handleElicitationCallback);
 
           const started = yield* acp.start().pipe(
             Effect.mapError(
@@ -405,7 +758,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             cwd: input.cwd,
             model: devinModelSelection?.model,
             threadId: input.threadId,
-            resumeCursor: input.resumeCursor,
+            resumeCursor: started.sessionId,
             activeTurnId: undefined,
             createdAt,
             updatedAt: createdAt,
@@ -416,6 +769,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             session,
             scope: sessionScope,
             acp,
+            acpSessionId: started.sessionId,
             notificationFiber: undefined,
             currentModelId,
             protocolMap,
@@ -423,6 +777,8 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             activeTurnId: undefined,
             turns: [],
             stopped: false,
+            pendingApprovals,
+            pendingUserInputs,
           };
 
           const nf = yield* Stream.runForEach(acp.getEvents(), (event) =>
@@ -485,16 +841,23 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
         Effect.gen(function* () {
           const ctx = yield* getSession(input.threadId, "sendTurn");
 
-          if (!input.input?.trim()) {
+          if (!input.input?.trim() && (input.attachments ?? []).length === 0) {
             return yield* new ProviderAdapterValidationError({
               provider: PROVIDER,
               operation: "sendTurn",
-              issue: "input is required and must be non-empty.",
+              issue: "input is required and must be non-empty when no attachments are provided.",
+            });
+          }
+
+          if (ctx.activeTurnId !== undefined) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "sendTurn",
+              issue: "Cannot start a new turn while another turn is active.",
             });
           }
 
           const turnId = TurnId.make(yield* randomUUIDv4);
-          ctx.activeTurnId = turnId;
 
           const devinModelSelection =
             input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
@@ -542,13 +905,19 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             );
           }
 
+          const prompt: Array<EffectAcpSchema.ContentBlock> = [];
+          const text = input.input?.trim();
+          if (text) {
+            prompt.push({ type: "text", text });
+          }
+          for (const attachment of input.attachments ?? []) {
+            prompt.push(yield* contentBlockForAttachment(attachment));
+          }
+
           const stamp = yield* makeEventStamp();
+          ctx.activeTurnId = turnId;
           ctx.session = { ...ctx.session, status: "running", activeTurnId: turnId };
           ctx.turns.push({ id: turnId, items: [] });
-
-          const prompt: Array<{ type: "text"; text: string }> = [
-            { type: "text", text: input.input.trim() },
-          ];
 
           yield* offerRuntimeEvent({
             type: "turn.started",
@@ -617,13 +986,17 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                 },
               });
             }
-            if (ctx.activeTurnId === turnId) {
+            if (!ctx.stopped && ctx.activeTurnId === turnId) {
               ctx.activeTurnId = undefined;
+              ctx.session = { ...ctx.session, status: "ready", activeTurnId: undefined };
             }
-            ctx.session = { ...ctx.session, status: "ready", activeTurnId: undefined };
           }).pipe(Effect.forkIn(ctx.scope));
 
-          return { threadId: input.threadId, turnId } satisfies ProviderTurnStartResult;
+          return {
+            threadId: input.threadId,
+            turnId,
+            resumeCursor: ctx.acpSessionId,
+          } satisfies ProviderTurnStartResult;
         }),
       );
 
@@ -663,9 +1036,11 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
         threadId,
         Effect.gen(function* () {
           const ctx = yield* getSession(threadId, "respondToRequest");
-          void ctx;
-          void _requestId;
-          void _decision;
+          const pending = ctx.pendingApprovals.get(_requestId);
+          if (!pending) {
+            return;
+          }
+          yield* Deferred.succeed(pending.decision, _decision).pipe(Effect.ignore);
         }),
       );
 
@@ -678,9 +1053,11 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
         threadId,
         Effect.gen(function* () {
           const ctx = yield* getSession(threadId, "respondToUserInput");
-          void ctx;
-          void _requestId;
-          void _answers;
+          const pending = ctx.pendingUserInputs.get(_requestId);
+          if (!pending) {
+            return;
+          }
+          yield* Deferred.succeed(pending.answers, _answers).pipe(Effect.ignore);
         }),
       );
 
@@ -712,28 +1089,51 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
       });
 
     const rollbackThread = (threadId: ThreadId, numTurns: number) =>
-      Effect.gen(function* () {
-        const ctx = yield* getSession(threadId, "rollbackThread");
-        if (numTurns <= 0) {
-          return { threadId, turns: ctx.turns } satisfies ProviderThreadSnapshot;
-        }
-        if (numTurns > ctx.turns.length) {
+      withThreadLock(
+        threadId,
+        Effect.gen(function* () {
+          const ctx = yield* getSession(threadId, "rollbackThread");
+          if (!Number.isInteger(numTurns) || numTurns < 1) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "rollbackThread",
+              issue: "numTurns must be an integer >= 1.",
+            });
+          }
+          if (numTurns > ctx.turns.length) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "rollbackThread",
+              issue: `Cannot roll back ${numTurns} turns; only ${ctx.turns.length} turns exist.`,
+            });
+          }
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
             operation: "rollbackThread",
-            issue: `Cannot roll back ${numTurns} turns; only ${ctx.turns.length} turns exist.`,
+            issue: "Devin ACP sessions do not support provider-side rollback yet.",
           });
-        }
-        ctx.turns = ctx.turns.slice(0, ctx.turns.length - numTurns);
-        return { threadId, turns: ctx.turns } satisfies ProviderThreadSnapshot;
-      });
+        }),
+      );
 
     const stopAll = () =>
       Effect.gen(function* () {
-        for (const ctx of Array.from(sessions.values())) {
-          if (!ctx.stopped) {
-            yield* stopSessionInternal(ctx);
+        const snapshot = Array.from(sessions.values());
+        for (const ctx of snapshot) {
+          if (ctx.stopped) {
+            continue;
           }
+          if (sessions.get(ctx.threadId) !== ctx) {
+            continue;
+          }
+          yield* withThreadLock(
+            ctx.threadId,
+            Effect.gen(function* () {
+              if (sessions.get(ctx.threadId) !== ctx) {
+                return;
+              }
+              yield* stopSessionInternal(ctx);
+            }),
+          );
         }
       });
 

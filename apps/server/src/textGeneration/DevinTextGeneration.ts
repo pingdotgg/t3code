@@ -76,7 +76,7 @@ export const makeDevinTextGeneration = Effect.fn("makeDevinTextGeneration")(func
           respectWorkspaceTrust: devinSettings.respectWorkspaceTrust,
           launchArgs: devinSettings.launchArgs,
           resolvedConfigPath: devinSettings.configPath?.trim()
-            ? path.resolve(expandHomePath(devinSettings.configPath))
+            ? path.resolve(expandHomePath(devinSettings.configPath.trim()))
             : undefined,
         },
         environment: resolvedEnvironment,

@@ -75,7 +75,8 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
-      const { cwd } = yield* ServerConfig;
+      const serverConfig = yield* ServerConfig;
+      const { cwd } = serverConfig;
       const baseEnv = mergeProviderInstanceEnvironment(environment);
       const resolvedProfile = yield* resolveDevinRuntimeProfile({
         settings: config,
@@ -101,6 +102,7 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
       const adapter = yield* makeDevinAdapter(effectiveConfig, {
         environment: resolvedProfile.environment,
         instanceId,
+        attachmentsDir: serverConfig.attachmentsDir,
       });
       const textGeneration = yield* makeDevinTextGeneration(
         effectiveConfig,

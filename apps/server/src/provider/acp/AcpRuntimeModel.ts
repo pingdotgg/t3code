@@ -859,13 +859,11 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       break;
     }
     case "config_option_update": {
-      if (Array.isArray(upd.configOptions) && upd.configOptions.length > 0) {
-        events.push({
-          _tag: "ConfigOptionsChanged",
-          configOptions: upd.configOptions,
-          rawPayload: params,
-        });
-      }
+      events.push({
+        _tag: "ConfigOptionsChanged",
+        configOptions: Array.isArray(upd.configOptions) ? upd.configOptions : [],
+        rawPayload: params,
+      });
       break;
     }
     default:

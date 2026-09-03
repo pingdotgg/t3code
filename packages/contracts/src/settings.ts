@@ -662,11 +662,19 @@ export const DevinSettings = makeProviderSettingsSchema(
     ),
     sandbox: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(false)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+      Schema.annotateKey({
+        title: "Sandbox",
+        description: "Run the Devin CLI in a sandbox.",
+        providerSettingsForm: { hidden: false },
+      }),
     ),
     respectWorkspaceTrust: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(true)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+      Schema.annotateKey({
+        title: "Respect workspace trust",
+        description: "Respect T3 Code workspace trust settings when running Devin.",
+        providerSettingsForm: { hidden: false },
+      }),
     ),
     launchArgs: TrimmedString.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
