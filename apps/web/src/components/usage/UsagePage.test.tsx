@@ -16,7 +16,7 @@ vi.mock("react", async (importOriginal) => {
     useState: vi.fn((initial: unknown) => [
       typeof initial === "function"
         ? {
-            days: 1,
+            period: 1,
             window: {
               sinceDay: "2026-08-10",
               untilDay: "2026-08-11",

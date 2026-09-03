@@ -6,6 +6,7 @@ import {
   formatDateTimeShort,
   formatHourShort,
   formatRelativeHourShort,
+  makeMonthToDateWindow,
   makeWindow,
 } from "./usageFormat.ts";
 
@@ -53,6 +54,26 @@ describe("hourly usage formatting", () => {
     expect(window.resolution).toBe("hour");
     expect(window.sinceTime).toBe("2026-08-10T12:37:00.000Z");
     expect(window.untilTime).toBe("2026-08-11T12:37:00.000Z");
+  });
+
+  it("builds a month-to-date request in the viewer's time zone", () => {
+    const resolved = new Intl.DateTimeFormat().resolvedOptions();
+    const resolvedOptions = vi
+      .spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions")
+      .mockReturnValue({ ...resolved, timeZone: "America/Los_Angeles" });
+
+    try {
+      const window = makeMonthToDateWindow(new Date("2026-09-01T06:30:00.000Z"));
+
+      expect(window).toMatchObject({
+        sinceDay: "2026-08-01",
+        untilDay: "2026-08-31",
+        timeZone: "America/Los_Angeles",
+        resolution: "day",
+      });
+    } finally {
+      resolvedOptions.mockRestore();
+    }
   });
 
   it("degrades an unknown resolved zone to UTC instead of crashing", () => {

@@ -17,6 +17,7 @@ import {
   formatPercent,
   formatTokens,
   formatUsd,
+  makeMonthToDateWindow,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { Button } from "../ui/button";
@@ -35,21 +36,29 @@ import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart"
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
 
 const WINDOW_OPTIONS = [
-  { days: 1, label: "Past 24h" },
-  { days: 7, label: "7 days" },
-  { days: 30, label: "30 days" },
-  { days: 90, label: "90 days" },
+  { value: 1, label: "Past 24h" },
+  { value: 7, label: "7 days" },
+  { value: "mtd", label: "MTD" },
+  { value: 30, label: "30 days" },
+  { value: 90, label: "90 days" },
 ] as const;
+
+type WindowPeriod = (typeof WINDOW_OPTIONS)[number]["value"];
+
+function makeWindowForPeriod(period: WindowPeriod) {
+  if (period === "mtd") return makeMonthToDateWindow();
+  return makeWindow(period, undefined, period === 1 ? "hour" : "day");
+}
 
 export function UsagePage() {
   const [windowSelection, setWindowSelection] = useState(() => ({
-    days: 30,
+    period: 30 as WindowPeriod,
     window: makeWindow(30),
   }));
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
-  const { days: windowDays, window } = windowSelection;
-  const isPast24Hours = windowDays === 1;
+  const { period: windowPeriod, window } = windowSelection;
+  const isPast24Hours = windowPeriod === 1;
   const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
 
   // Hold the content until every environment is terminal. Rendering merged
@@ -86,14 +95,14 @@ export function UsagePage() {
   const activeProviders = useMemo(() => providersWithUsage(merged.providers), [merged.providers]);
   const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
 
-  const selectWindow = (days: number) => {
+  const selectWindow = (period: WindowPeriod) => {
     setWindowSelection({
-      days,
-      window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
+      period,
+      window: makeWindowForPeriod(period),
     });
   };
   const refreshWindow = () => {
-    const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
+    const nextWindow = makeWindowForPeriod(windowPeriod);
     if (
       nextWindow.sinceDay === window.sinceDay &&
       nextWindow.untilDay === window.untilDay &&
@@ -102,7 +111,7 @@ export function UsagePage() {
     ) {
       refresh();
     } else {
-      setWindowSelection({ days: windowDays, window: nextWindow });
+      setWindowSelection({ period: windowPeriod, window: nextWindow });
     }
   };
   const windowLabel =
@@ -139,14 +148,15 @@ export function UsagePage() {
         <ToggleGroup
           aria-label="Usage period"
           variant="segmented"
-          value={[String(windowDays)]}
+          value={[String(windowPeriod)]}
           onValueChange={(next) => {
             const value = next[0];
-            if (value) selectWindow(Number(value));
+            const option = WINDOW_OPTIONS.find((candidate) => String(candidate.value) === value);
+            if (option) selectWindow(option.value);
           }}
         >
           {WINDOW_OPTIONS.map((option) => (
-            <Toggle key={option.days} value={String(option.days)}>
+            <Toggle key={option.value} value={String(option.value)}>
               {option.label}
             </Toggle>
           ))}
@@ -175,7 +185,13 @@ export function UsagePage() {
             <SelectItem value="tokens">Tokens</SelectItem>
           </SelectPopup>
         </Select>
-        <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
+        <Select
+          value={String(windowPeriod)}
+          onValueChange={(value) => {
+            const option = WINDOW_OPTIONS.find((candidate) => String(candidate.value) === value);
+            if (option) selectWindow(option.value);
+          }}
+        >
           <SelectTrigger
             aria-label="Usage period"
             size="compact"
@@ -183,12 +199,12 @@ export function UsagePage() {
             className="w-auto min-w-0"
           >
             <SelectValue>
-              {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
+              {WINDOW_OPTIONS.find((option) => option.value === windowPeriod)?.label}
             </SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {WINDOW_OPTIONS.map((option) => (
-              <SelectItem key={option.days} value={String(option.days)}>
+              <SelectItem key={option.value} value={String(option.value)}>
                 {option.label}
               </SelectItem>
             ))}

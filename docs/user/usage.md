@@ -9,5 +9,6 @@ Grok Build totals come from persisted session updates. Interactive turns that ne
 completed-turn record will not appear.
 
 Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. The **7 days**,
-**30 days**, and **90 days** ranges use daily resolution. Cost and token toggles update both the
-headline and chart, and refreshing rescans every connected environment.
+**30 days**, and **90 days** ranges use daily resolution. **MTD** covers the first day of the current
+month through today in your local time zone. Cost and token toggles update both the headline and
+chart, and refreshing rescans every connected environment.

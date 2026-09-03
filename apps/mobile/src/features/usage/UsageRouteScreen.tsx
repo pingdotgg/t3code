@@ -9,6 +9,7 @@ import {
   formatPercent,
   formatTokens,
   formatUsd,
+  makeMonthToDateWindow,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { useMemo, useState } from "react";
@@ -25,11 +26,19 @@ import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors } from "./usageProviders";
 
 const WINDOW_OPTIONS = [
-  { days: 1, label: "Past 24h" },
-  { days: 7, label: "7 days" },
-  { days: 30, label: "30 days" },
-  { days: 90, label: "90 days" },
+  { value: 1, label: "Past 24h" },
+  { value: 7, label: "7 days" },
+  { value: "mtd", label: "MTD" },
+  { value: 30, label: "30 days" },
+  { value: 90, label: "90 days" },
 ] as const;
+
+type WindowPeriod = (typeof WINDOW_OPTIONS)[number]["value"];
+
+function makeWindowForPeriod(period: WindowPeriod) {
+  if (period === "mtd") return makeMonthToDateWindow();
+  return makeWindow(period, undefined, period === 1 ? "hour" : "day");
+}
 
 const CHART_HEIGHT = 180;
 
@@ -37,12 +46,12 @@ export function UsageRouteScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [windowSelection, setWindowSelection] = useState(() => ({
-    days: 30,
+    period: 30 as WindowPeriod,
     window: makeWindow(30),
   }));
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
-  const { days: windowDays, window } = windowSelection;
-  const isPast24Hours = windowDays === 1;
+  const { period: windowPeriod, window } = windowSelection;
+  const isPast24Hours = windowPeriod === 1;
   const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
 
   const days = useMemo(
@@ -73,14 +82,14 @@ export function UsageRouteScreen() {
   // before. The initial scan renders its own placeholder, and an unreachable
   // environment stays pending forever — neither may pin the spinner on.
   const refreshing = environments.some((entry) => entry.isPending && entry.summary !== null);
-  const selectWindow = (days: number) => {
+  const selectWindow = (period: WindowPeriod) => {
     setWindowSelection({
-      days,
-      window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
+      period,
+      window: makeWindowForPeriod(period),
     });
   };
   const refreshWindow = () => {
-    const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
+    const nextWindow = makeWindowForPeriod(windowPeriod);
     if (
       nextWindow.sinceDay === window.sinceDay &&
       nextWindow.untilDay === window.untilDay &&
@@ -89,7 +98,7 @@ export function UsageRouteScreen() {
     ) {
       refresh();
     } else {
-      setWindowSelection({ days: windowDays, window: nextWindow });
+      setWindowSelection({ period: windowPeriod, window: nextWindow });
     }
   };
 
@@ -110,8 +119,8 @@ export function UsageRouteScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshWindow} />}
       >
         <SegmentedControl
-          options={WINDOW_OPTIONS.map((option) => ({ value: option.days, label: option.label }))}
-          selected={windowDays}
+          options={WINDOW_OPTIONS}
+          selected={windowPeriod}
           onSelect={selectWindow}
         />
 
