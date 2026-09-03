@@ -12,8 +12,13 @@ export function ProviderIcon(props: ProviderIconProps) {
   const isDarkMode = themeAppearance === "dark";
   const size = props.size ?? 16;
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
+  const normalized = props.provider?.trim().toLowerCase();
 
-  if (props.provider === "antigravity") {
+  if (
+    normalized === "antigravity" ||
+    normalized === "google" ||
+    normalized === "gemini"
+  ) {
     return (
       <Image
         source={require("../../assets/antigravity.png")}
@@ -23,7 +28,7 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
-  if (props.provider === "claudeAgent") {
+  if (normalized === "claudeagent" || normalized === "claude") {
     return (
       <Svg width={size} height={size} viewBox="0 0 256 257" fill="none">
         <Path
@@ -34,7 +39,7 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
-  if (props.provider === "grok") {
+  if (normalized === "grok") {
     const fill = isDarkMode ? "#F5F5F5" : "#0F0F0F";
     return (
       <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
@@ -50,7 +55,7 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
-  if (props.provider === "cursor") {
+  if (normalized === "cursor") {
     return (
       <Svg width={size} height={size} viewBox="0 0 466.73 532.09" fill="none">
         <Path
@@ -61,7 +66,7 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
-  if (props.provider === "opencode") {
+  if (normalized === "opencode") {
     return (
       <Svg width={size} height={size} viewBox="0 0 32 40" fill="none">
         <Path d="M24 32H8V16H24V32Z" fill={isDarkMode ? "#4B4646" : "#CFCECD"} />

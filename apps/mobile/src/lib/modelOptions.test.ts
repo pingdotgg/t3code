@@ -327,6 +327,24 @@ describe("mobile model options", () => {
       ]);
     });
 
+	it("defaults providerLabel to Antigravity when displayName is omitted", () => {
+    const defaultNameConfig = {
+      providers: [
+        {
+          instanceId: "antigravity",
+          driver: "antigravity",
+          enabled: true,
+          installed: true,
+          auth: {status: "authenticated"},
+          models: [model],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    const [option] = buildModelOptions(defaultNameConfig, null);
+    expect(option?.providerLabel).toBe("Antigravity");
+  });
+
     it("keeps offline selections without assuming that an unknown instance is Antigravity", () => {
       const unknownConfig = { ...config, providers: [] };
 
