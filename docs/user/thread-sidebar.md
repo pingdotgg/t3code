@@ -55,8 +55,9 @@ The main sidebar, right panel, and terminal drawer open and close immediately by
 The duration can be set up to 400 ms. Clicking the preview replays all three panel transitions; at
 0 ms, it snaps between the same open and closed states.
 
-Thread rows in the sidebar follow the same setting. At 0 ms a thread appears, moves between
-sections, or leaves the list immediately; above 0 ms it slides into place.
+Thread rows in the sidebar follow the same setting. At 0 ms, or when your system asks for reduced
+motion, a thread appears, moves between sections, or leaves the list immediately; otherwise it
+slides into place.
 
 ## Environment icons
 
