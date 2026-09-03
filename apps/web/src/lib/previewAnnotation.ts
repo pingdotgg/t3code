@@ -1,5 +1,6 @@
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 import { buildElementContextBlock, normalizeElementContextSelection } from "./elementContext";
+import { dataUrlToFile } from "./imageCompression";
 
 const TRAILING_PREVIEW_ANNOTATION_BLOCK_PATTERN =
   /\n*<preview_annotation>\n((?:(?!<preview_annotation>)[\s\S])*)\n<\/preview_annotation>\s*$/;
@@ -99,13 +100,20 @@ export function extractTrailingPreviewAnnotation(prompt: string): ExtractedPrevi
   };
 }
 
-export async function previewAnnotationScreenshotFile(
-  annotation: PreviewAnnotationPayload,
-): Promise<File | null> {
+const BASE64_DATA_URL_PATTERN = /^data:([^;,]*);base64,/;
+
+/**
+ * Decodes the captured crop in place rather than `fetch`ing its data URL. The
+ * desktop renderer is served over a custom scheme whose CSP allows `data:` for
+ * `img-src` but not for `connect-src`, so a fetch is blocked there and the
+ * screenshot never reaches the composer. Returns null when the crop is missing
+ * or is not a base64 data URL; callers must then drop the annotation's
+ * screenshot so the prompt does not advertise an attachment that never landed.
+ */
+export function previewAnnotationScreenshotFile(annotation: PreviewAnnotationPayload): File | null {
   if (!annotation.screenshot) return null;
-  const response = await fetch(annotation.screenshot.dataUrl);
-  const blob = await response.blob();
-  return new File([blob], `preview-annotation-${annotation.id}.png`, {
-    type: blob.type || "image/png",
-  });
+  const { dataUrl } = annotation.screenshot;
+  const match = BASE64_DATA_URL_PATTERN.exec(dataUrl);
+  if (!match) return null;
+  return dataUrlToFile(dataUrl, `preview-annotation-${annotation.id}.png`, match[1] || "image/png");
 }
