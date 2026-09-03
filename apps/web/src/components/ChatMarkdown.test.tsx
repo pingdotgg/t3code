@@ -5,6 +5,7 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import { remarkSourceLineAnchors } from "../markdown-source-line-anchors";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 
@@ -780,5 +781,21 @@ describe("ChatMarkdown Windows file links", () => {
     expect(html).not.toContain("javascript:");
     expect(html).not.toContain("d:alert");
     expect(html).not.toContain("chat-markdown-file-link");
+  });
+});
+
+describe("ChatMarkdown source line anchors", () => {
+  it("keeps the anchor on alert blockquotes and fenced code", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={"Intro\n\n> [!NOTE]\n> Careful here.\n\n```ts\nconst answer = 42;\n```\n"}
+        extraRemarkPlugins={[remarkSourceLineAnchors]}
+      />,
+    );
+
+    expect(html).toContain('role="note"');
+    expect(html).toMatch(/role="note"[^>]*data-source-line="3"/);
+    expect(html).toMatch(/chat-markdown-codeblock[^>]*data-source-line="6"/);
   });
 });

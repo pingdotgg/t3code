@@ -381,7 +381,10 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   ...defaultSchema,
   attributes: {
     ...defaultSchema.attributes,
-    "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
+    "*": [
+      ...(defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
+      "dataSourceLine",
+    ],
     code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
     div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
@@ -570,7 +573,7 @@ function nodeToPlainText(node: ReactNode): string {
 
 function extractCodeBlock(
   children: ReactNode,
-): { className: string | undefined; code: string } | null {
+): { className: string | undefined; code: string; sourceLine: number | string | undefined } | null {
   const childNodes = Children.toArray(children);
   if (childNodes.length !== 1) {
     return null;
@@ -578,9 +581,12 @@ function extractCodeBlock(
 
   const onlyChild = childNodes[0];
   if (
-    !isValidElement<{ className?: string; children?: ReactNode; node?: { tagName?: string } }>(
-      onlyChild,
-    )
+    !isValidElement<{
+      className?: string;
+      children?: ReactNode;
+      node?: { tagName?: string };
+      "data-source-line"?: number | string;
+    }>(onlyChild)
   ) {
     return null;
   }
@@ -592,6 +598,7 @@ function extractCodeBlock(
 
   return {
     className: onlyChild.props.className,
+    sourceLine: onlyChild.props["data-source-line"],
     code: nodeToPlainText(onlyChild.props.children),
   };
 }
@@ -827,12 +834,14 @@ function MarkdownCodeBlock({
   language,
   fenceTitle,
   theme,
+  sourceLine,
   children,
 }: {
   code: string;
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
+  sourceLine?: number | string | undefined;
   children: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
@@ -883,6 +892,7 @@ function MarkdownCodeBlock({
     <div
       className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-[var(--radius)] border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
       data-language={language}
+      data-source-line={sourceLine}
       data-wrap={wrapped ? "true" : "false"}
     >
       <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
@@ -2445,8 +2455,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     }
     // Not a <blockquote>: the stylesheet mutes those, and an alert's body is ordinary
     // text under a colored title — which is how the host renders it.
+    const sourceLine = (props as Record<string, unknown>)["data-source-line"];
     return (
-      <div role="note" className={cn("my-1 border-l-2 pl-3", alert.borderClassName)}>
+      <div
+        role="note"
+        className={cn("my-1 border-l-2 pl-3", alert.borderClassName)}
+        data-source-line={
+          typeof sourceLine === "number" || typeof sourceLine === "string" ? sourceLine : undefined
+        }
+      >
         <p className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}>
           <alert.Icon aria-hidden className="size-3.5 shrink-0" />
           {alert.label}
@@ -2872,6 +2889,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         language={language}
         fenceTitle={fenceTitle}
         theme={resolvedTheme}
+        sourceLine={codeBlock.sourceLine}
       >
         <RenderErrorBoundary
           resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
