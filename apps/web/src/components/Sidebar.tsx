@@ -480,6 +480,7 @@ type PinFlight = {
   sourceElement: HTMLElement;
   sourceRect: DOMRect;
   timeoutId: number;
+  animation: Animation | null;
 };
 
 const sidebarThreadListAnimation: AutoAnimationPlugin = (
@@ -2787,6 +2788,7 @@ export default function Sidebar() {
       return;
     }
     window.clearTimeout(flight.timeoutId);
+    flight.animation?.cancel();
     flight.clone.remove();
     flight.sourceElement.style.removeProperty("visibility");
     delete document.body.dataset.pinFlight;
@@ -2835,7 +2837,14 @@ export default function Sidebar() {
         document.body.dataset.pinFlight = "true";
         sourceElement.style.visibility = "hidden";
         const timeoutId = window.setTimeout(() => finishPinFlight(threadKey), 5_000);
-        pinFlightRef.current = { threadKey, clone, sourceElement, sourceRect, timeoutId };
+        pinFlightRef.current = {
+          threadKey,
+          clone,
+          sourceElement,
+          sourceRect,
+          timeoutId,
+          animation: null,
+        };
       }
       setPinMotionThreadKey(threadKey);
       void (async () => {
@@ -2872,10 +2881,14 @@ export default function Sidebar() {
       setPinMotionThreadKey(null);
       return;
     }
+    if (flight.animation !== null) return;
     const destination = document.querySelector<HTMLElement>(
       `[data-thread-key="${window.CSS.escape(pinMotionThreadKey)}"]`,
     );
-    if (destination === null) return;
+    if (destination === null) {
+      finishPinFlight(pinMotionThreadKey);
+      return;
+    }
     destination.style.visibility = "hidden";
     const destinationRect = destination.getBoundingClientRect();
     const x = destinationRect.left - flight.sourceRect.left;
@@ -2893,6 +2906,7 @@ export default function Sidebar() {
       ],
       { duration: 780, easing: "cubic-bezier(.2,.7,.16,1)", fill: "forwards" },
     );
+    flight.animation = animation;
     void animation.finished.catch(() => undefined).then(() => finishPinFlight(pinMotionThreadKey));
   }, [finishPinFlight, pinMotionThreadKey, pinnedThreads]);
   useEffect(
@@ -2900,6 +2914,7 @@ export default function Sidebar() {
       const flight = pinFlightRef.current;
       if (flight === null) return;
       window.clearTimeout(flight.timeoutId);
+      flight.animation?.cancel();
       flight.clone.remove();
       flight.sourceElement.style.removeProperty("visibility");
       delete document.body.dataset.pinFlight;
