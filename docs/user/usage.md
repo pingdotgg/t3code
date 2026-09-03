@@ -29,6 +29,8 @@ Rows that map to a thread carry a link that opens it.
 The **Estimated cache writes** total prices cache-creation tokens at each model's cache-write rate.
 It only applies to model-priced records that report cache-creation tokens. Rows without cache
 writes show a dash; incomplete or unavailable pricing is labeled **Unavailable** instead of zero.
+When a Codex rollout reports `cache_write_input_tokens` as zero, T3 Code cannot reconstruct a
+separate write charge; those prompt tokens remain in **Fresh input + output**.
 
 Usage is attributed to the project whose folder a session ran in, including sessions driven
 outside T3 Code. The breakdown's **Project** view ranks projects by spend, and the project picker
