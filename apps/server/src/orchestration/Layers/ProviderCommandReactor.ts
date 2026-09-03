@@ -657,6 +657,13 @@ const make = Effect.gen(function* () {
       thread,
       projects: project ? [project] : [],
     });
+    if (effectiveCwd && !(yield* fileSystem.exists(effectiveCwd))) {
+      return yield* new ProviderAdapterRequestError({
+        provider: preferredProvider,
+        method: "thread.turn.start",
+        detail: `This thread's workspace folder no longer exists: '${effectiveCwd}'. Restore the folder before retrying.`,
+      });
+    }
     const refreshWorkspaceSnapshot = effectiveCwd
       ? providerRegistry
           .refreshWorkspaceSnapshot({ instanceId: desiredInstanceId, cwd: effectiveCwd })
