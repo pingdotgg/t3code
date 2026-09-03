@@ -51,6 +51,18 @@ On web and desktop, HEIC and HEIF photos are automatically converted to JPEG whe
 the composer or paste them into a message. On iOS, selecting them from **Photo Library** also
 converts them to JPEG. The 10 MB image limit applies to the converted photo.
 
+On web and desktop, an existing thread settles its composer into a single-line resting state when
+the composer loses focus. At wider sizes, scrolling the conversation also rests a focused composer,
+except when scrolling toward the end while already there. When the thread-context strip has room,
+the model and mode controls stay available beside the thread context; otherwise they return when the
+composer is focused. Focus the composer or start typing to expand it again. New-thread layouts keep
+the full composer.
+
+At phone-sized web or desktop window widths, existing threads animate between their compact and
+expanded layouts. Up to three image attachments remain visible in either resting layout, followed
+by a count when more are attached. At wider sizes, videos, files, and other draft context remain
+visible at their natural height; the phone-sized compact row reveals those details when expanded.
+
 On mobile, the model picker shows each OpenCode model's upstream provider, such as Anthropic,
 GitHub Copilot, or OpenCode Zen, beneath its name. Search by that provider name to narrow the list
 when starting a thread or changing an existing thread's model.
