@@ -206,6 +206,7 @@ import {
   resetComposerScrollGesture,
   suppressActiveComposerScrollGesture,
 } from "./composerScrollGesture";
+import { selectionHoldsComposerOpen } from "./composerSelectionHold";
 import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
 
 function ComposerVideoThumbnail({ file }: { file: File }) {
@@ -4293,9 +4294,42 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ) {
         return;
       }
+      if (
+        !isMobileViewport &&
+        selectionHoldsComposerOpen(window.getSelection(), getTimelineScrollableNode())
+      ) {
+        // The check runs again once the selection clears.
+        return;
+      }
       setIsComposerFocused(false);
     });
-  }, [isMobileViewport]);
+  }, [getTimelineScrollableNode, isMobileViewport]);
+
+  // A held collapse settles when the selection goes away, whether the user
+  // clicked elsewhere, pressed Escape, or used the selection toolbar.
+  useEffect(() => {
+    if (isMobileViewport || !isComposerFocused) return;
+    let wasHolding = false;
+    const handleSelectionChange = () => {
+      const holding = selectionHoldsComposerOpen(
+        window.getSelection(),
+        getTimelineScrollableNode(),
+      );
+      if (wasHolding && !holding) {
+        scheduleComposerCollapseCheck();
+      }
+      wasHolding = holding;
+    };
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => {
+      document.removeEventListener("selectionchange", handleSelectionChange);
+    };
+  }, [
+    getTimelineScrollableNode,
+    isComposerFocused,
+    isMobileViewport,
+    scheduleComposerCollapseCheck,
+  ]);
 
   useEffect(() => {
     if (isMobileViewport || !isComposerFocused) return;
