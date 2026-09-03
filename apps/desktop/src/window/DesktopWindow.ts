@@ -523,6 +523,21 @@ export const make = Effect.gen(function* () {
       }
 
       if (params.mediaType === "image") {
+        const imageUrl = ElectronShell.parseSafeExternalUrl(params.srcURL);
+        if (Option.isSome(imageUrl)) {
+          menuTemplate.push(
+            {
+              label: "Copy URL",
+              click: () => {
+                void runPromise(electronShell.copyText(imageUrl.value));
+              },
+            },
+            {
+              label: "Save Image",
+              click: () => window.webContents.downloadURL(imageUrl.value),
+            },
+          );
+        }
         menuTemplate.push({
           label: "Copy Image",
           click: () => window.webContents.copyImageAt(params.x, params.y),

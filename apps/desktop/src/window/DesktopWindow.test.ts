@@ -66,6 +66,7 @@ function makeFakeBrowserWindow() {
   let zoomLevel = 0;
   const webContents = {
     copyImageAt: vi.fn(),
+    downloadURL: vi.fn(),
     getURL: vi.fn(() => "t3code-dev://app/"),
     getZoomLevel: vi.fn(() => zoomLevel),
     setZoomLevel: vi.fn((level: number) => {
@@ -115,6 +116,8 @@ function makeFakeBrowserWindow() {
 
   return {
     window: window as unknown as Electron.BrowserWindow,
+    copyImageAt: webContents.copyImageAt,
+    downloadURL: webContents.downloadURL,
     getBounds: window.getBounds,
     getNormalBounds: window.getNormalBounds,
     isDestroyed: window.isDestroyed,
@@ -208,6 +211,8 @@ function makeTestLayer(input: {
     bounds: DesktopAppSettings.DesktopWindowBounds,
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
+  readonly copiedTexts?: string[];
+  readonly popupTemplates?: Electron.MenuItemConstructorOptions[][];
   readonly previewZoomReapplies?: number[];
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
@@ -273,14 +278,24 @@ function makeTestLayer(input: {
         desktopServerExposureLayer,
         DesktopState.layer,
         electronAppLayer,
-        electronMenuLayer,
+        input.popupTemplates
+          ? Layer.succeed(ElectronMenu.ElectronMenu, {
+              setApplicationMenu: () => Effect.void,
+              popupTemplate: ({ template }) =>
+                Effect.sync(() => input.popupTemplates?.push([...template])),
+              showContextMenu: () => Effect.succeed(Option.none()),
+            } satisfies ElectronMenu.ElectronMenu["Service"])
+          : electronMenuLayer,
         Layer.succeed(ElectronShell.ElectronShell, {
           openExternal: (url) =>
             Effect.sync(() => {
               input.openedExternalUrls?.push(url);
               return true;
             }),
-          copyText: () => Effect.void,
+          copyText: (text) =>
+            Effect.sync(() => {
+              input.copiedTexts?.push(text);
+            }),
         } satisfies ElectronShell.ElectronShell["Service"]),
         electronThemeLayer,
         electronWindowLayer,
@@ -398,6 +413,70 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
   });
 
 describe("DesktopWindow", () => {
+  it.effect("keeps copy, save, and URL actions native for external images", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const copiedTexts: string[] = [];
+      const popupTemplates: Electron.MenuItemConstructorOptions[][] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        copiedTexts,
+        popupTemplates,
+      });
+      const imageUrl = "https://images.example/screenshot.png";
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const contextMenu = fakeWindow.webContentsListeners.get("context-menu");
+        if (!contextMenu) return yield* Effect.die("context-menu listener was not registered");
+
+        contextMenu({ preventDefault: vi.fn() }, {
+          dictionarySuggestions: [],
+          editFlags: { canCopy: false, canCut: false, canPaste: false, canSelectAll: false },
+          linkURL: "",
+          mediaType: "image",
+          misspelledWord: "",
+          srcURL: imageUrl,
+          x: 42,
+          y: 84,
+        } as unknown as Electron.ContextMenuParams);
+        yield* Effect.promise(() => Promise.resolve());
+
+        const template = popupTemplates.at(-1) ?? [];
+        const byLabel = (label: string) => template.find((item) => item.label === label);
+        assert.ok(byLabel("Copy URL"));
+        assert.ok(byLabel("Save Image"));
+        assert.ok(byLabel("Copy Image"));
+
+        byLabel("Copy URL")?.click?.(
+          {} as Electron.MenuItem,
+          fakeWindow.window,
+          {} as Electron.KeyboardEvent,
+        );
+        byLabel("Save Image")?.click?.(
+          {} as Electron.MenuItem,
+          fakeWindow.window,
+          {} as Electron.KeyboardEvent,
+        );
+        byLabel("Copy Image")?.click?.(
+          {} as Electron.MenuItem,
+          fakeWindow.window,
+          {} as Electron.KeyboardEvent,
+        );
+        yield* Effect.promise(() => Promise.resolve());
+
+        assert.deepEqual(copiedTexts, [imageUrl]);
+        assert.deepEqual(fakeWindow.downloadURL.mock.calls, [[imageUrl]]);
+        assert.deepEqual(fakeWindow.copyImageAt.mock.calls, [[42, 84]]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it("leaves fullscreen before concealing a pending quit", () => {
     const fakeWindow = makeFakeBrowserWindow();
 

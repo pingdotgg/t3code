@@ -25,6 +25,30 @@ export interface MediaActionSource {
   readonly onOpenFile?: () => void;
 }
 
+/** Browser/Electron native image menus can copy or save rendered cross-origin images without CORS. */
+export function shouldUseNativeImageContextMenu(source: MediaActionSource): boolean {
+  return (
+    source.kind === "image" &&
+    source.src !== null &&
+    source.reference?.kind === "url" &&
+    source.asset === undefined &&
+    source.onOpenFile === undefined
+  );
+}
+
+export function handleNativeImageContextMenu(
+  source: MediaActionSource,
+  event: {
+    readonly defaultPrevented: boolean;
+    readonly preventDefault: () => void;
+    readonly stopPropagation: () => void;
+  },
+): boolean {
+  if (event.defaultPrevented || !shouldUseNativeImageContextMenu(source)) return false;
+  event.stopPropagation();
+  return true;
+}
+
 function mediaFileName(source: MediaActionSource): string {
   return (
     (source.reference && mediaReferenceFileName(source.reference)) || source.name || source.kind
@@ -83,7 +107,8 @@ export function MediaActions({
   const menuOpen = useRef(false);
   const reference = source.reference;
   const hasActions =
-    source.kind === "image" || reference !== undefined || source.onOpenFile !== undefined;
+    !shouldUseNativeImageContextMenu(source) &&
+    (source.kind === "image" || reference !== undefined || source.onOpenFile !== undefined);
   const tooltip = reference?.kind === "file" ? reference.path : (reference?.url ?? source.name);
 
   const showMenu = async (position: { x: number; y: number }) => {
@@ -158,6 +183,10 @@ export function MediaActions({
         render={children}
         tabIndex={0}
         onContextMenu={(event) => {
+          if (handleNativeImageContextMenu(source, event)) {
+            setTooltipOpen(false);
+            return;
+          }
           if (!hasActions || event.defaultPrevented) return;
           event.preventDefault();
           event.stopPropagation();
