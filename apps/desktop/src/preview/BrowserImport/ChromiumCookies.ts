@@ -40,6 +40,7 @@ import {
 
 /** OSCrypt's CBC mode uses a fixed IV of 16 spaces rather than a per-record one. */
 const AES_CBC_IV = Buffer.alloc(16, 0x20);
+const isChromiumKeyError = Schema.is(ChromiumKeyError);
 
 /**
  * Every way the read can fail: the key failures, plus the ones this module
@@ -256,6 +257,19 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
         sameSite: sameSiteFromColumn(row.samesite),
       });
     }
+    // Keep partial imports, but do not call a missing key a successful import
+    // when it prevented every otherwise importable cookie from being read.
+    if (
+      cookies.length === 0 &&
+      keys.cbcV11Error !== undefined &&
+      result.rows.some(
+        (row) =>
+          row.top_frame_site_key === "" &&
+          Buffer.from(row.encrypted_value.subarray(0, 3)).toString("latin1") === "v11",
+      )
+    ) {
+      return yield* keys.cbcV11Error;
+    }
     return {
       cookies,
       undecryptable,
@@ -311,7 +325,7 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
     Effect.mapError(
       (cause) =>
         new ChromiumCookieReadError({
-          reason: "readFailed",
+          reason: isChromiumKeyError(cause) ? cause.reason : "readFailed",
           cookieDatabasePath: source.cookieDatabasePath,
           cause,
         }),

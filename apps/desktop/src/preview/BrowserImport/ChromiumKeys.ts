@@ -26,6 +26,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { LinuxBrowserSecretPath } from "./LinuxBrowserSecret.ts";
 
 const KEY_SALT = "saltysalt";
 const KEY_LENGTH = 16;
@@ -38,6 +39,7 @@ const LINUX_FALLBACK_PASSPHRASE = "peanuts";
 export const ChromiumKeyFailure = Schema.Literals([
   "needsKeychainApproval",
   "keychainItemMissing",
+  "keychainUnavailable",
   "unsupportedPlatform",
   /** The key store itself could not be read, as opposed to holding no key. */
   "readFailed",
@@ -67,6 +69,8 @@ export interface ChromiumKeyMaterial {
   readonly cbcV10?: Buffer;
   /** AES-128-CBC, Linux keyring-derived. */
   readonly cbcV11?: Buffer;
+  /** Retained so an import that needs this key can report why it is missing. */
+  readonly cbcV11Error?: ChromiumKeyError;
   /**
    * AES-128-CBC from an empty passphrase. Some Linux clients wrote records
    * with it (crbug.com/1195256), so Chromium — and this import — retry with it
@@ -116,26 +120,12 @@ const readKeychainSecret = Effect.fn("ChromiumKeys.readKeychainSecret")(function
   return secret;
 });
 
-const secretToolFailure = (stderr: string): ChromiumKeyFailure => {
-  if (stderr.trim() === "" || /no such secret|not found/i.test(stderr)) {
-    return "keychainItemMissing";
-  }
-  if (/denied|locked|cancel|dismiss|permission/i.test(stderr)) {
-    return "needsKeychainApproval";
-  }
-  return "readFailed";
-};
-
 /**
- * Chromium's Linux backend stores the passphrase under its own libsecret
- * schema, `chrome_libsecret_os_crypt_password_v2`, keyed by an `application`
- * attribute. Matching on the schema as well keeps an unrelated item that
- * happens to carry `application=chrome` from being picked up: that would derive
- * the wrong v11 key and silently skip every real cookie. `secret-tool lookup`
- * performs the same attribute search through Secret Service and keeps its
- * normal unlock/consent prompt.
+ * The bundled helper searches Chromium's libsecret schema and application
+ * attribute, retaining the desktop's normal unlock prompt. Its exit codes
+ * distinguish a missing key, denied access, and an unavailable keyring without
+ * parsing localized error messages. Stdout is the unmodified secret.
  */
-const CHROMIUM_LIBSECRET_SCHEMA = "chrome_libsecret_os_crypt_password_v2";
 export const readLinuxSecret = Effect.fn("ChromiumKeys.readLinuxSecret")(function* (
   application: string,
 ) {
@@ -143,36 +133,36 @@ export const readLinuxSecret = Effect.fn("ChromiumKeys.readLinuxSecret")(functio
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const environment = yield* HostProcessEnvironment;
+      const helper = yield* LinuxBrowserSecretPath;
+      if (helper === undefined) {
+        return yield* new ChromiumKeyError({ reason: "keychainUnavailable" });
+      }
       const handle = yield* spawner
-        .spawn(
-          ChildProcess.make(
-            "secret-tool",
-            ["lookup", "xdg:schema", CHROMIUM_LIBSECRET_SCHEMA, "application", application],
-            {
-              stdin: "ignore",
-              env: { ...environment, LC_ALL: "C" },
-            },
+        .spawn(ChildProcess.make(helper, [application], { stdin: "ignore", env: environment }))
+        .pipe(
+          Effect.mapError(
+            (cause) => new ChromiumKeyError({ reason: "keychainUnavailable", cause }),
           ),
-        )
-        .pipe(Effect.mapError((cause) => new ChromiumKeyError({ reason: "readFailed", cause })));
-      const [stdout, stderr, exitCode] = yield* Effect.all(
+        );
+      const [secret, , exitCode] = yield* Effect.all(
         [
           handle.stdout.pipe(Stream.decodeText(), Stream.mkString),
-          handle.stderr.pipe(Stream.decodeText(), Stream.mkString),
+          handle.stderr.pipe(Stream.runDrain),
           handle.exitCode,
         ],
         { concurrency: "unbounded" },
-      ).pipe(Effect.mapError((cause) => new ChromiumKeyError({ reason: "readFailed", cause })));
-      // secret-tool terminates successful output with one newline. Remove
-      // only that transport delimiter: spaces and tabs can be part of the
-      // stored passphrase and must survive key derivation unchanged.
-      const secret = stdout.endsWith("\r\n")
-        ? stdout.slice(0, -2)
-        : stdout.endsWith("\n")
-          ? stdout.slice(0, -1)
-          : stdout;
+      ).pipe(
+        Effect.mapError((cause) => new ChromiumKeyError({ reason: "keychainUnavailable", cause })),
+      );
       if (Number(exitCode) !== 0) {
-        return yield* new ChromiumKeyError({ reason: secretToolFailure(stderr) });
+        return yield* new ChromiumKeyError({
+          reason:
+            Number(exitCode) === 2
+              ? "keychainItemMissing"
+              : Number(exitCode) === 3
+                ? "needsKeychainApproval"
+                : "keychainUnavailable",
+        });
       }
       if (secret === "") {
         return yield* new ChromiumKeyError({ reason: "keychainItemMissing" });
@@ -206,23 +196,25 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
 
   if (request.platform === "linux") {
     // The fallback passphrase always applies to `v10` records; a keyring
-    // secret, when one is reachable, additionally unlocks `v11`. Failing to
-    // reach the keyring is not fatal — it just leaves those records skipped.
+    // secret, when one is reachable, additionally unlocks `v11`. Preserve its
+    // failure until the reader knows whether any cookies needed that key.
     const keyringSecret = request.linuxSecretApplication
       ? yield* readLinuxSecret(request.linuxSecretApplication).pipe(
           // v10 remains importable when Secret Service is absent or does not
           // contain a key. An explicit denial/lock/cancel remains a consent
           // failure rather than being silently downgraded.
           Effect.catch((error) =>
-            error.reason === "needsKeychainApproval"
-              ? Effect.fail(error)
-              : Effect.succeed(undefined),
+            error.reason === "needsKeychainApproval" ? Effect.fail(error) : Effect.succeed(error),
           ),
         )
       : undefined;
     return {
       cbcV10: derive(LINUX_FALLBACK_PASSPHRASE, LINUX_KEY_ITERATIONS),
-      ...(keyringSecret ? { cbcV11: derive(keyringSecret, LINUX_KEY_ITERATIONS) } : {}),
+      ...(typeof keyringSecret === "string"
+        ? { cbcV11: derive(keyringSecret, LINUX_KEY_ITERATIONS) }
+        : keyringSecret
+          ? { cbcV11Error: keyringSecret }
+          : {}),
       cbcEmpty: derive("", LINUX_KEY_ITERATIONS),
     };
   }

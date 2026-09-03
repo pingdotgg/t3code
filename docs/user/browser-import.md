@@ -8,3 +8,8 @@ separate from the source browser.
 Linux discovery includes Helium and both native and Snap installations of Firefox. A browser
 appears once it has a profile with a cookie database. Close the source browser before importing;
 the import wizard will prompt you if it is still running.
+
+On Linux, Chromium-based browsers use your desktop keyring to protect their cookies. T3 Code
+includes the keyring reader; no separate command-line tool is needed. Allow the desktop unlock
+prompt if one appears. If the keyring cannot be accessed, T3 Code reports that failure when no
+cookies can be imported. Partitioned cookies are skipped.

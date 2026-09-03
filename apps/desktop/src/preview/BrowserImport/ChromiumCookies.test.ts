@@ -8,7 +8,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { readChromiumCookieDatabase } from "./ChromiumCookies.ts";
+import { readChromiumCookieDatabase, readChromiumCookies } from "./ChromiumCookies.ts";
+import { ChromiumKeyError } from "./ChromiumKeys.ts";
+import { LinuxBrowserSecretPath } from "./LinuxBrowserSecret.ts";
 import { cookieScope } from "./CookieDatabase.ts";
 
 const encryptChromium = (
@@ -58,6 +60,62 @@ describe("cookieScope", () => {
 });
 
 describe("readChromiumCookieDatabase", () => {
+  it.effect(
+    "reports the missing key when no cookies can be read, while preserving partial imports",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-missing-key-",
+        });
+        const filename = `${directory}/Cookies`;
+        const key = Buffer.from("0123456789abcdef");
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`create table meta (key text primary key, value text not null)`;
+          yield* sql`insert into meta values ('version', 23)`;
+          yield* sql`create table cookies (
+          host_key text not null, name text not null, value text not null,
+          encrypted_value blob not null, path text not null, expires_utc integer not null,
+          is_secure integer not null, is_httponly integer not null, samesite integer not null,
+          top_frame_site_key text not null default ''
+        )`;
+          yield* sql`insert into cookies values ('v11.example', 'session', '', ${encryptChromium("v11", "secret", key)}, '/', 0, 1, 1, 1, '')`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+
+        const error = yield* readChromiumCookies({
+          cookieDatabasePath: filename,
+          platform: "linux",
+          linuxSecretApplication: "chromium",
+          keychainService: undefined,
+          keychainAccount: undefined,
+        }).pipe(Effect.provideService(LinuxBrowserSecretPath, undefined), Effect.flip);
+        expect(error.reason).toBe("keychainUnavailable");
+
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`insert into cookies values ('v10.example', 'readable', '', ${encryptV10("kept", key)}, '/', 0, 1, 1, 1, '')`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+        const keys = {
+          cbcV10: key,
+          cbcV11Error: new ChromiumKeyError({ reason: "keychainUnavailable" }),
+        };
+        const partial = yield* readChromiumCookieDatabase(filename, keys, "linux");
+        expect(partial.cookies.map((cookie) => cookie.value)).toEqual(["kept"]);
+        expect(partial.undecryptable).toBe(1);
+
+        // A partitioned-only jar does not need its key: it is skipped separately.
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`delete from cookies where name = 'readable'`;
+          yield* sql`update cookies set top_frame_site_key = 'https://top.example'`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+        const partitioned = yield* readChromiumCookieDatabase(filename, keys, "linux");
+        expect(partitioned.cookies).toEqual([]);
+        expect(partitioned.undecryptable).toBe(1);
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("reads plaintext, encrypted, and genuinely empty cookie values", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

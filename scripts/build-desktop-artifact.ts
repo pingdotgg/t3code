@@ -308,6 +308,11 @@ export const LINUX_DESKTOP_BUILD_PREREQUISITES = [
   { id: "rust-target", description: "Requested Rust standard library", packages: [] },
   { id: "cc", description: "C/C++ build toolchain", packages: ["build-essential"] },
   { id: "make", description: "Make", packages: ["build-essential"] },
+  {
+    id: "libsecret",
+    description: "libsecret development headers and pkg-config",
+    packages: ["libsecret-1-dev", "pkg-config"],
+  },
   { id: "imagemagick", description: "ImageMagick", packages: ["imagemagick"] },
 ] as const;
 
@@ -944,6 +949,10 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
   // are dead weight. The trailing dash keeps the SDK's own JS package.
   "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
+  "!apps/desktop/resources/browser-secret",
+  "!apps/desktop/resources/browser-secret/**/*",
+  "!apps/desktop/prod-resources/browser-secret",
+  "!apps/desktop/prod-resources/browser-secret/**/*",
   // Windows stages the server sidecar below prod-resources so electron-builder
   // can copy it using project-relative extraResources matchers. Keep those
   // staging inputs out of app.asar; they are emitted once at resources/.
@@ -1073,6 +1082,9 @@ export const DESKTOP_EXTRA_RESOURCES = [
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
   },
+] as const;
+export const LINUX_BROWSER_SECRET_EXTRA_RESOURCES = [
+  { from: "apps/desktop/prod-resources/browser-secret", to: "browser-secret" },
 ] as const;
 
 export interface MacPasskeySigningConfiguration {
@@ -1730,6 +1742,10 @@ export const preflightLinuxDesktopBuild = Effect.fn("preflightLinuxDesktopBuild"
         : rustTargetIsInstalled(rustTarget),
       cc: desktopBuildProbeSucceeds(ChildProcess.make("cc", ["--version"]), "cc"),
       make: desktopBuildProbeSucceeds(ChildProcess.make("make", ["--version"]), "make"),
+      libsecret: desktopBuildProbeSucceeds(
+        ChildProcess.make("pkg-config", ["--exists", "libsecret-1"]),
+        "libsecret",
+      ),
       imagemagick: Effect.all([
         desktopBuildProbeSucceeds(ChildProcess.make("magick", ["-version"]), "magick"),
         desktopBuildProbeSucceeds(ChildProcess.make("convert", ["-version"]), "convert"),
@@ -2196,6 +2212,31 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
   }
 });
 
+export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (input: {
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  if (input.platform !== "linux") return;
+  const path = yield* Path.Path;
+  yield* runCommand(
+    ChildProcess.make(
+      "node",
+      [
+        path.join(input.repoRoot, "apps/desktop/scripts/build-browser-secret.mjs"),
+        "--arch",
+        input.arch,
+        "--output",
+        path.join(input.stageResourcesDir, "browser-secret", "t3-browser-secret"),
+      ],
+      { cwd: input.repoRoot },
+    ),
+    { label: "build Linux browser secret helper", verbose: input.verbose },
+  );
+});
+
 function generateMacIconSet(
   sourcePng: string,
   targetIcns: string,
@@ -2538,6 +2579,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // hand-packed server.asar sidecar (see WINDOWS_SERVER_ASAR_RESOURCE).
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
       ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
     ],
@@ -3490,6 +3532,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
   }
   yield* stageResourceMonitor({
+    repoRoot,
+    stageResourcesDir,
+    platform: options.platform,
+    arch: options.arch,
+    verbose: options.verbose,
+  });
+  yield* stageBrowserSecret({
     repoRoot,
     stageResourcesDir,
     platform: options.platform,

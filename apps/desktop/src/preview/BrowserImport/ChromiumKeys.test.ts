@@ -5,9 +5,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { ChromiumKeyError, readLinuxSecret, resolveChromiumKeys } from "./ChromiumKeys.ts";
+import { LinuxBrowserSecretPath } from "./LinuxBrowserSecret.ts";
 
 type CapturedCommand = {
   readonly command: string;
@@ -18,36 +20,80 @@ type CapturedCommand = {
   };
 };
 
-const secretToolLayer = (input: {
+const helperLayer = (input: {
   readonly stdout?: string;
   readonly stderr?: string;
   readonly stdoutStream?: Stream.Stream<Uint8Array>;
   readonly stderrStream?: Stream.Stream<Uint8Array>;
   readonly exitCode?: number;
+  readonly spawnError?: PlatformError.PlatformError;
   readonly capture?: (command: CapturedCommand) => void;
 }) =>
-  Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make((command) =>
-      Effect.succeed(
-        ChildProcessSpawner.makeHandle({
-          pid: ChildProcessSpawner.ProcessId(1),
-          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(input.exitCode ?? 0)),
-          isRunning: Effect.succeed(false),
-          kill: () => Effect.void,
-          unref: Effect.succeed(Effect.void),
-          stdin: Sink.drain,
-          stdout: input.stdoutStream ?? Stream.encodeText(Stream.make(input.stdout ?? "")),
-          stderr: input.stderrStream ?? Stream.encodeText(Stream.make(input.stderr ?? "")),
-          all: Stream.empty,
-          getInputFd: () => Sink.drain,
-          getOutputFd: () => Stream.empty,
-        }),
-      ).pipe(Effect.tap(() => Effect.sync(() => input.capture?.(command as CapturedCommand)))),
+  Layer.merge(
+    Layer.succeed(LinuxBrowserSecretPath, "/bundled/browser-secret/t3-browser-secret"),
+    Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) =>
+        input.spawnError
+          ? Effect.fail(input.spawnError)
+          : Effect.succeed(
+              ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(1),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(input.exitCode ?? 0)),
+                isRunning: Effect.succeed(false),
+                kill: () => Effect.void,
+                unref: Effect.succeed(Effect.void),
+                stdin: Sink.drain,
+                stdout: input.stdoutStream ?? Stream.encodeText(Stream.make(input.stdout ?? "")),
+                stderr: input.stderrStream ?? Stream.encodeText(Stream.make(input.stderr ?? "")),
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              }),
+            ).pipe(
+              Effect.tap(() => Effect.sync(() => input.capture?.(command as CapturedCommand))),
+            ),
+      ),
     ),
   );
 
 describe("Linux Chromium secrets", () => {
+  it.effect("retains a missing helper failure alongside the keyring-free fallback", () =>
+    Effect.gen(function* () {
+      const keys = yield* resolveChromiumKeys({
+        platform: "linux",
+        keychainService: undefined,
+        keychainAccount: undefined,
+        linuxSecretApplication: "chromium",
+      });
+      expect(keys.cbcV10).toHaveLength(16);
+      expect(keys.cbcV11).toBeUndefined();
+      expect(keys.cbcV11Error?.reason).toBe("keychainUnavailable");
+    }).pipe(
+      Effect.provide(
+        helperLayer({
+          spawnError: PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+          }),
+        }),
+      ),
+    ),
+  );
+
+  it.effect("reports an unconfigured helper without searching PATH", () =>
+    readLinuxSecret("chromium").pipe(
+      Effect.flip,
+      Effect.tap((error) => Effect.sync(() => expect(error.reason).toBe("keychainUnavailable"))),
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.die("must not spawn")),
+      ),
+      Effect.provideService(LinuxBrowserSecretPath, undefined),
+    ),
+  );
+
   it.effect("looks up the browser's libsecret application attribute", () => {
     let captured: CapturedCommand | undefined;
     return Effect.gen(function* () {
@@ -58,22 +104,14 @@ describe("Linux Chromium secrets", () => {
         linuxSecretApplication: "msedge",
       });
 
-      expect(captured?.command).toBe("secret-tool");
-      // Scoped to Chromium's own schema so another item tagged with the same
-      // `application` attribute cannot supply the wrong key.
-      expect(captured?.args).toEqual([
-        "lookup",
-        "xdg:schema",
-        "chrome_libsecret_os_crypt_password_v2",
-        "application",
-        "msedge",
-      ]);
+      expect(captured?.command).toBe("/bundled/browser-secret/t3-browser-secret");
+      expect(captured?.args).toEqual(["msedge"]);
       expect(captured?.options.stdin).toBe("ignore");
       expect(keys.cbcV10).toHaveLength(16);
       expect(keys.cbcV11).toHaveLength(16);
     }).pipe(
       Effect.provide(
-        secretToolLayer({ stdout: "linux-secret\n", capture: (value) => (captured = value) }),
+        helperLayer({ stdout: "linux-secret", capture: (value) => (captured = value) }),
       ),
     );
   });
@@ -82,10 +120,10 @@ describe("Linux Chromium secrets", () => {
     Effect.gen(function* () {
       const error = yield* readLinuxSecret("chrome").pipe(Effect.flip);
       expect(error).toBeInstanceOf(ChromiumKeyError);
-      expect(error.reason).toBe("readFailed");
+      expect(error.reason).toBe("keychainUnavailable");
     }).pipe(
       Effect.provide(
-        secretToolLayer({ stderr: "Cannot autolaunch D-Bus without X11 $DISPLAY", exitCode: 1 }),
+        helperLayer({ stderr: "Cannot autolaunch D-Bus without X11 $DISPLAY", exitCode: 1 }),
       ),
     ),
   );
@@ -93,52 +131,55 @@ describe("Linux Chromium secrets", () => {
   it.effect("preserves trailing whitespace in the stored secret", () =>
     Effect.gen(function* () {
       const secret = yield* readLinuxSecret("chrome");
-      expect(secret).toBe("linux-secret \t");
-    }).pipe(Effect.provide(secretToolLayer({ stdout: "linux-secret \t\n" }))),
+      expect(secret).toBe("linux-secret \t\n");
+    }).pipe(Effect.provide(helperLayer({ stdout: "linux-secret \t\n" }))),
   );
 
   it.effect("drains stdout and stderr concurrently", () =>
     Effect.gen(function* () {
       const stderrDrainStarted = yield* Deferred.make<void>();
       const stdout = Stream.fromEffect(Deferred.await(stderrDrainStarted)).pipe(
-        Stream.flatMap(() => Stream.encodeText(Stream.make("linux-secret\n"))),
+        Stream.flatMap(() => Stream.encodeText(Stream.make("linux-secret"))),
       );
       const stderr = Stream.fromEffect(Deferred.succeed(stderrDrainStarted, undefined)).pipe(
         Stream.drain,
       );
 
       const secret = yield* readLinuxSecret("chrome").pipe(
-        Effect.provide(secretToolLayer({ stdoutStream: stdout, stderrStream: stderr })),
+        Effect.provide(helperLayer({ stdoutStream: stdout, stderrStream: stderr })),
       );
 
       expect(secret).toBe("linux-secret");
     }),
   );
 
-  it.effect("uses a stable locale and reports a denied unlock prompt as approval needed", () => {
-    let captured: CapturedCommand | undefined;
-    return Effect.gen(function* () {
-      const error = yield* readLinuxSecret("brave").pipe(Effect.flip);
-      expect(error).toBeInstanceOf(ChromiumKeyError);
-      expect(error.reason).toBe("needsKeychainApproval");
-      expect(captured?.options.env?.LC_ALL).toBe("C");
-      expect(captured?.options.env?.PATH).toBe("/synthetic/bin");
-      expect(captured?.options.env?.SESSION_MARKER).toBe("kept");
-    }).pipe(
-      Effect.provide(
-        secretToolLayer({
-          stderr: "Permission denied",
-          exitCode: 1,
-          capture: (value) => (captured = value),
+  it.effect(
+    "preserves the desktop environment and identifies denial without parsing stderr",
+    () => {
+      let captured: CapturedCommand | undefined;
+      return Effect.gen(function* () {
+        const error = yield* readLinuxSecret("brave").pipe(Effect.flip);
+        expect(error).toBeInstanceOf(ChromiumKeyError);
+        expect(error.reason).toBe("needsKeychainApproval");
+        expect(captured?.options.env?.LC_ALL).toBe("localized");
+        expect(captured?.options.env?.PATH).toBe("/synthetic/bin");
+        expect(captured?.options.env?.SESSION_MARKER).toBe("kept");
+      }).pipe(
+        Effect.provide(
+          helperLayer({
+            stderr: "Zugriff verweigert",
+            exitCode: 3,
+            capture: (value) => (captured = value),
+          }),
+        ),
+        Effect.provideService(HostProcessEnvironment, {
+          PATH: "/synthetic/bin",
+          SESSION_MARKER: "kept",
+          LC_ALL: "localized",
         }),
-      ),
-      Effect.provideService(HostProcessEnvironment, {
-        PATH: "/synthetic/bin",
-        SESSION_MARKER: "kept",
-        LC_ALL: "localized",
-      }),
-    );
-  });
+      );
+    },
+  );
 
   it.effect("does not discard a denied unlock prompt while resolving keys", () =>
     Effect.gen(function* () {
@@ -149,7 +190,7 @@ describe("Linux Chromium secrets", () => {
         linuxSecretApplication: "brave",
       }).pipe(Effect.flip);
       expect(error.reason).toBe("needsKeychainApproval");
-    }).pipe(Effect.provide(secretToolLayer({ stderr: "Keyring is locked", exitCode: 1 }))),
+    }).pipe(Effect.provide(helperLayer({ stderr: "Keyring is locked", exitCode: 3 }))),
   );
 
   it.effect("keeps the v10 fallback when the Secret Service backend is unavailable", () =>
@@ -164,7 +205,7 @@ describe("Linux Chromium secrets", () => {
       expect(keys.cbcV11).toBeUndefined();
     }).pipe(
       Effect.provide(
-        secretToolLayer({
+        helperLayer({
           stderr: "Cannot autolaunch D-Bus without X11 $DISPLAY",
           exitCode: 1,
         }),
@@ -182,6 +223,6 @@ describe("Linux Chromium secrets", () => {
       });
       expect(keys.cbcV10).toHaveLength(16);
       expect(keys.cbcV11).toBeUndefined();
-    }).pipe(Effect.provide(secretToolLayer({ exitCode: 1 }))),
+    }).pipe(Effect.provide(helperLayer({ exitCode: 2 }))),
   );
 });

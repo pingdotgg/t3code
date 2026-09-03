@@ -87,6 +87,7 @@ describe("importFailureReason", () => {
   it("recovers the reason token from the flattened message", () => {
     expect(importFailureReason(failure("browserRunning"))).toBe("browserRunning");
     expect(importFailureReason(failure("readFailed"))).toBe("readFailed");
+    expect(importFailureReason(failure("keychainUnavailable"))).toBe("keychainUnavailable");
     // A settings write that fails after the cookies landed is its own case,
     // not a read failure over a database that was in fact read.
     expect(importFailureReason(failure("profileNotSaved"))).toBe("profileNotSaved");
