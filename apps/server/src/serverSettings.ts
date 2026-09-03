@@ -235,6 +235,7 @@ const PersistedOptionalProviderSettings = Schema.Struct({
   providers: Schema.optionalKey(
     Schema.Struct({
       cursor: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
+      devin: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
       grok: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
       opencode: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
     }),
@@ -263,6 +264,7 @@ function restoreUsedProviders(
       instanceId,
       instance.enabled === undefined &&
       (instance.driver === "cursor" ||
+        instance.driver === "devin" ||
         instance.driver === "grok" ||
         instance.driver === "opencode") &&
       usedProviderInstances.has(instanceId)
@@ -278,6 +280,10 @@ function restoreUsedProviders(
       cursor: {
         ...settings.providers.cursor,
         enabled: persisted.providers?.cursor?.enabled ?? usedProviders.has("cursor"),
+      },
+      devin: {
+        ...settings.providers.devin,
+        enabled: persisted.providers?.devin?.enabled ?? usedProviders.has("devin"),
       },
       grok: {
         ...settings.providers.grok,
