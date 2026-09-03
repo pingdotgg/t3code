@@ -6,11 +6,11 @@
  * keeps them in plain SQLite with no key at all, so it needs no keychain and
  * works the same on every platform.
  *
- * Each entry pins its own paths and keychain coordinates rather than deriving
- * them, because the forks do not agree. Helium uses the keychain service
- * "Helium Storage Key" / account "Helium" where Chrome and its closer
- * relatives use "<Name> Safe Storage" / "<Name>", and the user-data directory
- * differs per fork and per platform.
+ * Each entry pins its own paths and credential-store coordinates rather than
+ * deriving them, because the forks do not agree. macOS uses service/account
+ * pairs, while Linux Chromium uses a custom libsecret schema keyed by an
+ * `application` attribute. The user-data directory also differs per fork and
+ * per platform.
  *
  * @module BrowserImportSources
  */
@@ -58,6 +58,8 @@ export interface BrowserImportSourceDefinition {
   /** Chromium on macOS only: where the OSCrypt key lives in the keychain. */
   readonly keychainService?: string;
   readonly keychainAccount?: string;
+  /** Chromium's `application` attribute in the Linux libsecret schema. */
+  readonly linuxSecretApplication?: string;
 }
 
 const macApplicationSupport = (
@@ -66,10 +68,9 @@ const macApplicationSupport = (
 ) => context.path.join(context.home, "Library", "Application Support", ...segments);
 
 /**
- * One Chromium fork on macOS and Linux. The leaves differ per fork; omitting a
- * platform's segments marks the fork as unavailable there. Windows is left out
- * on purpose: since Chrome 127 those cookies are encrypted to the browser's own
- * identity (App-Bound Encryption), so no other process can read them.
+ * One Chromium fork. The leaves differ per fork; omitting a platform's
+ * segments marks the fork as unavailable there. Most Windows Chromium builds
+ * use App-Bound Encryption, but forks can retain the older DPAPI-backed store.
  */
 const chromiumSource = (input: {
   readonly id: BrowserImportSourceId;
@@ -78,6 +79,8 @@ const chromiumSource = (input: {
   readonly keychainAccount: string;
   readonly macSegments: ReadonlyArray<string>;
   readonly linuxSegments?: ReadonlyArray<string>;
+  readonly linuxSecretApplication?: string;
+  readonly windowsSegments?: ReadonlyArray<string>;
 }): BrowserImportSourceDefinition => ({
   id: input.id,
   name: input.name,
@@ -85,11 +88,20 @@ const chromiumSource = (input: {
   platforms: [
     "darwin" as NodeJS.Platform,
     ...(input.linuxSegments ? ["linux" as NodeJS.Platform] : []),
+    ...(input.windowsSegments ? ["win32" as NodeJS.Platform] : []),
   ],
   keychainService: input.keychainService,
   keychainAccount: input.keychainAccount,
+  ...(input.linuxSecretApplication === undefined
+    ? {}
+    : { linuxSecretApplication: input.linuxSecretApplication }),
   userDataDirectory: (context) => {
     if (context.platform === "darwin") return macApplicationSupport(context, ...input.macSegments);
+    if (context.platform === "win32") {
+      return input.windowsSegments && context.localAppData
+        ? context.path.join(context.localAppData, ...input.windowsSegments)
+        : undefined;
+    }
     return input.linuxSegments
       ? context.path.join(context.home, ".config", ...input.linuxSegments)
       : undefined;
@@ -104,6 +116,7 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     keychainAccount: "Chrome",
     macSegments: ["Google", "Chrome"],
     linuxSegments: ["google-chrome"],
+    linuxSecretApplication: "chrome",
   }),
   chromiumSource({
     id: "edge",
@@ -112,6 +125,7 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     keychainAccount: "Microsoft Edge",
     macSegments: ["Microsoft Edge"],
     linuxSegments: ["microsoft-edge"],
+    linuxSecretApplication: "msedge",
   }),
   chromiumSource({
     id: "brave",
@@ -120,6 +134,7 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     keychainAccount: "Brave",
     macSegments: ["BraveSoftware", "Brave-Browser"],
     linuxSegments: ["BraveSoftware", "Brave-Browser"],
+    linuxSecretApplication: "brave",
   }),
   chromiumSource({
     id: "vivaldi",
@@ -128,6 +143,7 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     keychainAccount: "Vivaldi",
     macSegments: ["Vivaldi"],
     linuxSegments: ["vivaldi"],
+    linuxSecretApplication: "vivaldi",
   }),
   chromiumSource({
     id: "opera",
@@ -136,8 +152,9 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     keychainAccount: "Opera",
     macSegments: ["com.operasoftware.Opera"],
     linuxSegments: ["opera"],
+    linuxSecretApplication: "opera",
   }),
-  // Arc and Helium ship macOS-only builds.
+  // Arc has no Linux build.
   chromiumSource({
     id: "arc",
     name: "Arc",
@@ -151,6 +168,10 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     keychainService: "Helium Storage Key",
     keychainAccount: "Helium",
     macSegments: ["net.imput.helium"],
+    linuxSegments: ["net.imput.helium"],
+    windowsSegments: ["imput", "Helium", "User Data"],
+    // Helium retains Chromium's libsecret application name on Linux.
+    linuxSecretApplication: "chromium",
   }),
   {
     id: "firefox",
@@ -544,6 +565,29 @@ const windowsLockIsHeld = Effect.fnUntraced(function* (lockPath: string) {
   );
 });
 
+type WindowsLockProbe = (path: string) => Effect.Effect<boolean, never, FileSystem.FileSystem>;
+
+/**
+ * Chromium does not create its POSIX `SingletonLock` symlink on Windows. The
+ * live cookie database is opened without sharing instead, so probing each
+ * profile's current jar is the reliable running signal there.
+ */
+export const windowsChromiumCookiesAreHeld = Effect.fnUntraced(function* (
+  definition: BrowserImportSourceDefinition,
+  context: BrowserImportPathContext,
+  lockIsHeld: WindowsLockProbe = windowsLockIsHeld,
+) {
+  const profiles = yield* listSourceProfiles(definition, context);
+  const held = yield* Effect.forEach(profiles, (profile) =>
+    resolveCookieDatabase(definition, context, profile.directory).pipe(
+      Effect.flatMap((database) =>
+        database === undefined ? Effect.succeed(false) : lockIsHeld(database),
+      ),
+    ),
+  );
+  return held.some(Boolean);
+});
+
 /**
  * Whether a Firefox `lock` symlink's `<ip>:[+]<pid>` target still names a
  * live owner. Firefox writes this symlink beside the profile while it runs and
@@ -694,9 +738,13 @@ export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")
   const fileSystem = yield* FileSystem.FileSystem;
   const root = definition.userDataDirectory(context);
   if (root === undefined) return false;
-  // Both engines leave a lock file for as long as an instance holds a profile,
-  // which is far cheaper and more targeted than scanning the process table.
+  // Probe the source's own lock state rather than scanning the process table.
+  // Chromium exposes that through the cookie jar on Windows and through its
+  // user-data SingletonLock on POSIX.
   if (definition.engine !== "firefox") {
+    if (context.platform === "win32") {
+      return yield* windowsChromiumCookiesAreHeld(definition, context);
+    }
     const currentHost = yield* HostProcessHostname;
     const lock = context.path.join(root, "SingletonLock");
     return yield* fileSystem.readLink(lock).pipe(

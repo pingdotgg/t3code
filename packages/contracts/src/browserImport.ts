@@ -56,6 +56,8 @@ export type BrowserImportUnavailableReason = typeof BrowserImportUnavailableReas
  */
 export const BrowserImportFailureReason = Schema.Literals([
   ...BrowserImportUnavailableReason.literals,
+  /** The operating system's keyring or its bundled reader is unavailable. */
+  "keychainUnavailable",
   /** No source registered under the requested id. */
   "unknownSource",
   /** The requested profile directory is not one the source reported. */
@@ -149,6 +151,8 @@ export const BROWSER_IMPORT_UNAVAILABLE_COPY: Readonly<
 /** What to tell the user when an attempted import fails. */
 export const BROWSER_IMPORT_FAILURE_COPY: Readonly<Record<BrowserImportFailureReason, string>> = {
   ...BROWSER_IMPORT_UNAVAILABLE_COPY,
+  keychainUnavailable:
+    "The system keyring could not be accessed. Make sure your desktop keyring is running and unlocked, then retry.",
   unknownSource: "That browser is no longer available to import from.",
   unknownSourceProfile: "That browser profile no longer exists.",
   sessionUnavailable: "The target profile could not be opened.",

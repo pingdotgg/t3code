@@ -133,6 +133,7 @@ export function isRetryableReason(reason: BrowserImportFailureReason): boolean {
   switch (reason) {
     case "needsKeychainApproval":
     case "keychainItemMissing":
+    case "keychainUnavailable":
     case "readFailed":
     case "sessionUnavailable":
     case "profileNotSaved":

@@ -28,9 +28,31 @@ import {
   posixLockIsHeld,
   listSourceProfiles,
   sourcePathContext,
+  windowsChromiumCookiesAreHeld,
 } from "./Sources.ts";
 
 const helium = BROWSER_IMPORT_SOURCES.find((source) => source.id === "helium")!;
+
+describe("Linux Chromium secret applications", () => {
+  it("pins the libsecret application attribute for each supported fork", () => {
+    assert.deepEqual(
+      Object.fromEntries(
+        BROWSER_IMPORT_SOURCES.filter((source) => source.platforms.includes("linux")).map(
+          (source) => [source.id, source.linuxSecretApplication],
+        ),
+      ),
+      {
+        chrome: "chrome",
+        edge: "msedge",
+        brave: "brave",
+        vivaldi: "vivaldi",
+        opera: "opera",
+        helium: "chromium",
+        firefox: undefined,
+      },
+    );
+  });
+});
 
 /** A scratch home with the source's user-data directory already created. */
 const withSourceHome = Effect.fnUntraced(function* () {
@@ -83,7 +105,103 @@ const writeFirefoxCookieDatabase = (
     database.close();
   });
 
+describe("Helium on Linux", () => {
+  it.effect("discovers its profiles and checks the user-data lock", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-helium-linux-" });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcessEnvironment, { HOME: home }),
+          Effect.provideService(HostProcessPlatform, "linux"),
+        );
+        const root = `${home}/.config/net.imput.helium`;
+        yield* fileSystem.makeDirectory(`${root}/Default`, { recursive: true });
+        yield* writeCookieDatabase(`${root}/Default/Cookies`, 3);
+        yield* fileSystem.writeFileString(
+          `${root}/Local State`,
+          '{"profile":{"info_cache":{"Default":{"name":"Personal"}}}}',
+        );
+
+        assert.include(helium.platforms, "linux");
+        assert.isTrue(yield* isSourceInstalled(helium, context));
+        assert.deepEqual(yield* listSourceProfiles(helium, context), [
+          { directory: "Default", name: "Personal", cookieCount: 3 },
+        ]);
+        assert.isFalse(yield* isSourceRunning(helium, context));
+        yield* fileSystem.symlink("foreign-host-4242", `${root}/SingletonLock`);
+        assert.isTrue(yield* isSourceRunning(helium, context));
+      }),
+    ),
+  );
+});
+
+describe("Helium on Windows", () => {
+  it.effect("uses Helium's local app-data profile while other Chromium forks stay disabled", () =>
+    run(
+      Effect.gen(function* () {
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcessEnvironment, {
+            USERPROFILE: "C:\\Users\\browser-user",
+            LOCALAPPDATA: "C:\\Users\\browser-user\\AppData\\Local",
+          }),
+          Effect.provideService(HostProcessPlatform, "win32"),
+        );
+
+        assert.include(helium.platforms, "win32");
+        assert.equal(
+          helium.userDataDirectory(context),
+          context.path.join(
+            "C:\\Users\\browser-user\\AppData\\Local",
+            "imput",
+            "Helium",
+            "User Data",
+          ),
+        );
+        for (const source of BROWSER_IMPORT_SOURCES) {
+          if (source.engine === "chromium" && source.id !== "helium") {
+            assert.notInclude(source.platforms, "win32");
+          }
+        }
+      }),
+    ),
+  );
+});
+
 describe("isSourceRunning", () => {
+  it.effect("uses the held cookie database as Chromium's Windows running signal", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-helium-windows-lock-",
+        });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcessEnvironment, {
+            HOME: home,
+            LOCALAPPDATA: home,
+          }),
+          Effect.provideService(HostProcessPlatform, "win32"),
+        );
+        const profile = context.path.join(helium.userDataDirectory(context)!, "Default");
+        const database = context.path.join(profile, "Network", "Cookies");
+        yield* fileSystem.makeDirectory(context.path.join(profile, "Network"), { recursive: true });
+        yield* writeCookieDatabase(database, 1);
+
+        const probed: string[] = [];
+        assert.isTrue(
+          yield* windowsChromiumCookiesAreHeld(helium, context, (path) =>
+            Effect.sync(() => {
+              probed.push(path);
+              return true;
+            }),
+          ),
+        );
+        assert.deepEqual(probed, [database]);
+      }),
+    ),
+  );
+
   it.effect("reads Chromium's dangling SingletonLock symlink as a running browser", () =>
     run(
       Effect.gen(function* () {

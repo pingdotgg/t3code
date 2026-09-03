@@ -155,6 +155,7 @@ describe("refreshedSourceProfileDirectory", () => {
 describe("isRetryableReason", () => {
   it("offers a retry for failures a second attempt can clear", () => {
     expect(isRetryableReason("needsKeychainApproval")).toBe(true);
+    expect(isRetryableReason("keychainUnavailable")).toBe(true);
     expect(isRetryableReason("readFailed")).toBe(true);
   });
 
