@@ -2314,13 +2314,15 @@ export const makeCodexSessionRuntime = (
     });
 
     // Only a prompt that names a skill pays for the catalog read, and the app
-    // server answers it from its own cache. A failed read sends the mention as
-    // text, which is what every turn did before typed skill input.
+    // server answers it from its own cache. A failed or slow read sends the
+    // mention as text, which is what every turn did before typed skill input,
+    // rather than holding the turn behind a catalog that never answers.
     const resolveSkillsForPrompt = (
       prompt: string | undefined,
     ): Effect.Effect<ReadonlyArray<CodexSkillInput>> =>
       prompt !== undefined && hasCodexSkillMention(prompt)
         ? client.request("skills/list", { cwds: [options.cwd] }).pipe(
+            Effect.timeout("5 seconds"),
             Effect.map((response) => {
               const entry = response.data.find((candidate) => candidate.cwd === options.cwd);
               return resolveCodexSkillMentions(
