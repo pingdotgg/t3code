@@ -307,7 +307,7 @@ it.effect("continues marked sessions after activation with provider-specific inp
   }),
 );
 
-it.effect("continues an unmarked active session after an ordinary server restart", () =>
+const verifyOrdinaryRestartContinuation = (markerCleared: boolean) =>
   Effect.gen(function* () {
     const thread = makeThread(
       "thread-continue-after-restart",
@@ -350,6 +350,7 @@ it.effect("continues an unmarked active session after an ordinary server restart
               runtimePayload: {
                 activeTurnId: thread.session.activeTurnId,
                 lastRuntimeEvent: "provider.sendTurn",
+                ...(markerCleared ? { continueAfterServerUpdate: null } : {}),
               },
             }),
           ),
@@ -386,10 +387,18 @@ it.effect("continues an unmarked active session after an ordinary server restart
         {
           activeTurnId: null,
           lastRuntimeEvent: "provider.sendTurn",
+          ...(markerCleared ? { continueAfterServerUpdate: null } : {}),
         },
       ],
     );
-  }),
+  });
+
+it.effect.each([
+  { markerState: "absent", markerCleared: false },
+  { markerState: "cleared", markerCleared: true },
+] as const)(
+  "continues an active session after an ordinary server restart when the update marker is $markerState",
+  ({ markerCleared }) => verifyOrdinaryRestartContinuation(markerCleared),
 );
 
 it.effect("does not continue archived or deleted marked sessions", () => {

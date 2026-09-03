@@ -472,11 +472,10 @@ export const reconcileProviderSessions = Effect.gen(function* () {
             }).pipe(Effect.as(Option.none())),
       ),
     );
-    const continuationMarkerPresent =
-      Option.isSome(binding) && hasServerUpdateContinuationMarker(binding.value.runtimePayload);
     const continuationTurnId = Option.isSome(binding)
       ? readServerUpdateContinuationTurnId(binding.value.runtimePayload)
       : null;
+    const continuationMarkerPresent = continuationTurnId !== null;
     const continuationMarked =
       continuationTurnId !== null &&
       (session.activeTurnId === null || continuationTurnId === session.activeTurnId);
