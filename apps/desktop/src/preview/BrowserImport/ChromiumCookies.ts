@@ -19,10 +19,16 @@ import * as NodeCrypto from "node:crypto";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+
+import {
+  bareHost,
+  cookieScope,
+  snapshotCookieDatabase,
+  type CookieReadResult,
+  type ImportedCookie,
+} from "./CookieDatabase.ts";
 
 /** macOS OSCrypt parameters. Chromium has used these since the feature landed. */
 const MAC_KEY_ITERATIONS = 1003;
@@ -31,25 +37,6 @@ const MAC_KEY_LENGTH = 16;
 /** OSCrypt uses a fixed IV of 16 spaces rather than a per-record one. */
 const AES_IV = Buffer.alloc(16, 0x20);
 const V10_PREFIX = "v10";
-
-export interface ChromiumCookie {
-  readonly url: string;
-  readonly name: string;
-  readonly value: string;
-  /**
-   * Set only for domain cookies, which Chromium stores with a leading dot.
-   * A host-only cookie leaves this undefined: Electron treats any `domain` it
-   * is given as a domain cookie and re-adds the dot, which would widen the
-   * cookie to every subdomain of the host it was scoped to.
-   */
-  readonly domain: string | undefined;
-  readonly path: string;
-  readonly secure: boolean;
-  readonly httpOnly: boolean;
-  /** Seconds since the UNIX epoch, or undefined for a session cookie. */
-  readonly expirationDate: number | undefined;
-  readonly sameSite: "no_restriction" | "lax" | "strict";
-}
 
 export const ChromiumCookieReadReason = Schema.Literals([
   "needsKeychainApproval",
@@ -104,14 +91,17 @@ const decodeSchemaVersion = Schema.decodeUnknownEffect(
 );
 
 /**
- * Chromium stores `SameSite` as an int; unspecified (-1) behaves as Lax in
- * modern Chromium, so it maps there rather than to `no_restriction`, which
- * would widen the cookie's scope on import.
+ * Chromium stores `SameSite` as an int: -1 = unspecified, 0 = none, 1 = lax,
+ * 2 = strict. Unspecified is imported as Electron's own `unspecified` rather
+ * than pinned to Lax, so the target browser applies its default just as the
+ * source did; anything unrecognised lands there too, since guessing "none"
+ * would widen a cookie's scope on import.
  */
-const sameSiteFromColumn = (value: number): ChromiumCookie["sameSite"] => {
+const sameSiteFromColumn = (value: number): ImportedCookie["sameSite"] => {
   if (value === 0) return "no_restriction";
+  if (value === 1) return "lax";
   if (value === 2) return "strict";
-  return "lax";
+  return "unspecified";
 };
 
 /**
@@ -170,60 +160,6 @@ const readMacKeychainPassword = Effect.fn("ChromiumCookies.readMacKeychainPasswo
   }
   return password;
 });
-
-/**
- * Chromium keeps the cookie DB open with WAL. SQLite must create the snapshot
- * itself so the main database and WAL are read from one transactionally
- * consistent generation. Copying those files one after another can pair a
- * newer database with an older WAL (or the reverse).
- *
- * Scoped: the temp directory is removed when the caller's scope closes.
- */
-export const snapshotCookieDatabase = Effect.fn("ChromiumCookies.snapshotCookieDatabase")(
-  function* (cookiePath: string, tempPrefix = "t3code-cookie-import-") {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-
-    const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: tempPrefix });
-    const target = path.join(directory, "Cookies");
-
-    yield* Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`VACUUM INTO ${target}`;
-    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: cookiePath, readonly: true })));
-
-    return target;
-  },
-);
-
-/**
- * The URL and domain Electron should register a stored row under.
- *
- * Chromium marks a domain cookie with a leading dot on `host_key`. Electron
- * matches on a URL, so the dot comes off for that; `domain` is passed through
- * only for domain cookies, because supplying it at all makes Electron treat
- * the cookie as one and re-add the dot — widening a host-only cookie to every
- * subdomain of the host it was scoped to, and rejecting `__Host-` cookies,
- * which require it to be absent.
- */
-export const cookieScope = (
-  hostKey: string,
-  path: string,
-  secure: boolean,
-): { readonly url: string; readonly domain: string | undefined } => {
-  const isDomainCookie = hostKey.startsWith(".");
-  const host = isDomainCookie ? hostKey.slice(1) : hostKey;
-  const urlAuthority =
-    host.includes(":") && !(host.startsWith("[") && host.endsWith("]")) ? `[${host}]` : host;
-  return {
-    url: `${secure ? "https" : "http"}://${urlAuthority}${path}`,
-    ...(isDomainCookie ? { domain: hostKey } : { domain: undefined }),
-  };
-};
-
-/** The host without Chromium's domain-cookie leading dot, for display. */
-const bareHost = (hostKey: string): string =>
-  hostKey.startsWith(".") ? hostKey.slice(1) : hostKey;
 
 const decryptValue = (
   encrypted: Uint8Array,
@@ -294,7 +230,7 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
       return { rows: yield* decodeCookieRows(raw), schemaVersion };
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })));
 
-    const cookies: ChromiumCookie[] = [];
+    const cookies: ImportedCookie[] = [];
     let undecryptable = 0;
     const undecryptableHosts = new Set<string>();
     for (const row of rows.rows) {
@@ -339,18 +275,6 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
     } satisfies CookieReadResult;
   },
 );
-
-/**
- * What a reader produces: the cookies it could recover, and how many stored
- * rows it could not. The count reaches the user as part of the skipped total
- * rather than disappearing.
- */
-export interface CookieReadResult {
-  readonly cookies: ReadonlyArray<ChromiumCookie>;
-  readonly undecryptable: number;
-  /** Distinct hosts of the rows that could not be decrypted. */
-  readonly undecryptableHosts: ReadonlyArray<string>;
-}
 
 export interface ChromiumCookieSource {
   readonly cookieDatabasePath: string;
