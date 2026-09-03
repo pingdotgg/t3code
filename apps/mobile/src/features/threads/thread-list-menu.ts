@@ -13,7 +13,7 @@ export function buildThreadListMenuActions(input: {
       rather than let the action fail. Same computation as web:
       session.status === "running" && activeTurnId != null. */
   readonly isRunning?: boolean;
-}): MenuAction[] {
+}) {
   const regeneratingTitle = input.thread.titleRegeneration != null;
   const hasLifecycleArchive = input.lifecycleActions.some((action) => action.id === "archive");
   return [

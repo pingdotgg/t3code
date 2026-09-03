@@ -611,10 +611,6 @@ export function useThreadJumpHintVisibility(): {
   };
 }
 
-export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
-  return hasUnseenThreadCompletion(thread, thread.lastVisitedAt);
-}
-
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
   if (target === null) return true;
   return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);
@@ -1035,7 +1031,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (hasUnseenCompletion(thread)) {
+  if (hasUnseenThreadCompletion(thread, thread.lastVisitedAt)) {
     return {
       label: "Completed",
       colorClass: "text-emerald-600 dark:text-emerald-300/90",

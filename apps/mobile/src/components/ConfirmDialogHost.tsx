@@ -9,7 +9,7 @@ const DialogTextInput = withUniwind(AppTextInput, {
   selectionColor: { fromClassName: "selectionColorClassName", styleProperty: "accentColor" },
 });
 
-export type ConfirmDialogRequest = {
+type ConfirmDialogRequest = {
   readonly title: string;
   readonly message?: string;
   readonly cancelText?: string;
@@ -19,7 +19,7 @@ export type ConfirmDialogRequest = {
   readonly onCancel?: () => void;
 };
 
-export type TextInputDialogRequest = {
+type TextInputDialogRequest = {
   readonly title: string;
   readonly defaultValue: string;
   readonly cancelText?: string;
@@ -40,11 +40,11 @@ let presentRequest: ((request: DialogRequest) => void) | null = null;
  * Android, where the native dialog can only theme all confirm buttons at
  * once. Requires ConfirmDialogHost to be mounted at the app root.
  */
-export function showConfirmDialog(request: ConfirmDialogRequest): void {
+export function showConfirmDialog(request: ConfirmDialogRequest) {
   presentRequest?.({ kind: "confirm", ...request });
 }
 
-export function showTextInputDialog(request: TextInputDialogRequest): void {
+export function showTextInputDialog(request: TextInputDialogRequest) {
   presentRequest?.({ kind: "text-input", ...request });
 }
 
@@ -58,17 +58,16 @@ export function ConfirmDialogHost() {
   const [request, setRequest] = useState<DialogRequest | null>(null);
   const [inputValue, setInputValue] = useState("");
   useEffect(() => {
-    presentRequest = setRequest;
+    presentRequest = (nextRequest) => {
+      if (nextRequest.kind === "text-input") {
+        setInputValue(nextRequest.defaultValue);
+      }
+      setRequest(nextRequest);
+    };
     return () => {
       presentRequest = null;
     };
   }, []);
-
-  useEffect(() => {
-    if (request?.kind === "text-input") {
-      setInputValue(request.defaultValue);
-    }
-  }, [request]);
 
   const handleCancel = useCallback(() => {
     request?.onCancel?.();

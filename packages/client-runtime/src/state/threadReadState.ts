@@ -8,7 +8,7 @@ export function hasUnseenThreadCompletion(
     } | null;
   },
   lastVisitedAt: string | undefined,
-): boolean {
+) {
   if (
     thread.latestTurn?.state === "running" ||
     !thread.latestTurn?.completedAt ||
@@ -26,7 +26,7 @@ export function hasUnseenThreadCompletion(
 export function resolveThreadVisitedAt(
   previousVisitedAt: string | undefined,
   visitedAt: string | null | undefined,
-): string | undefined {
+) {
   if (!visitedAt) return previousVisitedAt;
   const visitedAtMs = Date.parse(visitedAt);
   if (!Number.isFinite(visitedAtMs)) return previousVisitedAt;
@@ -37,9 +37,7 @@ export function resolveThreadVisitedAt(
   return visitedAt;
 }
 
-export function resolveThreadUnreadAt(
-  latestTurnCompletedAt: string | null | undefined,
-): string | undefined {
+export function resolveThreadUnreadAt(latestTurnCompletedAt: string | null | undefined) {
   if (!latestTurnCompletedAt) return undefined;
   const completedAtMs = Date.parse(latestTurnCompletedAt);
   if (Number.isNaN(completedAtMs)) return undefined;

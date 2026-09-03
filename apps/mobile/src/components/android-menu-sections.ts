@@ -1,11 +1,11 @@
 import type { MenuAction } from "@react-native-menu/menu";
 
-export interface AndroidMenuEntry {
+interface AndroidMenuEntry {
   readonly action: MenuAction;
   readonly dividerBefore: boolean;
 }
 
-export function flattenInlineMenuSections(actions: readonly MenuAction[]): AndroidMenuEntry[] {
+export function flattenInlineMenuSections(actions: readonly MenuAction[]) {
   const entries: AndroidMenuEntry[] = [];
   let previousWasInlineGroup = false;
   for (const action of actions) {
