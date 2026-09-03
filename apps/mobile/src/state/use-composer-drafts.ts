@@ -974,6 +974,14 @@ export function updateComposerDraftSettings(
   });
 }
 
+export function setComposerDraftModelSelection(
+  draftKey: string,
+  modelSelection: ModelSelection,
+): void {
+  updateComposerDraftSettings(draftKey, { modelSelection });
+  setStickyComposerModelSelection(modelSelection);
+}
+
 export function clearComposerDraftContentState(
   current: Record<string, ComposerDraft>,
   draftKey: string,

@@ -139,6 +139,7 @@ import {
   retainComposerAttachmentFileForPreview,
   restoreComposerDraftSnapshotState,
   restoreCloudComposerDrafts,
+  setComposerDraftModelSelection,
   setComposerDraftText,
   setComposerDraftAttachmentUpload,
   waitForComposerDraftsLoaded,
@@ -956,6 +957,20 @@ describe("mobile composer drafts", () => {
       instanceId: "codex",
       model: "gpt-5.6-sol",
     });
+  });
+
+  it("remembers a model selection changed in an existing thread", () => {
+    const draftKey = "environment-1:thread-1";
+    const modelSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.6-sol",
+      options: [{ id: "reasoningEffort", value: "xhigh" }],
+    };
+
+    setComposerDraftModelSelection(draftKey, modelSelection);
+
+    expect(getComposerDraftSnapshot(draftKey).modelSelection).toEqual(modelSelection);
+    expect(appAtomRegistry.get(stickyComposerModelSelectionAtom)).toEqual(modelSelection);
   });
 
   it("waits for hydration before persisting the latest composer state", async () => {
