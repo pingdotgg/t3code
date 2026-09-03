@@ -66,7 +66,8 @@ const defaultSessionLoadTimeout = Duration.seconds(90);
 const defaultSessionLoadReplayIdleGap = Duration.seconds(2);
 const defaultCancelTimeout = Duration.seconds(15);
 const maxStartupMetadataUpdates = 32;
-const maxStderrChunkLength = 8_192;
+// Antigravity can emit an accepted 16 KiB Google authorization URL on stderr.
+const maxStderrChunkLength = 32_768;
 
 export interface AcpSpawnInput {
   readonly command: string;
@@ -614,13 +615,17 @@ export const make = (
         });
       });
 
-    const updateConfigOptions = (
-      response:
-        | EffectAcpSchema.SetSessionConfigOptionResponse
-        | EffectAcpSchema.LoadSessionResponse
-        | EffectAcpSchema.NewSessionResponse
-        | EffectAcpSchema.ResumeSessionResponse,
-    ): Effect.Effect<void> => Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(response));
+    const updateConfigOptions = Effect.fn("AcpSessionRuntime.updateConfigOptions")(function* (
+      response: EffectAcpSchema.SetSessionConfigOptionResponse,
+    ) {
+      const configOptions = sessionConfigOptionsFromSetup(response);
+      yield* Ref.set(configOptionsRef, configOptions);
+      yield* Queue.offer(eventQueue, {
+        _tag: "ConfigOptionsUpdated",
+        configOptions,
+        rawPayload: response,
+      });
+    });
 
     const updateCurrentModeId = (modeId: string): Effect.Effect<void> =>
       Ref.update(modeStateRef, (current) =>

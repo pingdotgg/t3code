@@ -50,6 +50,7 @@ import {
   shouldReleaseTimelineAnchorForToolActivity,
   shouldOpenProactivePullRequest,
   shouldOpenProactiveTurnDiff,
+  shouldRenderPreviewMiniPlayer,
   shouldShowBranchMismatchBanner,
   shouldShowPlanFollowUpPrompt,
   shouldWriteThreadErrorToCurrentServerThread,
@@ -90,6 +91,27 @@ describe("agent browser close confirmation", () => {
         "tab-2": { controller: "agent" },
       }),
     ).toContain("Close 2 browsers");
+  });
+});
+
+describe("floating browser preview", () => {
+  it("only hides the duplicate while the same browser is rendered in the panel", () => {
+    expect(shouldRenderPreviewMiniPlayer(null, null)).toBe(false);
+    expect(
+      shouldRenderPreviewMiniPlayer("tab-1", {
+        id: "browser:one",
+        kind: "preview",
+        resourceId: "tab-1",
+      }),
+    ).toBe(false);
+    expect(
+      shouldRenderPreviewMiniPlayer("tab-1", {
+        id: "browser:two",
+        kind: "preview",
+        resourceId: "tab-2",
+      }),
+    ).toBe(true);
+    expect(shouldRenderPreviewMiniPlayer("tab-1", { id: "diff", kind: "diff" })).toBe(true);
   });
 });
 

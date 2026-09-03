@@ -107,6 +107,7 @@ installations. Clear **Binary path** to use managed installation controls.
 The current official ACP exposes Gemini models only. T3 Code uses the model IDs and names
 returned for your account, including any model choices with different thinking levels. Models
 available in other Antigravity apps might not be available through this agent.
+The model picker updates when a running session reports new model choices.
 
 New threads use Gemini 3.8 Flash (High) when your account offers it. Older Gemini generations
 stay available under **Legacy models** in the picker.
@@ -116,6 +117,10 @@ T3 Code asks you to select an available model instead of silently changing it.
 
 Use Antigravity's native `/plan` command to request a plan. T3 Code's separate Plan mode control
 is not available for this provider.
+
+Project skills should use `.agents/skills`. T3 Code also discovers `.gemini/skills` and the legacy
+`.agent/skills` location. When multiple locations define the same skill name, `.gemini/skills`
+takes precedence, followed by `.agents/skills` and then `.agent/skills`.
 
 Antigravity reads and edits workspace files through T3 Code. Each write shows up as a file
 change approval with the content, so **Supervised** and **Auto-accept edits** behave the same way
@@ -164,6 +169,9 @@ session succeeds. To check account access and reload models, use **Refresh provi
 in web or desktop provider settings, or **Refresh models** in the mobile model picker. Refresh
 uses saved Google sign-in and does not open a login page. If sign-in is required, use the
 provider's setup controls. Automatic status checks verify the installation only.
+
+The packaged runtime can be slow to start, especially on Windows. Health checks, model refresh,
+and sign-out each allow up to 90 seconds before reporting a timeout.
 
 If Google reports `SUBSCRIPTION_REQUIRED`, an account restriction, or a usage limit, read the
 provider's message. A finished turn can contain an upstream error instead of completed work.

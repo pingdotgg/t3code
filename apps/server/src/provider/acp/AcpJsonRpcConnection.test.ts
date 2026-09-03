@@ -69,17 +69,35 @@ describe("AcpSessionRuntime", () => {
         expect(events.map((event) => event._tag)).toEqual([
           "AvailableCommandsUpdated",
           "ModeChanged",
+          "ConfigOptionsUpdated",
         ]);
         expect(events[0]).toMatchObject({
           availableCommands: [{ name: "plan", description: "Native command" }],
         });
         expect(yield* runtime.getModeState).toMatchObject({ currentModeId: "code" });
+        expect(events[2]).toMatchObject({
+          configOptions: yield* runtime.getConfigOptions,
+        });
         expect(
           (yield* runtime.getConfigOptions).find((option) => option.category === "model"),
         ).toMatchObject({ currentValue: "gpt-5.4" });
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   }
+
+  it.effect("publishes model changes returned by a config request and live notifications", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.make(mockRuntimeOptions);
+      yield* runtime.start();
+      const updates = yield* Stream.toPull(
+        runtime.getEvents().pipe(Stream.filter((event) => event._tag === "ConfigOptionsUpdated")),
+      );
+      const selected = yield* runtime.setConfigOption("model", "composer-2");
+      expect((yield* updates)[0]?.configOptions).toEqual(selected.configOptions);
+      yield* runtime.request("_test/startup-metadata", {});
+      expect((yield* updates)[0]?.configOptions).toEqual(yield* runtime.getConfigOptions);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("awaits native resume instead of using the load replay idle fallback", () =>
     Effect.gen(function* () {
@@ -327,7 +345,7 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("drains large stderr output and bounds optional logging chunks", () =>
+  it.effect("drains large stderr output and keeps auth-sized logging chunks", () =>
     Effect.gen(function* () {
       const lengths: Array<number> = [];
       for (const logStderr of [false, true]) {
@@ -348,7 +366,8 @@ describe("AcpSessionRuntime", () => {
         }).pipe(Effect.scoped);
       }
       expect(lengths.length).toBeGreaterThan(0);
-      expect(Math.max(...lengths)).toBeLessThanOrEqual(8_192);
+      expect(Math.max(...lengths)).toBeGreaterThanOrEqual(16_384);
+      expect(Math.max(...lengths)).toBeLessThanOrEqual(32_768);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

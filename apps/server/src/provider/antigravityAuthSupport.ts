@@ -24,9 +24,12 @@ export const ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE =
   "Sign in to Antigravity in Settings before you continue.";
 
 const maxAuthorizationUrlLength = 16_384;
+const maxBrowserHelperLineLength =
+  ANTIGRAVITY_AUTH_BROWSER_MARKER.length + maxAuthorizationUrlLength + 2;
 const maxStdoutLineBytes = 16 * 1024 * 1024;
 const authPrefixBytes = new TextEncoder().encode(ANTIGRAVITY_AUTH_STDOUT_PREFIX);
 const decodeUrl = Schema.decodeUnknownEffect(Schema.URLFromString);
+const decodeBrowserHelperUrl = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.String));
 const ProfileSettingsFile = Schema.Struct({
   auth: Schema.Struct({ type: Schema.String }),
   gcp: Schema.optional(
@@ -455,5 +458,32 @@ export function makeAntigravityStdoutTransform(
     });
 }
 
-/** Upstream stderr can contain OAuth URLs, states, and redirect codes. */
-export const drainAntigravityStderr = (_text: string): Effect.Effect<void> => Effect.void;
+/** Receives the URL emitted by T3's no-browser helper on stderr. */
+export function makeAntigravityStderrHandler(input: {
+  readonly onAuthorizationUrl: (
+    authorizationUrl: string,
+  ) => Effect.Effect<void, AcpErrors.AcpError>;
+}) {
+  let pending = "";
+  const handleLine = (line: string) => {
+    const message = line.endsWith("\r") ? line.slice(0, -1) : line;
+    if (
+      message.length > maxBrowserHelperLineLength ||
+      !message.startsWith(ANTIGRAVITY_AUTH_BROWSER_MARKER)
+    ) {
+      return Effect.void;
+    }
+    return decodeBrowserHelperUrl(message.slice(ANTIGRAVITY_AUTH_BROWSER_MARKER.length)).pipe(
+      Effect.flatMap(parseAntigravityAuthorizationUrl),
+      Effect.flatMap((request) => input.onAuthorizationUrl(request.authorizationUrl)),
+      Effect.ignore,
+    );
+  };
+
+  return Effect.fn("antigravityAuthSupport.handleStderr")(function* (text: string) {
+    const lines = `${pending}${text}`.split("\n");
+    pending = lines.pop() ?? "";
+    if (pending.length > maxBrowserHelperLineLength) pending = "";
+    yield* Effect.forEach(lines, handleLine, { discard: true });
+  });
+}

@@ -200,6 +200,22 @@ export class MacPasskeySigningConfigurationResolutionError extends Schema.Tagged
   }
 }
 
+export class KeyringNativePackageMissingError extends Schema.TaggedErrorClass<KeyringNativePackageMissingError>()(
+  "KeyringNativePackageMissingError",
+  {
+    packageName: Schema.String,
+    binaryFileName: Schema.String,
+    packageEntryPath: Schema.String,
+    platform: BuildPlatform,
+    arch: BuildArch,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Keyring native package is missing: ${this.packageName}`;
+  }
+}
+
 export class ClerkPasskeyNativePackageMissingError extends Schema.TaggedErrorClass<ClerkPasskeyNativePackageMissingError>()(
   "ClerkPasskeyNativePackageMissingError",
   {
@@ -292,6 +308,11 @@ export const LINUX_DESKTOP_BUILD_PREREQUISITES = [
   { id: "rust-target", description: "Requested Rust standard library", packages: [] },
   { id: "cc", description: "C/C++ build toolchain", packages: ["build-essential"] },
   { id: "make", description: "Make", packages: ["build-essential"] },
+  {
+    id: "libsecret",
+    description: "libsecret development headers and pkg-config",
+    packages: ["libsecret-1-dev", "pkg-config"],
+  },
   { id: "imagemagick", description: "ImageMagick", packages: ["imagemagick"] },
 ] as const;
 
@@ -928,6 +949,10 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
   // are dead weight. The trailing dash keeps the SDK's own JS package.
   "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
+  "!apps/desktop/resources/browser-secret",
+  "!apps/desktop/resources/browser-secret/**/*",
+  "!apps/desktop/prod-resources/browser-secret",
+  "!apps/desktop/prod-resources/browser-secret/**/*",
   // Windows stages the server sidecar below prod-resources so electron-builder
   // can copy it using project-relative extraResources matchers. Keep those
   // staging inputs out of app.asar; they are emitted once at resources/.
@@ -1057,6 +1082,9 @@ export const DESKTOP_EXTRA_RESOURCES = [
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
   },
+] as const;
+export const LINUX_BROWSER_SECRET_EXTRA_RESOURCES = [
+  { from: "apps/desktop/prod-resources/browser-secret", to: "browser-secret" },
 ] as const;
 
 export interface MacPasskeySigningConfiguration {
@@ -1342,6 +1370,69 @@ export function resolveClerkPasskeyNativeArtifacts(
 
   return [];
 }
+
+export function resolveKeyringNativeArtifacts(
+  platform: typeof BuildPlatform.Type,
+  arch: typeof BuildArch.Type,
+): readonly ClerkPasskeyNativeArtifact[] {
+  const architectures = arch === "universal" ? (["arm64", "x64"] as const) : [arch];
+
+  if (platform === "mac") {
+    return architectures.map((architecture) => ({
+      packageName: `@napi-rs/keyring-darwin-${architecture}`,
+      binaryFileName: `keyring.darwin-${architecture}.node`,
+    }));
+  }
+
+  if (platform === "win") {
+    return architectures.map((architecture) => ({
+      packageName: `@napi-rs/keyring-win32-${architecture}-msvc`,
+      binaryFileName: `keyring.win32-${architecture}-msvc.node`,
+    }));
+  }
+
+  return architectures.map((architecture) => ({
+    packageName: `@napi-rs/keyring-linux-${architecture}-gnu`,
+    binaryFileName: `keyring.linux-${architecture}-gnu.node`,
+  }));
+}
+
+/**
+ * Same nesting problem as the Clerk passkey binaries: pnpm keeps the platform
+ * package under `@napi-rs/keyring`, electron-builder only retains collected
+ * top-level dependencies, and the generated loader checks for a sibling
+ * `keyring.<platform>.node` before falling back to the package. Staging the
+ * binary beside `index.js` lets that first branch win.
+ */
+const stageKeyringNativeBinaries = Effect.fn("stageKeyringNativeBinaries")(function* (
+  stageAppDir: string,
+  platform: typeof BuildPlatform.Type,
+  arch: typeof BuildArch.Type,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const packageEntryPath = yield* fs.realPath(
+    path.join(stageAppDir, "node_modules", "@napi-rs", "keyring", "index.js"),
+  );
+  const packageDir = path.dirname(packageEntryPath);
+  const packageRequire = NodeModule.createRequire(packageEntryPath);
+
+  for (const artifact of resolveKeyringNativeArtifacts(platform, arch)) {
+    const sourcePath = yield* Effect.try({
+      try: () => packageRequire.resolve(`${artifact.packageName}/${artifact.binaryFileName}`),
+      catch: (cause) =>
+        new KeyringNativePackageMissingError({
+          packageName: artifact.packageName,
+          binaryFileName: artifact.binaryFileName,
+          packageEntryPath,
+          platform,
+          arch,
+          cause,
+        }),
+    });
+    yield* fs.copyFile(sourcePath, path.join(packageDir, artifact.binaryFileName));
+  }
+});
 
 // pnpm nests the architecture package under @clerk/electron-passkeys, while electron-builder only
 // retains collected top-level dependencies. The SDK loader checks beside index.js first, so stage
@@ -1651,6 +1742,10 @@ export const preflightLinuxDesktopBuild = Effect.fn("preflightLinuxDesktopBuild"
         : rustTargetIsInstalled(rustTarget),
       cc: desktopBuildProbeSucceeds(ChildProcess.make("cc", ["--version"]), "cc"),
       make: desktopBuildProbeSucceeds(ChildProcess.make("make", ["--version"]), "make"),
+      libsecret: desktopBuildProbeSucceeds(
+        ChildProcess.make("pkg-config", ["--exists", "libsecret-1"]),
+        "libsecret",
+      ),
       imagemagick: Effect.all([
         desktopBuildProbeSucceeds(ChildProcess.make("magick", ["-version"]), "magick"),
         desktopBuildProbeSucceeds(ChildProcess.make("convert", ["-version"]), "convert"),
@@ -2117,6 +2212,31 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
   }
 });
 
+export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (input: {
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  if (input.platform !== "linux") return;
+  const path = yield* Path.Path;
+  yield* runCommand(
+    ChildProcess.make(
+      "node",
+      [
+        path.join(input.repoRoot, "apps/desktop/scripts/build-browser-secret.mjs"),
+        "--arch",
+        input.arch,
+        "--output",
+        path.join(input.stageResourcesDir, "browser-secret", "t3-browser-secret"),
+      ],
+      { cwd: input.repoRoot },
+    ),
+    { label: "build Linux browser secret helper", verbose: input.verbose },
+  );
+});
+
 function generateMacIconSet(
   sourcePng: string,
   targetIcns: string,
@@ -2459,6 +2579,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // hand-packed server.asar sidecar (see WINDOWS_SERVER_ASAR_RESOURCE).
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
       ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
     ],
@@ -3417,6 +3538,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     arch: options.arch,
     verbose: options.verbose,
   });
+  yield* stageBrowserSecret({
+    repoRoot,
+    stageResourcesDir,
+    platform: options.platform,
+    arch: options.arch,
+    verbose: options.verbose,
+  });
 
   yield* assertPlatformBuildResources(
     options.platform,
@@ -3554,6 +3682,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     { label: "vp install --prod", verbose: options.verbose },
   );
   yield* stageClerkPasskeyNativeBinaries(stageAppDir, options.platform, options.arch);
+  yield* stageKeyringNativeBinaries(stageAppDir, options.platform, options.arch);
 
   // WSL is Windows-only, so only the Windows artifact carries the server
   // sidecar (which embeds the Linux node-pty prebuild); other platforms
