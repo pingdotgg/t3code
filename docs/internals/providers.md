@@ -41,6 +41,15 @@ directory to route session and turn operations for a thread, so callers name a t
 reference data before dispatching to any adapter. Bound user comments remain distinct from the quoted
 assistant text. Persisted messages keep their serialized links.
 
+Adapters can optionally implement `discoverPersistedThreads` for conversations created outside T3
+Code. Codex implements this capability through [`CodexThreadDiscovery.ts`][codex-discovery], which
+lists durable Codex threads and reads completed user and assistant messages. The server-owned
+reconciler runs when provider instances change and periodically while they are available. It scans
+the configured Codex home without a client-supplied workspace filter, matches each thread to the
+project with the same working directory, and stores unmatched threads in **Unassigned Codex
+threads**. The optional workspace filter remains available for a project-open request as a fast
+path; it is not the source of truth for other clients.
+
 Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
 orchestration, contract, or client change is required for the common case.
 
@@ -311,6 +320,18 @@ synchronization.
 3. [`CheckpointReactor`][checkpoint] captures workspace checkpoints on turn start and completion, and
    performs reverts.
 
+Persisted conversation discovery is separate from these queue-backed workers.
+[`ProviderThreadReconciler`][reconciler] runs when provider instances change and periodically in the
+background. It groups compatible instances by continuation identity, asks one healthy adapter in
+each group for persisted threads, and imports missing messages through the internal
+`thread.message.import` command. Threads are attached to the project matching their working
+directory; unmatched threads go into an **Unassigned Codex threads** project. Provider thread IDs,
+discovery cursors, and deterministic command and message IDs make retries safe and keep live T3
+threads from being imported twice.
+The imported provider ID, status, update time, and source metadata are also stored on the normal
+thread projection and included in thread and shell snapshots, so every client sees the same
+provider conversation identity.
+
 ### Buffered assistant delivery
 
 A thread in `buffered` assistant delivery mode accumulates assistant text instead of streaming each
@@ -341,6 +362,8 @@ when a request opens (approval) or user input is requested, via
 [instances]: ../../apps/server/src/provider/Services/ProviderInstanceRegistry.ts
 [registry]: ../../apps/server/src/provider/Services/ProviderAdapterRegistry.ts
 [service]: ../../apps/server/src/provider/Layers/ProviderService.ts
+[codex-discovery]: ../../apps/server/src/provider/Layers/CodexThreadDiscovery.ts
+[reconciler]: ../../apps/server/src/provider/Layers/ProviderThreadReconciler.ts
 [contracts]: ../../packages/contracts/src/orchestration.ts
 [worker]: ../../packages/shared/src/DrainableWorker.ts
 [ingest]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts

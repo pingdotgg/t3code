@@ -66,6 +66,13 @@ describe("orchestration projector", () => {
             worktreePath: null,
             createdAt: now,
             updatedAt: now,
+            providerThreadMetadata: {
+              provider: "codex",
+              providerThreadId: "provider-thread-1",
+              updatedAt: now,
+              status: { type: "idle" },
+              sourceMetadata: { cwd: "/work/demo" },
+            },
           },
         }),
       ),
@@ -100,8 +107,71 @@ describe("orchestration projector", () => {
         activities: [],
         checkpoints: [],
         session: null,
+        providerThreadMetadata: {
+          provider: "codex",
+          providerThreadId: "provider-thread-1",
+          updatedAt: now,
+          status: { type: "idle" },
+          sourceMetadata: { cwd: "/work/demo" },
+        },
       },
     ]);
+  });
+
+  it("moves a thread when thread.meta-updated changes its project", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const created = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(now),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-old",
+            title: "Imported thread",
+            modelSelection: {
+              provider: ProviderDriverKind.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: "/work/project",
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+
+    const moved = await Effect.runPromise(
+      projectEvent(
+        created,
+        makeEvent({
+          sequence: 2,
+          type: "thread.meta-updated",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: "2026-01-01T00:00:01.000Z",
+          commandId: "cmd-move",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-new",
+            worktreePath: null,
+            updatedAt: "2026-01-01T00:00:01.000Z",
+          },
+        }),
+      ),
+    );
+
+    expect(moved.threads[0]).toMatchObject({
+      projectId: "project-new",
+      worktreePath: null,
+    });
   });
 
   it("fails when event payload cannot be decoded by runtime schema", async () => {

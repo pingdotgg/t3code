@@ -303,6 +303,10 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            ...(payload.providerThreadMetadata === undefined ||
+            payload.providerThreadMetadata === null
+              ? {}
+              : { providerThreadMetadata: payload.providerThreadMetadata }),
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -465,6 +469,7 @@ export function projectEvent(
         Effect.map((payload) => ({
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
+            ...(payload.projectId !== undefined ? { projectId: payload.projectId } : {}),
             ...(payload.title !== undefined ? { title: payload.title } : {}),
             ...(payload.titleRegeneration !== undefined
               ? { titleRegeneration: payload.titleRegeneration }
@@ -476,6 +481,9 @@ export function projectEvent(
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
             ...(payload.linkedPullRequest !== undefined
               ? { linkedPullRequest: payload.linkedPullRequest }
+              : {}),
+            ...(payload.providerThreadMetadata !== undefined
+              ? { providerThreadMetadata: payload.providerThreadMetadata }
               : {}),
             updatedAt: payload.updatedAt,
           }),

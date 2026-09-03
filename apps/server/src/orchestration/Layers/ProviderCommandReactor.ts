@@ -36,6 +36,7 @@ import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -71,6 +72,17 @@ type ProviderIntentEvent = Extract<
 function toNonEmptyProviderInput(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+function readImportedThreadCwd(runtimePayload: unknown): string | undefined {
+  if (!runtimePayload || typeof runtimePayload !== "object" || Array.isArray(runtimePayload)) {
+    return undefined;
+  }
+  if (!("imported" in runtimePayload) || runtimePayload.imported !== true) {
+    return undefined;
+  }
+  const cwd = "cwd" in runtimePayload ? runtimePayload.cwd : undefined;
+  return typeof cwd === "string" && cwd.trim().length > 0 ? cwd : undefined;
 }
 
 function mapProviderSessionStatusToOrchestrationStatus(
@@ -312,6 +324,7 @@ const make = Effect.gen(function* () {
   const providerAuthService = yield* ProviderAuthService;
   const providerService = yield* ProviderService;
   const providerRegistry = yield* ProviderRegistry;
+  const providerSessionDirectory = yield* ProviderSessionDirectory;
   const gitWorkflow = yield* GitWorkflowService;
   const fileSystem = yield* FileSystem.FileSystem;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
@@ -655,10 +668,17 @@ const make = Effect.gen(function* () {
       }
     }
     const project = yield* resolveProject(thread.projectId);
-    const effectiveCwd = resolveThreadWorkspaceCwd({
-      thread,
-      projects: project ? [project] : [],
-    });
+    const persistedBinding = yield* providerSessionDirectory.getBinding(threadId);
+    const importedCwd = Option.isSome(persistedBinding)
+      ? readImportedThreadCwd(persistedBinding.value.runtimePayload)
+      : undefined;
+    const effectiveCwd =
+      thread.worktreePath === null && importedCwd !== undefined
+        ? importedCwd
+        : resolveThreadWorkspaceCwd({
+            thread,
+            projects: project ? [project] : [],
+          });
     const refreshWorkspaceSnapshot = effectiveCwd
       ? providerRegistry
           .refreshWorkspaceSnapshot({ instanceId: desiredInstanceId, cwd: effectiveCwd })

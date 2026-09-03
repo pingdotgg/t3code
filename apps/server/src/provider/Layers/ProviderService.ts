@@ -137,6 +137,7 @@ function toRuntimePayloadFromSession(
   session: ProviderSession,
   extra?: {
     readonly modelSelection?: unknown;
+    readonly continuationKey?: string;
     readonly lastRuntimeEvent?: string;
     readonly lastRuntimeEventAt?: string;
   },
@@ -147,6 +148,7 @@ function toRuntimePayloadFromSession(
     activeTurnId: session.activeTurnId ?? null,
     lastError: session.lastError ?? null,
     ...(extra?.modelSelection !== undefined ? { modelSelection: extra.modelSelection } : {}),
+    ...(extra?.continuationKey !== undefined ? { continuationKey: extra.continuationKey } : {}),
     ...(extra?.lastRuntimeEvent !== undefined ? { lastRuntimeEvent: extra.lastRuntimeEvent } : {}),
     ...(extra?.lastRuntimeEventAt !== undefined
       ? { lastRuntimeEventAt: extra.lastRuntimeEventAt }
@@ -318,6 +320,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     threadId: ThreadId,
     extra?: {
       readonly modelSelection?: unknown;
+      readonly continuationKey?: string;
       readonly lastRuntimeEvent?: string;
       readonly lastRuntimeEventAt?: string;
     },
@@ -327,6 +330,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "ProviderService.upsertSessionBinding",
         session,
       );
+      const instanceInfo = yield* registry.getInstanceInfo(providerInstanceId);
       yield* directory.upsert({
         threadId,
         provider: session.provider,
@@ -334,7 +338,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         runtimeMode: session.runtimeMode,
         status: toRuntimeStatus(session),
         ...(session.resumeCursor !== undefined ? { resumeCursor: session.resumeCursor } : {}),
-        runtimePayload: toRuntimePayloadFromSession(session, extra),
+        runtimePayload: toRuntimePayloadFromSession(session, {
+          ...extra,
+          continuationKey: instanceInfo.continuationIdentity.continuationKey,
+        }),
       });
     });
 

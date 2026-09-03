@@ -904,6 +904,14 @@ export function createServerEnvironmentAtoms<R, E>(
           ]),
       },
     }),
+    discoverPersistedThreads: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:discover-persisted-threads",
+      tag: WS_METHODS.providerDiscoverPersistedThreads,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.workspaceRoot}`,
+      },
+    }),
     updateProvider: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-provider",
       tag: WS_METHODS.serverUpdateProvider,

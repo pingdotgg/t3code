@@ -69,6 +69,7 @@ import {
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import { discoverCodexThreads } from "./CodexThreadDiscovery.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -2204,6 +2205,25 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       })),
     );
 
+  const discoverPersistedThreads: NonNullable<CodexAdapterShape["discoverPersistedThreads"]> = (
+    input,
+  ) =>
+    Effect.scoped(
+      discoverCodexThreads(codexConfig, options?.environment, input).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+        Effect.timeout("2 minutes"),
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "thread/list",
+              detail: cause.message,
+              cause,
+            }),
+        ),
+      ),
+    );
+
   const rollbackThread: CodexAdapterShape["rollbackThread"] = (threadId, numTurns) => {
     if (!Number.isInteger(numTurns) || numTurns < 1) {
       return Effect.fail(
@@ -2327,6 +2347,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     sendTurn,
     interruptTurn,
     readThread,
+    discoverPersistedThreads,
     rollbackThread,
     uploadFeedback,
     respondToRequest,

@@ -7,6 +7,7 @@ import {
   OrchestrationCheckpointFile,
   OrchestrationProposedPlanId,
   OrchestrationReadModel,
+  OrchestrationProviderThreadMetadata,
   OrchestrationThreadSearchSource,
   OrchestrationShellSnapshot,
   OrchestrationThread,
@@ -100,6 +101,9 @@ const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
+    providerThreadMetadata: Schema.NullOr(
+      Schema.fromJsonString(OrchestrationProviderThreadMetadata),
+    ),
   }),
 );
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
@@ -471,6 +475,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           branch,
           worktree_path AS "worktreePath",
           linked_pull_request_json AS "linkedPullRequest",
+          provider_thread_metadata_json AS "providerThreadMetadata",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -509,6 +514,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           branch,
           worktree_path AS "worktreePath",
           linked_pull_request_json AS "linkedPullRequest",
+          provider_thread_metadata_json AS "providerThreadMetadata",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -549,6 +555,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           branch,
           worktree_path AS "worktreePath",
           linked_pull_request_json AS "linkedPullRequest",
+          provider_thread_metadata_json AS "providerThreadMetadata",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -1011,6 +1018,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           branch,
           worktree_path AS "worktreePath",
           linked_pull_request_json AS "linkedPullRequest",
+          provider_thread_metadata_json AS "providerThreadMetadata",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -1907,6 +1915,9 @@ pending_approval_requests AS (
                 interactionMode: row.interactionMode,
                 branch: row.branch,
                 worktreePath: row.worktreePath,
+                ...(row.providerThreadMetadata == null
+                  ? {}
+                  : { providerThreadMetadata: row.providerThreadMetadata }),
                 ...(row.linkedPullRequest === null
                   ? {}
                   : { linkedPullRequest: row.linkedPullRequest }),
@@ -2120,6 +2131,9 @@ pending_approval_requests AS (
                   interactionMode: row.interactionMode,
                   branch: row.branch,
                   worktreePath: row.worktreePath,
+                  ...(row.providerThreadMetadata == null
+                    ? {}
+                    : { providerThreadMetadata: row.providerThreadMetadata }),
                   ...(row.linkedPullRequest === null
                     ? {}
                     : { linkedPullRequest: row.linkedPullRequest }),
@@ -2260,6 +2274,9 @@ pending_approval_requests AS (
                       interactionMode: row.interactionMode,
                       branch: row.branch,
                       worktreePath: row.worktreePath,
+                      ...(row.providerThreadMetadata == null
+                        ? {}
+                        : { providerThreadMetadata: row.providerThreadMetadata }),
                       ...(row.linkedPullRequest === null
                         ? {}
                         : { linkedPullRequest: row.linkedPullRequest }),
@@ -2408,6 +2425,9 @@ pending_approval_requests AS (
                 interactionMode: row.interactionMode,
                 branch: row.branch,
                 worktreePath: row.worktreePath,
+                ...(row.providerThreadMetadata == null
+                  ? {}
+                  : { providerThreadMetadata: row.providerThreadMetadata }),
                 ...(row.linkedPullRequest === null
                   ? {}
                   : { linkedPullRequest: row.linkedPullRequest }),
@@ -2702,6 +2722,9 @@ pending_approval_requests AS (
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
+        ...(threadRow.value.providerThreadMetadata == null
+          ? {}
+          : { providerThreadMetadata: threadRow.value.providerThreadMetadata }),
         ...(threadRow.value.linkedPullRequest === null
           ? {}
           : { linkedPullRequest: threadRow.value.linkedPullRequest }),
@@ -2940,6 +2963,9 @@ pending_approval_requests AS (
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
+        ...(threadRow.value.providerThreadMetadata == null
+          ? {}
+          : { providerThreadMetadata: threadRow.value.providerThreadMetadata }),
         ...(threadRow.value.linkedPullRequest === null
           ? {}
           : { linkedPullRequest: threadRow.value.linkedPullRequest }),
