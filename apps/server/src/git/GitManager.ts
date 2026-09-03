@@ -232,7 +232,16 @@ function resolvePullRequestWorktreeLocalBranchName(
 
   const sanitizedHeadBranch = sanitizeBranchFragment(pullRequest.headBranch).trim();
   const suffix = sanitizedHeadBranch.length > 0 ? sanitizedHeadBranch : "head";
-  return `t3code/pr-${pullRequest.number}/${suffix}`;
+  return `${PULL_REQUEST_WORKTREE_BRANCH_PREFIX}${pullRequest.number}/${suffix}`;
+}
+
+const PULL_REQUEST_WORKTREE_BRANCH_PREFIX = "t3code/pr-";
+const PULL_REQUEST_WORKTREE_BRANCH_PATTERN = new RegExp(
+  `^${PULL_REQUEST_WORKTREE_BRANCH_PREFIX}\\d+/`,
+);
+
+function isPullRequestWorktreeLocalBranchName(branch: string): boolean {
+  return PULL_REQUEST_WORKTREE_BRANCH_PATTERN.test(branch);
 }
 
 function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
@@ -1011,11 +1020,13 @@ export const make = Effect.gen(function* () {
         // `git worktree add -b feature origin/main` makes the new local branch
         // track origin/main. That upstream is the branch's base, not its
         // published PR head. Looking up PRs for it can attach an old reverse
-        // merge from main and auto-settle an unrelated feature thread.
+        // merge from main and auto-settle an unrelated feature thread. This
+        // also applies when origin is a fork and gh resolves another remote as
+        // the canonical base.
         if (
           headContext.headBranch !== details.branch &&
           upstreamHeadIsDefault &&
-          !headContext.isCrossRepository
+          !isPullRequestWorktreeLocalBranchName(details.branch)
         ) {
           return { latest: null, headContext };
         }
@@ -1243,14 +1254,35 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  const resolveGhBaseRemoteName = Effect.fn("resolveGhBaseRemoteName")(function* (cwd: string) {
+    const result = yield* gitCore
+      .execute({
+        operation: "GitManager.resolveGhBaseRemoteName",
+        cwd,
+        args: ["config", "--get-regexp", "^remote\\..*\\.gh-resolved$"],
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+        maxOutputBytes: 4 * 1024,
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    if (result === null || result.exitCode !== 0) return null;
+
+    for (const line of result.stdout.split(/\r?\n/)) {
+      const match = line.match(/^remote\.(.+)\.gh-resolved\s+base$/);
+      if (match?.[1]) return match[1];
+    }
+    return null;
+  });
+
   const resolvePrLookupRepositoryIdentity = Effect.fn("resolvePrLookupRepositoryIdentity")(
     function* (cwd: string, branch: string, remoteNameOverride?: string) {
       const remoteName =
         remoteNameOverride ?? (yield* readConfigValueNullable(cwd, `branch.${branch}.remote`));
+      const baseRemoteName = (yield* resolveGhBaseRemoteName(cwd)) ?? "origin";
       const [headRemote, targetRemote] = yield* Effect.all(
         [
           resolveRemoteRepositoryContext(cwd, remoteName),
-          resolveRemoteRepositoryContext(cwd, "origin"),
+          resolveRemoteRepositoryContext(cwd, baseRemoteName),
         ],
         { concurrency: "unbounded" },
       );
@@ -1277,21 +1309,22 @@ export const make = Effect.gen(function* () {
     const shouldProbeLocalBranchSelector =
       headBranchFromUpstream.length === 0 || headBranch === details.branch;
 
-    const [remoteRepository, originRepository] = yield* Effect.all(
+    const baseRemoteName = (yield* resolveGhBaseRemoteName(cwd)) ?? "origin";
+    const [remoteRepository, baseRepository] = yield* Effect.all(
       [
         resolveRemoteRepositoryContext(cwd, remoteName),
-        resolveRemoteRepositoryContext(cwd, "origin"),
+        resolveRemoteRepositoryContext(cwd, baseRemoteName),
       ],
       { concurrency: "unbounded" },
     );
 
     const isCrossRepository =
       remoteRepository.repositoryNameWithOwner !== null &&
-      originRepository.repositoryNameWithOwner !== null
+      baseRepository.repositoryNameWithOwner !== null
         ? remoteRepository.repositoryNameWithOwner.toLowerCase() !==
-          originRepository.repositoryNameWithOwner.toLowerCase()
+          baseRepository.repositoryNameWithOwner.toLowerCase()
         : remoteName !== null &&
-          remoteName !== "origin" &&
+          remoteName !== baseRemoteName &&
           remoteRepository.repositoryNameWithOwner !== null;
 
     const ownerHeadSelector =
@@ -1331,9 +1364,8 @@ export const make = Effect.gen(function* () {
         ownerHeadSelector && isCrossRepository ? ownerHeadSelector : headBranch,
       remoteName,
       headRemoteUrlKey:
-        remoteRepository.remoteUrlKey ??
-        (remoteName === null ? originRepository.remoteUrlKey : null),
-      targetRemoteUrlKey: originRepository.remoteUrlKey,
+        remoteRepository.remoteUrlKey ?? (remoteName === null ? baseRepository.remoteUrlKey : null),
+      targetRemoteUrlKey: baseRepository.remoteUrlKey,
       headRepositoryNameWithOwner: remoteRepository.repositoryNameWithOwner,
       headRepositoryOwnerLogin: remoteRepository.ownerLogin,
       isCrossRepository,
