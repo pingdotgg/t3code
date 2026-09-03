@@ -7,7 +7,7 @@ orchestration layer does not know which one is behind a thread.
 
 ## Built-in drivers
 
-[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with six entries:
+[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with seven entries:
 
 | Driver kind   | Driver source                                 |
 | ------------- | --------------------------------------------- |
@@ -17,6 +17,7 @@ orchestration layer does not know which one is behind a thread.
 | `grok`        | [`Drivers/GrokDriver.ts`][grok]               |
 | `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode]       |
 | `antigravity` | [`Drivers/AntigravityDriver.ts`][antigravity] |
+| `devin`       | [`Drivers/DevinDriver.ts`][devin]             |
 
 Each driver declares its `driverKind`, a `configSchema`, and a `create` function that builds an
 adapter in a child scope. Adapter implementations live beside them in
@@ -259,7 +260,7 @@ The server stores uploaded attachments in its attachment directory, outside the 
 `ProviderService` adds the absolute path of each attachment to the turn text, then passes every
 attachment to the provider adapter. Each adapter decides what its provider ingests natively:
 
-- Codex, Claude, Cursor, and Grok send images as native image inputs and skip generic files. For
+- Codex, Claude, Cursor, Devin, and Grok send images as native image inputs and skip generic files. For
   these providers, generic files reach the agent only as file paths in the turn text.
 - Antigravity sends BMP, JPEG, PNG, and WebP images and common audio formats as native blocks,
   text files as embedded resources, and PDFs as resource links. Other files are rejected with an
@@ -333,6 +334,7 @@ when a request opens (approval) or user input is requested, via
 [grok]: ../../apps/server/src/provider/Drivers/GrokDriver.ts
 [opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts
 [antigravity]: ../../apps/server/src/provider/Drivers/AntigravityDriver.ts
+[devin]: ../../apps/server/src/provider/Drivers/DevinDriver.ts
 [antigravity-adapter]: ../../apps/server/src/provider/Layers/AntigravityAdapter.ts
 [antigravity-provider]: ../../apps/server/src/provider/Layers/AntigravityProvider.ts
 [antigravity-installation]: ../../apps/server/src/provider/AntigravityInstallation.ts

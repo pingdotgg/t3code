@@ -93,8 +93,9 @@ provider's CLI, or use T3 Code's managed setup for Antigravity.
 | Grok Build  | [Grok Build CLI](https://x.ai/cli)                                                                         | `grok`             | `grok login`                       |
 | OpenCode    | [OpenCode](https://opencode.ai)                                                                            | `opencode`         | `opencode auth login`              |
 | Antigravity | [Official ACP agent](https://github.com/agentclientprotocol/registry/blob/main/antigravity-acp/agent.json) | Managed by T3 Code | **Sign in with Google** in T3 Code |
+| Devin       | [Devin CLI](https://docs.devin.ai/cli)                                                                     | `devin`            | `devin auth login`                 |
 
-Codex and Claude are on by default. Cursor, Grok Build, OpenCode, and Antigravity are off by
+Codex and Claude are on by default. Cursor, Grok Build, OpenCode, Antigravity, and Devin are off by
 default. Turn them on in **Settings** > **Providers** when you want to use them.
 
 For Antigravity, select the environment in provider settings, then install and sign in there.
