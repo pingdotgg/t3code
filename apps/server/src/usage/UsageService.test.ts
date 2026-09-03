@@ -567,7 +567,7 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live("accepts a canonical window whose local midnight starts in a DST gap", () =>
+  it.live("rejects a canonical window when a local midnight gap crosses retention", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
       const baseDir = NodePath.join(home, "midnight-gap-retention-state");
@@ -585,10 +585,10 @@ describe("UsageService", () => {
           NodePath.join(stateDir, "usage-record-ledger.json"),
           JSON.stringify({
             version: 2,
-            // The 92-day retention cutoff is 21:00 UTC on April 23. Cairo's
-            // April 24 midnight gap begins at 22:00 UTC, so that local day
-            // is still fully inside retention.
-            generatedAtMs: Date.parse("2026-07-24T21:00:00.000Z"),
+            // The 92-day retention cutoff is 00:00 UTC on April 24. Cairo's
+            // April 24 midnight gap begins at 22:00 UTC on April 23, so the
+            // first two hours of the local day are outside the ledger.
+            generatedAtMs: Date.parse("2026-07-25T00:00:00.000Z"),
             aggregates: [
               {
                 hostId: "mac",
@@ -623,13 +623,15 @@ describe("UsageService", () => {
           }),
         ),
       );
-      const result = yield* service.readSummary({
-        timeZone: "Africa/Cairo",
-        sinceDay: UsageDay.make("2026-04-24"),
-        untilDay: UsageDay.make("2026-07-22"),
-        resolution: "day",
-      });
-      assert.strictEqual(totalOutputTokens(result), 5);
+      const result = yield* service
+        .readSummary({
+          timeZone: "Africa/Cairo",
+          sinceDay: UsageDay.make("2026-04-24"),
+          untilDay: UsageDay.make("2026-07-22"),
+          resolution: "day",
+        })
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(result));
     }).pipe(Effect.scoped),
   );
 
