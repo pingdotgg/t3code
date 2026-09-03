@@ -914,3 +914,52 @@ describe("nested agents vs subagent shells", () => {
     expect(agents.map((agent) => agent.id)).toEqual(["nested-1"]);
   });
 });
+
+describe("host-settled background agents", () => {
+  it("reconciles the live count as soon as a terminal row lands", () => {
+    // Replay of a real Codex collab child: turnStarted/turnCompleted cycles,
+    // the host's settlement row, and the provider's own late idle row after
+    // it. The last word is terminal, so nothing is left working.
+    const linkage = {
+      taskId: "collab-child-1",
+      title: "math_one",
+      role: "general-purpose",
+      agentPath: "agents/math_one",
+      timelineBypass: true,
+    };
+    const agents = fold([
+      activity("task.started", { ...linkage }),
+      activity("task.updated", { ...linkage, status: "running" }),
+      activity("task.updated", { ...linkage, status: "idle" }),
+      activity("task.updated", { ...linkage, status: "running" }),
+      activity("task.updated", { ...linkage, status: "interrupted" }),
+      activity("task.updated", { ...linkage, status: "interrupted" }),
+      activity("task.updated", { ...linkage, status: "idle" }),
+      activity("task.updated", { ...linkage, status: "interrupted" }),
+    ]);
+
+    const model = deriveAgentPanelModel({ agents });
+    expect(model.liveCount).toBe(0);
+    expect(model.settledCount).toBe(1);
+    expect(agents[0]?.status).toBe("interrupted");
+  });
+
+  it("a settlement row alone settles a child whose start row aged out", () => {
+    const agents = fold([
+      activity("task.progress", {
+        taskId: "collab-child-2",
+        agentKind: "agent",
+        summary: "still working",
+      }),
+      activity("task.updated", {
+        taskId: "collab-child-2",
+        agentKind: "agent",
+        status: "interrupted",
+        endedAt: "2026-08-01T10:05:00.000Z",
+      }),
+    ]);
+
+    expect(deriveAgentPanelModel({ agents }).liveCount).toBe(0);
+    expect(agents[0]?.completedAt).toBe("2026-08-01T10:05:00.000Z");
+  });
+});

@@ -41,6 +41,8 @@ import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
+import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
+import { settleThreadTasks } from "../ThreadTaskSettlement.ts";
 import { forkParked, ServerActivation } from "../../serverActivation.ts";
 import { canReplaceThreadTitle, DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import {
@@ -49,6 +51,9 @@ import {
 } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+/** Bound on waiting for queued provider events before settling on Stop. */
+const INTERRUPT_INGESTION_DRAIN_TIMEOUT = Duration.seconds(5);
+
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -309,6 +314,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
+  const providerRuntimeIngestion = yield* ProviderRuntimeIngestionService;
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1336,6 +1342,33 @@ const make = Effect.gen(function* () {
     yield* providerService
       .interruptTurn({ threadId: event.payload.threadId })
       .pipe(Effect.catchCause(recoverInterruptFailure));
+
+    // Settlement reads persisted rows, so every provider event that was
+    // already queued when Stop arrived has to land first — otherwise a
+    // task.updated(running) from before the interrupt is written after the
+    // settlement row and re-arms both the registry and the client fold.
+    // Bounded: a hot event stream must not hold Stop hostage.
+    const drained = yield* providerRuntimeIngestion.drain.pipe(
+      Effect.timeoutOption(INTERRUPT_INGESTION_DRAIN_TIMEOUT),
+    );
+    if (Option.isNone(drained)) {
+      yield* Effect.logWarning(
+        "provider runtime ingestion did not drain before background task settlement",
+        { threadId: event.payload.threadId },
+      );
+    }
+
+    // Stop is a host promise, not a provider request: children the provider
+    // has already forgotten (compaction, a lost thread tree) never emit a
+    // terminal event of their own, so settle the persisted rows here. Covers
+    // both a successful interrupt and the stopSession fallback above; tasks
+    // the provider does still own emit their own terminal rows afterwards,
+    // which is harmless.
+    yield* settleThreadTasks({
+      threadId: event.payload.threadId,
+      status: "interrupted",
+      createdAt: event.payload.createdAt,
+    });
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (

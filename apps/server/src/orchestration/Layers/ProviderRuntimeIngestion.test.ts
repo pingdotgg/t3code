@@ -36,6 +36,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
+import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import {
   ProviderService,
@@ -48,6 +49,7 @@ import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQu
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
+import { selectLiveAgentTasks } from "../ThreadTaskSettlement.ts";
 import { DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
@@ -197,7 +199,10 @@ async function waitForThread(
 
 describe("ProviderRuntimeIngestion", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderRuntimeIngestionService | ProjectionSnapshotQuery,
+    | OrchestrationEngineService
+    | ProviderRuntimeIngestionService
+    | ProjectionSnapshotQuery
+    | ThreadBackgroundLiveness.ThreadBackgroundLivenessService,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -249,6 +254,9 @@ describe("ProviderRuntimeIngestion", () => {
       // engine, and the snapshot query (reader).
       Layer.provideMerge(ThreadBackgroundLiveness.layer),
       Layer.provideMerge(ThreadPlanProgress.layer),
+      // Settlement reads the thread's full task history straight from the
+      // activity projection.
+      Layer.provideMerge(ProjectionThreadActivityRepositoryLive),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
@@ -259,6 +267,9 @@ describe("ProviderRuntimeIngestion", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const ingestion = await runtime.runPromise(Effect.service(ProviderRuntimeIngestionService));
+    const backgroundLiveness = await runtime.runPromise(
+      Effect.service(ThreadBackgroundLiveness.ThreadBackgroundLivenessService),
+    );
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(ingestion.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(ingestion.drain);
@@ -321,6 +332,7 @@ describe("ProviderRuntimeIngestion", () => {
       engine,
       dispatch,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
+      backgroundLiveness,
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
@@ -3667,5 +3679,256 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime still processed");
+  });
+  it("settles Codex children the provider stopped reporting when the session exits", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = asThreadId("thread-1");
+    const taskId = "collab-child-1";
+    // Codex collab children carry no taskType, so ingestion stamps them
+    // agentKind "agent"; the linkage below is what CodexAdapter emits.
+    const linkage = {
+      title: "math_one",
+      role: "general-purpose",
+      agentPath: "agents/math_one",
+      timelineBypass: true,
+      model: "gpt-5-codex",
+      effort: "high",
+    } as const;
+
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-collab-child-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId,
+      payload: { taskId, description: "math_one", ...linkage },
+    });
+    harness.emit({
+      type: "task.updated",
+      eventId: asEventId("evt-collab-child-running"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId,
+      payload: { taskId, status: "running", ...linkage },
+    });
+
+    await harness.drain();
+    expect(harness.backgroundLiveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+
+    // No task.updated(idle) ever arrives: the child is gone with the session.
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-collab-session-exited"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:05.000Z",
+      threadId,
+      payload: {},
+    });
+    // Settling twice must not pile up rows: the id is per task, not per event.
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-collab-session-exited-duplicate"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:06.000Z",
+      threadId,
+      payload: {},
+    });
+
+    await harness.drain();
+
+    const thread = (await harness.readModel()).threads.find(
+      (entry: ProviderRuntimeTestThread) => entry.id === threadId,
+    );
+    const settledRows =
+      thread?.activities.filter((activity: ProviderRuntimeTestActivity) =>
+        activity.id.startsWith("task-settled:"),
+      ) ?? [];
+    expect(settledRows.length).toBe(1);
+    expect(settledRows[0]?.id).toBe(`task-settled:${threadId}:${taskId}`);
+    expect(settledRows[0]).toMatchObject({
+      kind: "task.updated",
+      payload: {
+        taskId,
+        status: "interrupted",
+        endedAt: "2026-01-01T00:00:05.000Z",
+        agentKind: "agent",
+        ...linkage,
+      },
+    });
+    expect(harness.backgroundLiveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+  });
+});
+
+describe("selectLiveAgentTasks", () => {
+  const row = (
+    id: string,
+    kind: string,
+    payload: Record<string, unknown>,
+  ): ProviderRuntimeTestActivity => ({
+    id: asEventId(id),
+    createdAt: "2026-01-01T00:00:00.000Z",
+    tone: "info",
+    kind,
+    summary: kind,
+    payload,
+    turnId: null,
+  });
+  const agent = { agentKind: "agent" } as const;
+
+  it("keeps only agent tasks whose latest state is still live", () => {
+    const live = selectLiveAgentTasks([
+      // Live: started, then an explicit running status.
+      row("a1", "task.started", { taskId: "live-explicit", ...agent, title: "one" }),
+      row("a2", "task.updated", { taskId: "live-explicit", status: "running", ...agent }),
+      // Live: started and never given a status of its own.
+      row("b1", "task.started", { taskId: "live-implicit", ...agent }),
+      // Not live: a usage-only progress tick is not work.
+      row("c1", "task.started", { taskId: "usage-only", ...agent }),
+      row("c2", "task.updated", { taskId: "usage-only", status: "idle", ...agent }),
+      row("c3", "task.progress", {
+        taskId: "usage-only",
+        usageSnapshot: true,
+        typedUsage: { totalTokens: 10 },
+        ...agent,
+      }),
+      // Not live: duplicate terminal rows stay terminal.
+      row("d1", "task.started", { taskId: "terminal", ...agent }),
+      row("d2", "task.updated", { taskId: "terminal", status: "interrupted", ...agent }),
+      row("d3", "task.updated", { taskId: "terminal", status: "interrupted", ...agent }),
+      row("d4", "task.completed", { taskId: "terminal", status: "completed", ...agent }),
+      // Not live: a resting Codex child is resumable, not working.
+      row("e1", "task.started", { taskId: "idle", ...agent }),
+      row("e2", "task.updated", { taskId: "idle", status: "idle", ...agent }),
+      // Not an agent: shells and monitors never join the roster.
+      row("f1", "task.started", { taskId: "shell", agentKind: "background" }),
+      row("f2", "task.updated", { taskId: "shell", status: "running", agentKind: "background" }),
+    ]);
+
+    expect(live.map((task) => task.taskId).toSorted()).toEqual(["live-explicit", "live-implicit"]);
+    // The status row carried no title; the start row's survives the merge.
+    expect(live.find((task) => task.taskId === "live-explicit")?.linkage).toEqual({
+      agentKind: "agent",
+      title: "one",
+    });
+  });
+
+  it("a late start row does not reopen a settled task", () => {
+    const live = selectLiveAgentTasks([
+      row("a1", "task.started", { taskId: "settled", ...agent }),
+      row("a2", "task.updated", { taskId: "settled", status: "failed", ...agent }),
+      row("a3", "task.started", { taskId: "settled", ...agent }),
+    ]);
+
+    expect(live).toEqual([]);
+  });
+
+  it("a settled workflow coordinator ends its members' run", () => {
+    const workflow = { taskId: "wf-1", taskType: "local_workflow", ...agent } as const;
+    const live = selectLiveAgentTasks([
+      row("w1", "task.started", { ...workflow }),
+      row("m1", "task.started", { taskId: "wf-member-1", parentAgentId: "wf-1", ...agent }),
+      row("m2", "task.updated", {
+        taskId: "wf-member-1",
+        status: "running",
+        parentAgentId: "wf-1",
+        ...agent,
+      }),
+      // A member of another (still running) coordinator keeps working.
+      row("o1", "task.started", { taskId: "other-1", taskType: "local_workflow", ...agent }),
+      row("m3", "task.started", { taskId: "other-member-1", parentAgentId: "other-1", ...agent }),
+      // The coordinator finishes without its member ever getting a terminal
+      // row: the client already shows that member as completed, so settling
+      // it would flip a finished run to "interrupted".
+      row("w2", "task.completed", { taskId: "wf-1", status: "completed", ...agent }),
+    ]);
+
+    expect(live.map((task) => task.taskId).toSorted()).toEqual(["other-1", "other-member-1"]);
+  });
+
+  it("keeps linkage from earlier rows when a later row carries only a status", () => {
+    // Terminal and status-patch rows commonly carry nothing but taskId and
+    // status. If the settled row copied only that newest payload it would
+    // land with no agentKind — and once the start row falls out of the
+    // client's activity window, the client would read the settled row as
+    // background work and drop the agent from the panel entirely.
+    const live = selectLiveAgentTasks([
+      row("a1", "task.started", {
+        taskId: "wf-member-1",
+        ...agent,
+        taskType: "local_agent",
+        title: "math_one",
+        role: "general-purpose",
+        agentPath: "agents/math_one",
+        timelineBypass: true,
+        model: "gpt-5-codex",
+        effort: "high",
+        parentAgentId: "wf-1",
+        workflowName: "release",
+        agentIndex: 2,
+        phaseIndex: 1,
+        phaseTitle: "Implement",
+        attempt: 1,
+        outputFile: "/tmp/out.md",
+      }),
+      row("a2", "task.updated", { taskId: "wf-member-1", status: "running" }),
+    ]);
+
+    expect(live).toEqual([
+      {
+        taskId: "wf-member-1",
+        linkage: {
+          agentKind: "agent",
+          taskType: "local_agent",
+          title: "math_one",
+          role: "general-purpose",
+          agentPath: "agents/math_one",
+          timelineBypass: true,
+          model: "gpt-5-codex",
+          effort: "high",
+          parentAgentId: "wf-1",
+          workflowName: "release",
+          agentIndex: 2,
+          phaseIndex: 1,
+          phaseTitle: "Implement",
+          attempt: 1,
+          outputFile: "/tmp/out.md",
+        },
+      },
+    ]);
+  });
+
+  it("carries the newest linkage onto the live task", () => {
+    const live = selectLiveAgentTasks([
+      row("a1", "task.started", { taskId: "child", ...agent, title: "old-name" }),
+      row("a2", "task.updated", {
+        taskId: "child",
+        status: "running",
+        ...agent,
+        title: "math_one",
+        role: "general-purpose",
+        agentPath: "agents/math_one",
+        timelineBypass: true,
+        model: "gpt-5-codex",
+        effort: "high",
+        // Not linkage: dropped from the synthesized row.
+        detail: "still working",
+      }),
+    ]);
+
+    expect(live).toEqual([
+      {
+        taskId: "child",
+        linkage: {
+          agentKind: "agent",
+          title: "math_one",
+          role: "general-purpose",
+          agentPath: "agents/math_one",
+          timelineBypass: true,
+          model: "gpt-5-codex",
+          effort: "high",
+        },
+      },
+    ]);
   });
 });

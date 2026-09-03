@@ -39,6 +39,7 @@ import { TextGenerationError } from "@t3tools/contracts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
+import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import {
   ProviderService,
@@ -59,6 +60,8 @@ import {
 } from "./ProviderCommandReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
+import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
+import { selectLiveAgentTasks } from "../ThreadTaskSettlement.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Clock from "effect/Clock";
@@ -109,7 +112,10 @@ async function waitFor(
 
 describe("ProviderCommandReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderCommandReactor | ProjectionSnapshotQuery,
+    | OrchestrationEngineService
+    | ProviderCommandReactor
+    | ProjectionSnapshotQuery
+    | ThreadBackgroundLiveness.ThreadBackgroundLivenessService,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -168,6 +174,8 @@ describe("ProviderCommandReactor", () => {
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly serverActivation?: Effect.Effect<void>;
     readonly interruptTurnEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
+    /** Stands in for the ingestion queue the reactor drains before settling. */
+    readonly ingestionDrain?: Effect.Effect<void>;
     readonly stopSessionEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly startSessionEffect?: (
       session: ProviderSession,
@@ -420,6 +428,16 @@ describe("ProviderCommandReactor", () => {
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
+      // Same single instance the engine and the snapshot query share.
+      Layer.provideMerge(ThreadBackgroundLiveness.layer),
+      Layer.provideMerge(ProjectionThreadActivityRepositoryLive),
+      Layer.provideMerge(SqlitePersistenceMemory),
+      Layer.provideMerge(
+        Layer.succeed(ProviderRuntimeIngestionService, {
+          start: () => Effect.void,
+          drain: input?.ingestionDrain ?? Effect.void,
+        }),
+      ),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
       Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
       Layer.provideMerge(
@@ -453,6 +471,9 @@ describe("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
+    const backgroundLiveness = await runtime.runPromise(
+      Effect.service(ThreadBackgroundLiveness.ThreadBackgroundLivenessService),
+    );
     const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
 
     await Effect.runPromise(
@@ -531,6 +552,7 @@ describe("ProviderCommandReactor", () => {
     return {
       engine,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
+      backgroundLiveness,
       startSession,
       sendTurn,
       interruptTurn,
@@ -2666,6 +2688,198 @@ describe("ProviderCommandReactor", () => {
     expect(harness.interruptTurn.mock.calls[0]?.[0]).toEqual({
       threadId: "thread-1",
     });
+  });
+
+  it("settles persisted background agent tasks the provider no longer reports on stop", async () => {
+    // The reactor drains ingestion before settling, so the drain hook is also
+    // the deterministic signal that it reached the settlement step.
+    const settlementReached = Effect.runSync(Deferred.make<void>());
+    const harness = await createHarness({
+      ingestionDrain: Deferred.succeed(settlementReached, undefined).pipe(Effect.asVoid),
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const taskId = "collab-child-1";
+    const appendChildRow = (activityId: string, kind: string, payload: Record<string, unknown>) =>
+      Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make(`cmd-${activityId}`),
+          threadId,
+          activity: {
+            id: EventId.make(activityId),
+            createdAt: now,
+            tone: "info",
+            kind,
+            summary: kind,
+            payload: {
+              taskId,
+              agentKind: "agent",
+              title: "math_one",
+              role: "general-purpose",
+              agentPath: "agents/math_one",
+              timelineBypass: true,
+              ...payload,
+            },
+            turnId: null,
+          },
+          createdAt: now,
+        }),
+      );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-settle-tasks"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    // A Codex collab child the provider has since lost: its rows say running
+    // and the interrupt below produces no child events at all.
+    await appendChildRow("evt-child-started", "task.started", {});
+    await appendChildRow("evt-child-running", "task.updated", { status: "running" });
+    harness.backgroundLiveness.recordTaskLiveness({
+      threadId,
+      taskId,
+      taskType: undefined,
+      status: "running",
+      kind: "updated",
+    });
+    expect(harness.backgroundLiveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-settle-tasks"),
+        threadId,
+        turnId: asTurnId("turn-1"),
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(Deferred.await(settlementReached));
+    await harness.drain();
+
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(
+      thread?.activities.find((activity) => activity.id === `task-settled:${threadId}:${taskId}`),
+    ).toMatchObject({
+      kind: "task.updated",
+      payload: {
+        taskId,
+        status: "interrupted",
+        endedAt: now,
+        agentKind: "agent",
+        title: "math_one",
+        role: "general-purpose",
+        agentPath: "agents/math_one",
+        timelineBypass: true,
+      },
+    });
+    expect(harness.backgroundLiveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+  });
+
+  it("settles only after in-flight provider events have been ingested", async () => {
+    // A task.updated(running) queued in ingestion before Stop must land BEFORE
+    // the settlement row; otherwise it is written after it and re-arms both
+    // the registry and the client fold. The reactor parks in the ingestion
+    // drain, which this harness controls, so the ordering is deterministic
+    // rather than a race the test hopes to lose.
+    const drainEntered = Effect.runSync(Deferred.make<void>());
+    const releaseDrain = Effect.runSync(Deferred.make<void>());
+    const harness = await createHarness({
+      ingestionDrain: Deferred.succeed(drainEntered, undefined).pipe(
+        Effect.andThen(Deferred.await(releaseDrain)),
+      ),
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const taskId = "collab-child-2";
+    const linkage = { agentKind: "agent", title: "math_two", timelineBypass: true } as const;
+    const appendChildRow = (activityId: string, payload: Record<string, unknown>) =>
+      Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make(`cmd-${activityId}`),
+          threadId,
+          activity: {
+            id: EventId.make(activityId),
+            createdAt: now,
+            tone: "info",
+            kind: "task.updated",
+            summary: "task.updated",
+            payload: { taskId, ...linkage, ...payload },
+            turnId: null,
+          },
+          createdAt: now,
+        }),
+      );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-drain-order"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await appendChildRow("evt-drain-child-started", { status: "running" });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-drain-order"),
+        threadId,
+        turnId: asTurnId("turn-1"),
+        createdAt: now,
+      }),
+    );
+
+    // The reactor is now parked in the drain, so nothing has been settled yet.
+    await Effect.runPromise(Deferred.await(drainEntered));
+    expect(
+      (await harness.readModel()).threads
+        .find((entry) => entry.id === threadId)
+        ?.activities.some((activity) => activity.id.startsWith("task-settled:")),
+    ).toBe(false);
+
+    // Ingestion flushes the event it was still holding: a fresh running row
+    // and the matching registry arm.
+    await appendChildRow("evt-drain-child-late-running", { status: "running" });
+    harness.backgroundLiveness.recordTaskLiveness({
+      threadId,
+      taskId,
+      taskType: undefined,
+      status: "running",
+      kind: "updated",
+    });
+    await Effect.runPromise(Deferred.succeed(releaseDrain, undefined));
+    await harness.drain();
+
+    const activities =
+      (await harness.readModel()).threads.find((entry) => entry.id === threadId)?.activities ?? [];
+    expect(selectLiveAgentTasks(activities)).toEqual([]);
+    expect(harness.backgroundLiveness.getThreadBackgroundLiveness(threadId)).toBeNull();
   });
 
   effectIt.effect(

@@ -38,6 +38,12 @@ export const ListProjectionThreadActivitiesInput = Schema.Struct({
 });
 export type ListProjectionThreadActivitiesInput = typeof ListProjectionThreadActivitiesInput.Type;
 
+export const ListProjectionThreadActivitiesByThreadIdsInput = Schema.Struct({
+  threadIds: Schema.Array(ThreadId),
+});
+export type ListProjectionThreadActivitiesByThreadIdsInput =
+  typeof ListProjectionThreadActivitiesByThreadIdsInput.Type;
+
 export const DeleteProjectionThreadActivitiesInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -65,6 +71,29 @@ export interface ProjectionThreadActivityRepositoryShape {
    */
   readonly listByThreadId: (
     input: ListProjectionThreadActivitiesInput,
+  ) => Effect.Effect<ReadonlyArray<ProjectionThreadActivity>, ProjectionRepositoryError>;
+
+  /**
+   * List a thread's complete task lifecycle history.
+   *
+   * Unwindowed on purpose: background-task settlement must see every task
+   * row, not the newest slice the thread detail read returns. Filters in
+   * SQLite so unrelated payloads do not enter server memory.
+   */
+  readonly listTaskLifecycleByThreadId: (
+    input: ListProjectionThreadActivitiesInput,
+  ) => Effect.Effect<ReadonlyArray<ProjectionThreadActivity>, ProjectionRepositoryError>;
+
+  /**
+   * List task lifecycle history for many threads in one pass.
+   *
+   * Startup reconciliation settles background work across every thread this
+   * process does not own, so it reads them together instead of issuing one
+   * query per thread. Rows come back grouped-ready: ordered within each
+   * thread, threads interleaved.
+   */
+  readonly listTaskLifecycleByThreadIds: (
+    input: ListProjectionThreadActivitiesByThreadIdsInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadActivity>, ProjectionRepositoryError>;
 
   /**

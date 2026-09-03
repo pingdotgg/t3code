@@ -172,6 +172,12 @@ On web and desktop, loading and syncing statuses fill the available banner width
 stash tab. Task progress appears above the composer, while the timeline's working timer shows
 only elapsed time.
 
+When background agents keep working after a turn ends, a banner above the composer counts them
+and offers **Stop**. Pressing Stop, or the provider session ending, marks any agents still listed
+as working as interrupted, so the banner clears and the Agents panel stops showing them as
+working, even when the provider never reports those agents again. Restarting T3 Code does the
+same for threads whose provider session did not survive.
+
 On web and desktop, additional notices peek out above the attached banner. Hover over the peek
 to reveal them, or focus **Show other notices** with `Tab` and press `Enter` or `Space`. Press
 `Escape` to close the stack and return focus to that control. On a touchscreen, tap the peek to

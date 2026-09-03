@@ -33,6 +33,13 @@ interface ThreadLivenessState {
 // INERT_TASK_TYPES: plan-mode bookkeeping) so this registry, ingestion's
 // agentKind stamp, and the client fold can never drift apart.
 
+/**
+ * Recent host settlements, enough to outlast a start row already in flight.
+ * One bounded FIFO for the whole registry keeps this O(1) regardless of how
+ * many threads or tasks a long-lived server sees.
+ */
+const HOST_SETTLED_TASK_MEMORY_LIMIT = 2048;
+
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
   "completed",
   "failed",
@@ -59,6 +66,12 @@ export class ThreadBackgroundLivenessService extends Context.Service<
       readonly status: string | undefined;
       readonly kind: "started" | "progress" | "updated" | "completed";
       readonly agentId?: string | undefined;
+      /**
+       * Set by host settlement (Stop, session death, startup reconciliation).
+       * Tombstones the task so a status-free start row already in flight from
+       * a provider that still thinks it owns the task cannot re-arm it.
+       */
+      readonly settledByHost?: boolean | undefined;
     }) => void;
 
     /** Session death orphans all of a thread's background work. */
@@ -72,8 +85,11 @@ export class ThreadBackgroundLivenessService extends Context.Service<
   }
 >()("t3/orchestration/ThreadBackgroundLiveness/ThreadBackgroundLivenessService") {}
 
+const taskKey = (threadId: string, taskId: string) => `${threadId}:${taskId}`;
+
 export function make(): ThreadBackgroundLivenessService["Service"] {
   const stateByThreadId = new Map<string, ThreadLivenessState>();
+  const hostSettledTaskKeys = new Set<string>();
 
   const stateFor = (threadId: string): ThreadLivenessState => {
     const existing = stateByThreadId.get(threadId);
@@ -127,6 +143,18 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
         (input.status !== undefined && TERMINAL_STATUSES.has(input.status));
       if (terminal) {
         drop(input.threadId, input.taskId);
+        // Only a HOST settlement leaves a tombstone. A provider's own idle or
+        // terminal event is ordinary lifecycle: a later start row for it is a
+        // real resumption and must still arm the thread.
+        if (input.settledByHost === true) {
+          hostSettledTaskKeys.add(taskKey(input.threadId, input.taskId));
+          if (hostSettledTaskKeys.size > HOST_SETTLED_TASK_MEMORY_LIMIT) {
+            const oldest = hostSettledTaskKeys.values().next().value;
+            if (oldest !== undefined) {
+              hostSettledTaskKeys.delete(oldest);
+            }
+          }
+        }
         return;
       }
 
@@ -142,7 +170,18 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
         }
       }
 
+      // A status-free row for a host-settled task is a late delivery, not a
+      // new run. Only an explicit non-terminal status below proves the task
+      // really came back, and it clears the tombstone.
+      if (
+        input.status === undefined &&
+        hostSettledTaskKeys.has(taskKey(input.threadId, input.taskId))
+      ) {
+        return;
+      }
+
       drop(input.threadId, input.taskId);
+      hostSettledTaskKeys.delete(taskKey(input.threadId, input.taskId));
       const state = stateFor(input.threadId);
       const bucket =
         taskType !== undefined && MONITOR_TASK_TYPES.has(taskType) ? state.monitors : state.agents;

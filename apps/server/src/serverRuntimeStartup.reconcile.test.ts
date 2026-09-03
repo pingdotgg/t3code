@@ -19,6 +19,9 @@ import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSna
 import { ProviderSessionDirectoryPersistenceError } from "./provider/Errors.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
+import * as ProjectionThreadActivities from "./persistence/Services/ProjectionThreadActivities.ts";
+import * as ThreadBackgroundLiveness from "./orchestration/ThreadBackgroundLiveness.ts";
+import type { TaskActivityRow } from "./orchestration/ThreadTaskSettlement.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -68,17 +71,49 @@ const queryWithThreads = (threads: ReadonlyArray<ReturnType<typeof makeThread>>)
     getCommandReadModel: () => Effect.succeed({ threads } as never),
   }) as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"];
 
+const activityRepositoryWith = (
+  activitiesByThreadId: Readonly<Record<string, ReadonlyArray<TaskActivityRow>>>,
+  batchReads: Array<ReadonlyArray<ThreadId>> = [],
+) =>
+  ({
+    listTaskLifecycleByThreadId: ({ threadId }: { readonly threadId: ThreadId }) =>
+      Effect.succeed(activitiesByThreadId[threadId] ?? []),
+    listTaskLifecycleByThreadIds: ({
+      threadIds,
+    }: {
+      readonly threadIds: ReadonlyArray<ThreadId>;
+    }) =>
+      Effect.sync(() => {
+        batchReads.push(threadIds);
+        return threadIds.flatMap((threadId) =>
+          (activitiesByThreadId[threadId] ?? []).map((row) => ({ ...row, threadId })),
+        );
+      }),
+  }) as unknown as ProjectionThreadActivities.ProjectionThreadActivityRepository["Service"];
+
 const runReconciliation = (input: {
   readonly threads: ReadonlyArray<ReturnType<typeof makeThread>>;
   readonly liveThreadIds?: ReadonlyArray<ThreadId>;
   readonly providerService?: ProviderService.ProviderService["Service"];
   readonly directory: ProviderSessionDirectory.ProviderSessionDirectory["Service"];
   readonly dispatch: OrchestrationEngine.OrchestrationEngineService["Service"]["dispatch"];
+  readonly activitiesByThreadId?: Readonly<Record<string, ReadonlyArray<TaskActivityRow>>>;
+  readonly backgroundLiveness?: ThreadBackgroundLiveness.ThreadBackgroundLivenessService["Service"];
+  /** Collects the thread-id lists the batched activity read was called with. */
+  readonly batchReads?: Array<ReadonlyArray<ThreadId>>;
 }) =>
   ServerRuntimeStartup.reconcileProviderSessions.pipe(
     Effect.provideService(
       ProjectionSnapshotQuery.ProjectionSnapshotQuery,
       queryWithThreads(input.threads),
+    ),
+    Effect.provideService(
+      ProjectionThreadActivities.ProjectionThreadActivityRepository,
+      activityRepositoryWith(input.activitiesByThreadId ?? {}, input.batchReads),
+    ),
+    Effect.provideService(
+      ThreadBackgroundLiveness.ThreadBackgroundLivenessService,
+      input.backgroundLiveness ?? ThreadBackgroundLiveness.make(),
     ),
     Effect.provideService(
       ProviderService.ProviderService,
@@ -654,7 +689,136 @@ it.effect("does not fail startup when the live provider session inventory cannot
       subscribeDomainEvents: Effect.succeed(Stream.empty),
       latestSequence: Effect.succeed(0),
     }),
+    Effect.provideService(
+      ThreadBackgroundLiveness.ThreadBackgroundLivenessService,
+      ThreadBackgroundLiveness.make(),
+    ),
+    Effect.provideService(
+      ProjectionThreadActivities.ProjectionThreadActivityRepository,
+      activityRepositoryWith({}),
+    ),
     Effect.provide(NodeServices.layer),
     Effect.tap(() => Effect.sync(() => assert.equal(queried, false))),
+  );
+});
+
+it.effect("settles background agent tasks left running by an orphaned session", () => {
+  const orphaned = makeThread("thread-settle-tasks", "running", TurnId.make("turn-settle-tasks"));
+  const taskId = "collab-child-1";
+  const linkage = { agentKind: "agent", title: "math_one", timelineBypass: true } as const;
+  const dispatched: OrchestrationCommand[] = [];
+  const liveness = ThreadBackgroundLiveness.make();
+  // The registry is empty after a real restart; arming it here proves the
+  // settlement clears rows and registry together.
+  liveness.recordTaskLiveness({
+    threadId: orphaned.id,
+    taskId,
+    taskType: undefined,
+    status: "running",
+    kind: "updated",
+  });
+
+  return runReconciliation({
+    threads: [orphaned],
+    activitiesByThreadId: {
+      [orphaned.id]: [
+        { kind: "task.started", payload: { taskId, ...linkage } },
+        { kind: "task.updated", payload: { taskId, status: "running", ...linkage } },
+      ],
+    },
+    backgroundLiveness: liveness,
+    directory: {
+      getBinding: () => Effect.succeed(Option.none()),
+      upsert: () => Effect.void,
+      getProvider: () => Effect.die("unused"),
+      listThreadIds: () => Effect.die("unused"),
+      listBindings: () => Effect.die("unused"),
+    },
+    dispatch: (command) => {
+      dispatched.push(command);
+      return Effect.succeed({ sequence: dispatched.length });
+    },
+  }).pipe(
+    Effect.tap(() =>
+      Effect.sync(() => {
+        const settlement = dispatched.find((command) => command.type === "thread.activity.append");
+        assert.isDefined(settlement);
+        assert.equal(settlement.activity.id, `task-settled:${orphaned.id}:${taskId}`);
+        assert.equal(settlement.activity.kind, "task.updated");
+        assert.deepStrictEqual(settlement.activity.payload, {
+          taskId,
+          status: "interrupted",
+          endedAt: settlement.createdAt,
+          ...linkage,
+        });
+        assert.equal(liveness.getThreadBackgroundLiveness(orphaned.id), null);
+        // The orphaned session itself is still reconciled to error.
+        assert.isDefined(dispatched.find((command) => command.type === "thread.session.set"));
+      }),
+    ),
+  );
+});
+
+it("settles background agents on ready and stopped threads, and writes nothing when idle", () => {
+  // The headline case: the turn finished, so the session is `ready` with no
+  // active turn, but its children kept working and did not survive the
+  // restart. Archived and deleted threads must not be written to.
+  const taskId = "collab-child-1";
+  const linkage = { agentKind: "agent", title: "math_one", timelineBypass: true } as const;
+  const rows = [
+    { kind: "task.started", payload: { taskId, ...linkage } },
+    { kind: "task.updated", payload: { taskId, status: "running", ...linkage } },
+  ];
+  const ready = makeThread("thread-settle-ready", "ready");
+  const archived = makeThread("thread-settle-archived", "ready", null, updatedAt);
+  const deleted = makeThread("thread-settle-deleted", "ready", null, null, updatedAt);
+  // A stopped session still counts: the process can die between marking the
+  // session stopped and settling its children, and no later boot would ever
+  // pick them up if stopped threads were skipped.
+  const stopped = makeThread("thread-settle-stopped", "stopped");
+  // Nothing to settle here, so it must produce no writes at all.
+  const quiet = makeThread("thread-settle-quiet", "ready");
+  const dispatched: OrchestrationCommand[] = [];
+  const batchReads: Array<ReadonlyArray<ThreadId>> = [];
+
+  return runReconciliation({
+    threads: [ready, archived, deleted, stopped, quiet],
+    batchReads,
+    activitiesByThreadId: {
+      [ready.id]: rows,
+      [archived.id]: rows,
+      [deleted.id]: rows,
+      [stopped.id]: rows,
+    },
+    directory: {
+      getBinding: () => Effect.succeed(Option.none()),
+      upsert: () => Effect.void,
+      getProvider: () => Effect.die("unused"),
+      listThreadIds: () => Effect.die("unused"),
+      listBindings: () => Effect.die("unused"),
+    },
+    dispatch: (command) => {
+      dispatched.push(command);
+      return Effect.succeed({ sequence: dispatched.length });
+    },
+  }).pipe(
+    Effect.tap(() =>
+      Effect.sync(() => {
+        assert.deepStrictEqual(
+          dispatched
+            .filter((command) => command.type === "thread.activity.append")
+            .map((command) => command.threadId),
+          [ready.id, stopped.id],
+        );
+        // One batched read for every candidate thread, not a query per thread,
+        // and archived/deleted threads are never even read.
+        assert.deepStrictEqual(batchReads, [[ready.id, stopped.id, quiet.id]]);
+        // A ready session is not an orphaned turn, so nothing else changes.
+        assert.deepStrictEqual(
+          dispatched.filter((command) => command.type === "thread.session.set"),
+          [],
+        );
+      }),
+    ),
   );
 });

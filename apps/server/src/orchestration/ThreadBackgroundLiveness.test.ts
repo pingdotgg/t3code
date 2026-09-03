@@ -226,4 +226,77 @@ describe("ThreadBackgroundLiveness", () => {
     a.clearThreadLiveness("t");
     expect(a.getThreadBackgroundLiveness("t")).toBeNull();
   });
+  it("only a host settlement blocks a late status-free start row", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "t-settled";
+    const arm = () =>
+      liveness.recordTaskLiveness({
+        threadId,
+        taskId: "child",
+        taskType: undefined,
+        status: undefined,
+        kind: "started",
+      });
+
+    arm();
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+
+    // The host settles the task itself (Stop, session death, restart).
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "child",
+      taskType: undefined,
+      status: "interrupted",
+      kind: "updated",
+      settledByHost: true,
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+
+    // A start row the provider had already queued must not reopen it.
+    arm();
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+
+    // An explicit non-terminal status is a real reactivation, and clears the
+    // tombstone so ordinary lifecycle resumes.
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "child",
+      taskType: undefined,
+      status: "running",
+      kind: "updated",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "child",
+      taskType: undefined,
+      status: "idle",
+      kind: "updated",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+    arm();
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+  });
+
+  it("a provider's own idle does not block a later start row", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "t-provider-idle";
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "child",
+      taskType: undefined,
+      status: "idle",
+      kind: "updated",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+    // A resumable Codex child that starts a new turn is real work again.
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "child",
+      taskType: undefined,
+      status: undefined,
+      kind: "started",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+  });
 });

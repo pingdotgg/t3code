@@ -10,6 +10,7 @@ import { toPersistenceDecodeError, toPersistenceSqlError } from "../Errors.ts";
 
 import {
   DeleteProjectionThreadActivitiesInput,
+  ListProjectionThreadActivitiesByThreadIdsInput,
   ListProjectionThreadActivitiesInput,
   ProjectionThreadActivity,
   ProjectionThreadActivityRepository,
@@ -37,6 +38,17 @@ const mapActivityRows = (
     ...(row.sequence !== null ? { sequence: row.sequence } : {}),
     createdAt: row.createdAt,
   }));
+
+/** SQLite's host-parameter ceiling is 999; stay well inside it. */
+const THREAD_ID_BATCH_SIZE = 500;
+
+const chunk = <A>(items: ReadonlyArray<A>, size: number): ReadonlyArray<ReadonlyArray<A>> => {
+  const chunks: A[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+};
 
 function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
   return (cause: unknown) =>
@@ -112,6 +124,59 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
       `,
   });
 
+  const listTaskLifecycleActivityRows = SqlSchema.findAll({
+    Request: ListProjectionThreadActivitiesInput,
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          activity_id AS "activityId",
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          tone,
+          kind,
+          summary,
+          payload_json AS "payload",
+          sequence,
+          created_at AS "createdAt"
+        FROM projection_thread_activities
+        WHERE thread_id = ${threadId}
+          AND kind IN ('task.started', 'task.progress', 'task.updated', 'task.completed')
+        ORDER BY
+          CASE WHEN sequence IS NULL THEN 0 ELSE 1 END ASC,
+          sequence ASC,
+          created_at ASC,
+          activity_id ASC
+      `,
+  });
+
+  const listTaskLifecycleActivityRowsByThreadIds = SqlSchema.findAll({
+    Request: ListProjectionThreadActivitiesByThreadIdsInput,
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadIds }) =>
+      sql`
+        SELECT
+          activity_id AS "activityId",
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          tone,
+          kind,
+          summary,
+          payload_json AS "payload",
+          sequence,
+          created_at AS "createdAt"
+        FROM projection_thread_activities
+        WHERE ${sql.in("thread_id", threadIds)}
+          AND kind IN ('task.started', 'task.progress', 'task.updated', 'task.completed')
+        ORDER BY
+          thread_id ASC,
+          CASE WHEN sequence IS NULL THEN 0 ELSE 1 END ASC,
+          sequence ASC,
+          created_at ASC,
+          activity_id ASC
+      `,
+  });
+
   const listUserInputLifecycleActivityRows = SqlSchema.findAll({
     Request: ListProjectionThreadActivitiesInput,
     Result: ProjectionThreadActivityDbRowSchema,
@@ -172,6 +237,38 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
       Effect.map(mapActivityRows),
     );
 
+  const listTaskLifecycleByThreadId: ProjectionThreadActivityRepositoryShape["listTaskLifecycleByThreadId"] =
+    (input) =>
+      listTaskLifecycleActivityRows(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionThreadActivityRepository.listTaskLifecycleByThreadId:query",
+            "ProjectionThreadActivityRepository.listTaskLifecycleByThreadId:decodeRows",
+          ),
+        ),
+        Effect.map(mapActivityRows),
+      );
+
+  const listTaskLifecycleByThreadIds: ProjectionThreadActivityRepositoryShape["listTaskLifecycleByThreadIds"] =
+    ({ threadIds }) =>
+      // SQLite caps host parameters per statement, so long id lists are read
+      // in chunks. Threads never straddle a chunk, so per-thread ordering is
+      // preserved by concatenation.
+      Effect.forEach(
+        chunk(threadIds, THREAD_ID_BATCH_SIZE),
+        (threadIdChunk) =>
+          listTaskLifecycleActivityRowsByThreadIds({ threadIds: threadIdChunk }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionThreadActivityRepository.listTaskLifecycleByThreadIds:query",
+                "ProjectionThreadActivityRepository.listTaskLifecycleByThreadIds:decodeRows",
+              ),
+            ),
+            Effect.map(mapActivityRows),
+          ),
+        { concurrency: 1 },
+      ).pipe(Effect.map((chunks) => chunks.flat()));
+
   const listUserInputLifecycleByThreadId: ProjectionThreadActivityRepositoryShape["listUserInputLifecycleByThreadId"] =
     (input) =>
       listUserInputLifecycleActivityRows(input).pipe(
@@ -194,6 +291,8 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
   return {
     upsert,
     listByThreadId,
+    listTaskLifecycleByThreadId,
+    listTaskLifecycleByThreadIds,
     listUserInputLifecycleByThreadId,
     deleteByThreadId,
   } satisfies ProjectionThreadActivityRepositoryShape;
