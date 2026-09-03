@@ -346,12 +346,47 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     event: ProviderRuntimeEvent,
   ): Effect.Effect<void> =>
     Effect.sync(() => correlateRuntimeEventWithInstance(source, event)).pipe(
-      Effect.flatMap((canonicalEvent) =>
-        increment(providerRuntimeEventsTotal, {
+      Effect.flatMap((canonicalEvent) => {
+        const resumeCursor =
+          canonicalEvent.type === "session.configured"
+            ? canonicalEvent.payload.resumeCursor
+            : undefined;
+        const resumeCursorPersistence =
+          resumeCursor === undefined
+            ? Effect.void
+            : directory
+                .updateResumeCursorIfCurrentInstance({
+                  threadId: canonicalEvent.threadId,
+                  providerInstanceId: source.instanceId,
+                  resumeCursor,
+                })
+                .pipe(
+                  Effect.tap((updated) =>
+                    updated
+                      ? Effect.void
+                      : Effect.logDebug("provider.session.resume-cursor-update-stale", {
+                          threadId: canonicalEvent.threadId,
+                          provider: canonicalEvent.provider,
+                          providerInstanceId: source.instanceId,
+                        }),
+                  ),
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("provider.session.resume-cursor-persist-failed", {
+                      threadId: canonicalEvent.threadId,
+                      provider: canonicalEvent.provider,
+                      cause,
+                    }),
+                  ),
+                );
+
+        return increment(providerRuntimeEventsTotal, {
           provider: canonicalEvent.provider,
           eventType: canonicalEvent.type,
-        }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent))),
-      ),
+        }).pipe(
+          Effect.andThen(resumeCursorPersistence),
+          Effect.andThen(publishRuntimeEvent(canonicalEvent)),
+        );
+      }),
     );
 
   // `subscribedAdapters` is our source-of-truth for "which instance adapters

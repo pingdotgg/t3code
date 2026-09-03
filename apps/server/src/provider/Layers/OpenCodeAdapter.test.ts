@@ -424,6 +424,7 @@ const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory
   getProvider: () =>
     Effect.die(new Error("ProviderSessionDirectory.getProvider is not used in test")),
   getBinding: () => Effect.succeed(Option.none()),
+  updateResumeCursorIfCurrentInstance: () => Effect.succeed(true),
   listThreadIds: () => Effect.succeed([]),
   listBindings: () => Effect.succeed([]),
 });

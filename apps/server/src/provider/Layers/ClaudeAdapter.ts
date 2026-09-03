@@ -8,6 +8,8 @@
  */
 import {
   type CanUseTool,
+  type HookCallback,
+  type HookInput,
   query,
   type Options as ClaudeQueryOptions,
   type PermissionMode,
@@ -134,6 +136,7 @@ interface ClaudeResumeState {
   readonly resume?: string;
   readonly resumeSessionAt?: string;
   readonly turnCount?: number;
+  readonly stoppedSubagents?: ReadonlyArray<ClaudeStoppedSubagent>;
 }
 
 interface ClaudeTurnState {
@@ -253,6 +256,11 @@ interface ClaudeTaskAgentState {
   effort: string | undefined;
 }
 
+interface ClaudeStoppedSubagent {
+  readonly agentId: string;
+  readonly agentType: string | undefined;
+}
+
 /**
  * How many racing snapshot models to buffer per session. A snapshot whose
  * task_started never arrives would otherwise pin its entry for the session's
@@ -300,6 +308,12 @@ interface ClaudeSessionContext {
   readonly inFlightTools: Map<number, ToolInFlight>;
   readonly claudeTasks: Map<string, ClaudeTaskState>;
   readonly taskAgents: Map<string, ClaudeTaskAgentState>;
+  /**
+   * Runtime agent ids reported by Claude's SubagentStop hook. SendMessage can
+   * resume one of these agents with its full transcript, so the PreToolUse
+   * hook consults this map before Claude Code restores that history.
+   */
+  readonly stoppedSubagents: Map<string, ClaudeStoppedSubagent>;
   /**
    * Authoritative subagent models from assistant snapshots that arrived before
    * their task_started registered the task, keyed by parent_tool_use_id.
@@ -687,6 +701,7 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
     sessionId?: unknown;
     resumeSessionAt?: unknown;
     turnCount?: unknown;
+    stoppedSubagents?: unknown;
   };
 
   const threadIdCandidate = typeof cursor.threadId === "string" ? cursor.threadId : undefined;
@@ -704,6 +719,20 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
   const resumeSessionAt =
     typeof cursor.resumeSessionAt === "string" ? cursor.resumeSessionAt : undefined;
   const turnCountValue = typeof cursor.turnCount === "number" ? cursor.turnCount : undefined;
+  const stoppedSubagents = new Map<string, ClaudeStoppedSubagent>();
+  if (Array.isArray(cursor.stoppedSubagents)) {
+    for (const value of cursor.stoppedSubagents.slice(-CLAUDE_STOPPED_SUBAGENT_CAP)) {
+      const record = recordFromUnknown(value);
+      const agentId = trimmedString(record?.agentId);
+      if (!agentId) {
+        continue;
+      }
+      rememberStoppedSubagent(stoppedSubagents, {
+        agentId,
+        agentType: trimmedString(record?.agentType),
+      });
+    }
+  }
 
   return {
     ...(threadId ? { threadId } : {}),
@@ -712,6 +741,7 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
     ...(turnCountValue !== undefined && Number.isInteger(turnCountValue) && turnCountValue >= 0
       ? { turnCount: turnCountValue }
       : {}),
+    ...(stoppedSubagents.size > 0 ? { stoppedSubagents: [...stoppedSubagents.values()] } : {}),
   };
 }
 
@@ -991,6 +1021,43 @@ function trimmedString(value: unknown): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+const CLAUDE_START_FRESH_AGENT_ANSWER = "Start fresh agent";
+const CLAUDE_RESUME_EXISTING_AGENT_ANSWER = "Resume existing agent";
+const CLAUDE_STOPPED_SUBAGENT_CAP = 128;
+const CLAUDE_INTERACTIVE_HOOK_TIMEOUT_SECONDS = 60 * 60 * 24 * 7;
+
+function recordFromUnknown(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function sendMessageTarget(input: unknown): string | undefined {
+  const record = recordFromUnknown(input);
+  if (!record) {
+    return undefined;
+  }
+  const messageType = trimmedString(record.type);
+  if (messageType !== undefined && messageType !== "message") {
+    return undefined;
+  }
+  return trimmedString(record.to) ?? trimmedString(record.recipient);
+}
+
+function rememberStoppedSubagent(
+  stoppedSubagents: Map<string, ClaudeStoppedSubagent>,
+  subagent: ClaudeStoppedSubagent,
+): void {
+  stoppedSubagents.delete(subagent.agentId);
+  stoppedSubagents.set(subagent.agentId, subagent);
+  if (stoppedSubagents.size > CLAUDE_STOPPED_SUBAGENT_CAP) {
+    const oldest = stoppedSubagents.keys().next();
+    if (!oldest.done) {
+      stoppedSubagents.delete(oldest.value);
+    }
+  }
 }
 
 /**
@@ -1847,6 +1914,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       ...(context.resumeSessionId ? { resume: context.resumeSessionId } : {}),
       ...(context.lastAssistantUuid ? { resumeSessionAt: context.lastAssistantUuid } : {}),
       turnCount: context.turns.length,
+      ...(context.stoppedSubagents.size > 0
+        ? { stoppedSubagents: [...context.stoppedSubagents.values()] }
+        : {}),
     };
 
     context.session = {
@@ -1854,6 +1924,29 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       resumeCursor,
       updatedAt: yield* nowIso,
     };
+  });
+
+  const emitResumeCursorUpdate = Effect.fn("emitResumeCursorUpdate")(function* (
+    context: ClaudeSessionContext,
+  ) {
+    yield* updateResumeCursor(context);
+    if (context.session.resumeCursor === undefined) {
+      return;
+    }
+
+    const configuredStamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "session.configured",
+      eventId: configuredStamp.eventId,
+      provider: PROVIDER,
+      createdAt: configuredStamp.createdAt,
+      threadId: context.session.threadId,
+      payload: {
+        config: {},
+        resumeCursor: context.session.resumeCursor,
+      },
+      providerRefs: {},
+    });
   });
 
   const ensureAssistantTextBlock = Effect.fn("ensureAssistantTextBlock")(function* (
@@ -3901,6 +3994,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const inFlightTools = new Map<number, ToolInFlight>();
       const claudeTasks = new Map<string, ClaudeTaskState>();
       const taskAgents = new Map<string, ClaudeTaskAgentState>();
+      const stoppedSubagents = new Map(
+        (resumeState?.stoppedSubagents ?? []).map((agent) => [agent.agentId, agent]),
+      );
       const pendingTaskModels = new Map<string, string>();
       const workflowMemberFingerprints = new Map<string, string>();
       const liveTaskIds = new Set<string>();
@@ -3917,6 +4013,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         callbackOptions: {
           readonly signal: AbortSignal;
           readonly toolUseID?: string;
+          readonly sourceToolName?: string;
+          readonly rawMethod?: string;
         },
       ) {
         const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
@@ -3980,9 +4078,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           }),
           raw: {
             source: "claude.sdk.permission",
-            method: "canUseTool/AskUserQuestion",
+            method: callbackOptions.rawMethod ?? "canUseTool/AskUserQuestion",
             payload: {
-              toolName: "AskUserQuestion",
+              toolName: callbackOptions.sourceToolName ?? "AskUserQuestion",
               input: toolInput,
             },
           },
@@ -4028,7 +4126,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           }),
           raw: {
             source: "claude.sdk.permission",
-            method: "canUseTool/AskUserQuestion/resolved",
+            method: `${callbackOptions.rawMethod ?? "canUseTool/AskUserQuestion"}/resolved`,
             payload: { answers },
           },
         });
@@ -4120,6 +4218,141 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
         return { behavior: "completed" as const, result: action };
       });
+
+      const handleSubagentStartHook = Effect.fn("handleSubagentStartHook")(function* (
+        hookInput: HookInput,
+      ) {
+        if (hookInput.hook_event_name !== "SubagentStart") {
+          return {};
+        }
+        const context = yield* Ref.get(contextRef);
+        if (context?.stoppedSubagents.delete(hookInput.agent_id)) {
+          yield* emitResumeCursorUpdate(context);
+        }
+        return {};
+      });
+
+      const handleSubagentStopHook = Effect.fn("handleSubagentStopHook")(function* (
+        hookInput: HookInput,
+      ) {
+        if (hookInput.hook_event_name !== "SubagentStop") {
+          return {};
+        }
+        const context = yield* Ref.get(contextRef);
+        if (context) {
+          rememberStoppedSubagent(context.stoppedSubagents, {
+            agentId: hookInput.agent_id,
+            agentType: trimmedString(hookInput.agent_type),
+          });
+          yield* emitResumeCursorUpdate(context);
+        }
+        return {};
+      });
+
+      const handleCompletedSubagentMessageHook = Effect.fn("handleCompletedSubagentMessageHook")(
+        function* (
+          hookInput: HookInput,
+          toolUseId: string | undefined,
+          callbackOptions: { readonly signal: AbortSignal },
+        ) {
+          if (hookInput.hook_event_name !== "PreToolUse" || hookInput.tool_name !== "SendMessage") {
+            return {};
+          }
+
+          const context = yield* Ref.get(contextRef);
+          const target = sendMessageTarget(hookInput.tool_input);
+          const stoppedSubagent = target ? context?.stoppedSubagents.get(target) : undefined;
+          if (!context || !stoppedSubagent) {
+            return {};
+          }
+
+          const agentType = stoppedSubagent.agentType?.slice(0, 80);
+          const agentLabel = agentType
+            ? `the finished “${agentType}” sub-agent`
+            : "a finished sub-agent";
+          const question = `Claude wants to send another message to ${agentLabel}. Claude Code resumes that agent with its previous conversation and may have to process all of that history again. How should Claude continue?`;
+          const result = yield* handleAskUserQuestion(
+            context,
+            {
+              questions: [
+                {
+                  header: "Resume agent",
+                  question,
+                  options: [
+                    {
+                      label: CLAUDE_START_FRESH_AGENT_ANSWER,
+                      description:
+                        "Recommended for a bounded follow-up; block this resume so Claude can launch a new agent with a concise handoff.",
+                    },
+                    {
+                      label: CLAUDE_RESUME_EXISTING_AGENT_ANSWER,
+                      description:
+                        "Restore the prior conversation; this can consume substantially more tokens.",
+                    },
+                    {
+                      label: "Cancel",
+                      description: "Block this message without suggesting a replacement agent.",
+                    },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+            {
+              signal: callbackOptions.signal,
+              ...(toolUseId ? { toolUseID: toolUseId } : {}),
+              sourceToolName: "SendMessage",
+              rawMethod: "hook/PreToolUse/SendMessage",
+            },
+          );
+
+          if (result.behavior !== "allow") {
+            return {
+              hookSpecificOutput: {
+                hookEventName: "PreToolUse" as const,
+                permissionDecision: "deny" as const,
+                permissionDecisionReason:
+                  "The user cancelled the completed sub-agent resume. Do not retry this SendMessage call.",
+              },
+            };
+          }
+
+          const answers = result.updatedInput.answers;
+          const selection =
+            answers && typeof answers === "object" && !Array.isArray(answers)
+              ? (answers as Record<string, unknown>)[question]
+              : undefined;
+          if (selection === CLAUDE_RESUME_EXISTING_AGENT_ANSWER) {
+            context.stoppedSubagents.delete(stoppedSubagent.agentId);
+            yield* emitResumeCursorUpdate(context);
+            return {
+              hookSpecificOutput: {
+                hookEventName: "PreToolUse" as const,
+                permissionDecision: "allow" as const,
+                permissionDecisionReason: "The user chose to resume the existing sub-agent.",
+              },
+            };
+          }
+
+          const choseFreshAgent = selection === CLAUDE_START_FRESH_AGENT_ANSWER;
+          return {
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse" as const,
+              permissionDecision: "deny" as const,
+              permissionDecisionReason: choseFreshAgent
+                ? "The user chose a fresh sub-agent instead of resuming this finished one. Launch a new Agent with a concise handoff containing only the facts needed for the follow-up. Do not retry SendMessage to the finished agent."
+                : "The user cancelled the completed sub-agent resume. Do not retry this SendMessage call.",
+            },
+          };
+        },
+      );
+
+      const subagentStartHook: HookCallback = (hookInput) =>
+        runPromise(handleSubagentStartHook(hookInput));
+      const subagentStopHook: HookCallback = (hookInput) =>
+        runPromise(handleSubagentStopHook(hookInput));
+      const completedSubagentMessageHook: HookCallback = (hookInput, toolUseId, options) =>
+        runPromise(handleCompletedSubagentMessageHook(hookInput, toolUseId, options));
 
       const canUseToolEffect = Effect.fn("canUseTool")(function* (
         toolName: Parameters<CanUseTool>[0],
@@ -4373,6 +4606,24 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
         canUseTool,
+        // Full-access runs Claude in bypassPermissions, which can skip
+        // canUseTool. PreToolUse hooks still run before execution, so the
+        // resume guard must live here to cover the mode where it matters.
+        hooks: {
+          SubagentStart: [{ hooks: [subagentStartHook] }],
+          SubagentStop: [{ hooks: [subagentStopHook] }],
+          PreToolUse: [
+            {
+              matcher: "SendMessage",
+              hooks: [completedSubagentMessageHook],
+              // The callback waits on T3's cross-client user-input flow. The
+              // turn abort signal cancels it when the session closes; this
+              // longer backstop keeps an idle UI from silently allowing the
+              // SDK's ten-minute default to cancel the guard first.
+              timeout: CLAUDE_INTERACTIVE_HOOK_TIMEOUT_SECONDS,
+            },
+          ],
+        },
         onUserDialog,
         supportedDialogKinds: ["resume_return"],
         env: claudeEnvironment,
@@ -4447,6 +4698,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...(sessionId ? { resume: sessionId } : {}),
           ...(resumeState?.resumeSessionAt ? { resumeSessionAt: resumeState.resumeSessionAt } : {}),
           turnCount: resumeState?.turnCount ?? 0,
+          ...(stoppedSubagents.size > 0
+            ? { stoppedSubagents: [...stoppedSubagents.values()] }
+            : {}),
         },
         createdAt: startedAt,
         updatedAt: startedAt,
@@ -4468,6 +4722,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         inFlightTools,
         claudeTasks,
         taskAgents,
+        stoppedSubagents,
         pendingTaskModels,
         workflowMemberFingerprints,
         liveTaskIds,

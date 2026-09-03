@@ -5227,6 +5227,203 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("guards SendMessage when Claude tries to resume a stopped subagent", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const agentId = "agent-expensive-history";
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        resumeCursor: {
+          resume: "550e8400-e29b-41d4-a716-446655440000",
+          stoppedSubagents: [{ agentId, agentType: "Explore" }],
+        },
+      });
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      const hooks = harness.getLastCreateQueryInput()?.options.hooks;
+      const subagentStartHook = hooks?.SubagentStart?.[0]?.hooks[0];
+      const subagentStopHook = hooks?.SubagentStop?.[0]?.hooks[0];
+      const preToolUseHook = hooks?.PreToolUse?.[0]?.hooks[0];
+      assert.equal(hooks?.PreToolUse?.[0]?.matcher, "SendMessage");
+      assert.equal(hooks?.PreToolUse?.[0]?.timeout, 60 * 60 * 24 * 7);
+      assert.equal(typeof subagentStartHook, "function");
+      assert.equal(typeof subagentStopHook, "function");
+      assert.equal(typeof preToolUseHook, "function");
+      if (!subagentStartHook || !subagentStopHook || !preToolUseHook) {
+        return;
+      }
+
+      const signal = new AbortController().signal;
+      const hookBase = {
+        session_id: "sdk-session-subagent-resume",
+        transcript_path: "/tmp/sdk-session-subagent-resume.jsonl",
+        cwd: "/tmp",
+        permission_mode: "bypassPermissions",
+      };
+
+      const freshAgentPromise = preToolUseHook(
+        {
+          ...hookBase,
+          hook_event_name: "PreToolUse",
+          tool_name: "SendMessage",
+          tool_input: {
+            type: "message",
+            recipient: agentId,
+            content: "Check one more thing",
+          },
+          tool_use_id: "tool-send-fresh",
+        },
+        "tool-send-fresh",
+        { signal },
+      );
+
+      const freshRequested = yield* Stream.runHead(adapter.streamEvents);
+      assert.equal(freshRequested._tag, "Some");
+      if (freshRequested._tag !== "Some" || freshRequested.value.type !== "user-input.requested") {
+        return;
+      }
+      const freshQuestion = freshRequested.value.payload.questions[0];
+      assert.equal(freshQuestion?.header, "Resume agent");
+      assert.match(freshQuestion?.question ?? "", /finished “Explore” sub-agent/);
+      assert.deepEqual(
+        freshQuestion?.options.map((option) => option.label),
+        ["Start fresh agent", "Resume existing agent", "Cancel"],
+      );
+      assert.deepEqual(freshRequested.value.providerRefs, {
+        providerItemId: ProviderItemId.make("tool-send-fresh"),
+      });
+      if (!freshQuestion || !freshRequested.value.requestId) {
+        return;
+      }
+
+      yield* adapter.respondToUserInput(
+        session.threadId,
+        ApprovalRequestId.make(freshRequested.value.requestId),
+        { [freshQuestion.id]: "Start fresh agent" },
+      );
+      yield* Stream.runHead(adapter.streamEvents);
+      const freshResult = yield* Effect.promise(() => freshAgentPromise);
+      assert.deepEqual(freshResult, {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason:
+            "The user chose a fresh sub-agent instead of resuming this finished one. Launch a new Agent with a concise handoff containing only the facts needed for the follow-up. Do not retry SendMessage to the finished agent.",
+        },
+      });
+
+      const resumePromise = preToolUseHook(
+        {
+          ...hookBase,
+          hook_event_name: "PreToolUse",
+          tool_name: "SendMessage",
+          tool_input: { type: "message", to: agentId, content: "Resume anyway" },
+          tool_use_id: "tool-send-resume",
+        },
+        "tool-send-resume",
+        { signal },
+      );
+      const resumeRequested = yield* Stream.runHead(adapter.streamEvents);
+      assert.equal(resumeRequested._tag, "Some");
+      if (
+        resumeRequested._tag !== "Some" ||
+        resumeRequested.value.type !== "user-input.requested"
+      ) {
+        return;
+      }
+      const resumeQuestion = resumeRequested.value.payload.questions[0];
+      if (!resumeQuestion || !resumeRequested.value.requestId) {
+        return;
+      }
+      yield* adapter.respondToUserInput(
+        session.threadId,
+        ApprovalRequestId.make(resumeRequested.value.requestId),
+        { [resumeQuestion.id]: "Resume existing agent" },
+      );
+      yield* Stream.runHead(adapter.streamEvents);
+      const resumeResult = yield* Effect.promise(() => resumePromise);
+      assert.deepEqual(resumeResult, {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "allow",
+          permissionDecisionReason: "The user chose to resume the existing sub-agent.",
+        },
+      });
+      const activeSession = (yield* adapter.listSessions())[0];
+      assert.equal(
+        (activeSession?.resumeCursor as { stoppedSubagents?: unknown } | undefined)
+          ?.stoppedSubagents,
+        undefined,
+      );
+
+      // Choosing resume clears the stopped marker until Claude reports the
+      // agent stopping again, so messages sent while it is live do not prompt.
+      const liveResult = yield* Effect.promise(() =>
+        preToolUseHook(
+          {
+            ...hookBase,
+            hook_event_name: "PreToolUse",
+            tool_name: "SendMessage",
+            tool_input: { type: "message", recipient: agentId, content: "Still working?" },
+            tool_use_id: "tool-send-live",
+          },
+          "tool-send-live",
+          { signal },
+        ),
+      );
+      assert.deepEqual(liveResult, {});
+
+      // The start signal independently clears stale stop state when another
+      // Claude mechanism, rather than SendMessage, wakes the agent.
+      yield* Effect.promise(() =>
+        subagentStopHook(
+          {
+            ...hookBase,
+            hook_event_name: "SubagentStop",
+            stop_hook_active: false,
+            agent_id: agentId,
+            agent_type: "Explore",
+            agent_transcript_path: `/tmp/${agentId}.jsonl`,
+          },
+          undefined,
+          { signal },
+        ),
+      );
+      yield* Effect.promise(() =>
+        subagentStartHook(
+          {
+            ...hookBase,
+            hook_event_name: "SubagentStart",
+            agent_id: agentId,
+            agent_type: "Explore",
+          },
+          undefined,
+          { signal },
+        ),
+      );
+      const restartedResult = yield* Effect.promise(() =>
+        preToolUseHook(
+          {
+            ...hookBase,
+            hook_event_name: "PreToolUse",
+            tool_name: "SendMessage",
+            tool_input: { type: "message", recipient: agentId, content: "Progress?" },
+            tool_use_id: "tool-send-restarted",
+          },
+          "tool-send-restarted",
+          { signal },
+        ),
+      );
+      assert.deepEqual(restartedResult, {});
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("denies AskUserQuestion when the waiting turn is aborted", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

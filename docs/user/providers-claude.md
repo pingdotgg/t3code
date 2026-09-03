@@ -46,6 +46,12 @@ offers to compact the conversation before you continue. You can also select **Co
 from the context meter. On every client, you can enter `/compact` in the message composer, and
 Claude can show its own resume prompt when you continue an old session.
 
+When Claude tries to message a sub-agent after that worker has stopped, T3 Code asks whether to
+start a fresh agent or resume the existing one. Resuming restores the worker's previous
+conversation and can make Claude process all of that history again. Starting fresh blocks that
+resume and tells Claude to launch a new agent with a concise handoff. Messages to agents that are
+still running continue without a prompt.
+
 ## Where Claude Skills Are Loaded
 
 T3 Code looks for Claude skills in the Claude config directory's `skills` folder and

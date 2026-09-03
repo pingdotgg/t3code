@@ -274,6 +274,7 @@ export type SessionStartedPayload = typeof SessionStartedPayload.Type;
 
 const SessionConfiguredPayload = Schema.Struct({
   config: UnknownRecordSchema,
+  resumeCursor: Schema.optional(Schema.Unknown),
 });
 export type SessionConfiguredPayload = typeof SessionConfiguredPayload.Type;
 

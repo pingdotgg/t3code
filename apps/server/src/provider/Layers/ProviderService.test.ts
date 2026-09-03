@@ -1736,6 +1736,89 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("persists current-instance cursors and ignores stale adapter updates", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = asThreadId("thread-runtime-resume-cursor");
+      const session = yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: claudeAgentInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* provider.sendTurn({
+        threadId: session.threadId,
+        input: "delegate this",
+        attachments: [],
+      });
+
+      const updatedResumeCursor = {
+        resume: "550e8400-e29b-41d4-a716-446655440000",
+        stoppedSubagents: [{ agentId: "agent-complete", agentType: "Explore" }],
+      };
+      const eventConsumer = yield* Stream.runHead(provider.streamEvents).pipe(Effect.forkChild);
+      yield* advanceTestClock(50);
+      routing.claude.emit({
+        type: "session.configured",
+        eventId: asEventId("event-resume-cursor-updated"),
+        provider: ProviderDriverKind.make("claudeAgent"),
+        threadId,
+        createdAt: "2026-09-01T00:00:00.000Z",
+        payload: { config: {}, resumeCursor: updatedResumeCursor },
+      });
+
+      yield* Fiber.join(eventConsumer);
+      const persisted = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.equal(Option.isSome(persisted), true);
+      if (Option.isSome(persisted)) {
+        assert.deepEqual(persisted.value.resumeCursor, updatedResumeCursor);
+        assert.equal(persisted.value.providerInstanceId, claudeAgentInstanceId);
+        assert.deepEqual(persisted.value.runtimePayload, {
+          cwd: session.cwd,
+          model: null,
+          activeTurnId: `turn-${String(threadId)}`,
+          lastError: null,
+          lastRuntimeEvent: "provider.sendTurn",
+          lastRuntimeEventAt: "1970-01-01T00:00:00.000Z",
+        });
+
+        const replacementResumeCursor = { opaque: "new-owner-resume" };
+        yield* runtimeRepository.upsert({
+          ...persisted.value,
+          providerName: "codex",
+          providerInstanceId: codexInstanceId,
+          adapterKey: "codex",
+          resumeCursor: replacementResumeCursor,
+          lastSeenAt: "2026-09-01T00:01:00.000Z",
+        });
+        const staleEventConsumer = yield* Stream.runHead(provider.streamEvents).pipe(
+          Effect.forkChild,
+        );
+        yield* advanceTestClock(50);
+        routing.claude.emit({
+          type: "session.configured",
+          eventId: asEventId("event-stale-resume-cursor"),
+          provider: ProviderDriverKind.make("claudeAgent"),
+          threadId,
+          createdAt: "2026-09-01T00:02:00.000Z",
+          payload: {
+            config: {},
+            resumeCursor: { opaque: "stale-owner-resume" },
+          },
+        });
+        yield* Fiber.join(staleEventConsumer);
+
+        const afterStaleEvent = yield* runtimeRepository.getByThreadId({ threadId });
+        assert.equal(Option.isSome(afterStaleEvent), true);
+        if (Option.isSome(afterStaleEvent)) {
+          assert.equal(afterStaleEvent.value.providerInstanceId, codexInstanceId);
+          assert.deepEqual(afterStaleEvent.value.resumeCursor, replacementResumeCursor);
+        }
+      }
+    }),
+  );
+
   it.effect("does not persist running after a concurrent send is interrupted", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -2588,6 +2671,8 @@ const boundedListing = makeProviderServiceLayer({
     upsert: () => Effect.void,
     getProvider: () => Effect.die("ProviderService.listSessions does not use getProvider"),
     getBinding,
+    updateResumeCursorIfCurrentInstance: () =>
+      Effect.die("ProviderService.listSessions does not update resume cursors"),
     listThreadIds,
     listBindings: () => Effect.die("ProviderService.listSessions does not use listBindings"),
   },

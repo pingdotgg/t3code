@@ -164,6 +164,20 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       ),
     );
 
+  const updateResumeCursorIfCurrentInstance: ProviderSessionDirectoryShape["updateResumeCursorIfCurrentInstance"] =
+    Effect.fn(function* (input) {
+      const lastSeenAt = DateTime.formatIso(yield* DateTime.now);
+      return yield* repository
+        .updateResumeCursorIfCurrentInstance({ ...input, lastSeenAt })
+        .pipe(
+          Effect.mapError(
+            toPersistenceError(
+              "ProviderSessionDirectory.updateResumeCursorIfCurrentInstance:update",
+            ),
+          ),
+        );
+    });
+
   const listThreadIds: ProviderSessionDirectoryShape["listThreadIds"] = () =>
     repository.list().pipe(
       Effect.mapError(toPersistenceError("ProviderSessionDirectory.listThreadIds:list")),
@@ -186,6 +200,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
     upsert,
     getProvider,
     getBinding,
+    updateResumeCursorIfCurrentInstance,
     listThreadIds,
     listBindings,
   } satisfies ProviderSessionDirectoryShape;
