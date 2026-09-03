@@ -672,7 +672,10 @@ function ThreadWorkGroupList(props: {
         scrollsToTop={false}
         bounces={false}
         keyboardShouldPersistTaps="handled"
-        style={StyleSheet.absoluteFill}
+        // MaskedView bridges through a native host whose absolute-fill bounds
+        // can lag behind a resize. Keep the list's viewport at the group's
+        // current height when expanding details or appending calls.
+        style={[StyleSheet.absoluteFill, { height }]}
       />
     </MaskedView>
   );
