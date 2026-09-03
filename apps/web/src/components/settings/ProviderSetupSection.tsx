@@ -169,6 +169,20 @@ function ProviderSetupActions({
   const authorizationUrl = auth?.phase === "waiting" ? auth.authorizationUrl : null;
   const queryError = authQuery.error ?? installQuery.error;
   const actionsDisabled = pendingLabel !== null || queryError !== null;
+  const installationStatusMessage =
+    installation?.phase === "downloading"
+      ? `Downloading ${(installation.downloadedBytes / 1_000_000).toFixed(1)} MB${installation.totalBytes === null ? "" : ` of ${(installation.totalBytes / 1_000_000).toFixed(1)} MB`}.`
+      : installation?.phase === "extracting"
+        ? "Extracting Antigravity."
+        : installation?.phase === "verifying"
+          ? "Checking the downloaded runtime."
+          : installed
+            ? "Antigravity is installed."
+            : usesCustomBinary
+              ? enabled
+                ? "The configured Antigravity runtime is unavailable."
+                : "The configured Antigravity runtime has not been checked."
+              : "Install the official Antigravity runtime before signing in.";
 
   async function runCommand<A, E>(
     label: string,
@@ -252,19 +266,7 @@ function ProviderSetupActions({
       <div className="grid gap-2">
         <p className="font-medium">Runtime</p>
         <p role="status" className="text-muted-foreground">
-          {installation?.phase === "downloading"
-            ? `Downloading ${(installation.downloadedBytes / 1_000_000).toFixed(1)} MB${installation.totalBytes === null ? "" : ` of ${(installation.totalBytes / 1_000_000).toFixed(1)} MB`}.`
-            : installation?.phase === "extracting"
-              ? "Extracting Antigravity."
-              : installation?.phase === "verifying"
-                ? "Checking the downloaded runtime."
-                : installed
-                  ? "Antigravity is installed."
-                  : usesCustomBinary
-                    ? enabled
-                      ? "The configured Antigravity runtime is unavailable."
-                      : "The configured Antigravity runtime has not been checked."
-                    : "Install the official Antigravity runtime before signing in."}
+          {installationStatusMessage}
         </p>
         {installation?.phase === "downloading" &&
         installation.totalBytes !== null &&
@@ -276,7 +278,7 @@ function ProviderSetupActions({
             max={installation.totalBytes}
           />
         ) : null}
-        {installation?.message ? (
+        {installation?.message && installation.message !== installationStatusMessage ? (
           <p className="text-muted-foreground [overflow-wrap:anywhere]">{installation.message}</p>
         ) : null}
         {usesCustomBinary ? (
