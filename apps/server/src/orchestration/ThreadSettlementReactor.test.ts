@@ -301,16 +301,22 @@ describe("ThreadSettlementReactor", () => {
           const commands = yield* Ref.get(fixture.commands);
           assert.deepStrictEqual(
             commands
-              .map(({ threadId, snapshotSequence }) => ({ threadId, snapshotSequence }))
+              .map(({ threadId, snapshotSequence, settledAt }) => ({
+                threadId,
+                snapshotSequence,
+                settledAt,
+              }))
               .sort((left, right) => left.threadId.localeCompare(right.threadId)),
             [
               {
                 threadId: ThreadId.make("closed-pr"),
                 snapshotSequence: 1,
+                settledAt: "2026-08-20T00:00:00.000Z",
               },
               {
                 threadId: ThreadId.make("inactive"),
                 snapshotSequence: 1,
+                settledAt: "2026-08-20T00:00:00.000Z",
               },
             ],
           );

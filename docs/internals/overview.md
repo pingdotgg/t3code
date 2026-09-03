@@ -97,7 +97,8 @@ when a connected environment drifts.
 once per minute, including when no client is connected. It dispatches the guarded internal
 `thread.auto-settle` command, which uses the existing settlement event lifecycle. Automatic
 settlement excludes live background work and requires a comparable PR timestamp for immediate PR
-settlement. The command also rejects any later event for its thread after the reactor's snapshot.
+settlement. The command carries the latest activity timestamp and rejects any later event for its
+thread after the reactor's snapshot.
 Clients render the persisted settlement state and do not derive settlement from PR or inactivity
 state. A committed `thread.settled` event also lets `ProviderCommandReactor` stop an idle provider
 session.

@@ -25,7 +25,7 @@ describe("resolveWorkEntryToolPresentation", () => {
     "preview_click",
   ])("recognizes browser tool names across providers: %s", (label) => {
     expect(resolveWorkEntryToolPresentation({ label })).toEqual({
-      displayName: "Click in the preview browser",
+      displayName: "Clicking in the preview browser",
       icon: "browser",
     });
   });
@@ -37,7 +37,7 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolTitle: "Inspect the current page",
         toolData: { server: "t3-code", tool: "preview_snapshot", result: { title: "Example" } },
       }),
-    ).toEqual({ displayName: "Take a snapshot of the preview page", icon: "browser" });
+    ).toEqual({ displayName: "Taking a snapshot of the preview page", icon: "browser" });
   });
 
   it.each([
@@ -46,7 +46,7 @@ describe("resolveWorkEntryToolPresentation", () => {
     ["failed", "Failed to click in the preview browser"],
     ["declined", "Declined to click in the preview browser"],
     ["stopped", "Stopped clicking in the preview browser"],
-    ["unknown", "Click in the preview browser"],
+    ["unknown", "Clicking in the preview browser"],
   ])("describes the tool's own %s state", (toolLifecycleStatus, displayName) => {
     expect(
       resolveWorkEntryToolPresentation({
@@ -115,7 +115,7 @@ describe("resolveWorkEntryToolPresentation", () => {
         label: "mcp__t3_code__task_status",
         toolTitle: "Check the child task",
       }),
-    ).toEqual({ displayName: "Get delegated task status", icon: "t3-code" });
+    ).toEqual({ displayName: "Getting delegated task status", icon: "t3-code" });
   });
 
   it("does not brand unknown tools or another server's matching tool name", () => {
@@ -353,17 +353,11 @@ describe("toolGroupAction", () => {
 describe("resolveViewedImageAsset", () => {
   const threadId = ThreadId.make("thread-1");
 
-  it("loads t3 attachment paths as attachments", () => {
-    const attachmentId =
-      "11111111-1111-4111-8111-111111111111-22222222-2222-4222-8222-222222222222";
-    expect(
-      resolveViewedImageAsset(`/Users/demo/.t3/dev/attachments/${attachmentId}.png`, {
-        threadId,
-        workspaceRoot: "/workspace",
-      }),
-    ).toEqual({
-      resource: { _tag: "attachment", attachmentId },
-      alt: `${attachmentId}.png`,
+  it("serves t3 attachment paths in place like any other host path", () => {
+    const path = "/Users/demo/.t3/dev/attachments/11111111-1111-4111-8111-111111111111.png";
+    expect(resolveViewedImageAsset(path, { threadId, workspaceRoot: "/workspace" })).toEqual({
+      resource: { _tag: "media-file", threadId, path },
+      alt: "11111111-1111-4111-8111-111111111111.png",
       srcFragment: "",
     });
   });

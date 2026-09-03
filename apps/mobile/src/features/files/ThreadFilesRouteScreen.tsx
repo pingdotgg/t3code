@@ -668,7 +668,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
               id: action.id,
               title: action.title,
               icon:
-                action.id === "share" ? ("square.and.arrow.up" as const) : ("doc.on.doc" as const),
+                action.id === "save" ? ("square.and.arrow.up" as const) : ("doc.on.doc" as const),
               inline: false,
               onPress: action.run,
             }))
