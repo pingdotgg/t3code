@@ -49,7 +49,6 @@ import {
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
-  MessageSquareIcon,
   PinIcon,
   PlusIcon,
   SearchIcon,
@@ -1309,7 +1308,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 faviconPath={props.projectFaviconPath}
                 projectIcon={props.projectIcon}
                 className="size-4"
-                fallbackIcon={MessageSquareIcon}
               />
             </span>
             {title}
@@ -1757,7 +1755,6 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
             faviconPath={props.projectFaviconPath}
             projectIcon={props.projectIcon}
             className="size-4 shrink-0"
-            fallbackIcon={MessageSquareIcon}
           />
           <span className="min-w-0 flex-1 truncate">{thread.title}</span>
           <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
