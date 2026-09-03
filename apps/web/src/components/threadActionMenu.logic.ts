@@ -18,6 +18,7 @@ export type ThreadActionMenuId =
   | "rename"
   | "regenerate-title"
   | "mark-unread"
+  | "filter-by-project"
   | "copy"
   | "copy-path"
   | "copy-branch"
@@ -34,6 +35,7 @@ export interface ThreadActionMenuState {
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects a thread with an active turn, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
+  readonly filterByProjectLabel: string | null;
   readonly supports: {
     readonly settlement: boolean;
     readonly snooze: boolean;
@@ -106,6 +108,15 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
+    ...(state.filterByProjectLabel
+      ? [
+          {
+            id: "filter-by-project" as const,
+            label: `Filter by ${state.filterByProjectLabel}`,
+            icon: "folder" as const,
+          },
+        ]
+      : []),
     {
       id: "copy",
       label: "Copy",

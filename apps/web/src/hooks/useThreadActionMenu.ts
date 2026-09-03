@@ -142,6 +142,7 @@ export function useThreadActionMenu(input: {
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
           isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
+          filterByProjectLabel: null,
           supports,
           snoozePresets,
         });

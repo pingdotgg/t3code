@@ -1937,6 +1937,21 @@ export default function Sidebar() {
       ),
     [projectGroups],
   );
+  const projectScopeByMemberKey = useMemo(
+    () =>
+      new Map(
+        projectGroups.flatMap((group) =>
+          group.memberProjectRefs.map(
+            (projectRef) =>
+              [
+                `${projectRef.environmentId}:${projectRef.projectId}`,
+                { key: group.projectKey, label: group.displayName },
+              ] as const,
+          ),
+        ),
+      ),
+    [projectGroups],
+  );
 
   // now is quantized to the minute so effectiveSettled memoization doesn't
   // churn on every render; auto-settle thresholds are day-granular anyway.
@@ -3129,6 +3144,9 @@ export default function Sidebar() {
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
+        const threadProjectScope = projectScopeByMemberKey.get(
+          `${thread.environmentId}:${thread.projectId}`,
+        );
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
         const clicked = await settlePromise(() =>
@@ -3142,6 +3160,7 @@ export default function Sidebar() {
               isRegeneratingTitle,
               isRunning:
                 thread.session?.status === "running" && thread.session.activeTurnId != null,
+              filterByProjectLabel: threadProjectScope?.label ?? null,
               supports: {
                 settlement: supportsSettlement,
                 snooze: supportsSnooze,
@@ -3223,6 +3242,11 @@ export default function Sidebar() {
           }
           case "mark-unread":
             markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+            return;
+          case "filter-by-project":
+            if (threadProjectScope) {
+              setProjectScopeKey(threadProjectScope.key);
+            }
             return;
           case "copy-path":
             if (!threadWorkspacePath) {
@@ -3322,6 +3346,7 @@ export default function Sidebar() {
       handleMultiSelectContextMenu,
       markThreadUnread,
       projectCwdByKey,
+      projectScopeByMemberKey,
       serverConfigs,
       startThreadRename,
       updateThreadMetadata,

@@ -10,6 +10,7 @@ const baseState: ThreadActionMenuState = {
   canSnoozeNow: true,
   isRegeneratingTitle: false,
   isRunning: false,
+  filterByProjectLabel: null,
   supports: { settlement: true, snooze: true, pinning: true, titleRegeneration: true },
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
@@ -64,6 +65,15 @@ describe("buildThreadActionMenuItems", () => {
       (candidate) => candidate.id === "regenerate-title",
     );
     expect(item).toMatchObject({ label: "Regenerating…", disabled: true });
+  });
+
+  it("includes the project filter action when requested by the thread list", () => {
+    const item = buildThreadActionMenuItems({
+      ...baseState,
+      filterByProjectLabel: "T3 Code",
+    }).find((candidate) => candidate.id === "filter-by-project");
+
+    expect(item).toMatchObject({ label: "Filter by T3 Code" });
   });
 
   it("marks delete as destructive and keeps it last", () => {
