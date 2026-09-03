@@ -2,7 +2,7 @@
 
 T3 Code selects a project icon automatically. It checks `t3.json`, common favicon and app icon
 paths, and icon links in project HTML files. If it does not find an image, it chooses a built-in
-emoji from the project name.
+icon from the project name.
 
 To choose a different icon or emoji:
 
