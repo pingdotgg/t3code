@@ -225,6 +225,11 @@ function threadTimeLabel(thread: SidebarThreadSummary): string {
   return compactSidebarTimeLabel(formatRelativeTimeLabel(timestamp));
 }
 
+function threadCompletedTimeLabel(thread: SidebarThreadSummary): string {
+  const timestamp = thread.latestTurn?.completedAt ?? thread.updatedAt;
+  return compactSidebarTimeLabel(formatRelativeTimeLabel(timestamp));
+}
+
 // Settled rows read "how long ago did this wrap up", matching their sort
 // key: both go through resolveSettledThreadTimestamp so label and order can't
 // disagree.
@@ -728,6 +733,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
 const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
+  compact: boolean;
   // Slim rows are either settled (action: un-settle) or merely quiet
   // (seen Ready threads — action: settle).
   variantAction: "settle" | "unsettle" | "unsnooze";
@@ -1269,6 +1275,93 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     )
   ) : null;
 
+  if (variant === "card" && props.compact) {
+    const compactStatus =
+      status === "working" ? (
+        <span
+          role="status"
+          aria-label="Working"
+          className="inline-flex shrink-0 items-center gap-1 text-sky-600 tabular-nums dark:text-sky-400"
+        >
+          <CircleDashedIcon aria-hidden className="size-4" />
+          <span aria-hidden>
+            <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
+          </span>
+        </span>
+      ) : status === "ready" ? (
+        <span
+          role="status"
+          aria-label={`Completed ${threadCompletedTimeLabel(thread)}`}
+          className="inline-flex shrink-0 items-center gap-1 text-emerald-700 tabular-nums dark:text-emerald-300"
+        >
+          <CircleCheckIcon aria-hidden className="size-4" />
+          <span aria-hidden className="text-secondary-label">
+            {threadCompletedTimeLabel(thread)}
+          </span>
+        </span>
+      ) : topStatus ? (
+        <span role="status" className={cn("shrink-0 text-xs font-medium", topStatus.className)}>
+          {topStatus.label}
+        </span>
+      ) : (
+        <span className="shrink-0 text-xs text-secondary-label tabular-nums">
+          {threadTimeLabel(thread)}
+        </span>
+      );
+
+    return (
+      <li
+        data-thread-item
+        ref={props.sortable?.setNodeRef}
+        style={
+          props.sortable
+            ? {
+                transform: CSS.Translate.toString(props.sortable.transform),
+                transition: props.sortable.transition,
+              }
+            : undefined
+        }
+        {...(props.sortable?.listeners ?? {})}
+        className={cn(
+          "list-none [content-visibility:auto] [contain-intrinsic-size:auto_36px]",
+          props.sortable?.isDragging && "z-20 opacity-80",
+        )}
+      >
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <div
+                role="button"
+                tabIndex={0}
+                data-testid="sidebar-row-compact"
+                aria-busy={isRegeneratingTitle || undefined}
+                className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2 px-2.5")}
+                onClick={handleClick}
+                onDoubleClick={handleDoubleClick}
+                onKeyDown={handleKeyDown}
+                onContextMenu={handleContextMenu}
+              />
+            }
+          >
+            <ProjectFavicon
+              environmentId={thread.environmentId}
+              cwd={props.projectCwd ?? ""}
+              faviconPath={props.projectFaviconPath}
+              className="size-4 shrink-0"
+              fallbackIcon={MessageSquareIcon}
+            />
+            {title}
+            {isRegeneratingTitle ? <span className="sr-only">Regenerating title</span> : null}
+            {pinIndicator}
+            {compactStatus}
+            {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
+          </TooltipTrigger>
+          {detailsTooltip}
+        </Tooltip>
+      </li>
+    );
+  }
+
   if (variant === "slim") {
     return (
       <li
@@ -1789,6 +1882,7 @@ export default function Sidebar() {
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const compactThreadRows = useClientSettings((s) => s.sidebarCompactThreadRows);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
@@ -3828,10 +3922,9 @@ export default function Sidebar() {
                     const threadKey = scopedThreadKey(
                       scopeThreadRef(thread.environmentId, thread.id),
                     );
-                    // Settled and snoozed are the ONLY things that collapse a
-                    // row: every other thread is a full card. Density comes
-                    // from users (or the auto rules) actually parking work,
-                    // not from the sidebar second-guessing what still matters.
+                    // Settled and snoozed always use slim rows. Active and
+                    // pinned threads use cards unless the user has explicitly
+                    // enabled the compact thread-list preference.
                     const isCard = section === "active" || section === "pinned";
                     const rowVariant = isCard ? "card" : "slim";
                     return (
@@ -3845,6 +3938,7 @@ export default function Sidebar() {
                         key={`${threadKey}:${rowVariant}`}
                         thread={thread}
                         variant={rowVariant}
+                        compact={compactThreadRows}
                         // Snoozed rows wake, settled rows un-settle, and cards settle.
                         variantAction={
                           section === "snoozed"

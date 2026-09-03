@@ -189,7 +189,18 @@ describe("ClientSettings environment identification", () => {
 
 describe("ClientSettings sidebar", () => {
   it("defaults to the current sidebar", () => {
-    expect(decodeClientSettings({}).legacySidebarEnabled).toBe(false);
+    const settings = decodeClientSettings({});
+    expect(settings.legacySidebarEnabled).toBe(false);
+    expect(settings.sidebarCompactThreadRows).toBe(false);
+  });
+
+  it("preserves an explicit compact thread row preference", () => {
+    expect(decodeClientSettings({ sidebarCompactThreadRows: true }).sidebarCompactThreadRows).toBe(
+      true,
+    );
+    expect(
+      decodeClientSettingsPatch({ sidebarCompactThreadRows: true }).sidebarCompactThreadRows,
+    ).toBe(true);
   });
 
   it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
