@@ -1,4 +1,3 @@
-import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Data from "effect/Data";
 import * as Crypto from "effect/Crypto";
@@ -49,9 +48,14 @@ const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
 const RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES = 59_000;
-const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
-const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 80_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
+// Review previews share the same per-file expansion budget for tracked and untracked changes.
+// Keeping the tracked patch at this limit prevents large lockfile or generated-file changes from
+// hiding later source files behind a small, order-dependent truncation cap.
+const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES;
+const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES;
+const REVIEW_UNTRACKED_DIFF_TOTAL_MAX_OUTPUT_BYTES = REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES;
+const REVIEW_UNTRACKED_DIFF_BATCH_SIZE = 4;
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 120_000;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
@@ -2191,38 +2195,73 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return { diff: "", truncated: untrackedResult.stdoutTruncated };
     }
 
-    const diffs = yield* Effect.forEach(
-      untrackedPaths,
-      (relativePath) =>
-        executeGit(
-          "GitVcsDriver.readUntrackedReviewDiffs.diff",
-          cwd,
-          [
-            "diff",
-            "--no-index",
-            "--patch",
-            "--no-color",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--minimal",
-            "--",
-            "/dev/null",
-            relativePath,
-          ],
-          {
-            allowNonZeroExit: true,
-            maxOutputBytes: REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES,
-            appendTruncationMarker: true,
-          },
-        ),
-      { concurrency: 4 },
-    );
+    const readUntrackedDiff = (relativePath: string) =>
+      executeGit(
+        "GitVcsDriver.readUntrackedReviewDiffs.diff",
+        cwd,
+        [
+          "diff",
+          "--no-index",
+          "--patch",
+          "--no-color",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--minimal",
+          "--",
+          "/dev/null",
+          relativePath,
+        ],
+        {
+          allowNonZeroExit: true,
+          maxOutputBytes: REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES,
+          appendTruncationMarker: true,
+        },
+      );
+    const encoder = new TextEncoder();
+    let diff = "";
+    let totalBytes = 0;
+    let truncated = untrackedResult.stdoutTruncated;
+    let aggregateLimitReached = false;
+    // Bound concurrent subprocess output while still keeping small workspaces responsive.
+    for (
+      let offset = 0;
+      offset < untrackedPaths.length && !aggregateLimitReached;
+      offset += REVIEW_UNTRACKED_DIFF_BATCH_SIZE
+    ) {
+      const batchResults = yield* Effect.forEach(
+        untrackedPaths.slice(offset, offset + REVIEW_UNTRACKED_DIFF_BATCH_SIZE),
+        readUntrackedDiff,
+        { concurrency: REVIEW_UNTRACKED_DIFF_BATCH_SIZE },
+      );
+
+      for (const result of batchResults) {
+        if (result.stdout.trim().length === 0) {
+          truncated ||= result.stdoutTruncated;
+          continue;
+        }
+
+        const separator = diff.length > 0 ? "\n" : "";
+        const next = `${separator}${result.stdout}`;
+        const nextBytes = encoder.encode(next).byteLength;
+        if (totalBytes + nextBytes > REVIEW_UNTRACKED_DIFF_TOTAL_MAX_OUTPUT_BYTES) {
+          truncated = true;
+          aggregateLimitReached = true;
+          break;
+        }
+
+        diff += next;
+        totalBytes += nextBytes;
+        truncated ||= result.stdoutTruncated;
+      }
+    }
+
+    if (truncated) {
+      diff += OUTPUT_TRUNCATED_MARKER;
+    }
 
     return {
-      diff: Arr.filterMap(diffs, (result) =>
-        result.stdout.trim().length > 0 ? Result.succeed(result.stdout) : Result.failVoid,
-      ).join("\n"),
-      truncated: untrackedResult.stdoutTruncated || diffs.some((result) => result.stdoutTruncated),
+      diff,
+      truncated,
     };
   });
 
