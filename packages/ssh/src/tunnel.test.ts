@@ -222,7 +222,10 @@ describe("ssh tunnel scripts", () => {
       "does not satisfy required range ",
     );
     assert.include(buildRemoteLaunchScript(), "wait_ready");
-    assert.include(buildRemoteLaunchScript(), '"$RUNNER_FILE" serve --host 127.0.0.1');
+    assert.include(
+      buildRemoteLaunchScript(),
+      '"$MANAGED_WRAPPER_FILE" "$RUNNER_FILE" "$REMOTE_NONCE" "$WRAPPER_READY_FILE" serve --host 127.0.0.1',
+    );
     assert.include(buildRemoteLaunchScript(), '--base-dir "$DEFAULT_SERVER_HOME"');
     assert.notInclude(buildRemoteLaunchScript(), "server-home");
     assert.include(buildRemoteLaunchScript(), "Remote T3 server did not become ready");
@@ -258,6 +261,13 @@ describe("ssh tunnel scripts", () => {
     );
     assert.include(buildRemoteLaunchScript(), "port > 65535");
     assert.include(buildRemoteLaunchScript(), 'PID_START_FILE="$STATE_DIR/pid-start"');
+    assert.include(buildRemoteLaunchScript(), 'MANAGED_WRAPPER_FILE="$STATE_DIR/run-managed.sh"');
+    assert.include(buildRemoteLaunchScript(), 'randomBytes(24).toString("hex")');
+    assert.include(
+      buildRemoteLaunchScript(),
+      'proc:*|ps:*"$MANAGED_WRAPPER_FILE"*"$REMOTE_NONCE"*',
+    );
+    assert.include(buildRemoteLaunchScript(), "printf 'ready\\n' >\"$WRAPPER_READY_FILE\"");
     assert.include(buildRemoteLaunchScript(), '[ "$DEFAULT_RUNTIME_PID" = "$REMOTE_PID" ]');
     assert.include(buildRemoteLaunchScript(), 'Number(origin.port || "80") !== port');
     assert.include(
@@ -340,6 +350,43 @@ describe("ssh tunnel scripts", () => {
       assert.isTrue(yield* fs.exists(path.join(stateDir, "pid")));
       assert.isTrue(yield* fs.exists(path.join(stateDir, "port")));
       assert.isTrue(yield* fs.exists(path.join(stateDir, "managed")));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("clears managed state after the verified process stops", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) === "win32") {
+        return;
+      }
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const homeDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-stop-success-test-" });
+      const target = {
+        alias: "devbox",
+        hostname: "devbox.example.com",
+        username: "julius",
+        port: 2222,
+      } as const;
+      const stateDir = path.join(homeDir, ".t3", "ssh-launch", remoteStateKey(target));
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      yield* fs.writeFileString(path.join(stateDir, "pid"), "123\n");
+      yield* fs.writeFileString(path.join(stateDir, "pid-start"), "ps:start\n");
+      yield* fs.writeFileString(path.join(stateDir, "port"), "3773\n");
+      yield* fs.writeFileString(path.join(stateDir, "managed"), "managed\n");
+      const script = `kill() { if [ "$1" = "-0" ]; then [ -f "$HOME/alive" ]; else rm -f "$HOME/alive"; touch "$HOME/signalled"; fi; }\nps() { [ -f "$HOME/alive" ] && printf 'start\\n'; }\ntouch "$HOME/alive"\n${buildRemoteStopScript(target)}`;
+      const child = yield* spawner.spawn(
+        ChildProcess.make("sh", ["-c", script], {
+          env: { HOME: homeDir },
+          extendEnv: true,
+        }),
+      );
+      const exitCode = yield* child.exitCode.pipe(Effect.map(Number));
+
+      assert.equal(exitCode, 0);
+      assert.isTrue(yield* fs.exists(path.join(homeDir, "signalled")));
+      assert.isFalse(yield* fs.exists(path.join(stateDir, "pid")));
+      assert.isFalse(yield* fs.exists(path.join(stateDir, "pid-start")));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 

@@ -422,7 +422,7 @@ const DesktopSshHostTextSchema = Schema.String.check(
 const DesktopSshUsernameSchema = Schema.String.check(
   Schema.isMaxLength(256),
   Schema.makeFilter((value) =>
-    /^[A-Za-z0-9._\\-]+$/u.test(value) ? undefined : "Invalid SSH username",
+    /^[A-Za-z0-9._\\-]+\$?$/u.test(value) ? undefined : "Invalid SSH username",
   ),
 );
 

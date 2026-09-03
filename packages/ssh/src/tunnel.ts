@@ -474,6 +474,7 @@ PID_START_FILE="$STATE_DIR/pid-start"
 MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
+MANAGED_WRAPPER_FILE="$STATE_DIR/run-managed.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
 mkdir -p "$STATE_DIR"
 cleanup_runner_next() {
@@ -532,7 +533,7 @@ NODE
       return 0
     fi
   fi
-  PS_IDENTITY="$(LC_ALL=C ps -o lstart= -p "$PID_TO_IDENTIFY" 2>/dev/null || true)"
+  PS_IDENTITY="$(LC_ALL=C ps -o lstart= -o command= -p "$PID_TO_IDENTIFY" 2>/dev/null || true)"
   [ -n "$PS_IDENTITY" ] || return 2
   printf 'ps:%s' "$PS_IDENTITY"
 }
@@ -543,8 +544,9 @@ managed_pid_is_owned() {
   if [ -z "$EXPECTED_PID_START" ]; then
     if process_identity "$REMOTE_PID" >/dev/null; then
       return 2
+    else
+      IDENTITY_STATUS=$?
     fi
-    IDENTITY_STATUS=$?
     [ "$IDENTITY_STATUS" -eq 1 ] && return 1
     return 2
   fi
@@ -562,8 +564,9 @@ stop_managed_pid() {
   if ! kill "$REMOTE_PID" 2>/dev/null; then
     if managed_pid_is_owned; then
       return 1
+    else
+      OWNERSHIP_STATUS=$?
     fi
-    OWNERSHIP_STATUS=$?
     [ "$OWNERSHIP_STATUS" -eq 1 ] && return 0
     return 2
   fi
@@ -574,8 +577,9 @@ stop_managed_pid() {
   done
   if managed_pid_is_owned; then
     return 1
+  else
+    OWNERSHIP_STATUS=$?
   fi
-  OWNERSHIP_STATUS=$?
   [ "$OWNERSHIP_STATUS" -eq 1 ] && return 0
   return 2
 }
@@ -720,18 +724,70 @@ if [ -z "$REMOTE_PORT" ]; then
     printf 'Failed to find an available port on the remote host. Ensure node is available on PATH.\\n' >&2
     exit 1
   fi
-  nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
+  cat >"$MANAGED_WRAPPER_FILE" <<'SH'
+#!/bin/sh
+set -eu
+RUNNER_FILE="$1"
+LAUNCH_NONCE="$2"
+WRAPPER_READY_FILE="$3"
+shift 3
+CHILD_PID=""
+stop_child() {
+  rm -f "$WRAPPER_READY_FILE"
+  if [ -n "$CHILD_PID" ] && kill -0 "$CHILD_PID" 2>/dev/null; then
+    kill "$CHILD_PID" 2>/dev/null || true
+    wait "$CHILD_PID" 2>/dev/null || true
+  fi
+  exit 143
+}
+trap stop_child TERM INT HUP
+: "$LAUNCH_NONCE"
+printf 'ready\\n' >"$WRAPPER_READY_FILE"
+env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" "$@" &
+CHILD_PID="$!"
+CHILD_EXIT=0
+wait "$CHILD_PID" || CHILD_EXIT="$?"
+rm -f "$WRAPPER_READY_FILE"
+exit "$CHILD_EXIT"
+SH
+  chmod 700 "$MANAGED_WRAPPER_FILE"
+  REMOTE_NONCE="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(24).toString("hex"))')"
+  WRAPPER_READY_FILE="$STATE_DIR/wrapper-ready.$REMOTE_NONCE"
+  rm -f "$WRAPPER_READY_FILE"
+  nohup "$MANAGED_WRAPPER_FILE" "$RUNNER_FILE" "$REMOTE_NONCE" "$WRAPPER_READY_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   REMOTE_MANAGED="managed"
-  if REMOTE_PID_START="$(process_identity "$REMOTE_PID")"; then
-    :
-  else
+  READY_ATTEMPT=0
+  while [ ! -f "$WRAPPER_READY_FILE" ] && [ "$READY_ATTEMPT" -lt 20 ]; do
+    READY_ATTEMPT=$((READY_ATTEMPT + 1))
+    sleep 0.05
+  done
+  if [ ! -f "$WRAPPER_READY_FILE" ]; then
+    printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
+    printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+    printf 'managed\\n' >"$MANAGED_FILE"
+    printf 'Managed remote T3 server wrapper did not become ready. State was retained.\\n' >&2
+    exit 1
+  fi
+  REMOTE_PID_START=""
+  IDENTITY_ATTEMPT=0
+  while [ "$IDENTITY_ATTEMPT" -lt 20 ]; do
+    IDENTITY_ATTEMPT=$((IDENTITY_ATTEMPT + 1))
+    if PID_IDENTITY="$(process_identity "$REMOTE_PID")"; then
+      case "$PID_IDENTITY" in
+        proc:*|ps:*"$MANAGED_WRAPPER_FILE"*"$REMOTE_NONCE"*) REMOTE_PID_START="$PID_IDENTITY"; break ;;
+      esac
+    fi
+    sleep 0.05
+  done
+  if [ -z "$REMOTE_PID_START" ]; then
     printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
     printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
     printf 'managed\\n' >"$MANAGED_FILE"
     printf 'Could not verify the managed remote T3 server process identity.\\n' >&2
     exit 1
   fi
+  rm -f "$WRAPPER_READY_FILE"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf '%s\\n' "$REMOTE_PID_START" >"$PID_START_FILE"
@@ -792,7 +848,7 @@ NODE
       return 0
     fi
   fi
-  PS_IDENTITY="$(LC_ALL=C ps -o lstart= -p "$PID_TO_IDENTIFY" 2>/dev/null || true)"
+  PS_IDENTITY="$(LC_ALL=C ps -o lstart= -o command= -p "$PID_TO_IDENTIFY" 2>/dev/null || true)"
   [ -n "$PS_IDENTITY" ] || return 2
   printf 'ps:%s' "$PS_IDENTITY"
 }
@@ -807,8 +863,9 @@ if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && [ -z "$EXPECTED_
   if process_identity "$REMOTE_PID" >/dev/null; then
     printf 'Managed remote T3 server process %s has no ownership identity. State was retained.\\n' "$REMOTE_PID" >&2
     exit 1
+  else
+    IDENTITY_STATUS=$?
   fi
-  IDENTITY_STATUS=$?
   if [ "$IDENTITY_STATUS" -eq 2 ]; then
     printf 'Could not verify managed remote T3 server process %s. State was retained.\\n' "$REMOTE_PID" >&2
     exit 1

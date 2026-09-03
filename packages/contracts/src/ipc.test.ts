@@ -96,6 +96,14 @@ describe("DesktopSshEnvironmentTargetSchema", () => {
     ]) {
       expect(() => decode(input)).toThrow();
     }
+    expect(
+      decode({
+        alias: "devbox",
+        hostname: "devbox.example.test",
+        username: "build$",
+        port: 22,
+      }).username,
+    ).toBe("build$");
   });
 
   it("rejects NUL bytes before values reach process spawning", () => {
