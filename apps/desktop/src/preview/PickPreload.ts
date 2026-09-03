@@ -483,6 +483,14 @@ function startAnnotation(): void {
   const composerRow = document.createElement("div");
   composerRow.className = "flex items-start gap-2 p-2";
 
+  const dragHandle = document.createElement("button");
+  dragHandle.type = "button";
+  dragHandle.textContent = "⠿";
+  dragHandle.title = "Drag annotation editor";
+  dragHandle.className =
+    "h-8 w-5 shrink-0 cursor-grab select-none border-0 bg-transparent p-0 font-sans text-lg font-bold leading-5 text-muted-foreground hover:text-foreground";
+  composerRow.appendChild(dragHandle);
+
   const adjust = createButton("", "Expand annotation editor");
   adjust.setAttribute("aria-label", "Expand annotation editor");
   adjust.setAttribute("aria-expanded", "false");
@@ -498,14 +506,6 @@ function startAnnotation(): void {
   comment.className =
     "min-h-8 max-h-24 min-w-0 flex-1 resize-none overflow-y-hidden border-0 border-b border-b-transparent bg-transparent px-0 py-1.5 font-sans text-sm leading-5 text-foreground outline-none ring-0 placeholder:text-muted-foreground focus:border-b-primary focus:outline-none focus:ring-0";
   composerRow.appendChild(comment);
-
-  const dragHandle = document.createElement("button");
-  dragHandle.type = "button";
-  dragHandle.textContent = "⠿";
-  dragHandle.title = "Drag annotation editor";
-  dragHandle.className =
-    "hidden h-8 w-6 shrink-0 cursor-grab select-none border-0 bg-transparent p-0 font-sans text-lg font-bold leading-5 text-muted-foreground";
-  composerRow.appendChild(dragHandle);
 
   const submit = createButton("Attach", "Attach annotation and screenshot (Enter)");
   submit.className +=
@@ -894,13 +894,16 @@ function startAnnotation(): void {
     };
   };
 
-  const applyEditorPosition = (position: { left: number; top: number }): void => {
+  const applyEditorPosition = (position: {
+    left: number;
+    top: number;
+  }): { left: number; top: number } => {
     const clamped = clampEditorPosition(position.left, position.top);
     editor.style.left = `${clamped.left}px`;
     editor.style.top = `${clamped.top}px`;
     editor.style.right = "auto";
     editor.style.bottom = "auto";
-    if (editorExpanded) editorPosition = clamped;
+    return clamped;
   };
 
   const getAnnotationBounds = (): PreviewAnnotationRect | null =>
@@ -948,7 +951,7 @@ function startAnnotation(): void {
     editorLayoutFrame = window.requestAnimationFrame(() => {
       editorLayoutFrame = null;
       if (editor.style.display === "none") return;
-      if (editorExpanded && editorPosition) applyEditorPosition(editorPosition);
+      if (editorPosition) applyEditorPosition(editorPosition);
       else positionCompactEditor();
     });
   }
@@ -956,20 +959,15 @@ function startAnnotation(): void {
   adjust.addEventListener("click", () => {
     if (selected.size === 0) return;
     if (!editorExpanded) {
-      const rect = editor.getBoundingClientRect();
       editorExpanded = true;
-      editorPosition = { left: rect.left, top: rect.top };
       stylePanel.style.display = selected.size > 0 ? "grid" : "none";
-      dragHandle.style.display = "block";
       adjust.setAttribute("aria-expanded", "true");
       adjust.title = "Collapse annotation editor";
       adjust.setAttribute("aria-label", "Collapse annotation editor");
       if (selected.size > 0) syncStyleControls();
     } else {
       editorExpanded = false;
-      editorPosition = null;
       stylePanel.style.display = "none";
-      dragHandle.style.display = "none";
       adjust.setAttribute("aria-expanded", "false");
       adjust.title = "Expand annotation editor";
       adjust.setAttribute("aria-label", "Expand annotation editor");
@@ -978,7 +976,7 @@ function startAnnotation(): void {
   });
 
   const onEditorPointerDown = (event: PointerEvent): void => {
-    if (event.button !== 0 || !editorExpanded) return;
+    if (event.button !== 0) return;
     const rect = editor.getBoundingClientRect();
     editorDrag = {
       pointerId: event.pointerId,
@@ -993,7 +991,8 @@ function startAnnotation(): void {
 
   const onEditorPointerMove = (event: PointerEvent): void => {
     if (!editorDrag || editorDrag.pointerId !== event.pointerId) return;
-    applyEditorPosition({
+    // Dragging pins the editor; until then it follows the selection.
+    editorPosition = applyEditorPosition({
       left: event.clientX - editorDrag.offsetX,
       top: event.clientY - editorDrag.offsetY,
     });
