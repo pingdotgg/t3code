@@ -5,6 +5,7 @@
  * different slash style, so attribution cannot rely on the host separator.
  */
 export function normalizeUsagePath(value: string): string {
+  const isWindowsPath = /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
   const slashPath = value.replaceAll("\\", "/");
   const rooted = slashPath.startsWith("/");
   const segments: string[] = [];
@@ -18,7 +19,8 @@ export function normalizeUsagePath(value: string): string {
     segments.push(segment);
   }
   const normalized = `${rooted ? "/" : ""}${segments.join("/")}`;
-  return normalized === "" ? (rooted ? "/" : ".") : normalized;
+  const result = normalized === "" ? (rooted ? "/" : ".") : normalized;
+  return isWindowsPath ? result.toLowerCase() : result;
 }
 
 /** Returns a normalized dedicated worktree, excluding the shared project root. */

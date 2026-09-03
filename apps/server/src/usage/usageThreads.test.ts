@@ -283,6 +283,31 @@ describe("foldThreadRows", () => {
     expect(rows[0]?.threadId).toBe(threadId);
     expect(rows[0]?.title).toBe("Normalized worktree");
   });
+  it("matches Windows worktrees without changing POSIX case sensitivity", () => {
+    const groups = accumulate([
+      [
+        record({ sessionId: "windows", cwd: "c:\\work\\app\\.wt\\thread-1\\src" }),
+        { sessionKey: "claude:windows", agentId: null },
+      ],
+      [
+        record({ sessionId: "posix", cwd: "/work/app/.wt/thread-1/src" }),
+        { sessionKey: "claude:posix", agentId: null },
+      ],
+    ]);
+    const attribution: ThreadAttribution = {
+      sessionToThread: new Map(),
+      worktreeToThread: new Map([
+        ["C:\\Work\\App\\.wt\\thread-1", { threadId, title: "Windows worktree" }],
+        ["/Work/App/.wt/thread-1", { threadId, title: "Different POSIX worktree" }],
+      ]),
+    };
+
+    const { rows } = foldThreadRows(groups, attribution, { cap: 40 });
+
+    const threadRow = rows.find((row) => row.threadId === threadId);
+    expect(threadRow?.sessions).toBe(1);
+    expect(rows.some((row) => row.threadId === null && row.sessions === 1)).toBe(true);
+  });
   it("scopes one T3 thread by provider and project", () => {
     const accumulator = new ThreadUsageAccumulator({
       timeZone: "UTC",
