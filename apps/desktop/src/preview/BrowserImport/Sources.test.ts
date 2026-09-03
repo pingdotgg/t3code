@@ -46,6 +46,7 @@ describe("Linux Chromium secret applications", () => {
         brave: "brave",
         vivaldi: "vivaldi",
         opera: "opera",
+        helium: "chromium",
         firefox: undefined,
       },
     );
@@ -102,6 +103,37 @@ const writeFirefoxCookieDatabase = (
     for (let index = 0; index < containerCount; index += 1) insert.run("^userContextId=2");
     database.close();
   });
+
+describe("Helium on Linux", () => {
+  it.effect("discovers its profiles and checks the user-data lock", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-helium-linux-" });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcessEnvironment, { HOME: home }),
+          Effect.provideService(HostProcessPlatform, "linux"),
+        );
+        const root = `${home}/.config/net.imput.helium`;
+        yield* fileSystem.makeDirectory(`${root}/Default`, { recursive: true });
+        yield* writeCookieDatabase(`${root}/Default/Cookies`, 3);
+        yield* fileSystem.writeFileString(
+          `${root}/Local State`,
+          '{"profile":{"info_cache":{"Default":{"name":"Personal"}}}}',
+        );
+
+        assert.include(helium.platforms, "linux");
+        assert.isTrue(yield* isSourceInstalled(helium, context));
+        assert.deepEqual(yield* listSourceProfiles(helium, context), [
+          { directory: "Default", name: "Personal", cookieCount: 3 },
+        ]);
+        assert.isFalse(yield* isSourceRunning(helium, context));
+        yield* fileSystem.symlink("foreign-host-4242", `${root}/SingletonLock`);
+        assert.isTrue(yield* isSourceRunning(helium, context));
+      }),
+    ),
+  );
+});
 
 describe("isSourceRunning", () => {
   it.effect("reads Chromium's dangling SingletonLock symlink as a running browser", () =>

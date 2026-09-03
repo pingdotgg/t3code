@@ -148,7 +148,7 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     linuxSegments: ["opera"],
     linuxSecretApplication: "opera",
   }),
-  // Arc and Helium ship macOS-only builds.
+  // Arc has no Linux build.
   chromiumSource({
     id: "arc",
     name: "Arc",
@@ -162,6 +162,9 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     keychainService: "Helium Storage Key",
     keychainAccount: "Helium",
     macSegments: ["net.imput.helium"],
+    linuxSegments: ["net.imput.helium"],
+    // Helium retains Chromium's libsecret application name on Linux.
+    linuxSecretApplication: "chromium",
   }),
   {
     id: "firefox",
