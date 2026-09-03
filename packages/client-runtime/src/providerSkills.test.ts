@@ -7,6 +7,7 @@ import {
   getProviderSlashCommandsForSlashMenu,
   getProviderSkillsForSlashMenu,
   resolveProviderSkillsForCwd,
+  resolveProviderSkillsForCwdAcrossProviders,
   resolveProviderSlashCommandsForCwd,
   resolveProviderSkillSourceKind,
 } from "./providerSkills.ts";
@@ -250,5 +251,39 @@ describe("workspace provider snapshots", () => {
   it("keeps the machine snapshot before this cwd has a provider snapshot", () => {
     expect(resolveProviderSkillsForCwd(provider, "/workspace/project-b")).toEqual(provider.skills);
     expect(resolveProviderSlashCommandsForCwd(provider, null)).toEqual(provider.slashCommands);
+  });
+
+  it("keeps skills from every provider available for persisted thread rendering", () => {
+    const openCode = {
+      ...provider,
+      instanceId: ProviderInstanceId.make("opencode"),
+      driver: ProviderDriverKind.make("opencode"),
+      skills: [{ name: "review", path: "/opencode/review/SKILL.md", enabled: true }],
+      workspaceSnapshots: [],
+    } satisfies ServerProvider;
+
+    expect(resolveProviderSkillsForCwdAcrossProviders([provider, openCode], null)).toEqual([
+      { name: "global", path: "/global/SKILL.md", enabled: true },
+      { name: "review", path: "/opencode/review/SKILL.md", enabled: true },
+    ]);
+  });
+
+  it("deduplicates shared skill names across providers", () => {
+    const duplicateProvider = {
+      ...provider,
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      skills: [
+        { name: "GLOBAL", path: "/claude/global/SKILL.md", enabled: true },
+        { name: "deploy", path: "/claude/deploy/SKILL.md", enabled: true },
+      ],
+      workspaceSnapshots: [],
+    } satisfies ServerProvider;
+
+    expect(
+      resolveProviderSkillsForCwdAcrossProviders([provider, duplicateProvider], null).map(
+        (skill) => skill.name,
+      ),
+    ).toEqual(["global", "deploy"]);
   });
 });

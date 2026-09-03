@@ -14,6 +14,7 @@ import {
   getProviderSkillsForSlashMenu,
   isProviderSkillUserInvocable,
   resolveProviderSkillsForCwd,
+  resolveProviderSkillsForCwdAcrossProviders,
 } from "@t3tools/client-runtime/providerSkills";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -25,6 +26,7 @@ import type { ComposerCommandItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
 
 const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
+const EMPTY_PROVIDER_STATUSES: ReadonlyArray<ServerProvider> = [];
 
 export function composerSelectionAtEnd(draftMessage: string): ComposerEditorSelection {
   return { start: draftMessage.length, end: draftMessage.length };
@@ -37,6 +39,7 @@ export function useComposerCommandMenu({
   environmentId,
   projectCwd,
   selectedProviderStatus,
+  providerStatuses = EMPTY_PROVIDER_STATUSES,
   hasThread,
   enabled = true,
   onChangeDraftMessage,
@@ -47,6 +50,7 @@ export function useComposerCommandMenu({
   readonly environmentId: EnvironmentId | null;
   readonly projectCwd: string | null;
   readonly selectedProviderStatus: ServerProvider | null;
+  readonly providerStatuses?: ReadonlyArray<ServerProvider>;
   readonly hasThread: boolean;
   readonly enabled?: boolean;
   readonly onChangeDraftMessage: (value: string) => void;
@@ -74,11 +78,14 @@ export function useComposerCommandMenu({
     setSelection(composerSelectionAtEnd(draftMessage));
   }, [draftMessage, ownerKey]);
 
-  const skills = useMemo(
-    () =>
-      selectedProviderStatus ? resolveProviderSkillsForCwd(selectedProviderStatus, projectCwd) : [],
-    [projectCwd, selectedProviderStatus],
-  );
+  const skills = useMemo(() => {
+    const directSkills = selectedProviderStatus
+      ? resolveProviderSkillsForCwd(selectedProviderStatus, projectCwd)
+      : [];
+    return directSkills.length > 0
+      ? directSkills
+      : resolveProviderSkillsForCwdAcrossProviders(providerStatuses, projectCwd);
+  }, [projectCwd, providerStatuses, selectedProviderStatus]);
   const slashCommands = selectedProviderStatus?.slashCommands ?? [];
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,

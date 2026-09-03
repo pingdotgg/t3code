@@ -2,8 +2,12 @@ import {
   type ChatAttachment,
   CommandId,
   EventId,
+  type MessageId,
   type ModelSelection,
   type OrchestrationEvent,
+  type OrchestrationMessage,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
@@ -99,8 +103,19 @@ const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const MAX_REGENERATION_ATTACHMENTS = 4;
 const MAX_THREAD_TITLE_CONTEXT_CHARS = 8_000;
 const MAX_FIRST_USER_TITLE_CONTEXT_CHARS = 2_000;
+const MAX_THREAD_CONTINUITY_CONTEXT_CHARS = 60_000;
+const MAX_THREAD_CONTINUITY_MESSAGE_CHARS = 4_000;
+const CURRENT_REQUEST_PREFIX = "\n\nCurrent Request:\n";
+const THREAD_CONTINUITY_SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 const THREAD_TITLE_CONTEXT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
 const FIRST_USER_CONTEXT_TRUNCATION_MARKER = "\n[First user message truncated]";
+
+function escapeThreadContinuitySkillTokens(value: string): string {
+  return value.replace(
+    THREAD_CONTINUITY_SKILL_TOKEN_REGEX,
+    (_match, prefix: string, name: string) => `${prefix}\\$${name}`,
+  );
+}
 
 type ThreadTitleMessage = {
   readonly role: "user" | "assistant" | "system";
@@ -332,6 +347,7 @@ const make = Effect.gen(function* () {
     );
 
   const threadModelSelections = new Map<string, ModelSelection>();
+  const threadContinuityPending = new Set<string>();
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -599,14 +615,36 @@ const make = Effect.gen(function* () {
       });
     }
     const preferredProvider: ProviderDriverKind = desiredDriverKind;
-    if (options?.pendingTurnStart === true && thread.session?.status !== "running") {
+
+    const isDriverChanged = currentInfo.driverKind !== desiredInfo.driverKind;
+    const isContinuationIncompatible =
+      currentInfo.continuationIdentity.continuationKey !==
+      desiredInfo.continuationIdentity.continuationKey;
+    const isHandoffSwitch =
+      (thread.session !== null || thread.messages.length > 0) &&
+      requestedModelSelection !== undefined &&
+      requestedModelSelection.instanceId !== currentInstanceId &&
+      (isDriverChanged || isContinuationIncompatible);
+
+    if (isHandoffSwitch) {
+      threadContinuityPending.add(threadId);
+    }
+
+    if (
+      options?.pendingTurnStart === true &&
+      (thread.session?.status !== "running" || isHandoffSwitch)
+    ) {
       yield* setThreadSession({
         threadId,
         session: {
           threadId,
           status: "starting",
-          providerName: activeSession?.provider ?? preferredProvider,
-          providerInstanceId: activeSession?.providerInstanceId ?? desiredInstanceId,
+          providerName: isHandoffSwitch
+            ? preferredProvider
+            : (activeSession?.provider ?? preferredProvider),
+          providerInstanceId: isHandoffSwitch
+            ? desiredInstanceId
+            : (activeSession?.providerInstanceId ?? desiredInstanceId),
           runtimeMode: desiredRuntimeMode,
           activeTurnId: null,
           lastError: null,
@@ -628,29 +666,6 @@ const make = Effect.gen(function* () {
             : thread.modelSelection,
         requestedModelSelection,
       });
-    }
-    if (
-      thread.session !== null &&
-      requestedModelSelection !== undefined &&
-      requestedModelSelection.instanceId !== currentInstanceId
-    ) {
-      if (currentInfo.driverKind !== desiredInfo.driverKind) {
-        return yield* new ProviderAdapterRequestError({
-          provider: preferredProvider,
-          method: "thread.turn.start",
-          detail: `Thread '${threadId}' is bound to driver '${currentInfo.driverKind}' and cannot switch to '${desiredInfo.driverKind}'.`,
-        });
-      }
-      if (
-        currentInfo.continuationIdentity.continuationKey !==
-        desiredInfo.continuationIdentity.continuationKey
-      ) {
-        return yield* new ProviderAdapterRequestError({
-          provider: preferredProvider,
-          method: "thread.turn.start",
-          detail: `Thread '${threadId}' cannot switch from instance '${currentInstanceId}' to '${desiredInstanceId}' because their provider resume state is incompatible.`,
-        });
-      }
     }
     const project = yield* resolveProject(thread.projectId);
     const effectiveCwd = resolveThreadWorkspaceCwd({
@@ -722,6 +737,7 @@ const make = Effect.gen(function* () {
       const instanceChanged =
         requestedModelSelection !== undefined &&
         activeSession?.providerInstanceId !== requestedModelSelection.instanceId;
+      const shouldRestartForHandoff = isHandoffSwitch;
       const shouldRestartForModelChange = modelChanged && sessionModelSwitch === "unsupported";
       const previousModelSelection = threadModelSelections.get(threadId);
       const shouldRestartForModelSelectionChange =
@@ -734,15 +750,21 @@ const make = Effect.gen(function* () {
         !cwdChanged &&
         !instanceChanged &&
         !shouldRestartForModelChange &&
-        !shouldRestartForModelSelectionChange
+        !shouldRestartForModelSelectionChange &&
+        !shouldRestartForHandoff
       ) {
         yield* refreshWorkspaceSnapshot;
         return existingSessionThreadId;
       }
 
-      const resumeCursor = shouldRestartForModelChange
-        ? undefined
-        : (activeSession?.resumeCursor ?? undefined);
+      if (shouldRestartForHandoff && activeSession) {
+        yield* providerService.stopSession({ threadId }).pipe(Effect.ignore);
+      }
+
+      const resumeCursor =
+        shouldRestartForModelChange || shouldRestartForHandoff
+          ? null
+          : (activeSession?.resumeCursor ?? undefined);
       yield* Effect.logInfo("provider command reactor restarting provider session", {
         threadId,
         existingSessionThreadId,
@@ -760,6 +782,7 @@ const make = Effect.gen(function* () {
         instanceChanged,
         shouldRestartForModelChange,
         shouldRestartForModelSelectionChange,
+        shouldRestartForHandoff,
         hasResumeCursor: resumeCursor !== undefined,
       });
       const restartedSession = yield* startProviderSession(
@@ -777,13 +800,152 @@ const make = Effect.gen(function* () {
       return restartedSession.threadId;
     }
 
-    const startedSession = yield* startProviderSession(undefined);
+    const startedSession = yield* startProviderSession(
+      isHandoffSwitch ? { resumeCursor: null } : undefined,
+    );
     yield* bindSessionToThread(startedSession);
     return startedSession.threadId;
   });
 
+  const priorConversationMessages = (input: {
+    readonly messages: ReadonlyArray<OrchestrationMessage>;
+    readonly currentMessageId?: MessageId | undefined;
+    readonly currentMessageText?: string | undefined;
+  }): ReadonlyArray<OrchestrationMessage> => {
+    let priorMessages = input.messages.filter(
+      (entry) => entry.role === "user" || entry.role === "assistant",
+    );
+
+    if (input.currentMessageId !== undefined) {
+      priorMessages = priorMessages.filter((entry) => entry.id !== input.currentMessageId);
+    } else if (
+      input.currentMessageText !== undefined &&
+      priorMessages.length > 0 &&
+      priorMessages[priorMessages.length - 1]?.role === "user" &&
+      priorMessages[priorMessages.length - 1]?.text === input.currentMessageText
+    ) {
+      priorMessages = priorMessages.slice(0, -1);
+    }
+
+    return priorMessages;
+  };
+
+  const collectThreadContinuityAttachments = (
+    messages: ReadonlyArray<OrchestrationMessage>,
+    currentAttachments: ReadonlyArray<ChatAttachment>,
+  ): ReadonlyArray<ChatAttachment> => {
+    const remainingSlots = Math.max(
+      0,
+      PROVIDER_SEND_TURN_MAX_ATTACHMENTS - currentAttachments.length,
+    );
+    if (remainingSlots === 0) {
+      return [];
+    }
+
+    const seenIds = new Set(currentAttachments.map((attachment) => attachment.id));
+    const recentAttachments: ChatAttachment[] = [];
+    for (const message of messages.toReversed()) {
+      for (const attachment of (message.attachments ?? []).toReversed()) {
+        if (seenIds.has(attachment.id)) {
+          continue;
+        }
+        seenIds.add(attachment.id);
+        recentAttachments.unshift(attachment);
+        if (recentAttachments.length === remainingSlots) {
+          return recentAttachments;
+        }
+      }
+    }
+    return recentAttachments;
+  };
+
+  const formatThreadContinuityContext = (input: {
+    readonly messages: ReadonlyArray<OrchestrationMessage>;
+    readonly maxChars: number;
+  }): string => {
+    const priorMessages = input.messages;
+
+    if (priorMessages.length === 0) {
+      return "";
+    }
+
+    const parts: string[] = [
+      "[Thread Continuity Context]",
+      "Continue this existing conversation as one continuous thread. Prior assistant messages, actions, and workspace changes are part of your own conversation history. Respond directly from that history. Do not mention internal context transfer.",
+      "Conversation before the current request:",
+      "---",
+    ];
+    const suffix = [
+      "---",
+      "Repository workspace already reflects all file edits and commits from this thread.",
+    ];
+    const fixedLength = [...parts, ...suffix].join("\n").length;
+    const messageBudget = Math.min(
+      MAX_THREAD_CONTINUITY_CONTEXT_CHARS - fixedLength,
+      input.maxChars - fixedLength,
+    );
+    if (messageBudget <= 0) {
+      return "";
+    }
+
+    const messageBlocks: string[] = [];
+
+    for (const msg of priorMessages) {
+      const roleLabel = msg.role === "user" ? "User" : "Assistant";
+      let text = escapeThreadContinuitySkillTokens(assistantCitationsToPlainText(msg.text)).trim();
+      const attachmentNames = (msg.attachments ?? [])
+        .map((attachment) => escapeThreadContinuitySkillTokens(attachment.name))
+        .filter(Boolean);
+      const attachmentSummary =
+        attachmentNames.length > 0 ? `\n[Attachments: ${attachmentNames.join(", ")}]` : "";
+      if (text.length > MAX_THREAD_CONTINUITY_MESSAGE_CHARS) {
+        text = text.slice(0, MAX_THREAD_CONTINUITY_MESSAGE_CHARS) + " ...[truncated]";
+      }
+      const separator = text.includes("\n") ? ":\n" : ": ";
+      if (text.length > 0 || attachmentSummary.length > 0) {
+        messageBlocks.push(`${roleLabel}${separator}${text}${attachmentSummary}`.trim());
+      }
+    }
+
+    if (messageBlocks.length > 0) {
+      const totalLength = messageBlocks.reduce((acc, block) => acc + block.length + 1, 0);
+      if (totalLength > messageBudget) {
+        const firstBlock = messageBlocks[0];
+        const recentBlocks: string[] = [];
+        const truncationMarker = "[Earlier context truncated...]";
+        const markerCost = truncationMarker.length + 1;
+        if (markerCost <= messageBudget) {
+          let remainingBudget = messageBudget - markerCost;
+          const keepFirst = firstBlock !== undefined && firstBlock.length + 1 <= remainingBudget;
+          if (keepFirst) {
+            remainingBudget -= firstBlock.length + 1;
+          }
+          for (let i = messageBlocks.length - 1; i >= 1; i--) {
+            const block = messageBlocks[i]!;
+            if (remainingBudget - block.length - 1 >= 0) {
+              recentBlocks.unshift(block);
+              remainingBudget -= block.length + 1;
+            } else {
+              break;
+            }
+          }
+          if (keepFirst) {
+            parts.push(firstBlock);
+          }
+          parts.push(truncationMarker);
+          parts.push(...recentBlocks);
+        }
+      } else {
+        parts.push(...messageBlocks);
+      }
+    }
+
+    return [...parts, ...suffix].join("\n");
+  };
+
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
+    readonly messageId?: MessageId | undefined;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
@@ -805,6 +967,39 @@ const make = Effect.gen(function* () {
     }
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
+
+    const needsContinuityContext = threadContinuityPending.has(input.threadId);
+    let effectiveInput = normalizedInput;
+    let effectiveAttachments = normalizedAttachments;
+    let continuityContextIncluded = false;
+    if (needsContinuityContext) {
+      const priorMessages = priorConversationMessages({
+        messages: thread.messages,
+        currentMessageId: input.messageId,
+        currentMessageText: input.messageText,
+      });
+      const currentRequestChars = normalizedInput
+        ? CURRENT_REQUEST_PREFIX.length + normalizedInput.length
+        : 0;
+      const continuityContext = formatThreadContinuityContext({
+        messages: priorMessages,
+        maxChars: PROVIDER_SEND_TURN_MAX_INPUT_CHARS - currentRequestChars,
+      });
+      if (continuityContext.length > 0) {
+        continuityContextIncluded = true;
+        threadContinuityPending.delete(input.threadId);
+        effectiveInput = normalizedInput
+          ? `${continuityContext}${CURRENT_REQUEST_PREFIX}${normalizedInput}`
+          : continuityContext;
+        effectiveAttachments = [
+          ...collectThreadContinuityAttachments(priorMessages, normalizedAttachments),
+          ...normalizedAttachments,
+        ];
+      } else {
+        threadContinuityPending.delete(input.threadId);
+      }
+    }
+
     const activeSession = yield* providerService
       .listSessions()
       .pipe(
@@ -834,11 +1029,16 @@ const make = Effect.gen(function* () {
         : input.modelSelection;
 
     return {
-      threadId: input.threadId,
-      ...(normalizedInput ? { input: normalizedInput } : {}),
-      ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
-      ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
-      ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      request: {
+        threadId: input.threadId,
+        ...(toNonEmptyProviderInput(effectiveInput)
+          ? { input: toNonEmptyProviderInput(effectiveInput) }
+          : {}),
+        ...(effectiveAttachments.length > 0 ? { attachments: effectiveAttachments } : {}),
+        ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
+        ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      },
+      continuityContextIncluded,
     };
   });
 
@@ -1222,6 +1422,7 @@ const make = Effect.gen(function* () {
 
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
+      messageId: message.id,
       messageText: message.text,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined
@@ -1238,9 +1439,16 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    const restoreContinuityContextOnFailure = (cause: Cause.Cause<unknown>) =>
+      Effect.sync(() => {
+        if (sendTurnRequest.value.continuityContextIncluded) {
+          threadContinuityPending.add(event.payload.threadId);
+        }
+      }).pipe(Effect.andThen(recoverTurnStartFailure(cause)));
+
     yield* providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+      .sendTurn(sendTurnRequest.value.request)
+      .pipe(Effect.catchCause(restoreContinuityContextOnFailure), Effect.forkScoped);
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (

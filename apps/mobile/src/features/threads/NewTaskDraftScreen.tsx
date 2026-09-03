@@ -313,6 +313,7 @@ export function NewTaskDraftScreen(props: {
         ? selectedProject?.workspaceRoot
         : (flow.selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null,
     selectedProviderStatus: flow.selectedProviderStatus,
+    providerStatuses: selectedEnvironmentServerConfig?.providers,
     hasThread: false,
     enabled: isComposerFocused && !isComposerInteractionLocked,
     onChangeDraftMessage: flow.setPrompt,

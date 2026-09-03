@@ -1349,6 +1349,37 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("uses an explicit null resume cursor to start a clean provider session", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-explicit-clean-start");
+      const initial = yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: "/tmp/project-explicit-clean-start",
+        runtimeMode: "full-access",
+      });
+      yield* provider.stopSession({ threadId: initial.threadId });
+      routing.codex.startSession.mockClear();
+
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: "/tmp/project-explicit-clean-start",
+        resumeCursor: null,
+        runtimeMode: "full-access",
+      });
+
+      const cleanStartInput = routing.codex.startSession.mock.calls[0]?.[0];
+      assert.equal(typeof cleanStartInput === "object" && cleanStartInput !== null, true);
+      if (cleanStartInput && typeof cleanStartInput === "object") {
+        assert.equal("resumeCursor" in cleanStartInput, false);
+      }
+    }),
+  );
+
   it.effect("routes explicit claudeAgent provider session starts to the claude adapter", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

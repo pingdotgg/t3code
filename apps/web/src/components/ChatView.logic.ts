@@ -616,23 +616,32 @@ export function deriveLockedProvider(input: {
   thread: Thread | null | undefined;
   selectedProvider: string | null;
   threadProvider: string | null;
+  providers?: ReadonlyArray<Pick<ServerProvider, "instanceId" | "requiresNewThreadForModelChange">>;
 }): ProviderDriverKind | null {
   if (!threadHasStarted(input.thread)) {
     return null;
   }
-  const sessionProvider = input.thread?.session?.providerName ?? null;
-  if (sessionProvider && isProviderDriverKind(sessionProvider)) {
-    return sessionProvider;
+  const sessionInstanceId =
+    input.thread?.session?.providerInstanceId ?? input.thread?.modelSelection.instanceId;
+  const currentProvider = input.providers?.find(
+    (snapshot) => snapshot.instanceId === sessionInstanceId,
+  );
+  if (currentProvider?.requiresNewThreadForModelChange === true) {
+    const sessionProvider = input.thread?.session?.providerName ?? null;
+    if (sessionProvider && isProviderDriverKind(sessionProvider)) {
+      return sessionProvider;
+    }
+    const narrowedThreadProvider =
+      input.threadProvider && isProviderDriverKind(input.threadProvider)
+        ? input.threadProvider
+        : null;
+    const narrowedSelectedProvider =
+      input.selectedProvider && isProviderDriverKind(input.selectedProvider)
+        ? input.selectedProvider
+        : null;
+    return narrowedThreadProvider ?? narrowedSelectedProvider ?? null;
   }
-  const narrowedThreadProvider =
-    input.threadProvider && isProviderDriverKind(input.threadProvider)
-      ? input.threadProvider
-      : null;
-  const narrowedSelectedProvider =
-    input.selectedProvider && isProviderDriverKind(input.selectedProvider)
-      ? input.selectedProvider
-      : null;
-  return narrowedThreadProvider ?? narrowedSelectedProvider ?? null;
+  return null;
 }
 
 export function getStartedThreadModelChangeBlockReason(input: {

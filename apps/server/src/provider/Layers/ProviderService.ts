@@ -613,6 +613,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           threadId,
           provider: resolvedProvider,
         };
+        const { resumeCursor: requestedResumeCursor, ...inputWithoutResumeCursor } = input;
         if (!instanceInfo.enabled) {
           return yield* toValidationError(
             "ProviderService.startSession",
@@ -621,10 +622,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
         const effectiveResumeCursor =
-          input.resumeCursor ??
-          (persistedBinding?.providerInstanceId === resolvedInstanceId
-            ? persistedBinding.resumeCursor
-            : undefined);
+          requestedResumeCursor !== undefined
+            ? (requestedResumeCursor ?? undefined)
+            : persistedBinding?.providerInstanceId === resolvedInstanceId
+              ? persistedBinding.resumeCursor
+              : undefined;
         const effectiveCwd =
           input.cwd ??
           (persistedBinding?.providerInstanceId === resolvedInstanceId
@@ -633,7 +635,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         yield* Effect.annotateCurrentSpan({
           "provider.kind": resolvedProvider,
           "provider.resume_cursor.source":
-            input.resumeCursor !== undefined
+            requestedResumeCursor !== undefined
               ? "request"
               : effectiveResumeCursor !== undefined &&
                   persistedBinding?.providerInstanceId === resolvedInstanceId
@@ -653,7 +655,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         yield* prepareMcpSession(threadId, resolvedInstanceId);
         const session = yield* adapter
           .startSession({
-            ...input,
+            ...inputWithoutResumeCursor,
             providerInstanceId: resolvedInstanceId,
             ...(effectiveCwd !== undefined ? { cwd: effectiveCwd } : {}),
             ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),

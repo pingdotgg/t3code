@@ -118,6 +118,16 @@ export function resolveProviderSkillsForCwd(
   return resolveProviderWorkspaceSnapshot(provider, cwd)?.skills ?? provider.skills;
 }
 
+/** Skills known anywhere in an environment, kept available across provider changes. */
+export function resolveProviderSkillsForCwdAcrossProviders(
+  providers: ReadonlyArray<ServerProvider>,
+  cwd: string | null | undefined,
+): ServerProviderSkill[] {
+  return dedupeProviderSkillsByName(
+    providers.flatMap((provider) => resolveProviderSkillsForCwd(provider, cwd)),
+  );
+}
+
 export function resolveProviderSlashCommandsForCwd(
   provider: ServerProvider,
   cwd: string | null | undefined,

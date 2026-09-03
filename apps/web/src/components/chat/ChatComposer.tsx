@@ -787,6 +787,7 @@ import {
   getProviderSlashCommandsForSlashMenu,
   getProviderSkillsForSlashMenu,
   resolveProviderSkillsForCwd,
+  resolveProviderSkillsForCwdAcrossProviders,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
@@ -1709,9 +1710,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],
   );
-  const selectedProviderSkills = selectedProviderStatus
-    ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
-    : [];
+  const selectedProviderSkills = useMemo(() => {
+    const directSkills = selectedProviderStatus
+      ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
+      : [];
+    if (directSkills.length > 0) {
+      return directSkills;
+    }
+    return resolveProviderSkillsForCwdAcrossProviders(providerStatuses, gitCwd);
+  }, [selectedProviderStatus, providerStatuses, gitCwd]);
   const selectedProviderSlashCommands = selectedProviderStatus
     ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
     : [];

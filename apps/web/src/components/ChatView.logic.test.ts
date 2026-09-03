@@ -21,6 +21,7 @@ import {
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveLockedProvider,
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getStartedThreadModelChangeBlockReason,
@@ -811,6 +812,100 @@ describe("getStartedThreadModelChangeBlockReason", () => {
       description:
         "This provider does not allow switching models after a conversation has started.",
     });
+  });
+});
+
+describe("deriveLockedProvider", () => {
+  it("returns null when thread has not started", () => {
+    expect(
+      deriveLockedProvider({
+        thread: null,
+        selectedProvider: "codex",
+        threadProvider: "codex",
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null for started threads when provider allows switching", () => {
+    const thread = {
+      id: ThreadId.make("thread-1"),
+      session: {
+        providerName: "claudeAgent",
+        providerInstanceId: ProviderInstanceId.make("claude"),
+        status: "ready",
+      },
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claude"),
+        model: "claude-3-7-sonnet",
+      },
+      messages: [
+        {
+          id: MessageId.make("m1"),
+          role: "user",
+          text: "hello",
+          streaming: false,
+          turnId: TurnId.make("t1"),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    } as unknown as Thread;
+
+    expect(
+      deriveLockedProvider({
+        thread,
+        selectedProvider: "claudeAgent",
+        threadProvider: "claude",
+        providers: [
+          {
+            instanceId: ProviderInstanceId.make("claude"),
+          },
+          {
+            instanceId: ProviderInstanceId.make("codex"),
+          },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("locks provider when provider explicitly requires a new thread for model changes", () => {
+    const thread = {
+      id: ThreadId.make("thread-1"),
+      session: {
+        providerName: "grok",
+        providerInstanceId: ProviderInstanceId.make("grok"),
+        status: "ready",
+      },
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("grok"),
+        model: "grok-build",
+      },
+      messages: [
+        {
+          id: MessageId.make("m1"),
+          role: "user",
+          text: "hello",
+          streaming: false,
+          turnId: TurnId.make("t1"),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    } as unknown as Thread;
+
+    expect(
+      deriveLockedProvider({
+        thread,
+        selectedProvider: "grok",
+        threadProvider: "grok",
+        providers: [
+          {
+            instanceId: ProviderInstanceId.make("grok"),
+            requiresNewThreadForModelChange: true,
+          },
+        ],
+      }),
+    ).toBe("grok");
   });
 });
 
