@@ -800,6 +800,20 @@ describe("buildThreadFeed", () => {
           payload: {
             title: "Call repository tool",
             itemType: "mcp_tool_call",
+            toolSurface: "computer",
+            toolIcon: {
+              _tag: "native-app",
+              app: { _tag: "app-id", appId: "com.example.Editor" },
+            },
+            toolSource: {
+              key: "native-app:com.example.editor",
+              name: "Computer Use",
+              kind: "computer",
+              icon: {
+                _tag: "native-app",
+                app: { _tag: "app-id", appId: "com.example.Editor" },
+              },
+            },
             detail: "repository.search",
             status: "completed",
             data: {
@@ -820,7 +834,21 @@ describe("buildThreadFeed", () => {
       return;
     }
 
-    expect(group.activities[0]?.icon).toBe("wrench");
+    expect(group.activities[0]?.icon).toBe("computer");
+    expect(group.activities[0]?.workEntry.toolSurface).toBe("computer");
+    expect(group.activities[0]?.workEntry.toolIcon).toEqual({
+      _tag: "native-app",
+      app: { _tag: "app-id", appId: "com.example.Editor" },
+    });
+    expect(group.activities[0]?.workEntry.toolSource).toEqual({
+      key: "native-app:com.example.editor",
+      name: "Computer Use",
+      kind: "computer",
+      icon: {
+        _tag: "native-app",
+        app: { _tag: "app-id", appId: "com.example.Editor" },
+      },
+    });
     expect(group.activities[0]?.getFullDetail()).toContain('"query": "work log"');
     expect(group.activities[0]?.getFullDetail()).toContain("repository.search");
   });
@@ -1600,6 +1628,8 @@ describe("buildThreadFeed", () => {
       id: string,
       createdAt: string,
       status: ThreadFeedActivity["status"] = "success",
+      toolSurface?: "browser" | "computer",
+      toolIcon?: import("@t3tools/contracts").ToolActivityIcon,
     ): ThreadFeedActivity => ({
       id,
       createdAt,
@@ -1619,6 +1649,8 @@ describe("buildThreadFeed", () => {
         label: `Tool ${id}`,
         command: `command ${id}`,
         tone: "tool",
+        ...(toolSurface ? { toolSurface } : {}),
+        ...(toolIcon ? { toolIcon } : {}),
       },
     });
     const feed: ThreadFeedEntry[] = [
@@ -1630,8 +1662,11 @@ describe("buildThreadFeed", () => {
         activities: [
           activity("activity-1", "2026-04-01T00:00:01.000Z"),
           activity("activity-neutral", "2026-04-01T00:00:02.000Z", "neutral"),
-          activity("activity-2", "2026-04-01T00:00:03.000Z"),
-          activity("activity-3", "2026-04-01T00:00:04.000Z"),
+          activity("activity-2", "2026-04-01T00:00:03.000Z", "success", "browser"),
+          activity("activity-3", "2026-04-01T00:00:04.000Z", "success", "computer", {
+            _tag: "native-app",
+            app: { _tag: "app-id", appId: "com.example.Editor" },
+          }),
         ],
       },
     ];
@@ -1644,6 +1679,11 @@ describe("buildThreadFeed", () => {
       hiddenCount: 3,
       expanded: false,
       summary: "Ran 3 commands",
+      toolSurface: "computer",
+      toolIcon: {
+        _tag: "native-app",
+        app: { _tag: "app-id", appId: "com.example.Editor" },
+      },
     });
 
     const expanded = deriveThreadFeedPresentation(

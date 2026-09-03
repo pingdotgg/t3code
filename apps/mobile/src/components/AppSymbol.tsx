@@ -185,6 +185,7 @@ const ANDROID_ICON_BY_MATERIAL_NAME: Record<string, Icon> = {
   close: IconX,
   construction: IconHammer,
   content_copy: IconCopy,
+  desktop_windows: IconDeviceDesktop,
   edit: IconEdit,
   error: IconAlertCircle,
   folder: IconFolder,

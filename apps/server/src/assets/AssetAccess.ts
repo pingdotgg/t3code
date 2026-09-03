@@ -12,6 +12,7 @@ import {
   AssetWorkspacePathValidationError,
   AssetWorkspaceResolutionError,
   AssetWorkspaceRootNormalizationError,
+  ToolActivityNativeAppReference,
 } from "@t3tools/contracts";
 import {
   hostPreviewMimeTypeFromExtension,
@@ -42,6 +43,7 @@ import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../atta
 import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile, type OpenMediaFile } from "./MediaFile.ts";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
@@ -118,6 +120,12 @@ const AssetClaimsSchema = Schema.Union([
     version: Schema.Literal(1),
     kind: Schema.Literal("project-favicon-external"),
     filePath: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("native-app-icon"),
+    app: ToolActivityNativeAppReference,
     expiresAt: Schema.Number,
   }),
 ]);
@@ -504,6 +512,16 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       }
       break;
     }
+    case "native-app-icon": {
+      claims = {
+        version: 1,
+        kind: "native-app-icon",
+        app: input.resource.app,
+        expiresAt,
+      };
+      fileName = "native-app-icon.png";
+      break;
+    }
   }
 
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
@@ -601,6 +619,12 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     return faviconPath === claims.filePath
       ? ({ kind: "file", path: faviconPath } satisfies ResolvedAsset)
       : null;
+  }
+
+  if (claims.kind === "native-app-icon") {
+    const nativeAppIconResolver = yield* NativeAppIconResolver.NativeAppIconResolver;
+    const iconPath = yield* nativeAppIconResolver.resolve(claims.app);
+    return iconPath ? ({ kind: "file", path: iconPath } satisfies ResolvedAsset) : null;
   }
 
   const decodedPath = decodeRelativePath(relativePath);
