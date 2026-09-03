@@ -1,13 +1,14 @@
 import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type {
-  EnvironmentId,
-  PullRequestAction,
-  PullRequestMergeMethod,
-  PullRequestUpdateMethod,
-  PullRequestRef,
-  PullRequestState,
-  ScopedThreadRef,
+import {
+  type EnvironmentId,
+  type PullRequestAction,
+  type PullRequestMergeMethod,
+  type PullRequestUpdateMethod,
+  type PullRequestRef,
+  type PullRequestState,
+  resolveEnvironmentMachineKind,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
@@ -36,7 +37,6 @@ import {
   PlayIcon,
   RefreshCwIcon,
   RotateCcwIcon,
-  ServerIcon,
   TriangleAlertIcon,
 } from "lucide-react";
 import {
@@ -77,6 +77,7 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -120,10 +121,13 @@ import {
   pullRequestFindingKey,
   pullRequestHandoffLabels,
   readableFailure,
+  readPullRequestDetailSnapshot,
+  resolveDisplayedPullRequestDetail,
   resolvePullRequestPrimaryControl,
   resolveBaseFreshness,
   type PullRequestFinding,
   shouldRefreshPullRequestActivity,
+  writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestChangeRequest } from "./pullRequestEditing.logic";
 import {
@@ -269,7 +273,10 @@ function ActOnEnvironmentPicker({
             {/* The radio item lays its children out as one block, so the icon and the label
                 need their own row to share a line. */}
             <span className="flex min-w-0 items-center gap-2">
-              <ServerIcon className="size-3.5 shrink-0" />
+              <EnvironmentMachineIcon
+                kind={environment.machine ?? "server"}
+                className="size-3.5 shrink-0"
+              />
               <span className="truncate">{environment.label}</span>
             </span>
           </MenuRadioItem>
@@ -558,7 +565,44 @@ export function PullRequestDetailPanel({
   const activityQuery = useEnvironmentQuery(
     pullRequestEnvironment.activity({ environmentId, input: reference }),
   );
-  const coreDetail = detailQuery.data;
+  const [cachedDetail, setCachedDetail] = useState(() =>
+    readPullRequestDetailSnapshot(
+      typeof window === "undefined" ? undefined : window.localStorage,
+      environmentId,
+      reference,
+    ),
+  );
+  useEffect(() => {
+    setCachedDetail(
+      readPullRequestDetailSnapshot(
+        typeof window === "undefined" ? undefined : window.localStorage,
+        environmentId,
+        reference,
+      ),
+    );
+  }, [environmentId, pullRequestKey, reference.projectId, reference.repository, reference.number]);
+  useEffect(() => {
+    if (detailQuery.data === null) return;
+    writePullRequestDetailSnapshot(
+      typeof window === "undefined" ? undefined : window.localStorage,
+      environmentId,
+      reference,
+      detailQuery.data,
+    );
+    setCachedDetail(detailQuery.data);
+  }, [
+    detailQuery.data,
+    environmentId,
+    pullRequestKey,
+    reference.projectId,
+    reference.repository,
+    reference.number,
+  ]);
+  const coreDetail = resolveDisplayedPullRequestDetail({
+    live: detailQuery.data,
+    cached: cachedDetail,
+    reference,
+  });
   const activity = activityQuery.data;
   const detail = useMemo(
     () =>
@@ -689,7 +733,11 @@ export function PullRequestDetailPanel({
         ? resolvePickableEnvironments(
             { environmentId, projectId: reference.projectId },
             projects,
-            environments,
+            environments.map((environment) => ({
+              environmentId: environment.environmentId,
+              label: environment.label,
+              machine: resolveEnvironmentMachineKind(environment.serverConfig),
+            })),
           )
         : [],
     [context, environmentId, environments, projects, reference.projectId],
@@ -1240,6 +1288,8 @@ export function PullRequestDetailPanel({
         ).length
       : 0;
 
+  // A reopen already has last time's title, author, and counts. Keep them on screen
+  // and let the live read replace fields — especially the diff counts — in place.
   if (detailQuery.isPending && !detail) {
     return <PullRequestDetailGhost />;
   }

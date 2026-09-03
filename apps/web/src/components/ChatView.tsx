@@ -22,6 +22,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInteractionMode,
   ProviderDriverKind,
+  resolveEnvironmentMachineKind,
   RuntimeMode,
   TerminalOpenInput,
 } from "@t3tools/contracts";
@@ -303,6 +304,7 @@ import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
 import {
+  type EnvironmentOption,
   resolveEffectiveEnvMode,
   resolveLocalCheckoutBranchMismatch,
   shouldShowComposerContextStrip,
@@ -2061,22 +2063,18 @@ function ChatViewContent(props: ChatViewProps) {
       (p) => deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) === logicalKey,
     );
     const seen = new Set<string>();
-    const envs: Array<{
-      environmentId: EnvironmentId;
-      projectId: ProjectId;
-      label: string;
-      isPrimary: boolean;
-    }> = [];
+    const envs: EnvironmentOption[] = [];
     for (const p of memberProjects) {
       if (seen.has(p.environmentId)) continue;
       seen.add(p.environmentId);
       const isPrimary = p.environmentId === primaryEnvironmentId;
-      const label = environmentById.get(p.environmentId)?.label ?? p.environmentId;
+      const environment = environmentById.get(p.environmentId) ?? null;
       envs.push({
         environmentId: p.environmentId,
         projectId: p.id,
-        label,
+        label: environment?.label ?? p.environmentId,
         isPrimary,
+        machine: resolveEnvironmentMachineKind(environment?.serverConfig ?? null),
       });
     }
     // Sort: primary first, then alphabetical

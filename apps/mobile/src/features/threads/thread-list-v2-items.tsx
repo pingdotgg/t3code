@@ -3,6 +3,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
+import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import { resolveSettledThreadTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -13,6 +14,7 @@ import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSw
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
+import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
@@ -201,6 +203,8 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   readonly project: EnvironmentProject | null;
   readonly projectTitle?: string;
   readonly environmentLabel: string | null;
+  /** Drawn beside the label; ignored while the label is null. */
+  readonly environmentMachine?: EnvironmentMachineKind;
   readonly pane?: "screen" | "sidebar";
   /** Draws the "Pending" divider above the first queued row. */
   readonly showPendingDivider: boolean;
@@ -249,17 +253,26 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
         {pendingTask.title}
       </Text>
       {branch || props.environmentLabel ? (
-        <Text className="mt-1 text-xs text-foreground-muted" numberOfLines={1}>
-          {branch ? (
-            <Text className="text-xs text-foreground-muted" style={{ fontFamily: MONO_FONT }}>
-              {branch}
-            </Text>
+        <View className="mt-1 flex-row items-center gap-1">
+          <Text className="shrink text-xs text-foreground-muted" numberOfLines={1}>
+            {branch ? (
+              <Text className="text-xs text-foreground-muted" style={{ fontFamily: MONO_FONT }}>
+                {branch}
+              </Text>
+            ) : null}
+            {branch && props.environmentLabel ? "  ·  " : null}
+            {props.environmentLabel ? (
+              <Text className="text-xs text-foreground-tertiary">{props.environmentLabel}</Text>
+            ) : null}
+          </Text>
+          {props.environmentLabel && props.environmentMachine ? (
+            <EnvironmentMachineSymbol
+              kind={props.environmentMachine}
+              size={11}
+              tintColorClassName="accent-foreground-tertiary"
+            />
           ) : null}
-          {branch && props.environmentLabel ? "  ·  " : null}
-          {props.environmentLabel ? (
-            <Text className="text-xs text-foreground-tertiary">{props.environmentLabel}</Text>
-          ) : null}
-        </Text>
+        </View>
       ) : null}
     </>
   );
@@ -327,6 +340,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       the web sidebar's remote-environment cloud icon, but as text since
       phones have no hover tooltips. */
   readonly environmentLabel: string | null;
+  /** Drawn after the label so the machine reads at a glance; ignored while
+      the label is null. */
+  readonly environmentMachine?: EnvironmentMachineKind;
   /** Hosting surface. "screen" (default) renders the compact Home idiom:
       flat edge-to-edge rows on the screen background with inset hairlines.
       "sidebar" renders the iPad split-view idiom: rounded rows blending
@@ -767,6 +783,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : (
           <View className="flex-1" />
         )}
+        {status !== "failed" && props.environmentLabel && props.environmentMachine ? (
+          <EnvironmentMachineSymbol
+            kind={props.environmentMachine}
+            size={11}
+            tintColorClassName={
+              selected ? "accent-user-bubble-foreground-muted" : "accent-foreground-tertiary"
+            }
+          />
+        ) : null}
         {pr ? (
           <Text
             accessibilityLabel={pr.accessibilityLabel}

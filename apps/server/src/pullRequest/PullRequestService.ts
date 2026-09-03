@@ -2001,7 +2001,25 @@ export const make = Effect.gen(function* () {
           },
         }),
       );
-    return { read, record };
+    /**
+     * A change request already read does not wait on the host again. `reuse` answers from
+     * what we hold and spends nothing — title, author, and state barely move, and a linked
+     * thread already names the change request. `revalidate` answers the same way and
+     * refreshes behind it, so line counts and the rest can change in place.
+     */
+    const serveHeld = (
+      key: string,
+      effect: Effect.Effect<A, PullRequestError>,
+      mode: "reuse" | "revalidate",
+    ) => {
+      const snapshot = held.get(key);
+      if (snapshot === undefined) return read(key, effect);
+      if (mode === "reuse") return Effect.succeed(snapshot.value);
+      return Effect.sync(() => runFork(Effect.ignore(read(key, effect)))).pipe(
+        Effect.as(snapshot.value),
+      );
+    };
+    return { peek: (key: string) => held.get(key)?.value, read, record, serveHeld };
   };
   const lastGoodSummary = makeLastGoodRead<PullRequestSummary>(DETAIL_CACHE_CAPACITY);
   const lastGoodDetail = makeLastGoodRead<PullRequestDetail>(DETAIL_CACHE_CAPACITY);
@@ -2059,7 +2077,7 @@ export const make = Effect.gen(function* () {
     const cached = Cache.get(summaryCache, key);
     return options?.recoverTransientFailure === false
       ? cached.pipe(Effect.tap((value) => lastGoodSummary.record(key, value)))
-      : lastGoodSummary.read(key, cached);
+      : lastGoodSummary.serveHeld(key, cached, "reuse");
   };
 
   // Keys serialize positionally and parse back in the lookup, so the cache is the only holder
@@ -2149,9 +2167,42 @@ export const make = Effect.gen(function* () {
       timeToLive: (exit) => (Exit.isSuccess(exit) ? DETAIL_CACHE_TTL : Duration.zero),
     },
   );
+  const summaryFromDetail = (detail: PullRequestDetail): PullRequestSummary => ({
+    provider: detail.provider,
+    projectId: detail.projectId,
+    repository: detail.repository,
+    number: detail.number,
+    title: detail.title,
+    url: detail.url,
+    state: detail.state,
+    headBranch: detail.headBranch,
+    baseBranch: detail.baseBranch,
+    updatedAt: detail.updatedAt,
+  });
+  const shouldReplaceHeldSummary = (key: string, next: PullRequestSummary) => {
+    const current = lastGoodSummary.peek(key);
+    if (current === undefined) return true;
+    if (current.state === "merged" && next.state !== "merged") return false;
+    return next.updatedAt >= current.updatedAt;
+  };
   const detail: PullRequestService["Service"]["detail"] = (input) => {
     const key = refCacheKey(input);
-    return lastGoodDetail.read(key, Cache.get(detailCache, key));
+    // Record the summary from a host or cache read, not the stale value
+    // `serveHeld` returns immediately. Skip the write when that read is older
+    // than a later strict summary — display reuse would otherwise keep the
+    // regression and never ask the host again.
+    return lastGoodDetail.serveHeld(
+      key,
+      Cache.get(detailCache, key).pipe(
+        Effect.tap((value) => {
+          const summary = summaryFromDetail(value);
+          return shouldReplaceHeldSummary(key, summary)
+            ? lastGoodSummary.record(key, summary)
+            : Effect.void;
+        }),
+      ),
+      "revalidate",
+    );
   };
 
   const activityCache = yield* Cache.makeWith(

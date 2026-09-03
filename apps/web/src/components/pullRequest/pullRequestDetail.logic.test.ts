@@ -2,6 +2,7 @@ import {
   PullRequestAction,
   type PullRequestCheck,
   type PullRequestComment,
+  type PullRequestDetail,
   type PullRequestDetailView,
   type PullRequestReviewThread,
 } from "@t3tools/contracts";
@@ -31,12 +32,15 @@ import {
   pullRequestHandoffLabels,
   pullRequestReviewOutcome,
   readableFailure,
+  readPullRequestDetailSnapshot,
+  resolveDisplayedPullRequestDetail,
   resolvePullRequestPrimaryControl,
   shouldRefreshPullRequestActivity,
   resolveBaseFreshness,
   buildPullRequestTimeline,
   describePullRequestState,
   editPullRequestThreadComment,
+  writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -1315,5 +1319,105 @@ describe("which actions need the host read again after they run", () => {
     ] as const) {
       expect(pullRequestActionNeedsHostRefresh(action)).toBe(false);
     }
+  });
+});
+
+describe("cached pull request detail", () => {
+  const reference = { projectId: "project-1", repository: "acme/web", number: 7 };
+  const detail = (overrides: Partial<PullRequestDetail> = {}): PullRequestDetail =>
+    ({
+      provider: "github",
+      capabilities: {
+        diff: true,
+        comment: true,
+        actions: ["merge"],
+        mergeMethods: ["merge"],
+        search: true,
+        review: {
+          inlineComment: true,
+          reply: true,
+          resolve: true,
+          verdicts: ["comment", "approve", "request-changes"],
+        },
+        reviewers: { request: true, listCandidates: true },
+      },
+      viewerPermissions: {
+        actions: ["merge"],
+        comment: true,
+        resolve: true,
+        verdicts: ["comment", "approve", "request-changes"],
+        requestReviewers: true,
+      },
+      projectId: "project-1",
+      projectTitle: "web",
+      workspaceRoot: "/repo",
+      repository: "acme/web",
+      number: 7,
+      title: "Cache the title",
+      body: "who made it",
+      url: "https://github.com/acme/web/pull/7",
+      author: { login: "octocat", name: null, avatarUrl: "https://avatars.example/octocat" },
+      state: "open",
+      isDraft: false,
+      mergeability: "mergeable",
+      additions: 12,
+      deletions: 3,
+      changedFiles: 2,
+      headBranch: "feat/cache",
+      baseBranch: "main",
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+      mergedAt: null,
+      closedAt: null,
+      reviewers: [],
+      labels: [],
+      checks: [],
+      mergeCapabilities: { merge: true, squash: true, rebase: true },
+      ...overrides,
+    }) as PullRequestDetail;
+
+  const makeStorage = () => {
+    const held = new Map<string, string>();
+    return {
+      getItem: (key: string) => held.get(key) ?? null,
+      setItem: (key: string, value: string) => void held.set(key, value),
+    };
+  };
+
+  it("hydrates the last title, author, and counts so a reopen does not ghost the tab", () => {
+    const storage = makeStorage();
+    writePullRequestDetailSnapshot(storage, "env-1", reference, detail());
+    const snapshot = readPullRequestDetailSnapshot(storage, "env-1", reference);
+    expect(snapshot?.title).toBe("Cache the title");
+    expect(snapshot?.author?.login).toBe("octocat");
+    expect(snapshot?.additions).toBe(12);
+    expect(snapshot?.deletions).toBe(3);
+  });
+
+  it("keeps a cached tab painted while the live read replaces the counts", () => {
+    const cached = detail();
+    const live = detail({ additions: 40, deletions: 9, title: "Cache the title" });
+    expect(resolveDisplayedPullRequestDetail({ live, cached, reference })?.additions).toBe(40);
+    expect(resolveDisplayedPullRequestDetail({ live: null, cached, reference })?.additions).toBe(
+      12,
+    );
+  });
+
+  it("does not paint another change request's snapshot", () => {
+    expect(
+      resolveDisplayedPullRequestDetail({
+        live: null,
+        cached: detail({ number: 8 }),
+        reference,
+      }),
+    ).toBeNull();
+    expect(readPullRequestDetailSnapshot(makeStorage(), "env-2", reference)).toBeNull();
+  });
+
+  it("shrugs off corrupt storage and no storage at all", () => {
+    const storage = makeStorage();
+    storage.setItem("t3.pullRequests.detail:env-1:project-1:acme/web#7", "{not json");
+    expect(readPullRequestDetailSnapshot(storage, "env-1", reference)).toBeNull();
+    expect(readPullRequestDetailSnapshot(undefined, "env-1", reference)).toBeNull();
   });
 });

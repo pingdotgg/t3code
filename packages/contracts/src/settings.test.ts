@@ -505,3 +505,22 @@ describe("ServerSettingsPatch string normalization", () => {
     expect(encoded.providers?.codex?.launchArgs).toBe("--strict-config");
   });
 });
+
+describe("ServerSettings environment icon", () => {
+  it("defaults to null", () => {
+    expect(decodeServerSettings({}).environmentIcon).toBeNull();
+  });
+
+  it("keeps a kind this build knows", () => {
+    expect(decodeServerSettings({ environmentIcon: "mac-mini" }).environmentIcon).toBe("mac-mini");
+  });
+
+  it("decodes a kind from a newer server as null instead of failing the snapshot", () => {
+    expect(decodeServerSettings({ environmentIcon: "toaster" }).environmentIcon).toBeNull();
+  });
+
+  it("round-trips through encode", () => {
+    const settings = decodeServerSettings({ environmentIcon: "laptop" });
+    expect(encodeServerSettings(settings).environmentIcon).toBe("laptop");
+  });
+});
