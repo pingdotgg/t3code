@@ -4,7 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { UsageAggregator } from "./usageAggregation.ts";
 import type { RateTable } from "./usagePricing.ts";
 import { foldThreadRows, ThreadUsageAccumulator, type ThreadAttribution } from "./usageThreads.ts";
-import type { UsageRecord } from "./usageTranscripts.ts";
+import { parseClaudeLineRecords, type UsageRecord } from "./usageTranscripts.ts";
 
 const rates: RateTable = new Map([
   [
@@ -211,6 +211,66 @@ describe("ThreadUsageAccumulator", () => {
 });
 
 describe("foldThreadRows", () => {
+  it("keeps model-less Claude iterations in an attributed thread cost row", () => {
+    const threadId = ThreadId.make("thread-model-less-iteration");
+    const records = parseClaudeLineRecords(
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-08-07T04:05:13.944Z",
+        requestId: "req_model_omitted",
+        sessionId: "session-model-omitted",
+        cwd: "/work/app",
+        message: {
+          id: "msg_model_omitted",
+          model: "claude-fable-5",
+          usage: {
+            iterations: [
+              {
+                type: "message",
+                input_tokens: 2,
+                cache_read_input_tokens: 100,
+                cache_creation_input_tokens: 20,
+                output_tokens: 12,
+              },
+            ],
+          },
+        },
+      }),
+    );
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+    });
+    for (const parsed of records) {
+      accumulator.add(parsed, { sessionKey: "claude:session-model-omitted", agentId: null });
+    }
+
+    const result = foldThreadRows(
+      accumulator.finish(),
+      {
+        sessionToThread: new Map([
+          ["claude:session-model-omitted", { threadId, title: "Real Claude thread" }],
+        ]),
+        worktreeToThread: new Map(),
+      },
+      { cap: 40, threadFilter: threadId },
+    );
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.totals).toMatchObject({
+      uncachedInputTokens: 2,
+      cachedInputTokens: 100,
+      cacheCreationTokens: 20,
+      outputTokens: 12,
+    });
+    expect(result.rows[0]?.costUsd).toBeCloseTo(0.00097, 12);
+    expect(result.rows[0]?.daily[0]?.cacheWriteUsd).toBeCloseTo(0.00025, 12);
+    expect(result.rows[0]?.daily[0]?.cacheReadUsd).toBeCloseTo(0.0001, 12);
+    expect(result.rows[0]?.daily[0]?.freshUsd).toBeCloseTo(0.00062, 12);
+  });
+
   it("keeps only the requested thread before applying the row cap", () => {
     const targetThreadId = ThreadId.make("thread-target");
     const groups = accumulate([

@@ -142,6 +142,43 @@ describe("parseClaudeLine", () => {
     ]);
   });
 
+  it("uses the serving model when an iteration omits its model", () => {
+    const records = parseClaudeLineRecords(
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-09-03T01:13:44.675Z",
+        requestId: "req_model_omitted",
+        sessionId: "session-model-omitted",
+        cwd: "/work/app",
+        message: {
+          id: "msg_model_omitted",
+          model: "claude-fable-5-1",
+          usage: {
+            output_tokens: 12,
+            iterations: [
+              {
+                type: "message",
+                input_tokens: 2,
+                cache_read_input_tokens: 100,
+                cache_creation_input_tokens: 20,
+                output_tokens: 12,
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    expect(records).toHaveLength(1);
+    expect(records[0]?.model).toBe("claude-fable-5-1");
+    expect(records[0]?.totals).toMatchObject({
+      uncachedInputTokens: 2,
+      cachedInputTokens: 100,
+      cacheCreationTokens: 20,
+      outputTokens: 12,
+    });
+  });
+
   it("replaces a progressive Claude snapshot with its final serving iteration", () => {
     const partial = parseClaudeLineRecords(
       claudeLine({
