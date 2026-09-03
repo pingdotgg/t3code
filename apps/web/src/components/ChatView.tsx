@@ -5616,6 +5616,16 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      if (command === "rightPanel.close") {
+        // Nothing open: leave the event alone so the shortcut keeps its
+        // native meaning (close window on desktop, close tab in a browser).
+        if (!activeRightPanelSurface) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) closeRightPanelSurface(activeRightPanelSurface);
+        return;
+      }
+
       if (command === "terminal.split") {
         event.preventDefault();
         event.stopPropagation();
@@ -5704,6 +5714,7 @@ function ChatViewContent(props: ChatViewProps) {
     terminalUiState.terminalOpen,
     terminalUiState.activeTerminalId,
     activeThreadId,
+    closeRightPanelSurface,
     requestCloseTerminal,
     requestClosePanelTerminal,
     createNewTerminal,
