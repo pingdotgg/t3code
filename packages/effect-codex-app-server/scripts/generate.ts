@@ -194,6 +194,18 @@ const Codex0150DefinitionSchemas: Record<string, Schema.Json> = {
   },
 };
 
+// The pinned Codex protocol marks these fields experimental, so its exported
+// JSON schemas omit them even though T3 negotiates the experimental API.
+const ExperimentalTopLevelSchemaProperties: Record<string, Record<string, Schema.Json>> = {
+  V2ThreadResumeParams: {
+    excludeTurns: {
+      type: "boolean",
+      description:
+        "When true, return only thread metadata and live-resume state without populating thread.turns.",
+    },
+  },
+};
+
 const getGeneratedPaths = Effect.fn("getGeneratedPaths")(function* () {
   const path = yield* Path.Path;
   const generatedDir = path.join(import.meta.dirname, "..", "src", "_generated");
@@ -624,6 +636,13 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
       if (key !== "definitions") {
         topLevelSchema[key] = value;
       }
+    }
+    const propertyPatches = ExperimentalTopLevelSchemaProperties[file.exportName];
+    if (propertyPatches) {
+      topLevelSchema.properties = {
+        ...(topLevelSchema.properties as Record<string, Schema.Json>),
+        ...propertyPatches,
+      };
     }
 
     aggregateSchemas[file.exportName] = stripNullDefaults(
