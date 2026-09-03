@@ -12,6 +12,8 @@ import type { EnvironmentId, ServerSettings, ServerSettingsPatch } from "@t3tool
 import * as Equal from "effect/Equal";
 import * as Struct from "effect/Struct";
 
+import type { EnvironmentPresentation } from "../connection/presentation.ts";
+
 /** Server keys that hold a user preference rather than machine config. */
 export const SHARED_SERVER_SETTING_KEYS = [
   "sidebarAutoSettleAfterDays",
@@ -48,6 +50,36 @@ export function splitSharedServerPatch(patch: ServerSettingsPatch): {
 /** The shared subset of one environment's settings, as a patch that can be written elsewhere. */
 export function pickSharedServerSettings(settings: ServerSettings): ServerSettingsPatch {
   return Struct.pick(settings, SHARED_SERVER_SETTING_KEYS);
+}
+
+/**
+ * Whether an environment can hold every shared key right now. Gated on the
+ * auto-settlement capability because it is the newest of the shared keys: a
+ * server that has it has all of them. Older servers drop unknown keys on
+ * write, so a mismatch against them could never clear, and their decoded
+ * defaults must not be treated as real values.
+ */
+export function supportsSharedSettings(environment: EnvironmentPresentation): boolean {
+  return (
+    environment.connection.phase === "connected" &&
+    environment.serverConfig?.environment.capabilities.threadAutoSettlement === true
+  );
+}
+
+/**
+ * One line per environment that rejected a settings write, each with its own
+ * reason. Two environments can fail for different reasons (one dropped its
+ * session, one refused the scope), so the reasons are never collapsed.
+ */
+export function describeRejectedSettingsWrites(
+  failed: ReadonlyArray<{ readonly label: string; readonly error: unknown }>,
+): string {
+  return failed
+    .map(
+      ({ label, error }) =>
+        `${label}: ${error instanceof Error ? error.message : "The server rejected the change."}`,
+    )
+    .join("\n");
 }
 
 export interface SharedSettingsEnvironment {

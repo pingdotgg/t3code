@@ -1,10 +1,19 @@
-import { DEFAULT_SERVER_SETTINGS, EnvironmentId } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Option from "effect/Option";
 
+import { BearerConnectionProfile, type ConnectionCatalogEntry } from "../connection/catalog.ts";
+import { BearerConnectionTarget } from "../connection/model.ts";
+import type {
+  EnvironmentConnectionPhase,
+  EnvironmentPresentation,
+} from "../connection/presentation.ts";
 import {
+  describeRejectedSettingsWrites,
   findSharedSettingsMismatches,
   pickSharedServerSettings,
   splitSharedServerPatch,
+  supportsSharedSettings,
 } from "./sharedSettings.ts";
 
 const primaryId = EnvironmentId.make("env-primary");
@@ -37,6 +46,40 @@ describe("pickSharedServerSettings", () => {
 
 describe("findSharedSettingsMismatches", () => {
   const primarySettings = { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 7 };
+
+  it("compares nested shared keys by value so an applied write clears the mismatch", () => {
+    const environments = [
+      {
+        environmentId: boxId,
+        label: "Remote Box",
+        connected: true,
+        settings: {
+          ...primarySettings,
+          sourceControlWritingStyle: { ...primarySettings.sourceControlWritingStyle },
+        },
+      },
+    ];
+    expect(
+      findSharedSettingsMismatches({
+        primaryEnvironmentId: primaryId,
+        primarySettings,
+        environments,
+      }),
+    ).toEqual([]);
+    expect(
+      findSharedSettingsMismatches({
+        primaryEnvironmentId: primaryId,
+        primarySettings: {
+          ...primarySettings,
+          sourceControlWritingStyle: {
+            ...primarySettings.sourceControlWritingStyle,
+            customInstructions: "Keep it short.",
+          },
+        },
+        environments,
+      }),
+    ).toEqual([{ environmentId: boxId, label: "Remote Box" }]);
+  });
 
   it("lists connected environments whose shared settings differ", () => {
     const mismatches = findSharedSettingsMismatches({
@@ -103,5 +146,57 @@ describe("findSharedSettingsMismatches", () => {
       ],
     });
     expect(mismatches).toEqual([]);
+  });
+});
+
+describe("supportsSharedSettings", () => {
+  const target = new BearerConnectionTarget({
+    environmentId: boxId,
+    label: "Remote Box",
+    connectionId: "connection-1",
+  });
+  const entry: ConnectionCatalogEntry = {
+    target,
+    profile: Option.some(
+      new BearerConnectionProfile({
+        connectionId: target.connectionId,
+        environmentId: target.environmentId,
+        label: target.label,
+        httpBaseUrl: "https://environment.example.test",
+        wsBaseUrl: "wss://environment.example.test",
+      }),
+    ),
+  };
+  const presentation = (
+    phase: EnvironmentConnectionPhase,
+    threadAutoSettlement: boolean | null,
+  ): EnvironmentPresentation => ({
+    entry,
+    connection: { phase, error: null, traceId: null },
+    serverConfig:
+      threadAutoSettlement === null
+        ? null
+        : ({
+            environment: { capabilities: { repositoryIdentity: true, threadAutoSettlement } },
+            settings: DEFAULT_SERVER_SETTINGS,
+          } as ServerConfig),
+  });
+
+  it("requires a live connection to a server that holds every shared key", () => {
+    expect(supportsSharedSettings(presentation("connected", true))).toBe(true);
+    expect(supportsSharedSettings(presentation("connecting", true))).toBe(false);
+    expect(supportsSharedSettings(presentation("connected", false))).toBe(false);
+    expect(supportsSharedSettings(presentation("connected", null))).toBe(false);
+  });
+});
+
+describe("describeRejectedSettingsWrites", () => {
+  it("keeps each environment's own reason", () => {
+    expect(
+      describeRejectedSettingsWrites([
+        { label: "Laptop", error: new Error("Laptop is not connected.") },
+        { label: "Remote Box", error: { _tag: "EnvironmentAuthorizationError" } },
+      ]),
+    ).toBe("Laptop: Laptop is not connected.\nRemote Box: The server rejected the change.");
   });
 });

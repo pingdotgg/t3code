@@ -25,8 +25,9 @@ turn, not by when the server noticed it was inactive.
 Change these rules in **Settings > General**. The change is written to every environment you are
 connected to at that moment. An environment that is offline keeps its old value. When a connected
 environment holds a different value, **Settings > General** shows a warning that names it. Choose
-**Apply to all** to write your current values to every connected environment. The same applies to
-the new-thread workspace mode and the source control writing style.
+**Apply to all** to write your current values to every connected environment. If an environment
+rejects the write, the app tells you which one and why. The same applies to the new-thread workspace
+mode and the source control writing style.
 
 A settings change affects future settlement and does not reopen a settled thread. Settings saved
 by older clients on one device no longer control this behavior.

@@ -39,13 +39,16 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironments } from "../../state/environments";
 import {
   DEFAULT_SERVER_SETTINGS,
+  type EnvironmentId,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import {
+  describeRejectedSettingsWrites,
   findSharedSettingsMismatches,
   pickSharedServerSettings,
+  supportsSharedSettings,
 } from "@t3tools/client-runtime/state/shared-settings";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import {
@@ -556,33 +559,54 @@ const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterD
  * has no primary environment, so the first connected environment that
  * supports it is the reference value. Edits fan out to every connected
  * environment, and a mismatch row lets the user push the reference out.
+ *
+ * Writes are awaited so a rejected environment (a dropped session, a server
+ * that refuses the scope) is reported instead of leaving the control looking
+ * saved. The server echoes every accepted write through the config
+ * subscription, so no optimistic state is kept here.
  */
 function AutoSettleSettingsRows() {
   const { environments } = useEnvironments();
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "server settings update",
-    reportFailure: true,
+    reportFailure: false,
   });
 
-  const connected = environments.filter(
-    (environment) =>
-      environment.connection.phase === "connected" &&
-      environment.serverConfig?.environment.capabilities.threadAutoSettlement === true,
-  );
+  const connected = environments.filter(supportsSharedSettings);
   const reference = connected[0] ?? null;
   const referenceSettings = reference?.serverConfig?.settings ?? null;
 
   const [daysDraft, setDaysDraft] = useState<string | null>(null);
 
+  const writeTo = useCallback(
+    async (
+      targets: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>,
+      patch: ServerSettingsPatch,
+    ) => {
+      const failed: Array<{ readonly label: string; readonly error: unknown }> = [];
+      await Promise.all(
+        targets.map(async (target) => {
+          const result = await updateSettings({
+            environmentId: target.environmentId,
+            input: { patch },
+          });
+          if (AsyncResult.isFailure(result) && !isAtomCommandInterrupted(result)) {
+            failed.push({ label: target.label, error: squashAtomCommandFailure(result) });
+          }
+        }),
+      );
+      if (failed.length > 0) {
+        Alert.alert("Setting not saved", describeRejectedSettingsWrites(failed));
+      }
+    },
+    [updateSettings],
+  );
+
   if (reference === null || referenceSettings === null) {
     return null;
   }
 
-  const writeToAll = (patch: ServerSettingsPatch) => {
-    for (const environment of connected) {
-      void updateSettings({ environmentId: environment.environmentId, input: { patch } });
-    }
-  };
+  const writeToAll = (patch: ServerSettingsPatch) => void writeTo(connected, patch);
 
   const mismatches = findSharedSettingsMismatches({
     primaryEnvironmentId: reference.environmentId,
@@ -590,7 +614,7 @@ function AutoSettleSettingsRows() {
     environments: environments.map((environment) => ({
       environmentId: environment.environmentId,
       label: environment.label,
-      connected: environment.connection.phase === "connected",
+      connected: supportsSharedSettings(environment),
       settings: environment.serverConfig?.settings ?? null,
     })),
   });
@@ -623,7 +647,6 @@ function AutoSettleSettingsRows() {
       <SettingsSwitchRow
         icon="clock"
         label="Auto-settle inactive threads"
-        subtitle={afterDays === null ? undefined : `After ${afterDays} days without activity`}
         value={afterDays !== null}
         onValueChange={(value) =>
           writeToAll({ sidebarAutoSettleAfterDays: value ? AUTO_SETTLE_DEFAULT_DAYS : null })
@@ -631,7 +654,7 @@ function AutoSettleSettingsRows() {
       />
       {afterDays !== null ? (
         <View className="flex-row items-center gap-4 border-t border-border-subtle p-4">
-          <Text className="flex-1 text-lg text-foreground">Days before auto-settle</Text>
+          <Text className="flex-1 text-lg text-foreground">Days without activity</Text>
           <TextInput
             className="min-h-10 w-20 rounded-xl px-3 py-2 text-center text-base"
             keyboardType="number-pad"
@@ -640,7 +663,7 @@ function AutoSettleSettingsRows() {
             onChangeText={setDaysDraft}
             onBlur={commitDays}
             onSubmitEditing={commitDays}
-            accessibilityLabel="Days before auto-settle"
+            accessibilityLabel="Days without activity before auto-settle"
           />
         </View>
       ) : null}
@@ -654,15 +677,7 @@ function AutoSettleSettingsRows() {
           </View>
           <Pressable
             accessibilityRole="button"
-            onPress={() => {
-              const patch = pickSharedServerSettings(referenceSettings);
-              for (const mismatch of mismatches) {
-                void updateSettings({
-                  environmentId: mismatch.environmentId,
-                  input: { patch },
-                });
-              }
-            }}
+            onPress={() => void writeTo(mismatches, pickSharedServerSettings(referenceSettings))}
             className="rounded-full bg-subtle px-4 py-2 active:opacity-70"
           >
             <Text className="text-base font-t3-medium text-foreground">Apply to all</Text>

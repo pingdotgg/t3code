@@ -26,9 +26,15 @@ import {
 } from "@t3tools/contracts/settings";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
+  describeRejectedSettingsWrites,
   findSharedSettingsMismatches,
   pickSharedServerSettings,
   splitSharedServerPatch,
+  supportsSharedSettings,
 } from "@t3tools/client-runtime/state/shared-settings";
 import { ensureLocalApi } from "~/localApi";
 import {
@@ -42,11 +48,7 @@ import * as Struct from "effect/Struct";
 import { toastManager } from "~/components/ui/toast";
 import { isHostedStaticApp } from "~/hostedPairing";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
-import {
-  type EnvironmentPresentation,
-  useEnvironments,
-  usePrimaryEnvironment,
-} from "~/state/environments";
+import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useTheme } from "./useTheme";
 
@@ -332,27 +334,56 @@ export function usePrimarySettingsAvailable(): boolean {
   return primaryEnvironment !== null || !isHostedStaticApp();
 }
 
-/**
- * Whether an environment can hold every shared key right now. Gated on the
- * auto-settlement capability because it is the newest of the shared keys: a
- * server that has it has all of them. Older servers drop unknown keys on
- * write, so a mismatch against them could never clear, and their decoded
- * defaults must not be treated as real values.
- */
-function supportsSharedSettings(environment: EnvironmentPresentation): boolean {
-  return (
-    environment.connection.phase === "connected" &&
-    environment.serverConfig?.environment.capabilities.threadAutoSettlement === true
-  );
-}
-
 /** Environments that can receive a shared settings write right now. */
-function useConnectedEnvironmentIds(): ReadonlyArray<EnvironmentId> {
+function useConnectedEnvironments(): ReadonlyArray<SettingsWriteTarget> {
   const { environments } = useEnvironments();
   return useMemo(
     () =>
-      environments.filter(supportsSharedSettings).map((environment) => environment.environmentId),
+      environments
+        .filter(supportsSharedSettings)
+        .map(({ environmentId, label }) => ({ environmentId, label })),
     [environments],
+  );
+}
+
+interface SettingsWriteTarget {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+}
+
+/**
+ * A silent failure leaves the control looking saved, so every rejected write
+ * (a dropped session, a server that refuses the scope) is named in a toast.
+ * Accepted writes come back through the config subscription and need nothing.
+ */
+function useWriteServerSettings() {
+  const persistServerSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "server settings update",
+    reportFailure: false,
+  });
+  return useCallback(
+    async (targets: ReadonlyArray<SettingsWriteTarget>, patch: ServerSettingsPatch) => {
+      const failed: Array<{ readonly label: string; readonly error: unknown }> = [];
+      await Promise.all(
+        targets.map(async (target) => {
+          const result = await persistServerSettings({
+            environmentId: target.environmentId,
+            input: { patch },
+          });
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            failed.push({ label: target.label, error: squashAtomCommandFailure(result) });
+          }
+        }),
+      );
+      if (failed.length > 0) {
+        toastManager.add({
+          type: "error",
+          title: "Setting not saved",
+          description: describeRejectedSettingsWrites(failed),
+        });
+      }
+    },
+    [persistServerSettings],
   );
 }
 
@@ -366,11 +397,12 @@ function useConnectedEnvironmentIds(): ReadonlyArray<EnvironmentId> {
  * client persistence.
  */
 function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
-  const persistServerSettings = useAtomCommand(
-    serverEnvironment.updateSettings,
-    "server settings update",
-  );
-  const connectedEnvironmentIds = useConnectedEnvironmentIds();
+  const writeServerSettings = useWriteServerSettings();
+  const connectedEnvironments = useConnectedEnvironments();
+  const { environments } = useEnvironments();
+  const targetLabel =
+    environments.find((environment) => environment.environmentId === environmentId)?.label ??
+    "This environment";
   const updateSettings = useCallback(
     (patch: UnifiedSettingsPatch) => {
       const { serverPatch, clientPatch } = splitPatch(patch);
@@ -386,28 +418,22 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           });
         if (Object.keys(localPatch).length > 0) {
           if (environmentId) {
-            void persistServerSettings({
-              environmentId,
-              input: { patch: localPatch },
-            });
+            void writeServerSettings([{ environmentId, label: targetLabel }], localPatch);
           } else {
             warnUnsaved();
           }
         }
         if (Object.keys(sharedPatch).length > 0) {
-          const targets = new Set(connectedEnvironmentIds);
-          if (environmentId) {
-            targets.add(environmentId);
+          const targets = new Map(
+            connectedEnvironments.map((target) => [target.environmentId, target]),
+          );
+          if (environmentId && !targets.has(environmentId)) {
+            targets.set(environmentId, { environmentId, label: targetLabel });
           }
           if (targets.size === 0) {
             warnUnsaved();
           }
-          for (const targetId of targets) {
-            void persistServerSettings({
-              environmentId: targetId,
-              input: { patch: sharedPatch },
-            });
-          }
+          void writeServerSettings([...targets.values()], sharedPatch);
         }
       }
       if (Object.keys(clientPatch).length > 0) {
@@ -417,7 +443,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
         });
       }
     },
-    [connectedEnvironmentIds, environmentId, persistServerSettings],
+    [connectedEnvironments, environmentId, targetLabel, writeServerSettings],
   );
 
   return updateSettings;
@@ -441,10 +467,7 @@ export function useSharedSettingsSync() {
       ? (primaryEnvironment.serverConfig?.settings ?? null)
       : null;
   const { environments } = useEnvironments();
-  const persistServerSettings = useAtomCommand(
-    serverEnvironment.updateSettings,
-    "server settings update",
-  );
+  const writeServerSettings = useWriteServerSettings();
 
   const mismatches = useMemo(
     () =>
@@ -465,14 +488,8 @@ export function useSharedSettingsSync() {
     if (primarySettings === null) {
       return;
     }
-    const patch = pickSharedServerSettings(primarySettings);
-    for (const mismatch of mismatches) {
-      void persistServerSettings({
-        environmentId: mismatch.environmentId,
-        input: { patch },
-      });
-    }
-  }, [mismatches, persistServerSettings, primarySettings]);
+    void writeServerSettings(mismatches, pickSharedServerSettings(primarySettings));
+  }, [mismatches, primarySettings, writeServerSettings]);
 
   return { mismatches, applyToAll };
 }
