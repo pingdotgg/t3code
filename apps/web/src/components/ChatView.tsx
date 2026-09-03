@@ -5195,6 +5195,9 @@ function ChatViewContent(props: ChatViewProps) {
     // Same optimistic side effects as a normal send: the composer goes busy,
     // the working row appears, and live-follow is re-armed.
     sendInFlightRef.current = true;
+    // A lingering session error would mark the local dispatch as already
+    // acknowledged, so the composer never went busy; clear it like onSend.
+    setThreadError(activeThread.id, null);
     beginLocalDispatch({ preparingWorktree: false });
     scrollToEnd();
     const createdAt = new Date().toISOString();
@@ -5218,11 +5221,14 @@ function ChatViewContent(props: ChatViewProps) {
     sendInFlightRef.current = false;
     if (result._tag === "Failure") {
       resetLocalDispatch();
-      toastManager.add({
-        type: "error",
-        title: "Could not continue",
-        description: "The turn could not be restarted. Send a message to continue instead.",
-      });
+      // An interrupted command never reached the server; only real failures toast.
+      if (!isAtomCommandInterrupted(result)) {
+        toastManager.add({
+          type: "error",
+          title: "Could not continue",
+          description: "The turn could not be restarted. Send a message to continue instead.",
+        });
+      }
       setDismissedContinueTurnIds((ids) => {
         const next = new Set(ids);
         next.delete(continueTurnId);
@@ -5236,6 +5242,7 @@ function ChatViewContent(props: ChatViewProps) {
     continueTurnId,
     resetLocalDispatch,
     scrollToEnd,
+    setThreadError,
     startThreadTurn,
     workLogEntries,
   ]);
