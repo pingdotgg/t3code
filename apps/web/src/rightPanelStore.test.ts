@@ -279,6 +279,50 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("opens an attachment as a file surface without the standalone explorer", () => {
+    const attachment = {
+      type: "file" as const,
+      id: "thread-A-attachment-pdf",
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 42,
+    };
+    useRightPanelStore.getState().open(refA, "files");
+    useRightPanelStore.getState().openAttachment(refA, attachment);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "attachment:thread-A-attachment-pdf",
+      surfaces: [
+        {
+          id: "attachment:thread-A-attachment-pdf",
+          kind: "file",
+          relativePath: "report.pdf",
+          revealLine: null,
+          revealRequestId: 0,
+          attachment,
+        },
+      ],
+    });
+  });
+
+  it("keeps attachment and workspace file ids disjoint", () => {
+    useRightPanelStore.getState().openFile(refA, "attachment:shared-id");
+    useRightPanelStore.getState().openAttachment(refA, {
+      type: "file",
+      id: "shared-id",
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 42,
+    });
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.map(
+        (surface) => surface.id,
+      ),
+    ).toEqual(["file:attachment:shared-id", "attachment:shared-id"]);
+  });
+
   it("updates line reveal requests when reopening a file surface", () => {
     useRightPanelStore.getState().openFile(refA, "src/index.ts", 42);
     useRightPanelStore.getState().openFile(refA, "src/index.ts", 87);
@@ -333,6 +377,35 @@ describe("rightPanelStore", () => {
       isOpen: false,
       activeSurfaceId: null,
       surfaces: [],
+    });
+  });
+
+  it("keeps attachment previews when their workspace is unavailable", () => {
+    const attachment = {
+      type: "file" as const,
+      id: "thread-A-attachment-pdf",
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 42,
+    };
+    useRightPanelStore.getState().openFile(refA, "README.md");
+    useRightPanelStore.getState().openAttachment(refA, attachment);
+
+    useRightPanelStore.getState().reconcileFileSurfaces(refA, false);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "attachment:thread-A-attachment-pdf",
+      surfaces: [
+        {
+          id: "attachment:thread-A-attachment-pdf",
+          kind: "file",
+          relativePath: "report.pdf",
+          revealLine: null,
+          revealRequestId: 0,
+          attachment,
+        },
+      ],
     });
   });
 

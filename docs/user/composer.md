@@ -31,6 +31,9 @@ Use Share to save a copy or send it to another app. PDFs support page navigation
 PDF links in assistant responses open the same preview. On Android, images open in the image
 viewer and PDFs open the system chooser.
 
+On web and desktop, select a sent PDF or HTML attachment to open it in the file viewer, or use the
+download button beside it to save a copy. Other attached files download when selected.
+
 Select a video attachment before or after sending to play it. Web and desktop use the browser's
 built-in controls. On mobile, videos open in a full-screen player with native playback controls.
 Supported videos show a thumbnail in the conversation and composer.
@@ -133,10 +136,10 @@ are not supported; use the Markdown embed syntax above.
 
 When an agent links to a file it wrote outside the workspace, such as a Markdown report in
 `/tmp`, select the link to open it in the file viewer. The viewer shows the file read-only, with
-rendered Markdown available as usual; it cannot edit files outside the workspace. HTML and PDF
-files outside the workspace open the same way as ones inside it. Because such a file is served on
-its own, an HTML page outside the workspace cannot load scripts, styles, or images from files beside
-it.
+rendered Markdown available as usual; it cannot edit files outside the workspace. The workspace
+file tree stays hidden because it does not describe the open file. HTML and PDF files outside the
+workspace open the same way as ones inside it. Because such a file is served on its own, an HTML
+page outside the workspace cannot load scripts, styles, or images from files beside it.
 
 ## HTML and PDF files in the file viewer
 
