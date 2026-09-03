@@ -5021,13 +5021,7 @@ function ChatViewContent(props: ChatViewProps) {
         }),
       );
     };
-    if (
-      !activeThread ||
-      isSendBusy ||
-      isConnecting ||
-      threadDetailLoading ||
-      sendInFlightRef.current
-    ) {
+    if (!activeThread) {
       notifyDirectAnnotationAttached();
       return;
     }
@@ -5041,12 +5035,19 @@ function ChatViewContent(props: ChatViewProps) {
       );
       return;
     }
+    // Pending user-input answers use thread.user-input.respond, not a
+    // provider turn: they must not wait on send-busy/connecting/loading
+    // guards, or an enabled Submit strands on the Input badge (see #9318).
     if (activePendingProgress) {
       if (directAnnotation) {
         notifyDirectAnnotationAttached();
         return;
       }
       onAdvanceActivePendingUserInput();
+      return;
+    }
+    if (isSendBusy || isConnecting || threadDetailLoading || sendInFlightRef.current) {
+      notifyDirectAnnotationAttached();
       return;
     }
     const sendCtx = composerRef.current?.getSendContext();

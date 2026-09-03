@@ -1887,6 +1887,30 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }) => {
+      // Pending user-input answers ride their own response path
+      // (thread.user-input.respond): they need no provider, no send
+      // context, and no images. Normal-send guards must not strand an
+      // enabled Submit/Next button on the Input badge.
+      if (activePendingProgress) {
+        const submission = submitComposerDraft({
+          prompt: promptRef.current,
+          submissionTarget: "pending-user-input",
+          event,
+          onSend: (sendEvent) => {
+            // ChatView reports its final composed-input preflight through the
+            // composer handle before its first asynchronous send step.
+            providerInputRejectedRef.current = false;
+            onSend(sendEvent);
+            return !providerInputRejectedRef.current;
+          },
+        });
+        setComposerSubmissionError(submission.validationMessage);
+        if (!submission.didDispatch) return;
+        if (shouldBlurMobileComposerOnSubmit()) {
+          blurMobileComposerAfterSend();
+        }
+        return;
+      }
       if (noProviderAvailable || isSendDisabled) {
         event?.preventDefault();
         return;
@@ -1906,7 +1930,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       const submission = submitComposerDraft({
         prompt: promptRef.current,
-        submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
+        submissionTarget: "provider-turn",
         event,
         onSend: (sendEvent) => {
           // ChatView reports its final composed-input preflight through the
