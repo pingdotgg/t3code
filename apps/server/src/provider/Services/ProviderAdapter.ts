@@ -64,6 +64,7 @@ export interface ProviderPersistedThread {
   readonly title: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly status: unknown;
   readonly discoveryCursor: string;
   readonly sourceMetadata: unknown;
   readonly messages: ReadonlyArray<ProviderPersistedThreadMessage>;

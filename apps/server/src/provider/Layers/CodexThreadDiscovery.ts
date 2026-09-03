@@ -130,6 +130,7 @@ export function toPersistedThread(
     title: titleForThread(thread),
     createdAt: unixSecondsToIso(thread.createdAt),
     updatedAt: unixSecondsToIso(thread.updatedAt),
+    status: thread.status,
     discoveryCursor: discoveryCursorForThread(thread),
     sourceMetadata: {
       source: thread.source,

@@ -64,6 +64,7 @@ const persistedThread: ProviderPersistedThread = {
   title: "External work",
   createdAt: "2026-08-21T03:22:43.000Z",
   updatedAt: "2026-08-21T03:24:43.000Z",
+  status: { type: "idle" },
   discoveryCursor: "2026-08-21T03:24:43.000Z:idle",
   sourceMetadata: { source: "cli" },
   messages: [
@@ -85,6 +86,14 @@ const persistedThread: ProviderPersistedThread = {
     },
   ],
 };
+
+const importedProviderThreadMetadata = {
+  provider: ProviderDriverKind.make("codex"),
+  providerThreadId: PROVIDER_THREAD_ID,
+  updatedAt: persistedThread.updatedAt,
+  status: persistedThread.status,
+  sourceMetadata: persistedThread.sourceMetadata,
+} as const;
 
 it("keeps deterministic fallback candidates for each shared Codex home", () => {
   const makeDiscoveryInstance = (instanceId: string, continuationKey: string) =>
@@ -505,6 +514,7 @@ it.effect("does not re-import turns that T3 already projected under different me
                 instanceId: instance.instanceId,
                 model: "gpt-5.6-sol",
               },
+              providerThreadMetadata: importedProviderThreadMetadata,
             }),
           ),
         getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.some({ id: "project-1" })),
@@ -552,6 +562,7 @@ it.effect("appends only messages missing after a deterministic imported id", () 
                 instanceId: instance.instanceId,
                 model: "gpt-5.6-sol",
               },
+              providerThreadMetadata: importedProviderThreadMetadata,
             }),
           ),
         getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.some({ id: "project-1" })),

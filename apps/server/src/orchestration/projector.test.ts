@@ -66,6 +66,13 @@ describe("orchestration projector", () => {
             worktreePath: null,
             createdAt: now,
             updatedAt: now,
+            providerThreadMetadata: {
+              provider: "codex",
+              providerThreadId: "provider-thread-1",
+              updatedAt: now,
+              status: { type: "idle" },
+              sourceMetadata: { cwd: "/work/demo" },
+            },
           },
         }),
       ),
@@ -100,6 +107,13 @@ describe("orchestration projector", () => {
         activities: [],
         checkpoints: [],
         session: null,
+        providerThreadMetadata: {
+          provider: "codex",
+          providerThreadId: "provider-thread-1",
+          updatedAt: now,
+          status: { type: "idle" },
+          sourceMetadata: { cwd: "/work/demo" },
+        },
       },
     ]);
   });

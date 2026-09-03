@@ -119,6 +119,10 @@ function importedMessageId(
   );
 }
 
+function providerThreadMetadataEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 export function groupPersistedThreadDiscoveryCandidates(
   instances: ReadonlyArray<ProviderInstance>,
 ): ReadonlyArray<ReadonlyArray<ProviderInstance>> {
@@ -398,6 +402,13 @@ export const reconcilePersistedThread = Effect.fn("reconcilePersistedProviderThr
       ? matchingProject.value.id
       : input.unassignedProjectId;
     if (projectId === undefined) return;
+    const providerThreadMetadata = {
+      provider: input.instance.driverKind,
+      providerThreadId: input.thread.providerThreadId,
+      updatedAt: input.thread.updatedAt,
+      status: input.thread.status,
+      sourceMetadata: input.thread.sourceMetadata,
+    } as const;
     const projectChanged =
       Option.isSome(existingThread) &&
       existingThread.value.projectId !== undefined &&
@@ -415,12 +426,17 @@ export const reconcilePersistedThread = Effect.fn("reconcilePersistedProviderThr
         interactionMode: "default",
         branch: null,
         worktreePath: null,
+        providerThreadMetadata,
         createdAt: input.thread.createdAt,
       });
     } else if (
       projectChanged ||
       existingThread.value.modelSelection.instanceId !== input.instance.instanceId ||
-      existingThread.value.modelSelection.model !== input.model
+      existingThread.value.modelSelection.model !== input.model ||
+      !providerThreadMetadataEqual(
+        existingThread.value.providerThreadMetadata,
+        providerThreadMetadata,
+      )
     ) {
       yield* input.engine.dispatch({
         type: "thread.meta.update",
@@ -430,10 +446,12 @@ export const reconcilePersistedThread = Effect.fn("reconcilePersistedProviderThr
           "owner",
           input.instance.instanceId,
           input.model,
+          input.thread.discoveryCursor,
         ),
         threadId: expectedThreadId,
         ...(projectChanged ? { projectId, worktreePath: null } : {}),
         modelSelection: { instanceId: input.instance.instanceId, model: input.model },
+        providerThreadMetadata,
       });
     }
 

@@ -328,6 +328,9 @@ each group for persisted threads, and imports missing messages through the inter
 directory; unmatched threads go into an **Unassigned Codex threads** project. Provider thread IDs,
 discovery cursors, and deterministic command and message IDs make retries safe and keep live T3
 threads from being imported twice.
+The imported provider ID, status, update time, and source metadata are also stored on the normal
+thread projection and included in thread and shell snapshots, so every client sees the same
+provider conversation identity.
 
 ### Buffered assistant delivery
 

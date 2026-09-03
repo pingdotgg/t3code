@@ -353,6 +353,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          ...(command.providerThreadMetadata !== undefined
+            ? { providerThreadMetadata: command.providerThreadMetadata }
+            : {}),
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -830,6 +833,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
           ...(command.linkedPullRequest !== undefined
             ? { linkedPullRequest: command.linkedPullRequest }
+            : {}),
+          ...(command.providerThreadMetadata !== undefined
+            ? { providerThreadMetadata: command.providerThreadMetadata }
             : {}),
           updatedAt: occurredAt,
         },

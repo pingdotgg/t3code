@@ -95,6 +95,10 @@ export function applyThreadDetailEvent(
           interactionMode: event.payload.interactionMode,
           branch: event.payload.branch,
           worktreePath: event.payload.worktreePath,
+          ...(event.payload.providerThreadMetadata === undefined ||
+          event.payload.providerThreadMetadata === null
+            ? {}
+            : { providerThreadMetadata: event.payload.providerThreadMetadata }),
           latestTurn: null,
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
@@ -237,6 +241,9 @@ export function applyThreadDetailEvent(
             : {}),
           ...(event.payload.linkedPullRequest !== undefined
             ? { linkedPullRequest: event.payload.linkedPullRequest }
+            : {}),
+          ...(event.payload.providerThreadMetadata !== undefined
+            ? { providerThreadMetadata: event.payload.providerThreadMetadata }
             : {}),
           updatedAt: event.payload.updatedAt,
         },
