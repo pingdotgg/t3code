@@ -272,19 +272,13 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
-  it("derives the npm prefix from POSIX and Windows global layouts", () => {
+  it("derives the npm prefix only from the global lib/node_modules layout", () => {
     expect(
       npmGlobalPrefixFromCommandPath(
         "/usr/local/lib/node_modules/@openai/codex/bin/codex.js",
         "@openai/codex",
       ),
     ).toBe("/usr/local");
-    expect(
-      npmGlobalPrefixFromCommandPath(
-        "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js",
-        "@openai/codex",
-      ),
-    ).toBe("C:/Users/me/AppData/Roaming/npm");
     // A copy nested inside another package is not a global install.
     expect(
       npmGlobalPrefixFromCommandPath(
@@ -292,7 +286,43 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         "@openai/codex",
       ),
     ).toBeNull();
+    // Neither is a project-local dependency.
+    expect(
+      npmGlobalPrefixFromCommandPath(
+        "/work/app/node_modules/@openai/codex/bin/codex.js",
+        "@openai/codex",
+      ),
+    ).toBeNull();
   });
+
+  it.effect("proves Windows npm ownership from the package manifest beside the shim", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-npm-windows-capabilities");
+      const shim = NodePath.join(tempDir, "package-tool.cmd");
+      NodeFS.mkdirSync(tempDir, { recursive: true });
+      NodeFS.writeFileSync(shim, "@echo off\r\n");
+      NodeFS.mkdirSync(NodePath.join(tempDir, "node_modules", "@example", "package-tool"), {
+        recursive: true,
+      });
+      NodeFS.writeFileSync(
+        NodePath.join(tempDir, "node_modules", "@example", "package-tool", "package.json"),
+        "{}",
+      );
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: shim,
+        env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+      }).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+      );
+
+      expect(capabilities.update).toMatchObject({
+        executable: "npm",
+        args: ["install", "-g", "--prefix", tempDir, expect.any(String), expect.any(String)],
+      });
+    }),
+  );
 
   it.effect("switches to pnpm updates when the real path lives in pnpm's global store", () =>
     Effect.gen(function* () {
@@ -375,14 +405,34 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   it("recognizes Homebrew kegs and casks from the real executable path", () => {
     expect(
       homebrewOwnershipFromCommandPath("/opt/homebrew/Cellar/claude-code@latest/2.1.0/bin/claude"),
-    ).toEqual({ kind: "formula", name: "claude-code@latest" });
+    ).toEqual({ kind: "formula", name: "claude-code@latest", prefix: "/opt/homebrew" });
     expect(homebrewOwnershipFromCommandPath("/usr/local/Caskroom/codex/0.148.0/codex")).toEqual({
       kind: "cask",
       name: "codex",
+      prefix: "/usr/local",
     });
     // A plain /usr/local/bin binary is not evidence of Homebrew (#8832).
     expect(homebrewOwnershipFromCommandPath("/usr/local/bin/codex")).toBeNull();
+    // A keg elsewhere reports its prefix so the resolver can reject it against
+    // `brew --prefix`.
+    expect(homebrewOwnershipFromCommandPath("/srv/Cellar/claude/1.0.0/bin/claude")).toMatchObject({
+      prefix: "/srv",
+    });
   });
+
+  it.effect("stays manual-only for an explicit binary path that does not exist", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-missing-native-capabilities");
+      const missingPath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+        nativePackageToolUpdate,
+        { binaryPath: missingPath, env: { PATH: "" } },
+      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+      expect(capabilities.update).toBeNull();
+    }),
+  );
 
   it.effect(
     "upgrades the Homebrew cask that owns the binary and compares against its version",
@@ -417,12 +467,17 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
             ChildProcessSpawner.ChildProcessSpawner,
             stdoutSpawner((command, args) => {
               spawned.push([command, ...args]);
-              return JSON.stringify({ casks: [{ version: "0.148.0,42" }] });
+              return args[0] === "--prefix"
+                ? `${tempDir}\n`
+                : JSON.stringify({ casks: [{ version: "0.148.0,42" }] });
             }),
           ),
         );
 
-        expect(spawned).toEqual([[brewPath, "info", "--json=v2", "package-tool"]]);
+        expect(spawned).toEqual([
+          [brewPath, "--prefix"],
+          [brewPath, "info", "--json=v2", "package-tool"],
+        ]);
         expect(capabilities).toEqual({
           provider: driver("packageTool"),
           packageName: "@example/package-tool",
@@ -437,12 +492,42 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       }),
   );
 
+  it.effect("stays manual-only when the keg is not under the resolved brew's prefix", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-homebrew-foreign-prefix");
+      const brewBinDir = NodePath.join(tempDir, "brew-bin");
+      writeExecutable(NodePath.join(brewBinDir, "brew"));
+      const kegBinary = NodePath.join(
+        tempDir,
+        "elsewhere",
+        "Cellar",
+        "package-tool",
+        "1.0.0",
+        "bin",
+        "package-tool",
+      );
+      writeExecutable(kegBinary);
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: kegBinary,
+        env: { PATH: brewBinDir },
+      }).pipe(
+        Effect.provideService(HostProcessPlatform, "darwin"),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          stdoutSpawner(() => "/opt/homebrew\n"),
+        ),
+      );
+
+      expect(capabilities).toEqual(manualPackageTool);
+    }),
+  );
+
   it("reads the stable formula version from brew info", () => {
     const info = JSON.stringify({ formulae: [{ versions: { stable: "2.1.5" } }] });
-    expect(parseHomebrewLatestVersion(info, { kind: "formula", name: "claude-code" })).toBe(
-      "2.1.5",
-    );
-    expect(parseHomebrewLatestVersion("not json", { kind: "formula", name: "x" })).toBeNull();
+    const formula = { kind: "formula", name: "claude-code", prefix: "/opt/homebrew" } as const;
+    expect(parseHomebrewLatestVersion(info, formula)).toBe("2.1.5");
+    expect(parseHomebrewLatestVersion("not json", formula)).toBeNull();
   });
 
   it.effect(

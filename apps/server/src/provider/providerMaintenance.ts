@@ -14,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -159,10 +160,6 @@ export function makeManualOnlyProviderMaintenanceCapabilities(input: {
   });
 }
 
-export function hasPathSeparator(value: string): boolean {
-  return value.includes("/") || value.includes("\\");
-}
-
 export function normalizeCommandPath(commandPath: string): string {
   return commandPath.replaceAll("\\", "/").toLowerCase();
 }
@@ -188,9 +185,10 @@ function isPnpmGlobalCommandPath(commandPath: string): boolean {
 
 /**
  * The npm global prefix that owns a package, derived from the real path of
- * its entry point: `<prefix>/lib/node_modules/<pkg>/…` on POSIX and
- * `<prefix>/node_modules/<pkg>/…` on Windows. Returns null when the path does
- * not go through the package, which is the evidence that npm owns it.
+ * its entry point: `<prefix>/lib/node_modules/<pkg>/…`. Windows global
+ * installs have no `lib` segment and are proven by the shim instead (see
+ * `resolveNpmGlobalPrefix`). A project-local `node_modules` is not a global
+ * install and yields null.
  */
 export function npmGlobalPrefixFromCommandPath(
   realCommandPath: string,
@@ -198,26 +196,31 @@ export function npmGlobalPrefixFromCommandPath(
 ): string | null {
   const slashPath = realCommandPath.replaceAll("\\", "/");
   const normalized = slashPath.toLowerCase();
-  const packageSegment = `/node_modules/${packageName.toLowerCase()}/`;
+  const packageSegment = `/lib/node_modules/${packageName.toLowerCase()}/`;
   const packageIndex = normalized.lastIndexOf(packageSegment);
   if (packageIndex < 0 || normalized.slice(0, packageIndex).includes("/node_modules/")) {
     return null;
   }
-  const modulesRoot = slashPath.slice(0, packageIndex);
-  const prefix = modulesRoot.toLowerCase().endsWith("/lib")
-    ? modulesRoot.slice(0, -"/lib".length)
-    : modulesRoot;
+  const prefix = slashPath.slice(0, packageIndex);
   return prefix.length > 0 ? prefix : null;
 }
 
-const HOMEBREW_KEG_PATTERN = /\/(cellar|caskroom)\/([^/]+)\//i;
+// `<prefix>/Cellar/<name>/<version>/…` or `<prefix>/Caskroom/<name>/<version>/…`.
+// Homebrew always nests a version directory under the keg.
+const HOMEBREW_KEG_PATTERN = /^(.*)\/(cellar|caskroom)\/([^/]+)\/[^/]+\//i;
 
 export interface HomebrewOwnership {
   readonly kind: "formula" | "cask";
   readonly name: string;
+  /** The Homebrew prefix the keg sits under; must match `brew --prefix`. */
+  readonly prefix: string;
 }
 
-/** Homebrew owns an executable when its real path runs through a keg or caskroom entry. */
+/**
+ * Homebrew looks like the owner when the real path runs through a versioned
+ * keg or cask. It is only proven once the prefix matches the `brew` that will
+ * run the upgrade (see `resolvePackageManagedProviderMaintenance`).
+ */
 export function homebrewOwnershipFromCommandPath(
   realCommandPath: string,
 ): HomebrewOwnership | null {
@@ -226,8 +229,9 @@ export function homebrewOwnershipFromCommandPath(
     return null;
   }
   return {
-    kind: match[1]!.toLowerCase() === "cellar" ? "formula" : "cask",
-    name: match[2]!,
+    kind: match[2]!.toLowerCase() === "cellar" ? "formula" : "cask",
+    name: match[3]!,
+    prefix: match[1]!,
   };
 }
 
@@ -260,41 +264,33 @@ export function parseHomebrewLatestVersion(
   return nonEmptyString(raw);
 }
 
-const fetchHomebrewLatestVersion = Effect.fn("fetchHomebrewLatestVersion")(function* (
+/** Run `brew <args>` and return stdout, or null on failure, timeout, or oversized output. */
+const runHomebrew = Effect.fn("runHomebrew")(function* (
   brewPath: string,
-  ownership: HomebrewOwnership,
+  args: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const collect = Effect.gen(function* () {
-    const child = yield* spawner.spawn(
-      ChildProcess.make(brewPath, ["info", "--json=v2", ownership.name], {
-        env,
-        extendEnv: true,
-      }),
-    );
+    const child = yield* spawner.spawn(ChildProcess.make(brewPath, args, { env, extendEnv: true }));
     yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
+    // stderr is drained so a chatty brew cannot block on a full pipe.
     const [stdout, exitCode] = yield* Effect.all(
       [
         collectUint8StreamText({ stream: child.stdout, maxBytes: HOMEBREW_INFO_MAX_BYTES }),
         child.exitCode,
+        Stream.runDrain(child.stderr),
       ],
       { concurrency: "unbounded" },
     );
-    if (Number(exitCode) !== 0 || stdout.truncated) {
-      return null;
-    }
-    return parseHomebrewLatestVersion(stdout.text, ownership);
+    return Number(exitCode) !== 0 || stdout.truncated ? null : stdout.text;
   });
   return yield* collect.pipe(
     Effect.scoped,
     Effect.timeoutOption(Duration.millis(HOMEBREW_INFO_TIMEOUT_MS)),
     Effect.map(Option.getOrNull),
     Effect.catchCause((cause) =>
-      Effect.logWarning("Homebrew latest version probe failed", {
-        formula: ownership.name,
-        cause,
-      }).pipe(Effect.as(null)),
+      Effect.logWarning("Homebrew probe failed", { args, cause }).pipe(Effect.as(null)),
     ),
   );
 });
@@ -363,13 +359,29 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
   if (homebrew) {
     const brewPath = yield* resolveCommandPath("brew", { env: context.env }).pipe(
-      Effect.catchTag("CommandResolutionError", () => Effect.succeed(null)),
+      Effect.catchTags({ CommandResolutionError: () => Effect.succeed(null) }),
     );
     if (!brewPath) {
       return manual;
     }
+    // A keg-shaped path is only Homebrew's if it sits under the prefix of the
+    // `brew` that would upgrade it; `brew --prefix` is a cheap shell script.
+    const fileSystem = yield* FileSystem.FileSystem;
+    const brewPrefix = nonEmptyString(yield* runHomebrew(brewPath, ["--prefix"], context.env));
+    const realBrewPrefix = brewPrefix
+      ? yield* fileSystem.realPath(brewPrefix).pipe(Effect.orElseSucceed(() => brewPrefix))
+      : null;
+    if (
+      !realBrewPrefix ||
+      normalizeCommandPath(realBrewPrefix) !== normalizeCommandPath(homebrew.prefix)
+    ) {
+      return manual;
+    }
     const args =
       homebrew.kind === "cask" ? ["upgrade", "--cask", homebrew.name] : ["upgrade", homebrew.name];
+    // Homebrew lags npm by hours on every release, so compare against what
+    // `brew upgrade` can actually deliver.
+    const info = yield* runHomebrew(brewPath, ["info", "--json=v2", homebrew.name], context.env);
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -377,9 +389,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateArgs: args,
       updateLockKey: "homebrew",
       updateCommand: ["brew", ...args].join(" "),
-      // Homebrew lags npm by hours on every release, so compare against what
-      // `brew upgrade` can actually deliver.
-      latestVersion: yield* fetchHomebrewLatestVersion(brewPath, homebrew, context.env),
+      latestVersion: info ? parseHomebrewLatestVersion(info, homebrew) : null,
     });
   }
 
@@ -475,10 +485,12 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   }
 
   const env = options?.env ?? (yield* readCommandLookupEnv);
-  const resolvedCommandPath =
-    (yield* resolveCommandPath(binaryPath, { env }).pipe(
-      Effect.catchTag("CommandResolutionError", () => Effect.succeed(null)),
-    )) ?? (hasPathSeparator(binaryPath) ? binaryPath : null);
+  // resolveCommandPath checks explicit paths for existence too, so a missing
+  // binary always lands in the no-context branch and never gets an update
+  // command it cannot run.
+  const resolvedCommandPath = yield* resolveCommandPath(binaryPath, { env }).pipe(
+    Effect.catchTags({ CommandResolutionError: () => Effect.succeed(null) }),
+  );
   if (!resolvedCommandPath) {
     return yield* resolver.resolve(null);
   }
@@ -486,7 +498,10 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   const fileSystem = yield* FileSystem.FileSystem;
   const realCommandPath = yield* fileSystem
     .realPath(resolvedCommandPath)
-    .pipe(Effect.orElseSucceed(() => resolvedCommandPath));
+    .pipe(Effect.orElseSucceed(() => null));
+  if (!realCommandPath) {
+    return yield* resolver.resolve(null);
+  }
   return yield* resolver.resolve({
     binaryPath,
     resolvedCommandPath,

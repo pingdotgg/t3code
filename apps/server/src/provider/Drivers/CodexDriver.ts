@@ -73,8 +73,10 @@ import {
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
+// The standalone installer lays out `<CODEX_HOME>/packages/standalone/…`;
+// CODEX_HOME is not always `~/.codex`.
 function isCodexStandaloneCommandPath(commandPath: string): boolean {
-  return normalizeCommandPath(commandPath).includes("/.codex/packages/standalone/");
+  return normalizeCommandPath(commandPath).includes("/packages/standalone/");
 }
 
 const UPDATE = makePackageManagedProviderMaintenanceResolver({

@@ -161,7 +161,8 @@ export function isProviderSettingsUpdateCandidate(
 ): provider is ProviderSettingsUpdateCandidate {
   return (
     provider.enabled &&
-    provider.versionAdvisory?.canUpdate === true &&
+    provider.versionAdvisory?.status === "behind_latest" &&
+    provider.versionAdvisory.canUpdate === true &&
     provider.versionAdvisory.updateCommand !== null
   );
 }
