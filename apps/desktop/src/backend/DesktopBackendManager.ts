@@ -472,6 +472,11 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
         type: "output",
       };
     }
+    if (options.bootstrap.desktopLifetimeFd !== undefined) {
+      additionalFds[`fd${options.bootstrap.desktopLifetimeFd}`] = {
+        type: "input",
+      };
+    }
   }
   const command = ChildProcess.make(options.executablePath, options.args, {
     cwd: options.cwd,

@@ -303,6 +303,7 @@ export const resolveServerConfig = (
     const desktopBootstrapToken = bootstrap?.desktopBootstrapToken;
     const desktopTelemetryFd = bootstrap?.desktopTelemetryFd;
     const desktopTelemetryControlFd = bootstrap?.desktopTelemetryControlFd;
+    const desktopLifetimeFd = bootstrap?.desktopLifetimeFd;
     const resourceMonitorPath = bootstrap?.resourceMonitorPath;
     const autoBootstrapProjectFromCwd = Option.getOrElse(
       resolveOptionPrecedence(
@@ -379,6 +380,7 @@ export const resolveServerConfig = (
       desktopBootstrapToken,
       desktopTelemetryFd,
       desktopTelemetryControlFd,
+      desktopLifetimeFd,
       resourceMonitorPath,
       autoBootstrapProjectFromCwd,
       logWebSocketEvents,
