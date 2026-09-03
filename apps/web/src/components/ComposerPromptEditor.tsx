@@ -87,6 +87,7 @@ import { getTimelinePageScrollKey } from "./chat/pageScrollController";
 import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/providerSkills";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { registerComposerInlineTokenPaste } from "./composerInlineTokenPaste";
+import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import {
   $consumeComposerCitationCommentRequest,
   $createComposerCitationNode,
@@ -904,7 +905,9 @@ interface ComposerPromptEditorProps {
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
+  containerClassName?: string;
   className?: string;
+  placeholderClassName?: string;
   onRemoveTerminalContext: (contextId: string) => void;
   onChange: (
     nextValue: string,
@@ -913,6 +916,7 @@ interface ComposerPromptEditorProps {
     cursorAdjacentToMention: boolean,
     terminalContextIds: string[],
   ) => void;
+  onVisibleSelectionChange?: () => void;
   onCommandKeyDown?: (
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
@@ -1557,9 +1561,12 @@ function ComposerPromptEditorInner({
   skills,
   disabled,
   placeholder,
+  containerClassName,
   className,
+  placeholderClassName,
   onRemoveTerminalContext,
   onChange,
+  onVisibleSelectionChange,
   onCommandKeyDown,
   onPageScrollKeyDown,
   onPageScrollKeyUp,
@@ -1569,7 +1576,9 @@ function ComposerPromptEditorInner({
 }: ComposerPromptEditorProps) {
   const [editor] = useLexicalComposerContext();
   const onChangeRef = useRef(onChange);
+  const onVisibleSelectionChangeRef = useRef(onVisibleSelectionChange);
   const initialCursor = clampCollapsedComposerCursor(value, cursor);
+  const initialExpandedCursor = expandCollapsedComposerCursor(value, initialCursor);
   const terminalContextsSignature = terminalContextSignature(terminalContexts);
   const terminalContextsSignatureRef = useRef(terminalContextsSignature);
   const skillsSignature = skillSignature(skills);
@@ -1578,9 +1587,10 @@ function ComposerPromptEditorInner({
   const snapshotRef = useRef({
     value,
     cursor: initialCursor,
-    expandedCursor: expandCollapsedComposerCursor(value, initialCursor),
+    expandedCursor: initialExpandedCursor,
     terminalContextIds: terminalContexts.map((context) => context.id),
   });
+  const selectionRangeRef = useRef({ start: initialExpandedCursor, end: initialExpandedCursor });
   const isApplyingControlledUpdateRef = useRef(false);
   const citationCommentRequestRef = useRef<ComposerCitationCommentRequest | null>(null);
   const [openCitationComment, setOpenCitationComment] =
@@ -1604,6 +1614,10 @@ function ComposerPromptEditorInner({
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
+
+  useEffect(() => {
+    onVisibleSelectionChangeRef.current = onVisibleSelectionChange;
+  }, [onVisibleSelectionChange]);
 
   useLayoutEffect(() => {
     skillMetadataRef.current = skillMetadataByName(skills);
@@ -1643,11 +1657,16 @@ function ComposerPromptEditorInner({
       return;
     }
 
+    const normalizedExpandedCursor = expandCollapsedComposerCursor(value, normalizedCursor);
     snapshotRef.current = {
       value,
       cursor: normalizedCursor,
-      expandedCursor: expandCollapsedComposerCursor(value, normalizedCursor),
+      expandedCursor: normalizedExpandedCursor,
       terminalContextIds: terminalContexts.map((context) => context.id),
+    };
+    selectionRangeRef.current = {
+      start: normalizedExpandedCursor,
+      end: normalizedExpandedCursor,
     };
     terminalContextsSignatureRef.current = terminalContextsSignature;
     skillsSignatureRef.current = skillsSignature;
@@ -1700,6 +1719,10 @@ function ComposerPromptEditorInner({
         expandedCursor: expandCollapsedComposerCursor(snapshotRef.current.value, boundedCursor),
         terminalContextIds: snapshotRef.current.terminalContextIds,
       };
+      selectionRangeRef.current = {
+        start: snapshotRef.current.expandedCursor,
+        end: snapshotRef.current.expandedCursor,
+      };
       onChangeRef.current(
         snapshotRef.current.value,
         boundedCursor,
@@ -1733,12 +1756,17 @@ function ComposerPromptEditorInner({
         nextValue,
         $readExpandedSelectionOffsetFromEditorState(fallbackExpandedCursor),
       );
+      const selectionRange = getSelectionRangeForExpandedComposerOffsets($getSelection());
       const terminalContextIds = collectTerminalContextIds($getRoot());
       snapshot = {
         value: nextValue,
         cursor: nextCursor,
         expandedCursor: nextExpandedCursor,
         terminalContextIds,
+      };
+      selectionRangeRef.current = selectionRange ?? {
+        start: nextExpandedCursor,
+        end: nextExpandedCursor,
       };
     });
     snapshotRef.current = snapshot;
@@ -1788,18 +1816,28 @@ function ComposerPromptEditorInner({
         nextValue,
         $readExpandedSelectionOffsetFromEditorState(fallbackExpandedCursor),
       );
+      const nextSelectionRange = getSelectionRangeForExpandedComposerOffsets($getSelection());
+      const previousSelectionRange = selectionRangeRef.current;
+      selectionRangeRef.current = nextSelectionRange ?? {
+        start: nextExpandedCursor,
+        end: nextExpandedCursor,
+      };
       const terminalContextIds = collectTerminalContextIds($getRoot());
       const previousSnapshot = snapshotRef.current;
-      if (
+      const snapshotChanged = !(
         previousSnapshot.value === nextValue &&
         previousSnapshot.cursor === nextCursor &&
         previousSnapshot.expandedCursor === nextExpandedCursor &&
         previousSnapshot.terminalContextIds.length === terminalContextIds.length &&
         previousSnapshot.terminalContextIds.every((id, index) => id === terminalContextIds[index])
-      ) {
+      );
+      if (isApplyingControlledUpdateRef.current) {
         return;
       }
-      if (isApplyingControlledUpdateRef.current) {
+      if (!snapshotChanged) {
+        if (didComposerSelectionChangeVisibly(previousSelectionRange, nextSelectionRange)) {
+          onVisibleSelectionChangeRef.current?.();
+        }
         return;
       }
       snapshotRef.current = {
@@ -1824,7 +1862,12 @@ function ComposerPromptEditorInner({
   return (
     <ComposerTerminalContextActionsContext value={terminalContextActions}>
       <ComposerCitationCommentContext value={citationCommentActions}>
-        <div className="relative [font-family:var(--font-composer,var(--font-sans))] [font-size:var(--font-size-prompt,0.875rem)] [@media(max-width:39.999rem)_and_(pointer:coarse)]:[font-size:max(var(--font-size-prompt,1rem),16px)]">
+        <div
+          className={cn(
+            "relative [font-family:var(--font-composer,var(--font-sans))] [font-size:var(--font-size-prompt,0.875rem)] [@media(max-width:39.999rem)_and_(pointer:coarse)]:[font-size:max(var(--font-size-prompt,1rem),16px)]",
+            containerClassName,
+          )}
+        >
           <PlainTextPlugin
             contentEditable={
               <ContentEditable
@@ -1881,7 +1924,12 @@ function ComposerPromptEditorInner({
             }
             placeholder={
               terminalContexts.length > 0 ? null : (
-                <div className="pointer-events-none absolute inset-0 leading-relaxed text-placeholder">
+                <div
+                  className={cn(
+                    "pointer-events-none absolute inset-0 leading-relaxed text-placeholder",
+                    placeholderClassName,
+                  )}
+                >
                   {placeholder}
                 </div>
               )
@@ -1911,9 +1959,12 @@ export function ComposerPromptEditor({
   skills,
   disabled,
   placeholder,
+  containerClassName,
   className,
+  placeholderClassName,
   onRemoveTerminalContext,
   onChange,
+  onVisibleSelectionChange,
   onCommandKeyDown,
   onPageScrollKeyDown,
   onPageScrollKeyUp,
@@ -1957,8 +2008,10 @@ export function ComposerPromptEditor({
         skills={skills}
         disabled={disabled}
         placeholder={placeholder}
+        {...(containerClassName ? { containerClassName } : {})}
         onRemoveTerminalContext={onRemoveTerminalContext}
         onChange={onChange}
+        {...(onVisibleSelectionChange ? { onVisibleSelectionChange } : {})}
         onPaste={onPaste}
         editorRef={editorRef}
         {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
@@ -1966,6 +2019,7 @@ export function ComposerPromptEditor({
         {...(onPageScrollKeyUp ? { onPageScrollKeyUp } : {})}
         {...(onPageScrollRelease ? { onPageScrollRelease } : {})}
         {...(className ? { className } : {})}
+        {...(placeholderClassName ? { placeholderClassName } : {})}
       />
     </LexicalComposer>
   );

@@ -2340,11 +2340,15 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               }`}
             />
           )}
-          <ProjectFavicon
-            environmentId={project.environmentId}
-            cwd={project.workspaceRoot}
-            faviconPath={project.faviconPath}
-          />
+          <span className="flex shrink-0">
+            <ProjectFavicon
+              environmentId={project.environmentId}
+              cwd={project.workspaceRoot}
+              projectName={project.displayName}
+              faviconPath={project.faviconPath}
+              projectIcon={project.projectIcon}
+            />
+          </span>
           <span className="flex min-w-0 flex-1 items-center gap-2">
             <span className="truncate text-sm font-medium text-sidebar-foreground/90">
               {project.displayName}

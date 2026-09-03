@@ -63,7 +63,7 @@ import { useProjects } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
-import { pullRequestEnvironment } from "~/state/pullRequests";
+import { pullRequestEnvironment, useSharedPullRequestSummary } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { vcsEnvironment } from "~/state/vcs";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -445,6 +445,7 @@ function PullRequestBaseFreshnessWarning({
 
 export function PullRequestDetailPanel({
   environmentId,
+  threadRef = null,
   reference,
   refreshToken: forcedRefreshToken = 0,
   onActed,
@@ -454,6 +455,13 @@ export function PullRequestDetailPanel({
   composerDraftTarget,
 }: {
   environmentId: EnvironmentId;
+  /**
+   * The thread this panel sits beside, if any. Links that are not the pull
+   * request itself (check details, host permalinks) can open in that thread's
+   * in-app browser when the user has asked for it; the page has no thread, so
+   * there they always go to the system browser.
+   */
+  threadRef?: ScopedThreadRef | null;
   reference: PullRequestRef;
   /**
    * Bumped by whatever holds the panel when a reader asks for everything on screen to be read
@@ -468,14 +476,8 @@ export function PullRequestDetailPanel({
   onActed?: () => void;
   /** Page-owned detail columns use this to clear the selected pull request. */
   onClose?: () => void;
-  /** Keeps surrounding thread state in step with refreshed host state. */
-  onStateChange?: (status: {
-    projectId: string;
-    repository: string;
-    number: number;
-    state: PullRequestState;
-    isDraft: boolean;
-  }) => void;
+  /** Keeps surrounding inferred thread state in step with refreshed host state. */
+  onStateChange?: (status: { repository: string; number: number; state: PullRequestState }) => void;
   /**
    * Beside a thread, the checkout affordance disappears: the panel is showing that thread's
    * own pull request, so the branch is already under the reader's feet — and checking it out
@@ -598,11 +600,19 @@ export function PullRequestDetailPanel({
     reference.repository,
     reference.number,
   ]);
-  const coreDetail = resolveDisplayedPullRequestDetail({
+  const resolvedCoreDetail = resolveDisplayedPullRequestDetail({
     live: detailQuery.data,
     cached: cachedDetail,
     reference,
   });
+  const sharedSummary = useSharedPullRequestSummary(environmentId, reference, resolvedCoreDetail);
+  const coreDetail = useMemo(
+    () =>
+      resolvedCoreDetail === null || sharedSummary === null || sharedSummary === resolvedCoreDetail
+        ? resolvedCoreDetail
+        : { ...resolvedCoreDetail, ...sharedSummary },
+    [resolvedCoreDetail, sharedSummary],
+  );
   const activity = activityQuery.data;
   const detail = useMemo(
     () =>
@@ -666,16 +676,14 @@ export function PullRequestDetailPanel({
     }
     activityRevision.current = next;
   }, [activityQuery.refresh, coreDetail, pullRequestKey]);
-  useEffect(() => {
-    if (!detail) return;
+  useLayoutEffect(() => {
+    if (!resolvedCoreDetail) return;
     onStateChange?.({
-      projectId: detail.projectId,
-      repository: detail.repository,
-      number: detail.number,
-      state: detail.state,
-      isDraft: detail.isDraft,
+      repository: resolvedCoreDetail.repository,
+      number: resolvedCoreDetail.number,
+      state: resolvedCoreDetail.state,
     });
-  }, [detail, onStateChange]);
+  }, [onStateChange, resolvedCoreDetail]);
   // Core detail is cheap enough to re-read while this stays open. Activity is heavier, so the
   // revision effect above reads it only after this same pull request reports a change. Keyed by
   // the pull request rather than by the panel, because this one panel shows a different pull
@@ -2152,7 +2160,11 @@ export function PullRequestDetailPanel({
                 aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
               >
                 {checksState !== null ? (
-                  <PullRequestChecksPopover checks={detail.checks} checksState={checksState} />
+                  <PullRequestChecksPopover
+                    checks={detail.checks}
+                    checksState={checksState}
+                    threadRef={threadRef}
+                  />
                 ) : (
                   <CircleDotIcon aria-hidden className="size-3.5" />
                 )}
@@ -2276,6 +2288,7 @@ export function PullRequestDetailPanel({
               <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
                 <PullRequestSummaryTab
                   environmentId={environmentId}
+                  threadRef={threadRef}
                   reference={reference}
                   detail={detail}
                   activityPending={activityPending}
@@ -2303,6 +2316,7 @@ export function PullRequestDetailPanel({
                   <PullRequestTimelineTab
                     detail={detail}
                     environmentId={environmentId}
+                    threadRef={threadRef}
                     reference={reference}
                     order={timelineOrder}
                     onOpenCommit={openCommit}

@@ -40,6 +40,17 @@ The web and desktop Agents panel shows each sub-agent's model and reasoning effo
 reports them. If Codex does not report either value, T3 Code leaves it out instead of using the
 parent agent's settings.
 
+## Browser and computer activity
+
+Browser and Computer Use calls show their user-facing task title when Codex provides one. Expanded
+activity groups show an icon for every call. Website calls use the active page's favicon when it is
+available, and desktop app calls use the app's native icon on macOS when available. Other hosts use
+a generic fallback glyph.
+
+Collapsed activity groups are summarized by source, such as `Used Chrome integration`, instead of
+showing the underlying tool name. Website favicons and native app icons keep their original colors;
+integrations that provide separate light and dark logos use the logo for the current appearance.
+
 ## Approve access to other apps
 
 When a Codex tool needs access to an app such as Safari, T3 Code shows the app name and asks for

@@ -6,7 +6,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 
-import { ModelSelection, ProjectScript } from "@t3tools/contracts";
+import { ModelSelection, ProjectIconOverride, ProjectScript } from "@t3tools/contracts";
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
   DeleteProjectionProjectInput,
@@ -20,6 +20,7 @@ const ProjectionProjectDbRow = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     autoPull: Schema.Number,
+    projectIcon: Schema.NullOr(Schema.fromJsonString(ProjectIconOverride)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
   }),
 );
@@ -40,6 +41,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           default_thread_env_mode,
           auto_pull,
           favicon_path,
+          project_icon_json,
           scripts_json,
           created_at,
           updated_at,
@@ -53,6 +55,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           ${row.defaultThreadEnvMode},
           ${row.autoPull ? 1 : 0},
           ${row.faviconPath ?? null},
+          ${row.projectIcon ? JSON.stringify(row.projectIcon) : null},
           ${JSON.stringify(row.scripts)},
           ${row.createdAt},
           ${row.updatedAt},
@@ -66,6 +69,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           default_thread_env_mode = excluded.default_thread_env_mode,
           auto_pull = excluded.auto_pull,
           favicon_path = excluded.favicon_path,
+          project_icon_json = excluded.project_icon_json,
           scripts_json = excluded.scripts_json,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
@@ -86,6 +90,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           default_thread_env_mode AS "defaultThreadEnvMode",
           auto_pull AS "autoPull",
           favicon_path AS "faviconPath",
+          project_icon_json AS "projectIcon",
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -108,6 +113,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           default_thread_env_mode AS "defaultThreadEnvMode",
           auto_pull AS "autoPull",
           favicon_path AS "faviconPath",
+          project_icon_json AS "projectIcon",
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
