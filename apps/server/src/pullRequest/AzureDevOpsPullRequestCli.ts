@@ -224,7 +224,13 @@ function actionArgs(
     // Auto-complete is Azure's own name for it: the pull request stays active and Azure completes
     // it once its policies pass. The squash choice is stored with it, as it is for a merge now.
     case "enable-auto-merge":
-      return ["--auto-complete", "true", "--squash", mergeMethod === "squash" ? "true" : "false"];
+      return [
+        "--auto-complete",
+        "true",
+        ...(mergeMethod === undefined
+          ? []
+          : ["--squash", mergeMethod === "squash" ? "true" : "false"]),
+      ];
     case "disable-auto-merge":
       return ["--auto-complete", "false"];
     case "ready":
@@ -238,6 +244,10 @@ function actionArgs(
       return [];
     case "reopen":
       return ["--status", "active"];
+    // Never reached: this host does not declare the action, so the service refuses it first.
+    case "revert":
+    case "approve-workflows":
+      throw new Error(`Azure DevOps pull request action ${action} is unsupported`);
   }
 }
 

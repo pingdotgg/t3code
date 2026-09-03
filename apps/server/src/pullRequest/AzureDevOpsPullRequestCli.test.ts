@@ -414,7 +414,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
   );
 
   it.effect.each([
-    { action: "enable-auto-merge", expected: ["--auto-complete", "true", "--squash", "false"] },
+    { action: "enable-auto-merge", expected: ["--auto-complete", "true"] },
     { action: "disable-auto-merge", expected: ["--auto-complete", "false"] },
     { action: "draft", expected: ["--draft", "true"] },
     { action: "ready", expected: ["--draft", "false"] },

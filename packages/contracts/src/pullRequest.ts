@@ -93,6 +93,10 @@ export const PullRequestAction = Schema.Literals([
   "enable-auto-merge",
   /** Take the standing instruction back, which leaves the change request where it was. */
   "disable-auto-merge",
+  /** Open a new change request that reverses a merged one. */
+  "revert",
+  /** Allow Actions workflows from a fork pull request to begin running. */
+  "approve-workflows",
 ]);
 export type PullRequestAction = typeof PullRequestAction.Type;
 
@@ -131,6 +135,7 @@ export type PullRequestLabel = typeof PullRequestLabel.Type;
 
 export const PullRequestCheckStatus = Schema.Literals([
   "pending",
+  "action-required",
   "success",
   "failure",
   "skipped",
@@ -709,6 +714,10 @@ export const PullRequestDetail = Schema.Struct({
    * arm something that is already armed, and a second arming is a write nobody asked for.
    */
   autoMergeEnabled: Schema.optional(Schema.Boolean),
+  /** The strategy the host will use for an armed auto-merge, where it reports one. */
+  autoMergeMethod: Schema.optional(PullRequestMergeMethod),
+  /** GitHub Actions runs on this head commit that are waiting for a maintainer's approval. */
+  workflowApprovalsRequired: Schema.optional(NonNegativeInt),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 

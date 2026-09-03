@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { PullRequestReaction } from "@t3tools/contracts";
 
+import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
 import { gitHubViewerPermissions, loginAvatarUrl, make } from "./GitHubPullRequestProvider.ts";
 import type { GitHubReviewThreadComments } from "./gitHubPullRequestJson.ts";
@@ -52,6 +53,8 @@ describe("gitHubViewerPermissions", () => {
         "merge",
         "enable-auto-merge",
         "disable-auto-merge",
+        "revert",
+        "approve-workflows",
         "ready",
         "draft",
         "close",
@@ -108,6 +111,13 @@ describe("gitHubViewerPermissions", () => {
         verdicts: ["comment", "approve", "request-changes"],
         requestReviewers: false,
       });
+      expect(detail.workflowApprovalsRequired).toBeUndefined();
+      expect(detail.checks).toContainEqual({
+        name: "Workflow approval status",
+        status: "action-required",
+        description: "GitHub could not determine whether workflows are awaiting approval.",
+        url: null,
+      });
     }).pipe(
       Effect.provide(
         Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
@@ -118,6 +128,7 @@ describe("gitHubViewerPermissions", () => {
               title: "Pull request 7",
               url: "https://github.com/acme/web/pull/7",
               author: null,
+              isCrossRepository: true,
               headRepositoryOwner: null,
               headBranch: "feat/page",
               baseBranch: "main",
@@ -152,39 +163,254 @@ describe("gitHubViewerPermissions", () => {
       ),
     ),
   );
+
+  it.effect("keeps fork workflows awaiting approval out of the passing state", () =>
+    Effect.gen(function* () {
+      const provider = yield* make;
+      const detail = yield* provider.getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      expect(detail.workflowApprovalsRequired).toBe(1);
+      expect(detail.checks).toEqual([
+        {
+          name: "manual gate",
+          status: "action-required",
+          description: null,
+          url: "https://example.com/manual-gate",
+        },
+        {
+          name: "build",
+          status: "success",
+          description: null,
+          url: null,
+        },
+        {
+          name: "contributor tests",
+          status: "action-required",
+          description: "A maintainer must approve this workflow before it can run.",
+          url: "https://github.com/acme/web/actions/runs/123",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
+          getPullRequestDetail: () =>
+            Effect.succeed({
+              authorId: null,
+              number: 7,
+              title: "Pull request 7",
+              url: "https://github.com/acme/web/pull/7",
+              author: null,
+              isCrossRepository: true,
+              headRepositoryOwner: "octocat",
+              headSha: "abc123",
+              headBranch: "feat/page",
+              baseBranch: "main",
+              state: "open",
+              isDraft: false,
+              mergeability: "mergeable",
+              reviewDecision: null,
+              additions: 1,
+              deletions: 1,
+              createdAt: "2026-07-01T00:00:00Z",
+              updatedAt: "2026-07-02T00:00:00Z",
+              reviewRequestLogins: [],
+              hasTeamReviewRequest: false,
+              checksState: "passing",
+              labels: [],
+              body: "",
+              changedFiles: 1,
+              mergedAt: null,
+              closedAt: null,
+              checks: [
+                {
+                  name: "manual gate",
+                  status: "action-required",
+                  description: null,
+                  url: "https://example.com/manual-gate",
+                },
+                { name: "build", status: "success", description: null, url: null },
+              ],
+              comments: [],
+              commits: [],
+            }),
+          listWorkflowRunsRequiringApproval: () =>
+            Effect.succeed([
+              {
+                id: 123,
+                name: "contributor tests",
+                url: "https://github.com/acme/web/actions/runs/123",
+              },
+            ]),
+          getPullRequestBaseComparison: () =>
+            Effect.succeed({ behindBy: 0, viewerCanUpdate: true }),
+          getRepositoryAccess: () =>
+            Effect.succeed({
+              canWrite: true,
+              mergeCapabilities: { merge: true, squash: true, rebase: true },
+            }),
+          getViewerAccess: () =>
+            Effect.succeed({ canWrite: true, canUpdate: true, didAuthor: false }),
+        }),
+      ),
+    ),
+  );
 });
 
-describe("getViewerPermissions", () => {
-  const openDetail = {
-    authorId: null,
-    number: 7,
-    title: "Pull request 7",
-    url: "https://github.com/acme/web/pull/7",
-    author: null,
-    headRepositoryOwner: "acme",
-    headBranch: "feat/page",
-    baseBranch: "main",
-    state: "open" as const,
-    isDraft: false,
-    mergeability: "mergeable" as const,
-    reviewDecision: null,
-    additions: 1,
-    deletions: 1,
-    createdAt: "2026-07-01T00:00:00Z",
-    updatedAt: "2026-07-02T00:00:00Z",
-    reviewRequestLogins: [],
-    hasTeamReviewRequest: false,
-    checksState: null,
-    labels: [],
-    body: "",
-    changedFiles: 1,
-    mergedAt: null,
-    closedAt: null,
-    checks: [],
-    comments: [],
-    commits: [],
-  };
+const openDetail = {
+  authorId: null,
+  number: 7,
+  title: "Pull request 7",
+  url: "https://github.com/acme/web/pull/7",
+  author: null,
+  isCrossRepository: true,
+  headRepositoryOwner: "acme",
+  headSha: "abc123",
+  headBranch: "feat/page",
+  baseBranch: "main",
+  state: "open" as const,
+  isDraft: false,
+  mergeability: "mergeable" as const,
+  reviewDecision: null,
+  additions: 1,
+  deletions: 1,
+  createdAt: "2026-07-01T00:00:00Z",
+  updatedAt: "2026-07-02T00:00:00Z",
+  reviewRequestLogins: [],
+  hasTeamReviewRequest: false,
+  checksState: null,
+  labels: [],
+  body: "",
+  changedFiles: 1,
+  mergedAt: null,
+  closedAt: null,
+  checks: [],
+  comments: [],
+  commits: [],
+};
 
+it.effect("does not classify same-repository gates as fork workflow approvals", () =>
+  Effect.gen(function* () {
+    const provider = yield* make;
+    const detail = yield* provider.getChangeRequest({
+      cwd: "/w",
+      repository: "acme/web",
+      host: "github.com",
+      number: 7,
+    });
+
+    expect(detail.workflowApprovalsRequired).toBe(0);
+    expect(detail.checks).toEqual([]);
+  }).pipe(
+    Effect.provide(
+      Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
+        getPullRequestDetail: () => Effect.succeed({ ...openDetail, isCrossRepository: false }),
+        getPullRequestBaseComparison: () => Effect.succeed({ behindBy: 0, viewerCanUpdate: true }),
+        listWorkflowRunsRequiringApproval: () =>
+          Effect.die("same-repository pull requests must not probe fork workflow approvals"),
+        getRepositoryAccess: () =>
+          Effect.succeed({
+            canWrite: true,
+            mergeCapabilities: { merge: true, squash: true, rebase: true },
+          }),
+        getViewerAccess: () =>
+          Effect.succeed({ canWrite: true, canUpdate: true, didAuthor: false }),
+      }),
+    ),
+  ),
+);
+
+it.effect("keeps an unsafe workflow approval scope visible as unknown", () =>
+  Effect.gen(function* () {
+    const provider = yield* make;
+    const detail = yield* provider.getChangeRequest({
+      cwd: "/w",
+      repository: "acme/web",
+      host: "github.com",
+      number: 7,
+    });
+
+    expect(detail.workflowApprovalsRequired).toBeUndefined();
+    expect(detail.checks).toEqual([
+      {
+        name: "Workflow approval status",
+        status: "action-required",
+        description: "GitHub could not determine whether workflows are awaiting approval.",
+        url: null,
+      },
+    ]);
+  }).pipe(
+    Effect.provide(
+      Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
+        getPullRequestDetail: () => Effect.succeed(openDetail),
+        getPullRequestBaseComparison: () => Effect.succeed({ behindBy: 0, viewerCanUpdate: true }),
+        listWorkflowRunsRequiringApproval: () =>
+          Effect.fail(
+            new GitHubPullRequestCli.GitHubWorkflowApprovalRefusedError({
+              command: "gh",
+              cwd: "/w",
+              number: 7,
+              reason: "head-not-unique",
+              observedCount: 2,
+              limit: 1_000,
+            }),
+          ),
+        getRepositoryAccess: () =>
+          Effect.succeed({
+            canWrite: true,
+            mergeCapabilities: { merge: true, squash: true, rebase: true },
+          }),
+        getViewerAccess: () =>
+          Effect.succeed({ canWrite: true, canUpdate: true, didAuthor: false }),
+      }),
+    ),
+  ),
+);
+
+it.effect("propagates workflow discovery rate limits", () =>
+  Effect.gen(function* () {
+    const provider = yield* make;
+    const error = yield* provider
+      .getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      })
+      .pipe(Effect.flip);
+
+    expect(error.operation).toBe("getChangeRequest");
+    expect(error.reason).toBe("rate-limited");
+  }).pipe(
+    Effect.provide(
+      Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
+        getPullRequestDetail: () => Effect.succeed(openDetail),
+        getPullRequestBaseComparison: () => Effect.succeed({ behindBy: 0, viewerCanUpdate: true }),
+        listWorkflowRunsRequiringApproval: () =>
+          Effect.fail(
+            new GitHubCli.GitHubCliRateLimitError({
+              command: "gh",
+              cwd: "/w",
+              cause: new Error("rate limited"),
+            }),
+          ),
+        getRepositoryAccess: () =>
+          Effect.succeed({
+            canWrite: true,
+            mergeCapabilities: { merge: true, squash: true, rebase: true },
+          }),
+        getViewerAccess: () =>
+          Effect.succeed({ canWrite: true, canUpdate: true, didAuthor: false }),
+      }),
+    ),
+  ),
+);
+
+describe("getViewerPermissions", () => {
   const layerWithComparison = (
     comparison: Effect.Effect<{
       readonly behindBy: number | null;

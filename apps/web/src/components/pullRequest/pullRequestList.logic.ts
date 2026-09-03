@@ -985,7 +985,7 @@ export function scorePullRequestMatch(entry: PullRequestListEntry, query: string
 
 /**
  * Search results in the order they answer the question, most convincing first, and by recency
- * among equals. Only for a search: without one, a listing is a timeline and recency is the order.
+ * among equals. Without a search, preserve the host order for the caller's browse-time ranking.
  */
 export function rankPullRequestMatches<Entry extends PullRequestListEntry>(
   entries: ReadonlyArray<Entry>,
@@ -995,6 +995,35 @@ export function rankPullRequestMatches<Entry extends PullRequestListEntry>(
   return entries.toSorted((left, right) => {
     const byScore = scorePullRequestMatch(right, query) - scorePullRequestMatch(left, query);
     return byScore !== 0 ? byScore : right.updatedAt.localeCompare(left.updatedAt);
+  });
+}
+
+/**
+ * The default review queue: work that is green and approved, then green work still waiting on a
+ * verdict, then everything else still open. Drafts stay in that third tier because their author
+ * has not made them mergeable yet. Finished work follows open work when all states are visible. A
+ * known conflict is never ready, whatever its checks, review or state say, so it stays at the
+ * bottom. Smaller measured changes come first within a tier; recency only breaks a remaining tie.
+ */
+export function rankPullRequestsByMergeReadiness<Entry extends PullRequestListEntry>(
+  entries: ReadonlyArray<Entry>,
+  hasMeasuredSize: (entry: Entry) => boolean = (entry) => entry.additions + entry.deletions > 0,
+): ReadonlyArray<Entry> {
+  const tier = (entry: Entry) => {
+    if (entry.mergeability === "conflicting") return 4;
+    if (entry.state !== "open") return 3;
+    if (entry.isDraft) return 2;
+    if (entry.checksState === "passing" && entry.reviewDecision === "approved") return 0;
+    if (entry.checksState === "passing") return 1;
+    return 2;
+  };
+  return entries.toSorted((left, right) => {
+    const byTier = tier(left) - tier(right);
+    if (byTier !== 0) return byTier;
+    const byMeasurement = Number(hasMeasuredSize(right)) - Number(hasMeasuredSize(left));
+    if (byMeasurement !== 0) return byMeasurement;
+    const bySize = left.additions + left.deletions - (right.additions + right.deletions);
+    return bySize !== 0 ? bySize : right.updatedAt.localeCompare(left.updatedAt);
   });
 }
 

@@ -16,6 +16,7 @@ import {
   decodeReviewThreadCommentsJson,
   decodeReviewThreadsJson,
   decodeViewerPermissionsJson,
+  decodeWorkflowRunApprovalsJson,
   reviewThreadConversation,
   REVIEW_THREADS_GRAPHQL_QUERY,
 } from "./gitHubPullRequestJson.ts";
@@ -223,18 +224,56 @@ describe("pull request detail decoding", () => {
     ]);
   });
 
-  it("reads an auto-merge request as armed, its null as off and its absence as neither", () => {
+  it("keeps a workflow waiting for approval out of the passing state", () => {
+    const raw = JSON.parse(detailJson) as Record<string, unknown>;
+    const detail = expectSuccess(
+      decodePullRequestDetailJson(
+        JSON.stringify({
+          ...raw,
+          statusCheckRollup: [
+            { __typename: "CheckRun", name: "build", status: "COMPLETED", conclusion: "SUCCESS" },
+            {
+              __typename: "CheckRun",
+              name: "contributor tests",
+              status: "COMPLETED",
+              conclusion: "ACTION_REQUIRED",
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(detail.checks.map((check) => check.status)).toEqual(["success", "action-required"]);
+    expect(detail.checksState).toBe("pending");
+  });
+
+  it("decodes workflow runs that can be approved", () => {
+    expect(
+      expectSuccess(
+        decodeWorkflowRunApprovalsJson(
+          JSON.stringify([
+            { databaseId: 10, workflowName: "contributor tests", url: "https://example.com/10" },
+            { databaseId: 11, workflowName: null, url: null },
+          ]),
+        ),
+      ),
+    ).toEqual([
+      { id: 10, name: "contributor tests", url: "https://example.com/10" },
+      { id: 11, name: "Workflow run 11", url: null },
+    ]);
+  });
+
+  it("reads an auto-merge request and strategy, its null as off and its absence as neither", () => {
     const raw = JSON.parse(detailJson) as Record<string, unknown>;
     const armed = (entry: Record<string, unknown>) =>
-      expectSuccess(decodePullRequestDetailJson(JSON.stringify({ ...raw, ...entry })))
-        .autoMergeEnabled;
+      expectSuccess(decodePullRequestDetailJson(JSON.stringify({ ...raw, ...entry })));
 
     expect(
       armed({ autoMergeRequest: { enabledBy: { login: "octocat" }, mergeMethod: "SQUASH" } }),
-    ).toBe(true);
-    expect(armed({ autoMergeRequest: null })).toBe(false);
+    ).toMatchObject({ autoMergeEnabled: true, autoMergeMethod: "squash" });
+    expect(armed({ autoMergeRequest: null }).autoMergeEnabled).toBe(false);
     // `gh` not answering for the field at all is not GitHub saying the merge is unarmed.
-    expect(armed({})).toBeUndefined();
+    expect(armed({}).autoMergeEnabled).toBeUndefined();
   });
 
   it("shows a re-running check once, as the run that is happening now", () => {
@@ -417,6 +456,36 @@ describe("review thread decoding", () => {
       ["abc123", { additions: 18, deletions: 7 }],
       ["def456", { additions: 3, deletions: 0 }],
     ]);
+  });
+
+  it("omits misleading line counts from merge commits", () => {
+    const result = expectSuccess(
+      decodeReviewThreadsJson(
+        JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: { totalCount: 0, nodes: [] },
+                commits: {
+                  nodes: [
+                    {
+                      commit: {
+                        oid: "merge123",
+                        additions: 36_858,
+                        deletions: 12_928,
+                        parents: { totalCount: 2 },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect([...result.commitStats]).toEqual([]);
   });
 
   it("decodes the newest commits off the same connection, oldest to newest", () => {
