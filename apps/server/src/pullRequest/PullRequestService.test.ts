@@ -2262,6 +2262,125 @@ it.effect("hands the host's own candidate list back, and asks for it with the ch
   }),
 );
 
+it.effect("refuses a label change on a host that has not said it takes one", () =>
+  Effect.gen(function* () {
+    let changed = false;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          // The method is there; the capability that would let it be called is not.
+          setLabels: () => {
+            changed = true;
+            return Effect.void;
+          },
+        }),
+      ],
+    });
+
+    const error = yield* Effect.flip(
+      service.setLabels({
+        projectId: "p1" as ProjectId,
+        repository: "acme/web",
+        number: 1,
+        labels: ["bug"],
+        applied: true,
+      }),
+    );
+
+    assert.strictEqual(error._tag, "PullRequestOperationError");
+    assert.include(error.message, "cannot change the labels");
+    assert.isFalse(changed);
+  }),
+);
+
+it.effect("refuses a label change this viewer may not make, and says what access it takes", () =>
+  Effect.gen(function* () {
+    let changed = false;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          capabilities: { ...fakeProvider("github").capabilities, labels: true },
+          getViewerPermissions: () =>
+            Effect.succeed({
+              actions: [],
+              comment: true,
+              resolve: false,
+              verdicts: ["comment", "approve", "request-changes"],
+              requestReviewers: false,
+              labels: false,
+            }),
+          listLabelCandidates: () => Effect.die("must not be called"),
+          setLabels: () => {
+            changed = true;
+            return Effect.void;
+          },
+        }),
+      ],
+    });
+
+    const listError = yield* Effect.flip(
+      service.labelCandidates({ projectId: "p1" as ProjectId, repository: "acme/web", number: 1 }),
+    );
+    assert.include(listError.message, "You need triage access on this repository");
+
+    const error = yield* Effect.flip(
+      service.setLabels({
+        projectId: "p1" as ProjectId,
+        repository: "acme/web",
+        number: 1,
+        labels: ["bug"],
+        applied: true,
+      }),
+    );
+    assert.include(error.message, "You need triage access on this repository");
+    assert.isFalse(changed);
+  }),
+);
+
+it.effect("hands a label change to the host, and reads the labels back for the menu", () =>
+  Effect.gen(function* () {
+    let received: { labels: ReadonlyArray<string>; applied: boolean } | null = null;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          capabilities: { ...fakeProvider("github").capabilities, labels: true },
+          listLabelCandidates: () =>
+            Effect.succeed({
+              candidates: [{ name: "bug", color: null, description: null, isApplied: false }],
+              truncated: false,
+            }),
+          setLabels: (input) => {
+            received = { labels: input.labels, applied: input.applied };
+            return Effect.void;
+          },
+        }),
+      ],
+    });
+
+    const list = yield* service.labelCandidates({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 4,
+    });
+    assert.deepStrictEqual(
+      list.candidates.map((label) => label.name),
+      ["bug"],
+    );
+
+    yield* service.setLabels({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 4,
+      labels: ["bug"],
+      applied: false,
+    });
+    assert.deepStrictEqual(received, { labels: ["bug"], applied: false });
+  }),
+);
+
 it.effect("answers a repeated listing from cache, and concurrent readers share one request", () =>
   Effect.gen(function* () {
     let hostCalls = 0;

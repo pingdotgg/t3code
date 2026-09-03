@@ -18,6 +18,7 @@ import {
   type PullRequestReviewVerdict,
   type PullRequestReviewerCandidateList,
   type PullRequestReviewerKind,
+  type PullRequestLabelCandidateList,
   type PullRequestThreadCommentsResult,
   type PullRequestUpdateMethod,
 } from "@t3tools/contracts";
@@ -42,6 +43,9 @@ import {
   decodeReactionSubjectScopeJson,
   decodeRepositoryAccessJson,
   decodeReviewerCandidatesJson,
+  decodeLabelCandidatesJson,
+  buildLabelRequestJson,
+  LABEL_CANDIDATES_GRAPHQL_QUERY,
   decodeReviewDismissalsJson,
   decodeReviewThreadCommentsJson,
   decodeReviewThreadsJson,
@@ -595,6 +599,24 @@ export class GitHubPullRequestCli extends Context.Service<
       }>;
       /** False deletes the same collection a request posts to, which takes the request back. */
       readonly requested: boolean;
+    }) => Effect.Effect<void, GitHubPullRequestCliError>;
+
+    /** The repository's labels, and which of them this pull request already wears. */
+    readonly listLabelCandidates: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+    }) => Effect.Effect<PullRequestLabelCandidateList, GitHubPullRequestCliError>;
+
+    readonly setLabels: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+      readonly labels: ReadonlyArray<string>;
+      /** False takes each label off; true adds each to whatever is already there. */
+      readonly applied: boolean;
     }) => Effect.Effect<void, GitHubPullRequestCliError>;
 
     readonly runPullRequestAction: (input: {
@@ -1975,6 +1997,56 @@ export const make = Effect.gen(function* () {
           stdin: buildReviewerRequestJson(input.reviewers),
         })
         .pipe(Effect.asVoid);
+    },
+
+    listLabelCandidates: (input) => {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      return graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "listLabelCandidates",
+        allowReserve: true,
+        variables: [
+          ["-f", `owner=${owner}`],
+          ["-f", `name=${name}`],
+          ["-F", `number=${input.number}`],
+        ],
+        query: LABEL_CANDIDATES_GRAPHQL_QUERY,
+        decode: decodeLabelCandidatesJson,
+      });
+    },
+
+    setLabels: (input) => {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      // A pull request is an issue to the labels API. Adding posts a list and leaves what was
+      // already there; taking off is one delete per label, since the endpoint names one in its
+      // path. The name goes into the path encoded, because a label may carry a space or a slash.
+      const issue = `repos/${owner}/${name}/issues/${input.number}/labels`;
+      if (input.applied) {
+        return github
+          .execute({
+            cwd: input.cwd,
+            args: ["api", "--method", "POST", "--hostname", input.host, issue, "--input", "-"],
+            stdin: buildLabelRequestJson(input.labels),
+          })
+          .pipe(Effect.asVoid);
+      }
+      return Effect.forEach(
+        input.labels,
+        (label) =>
+          github.execute({
+            cwd: input.cwd,
+            args: [
+              "api",
+              "--method",
+              "DELETE",
+              "--hostname",
+              input.host,
+              `${issue}/${encodeURIComponent(label)}`,
+            ],
+          }),
+        { concurrency: 1, discard: true },
+      );
     },
 
     runPullRequestAction: (input) => {
