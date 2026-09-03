@@ -170,6 +170,15 @@ function toBaseUrl(host: string): string {
   return `https://${host}`;
 }
 
+// Multi-account ~/.ssh/config setups follow the documented convention of
+// suffixing the real host in the alias, e.g. `Host github.com-work`. The alias
+// only exists for SSH, so HTTPS remotes keep their literal host.
+const SSH_ALIAS_HOSTNAME_PATTERN = /^(github\.com|gitlab\.com|bitbucket\.org)-[^./]+$/;
+
+export function canonicalizeSshRemoteHostname(hostname: string): string {
+  return SSH_ALIAS_HOSTNAME_PATTERN.exec(hostname)?.[1] ?? hostname;
+}
+
 function hasDnsLabel(host: string, label: string): boolean {
   return host.split(".").includes(label);
 }
@@ -201,11 +210,17 @@ function isBitbucketHost(host: string): boolean {
 export function detectSourceControlProviderFromRemoteUrl(
   remoteUrl: string,
 ): SourceControlProviderInfo | null {
-  const host = parseRemoteHost(remoteUrl);
-  if (!host) {
+  const parsedHost = parseRemoteHost(remoteUrl);
+  if (!parsedHost) {
     return null;
   }
-  const hostname = parseHostName(host);
+  const parsedHostname = parseHostName(parsedHost);
+  const hostname = isSshRemoteUrl(remoteUrl)
+    ? canonicalizeSshRemoteHostname(parsedHostname)
+    : parsedHostname;
+  // Stripping the alias suffix drops any port, but SSH ports never belong in
+  // the https base URL anyway; unaliased hosts keep their port as before.
+  const host = hostname === parsedHostname ? parsedHost : hostname;
 
   if (isGitHubHost(hostname)) {
     return {

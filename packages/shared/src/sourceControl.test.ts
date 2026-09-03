@@ -160,3 +160,30 @@ describe("isSshRemoteUrl", () => {
     expect(isSshRemoteUrl("deploy@github.com/project/repo")).toBe(false);
   });
 });
+
+describe("SSH host aliases", () => {
+  it("resolves multi-account SSH alias hosts to the real provider", () => {
+    expect(detectSourceControlProviderFromRemoteUrl("git@github.com-work:owner/repo.git")).toEqual({
+      kind: "github",
+      name: "GitHub",
+      baseUrl: "https://github.com",
+    });
+    expect(
+      detectSourceControlProviderFromRemoteUrl("ssh://git@gitlab.com-personal/group/repo.git"),
+    ).toEqual({
+      kind: "gitlab",
+      name: "GitLab",
+      baseUrl: "https://gitlab.com",
+    });
+  });
+
+  it("keeps literal hosts for non-SSH remotes that merely resemble aliases", () => {
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://github.com-work/owner/repo.git"),
+    ).toEqual({
+      kind: "github",
+      name: "GitHub Self-Hosted",
+      baseUrl: "https://github.com-work",
+    });
+  });
+});

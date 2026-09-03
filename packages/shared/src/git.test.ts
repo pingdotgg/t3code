@@ -172,3 +172,35 @@ describe("applyGitStatusStreamEvent", () => {
     });
   });
 });
+
+describe("SSH host aliases", () => {
+  it("canonicalizes multi-account SSH alias hosts to the real provider host", () => {
+    expect(normalizeGitRemoteUrl("git@github.com-work:T3Tools/T3Code.git")).toBe(
+      "github.com/t3tools/t3code",
+    );
+    expect(normalizeGitRemoteUrl("ssh://git@github.com-work/T3Tools/T3Code.git")).toBe(
+      "github.com/t3tools/t3code",
+    );
+    expect(normalizeGitRemoteUrl("git@gitlab.com-personal:group/project.git")).toBe(
+      "gitlab.com/group/project",
+    );
+  });
+
+  it("leaves non-SSH remotes and unrelated hosts alone", () => {
+    expect(normalizeGitRemoteUrl("https://github.com-work/T3Tools/T3Code.git")).toBe(
+      "github.com-work/t3tools/t3code",
+    );
+    expect(normalizeGitRemoteUrl("git@github.company.com:T3Tools/T3Code.git")).toBe(
+      "github.company.com/t3tools/t3code",
+    );
+  });
+
+  it("parses owner and repo through a GitHub SSH alias", () => {
+    expect(
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("git@github.com-work:owner/repo.git"),
+    ).toBe("owner/repo");
+    expect(
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("ssh://git@github.com-work/owner/repo"),
+    ).toBe("owner/repo");
+  });
+});
