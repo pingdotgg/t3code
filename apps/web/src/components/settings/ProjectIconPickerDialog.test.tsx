@@ -39,13 +39,13 @@ vi.mock("../ui/toggle-group", () => ({
 import { ProjectIconPickerDialog } from "./ProjectIconPickerDialog";
 
 describe("ProjectIconPickerDialog", () => {
-  it("shows emoji first and selects it for an automatic project", () => {
+  it("shows icons first and selects them for an automatic project", () => {
     const markup = renderToStaticMarkup(
       <ProjectIconPickerDialog current={null} open onOpenChange={() => {}} onSelect={() => {}} />,
     );
 
-    expect(markup).toContain('data-current="emoji"');
-    expect(markup.indexOf(">Emoji<")).toBeLessThan(markup.indexOf(">Icons<"));
-    expect(markup).toContain("Or paste any emoji");
+    expect(markup).toContain('data-current="lucide"');
+    expect(markup.indexOf(">Icons<")).toBeLessThan(markup.indexOf(">Emoji<"));
+    expect(markup).toContain('aria-label="Icon color"');
   });
 });

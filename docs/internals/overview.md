@@ -18,13 +18,13 @@ there, never in the client.
 ┌──────────────────▼─────────────────────────────┐
 │ apps/server                                    │
 │  orchestration engine (event-sourced)          │
-│  provider driver registry (5 built-in drivers) │
+│  provider driver registry (6 built-in drivers) │
 │  checkpointing, VCS, terminals, filesystem     │
 └──────────────────┬─────────────────────────────┘
                    │ per-driver transport
 ┌──────────────────▼─────────────────────────────┐
 │ Agent CLIs: Codex, Claude, Cursor, Grok,       │
-│ OpenCode                                       │
+│ OpenCode, Antigravity                          │
 └────────────────────────────────────────────────┘
 ```
 
@@ -90,9 +90,10 @@ A turn is complete when its session leaves `running` status, projected by
 does not define turn end.
 
 Thread settlement is server-owned. Each server's own settings control PR and inactivity
-settlement. Those keys are user preferences, so clients write them to every connected environment
-(`SHARED_SERVER_SETTING_KEYS` in `packages/client-runtime/src/state/sharedSettings.ts`) and warn
-when a connected environment drifts.
+settlement. Those keys are user preferences, so clients write them to every shared-settings sync
+target (`SHARED_SERVER_SETTING_KEYS` in `packages/client-runtime/src/state/sharedSettings.ts`) and
+warn when another target drifts. A target must have an active connection and advertise the
+`threadAutoSettlement` capability, which signals that the server can hold every shared key.
 [`ThreadSettlementReactor`][settlement] checks threads at startup, when those settings change, and
 once per minute, including when no client is connected. It dispatches the guarded internal
 `thread.auto-settle` command, which uses the existing settlement event lifecycle. Automatic
@@ -122,8 +123,8 @@ build production behavior on receipts.
 
 ## Provider drivers
 
-Five drivers ship built in, registered in [`builtInDrivers.ts`][drivers] as `BUILT_IN_DRIVERS`:
-Codex, Claude, Cursor, Grok, and OpenCode. A driver declares its kind and config schema and creates a
+Six drivers ship built in, registered in [`builtInDrivers.ts`][drivers] as `BUILT_IN_DRIVERS`:
+Codex, Claude, Cursor, Grok, OpenCode, and Antigravity. A driver declares its kind and config schema and creates a
 scoped adapter; `ProviderInstanceRegistry` owns live instances and `ProviderAdapterRegistry` resolves
 an instance to its adapter, so `ProviderService` routes session and turn operations without knowing
 which agent is behind them. See [providers.md](./providers.md).

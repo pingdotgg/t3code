@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  isInsideCollapsedComposerControls,
   isInsideComposerFloatingLayer,
   isInsideRestingComposerControlScope,
 } from "./composerEventScope";
@@ -25,6 +26,13 @@ describe("composer event scopes", () => {
     vi.stubGlobal("Element", FakeElement);
 
     const target = new FakeElement('[data-chat-composer-resting-controls="true"]');
+    expect(isInsideRestingComposerControlScope(target as unknown as EventTarget)).toBe(true);
+  });
+
+  it("recognizes events from the composer context strip controls", () => {
+    vi.stubGlobal("Element", FakeElement);
+
+    const target = new FakeElement("[data-composer-context-control]");
     expect(isInsideRestingComposerControlScope(target as unknown as EventTarget)).toBe(true);
   });
 
@@ -57,5 +65,16 @@ describe("composer event scopes", () => {
     const target = new FakeElement(null);
     expect(isInsideRestingComposerControlScope(target as unknown as EventTarget)).toBe(false);
     expect(isInsideRestingComposerControlScope(null)).toBe(false);
+  });
+
+  it("recognizes banner and drawer controls docked above the surface", () => {
+    vi.stubGlobal("Element", FakeElement);
+
+    const target = new FakeElement('[data-chat-composer-collapsed-controls="true"]');
+    expect(isInsideCollapsedComposerControls(target as unknown as EventTarget)).toBe(true);
+    expect(isInsideCollapsedComposerControls(new FakeElement(null) as unknown as EventTarget)).toBe(
+      false,
+    );
+    expect(isInsideCollapsedComposerControls(null)).toBe(false);
   });
 });

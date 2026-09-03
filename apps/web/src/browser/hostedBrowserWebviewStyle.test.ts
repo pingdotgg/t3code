@@ -30,6 +30,7 @@ describe("resolveHostedBrowserWebviewWrapperStyle", () => {
         active: true,
         renderingActive: true,
         cornerRadius: 12,
+        zIndex: 48,
         rect: { x: 12, y: 34, width: 360, height: 203 },
         hiddenSize: { width: 1280, height: 800 },
       }),
@@ -39,6 +40,7 @@ describe("resolveHostedBrowserWebviewWrapperStyle", () => {
       width: 360,
       height: 203,
       borderRadius: 12,
+      zIndex: 48,
     });
   });
 

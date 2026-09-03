@@ -1,5 +1,5 @@
 import { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
-import { memo, type ReactNode } from "react";
+import { memo, type ReactNode, useState } from "react";
 import { EllipsisIcon } from "lucide-react";
 import {
   Menu,
@@ -18,13 +18,29 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   showInteractionModeToggle: boolean;
   traitsMenuContent?: ReactNode;
   size?: "sm" | "xs";
+  /**
+   * The resting strip keeps this menu mounted out of flow while every block
+   * fits inline. Its portaled popup would outlive that transition, so an
+   * open menu closes when its trigger hides.
+   */
+  hidden?: boolean;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   const size = props.size ?? "sm";
+  const [open, setOpen] = useState(false);
+  const hidden = props.hidden ?? false;
+  // Base UI does not report a close it did not initiate, so clear the state
+  // when the trigger hides or the menu would reopen by itself when the
+  // trigger returns.
+  const [wasHidden, setWasHidden] = useState(hidden);
+  if (hidden !== wasHidden) {
+    setWasHidden(hidden);
+    if (hidden) setOpen(false);
+  }
 
   return (
-    <Menu>
+    <Menu open={open && !hidden} onOpenChange={setOpen}>
       <MenuTrigger
         render={
           <ComposerControl

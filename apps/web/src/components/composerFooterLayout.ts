@@ -27,7 +27,9 @@ export function shouldUseRestingComposerLayout(input: {
   isExistingThread: boolean;
   isMobileViewport: boolean;
   isFocused: boolean;
+  isScrollCollapsed: boolean;
   hasExpandedChrome: boolean;
+  collapseOnBlur: boolean;
 }): boolean {
   // Passive draft content is deliberately absent here. Resting only clamps
   // the prompt row and overlays its actions; non-image attachment and context
@@ -37,12 +39,13 @@ export function shouldUseRestingComposerLayout(input: {
   // deliberately absent here: resting reclaims vertical space at every
   // desktop width, and where the strip is missing or too narrow the controls
   // simply return when the composer is focused.
-  return (
-    input.isExistingThread &&
-    !input.isMobileViewport &&
-    !input.isFocused &&
-    !input.hasExpandedChrome
-  );
+  //
+  // A scroll collapse rests the composer regardless of the blur preference:
+  // the user asked for it with the gesture, and it lifts on the next
+  // composer interaction. With blur collapse off, losing focus alone never
+  // rests the composer.
+  const collapsed = input.isScrollCollapsed || (input.collapseOnBlur && !input.isFocused);
+  return input.isExistingThread && !input.isMobileViewport && collapsed && !input.hasExpandedChrome;
 }
 
 export function shouldAnimateComposerRestingTransition(input: {
@@ -63,6 +66,43 @@ export function shouldUseCompactComposerPrimaryActions(
   return width !== null && width < COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX;
 }
 
+export interface RestingComposerControlsMeasurement {
+  gap: number;
+  naturalFixedWidth: number;
+  minimumFixedWidth: number;
+  blockWidths: readonly number[];
+  overflowWidth: number;
+}
+
+function restingComposerControlsWidth(
+  input: RestingComposerControlsMeasurement,
+  hiddenCount: number,
+  fixedWidth = input.naturalFixedWidth,
+): number {
+  const { blockWidths, gap } = input;
+  const visibleCount = blockWidths.length - hiddenCount;
+  return (
+    fixedWidth +
+    blockWidths.slice(0, visibleCount).reduce((sum, width) => sum + width, 0) +
+    (hiddenCount > 0 ? input.overflowWidth : 0) +
+    gap * (visibleCount + (hiddenCount > 0 ? 1 : 0))
+  );
+}
+
+/**
+ * The width the resting controls take with nothing moved into overflow.
+ *
+ * The context strip reserves this much for the composer before deciding
+ * whether its own labels may expand. Judging against the currently visible
+ * controls instead lets the strip expand into space the composer just gave
+ * up, which shrinks the host, hides the controls again, and repeats.
+ */
+export function resolveRestingComposerControlsNaturalWidth(
+  input: RestingComposerControlsMeasurement,
+): number {
+  return restingComposerControlsWidth(input, 0);
+}
+
 /**
  * Decide how many trailing resting control blocks move into the overflow
  * menu, and whether the cluster can show at all, from natural widths.
@@ -71,29 +111,18 @@ export function shouldUseCompactComposerPrimaryActions(
  * the overflow menu, the picker may contract to its minimum readable width;
  * below that the whole cluster hides rather than clipping.
  */
-export function resolveRestingComposerControlsLayout(input: {
-  hostWidth: number;
-  gap: number;
-  naturalFixedWidth: number;
-  minimumFixedWidth: number;
-  blockWidths: readonly number[];
-  overflowWidth: number;
-}): { hiddenCount: number; visible: boolean } {
-  const { blockWidths, gap, hostWidth } = input;
-  const widthWithHidden = (hidden: number, fixedWidth = input.naturalFixedWidth) => {
-    const visibleCount = blockWidths.length - hidden;
-    return (
-      fixedWidth +
-      blockWidths.slice(0, visibleCount).reduce((sum, width) => sum + width, 0) +
-      (hidden > 0 ? input.overflowWidth : 0) +
-      gap * (visibleCount + (hidden > 0 ? 1 : 0))
-    );
-  };
-
+export function resolveRestingComposerControlsLayout(
+  input: RestingComposerControlsMeasurement & { hostWidth: number },
+): { hiddenCount: number; visible: boolean } {
+  const { blockWidths, hostWidth } = input;
   let hiddenCount = 0;
-  while (hiddenCount < blockWidths.length && widthWithHidden(hiddenCount) > hostWidth) {
+  while (
+    hiddenCount < blockWidths.length &&
+    restingComposerControlsWidth(input, hiddenCount) > hostWidth
+  ) {
     hiddenCount += 1;
   }
-  const visible = widthWithHidden(hiddenCount, input.minimumFixedWidth) <= hostWidth;
+  const visible =
+    restingComposerControlsWidth(input, hiddenCount, input.minimumFixedWidth) <= hostWidth;
   return { hiddenCount, visible };
 }

@@ -18,6 +18,9 @@ import type {
   PullRequestListState,
 } from "@t3tools/contracts";
 
+import { toSortableTimestamp } from "../../lib/threadSort";
+import type { PullRequestListSort } from "./pullRequestListPreferences";
+
 /**
  * A listed change request with the environment that read it. Nothing on a row says which machine
  * it came from, and the page unions every connected one — so acting on a row, refreshing it, or
@@ -415,7 +418,7 @@ export function groupPullRequestsByInvolvement<Entry extends ScopedEntry>(
       buckets.others.push(entry);
     }
   }
-  return (["reviewRequested", "authored", "others"] as const)
+  return (["authored", "reviewRequested", "others"] as const)
     .filter((key) => buckets[key].length > 0)
     .map((key) => ({ key, label: GROUP_LABELS[key], entries: buckets[key] }));
 }
@@ -615,8 +618,8 @@ export function partitionPullRequestsWithPriority<Entry extends PullRequestListE
   const byRecency = (left: Entry, right: Entry) => right.updatedAt.localeCompare(left.updatedAt);
   return (
     [
-      { key: "reviewRequested", entries: [...reviewByKey.values()].toSorted(byRecency) },
       { key: "authored", entries: [...authoredByKey.values()].toSorted(byRecency) },
+      { key: "reviewRequested", entries: [...reviewByKey.values()].toSorted(byRecency) },
       { key: "others", entries: others },
     ] as const
   )
@@ -1025,6 +1028,45 @@ export function rankPullRequestsByMergeReadiness<Entry extends PullRequestListEn
     const bySize = left.additions + left.deletions - (right.additions + right.deletions);
     return bySize !== 0 ? bySize : right.updatedAt.localeCompare(left.updatedAt);
   });
+}
+
+/** Keeps authored work first while applying the selected ordering inside every involvement group. */
+export function sortPullRequestGroups<Entry extends PullRequestListEntry>(
+  groups: ReadonlyArray<PullRequestGroup<Entry>>,
+  sort: PullRequestListSort,
+  searchText: string,
+  hasMeasuredSize: (entry: Entry) => boolean = (entry) => entry.additions + entry.deletions > 0,
+): ReadonlyArray<PullRequestGroup<Entry>> {
+  const sortWithinGroups = (rank: (entries: ReadonlyArray<Entry>) => ReadonlyArray<Entry>) =>
+    groups.map((group) => ({ ...group, entries: rank(group.entries) }));
+
+  if (sort === "ready") {
+    return searchText.trim().length === 0
+      ? sortWithinGroups((entries) => rankPullRequestsByMergeReadiness(entries, hasMeasuredSize))
+      : groups;
+  }
+  if (sort === "updated") return groups;
+
+  const timestamp = (entry: Entry) =>
+    toSortableTimestamp(entry.updatedAt) ?? toSortableTimestamp(entry.createdAt) ?? 0;
+  return sortWithinGroups((entries) =>
+    entries.toSorted((left, right) => {
+      if (sort === "newest" || sort === "oldest") {
+        const leftCreated = toSortableTimestamp(left.createdAt);
+        const rightCreated = toSortableTimestamp(right.createdAt);
+        const measured = Number(rightCreated !== null) - Number(leftCreated !== null);
+        const dated = (leftCreated ?? 0) - (rightCreated ?? 0);
+        return (
+          measured || (sort === "newest" ? -dated : dated) || timestamp(right) - timestamp(left)
+        );
+      }
+      const measured = Number(hasMeasuredSize(right)) - Number(hasMeasuredSize(left));
+      const sized = left.additions + left.deletions - (right.additions + right.deletions);
+      return (
+        measured || (sort === "largest" ? -sized : sized) || timestamp(right) - timestamp(left)
+      );
+    }),
+  );
 }
 
 /**

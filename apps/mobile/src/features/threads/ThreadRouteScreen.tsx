@@ -157,8 +157,9 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
 
   // Render the full thread chrome (header, feed, composer) as soon as the
   // thread SHELL is known — no blocking on message detail. The feed shows a
-  // loading placeholder while messages fetch, and the composer's connection
-  // pill reports connecting/reconnecting/syncing status.
+  // loading placeholder while messages fetch, the floating pill above the
+  // composer reports loading/syncing, and the composer's connection pill
+  // reports connecting/reconnecting status.
   if (selectedThread !== null && selectedThreadKey === routeThreadKey) {
     return <ThreadRouteContent {...props} selectedThreadDetailState={selectedThreadDetailState} />;
   }

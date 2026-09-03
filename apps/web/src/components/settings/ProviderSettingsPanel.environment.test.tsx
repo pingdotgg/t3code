@@ -132,12 +132,16 @@ function provider(): ServerProvider {
 
 function renderPanel(options?: {
   readonly readOnly?: boolean;
+  readonly targetInstanceId?: ProviderInstanceId;
 }): ReactElement<Record<string, unknown>> {
   hooks.beginRender();
   return EnvironmentProviderSettings({
     environmentId,
     environmentLabel: "Remote device",
     ...(options?.readOnly === undefined ? {} : { readOnly: options.readOnly }),
+    ...(options?.targetInstanceId === undefined
+      ? {}
+      : { targetInstanceId: options.targetInstanceId }),
   }) as ReactElement<Record<string, unknown>>;
 }
 
@@ -204,7 +208,10 @@ describe("EnvironmentProviderSettings routing", () => {
     (refreshButton?.props.onClick as (() => void) | undefined)?.();
     await flushPromises();
 
-    expect(commands.refresh).toHaveBeenCalledWith({ environmentId, input: {} });
+    expect(commands.refresh).toHaveBeenCalledWith({
+      environmentId,
+      input: { refreshModels: true },
+    });
 
     const providerCard = visitElements(
       panel,
@@ -219,6 +226,26 @@ describe("EnvironmentProviderSettings routing", () => {
       environmentId,
       input: { provider: ProviderDriverKind.make("codex"), instanceId: codexId },
     });
+  });
+
+  it("opens the requested provider instance instead of the first provider", () => {
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [customId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+      },
+    };
+    atoms.providers = [provider()];
+    const panel = renderPanel({ targetInstanceId: customId });
+    const editor = visitElements(panel, (element) => element.props.mode === "editor");
+    expect(editor?.props.instanceId).toBe(customId);
+  });
+
+  it("does not substitute another account when the requested instance was removed", () => {
+    atoms.providers = [provider()];
+    const panel = renderPanel({ targetInstanceId: customId });
+    expect(visitElements(panel, (element) => element.props.mode === "editor")).toBeNull();
+    expect(settingsState.updateSettings).not.toHaveBeenCalled();
   });
 
   it("keeps provider selection available while write controls are read only", () => {

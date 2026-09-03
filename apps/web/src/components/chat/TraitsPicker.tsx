@@ -592,7 +592,11 @@ export const TraitsPicker = memo(function TraitsPicker({
         size={size}
         className={cn(
           "fill-current opacity-80",
-          provider === "claudeAgent" ? "text-[#d97757]" : "text-foreground",
+          size === "xs"
+            ? "text-current"
+            : provider === "claudeAgent"
+              ? "text-[#d97757]"
+              : "text-foreground",
         )}
       />
       <span className="sr-only">Fast mode on</span>
@@ -623,11 +627,10 @@ export const TraitsPicker = memo(function TraitsPicker({
         }
       >
         {isCodexStyle ? (
+          // The label truncates itself; clipping the wrapper too would cut off
+          // the chevron, whose negative end margin overhangs the wrapper edge.
           <span
-            className={cn(
-              "flex min-w-0 w-full items-center overflow-hidden",
-              size === "xs" ? "gap-1" : "gap-1.5",
-            )}
+            className={cn("flex min-w-0 w-full items-center", size === "xs" ? "gap-1" : "gap-1.5")}
           >
             {fastModeIcon}
             <span className="min-w-0 truncate">{triggerLabel}</span>

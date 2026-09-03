@@ -34,6 +34,7 @@ import { vcsEnvironment } from "../state/vcs";
 import { cn } from "../lib/utils";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
+import { composerFloatingLayerProps } from "./chat/composerEventScope";
 import {
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchTriggerLabel,
@@ -788,7 +789,12 @@ export function BranchToolbarBranchSelector({
           </ComboboxTrigger>
         </span>
       </div>
-      <ComboboxPopup align="end" side="top" className="flex w-80 flex-col">
+      <ComboboxPopup
+        align="end"
+        side="top"
+        className="flex w-80 flex-col"
+        {...composerFloatingLayerProps}
+      >
         <div className="shrink-0 px-3 pt-2.5">
           <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
             <SearchIcon

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { resolveContextStripLabelsCompact } from "./BranchToolbar.logic";
 import {
   COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX,
   COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX,
   getRestingComposerImagePreviewCounts,
   resolveRestingComposerControlsLayout,
+  resolveRestingComposerControlsNaturalWidth,
   shouldAnimateComposerRestingTransition,
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
@@ -77,11 +79,34 @@ describe("shouldUseRestingComposerLayout", () => {
     isExistingThread: true,
     isMobileViewport: false,
     isFocused: false,
+    isScrollCollapsed: false,
     hasExpandedChrome: false,
+    collapseOnBlur: true,
   };
 
   it("uses the resting layout for an unfocused desktop composer", () => {
     expect(shouldUseRestingComposerLayout(resting)).toBe(true);
+  });
+
+  it("keeps an unfocused composer expanded when blur collapse is off", () => {
+    expect(shouldUseRestingComposerLayout({ ...resting, collapseOnBlur: false })).toBe(false);
+  });
+
+  it("rests a scroll-collapsed composer even while focused", () => {
+    expect(
+      shouldUseRestingComposerLayout({ ...resting, isFocused: true, isScrollCollapsed: true }),
+    ).toBe(true);
+  });
+
+  it("rests a scroll-collapsed composer regardless of the blur preference", () => {
+    expect(
+      shouldUseRestingComposerLayout({
+        ...resting,
+        isFocused: true,
+        isScrollCollapsed: true,
+        collapseOnBlur: false,
+      }),
+    ).toBe(true);
   });
 
   it("keeps new-thread composers expanded", () => {
@@ -211,5 +236,67 @@ describe("resolveRestingComposerControlsLayout", () => {
         hostWidth: 139,
       }),
     ).toEqual({ hiddenCount: 0, visible: false });
+  });
+});
+
+describe("context strip labels and resting composer controls", () => {
+  // Widths captured from a desktop renderer that crashed with React error
+  // 185. The strip is 724px wide. Its expanded labels need 327px, and the
+  // rest of its chrome needs 125px. The composer controls sit in the host
+  // that takes whatever is left.
+  const stripWidth = 724;
+  const labelWidth = 327;
+  const chromeWidth = 125;
+  const measurement = {
+    gap: 4,
+    naturalFixedWidth: 96.3828125 + 5 + 4,
+    minimumFixedWidth: 52 + 5 + 4,
+    blockWidths: [130.6953125, 119.671875],
+    overflowWidth: 28,
+  };
+  const naturalWidth = resolveRestingComposerControlsNaturalWidth(measurement);
+
+  function hostWidth(compact: boolean): number {
+    return stripWidth - chromeWidth - (compact ? 0 : labelWidth);
+  }
+
+  it("keeps the labels compact when the full controls only fit beside compact labels", () => {
+    // Compact labels leave 599px, so the composer shows every block.
+    const layout = resolveRestingComposerControlsLayout({
+      ...measurement,
+      hostWidth: hostWidth(true),
+    });
+    expect(layout).toEqual({ hiddenCount: 0, visible: true });
+
+    // The strip reserves the natural controls width, so expanding the
+    // labels is off the table: 125 + 327 + 364 > 724.
+    const compact = resolveContextStripLabelsCompact({
+      compact: true,
+      neededWidth: chromeWidth + labelWidth + naturalWidth,
+      availableWidth: stripWidth,
+    });
+    expect(compact).toBe(true);
+
+    // The next pass sees the same inputs and lands on the same answer.
+    expect(
+      resolveRestingComposerControlsLayout({ ...measurement, hostWidth: hostWidth(compact) }),
+    ).toEqual(layout);
+  });
+
+  it("does not settle when the strip only reserves the visible controls", () => {
+    // Regression guard for the alternating layout. Reserving only the
+    // controls left visible after two blocks moved into overflow makes the
+    // strip expand its labels, which shrinks the host below what the full
+    // controls need, which hides the blocks again.
+    const hiddenControlsWidth = 137;
+    const expands = !resolveContextStripLabelsCompact({
+      compact: true,
+      neededWidth: chromeWidth + labelWidth + hiddenControlsWidth,
+      availableWidth: stripWidth,
+    });
+    expect(expands).toBe(true);
+    expect(
+      resolveRestingComposerControlsLayout({ ...measurement, hostWidth: hostWidth(false) }),
+    ).toEqual({ hiddenCount: 2, visible: true });
   });
 });

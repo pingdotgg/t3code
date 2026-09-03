@@ -19,18 +19,17 @@ describe("selectProjectIcon", () => {
     expect(selectProjectIcon("", "C:\\work\\mobile-app").icon).toBe("mobile");
   });
 
-  it("uses emoji for automatic project icons", () => {
+  it("uses Lucide icons for automatic project icons", () => {
     expect(selectProjectIcon("agent-runtime", "/workspace/agent-runtime")).toEqual({
-      kind: "emoji",
+      kind: "lucide",
       icon: "ai",
-      emoji: "🤖",
     });
   });
 
   it("gives unknown names a stable generic icon", () => {
     const icon = selectProjectIcon("mercury", "/workspace/mercury");
 
-    expect(icon.kind).toBe("emoji");
+    expect(icon.kind).toBe("lucide");
     expect(PROJECT_ICON_NAMES).toContain(icon.icon);
     expect(selectProjectIcon("mercury", "/elsewhere/mercury")).toEqual(icon);
   });
