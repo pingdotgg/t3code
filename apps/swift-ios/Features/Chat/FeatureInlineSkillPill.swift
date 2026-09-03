@@ -330,7 +330,7 @@ enum FeatureInlineSkillPillRenderer {
             let bounds = CGRect(origin: .zero, size: size).insetBy(dx: 0.5, dy: 0.5)
             let path = UIBezierPath(
                 roundedRect: bounds,
-                cornerRadius: max(7, pillHeight * 0.35)
+                cornerRadius: labelFont.pointSize * 0.5
             )
             fuchsia.withAlphaComponent(0.12).setFill()
             path.fill()
