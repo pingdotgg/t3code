@@ -328,10 +328,13 @@ describe("Cursor skills", () => {
           directory: NodeOS.tmpdir(),
           prefix: "cursor-skills-home-",
         });
-        const workspace = yield* fileSystem.makeTempDirectory({
+        const workspaceDirectory = yield* fileSystem.makeTempDirectory({
           directory: NodeOS.tmpdir(),
           prefix: "cursor-skills-workspace-",
         });
+        // Discovery canonicalizes skill paths, and on macOS the temp directory
+        // itself sits behind a symlink (`/var` -> `/private/var`).
+        const workspace = yield* fileSystem.realPath(workspaceDirectory);
         const writeSkill = Effect.fn("writeCursorSkill")(function* (
           root: string,
           name: string,
