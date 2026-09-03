@@ -198,6 +198,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import { usePanelAnimationSettings } from "~/panelAnimations";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import {
   derivePhysicalProjectKey,
@@ -3341,23 +3342,25 @@ export default function LegacySidebar() {
     dragInProgressRef.current = false;
   }, []);
 
-  const animatedProjectListsRef = useRef(new WeakSet<HTMLElement>());
-  const attachProjectListAutoAnimateRef = useCallback((node: HTMLElement | null) => {
-    if (!node || animatedProjectListsRef.current.has(node)) {
-      return;
-    }
-    autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
-    animatedProjectListsRef.current.add(node);
-  }, []);
-
-  const animatedThreadListsRef = useRef(new WeakSet<HTMLElement>());
-  const attachThreadListAutoAnimateRef = useCallback((node: HTMLElement | null) => {
-    if (!node || animatedThreadListsRef.current.has(node)) {
-      return;
-    }
-    autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
-    animatedThreadListsRef.current.add(node);
-  }, []);
+  // Both lists follow the Motion setting, as the default sidebar does: at the
+  // default 0 ms they change immediately and auto-animate is never attached,
+  // so its per-row position polling (#4693) never runs. A detached list is
+  // destroyed rather than left polling.
+  const { active: listMotionActive, durationMs: listMotionDurationMs } =
+    usePanelAnimationSettings();
+  const attachListAutoAnimateRef = useCallback(
+    (node: HTMLElement | null) => {
+      if (!node || !listMotionActive) return;
+      const controller = autoAnimate(node, {
+        ...SIDEBAR_LIST_ANIMATION_OPTIONS,
+        duration: Math.min(SIDEBAR_LIST_ANIMATION_OPTIONS.duration, listMotionDurationMs),
+      });
+      return () => controller.destroy?.();
+    },
+    [listMotionActive, listMotionDurationMs],
+  );
+  const attachProjectListAutoAnimateRef = attachListAutoAnimateRef;
+  const attachThreadListAutoAnimateRef = attachListAutoAnimateRef;
 
   const visibleThreads = useMemo(
     () => sidebarThreads.filter((thread) => thread.archivedAt === null),

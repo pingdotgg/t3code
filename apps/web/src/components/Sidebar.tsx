@@ -107,6 +107,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
+import { usePanelAnimationSettings } from "../panelAnimations";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -3458,10 +3459,25 @@ export default function Sidebar() {
     updateThreadJumpHintsVisibility(shouldShowJumpHintsNow);
   }, [shouldShowJumpHintsNow, updateThreadJumpHintsVisibility]);
 
-  const attachListAutoAnimateRef = useCallback((node: HTMLUListElement | null) => {
-    if (!node) return;
-    autoAnimate(node, { duration: 150, easing: "ease-out" });
-  }, []);
+  // The thread list follows the same Motion setting as the panels: at the
+  // default 0 ms a row appears, moves, or leaves immediately. auto-animate
+  // also polls every row's position for as long as it is attached, which alone
+  // kept an idle app on a quarter of a core (#4693), so a list that never
+  // animates is never attached, and a detached list is destroyed rather than
+  // left polling.
+  const { active: listMotionActive, durationMs: listMotionDurationMs } =
+    usePanelAnimationSettings();
+  const attachListAutoAnimateRef = useCallback(
+    (node: HTMLUListElement | null) => {
+      if (!node || !listMotionActive) return;
+      const controller = autoAnimate(node, {
+        duration: Math.min(150, listMotionDurationMs),
+        easing: "ease-out",
+      });
+      return () => controller.destroy?.();
+    },
+    [listMotionActive, listMotionDurationMs],
+  );
 
   // New thread defaults to the project you're in (active thread's project,
   // falling back to the top project) — same resolution the command palette
