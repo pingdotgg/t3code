@@ -36,7 +36,11 @@ import {
   type ThreadShell,
   type TurnDiffSummary,
 } from "../types";
-import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
+import {
+  type ComposerFileAttachment,
+  type ComposerImageAttachment,
+  type DraftThreadState,
+} from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
@@ -624,6 +628,25 @@ export function resolveBackgroundDraftWorkspaceOptions(input: {
   };
 }
 
+/**
+ * Drops a file's server-side upload reference so a recovery snapshot does not
+ * point at an upload that was already released when the turn was accepted. On
+ * restore, a file that still has local bytes re-uploads cleanly, and a byte-less
+ * file (hydrated from persistence, `file: null`) honestly surfaces as
+ * needs-reattach instead of appearing attached and then silently failing the
+ * upload queue's verification against the deleted upload.
+ */
+export function clearComposerFileUploadReference(
+  file: ComposerFileAttachment,
+): ComposerFileAttachment {
+  const {
+    uploadedAttachmentId: _uploadedAttachmentId,
+    uploadEnvironmentId: _uploadEnvironmentId,
+    ...rest
+  } = file;
+  return rest;
+}
+
 export function cloneComposerImageForRetry(
   image: ComposerImageAttachment,
 ): ComposerImageAttachment {
@@ -906,6 +929,78 @@ export function createLocalDispatchSnapshot(
     sessionStatus: session?.status ?? null,
     sessionUpdatedAt: session?.updatedAt ?? null,
   };
+}
+
+// A message that was submitted and cleared from the composer must never be
+// lost when its turn fails. The synchronous send-failure path (a rejected
+// start-turn RPC) restores the composer inline, but a turn that the server
+// ACCEPTS and then fails asynchronously — a runtime stream error, a stale
+// pending provider callback, a `runtime.error` — surfaces only later via
+// `session.lastError`/`session.status`, long after `onSend` returned. This
+// decides, from the in-flight snapshot captured at send time, whether that
+// later failure should push the text back into an (empty) composer.
+//
+// The failure signal is `session.status === "error"`, not `lastError`:
+// `lastError` is carried forward across a fresh turn until the session next
+// reaches "ready", so keying on it would restore a stale prior-turn error.
+// Freshness (that the error is this send's, not a prior one still showing) is
+// established by any of: a changed `sessionUpdatedAt`, a changed `latestTurnId`,
+// or the pre-send session status not yet being "error". The last covers a
+// steered send, which keeps the running turn's id and can reuse the pre-send
+// millisecond, so neither of the first two advances on an accept-then-fail. A
+// session that was already "error" when the user sent (and has not transitioned)
+// is excluded from all three, so it cannot trigger a spurious restore.
+export function deriveTurnFailureRecoveryAction(input: {
+  hasPendingSnapshot: boolean;
+  preSendTurnId: TurnId | null;
+  preSendLatestTurnCompletedAt: string | null;
+  preSendSessionUpdatedAt: string | null;
+  preSendSessionStatus: NonNullable<Thread["session"]>["status"] | null;
+  sessionStatus: NonNullable<Thread["session"]>["status"] | null;
+  sessionUpdatedAt: string | null;
+  latestTurnId: TurnId | null;
+  latestTurnCompletedAt: string | null;
+  composerHasContent: boolean;
+}): "restore" | "drop" | "wait" {
+  if (!input.hasPendingSnapshot) {
+    return "wait";
+  }
+  // "Fresh" = the session moved past the pre-send snapshot, so an error now is
+  // this send's, not a prior one still showing. A changed `sessionUpdatedAt`
+  // is the usual signal; a changed `latestTurnId` also counts, covering an
+  // accept-then-fail that lands in the same millisecond as the pre-send state.
+  const sessionAdvanced =
+    (input.sessionUpdatedAt !== null && input.sessionUpdatedAt !== input.preSendSessionUpdatedAt) ||
+    (input.latestTurnId !== null && input.latestTurnId !== input.preSendTurnId);
+  // A steered send folds into the already-running turn, so its turn id does not
+  // change; if the accept-then-fail also reuses the pre-send millisecond,
+  // neither `sessionAdvanced` clause fires. A crossing into "error" then stands
+  // in as the freshness signal — but only for a steered send, i.e. one made
+  // while a turn was already in progress ("starting"/"running"). A fresh send
+  // mints a new turn, so its failure advances `latestTurnId` and is caught by
+  // `sessionAdvanced` above; restricting this fallback to an in-progress
+  // pre-send state stops a prior turn's error that merely lands during our
+  // awaits (pre-send read as idle/ready) from masquerading as this send's.
+  const preSendTurnWasInProgress =
+    input.preSendSessionStatus === "starting" || input.preSendSessionStatus === "running";
+  const failedSincePreSend = preSendTurnWasInProgress && input.sessionStatus === "error";
+  if (input.sessionStatus === "error" && (sessionAdvanced || failedSincePreSend)) {
+    // Never clobber text the user has started typing since the send; the
+    // failed attempt is still in the transcript for them to copy from.
+    return input.composerHasContent ? "drop" : "restore";
+  }
+  // Our turn ran to completion without error, so the snapshot is spent. A fresh
+  // turn advances `latestTurnId`; a steered follow-up folds into the turn that
+  // was already running and keeps the same id but moves `completedAt` from its
+  // pre-send value, so both must count as completion.
+  const turnCompleted =
+    input.latestTurnCompletedAt !== null &&
+    (input.latestTurnId !== input.preSendTurnId ||
+      input.latestTurnCompletedAt !== input.preSendLatestTurnCompletedAt);
+  if (turnCompleted && input.sessionStatus !== "error") {
+    return "drop";
+  }
+  return "wait";
 }
 
 export function hasServerAcknowledgedLocalDispatch(input: {

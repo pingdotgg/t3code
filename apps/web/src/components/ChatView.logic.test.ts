@@ -15,6 +15,7 @@ import type { Thread, ThreadShell, TurnDiffSummary } from "../types";
 import type { TimelineEntry } from "../session-logic";
 import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
+import { composerFileNeedsReattach, type ComposerFileAttachment } from "../composerDraftStore";
 import type { RightPanelSurface } from "../rightPanelStore";
 import {
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
@@ -25,8 +26,10 @@ import {
   buildLoadingThreadFromShell,
   buildRevertTurnCountByUserMessageId,
   buildThreadTurnInterruptInput,
+  clearComposerFileUploadReference,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveTurnFailureRecoveryAction,
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getAntigravitySendBlockReason,
@@ -1367,6 +1370,186 @@ describe("startNewThreadForProject", () => {
       }),
     ).toBe(false);
     expect(called).toBe(false);
+  });
+});
+
+describe("deriveTurnFailureRecoveryAction", () => {
+  const base = {
+    hasPendingSnapshot: true,
+    preSendTurnId: TurnId.make("turn-1"),
+    preSendLatestTurnCompletedAt: null,
+    preSendSessionUpdatedAt: "2026-01-01T00:00:00.000Z",
+    preSendSessionStatus: "running" as const,
+    sessionStatus: "running" as const,
+    sessionUpdatedAt: "2026-01-01T00:00:01.000Z",
+    latestTurnId: TurnId.make("turn-2"),
+    latestTurnCompletedAt: null,
+    composerHasContent: false,
+  };
+
+  it("waits while there is no pending snapshot", () => {
+    expect(deriveTurnFailureRecoveryAction({ ...base, hasPendingSnapshot: false })).toBe("wait");
+  });
+
+  it("restores when the turn fails asynchronously and the composer is empty", () => {
+    expect(
+      deriveTurnFailureRecoveryAction({
+        ...base,
+        sessionStatus: "error",
+        sessionUpdatedAt: "2026-01-01T00:00:05.000Z",
+      }),
+    ).toBe("restore");
+  });
+
+  it("drops without restoring when the user already retyped", () => {
+    expect(
+      deriveTurnFailureRecoveryAction({
+        ...base,
+        sessionStatus: "error",
+        sessionUpdatedAt: "2026-01-01T00:00:05.000Z",
+        composerHasContent: true,
+      }),
+    ).toBe("drop");
+  });
+
+  it("waits on a stale pre-send error that has not advanced since the send", () => {
+    // The session was already in "error" when the user sent (lastError is
+    // carried forward until "ready"); with neither the session timestamp nor
+    // the turn id advancing, this must not spuriously restore before the new
+    // turn has begun.
+    expect(
+      deriveTurnFailureRecoveryAction({
+        ...base,
+        preSendTurnId: TurnId.make("turn-1"),
+        latestTurnId: TurnId.make("turn-1"),
+        preSendSessionStatus: "error",
+        sessionStatus: "error",
+        sessionUpdatedAt: base.preSendSessionUpdatedAt,
+      }),
+    ).toBe("wait");
+  });
+
+  it("waits when a prior turn's error lands during our awaits and no turn was in progress at send", () => {
+    // The session was idle when the user sent (no turn to steer into), so a
+    // freshly-minted turn's own failure would advance `latestTurnId`. An "error"
+    // that appears with neither the turn id nor the timestamp advancing is a
+    // prior turn's error surfacing during our RPC awaits, not this send's — it
+    // must not masquerade as this send's failure and clobber the composer.
+    expect(
+      deriveTurnFailureRecoveryAction({
+        ...base,
+        preSendTurnId: TurnId.make("turn-1"),
+        latestTurnId: TurnId.make("turn-1"),
+        preSendSessionStatus: "idle",
+        sessionStatus: "error",
+        sessionUpdatedAt: base.preSendSessionUpdatedAt,
+      }),
+    ).toBe("wait");
+  });
+
+  it("restores an accept-then-fail landing in the same millisecond via a new turn id", () => {
+    // The failing session.set can share the pre-send millisecond timestamp; a
+    // freshly advanced turn id is enough to know the failure is this send's.
+    expect(
+      deriveTurnFailureRecoveryAction({
+        ...base,
+        preSendTurnId: TurnId.make("turn-1"),
+        latestTurnId: TurnId.make("turn-2"),
+        sessionStatus: "error",
+        sessionUpdatedAt: base.preSendSessionUpdatedAt,
+      }),
+    ).toBe("restore");
+  });
+
+  it("drops the snapshot once a fresh turn completes cleanly", () => {
+    expect(
+      deriveTurnFailureRecoveryAction({
+        ...base,
+        sessionStatus: "idle",
+        latestTurnCompletedAt: "2026-01-01T00:00:09.000Z",
+      }),
+    ).toBe("drop");
+  });
+
+  it("restores a steered accept-then-fail that reuses the pre-send turn id and millisecond", () => {
+    // Steering folds the message into the running turn, so the turn id does not
+    // change; a same-millisecond failure also leaves `sessionUpdatedAt` equal to
+    // the pre-send value. The status crossing from a non-error pre-send into
+    // "error" is what proves this send's turn failed, so the snapshot restores.
+    expect(
+      deriveTurnFailureRecoveryAction({
+        ...base,
+        preSendTurnId: TurnId.make("turn-2"),
+        latestTurnId: TurnId.make("turn-2"),
+        preSendSessionStatus: "running",
+        sessionStatus: "error",
+        sessionUpdatedAt: base.preSendSessionUpdatedAt,
+      }),
+    ).toBe("restore");
+  });
+
+  it("drops a steered same-ms failure without clobbering text the user retyped", () => {
+    expect(
+      deriveTurnFailureRecoveryAction({
+        ...base,
+        preSendTurnId: TurnId.make("turn-2"),
+        latestTurnId: TurnId.make("turn-2"),
+        preSendSessionStatus: "running",
+        sessionStatus: "error",
+        sessionUpdatedAt: base.preSendSessionUpdatedAt,
+        composerHasContent: true,
+      }),
+    ).toBe("drop");
+  });
+
+  it("drops the snapshot after a steered turn completes under the same turn id", () => {
+    // Steering folds the message into the running turn, so the turn id does not
+    // change; the moved completion marker is what signals a clean finish.
+    expect(
+      deriveTurnFailureRecoveryAction({
+        ...base,
+        preSendTurnId: TurnId.make("turn-2"),
+        latestTurnId: TurnId.make("turn-2"),
+        preSendLatestTurnCompletedAt: null,
+        latestTurnCompletedAt: "2026-01-01T00:00:09.000Z",
+        sessionStatus: "idle",
+      }),
+    ).toBe("drop");
+  });
+
+  it("keeps waiting while the accepted turn is still running", () => {
+    expect(deriveTurnFailureRecoveryAction(base)).toBe("wait");
+  });
+});
+
+describe("clearComposerFileUploadReference", () => {
+  const fileWithBytes: ComposerFileAttachment = {
+    type: "file",
+    id: "file-1",
+    name: "notes.pdf",
+    mimeType: "application/pdf",
+    sizeBytes: 10,
+    file: new File([new Uint8Array([1, 2, 3])], "notes.pdf", { type: "application/pdf" }),
+    uploadedAttachmentId: "pending-upload-1",
+    uploadEnvironmentId: EnvironmentId.make("env-1"),
+  };
+
+  it("drops the released upload reference so a file with bytes re-uploads cleanly", () => {
+    const cleared = clearComposerFileUploadReference(fileWithBytes);
+    expect(cleared.uploadedAttachmentId).toBeUndefined();
+    expect(cleared.uploadEnvironmentId).toBeUndefined();
+    // Bytes survive, so it is not a needs-reattach placeholder.
+    expect(cleared.file).toBe(fileWithBytes.file);
+    expect(composerFileNeedsReattach(cleared)).toBe(false);
+  });
+
+  it("turns a byte-less file into an honest needs-reattach row", () => {
+    // A file hydrated from persistence has no local bytes; once its released
+    // upload id is stripped it must surface as needs-reattach immediately
+    // instead of appearing attached and silently failing verification.
+    const byteless: ComposerFileAttachment = { ...fileWithBytes, file: null };
+    expect(composerFileNeedsReattach(byteless)).toBe(false);
+    expect(composerFileNeedsReattach(clearComposerFileUploadReference(byteless))).toBe(true);
   });
 });
 

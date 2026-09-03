@@ -355,6 +355,7 @@ import {
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveTurnFailureRecoveryAction,
   dismissBranchMismatchForSession,
   hasEnvironmentReconnectWarningGraceElapsed,
   scheduleEnvironmentReconnectWarning,
@@ -371,6 +372,7 @@ import {
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
   PullRequestDialogState,
+  clearComposerFileUploadReference,
   cloneComposerImageForRetry,
   deriveLockedProvider,
   readFileAsDataUrl,
@@ -1600,6 +1602,29 @@ function ChatViewContent(props: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
+  // Snapshot of a submitted message kept alive until its turn is confirmed
+  // accepted-and-clean, so an asynchronous turn failure (runtime stream error,
+  // stale pending provider callback, `runtime.error`) can restore the text to
+  // the composer instead of losing it. See `deriveTurnFailureRecoveryAction`.
+  const pendingSendRecoveryRef = useRef<{
+    environmentId: EnvironmentId;
+    threadId: ThreadId;
+    prompt: string;
+    images: ComposerImageAttachment[];
+    files: ComposerFileAttachment[];
+    terminalContexts: TerminalContextDraft[];
+    elementContexts: ElementContextDraft[];
+    previewAnnotations: PreviewAnnotationPayload[];
+    reviewComments: ReviewCommentContext[];
+    preSendTurnId: TurnId | null;
+    preSendLatestTurnCompletedAt: string | null;
+    preSendSessionUpdatedAt: string | null;
+    preSendSessionStatus: NonNullable<Thread["session"]>["status"] | null;
+  } | null>(null);
+  // Bumped after a snapshot is armed so the recovery effect re-evaluates even
+  // when `activeServerThread` has not changed since it last ran (e.g. the
+  // failing session state already landed while the send RPCs were awaiting).
+  const [recoveryReevaluateTick, setRecoveryReevaluateTick] = useState(0);
   const feedbackUploadsInFlightRef = useRef(new Set<string>());
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
 
@@ -5932,6 +5957,105 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
+  // Push a captured pre-send snapshot back into the composer. Shared by the
+  // synchronous send-failure path and the asynchronous turn-failure recovery
+  // effect so both restore identically. Only ever called when the composer is
+  // empty, so it never clobbers text the user typed after the send.
+  const restoreComposerContentFromSnapshot = useCallback(
+    (snapshot: {
+      prompt: string;
+      images: ComposerImageAttachment[];
+      files: ComposerFileAttachment[];
+      terminalContexts: TerminalContextDraft[];
+      elementContexts: ElementContextDraft[];
+      previewAnnotations: PreviewAnnotationPayload[];
+      reviewComments: ReviewCommentContext[];
+    }) => {
+      promptRef.current = snapshot.prompt;
+      const retryComposerImages = snapshot.images.map(cloneComposerImageForRetry);
+      composerImagesRef.current = retryComposerImages;
+      composerFilesRef.current = snapshot.files;
+      composerTerminalContextsRef.current = snapshot.terminalContexts;
+      composerElementContextsRef.current = snapshot.elementContexts;
+      setComposerDraftPrompt(composerDraftTarget, snapshot.prompt);
+      addComposerDraftImages(composerDraftTarget, retryComposerImages);
+      addComposerDraftFiles(composerDraftTarget, snapshot.files);
+      setComposerDraftTerminalContexts(composerDraftTarget, snapshot.terminalContexts);
+      setComposerDraftElementContexts(composerDraftTarget, snapshot.elementContexts);
+      setComposerDraftPreviewAnnotations(composerDraftTarget, snapshot.previewAnnotations);
+      setComposerDraftReviewComments(composerDraftTarget, snapshot.reviewComments);
+      composerRef.current?.resetCursorState({
+        cursor: collapseExpandedComposerCursor(snapshot.prompt, snapshot.prompt.length),
+        prompt: snapshot.prompt,
+        detectTrigger: true,
+      });
+    },
+    [
+      addComposerDraftFiles,
+      addComposerDraftImages,
+      composerDraftTarget,
+      setComposerDraftElementContexts,
+      setComposerDraftPreviewAnnotations,
+      setComposerDraftPrompt,
+      setComposerDraftReviewComments,
+      setComposerDraftTerminalContexts,
+    ],
+  );
+
+  // Recover a submitted message whose turn was accepted but then failed
+  // asynchronously (runtime stream error, stale pending provider callback,
+  // `runtime.error`). Those surface via session status/lastError well after
+  // `onSend` returned, so the inline send-failure path cannot catch them; watch
+  // the active server thread and restore the pre-send snapshot into an empty
+  // composer instead of losing the text.
+  useEffect(() => {
+    const pending = pendingSendRecoveryRef.current;
+    if (
+      !pending ||
+      !activeServerThread ||
+      // Thread ids are only unique within an environment, so scope the guard by
+      // environment too: otherwise the same id in another environment would
+      // restore this send's content into a different thread's composer.
+      activeServerThread.environmentId !== pending.environmentId ||
+      activeServerThread.id !== pending.threadId
+    ) {
+      return;
+    }
+    const session = activeServerThread.session ?? null;
+    const latestTurn = activeServerThread.latestTurn ?? null;
+    // Read "has the user retyped?" from the draft store keyed by this thread's
+    // target, not the imperative composer refs: those still hold the previously
+    // viewed thread's content until child effects resync, so on navigating back
+    // to a failed turn they would misjudge whether *this* thread's composer has
+    // content and wrongly drop or apply the recovery snapshot.
+    const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+    const composerHasContent = composerDraftHasUserContent(draft);
+    const action = deriveTurnFailureRecoveryAction({
+      hasPendingSnapshot: true,
+      preSendTurnId: pending.preSendTurnId,
+      preSendLatestTurnCompletedAt: pending.preSendLatestTurnCompletedAt,
+      preSendSessionUpdatedAt: pending.preSendSessionUpdatedAt,
+      preSendSessionStatus: pending.preSendSessionStatus,
+      sessionStatus: session?.status ?? null,
+      sessionUpdatedAt: session?.updatedAt ?? null,
+      latestTurnId: latestTurn?.turnId ?? null,
+      latestTurnCompletedAt: latestTurn?.completedAt ?? null,
+      composerHasContent,
+    });
+    if (action === "wait") {
+      return;
+    }
+    if (action === "restore") {
+      restoreComposerContentFromSnapshot(pending);
+    }
+    pendingSendRecoveryRef.current = null;
+  }, [
+    activeServerThread,
+    composerDraftTarget,
+    recoveryReevaluateTick,
+    restoreComposerContentFromSnapshot,
+  ]);
+
   const onSend = async (
     e?: { preventDefault: () => void },
     submissionIntent: ComposerSubmissionIntent = "foreground",
@@ -6165,6 +6289,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (composerRef.current?.validateProviderInput(outgoingFollowUpText) === false) {
         return;
       }
+      pendingSendRecoveryRef.current = null;
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
@@ -6187,6 +6312,7 @@ function ChatViewContent(props: ChatViewProps) {
         : null;
     if (standaloneSlashCommand) {
       handleInteractionModeChange(standaloneSlashCommand);
+      pendingSendRecoveryRef.current = null;
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
@@ -6241,6 +6367,12 @@ function ChatViewContent(props: ChatViewProps) {
     const composerElementContextsSnapshot = [...composerElementContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
+    // Turn/session markers captured before this send so an async failure can be
+    // distinguished from a stale prior-turn error (see the recovery effect).
+    const preSendLatestTurnId = activeThread.latestTurn?.turnId ?? null;
+    const preSendLatestTurnCompletedAt = activeThread.latestTurn?.completedAt ?? null;
+    const preSendSessionUpdatedAt = activeThread.session?.updatedAt ?? null;
+    const preSendSessionStatus = activeThread.session?.status ?? null;
     const messageTextWithContexts = appendElementContextsToPrompt(
       appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
       composerElementContextsSnapshot,
@@ -6440,6 +6572,11 @@ function ChatViewContent(props: ChatViewProps) {
         }),
       );
     }
+    // A new send supersedes any earlier recovery snapshot: the previous turn's
+    // text must not restore into this send's freshly cleared composer (which
+    // would then be treated as non-empty and drop this send's own text on a
+    // later failure). This send re-arms its own snapshot on accept below.
+    pendingSendRecoveryRef.current = null;
     promptRef.current = "";
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
@@ -6583,6 +6720,32 @@ function ChatViewContent(props: ChatViewProps) {
           releaseDraftAttachments(composerAttachmentsSnapshot);
         }
         acknowledgeActiveThreadWoke();
+        // The turn was accepted; keep the composed text recoverable until the
+        // turn is confirmed clean, so an async failure can restore it. Bump the
+        // tick so the recovery effect re-evaluates even if the failing session
+        // state already arrived while these RPCs were in flight (a ref write
+        // alone would not re-run the effect).
+        pendingSendRecoveryRef.current = {
+          environmentId: activeThread.environmentId,
+          threadId: threadIdForSend,
+          prompt: promptForSend,
+          images: composerImagesSnapshot,
+          // The uploads were just released, so the snapshot must not keep their
+          // now-dangling ids: files with bytes re-upload on restore, byte-less
+          // files honestly surface as needs-reattach. Images always carry bytes.
+          files: turnUsesAttachmentUploads
+            ? composerFilesSnapshot.map(clearComposerFileUploadReference)
+            : composerFilesSnapshot,
+          terminalContexts: composerTerminalContextsSnapshot,
+          elementContexts: composerElementContextsSnapshot,
+          previewAnnotations: composerPreviewAnnotationsSnapshot,
+          reviewComments: composerReviewCommentsSnapshot,
+          preSendTurnId: preSendLatestTurnId,
+          preSendLatestTurnCompletedAt,
+          preSendSessionUpdatedAt,
+          preSendSessionStatus,
+        };
+        setRecoveryReevaluateTick((tick) => tick + 1);
         if (backgroundThreadRef) {
           markPromotedDraftThreadByRef(backgroundThreadRef);
           try {
@@ -6645,6 +6808,7 @@ function ChatViewContent(props: ChatViewProps) {
         (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.reviewComments
           .length ?? 0) === 0
       ) {
+        // The turn never started, so the optimistic user message must go too.
         setOptimisticUserMessages((existing) => {
           const removed = existing.filter((message) => message.id === messageIdForSend);
           for (const message of removed) {
@@ -6653,23 +6817,14 @@ function ChatViewContent(props: ChatViewProps) {
           const next = existing.filter((message) => message.id !== messageIdForSend);
           return next.length === existing.length ? existing : next;
         });
-        promptRef.current = promptForSend;
-        const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
-        composerImagesRef.current = retryComposerImages;
-        composerFilesRef.current = composerFilesSnapshot;
-        composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
-        composerElementContextsRef.current = composerElementContextsSnapshot;
-        setComposerDraftPrompt(composerDraftTarget, promptForSend);
-        addComposerDraftImages(composerDraftTarget, retryComposerImages);
-        addComposerDraftFiles(composerDraftTarget, composerFilesSnapshot);
-        setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
-        setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
-        setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
-        setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
-        composerRef.current?.resetCursorState({
-          cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
+        restoreComposerContentFromSnapshot({
           prompt: promptForSend,
-          detectTrigger: true,
+          images: composerImagesSnapshot,
+          files: composerFilesSnapshot,
+          terminalContexts: composerTerminalContextsSnapshot,
+          elementContexts: composerElementContextsSnapshot,
+          previewAnnotations: composerPreviewAnnotationsSnapshot,
+          reviewComments: composerReviewCommentsSnapshot,
         });
       }
       if (!isAtomCommandInterrupted(failure)) {
