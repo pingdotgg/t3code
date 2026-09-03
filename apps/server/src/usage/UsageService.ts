@@ -991,8 +991,6 @@ export const make = Effect.gen(function* () {
           // the durable ledger. Records appended while the walk is in flight
           // belong to the next refresh.
           if (record.timestampMs >= startedAtMs) continue;
-          // Only sessions that contributed in-window count: the mtime slack
-          // admits boundary files whose records fall outside the range.
           const dedupeKey = record.dedupeKey;
           if (dedupeKey !== null) {
             if (ledgerSeen.has(dedupeKey)) continue;
@@ -1000,7 +998,9 @@ export const make = Effect.gen(function* () {
           }
 
           // The viewer aggregate and canonical ledger share the same
-          // directory-scoped dedupe decision above.
+          // directory-scoped dedupe decision above. Only sessions that
+          // contributed in-window count: the mtime slack admits boundary files
+          // whose records fall outside the range.
           if (aggregator.add(record) && record.sessionId.length > 0) {
             sessionIds.add(record.sessionId);
           }
