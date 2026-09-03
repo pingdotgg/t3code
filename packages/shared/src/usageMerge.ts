@@ -1,4 +1,4 @@
-// @effect-diagnostics globalDate:off -- Usage summaries use calendar-day boundaries in each environment's zone.
+// @effect-diagnostics globalDate:off -- Pure coverage-cutoff logic compares instants without reading the clock.
 /**
  * Merges per-environment usage summaries into the single view the page renders.
  *

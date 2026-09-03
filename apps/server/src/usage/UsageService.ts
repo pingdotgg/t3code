@@ -1,6 +1,6 @@
-// @effect-diagnostics globalDate:off -- Transcript timestamps are converted to viewer-local calendar days.
-// @effect-diagnostics globalDateInEffect:off -- Date conversions use captured scan instants inside Effect workflows.
-// @effect-diagnostics preferSchemaOverJson:off -- Persisted usage caches use explicit JSON codecs for versioned files.
+// @effect-diagnostics globalDate:off -- ISO day/window arithmetic uses wall-clock reads through Effect Clock.
+// @effect-diagnostics globalDateInEffect:off -- Pure timestamp conversion runs inside scan effects without reading the clock.
+// @effect-diagnostics preferSchemaOverJson:off -- JSON.stringify is used for stable identity keys, not payload decoding.
 /**
  * UsageService - scans provider transcripts and returns priced usage buckets.
  *
