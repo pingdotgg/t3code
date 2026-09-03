@@ -316,6 +316,10 @@ interface ClaudeSessionContext {
   readonly workflowMemberFingerprints: Map<string, string>;
   /** Task ids that have started and not yet reached a terminal state. */
   readonly liveTaskIds: Set<string>;
+  /** Task ids that settled in this process, including ones the CLI's resume
+   * sweep settled before anything here registered them. task_started
+   * consumes the entry when it re-registers the task. */
+  readonly settledTaskIds: Set<string>;
   turnState: ClaudeTurnState | undefined;
   lastKnownContextWindow: number | undefined;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
@@ -3271,6 +3275,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               (tool) => tool.itemId === message.tool_use_id,
             )
           : undefined;
+        // SendMessage to a settled subagent makes the CLI emit a fresh
+        // task_started for the same task id under the SendMessage tool use.
+        // Saying "running" is what lets clients reopen the settled row. A
+        // start carrying the spawn's own tool use is instead a late or
+        // duplicate delivery, and leaves the marker in place so a real
+        // re-dispatch after it is still recognized.
+        const reactivation =
+          context.settledTaskIds.has(message.task_id) &&
+          (context.taskAgents.get(message.task_id)?.toolUseId ?? undefined) !== message.tool_use_id;
+        if (reactivation) {
+          context.settledTaskIds.delete(message.task_id);
+        }
         const owningAgentId = launchingTool?.agentId;
         // Model/effort: the Agent tool's input carries explicit overrides;
         // absent ones inherit the session's selection (SDK behavior).
@@ -3316,6 +3332,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           payload: {
             taskId: RuntimeTaskId.make(message.task_id),
             description: message.description,
+            ...(reactivation ? { status: "running" as const } : {}),
             ...(message.task_type ? { taskType: message.task_type } : {}),
             ...(owningAgentId ? { agentId: owningAgentId } : {}),
             ...(message.description ? { title: message.description } : {}),
@@ -3372,6 +3389,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           patch.status !== undefined ? CLAUDE_TASK_PATCH_STATUS[patch.status] : undefined;
         if (status === "completed" || status === "failed" || status === "cancelled") {
           context.liveTaskIds.delete(message.task_id);
+          context.settledTaskIds.add(message.task_id);
         }
         const endedAt =
           typeof patch.end_time === "number" && Number.isFinite(patch.end_time)
@@ -3396,6 +3414,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
       case "task_notification": {
         context.liveTaskIds.delete(message.task_id);
+        context.settledTaskIds.add(message.task_id);
         yield* emitThreadTokenUsage(
           context,
           normalizeClaudeTaskProgressTokenUsage(message.usage, context),
@@ -3903,6 +3922,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const pendingTaskModels = new Map<string, string>();
       const workflowMemberFingerprints = new Map<string, string>();
       const liveTaskIds = new Set<string>();
+      const settledTaskIds = new Set<string>();
 
       const contextRef = yield* Ref.make<ClaudeSessionContext | undefined>(undefined);
 
@@ -4470,6 +4490,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         pendingTaskModels,
         workflowMemberFingerprints,
         liveTaskIds,
+        settledTaskIds,
         turnState: undefined,
         lastKnownContextWindow: initialContextWindow,
         lastKnownTokenUsage: undefined,

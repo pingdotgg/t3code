@@ -15,7 +15,7 @@
  * nonterminal state, provider-specific usage merges, first-write terminal
  * timestamps, reactivation clearing terminal detail, and order-robust
  * folding (completion can create an agent; a late start only fills
- * metadata).
+ * metadata unless the server stamped it with an explicit status).
  */
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
 
@@ -492,6 +492,14 @@ export function foldSubagentActivities(
           agent.status = "running";
         } else if (agent.status === "idle") {
           applyStatus(agent, "running", at);
+        }
+        // An explicit status on a start row is the server reporting a
+        // re-dispatch of a settled task (Claude emits a fresh task_started
+        // when SendMessage resumes one). A genuine reactivation, not a late
+        // delivery: run count bumps, prior terminal detail clears.
+        const explicitStartStatus = asRuntimeStatus(payload.status);
+        if (explicitStartStatus) {
+          applyStatus(agent, explicitStartStatus, at);
         }
         const detail = asString(payload.detail);
         if (detail && agent.title === agent.id) agent.title = detail;
