@@ -1,7 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderDriverKind, type ServerProviderModel } from "@t3tools/contracts";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -356,9 +355,6 @@ describe("ModelManifest service", () => {
     const responses = [REMOTE_CLAUDE_MANIFEST, ...INVALID_REMOTE_MANIFESTS];
 
     return Effect.gen(function* () {
-      // The test clock starts at the epoch. Move past the bundle's edit date
-      // so the fetched cache still outranks the bundle after a reboot.
-      yield* TestClock.adjust(Duration.millis(manifestUpdatedAtMs(BUNDLED_MODEL_MANIFEST) + 1));
       const service = yield* make;
       assert.deepStrictEqual(yield* service.refresh, REMOTE_CLAUDE_MANIFEST);
 
@@ -381,26 +377,33 @@ describe("ModelManifest service", () => {
     );
   });
 
-  it.live("drops a disk cache fetched before the bundled manifest was edited", () =>
+  it.live("drops a disk cache of a manifest older than the bundled one", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const config = yield* ServerConfig.ServerConfig;
-      const bundleEditedAt = manifestUpdatedAtMs(BUNDLED_MODEL_MANIFEST);
-      assert.isAbove(bundleEditedAt, 0);
-      // A cache from before the release shipped this bundle. The remote may
-      // still be unreachable, so `current` must already prefer the bundle.
-      yield* fs.writeFileString(
-        path.join(config.stateDir, "model-manifest.json"),
-        yield* encodeManifestCache({ fetchedAtMs: bundleEditedAt - 1, manifest: REMOTE_MANIFEST }),
-      );
-      const service = yield* make;
-      assert.deepStrictEqual(yield* service.current, BUNDLED_MODEL_MANIFEST);
+      assert.isAbove(manifestUpdatedAtMs(BUNDLED_MODEL_MANIFEST), 0);
+      const cachePath = path.join(config.stateDir, "model-manifest.json");
+      // A cache of the manifest as it was before the release edited it. The
+      // fetch time is irrelevant: the remote may be unreachable now, so
+      // `current` must already prefer the bundle.
+      const { updatedAt: _undated, ...undatedManifest } = REMOTE_MANIFEST;
+      for (const stale of [
+        undatedManifest,
+        { ...REMOTE_MANIFEST, updatedAt: "2000-01-01T00:00:00Z" },
+      ]) {
+        yield* fs.writeFileString(
+          cachePath,
+          yield* encodeManifestCache({ fetchedAtMs: 0, manifest: stale }),
+        );
+        const service = yield* make;
+        assert.deepStrictEqual(yield* service.current, BUNDLED_MODEL_MANIFEST);
+      }
 
-      // A cache fetched after the edit still outranks the bundle.
+      // A cache of a newer edit still outranks the bundle.
       yield* fs.writeFileString(
-        path.join(config.stateDir, "model-manifest.json"),
-        yield* encodeManifestCache({ fetchedAtMs: bundleEditedAt + 1, manifest: REMOTE_MANIFEST }),
+        cachePath,
+        yield* encodeManifestCache({ fetchedAtMs: 0, manifest: REMOTE_MANIFEST }),
       );
       const later = yield* make;
       assert.deepStrictEqual(yield* later.current, REMOTE_MANIFEST);

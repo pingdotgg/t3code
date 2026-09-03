@@ -84,8 +84,8 @@ const ModelManifestEnvelopeSchema = Schema.Struct({
   version: Schema.Literal(1),
   /**
    * ISO date of the last edit. A release bundles its manifest, and a disk
-   * cache fetched before that edit must not outrank it. Optional so older
-   * remote files still decode.
+   * cache of an older edit must not outrank it. Optional so older remote
+   * files still decode; they count as older than any dated bundle.
    */
   updatedAt: Schema.optional(Schema.String),
   currentModels: Schema.Record(Schema.String, Schema.Array(Schema.String)),
@@ -344,10 +344,14 @@ export const make = Effect.gen(function* () {
       );
       if (fromDisk === null) return;
       // The disk copy is the last-seen remote manifest, so it outranks the
-      // bundle even when stale, unless the bundle was edited after that
-      // fetch. Then the release carries newer data and the cache is dropped
-      // so the next refresh replaces it.
-      if (manifestUpdatedAtMs(BUNDLED_MODEL_MANIFEST) > fromDisk.fetchedAtMs) return;
+      // bundle even when stale, unless the bundle's own edit date is newer
+      // than the cached manifest's. Then the release carries data the cache
+      // has not seen and the cache is dropped so the next refresh replaces
+      // it. Comparing edit dates, not fetch time, keeps this independent of
+      // when the cache was written relative to the release.
+      if (manifestUpdatedAtMs(BUNDLED_MODEL_MANIFEST) > manifestUpdatedAtMs(fromDisk.manifest)) {
+        return;
+      }
       manifest = fromDisk.manifest;
       fetchedAtMs = fromDisk.fetchedAtMs;
     }),
