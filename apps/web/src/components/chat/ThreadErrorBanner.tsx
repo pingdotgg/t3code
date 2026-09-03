@@ -1,8 +1,56 @@
-import { memo } from "react";
+import { memo, useRef } from "react";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
-import { CircleAlertIcon, XIcon } from "lucide-react";
+import { CheckIcon, CircleAlertIcon, CopyIcon, XIcon } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { anchoredToastManager } from "../ui/toast";
+
+const COPY_FEEDBACK_TIMEOUT_MS = 1000;
+
+export function showThreadErrorCopyFailure(
+  anchor: HTMLButtonElement | null,
+  copyError: Error,
+): void {
+  if (!anchor) return;
+  anchoredToastManager.add({
+    data: { tooltipStyle: true },
+    positionerProps: { anchor },
+    timeout: COPY_FEEDBACK_TIMEOUT_MS,
+    title: "Failed to copy",
+    description: copyError.message,
+  });
+}
+
+function ThreadErrorCopyButton({ error }: { error: string }) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: "error-message",
+    timeout: COPY_FEEDBACK_TIMEOUT_MS,
+    onError: (copyError) => showThreadErrorCopyFailure(buttonRef.current, copyError),
+  });
+  const copyLabel = isCopied ? "Copied error" : "Copy error";
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={copyLabel}
+            onClick={() => copyToClipboard(error)}
+            ref={buttonRef}
+            type="button"
+          />
+        }
+      >
+        {isCopied ? <CheckIcon className="text-success!" /> : <CopyIcon className="text-error" />}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{copyLabel}</TooltipPopup>
+    </Tooltip>
+  );
+}
 
 export function getThreadErrorBannerKey(threadKey: string, error: string | null): string | null {
   return error === null ? null : `${threadKey}\u0000${error}`;
@@ -41,6 +89,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   onDismiss?: () => void;
 }) {
   if (!error) return null;
+
   return (
     <div className="mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
       <Alert variant="error" controlAlignment="first-line">
@@ -53,13 +102,14 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
             </TooltipPopup>
           </Tooltip>
         </AlertDescription>
-        {onDismiss && (
-          <AlertAction>
+        <AlertAction>
+          <ThreadErrorCopyButton error={error} />
+          {onDismiss && (
             <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
               <XIcon className="text-destructive" />
             </Button>
-          </AlertAction>
-        )}
+          )}
+        </AlertAction>
       </Alert>
     </div>
   );
