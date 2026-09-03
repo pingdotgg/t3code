@@ -147,24 +147,22 @@ export const make = Effect.gen(function* () {
         { concurrency: 2 },
       ).pipe(
         Effect.mapError(fail("getChangeRequest")),
-        Effect.map(
-          ([mergeRequest, mergeCapabilities]): ProviderChangeRequestDetail => ({
-            ...mergeRequest,
-            mergeCapabilities,
-            viewerPermissions: gitLabViewerPermissions(mergeRequest),
-            // A GitLab too old to count the divergence says nothing here rather than "up to
-            // date": the banner is worth missing, and a wrong all-clear is not worth showing.
-            baseComparison:
-              mergeRequest.divergedCommits === undefined
-                ? "unknown"
-                : mergeRequest.divergedCommits > 0
-                  ? "behind"
-                  : "up-to-date",
-            ...(mergeRequest.divergedCommits === undefined
-              ? {}
-              : { behindBy: mergeRequest.divergedCommits }),
-          }),
-        ),
+        Effect.map(([mergeRequest, mergeCapabilities]): ProviderChangeRequestDetail => ({
+          ...mergeRequest,
+          mergeCapabilities,
+          viewerPermissions: gitLabViewerPermissions(mergeRequest),
+          // A GitLab too old to count the divergence says nothing here rather than "up to
+          // date": the banner is worth missing, and a wrong all-clear is not worth showing.
+          baseComparison:
+            mergeRequest.divergedCommits === undefined
+              ? "unknown"
+              : mergeRequest.divergedCommits > 0
+                ? "behind"
+                : "up-to-date",
+          ...(mergeRequest.divergedCommits === undefined
+            ? {}
+            : { behindBy: mergeRequest.divergedCommits }),
+        })),
       ),
 
     getChangeRequestActivity: (input) =>
@@ -189,28 +187,26 @@ export const make = Effect.gen(function* () {
         { concurrency: 4 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(
-          ([notes, commits, discussions, awards]): ProviderChangeRequestActivity => ({
-            reactions: awards.reactions,
-            comments: notes.comments.map((comment) => ({
+        Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => ({
+          reactions: awards.reactions,
+          comments: notes.comments.map((comment) => ({
+            ...comment,
+            reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+          })),
+          // GitLab reports no count of its own, so the walk's own total is the host's: the
+          // notes endpoint carries every comment on the merge request, including the ones
+          // written under a discussion, and it is read until GitLab runs out.
+          commentCount: notes.comments.length,
+          commentsTruncated: notes.truncated || discussions.truncated,
+          reviewThreads: discussions.threads.map((thread) => ({
+            ...thread,
+            comments: thread.comments.map((comment) => ({
               ...comment,
               reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
             })),
-            // GitLab reports no count of its own, so the walk's own total is the host's: the
-            // notes endpoint carries every comment on the merge request, including the ones
-            // written under a discussion, and it is read until GitLab runs out.
-            commentCount: notes.comments.length,
-            commentsTruncated: notes.truncated || discussions.truncated,
-            reviewThreads: discussions.threads.map((thread) => ({
-              ...thread,
-              comments: thread.comments.map((comment) => ({
-                ...comment,
-                reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
-              })),
-            })),
-            commits,
-          }),
-        ),
+          })),
+          commits,
+        })),
       ),
 
     // The same read the detail takes it from, on its own: `user.can_merge` lives on the merge

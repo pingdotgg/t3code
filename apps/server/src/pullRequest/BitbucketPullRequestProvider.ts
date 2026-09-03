@@ -203,17 +203,15 @@ export const make = Effect.gen(function* () {
         { concurrency: 3 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(
-          ([pullRequest, comments, commits]): ProviderChangeRequestActivity => ({
-            comments: [...comments.comments, ...pullRequest.reviews].toSorted((left, right) =>
-              left.createdAt.localeCompare(right.createdAt),
-            ),
-            commentCount: comments.comments.length + pullRequest.reviews.length,
-            commentsTruncated: comments.truncated,
-            reviewThreads: comments.threads,
-            commits,
-          }),
-        ),
+        Effect.map(([pullRequest, comments, commits]): ProviderChangeRequestActivity => ({
+          comments: [...comments.comments, ...pullRequest.reviews].toSorted((left, right) =>
+            left.createdAt.localeCompare(right.createdAt),
+          ),
+          commentCount: comments.comments.length + pullRequest.reviews.length,
+          commentsTruncated: comments.truncated,
+          reviewThreads: comments.threads,
+          commits,
+        })),
       );
     },
 

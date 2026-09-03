@@ -491,12 +491,10 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
     validateProcessIdentity,
     retry: nativeClient.retry.pipe(
       Effect.zip(Ref.get(state)),
-      Effect.map(
-        ([accepted, current]): ResourceTelemetryRetryResult => ({
-          accepted,
-          snapshot: current.latest,
-        }),
-      ),
+      Effect.map(([accepted, current]): ResourceTelemetryRetryResult => ({
+        accepted,
+        snapshot: current.latest,
+      })),
     ),
   });
 });
