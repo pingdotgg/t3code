@@ -6276,7 +6276,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               eventId: EventId.make("goal-cleared-event"),
               provider: ProviderDriverKind.make("codex"),
               providerInstanceId,
-              createdAt: "2026-04-24T03:07:01.000Z",
+              createdAt: "2026-01-01T00:00:01.000Z",
               threadId,
               payload: {},
             });

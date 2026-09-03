@@ -346,10 +346,8 @@ const ThreadGoalUpdatedPayload = Schema.Struct({
   goal: CodexGoal,
 });
 export type ThreadGoalUpdatedPayload = typeof ThreadGoalUpdatedPayload.Type;
-
 const ThreadGoalClearedPayload = Schema.Struct({});
 export type ThreadGoalClearedPayload = typeof ThreadGoalClearedPayload.Type;
-
 const ThreadRealtimeStartedPayload = Schema.Struct({
   realtimeSessionId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
@@ -947,7 +945,6 @@ const ProviderRuntimeThreadGoalUpdatedEvent = Schema.Struct({
 });
 export type ProviderRuntimeThreadGoalUpdatedEvent =
   typeof ProviderRuntimeThreadGoalUpdatedEvent.Type;
-
 const ProviderRuntimeThreadGoalClearedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: ThreadGoalClearedType,
@@ -955,7 +952,6 @@ const ProviderRuntimeThreadGoalClearedEvent = Schema.Struct({
 });
 export type ProviderRuntimeThreadGoalClearedEvent =
   typeof ProviderRuntimeThreadGoalClearedEvent.Type;
-
 const ProviderRuntimeThreadRealtimeStartedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: ThreadRealtimeStartedType,

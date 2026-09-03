@@ -87,14 +87,7 @@ app. Some tools also offer approval for the current session or permanent approva
 
 ## Manage A Codex Goal
 
-Use these commands in a started Codex thread:
-
-```text
-/goal create <objective> | /goal status | /goal steer <updated objective>
-/goal pause | /goal resume | /goal clear | /goal reset
-```
-
-`/goal <objective>` creates a Goal. Status and usage stay synchronized with Codex on Codex threads.
+In a started Codex thread, use `/goal create <objective>`, `/goal status`, `/goal steer <objective>`, `/goal pause`, `/goal resume`, `/goal clear`, or `/goal reset`.
 
 ## I Want Work And Personal Codex Accounts
 
