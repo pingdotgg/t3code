@@ -479,11 +479,12 @@ export const reconcileProviderSessions = Effect.gen(function* () {
     const continuationMarked =
       continuationTurnId !== null &&
       (session.activeTurnId === null || continuationTurnId === session.activeTurnId);
-    // A normal desktop quit does not pass through the self-update marker flow,
-    // but the projected active turn and persisted provider cursor still prove
-    // that this session can be resumed. Preserve the pre-#9167 behavior by
-    // continuing that turn after any server restart. A stale explicit update
-    // marker remains authoritative and must not resume a different turn.
+    // Quitting the T3 Code desktop app also stops its embedded backend, but
+    // unlike a managed self-update it does not write a continuation marker.
+    // On the next app launch, the projected active turn and persisted provider
+    // cursor still prove that the interrupted session can be resumed. The same
+    // startup path also covers standalone backend restarts. A stale explicit
+    // update marker remains authoritative and must not resume a different turn.
     const restartContinuationEligible =
       continuationMarked ||
       (!continuationMarkerPresent &&
@@ -619,12 +620,12 @@ export const reconcileProviderSessions = Effect.gen(function* () {
             }
             return;
           }
-          yield* Effect.logWarning("failed to continue provider session after server restart", {
+          yield* Effect.logWarning("failed to continue provider session after T3 Code restarted", {
             threadId: thread.id,
             cause: continuationExit.cause,
           });
           yield* settleAsError(
-            "Could not continue this thread after the server restart. Send a new message to continue.",
+            "Could not continue this thread after T3 Code restarted. Send a new message to continue.",
           ).pipe(Effect.ignoreCause);
         }),
       );

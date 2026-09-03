@@ -397,7 +397,7 @@ it.effect.each([
   { markerState: "absent", markerCleared: false },
   { markerState: "cleared", markerCleared: true },
 ] as const)(
-  "continues an active session after an ordinary server restart when the update marker is $markerState",
+  "continues an active session after reopening T3 Code when the update marker is $markerState",
   ({ markerCleared }) => verifyOrdinaryRestartContinuation(markerCleared),
 );
 
