@@ -156,6 +156,10 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
       .run({
         command: "npm",
         args: ["install", "--prefix", stagingDir, "--no-fund", "--no-audit", `t3@${input.version}`],
+        // npx exports its resolved allow-scripts policy as npm_config_allow_scripts.
+        // npm 12 reads that as a project-scoped --allow-scripts and refuses the
+        // install with EALLOWSCRIPTS, so unset it (Node drops undefined entries).
+        env: { npm_config_allow_scripts: undefined },
         // Native dependencies may compile from source on slower machines.
         timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
       })
