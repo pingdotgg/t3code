@@ -175,7 +175,6 @@ describe("Antigravity model catalog", () => {
 
   it("uses legacy session models only when model config is absent", () => {
     const fromLegacy = buildAntigravityModelsFromSession({
-      sessionId: "legacy-session",
       models: sessionSetupResult.models,
     });
     expect(fromLegacy).toEqual(buildAntigravityModelsFromSession(sessionSetupResult));
@@ -189,7 +188,6 @@ describe("Antigravity model catalog", () => {
 
   it("flattens native option groups without combining distinct model IDs", () => {
     const models = buildAntigravityModelsFromSession({
-      sessionId: "grouped-session",
       configOptions: [
         {
           ...modelConfig,
@@ -356,11 +354,46 @@ it.layer(testLayer)("Antigravity provider snapshots", (it) => {
             supportsTextGeneration: false,
           });
           yield* harness.provider.onAvailableCommands(commands, "/workspace");
+          yield* harness.provider.onConfigOptionsUpdated([modelConfig]);
           expect((yield* harness.provider.snapshotForCwd("/workspace")).slashCommands).toEqual([]);
+          expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual([]);
         }
         const refreshed = yield* harness.provider.snapshot.refresh;
         expect(refreshed.auth.status).toBe("unauthenticated");
         expect(refreshed.supportsTextGeneration).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("replaces live model choices and accepts an empty catalog", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.initialize;
+        yield* harness.provider.onSessionStarted(started, "/workspace");
+        yield* harness.provider.onAvailableCommands(commands, "/workspace");
+        const before = yield* harness.provider.snapshot.getSnapshot;
+        const configOptions = [
+          {
+            ...modelConfig,
+            currentValue: "gemini-3.8-flash-high",
+            options: modelOptions.slice(0, 3),
+          },
+        ];
+        const nextSnapshot = yield* Stream.toPull(
+          harness.provider.snapshot.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.models.length === 3),
+          ),
+        );
+        yield* harness.provider.onConfigOptionsUpdated(configOptions);
+        expect((yield* nextSnapshot)[0]).toMatchObject({
+          models: buildAntigravityModelsFromSession({ configOptions }),
+          auth: before.auth,
+          workspaceSnapshots: before.workspaceSnapshots,
+          slashCommands: commands,
+        });
+        yield* harness.provider.onConfigOptionsUpdated([]);
+        expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual([]);
       }),
     ),
   );

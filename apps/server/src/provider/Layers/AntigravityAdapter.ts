@@ -133,6 +133,9 @@ export interface AntigravityAdapterOptions {
     commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
     cwd: string,
   ) => Effect.Effect<void>;
+  readonly onConfigOptionsUpdated?: (
+    configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+  ) => Effect.Effect<void>;
   readonly onAuthRequired?: Effect.Effect<void>;
   /** Model the provider default alias selects, when the account offers it. */
   readonly defaultModel?: Effect.Effect<string | undefined>;
@@ -502,6 +505,9 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         return;
       case "AvailableCommandsUpdated":
         yield* options.onAvailableCommands?.(event.availableCommands, context.cwd) ?? Effect.void;
+        return;
+      case "ConfigOptionsUpdated":
+        yield* options.onConfigOptionsUpdated?.(event.configOptions) ?? Effect.void;
         return;
       case "ConnectionTerminated":
         context.stopped = true;

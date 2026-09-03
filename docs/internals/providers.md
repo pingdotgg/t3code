@@ -168,6 +168,8 @@ Account access starts unknown and becomes authenticated after successful session
 including an explicit model refresh.
 The [provider snapshot][antigravity-provider] takes models and commands from setup and native
 updates. It preserves returned Gemini model IDs, labels, order, and thinking-level choices.
+ACP `config_option_update` notifications and `session/set_config_option` responses replace
+the instance's model catalog. Child session notifications do not change the root catalog.
 The registry treats a successful empty catalog as authoritative and clears cached metadata
 after sign-out. It must not retain a previous account's models. Cached models do not prove
 current access. The auth response does not supply an email, plan tier, or reliable quota.

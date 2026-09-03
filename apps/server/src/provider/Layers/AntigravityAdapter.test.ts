@@ -297,6 +297,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         );
         const requestLog = path.join(cwd, "requests.ndjson");
         const commands: string[] = [];
+        const modelSelections: string[] = [];
         const observed: ProviderRuntimeEvent[] = [];
         const completed = yield* Deferred.make<void>();
         const adapter = yield* makeAntigravityAdapter(decodeSettings({ enabled: true }), {
@@ -321,6 +322,11 @@ it.layer(layer)("AntigravityAdapter", (it) => {
           onAvailableCommands: (available) =>
             Effect.sync(() => {
               commands.push(...available.map((command) => command.name));
+            }),
+          onConfigOptionsUpdated: (configOptions) =>
+            Effect.sync(() => {
+              const model = configOptions.find((option) => option.category === "model");
+              if (model?.type === "select") modelSelections.push(model.currentValue);
             }),
         });
         yield* adapter.streamEvents.pipe(
@@ -350,6 +356,8 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         yield* adapter.sendTurn({ threadId, input: "Reply with one short line." });
         yield* Deferred.await(completed);
         expect(commands).toEqual(["plan", "logout", "plan", "logout"]);
+        expect(modelSelections.length).toBeGreaterThan(0);
+        expect(modelSelections.every((model) => model === nativeAlternative)).toBe(true);
         expect(
           observed
             .filter((event) => event.type === "content.delta")

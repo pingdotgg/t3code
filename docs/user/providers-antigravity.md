@@ -107,6 +107,7 @@ installations. Clear **Binary path** to use managed installation controls.
 The current official ACP exposes Gemini models only. T3 Code uses the model IDs and names
 returned for your account, including any model choices with different thinking levels. Models
 available in other Antigravity apps might not be available through this agent.
+The model picker updates when a running session reports new model choices.
 
 New threads use Gemini 3.8 Flash (High) when your account offers it. Older Gemini generations
 stay available under **Legacy models** in the picker.
