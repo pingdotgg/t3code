@@ -24,7 +24,6 @@
  * cursors never rewind.
  */
 
-// @effect-diagnostics nodeBuiltinImport:off - node:os resolves the shared T3 home guard.
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
