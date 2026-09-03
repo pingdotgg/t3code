@@ -274,7 +274,7 @@ async function readFirstPromptMessage(
   return next.value;
 }
 
-/** The message a CLI sends when it accepts a `--resume`, which is what startSession waits for. */
+/** What the CLI sends when it accepts a `--resume`, and what startSession waits for. */
 function resumeAcceptedInit(sessionId: string): SDKMessage {
   return {
     type: "system",
@@ -4309,6 +4309,37 @@ describe("ClaudeAdapterLive", () => {
         runtimeEvents.some((event) => event.type === "session.exited"),
         false,
       );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("fails a resume start whose session dies before it says anything", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      harness.query.fail(new Error("claude exited during startup"));
+
+      const result = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: {
+            threadId: RESUME_THREAD_ID,
+            resume: "550e8400-e29b-41d4-a716-446655440000",
+          },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag !== "Failure") {
+        return;
+      }
+      assert.equal(result.failure._tag, "ProviderAdapterSessionClosedError");
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

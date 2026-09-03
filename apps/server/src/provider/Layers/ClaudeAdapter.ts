@@ -291,10 +291,7 @@ interface ClaudeSessionContext {
    * effort override inherit this. */
   currentEffort: string | undefined;
   resumeSessionId: string | undefined;
-  /**
-   * Set only while startSession waits to learn whether a `--resume` start
-   * took. Resolves `true` when the CLI rejected the resume id.
-   */
+  /** Pending only while startSession waits; resolves `true` on a rejected resume. */
   resumeVerification: Deferred.Deferred<boolean> | undefined;
   resumeRejected: boolean;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
@@ -468,9 +465,9 @@ function isInterruptedResult(result: SDKResultMessage): boolean {
 }
 
 /**
- * A `--resume` the CLI refuses because it holds no transcript for that id.
- * The CLI writes the transcript a moment before its first `system/init`, so a
- * session stopped during startup leaves an id that can never resolve.
+ * A `--resume` the CLI refuses because it holds no transcript for that id. The
+ * transcript lands a moment before the first `system/init`, so a session
+ * stopped during startup leaves an id that can never resolve.
  */
 function isMissingConversationResult(message: SDKMessage): boolean {
   return (
@@ -2053,10 +2050,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   });
 
   /**
-   * Settles startSession's resume verification from the first durable message,
-   * reporting whether the resume was rejected. Hook messages are excluded for
-   * the same reason as in `ensureThreadId`: they run before the CLI commits
-   * the session, so they prove nothing about the resume.
+   * Reports whether the resume was rejected, settling startSession's wait.
+   * Hooks are excluded for the same reason as in `ensureThreadId`: they run
+   * before the CLI commits the session, so they prove nothing about a resume.
    */
   const settleResumeVerification = Effect.fn("settleResumeVerification")(function* (
     context: ClaudeSessionContext,
@@ -3787,7 +3783,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     context.stopped = true;
 
     // A session that dies before its first durable message never answers the
-    // resume question; release startSession rather than leave it waiting.
+    // resume question; release startSession instead of leaving it waiting.
     if (context.resumeVerification !== undefined) {
       const verification = context.resumeVerification;
       context.resumeVerification = undefined;
@@ -4611,6 +4607,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // transcript, so startSession's retry lands before any prompt is queued.
       if (resumeVerification !== undefined) {
         yield* Deferred.await(resumeVerification);
+        // A stop or a stream death settles the wait too, and the snapshot
+        // below would describe a session that no longer exists.
+        if (context.stopped && !context.resumeRejected) {
+          return yield* new ProviderAdapterSessionClosedError({
+            provider: PROVIDER,
+            threadId,
+          });
+        }
       }
 
       return {
@@ -4620,9 +4624,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   );
 
   /**
-   * A resume the CLI cannot honor is definitive: the id will never resolve, so
-   * retrying it would leave the thread unable to start another turn. Drop the
-   * resume state and start fresh instead.
+   * A rejected resume is definitive: retrying the id would leave the thread
+   * unable to ever start another turn.
    */
   const startSession: ClaudeAdapterShape["startSession"] = Effect.fn("startSession")(
     function* (input) {
