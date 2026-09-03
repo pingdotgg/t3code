@@ -29,10 +29,10 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ProjectIconOverride, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import {
   resolveEnvironmentMachineKind,
   type EnvironmentMachineKind,
+  type ProjectIconOverride,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";

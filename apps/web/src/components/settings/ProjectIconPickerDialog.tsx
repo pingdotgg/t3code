@@ -1,6 +1,6 @@
 import type { ProjectIconColor, ProjectIconOverride } from "@t3tools/contracts";
 import { DynamicIcon, type IconName } from "lucide-react/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   filterProjectIconNames,
   firstEmoji,
@@ -56,15 +56,18 @@ export function ProjectIconPickerDialog({
   const [emoji, setEmoji] = useState(current?.kind === "emoji" ? current.emoji : "💻");
   const [query, setQuery] = useState("");
   const [customEmoji, setCustomEmoji] = useState("");
+  const previousOpenRef = useRef(false);
 
   useEffect(() => {
-    if (!open) return;
-    setMode(current?.kind === "lucide" ? "lucide" : "emoji");
-    setIconName(current?.kind === "lucide" ? (current.name as IconName) : DEFAULT_ICON);
-    setColor(current?.kind === "lucide" ? current.color : DEFAULT_COLOR);
-    setEmoji(current?.kind === "emoji" ? current.emoji : "💻");
-    setQuery("");
-    setCustomEmoji("");
+    if (open && !previousOpenRef.current) {
+      setMode(current?.kind === "lucide" ? "lucide" : "emoji");
+      setIconName(current?.kind === "lucide" ? (current.name as IconName) : DEFAULT_ICON);
+      setColor(current?.kind === "lucide" ? current.color : DEFAULT_COLOR);
+      setEmoji(current?.kind === "emoji" ? current.emoji : "💻");
+      setQuery("");
+      setCustomEmoji("");
+    }
+    previousOpenRef.current = open;
   }, [current, open]);
 
   const icons = useMemo(() => filterProjectIconNames(query), [query]);
