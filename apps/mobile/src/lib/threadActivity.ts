@@ -323,7 +323,6 @@ function resolvePendingUserInputAnswer(
 
 /** Some providers settle agents through task.updated instead of task.completed. */
 const MOBILE_TERMINAL_UPDATE_STATUSES: ReadonlySet<string> = new Set([
-  "idle",
   "completed",
   "failed",
   "cancelled",
@@ -338,7 +337,11 @@ function isTerminalTaskUpdate(activity: OrchestrationThreadActivity): boolean {
     activity.payload && typeof activity.payload === "object"
       ? (activity.payload as Record<string, unknown>)
       : null;
-  return typeof payload?.status === "string" && MOBILE_TERMINAL_UPDATE_STATUSES.has(payload.status);
+  return (
+    typeof payload?.status === "string" &&
+    (MOBILE_TERMINAL_UPDATE_STATUSES.has(payload.status) ||
+      (payload.timelineBypass === true && payload.status === "idle"))
+  );
 }
 
 /**
@@ -1095,7 +1098,6 @@ function extractWorkLogToolLifecycleStatus(
   const status = payload?.status;
   if (status === "pending" || status === "running" || status === "waiting") return "inProgress";
   if (status === "cancelled" || status === "interrupted") return "stopped";
-  if (status === "idle") return "completed";
   if (
     status === "inProgress" ||
     status === "completed" ||

@@ -51,6 +51,11 @@ describe("native Antigravity subagent tools", () => {
   it("recognizes history starts and bounds the native result", () => {
     expect(
       isAntigravitySubagentReplayStart({
+        update: { sessionUpdate: "tool_call", status: "completed", rawOutput: "Done." },
+      }),
+    ).toBe(false);
+    expect(
+      isAntigravitySubagentReplayStart({
         update: { sessionUpdate: "tool_call", status: "completed" },
       }),
     ).toBe(true);

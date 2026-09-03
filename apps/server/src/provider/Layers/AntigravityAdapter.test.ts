@@ -865,6 +865,44 @@ it.layer(layer)("AntigravityAdapter", (it) => {
     }),
   );
 
+  it.effect("completes a live subagent delivered in one tool call", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const sending = yield* h.adapter
+        .sendTurn({ threadId, input: "Review with subagents" })
+        .pipe(Effect.forkChild);
+      const prompt = yield* h.nextPrompt;
+      for (const [id, rawOutput] of [
+        ["live:4", "Review complete."],
+        ["live:5", undefined],
+      ] as const) {
+        yield* h.emitNative(
+          nativeToolUpdate({
+            sessionUpdate: "tool_call",
+            toolCallId: id,
+            title: "Running start_subagent",
+            kind: "other",
+            status: "completed",
+            rawInput: {},
+            ...(rawOutput ? { rawOutput } : {}),
+          }),
+        );
+        const completed = yield* h.waitForEvent((event) => event.type === "task.completed");
+        expect(completed.payload).toMatchObject({ taskId: id, status: "completed" });
+        expect(completed.payload.summary).toBe(rawOutput);
+      }
+      yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
+      yield* Fiber.join(sending);
+      yield* h.waitForEvent((event) => event.type === "turn.completed");
+      expect(h.seen.filter((event) => event.type === "task.updated")).toHaveLength(0);
+    }),
+  );
+
   it.effect("shows pending subagents and closes a denied invocation", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();

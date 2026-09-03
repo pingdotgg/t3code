@@ -370,7 +370,8 @@ export function isAntigravitySubagentReplayStart(rawPayload: unknown): boolean {
   return (
     Predicate.isObject(update) &&
     update.sessionUpdate === "tool_call" &&
-    update.status === "completed"
+    update.status === "completed" &&
+    (update.rawOutput === undefined || update.rawOutput === null)
   );
 }
 

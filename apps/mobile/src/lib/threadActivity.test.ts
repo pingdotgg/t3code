@@ -2121,6 +2121,48 @@ describe("buildThreadFeed", () => {
 });
 
 describe("quiet timeline: nested agents", () => {
+  it.each(["task.updated", "task.progress"] as const)(
+    "does not mark an ordinary task complete when it resumes through %s",
+    (resumeKind) => {
+      const thread = makeThread({
+        id: ThreadId.make("resumed-agent"),
+        projectId: ProjectId.make("project-1"),
+        title: "Resumed agent",
+        activities: (
+          [
+            ["task.progress", "running", "Review"],
+            ["task.updated", "idle", "Task idle"],
+            [resumeKind, "running", "Review resumed"],
+          ] as const
+        ).map(([kind, status, summary], index) =>
+          makeActivity({
+            id: EventId.make(`resumed-${index}`),
+            kind,
+            summary,
+            createdAt: `2026-04-01T00:00:0${index + 1}.000Z`,
+            payload: {
+              taskId: "agent-1",
+              agentKind: "agent",
+              title: "Reviewer",
+              status,
+              detail: summary,
+            },
+          }),
+        ),
+      });
+      const rows = buildThreadFeed(thread).flatMap((entry) =>
+        entry.type === "activity-group" ? entry.activities : [],
+      );
+      expect(rows).toMatchObject([
+        {
+          lifecycleStatus: "inProgress",
+          summary: "Reviewer",
+          workEntry: { label: resumeKind === "task.progress" ? "Review resumed" : "Review" },
+        },
+      ]);
+    },
+  );
+
   it.each(["cancelled", "failed", "interrupted"] as const)(
     "replaces Antigravity progress with %s without a timeline bypass flag",
     (status) => {

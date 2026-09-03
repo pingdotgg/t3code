@@ -607,7 +607,10 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
               const turnId = subagent?.turnId ?? context.activeTurnId;
               const linkage = subagentLinkage(toolCall.toolCallId);
               // Replay starts claim completion before the result says whether the call failed.
-              if (isAntigravitySubagentReplayStart(event.rawPayload)) {
+              if (
+                context.activeTurnId === undefined &&
+                isAntigravitySubagentReplayStart(event.rawPayload)
+              ) {
                 context.subagents.set(toolCall.toolCallId, { turnId, status: undefined });
                 return;
               }
