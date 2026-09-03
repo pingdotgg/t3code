@@ -24,12 +24,14 @@ class FakeElement {
     readonly tagName = "DIV",
     readonly kind: "plain" | "control" | "editable" = "plain",
     parent: FakeElement | null = null,
+    readonly contentEditable: string | null = null,
   ) {
     this.parentNode = parent;
   }
   closest(selector: string): FakeElement | null {
     // Mirrors the real selectors: controls match button/a/role queries,
-    // editables match form-field queries, plain elements match neither.
+    // editables match form-field queries, and only editable contenteditable
+    // values match — "false" islands (e.g. citation chips) match nothing.
     const parts = selector.split(",").map((part) => part.trim());
     const selfMatch = parts.some((part) => {
       if (part === "button" || part === "a" || part === "[role=button]") {
@@ -39,10 +41,16 @@ class FakeElement {
         part === "input" ||
         part === "textarea" ||
         part === "select" ||
-        part === "[contenteditable]" ||
         part === "[data-no-copy-on-select]"
       ) {
         return this.kind === "editable";
+      }
+      if (part.startsWith("[contenteditable")) {
+        return (
+          this.contentEditable === "" ||
+          this.contentEditable === "true" ||
+          this.contentEditable === "plaintext-only"
+        );
       }
       return false;
     });
@@ -187,6 +195,32 @@ describe("getCopyableDomSelectionText", () => {
         container as unknown as HTMLElement,
       ),
     ).toBe("docs");
+  });
+
+  it("allows selections on contenteditable=false islands such as citation chips", () => {
+    const container = new FakeElement();
+    const chip = new FakeElement("SPAN", "plain", container, "false");
+    const node = textNode("cite", chip);
+    expect(
+      getCopyableDomSelectionText(
+        selectionOf("cite", node, node),
+        container as unknown as HTMLElement,
+      ),
+    ).toBe("cite");
+  });
+
+  it("still excludes genuinely editable contenteditable regions", () => {
+    const container = new FakeElement();
+    for (const value of ["", "true", "plaintext-only"]) {
+      const field = new FakeElement("DIV", "plain", container, value);
+      const node = textNode("edit", field);
+      expect(
+        getCopyableDomSelectionText(
+          selectionOf("edit", node, node),
+          container as unknown as HTMLElement,
+        ),
+      ).toBeNull();
+    }
   });
 
   it("rejects collapsed, multi-range, and whitespace-only selections", () => {

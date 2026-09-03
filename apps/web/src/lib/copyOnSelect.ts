@@ -13,9 +13,13 @@
  * intentionally NOT excluded — chat is full of selectable controls, and a
  * drag across them is still a real selection. Clicks on those controls
  * without a drag are filtered by gesture-identity comparison instead.
+ *
+ * Note the `contenteditable` values are enumerated instead of using a bare
+ * `[contenteditable]`: that would also match `contenteditable="false"`
+ * islands such as citation chips, which are explicitly non-editable.
  */
 export const COPY_ON_SELECT_EDITABLE_SELECTOR =
-  "input, textarea, select, [contenteditable], [data-no-copy-on-select]";
+  'input, textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"], [data-no-copy-on-select]';
 
 /**
  * Herdr copies on mouse release after a drag or double-click. Only the
