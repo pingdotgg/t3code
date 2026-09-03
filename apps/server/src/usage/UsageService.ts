@@ -349,10 +349,10 @@ export const make = Effect.gen(function* () {
 
       // Stored already de-duplicated within the file, which is 99% of all
       // duplicates. The aggregator still runs the cross-file dedupe pass. One
-      // seen set spans the cached base, the new lines, and the tail so a
+      // seen map spans the cached base, the new lines, and the tail so a
       // resumed parse dedupes exactly like a full one.
       const base = parsed.resumed && cached !== undefined ? cached.records : [];
-      const seen = new Set<string>();
+      const seen = new Map<string, UsageRecord>();
       const records = dedupeWithinFile([...base, ...parsed.records], seen);
       const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
 
