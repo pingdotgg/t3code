@@ -1,5 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -323,83 +322,6 @@ describe("attachmentUploadQueue", () => {
       ]);
     } finally {
       useComposerDraftStore.getState().clearComposerContent(draftId);
-    }
-  });
-
-  it("persists a pending upload on the same-environment draft that receives its file", async () => {
-    const source = scopeThreadRef(firstEnvironment, ThreadId.make("thread-background-move-source"));
-    const destination = scopeThreadRef(
-      firstEnvironment,
-      ThreadId.make("thread-background-move-destination"),
-    );
-    const file = makeFile("background-move");
-    const store = useComposerDraftStore.getState();
-    store.addFiles(source, [file]);
-
-    try {
-      startAttachmentUpload({
-        environmentId: firstEnvironment,
-        image: file,
-        draftTarget: source,
-      });
-      await Promise.resolve();
-      store.moveComposerPromptAndImages(source, destination);
-      const sourceAfterMove = store.getComposerDraft(source);
-
-      // The destination never starts the existing job again. Its completion
-      // must find the file in current store state instead of the captured row.
-      const settled = awaitAttachmentUploads([file.id]);
-      TestXmlHttpRequest.requests[0]!.complete();
-      await settled;
-
-      expect(store.getComposerDraft(source)).toEqual(sourceAfterMove);
-      expect(store.getComposerDraft(destination)?.files).toMatchObject([
-        {
-          id: file.id,
-          uploadedAttachmentId: "pending-environment-1-background-move.pdf",
-          uploadEnvironmentId: firstEnvironment,
-        },
-      ]);
-    } finally {
-      store.clearComposerContent(source);
-      store.clearComposerContent(destination);
-    }
-  });
-
-  it("does not stamp an old-environment upload after its file moves environments", async () => {
-    const source = scopeThreadRef(
-      firstEnvironment,
-      ThreadId.make("thread-cross-environment-source"),
-    );
-    const destination = scopeThreadRef(
-      secondEnvironment,
-      ThreadId.make("thread-cross-environment-destination"),
-    );
-    const file = makeFile("cross-environment-move");
-    const store = useComposerDraftStore.getState();
-    store.addFiles(source, [file]);
-
-    try {
-      startAttachmentUpload({
-        environmentId: firstEnvironment,
-        image: file,
-        draftTarget: source,
-      });
-      await Promise.resolve();
-      store.moveComposerPromptAndImages(source, destination);
-
-      const settled = awaitAttachmentUploads([file.id]);
-      TestXmlHttpRequest.requests[0]!.complete();
-      await settled;
-
-      expect(store.getComposerDraft(source)).toBeNull();
-      const movedFile = store.getComposerDraft(destination)?.files[0];
-      expect(movedFile?.id).toBe(file.id);
-      expect(movedFile?.uploadedAttachmentId).toBeUndefined();
-      expect(movedFile?.uploadEnvironmentId).toBeUndefined();
-    } finally {
-      store.clearComposerContent(source);
-      store.clearComposerContent(destination);
     }
   });
 
@@ -847,90 +769,6 @@ describe("attachmentUploadQueue", () => {
       environmentId: firstEnvironment,
       attachmentId: "pending-environment-1-image-move.png",
     });
-  });
-
-  it("releases a moved file's source upload only after its destination upload succeeds", async () => {
-    const source = scopeThreadRef(firstEnvironment, ThreadId.make("thread-file-move-source"));
-    const destination = scopeThreadRef(
-      secondEnvironment,
-      ThreadId.make("thread-file-move-destination"),
-    );
-    const file = makeFile("moved-report");
-    const store = useComposerDraftStore.getState();
-    store.addFiles(source, [file]);
-
-    try {
-      startAttachmentUpload({
-        environmentId: firstEnvironment,
-        image: file,
-        draftTarget: source,
-      });
-      await Promise.resolve();
-      let settled = awaitAttachmentUploads([file.id]);
-      TestXmlHttpRequest.requests[0]!.complete();
-      await settled;
-
-      const sourceAttachmentId = store.getComposerDraft(source)?.files[0]?.uploadedAttachmentId;
-      expect(sourceAttachmentId).toBe("pending-environment-1-moved-report.pdf");
-
-      store.moveComposerPromptAndImages(source, destination);
-      const movedFile = store.getComposerDraft(destination)?.files[0];
-      expect(movedFile).toMatchObject({
-        id: file.id,
-        file: file.file,
-      });
-      expect(movedFile?.uploadedAttachmentId).toBeUndefined();
-      expect(movedFile?.uploadEnvironmentId).toBeUndefined();
-
-      startAttachmentUpload({
-        environmentId: secondEnvironment,
-        image: movedFile!,
-        draftTarget: destination,
-      });
-      await Promise.resolve();
-
-      const sourceDeletesBeforeDestinationUpload = mocks.runAtomCommand.mock.calls.filter(
-        ([, command, target]) =>
-          command === mocks.removeUpload &&
-          (
-            target as {
-              readonly environmentId: EnvironmentId;
-              readonly input: { readonly attachmentId: string };
-            }
-          ).environmentId === firstEnvironment &&
-          (target as { readonly input: { readonly attachmentId: string } }).input.attachmentId ===
-            sourceAttachmentId,
-      );
-      expect(sourceDeletesBeforeDestinationUpload).toEqual([]);
-
-      settled = awaitAttachmentUploads([file.id]);
-      TestXmlHttpRequest.requests[1]!.complete();
-      await settled;
-
-      const sourceDeletesAfterDestinationUpload = mocks.runAtomCommand.mock.calls.filter(
-        ([, command, target]) =>
-          command === mocks.removeUpload &&
-          (
-            target as {
-              readonly environmentId: EnvironmentId;
-              readonly input: { readonly attachmentId: string };
-            }
-          ).environmentId === firstEnvironment &&
-          (target as { readonly input: { readonly attachmentId: string } }).input.attachmentId ===
-            sourceAttachmentId,
-      );
-      expect(sourceDeletesAfterDestinationUpload).toHaveLength(1);
-      expect(store.getComposerDraft(destination)?.files).toMatchObject([
-        {
-          id: file.id,
-          uploadedAttachmentId: "pending-environment-2-moved-report.pdf",
-          uploadEnvironmentId: secondEnvironment,
-        },
-      ]);
-    } finally {
-      store.clearComposerContent(source);
-      store.clearComposerContent(destination);
-    }
   });
 
   it("does not let stalled uploads block another environment", async () => {

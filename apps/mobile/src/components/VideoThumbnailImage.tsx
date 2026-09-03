@@ -11,6 +11,7 @@ import { cachedVideoThumbnail, loadVideoThumbnail } from "../lib/videoThumbnails
 export function VideoThumbnailImage(props: {
   readonly cacheKey: string;
   readonly source: string | DraftComposerFileAttachment | null;
+  readonly contentFit?: "cover" | "contain";
 }) {
   const { cacheKey, source } = props;
   const isFocused = useIsFocused();
@@ -37,7 +38,7 @@ export function VideoThumbnailImage(props: {
     <Image
       source={thumbnail}
       style={StyleSheet.absoluteFill}
-      contentFit="cover"
+      contentFit={props.contentFit ?? "cover"}
       recyclingKey={cacheKey}
       accessible={false}
     />

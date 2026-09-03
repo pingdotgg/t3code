@@ -14,7 +14,7 @@ const NativeControls = requireNativeModule<{
   dismissFile(identifier: string): Promise<void>;
 }>("T3NativeControls");
 
-export function FilePreview(props: {
+function NativeFilePreview(props: {
   readonly source: ResolvedFilePreviewSource;
   readonly onRequestClose: () => void;
 }) {
@@ -40,4 +40,11 @@ export function FilePreview(props: {
   }, [uri, name, sourceIdentifier, identifier]);
 
   return null;
+}
+
+export function FilePreview(props: {
+  readonly source: ResolvedFilePreviewSource;
+  readonly onRequestClose: () => void;
+}) {
+  return <NativeFilePreview {...props} />;
 }

@@ -19,12 +19,14 @@ import { prepareTurnAttachments, validateDraftFileAttachments } from "../../lib/
 import { makeTurnCommandMetadata, type TurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
 import { randomHex } from "../../lib/uuid";
+import { isModelSelectionUnavailable } from "../../lib/modelOptions";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { scheduleUnusedComposerAttachmentCleanup } from "../../state/use-composer-drafts";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
 import { validateProjectThreadCreation } from "./projectThreadCreationValidation";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
+import { resolveProviderInteractionMode } from "./legacy-plan-mode";
 
 export function useCreateProjectThread() {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
@@ -110,6 +112,22 @@ export function useCreateProjectThread() {
         return AsyncResult.failure(Cause.fail(new Error(preparedAttachmentError)));
       }
 
+      const serverConfig = appAtomRegistry.get(
+        serverEnvironment.configValueAtom(input.project.environmentId),
+      );
+      const providerError = !serverConfig
+        ? "Provider settings are still loading. Try again."
+        : isModelSelectionUnavailable(serverConfig, input.modelSelection)
+          ? "Antigravity model unavailable. Open model settings to finish setup or choose another model."
+          : null;
+      if (providerError !== null) {
+        setPendingConnectionError(providerError);
+        return AsyncResult.failure(Cause.fail(new Error(providerError)));
+      }
+      const provider = serverConfig?.providers.find(
+        (candidate) => candidate.instanceId === input.modelSelection.instanceId,
+      );
+
       const result = await startTurn({
         environmentId: input.project.environmentId,
         input: buildProjectThreadStartTurnInput({
@@ -124,7 +142,7 @@ export function useCreateProjectThread() {
           uploadedAttachments: prepared.attachments,
           modelSelection: input.modelSelection,
           runtimeMode: input.runtimeMode,
-          interactionMode: input.interactionMode,
+          interactionMode: resolveProviderInteractionMode(provider, input.interactionMode),
           workspaceMode: input.envMode,
           branch: input.branch,
           worktreePath: input.worktreePath,

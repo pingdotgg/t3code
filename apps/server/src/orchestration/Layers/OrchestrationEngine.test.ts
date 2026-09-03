@@ -206,6 +206,7 @@ describe("OrchestrationEngine", () => {
           getSnapshotSequence: () =>
             Effect.succeed({ snapshotSequence: projectionSnapshot.snapshotSequence }),
           getCounts: () => Effect.succeed({ projectCount: 1, threadCount: 1 }),
+          getEventReplayStats: () => Effect.die("unused"),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getProjectShellById: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
@@ -221,6 +222,7 @@ describe("OrchestrationEngine", () => {
         Layer.succeed(OrchestrationProjectionPipeline, {
           bootstrap: Effect.void,
           projectEvent: () => Effect.void,
+          projectEventDeferred: () => Effect.succeed(Effect.void),
         } satisfies OrchestrationProjectionPipelineShape),
       ),
       Layer.provide(Layer.succeed(OrchestrationEventStore, eventStore)),
@@ -378,12 +380,15 @@ describe("OrchestrationEngine", () => {
           originalUpdatedAt,
         );
 
+        // Automatic settlement stamps the last activity, never the sweep time.
+        const lastActivityAt = "2025-12-20T00:00:00.000Z";
         const staleError = yield* engine
           .dispatch({
             type: "thread.auto-settle",
             commandId: CommandId.make("cmd-auto-settle-stale-snapshot"),
             threadId: guardedThreadId,
             snapshotSequence,
+            settledAt: lastActivityAt,
           })
           .pipe(Effect.flip);
         expect(staleError._tag).toBe("OrchestrationCommandInvariantError");
@@ -411,6 +416,7 @@ describe("OrchestrationEngine", () => {
               commandId: CommandId.make(`cmd-auto-settle-${expectedLiveness}`),
               threadId: liveThreadId,
               snapshotSequence: livenessSnapshotSequence,
+              settledAt: lastActivityAt,
             })
             .pipe(Effect.flip);
           expect(livenessError._tag).toBe("OrchestrationCommandInvariantError");
@@ -423,6 +429,7 @@ describe("OrchestrationEngine", () => {
           commandId: CommandId.make("cmd-auto-settle-after-liveness-cleared"),
           threadId: liveThreadId,
           snapshotSequence: livenessSnapshotSequence,
+          settledAt: lastActivityAt,
         });
 
         const freshSnapshotSequence = yield* engine.latestSequence;
@@ -437,15 +444,16 @@ describe("OrchestrationEngine", () => {
           commandId: CommandId.make("cmd-auto-settle-after-unrelated-update"),
           threadId: guardedThreadId,
           snapshotSequence: freshSnapshotSequence,
+          settledAt: lastActivityAt,
         });
 
         const settled = yield* snapshots.getSnapshot();
-        expect(
-          settled.threads.find((thread) => thread.id === guardedThreadId)?.settledOverride,
-        ).toBe("settled");
-        expect(settled.threads.find((thread) => thread.id === liveThreadId)?.settledOverride).toBe(
-          "settled",
-        );
+        for (const threadId of [guardedThreadId, liveThreadId]) {
+          const thread = settled.threads.find((candidate) => candidate.id === threadId);
+          expect(thread?.settledOverride).toBe("settled");
+          expect(thread?.settledAt).toBe(lastActivityAt);
+          expect(thread?.updatedAt).toBe(now());
+        }
       }).pipe(Effect.provide(makeOrchestrationLayer())),
   );
 
@@ -1115,7 +1123,8 @@ describe("OrchestrationEngine", () => {
     let shouldFailRequestedProjection = true;
     const flakyProjectionPipeline: OrchestrationProjectionPipelineShape = {
       bootstrap: Effect.void,
-      projectEvent: (event) => {
+      projectEvent: () => Effect.void,
+      projectEventDeferred: (event) => {
         if (
           shouldFailRequestedProjection &&
           event.commandId === CommandId.make("cmd-turn-start-atomic") &&
@@ -1129,7 +1138,7 @@ describe("OrchestrationEngine", () => {
             }),
           );
         }
-        return Effect.void;
+        return Effect.succeed(Effect.void);
       },
     };
 
@@ -1262,7 +1271,8 @@ describe("OrchestrationEngine", () => {
     let shouldFailProjection = true;
     const flakyProjectionPipeline: OrchestrationProjectionPipelineShape = {
       bootstrap: Effect.void,
-      projectEvent: (event) => {
+      projectEvent: () => Effect.void,
+      projectEventDeferred: (event) => {
         if (
           shouldFailProjection &&
           event.commandId === CommandId.make("cmd-thread-archive-sync-fail")
@@ -1275,7 +1285,7 @@ describe("OrchestrationEngine", () => {
             }),
           );
         }
-        return Effect.void;
+        return Effect.succeed(Effect.void);
       },
     };
 

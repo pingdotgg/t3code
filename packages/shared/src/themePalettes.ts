@@ -764,10 +764,6 @@ export const BUILT_IN_THEMES: ReadonlyArray<ThemeDefinition> = [
   IRIS_THEME,
 ];
 
-export function getBuiltInTheme(id: string): ThemeDefinition | null {
-  return BUILT_IN_THEMES.find((theme) => theme.id === id) ?? null;
-}
-
 export function getThemeColorsForAppearance(
   theme: ThemeDefinition,
   appearance: ThemeAppearance,

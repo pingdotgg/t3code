@@ -218,6 +218,45 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
     }),
   );
 
+  it.effect("advertises desktopAppUpdate only with desktop mode and the control fd", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-desktop-update-test-",
+      });
+      const serverConfig = yield* makeServerConfig(baseDir);
+      yield* fileSystem.makeDirectory(serverConfig.stateDir, { recursive: true });
+
+      const describeWith = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =>
+        Effect.gen(function* () {
+          const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+          return yield* serverEnvironment.getDescriptor;
+        }).pipe(
+          Effect.provide(
+            ServerEnvironment.layer.pipe(
+              Layer.provide(ServerSecretStore.layer),
+              Layer.provide(ServerConfig.layer({ ...serverConfig, ...overrides })),
+            ),
+          ),
+        );
+
+      const withFd = yield* describeWith({ mode: "desktop", desktopTelemetryControlFd: 5 });
+      expect(withFd.capabilities.serverSelfUpdate).toBe("desktop-managed");
+      expect(withFd.capabilities.desktopAppUpdate).toBe(true);
+      expect(withFd.capabilities.serverSelfUpdateProgress).toBe(true);
+      expect(withFd.capabilities.serverUpdateThreadContinuation).toBe(true);
+
+      const withoutFd = yield* describeWith({ mode: "desktop" });
+      expect(withoutFd.capabilities.serverSelfUpdate).toBe("desktop-managed");
+      expect(withoutFd.capabilities.desktopAppUpdate).toBeUndefined();
+      expect(withoutFd.capabilities.serverSelfUpdateProgress).toBeUndefined();
+      expect(withoutFd.capabilities.serverUpdateThreadContinuation).toBeUndefined();
+
+      const web = yield* describeWith({ mode: "web", desktopTelemetryControlFd: 5 });
+      expect(web.capabilities.desktopAppUpdate).toBeUndefined();
+    }),
+  );
+
   it.effect("structures persisted environment id filesystem failures", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
