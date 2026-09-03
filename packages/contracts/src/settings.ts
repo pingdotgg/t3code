@@ -351,6 +351,19 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Herdr-style copy-on-select: releasing a mouse drag or double-click
+   * copies the selection to the clipboard. Matches Herdr's
+   * `ui.copy_on_select` (default true); the terminal pane and the chat
+   * timeline both honor it.
+   */
+  copyOnSelect: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Shows the "copied to clipboard" toast after an automatic copy.
+   * Matches Herdr's `ui.toast.clipboard.enabled` (default true); turning
+   * it off keeps the copy but stays silent.
+   */
+  copyOnSelectToast: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -1210,5 +1223,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   wordWrap: Schema.optionalKey(Schema.Boolean),
+  copyOnSelect: Schema.optionalKey(Schema.Boolean),
+  copyOnSelectToast: Schema.optionalKey(Schema.Boolean),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

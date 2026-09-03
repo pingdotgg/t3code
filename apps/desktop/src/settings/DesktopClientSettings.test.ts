@@ -60,6 +60,8 @@ const clientSettings: ClientSettings = {
   legacySidebarEnabled: false,
   timestampFormat: "24-hour",
   wordWrap: true,
+  copyOnSelect: true,
+  copyOnSelectToast: true,
 };
 
 const decodeClientSettingsJson = Schema.decodeEffect(Schema.fromJsonString(ClientSettingsSchema));

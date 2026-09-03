@@ -76,6 +76,18 @@ describe("ClientSettings proactive panels", () => {
   });
 });
 
+describe("ClientSettings copy on select", () => {
+  it("defaults copy and its toast on, matching Herdr", () => {
+    expect(decodeClientSettings({}).copyOnSelect).toBe(true);
+    expect(decodeClientSettings({}).copyOnSelectToast).toBe(true);
+  });
+
+  it("accepts client-local updates", () => {
+    expect(decodeClientSettingsPatch({ copyOnSelect: false }).copyOnSelect).toBe(false);
+    expect(decodeClientSettingsPatch({ copyOnSelectToast: false }).copyOnSelectToast).toBe(false);
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it("defaults to hold", () => {
     expect(decodeClientSettings({}).confirmQuit).toBe("hold");

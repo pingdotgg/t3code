@@ -211,6 +211,19 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "copy-on-select",
+    title: "Copy on select",
+    to: "/settings/general",
+    searchTerms: ["clipboard automatic selection herdr copy select drag highlight"],
+  },
+  {
+    id: "copy-on-select-toast",
+    title: "Copy on select toast",
+    to: "/settings/general",
+    targetId: "copy-on-select",
+    searchTerms: ["clipboard notification popup copied confirmation"],
+  },
+  {
     id: "provider-update-checks",
     title: "Provider update checks",
     to: "/settings/general",

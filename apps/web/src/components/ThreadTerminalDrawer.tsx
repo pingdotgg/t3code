@@ -42,6 +42,9 @@ import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { getClientSettings } from "~/hooks/useSettings";
+import { normalizeTerminalSelectionText } from "~/lib/copyOnSelect";
+import { toastManager } from "~/components/ui/toast";
 import { cn } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import {
@@ -460,6 +463,9 @@ export function TerminalViewport({
     let setupTerminal: GhosttyTerminalSurface | null = null;
     let setupCleanups: Array<() => void> = [];
     let selectionActions: ReturnType<typeof observeSelectionActions> | null = null;
+    // Last text confirmed via copy-on-select, so repeat gestures over an
+    // unchanged selection stay quiet instead of re-toasting.
+    let lastAutoCopiedText: string | null = null;
 
     const setup = async (): Promise<(() => void) | null> => {
       const setupFont = terminalFontRef.current;
@@ -594,11 +600,37 @@ export function TerminalViewport({
 
       const copySelection = async (text: string, requestId: number) => {
         try {
-          await writeTextToClipboard(text, "terminal selection");
+          const didCopy = await writeTextToClipboard(text, "terminal selection");
+          if (didCopy) {
+            lastAutoCopiedText = text;
+            toastManager.add({ type: "success", title: "Copied to clipboard" });
+          }
         } catch (error) {
           reportIfCurrent(requestId, error, "Unable to copy terminal selection");
         }
         focusIfCurrent(requestId);
+      };
+
+      // Herdr-style copy-on-select: a completed selection gesture copies on
+      // release. Only call with a fresh, non-empty selection read for this
+      // gesture (as `showSelectionAction` does) — never with pre-existing
+      // text, so application clicks can't clobber the clipboard with stale
+      // content. The toast fires only after a successful write.
+      const autoCopyTerminalSelection = async (text: string) => {
+        const settings = getClientSettings();
+        if (!settings.copyOnSelect) return;
+        if (normalizeTerminalSelectionText(text) === null) return;
+        if (text === lastAutoCopiedText) return;
+        try {
+          const didCopy = await writeTextToClipboard(text, "terminal selection");
+          if (!didCopy) return;
+        } catch {
+          return;
+        }
+        lastAutoCopiedText = text;
+        if (getClientSettings().copyOnSelectToast) {
+          toastManager.add({ type: "success", title: "Copied to clipboard" });
+        }
       };
 
       const pasteFromClipboard = async (requestId: number) => {
@@ -669,6 +701,10 @@ export function TerminalViewport({
           clearSelectionAction();
           return;
         }
+        // Copy-on-select fires on release, before the popup opens; the popup
+        // stays for Add to chat (and Copy as a fallback when auto-copy is
+        // off or the clipboard write failed).
+        void autoCopyTerminalSelection(nextAction.clipboardText);
         const requestId = ++selectionActionRequestIdRef.current;
         openSelectionMenuRequestIdRef.current = requestId;
         const clicked = await localApi.contextMenu
