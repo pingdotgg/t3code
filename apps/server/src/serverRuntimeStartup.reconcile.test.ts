@@ -307,6 +307,91 @@ it.effect("continues marked sessions after activation with provider-specific inp
   }),
 );
 
+it.effect("continues an unmarked active session after an ordinary server restart", () =>
+  Effect.gen(function* () {
+    const thread = makeThread(
+      "thread-continue-after-restart",
+      "running",
+      TurnId.make("turn-continue-after-restart"),
+    );
+    const continuationSent = yield* Deferred.make<void>();
+    const sends: ProviderSendTurnInput[] = [];
+    const dispatched: OrchestrationCommand[] = [];
+    const upserts: ProviderSessionDirectory.ProviderRuntimeBinding[] = [];
+    const providerService: ProviderService.ProviderService["Service"] = {
+      ...makeProviderService(),
+      getCapabilities: () =>
+        Effect.succeed({
+          sessionModelSwitch: "in-session",
+          promptlessTurnContinuation: true,
+        }),
+      sendTurn: (input) =>
+        Effect.sync(() => {
+          sends.push(input);
+          return {
+            threadId: input.threadId,
+            turnId: TurnId.make("continued-after-restart"),
+          };
+        }).pipe(Effect.tap(() => Deferred.succeed(continuationSent, undefined))),
+    };
+
+    yield* runReconciliation({
+      threads: [thread],
+      providerService,
+      directory: {
+        getBinding: () =>
+          Effect.succeed(
+            Option.some({
+              threadId: thread.id,
+              provider: ProviderDriverKind.make("codex"),
+              providerInstanceId,
+              status: "running" as const,
+              resumeCursor: { threadId: "provider-thread-resume" },
+              runtimePayload: {
+                activeTurnId: thread.session.activeTurnId,
+                lastRuntimeEvent: "provider.sendTurn",
+              },
+            }),
+          ),
+        upsert: (binding) => Effect.sync(() => upserts.push(binding)),
+        getProvider: () => Effect.die("unused"),
+        listThreadIds: () => Effect.die("unused"),
+        listBindings: () => Effect.die("unused"),
+      },
+      dispatch: (command) =>
+        Effect.sync(() => dispatched.push(command)).pipe(
+          Effect.as({ sequence: dispatched.length }),
+        ),
+    });
+    yield* Deferred.await(continuationSent);
+
+    assert.deepStrictEqual(sends, [
+      { threadId: thread.id, continuation: true, interactionMode: "default" },
+    ]);
+    assert.deepStrictEqual(
+      dispatched.map((command) =>
+        command.type === "thread.session.set"
+          ? {
+              status: command.session.status,
+              activeTurnId: command.session.activeTurnId,
+              lastError: command.session.lastError,
+            }
+          : null,
+      ),
+      [{ status: "starting", activeTurnId: null, lastError: null }],
+    );
+    assert.deepStrictEqual(
+      upserts.map((binding) => binding.runtimePayload),
+      [
+        {
+          activeTurnId: null,
+          lastRuntimeEvent: "provider.sendTurn",
+        },
+      ],
+    );
+  }),
+);
+
 it.effect("does not continue archived or deleted marked sessions", () => {
   const archived = makeThread(
     "thread-continue-archived",
@@ -438,7 +523,7 @@ it.effect("retries continuation preparation before settling a persistent failure
 
 it.effect("reconciles multiple active and archived orphans but skips live sessions", () => {
   const starting = makeThread("thread-starting", "starting");
-  const running = makeThread("thread-running", "running", TurnId.make("turn-running"));
+  const running = makeThread("thread-running", "running");
   const staleActiveTurn = makeThread(
     "thread-stale-active-turn",
     "ready",

@@ -480,6 +480,18 @@ export const reconcileProviderSessions = Effect.gen(function* () {
     const continuationMarked =
       continuationTurnId !== null &&
       (session.activeTurnId === null || continuationTurnId === session.activeTurnId);
+    // A normal desktop quit does not pass through the self-update marker flow,
+    // but the projected active turn and persisted provider cursor still prove
+    // that this session can be resumed. Preserve the pre-#9167 behavior by
+    // continuing that turn after any server restart. A stale explicit update
+    // marker remains authoritative and must not resume a different turn.
+    const restartContinuationEligible =
+      continuationMarked ||
+      (!continuationMarkerPresent &&
+        session.activeTurnId !== null &&
+        Option.isSome(binding) &&
+        binding.value.resumeCursor !== null &&
+        binding.value.resumeCursor !== undefined);
     const settleAsError = (lastError: string) =>
       Effect.gen(function* () {
         yield* Effect.gen(function* () {
@@ -535,7 +547,7 @@ export const reconcileProviderSessions = Effect.gen(function* () {
 
     if (
       Option.isSome(binding) &&
-      continuationMarked &&
+      restartContinuationEligible &&
       thread.archivedAt === null &&
       thread.deletedAt === null
     ) {
@@ -595,7 +607,7 @@ export const reconcileProviderSessions = Effect.gen(function* () {
           });
           const continuationExit = yield* Effect.exit(continuation);
           if (Exit.isSuccess(continuationExit) || Cause.hasInterrupts(continuationExit.cause)) {
-            if (Exit.isSuccess(continuationExit)) {
+            if (Exit.isSuccess(continuationExit) && continuationMarkerPresent) {
               yield* clearContinuationMarkers(directory, [thread.id]).pipe(
                 Effect.uninterruptible,
                 Effect.catchCause((cause) =>
@@ -608,12 +620,12 @@ export const reconcileProviderSessions = Effect.gen(function* () {
             }
             return;
           }
-          yield* Effect.logWarning("failed to continue provider session after server update", {
+          yield* Effect.logWarning("failed to continue provider session after server restart", {
             threadId: thread.id,
             cause: continuationExit.cause,
           });
           yield* settleAsError(
-            "Could not continue this thread after the server update. Send a new message to continue.",
+            "Could not continue this thread after the server restart. Send a new message to continue.",
           ).pipe(Effect.ignoreCause);
         }),
       );
