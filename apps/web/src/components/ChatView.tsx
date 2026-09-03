@@ -5213,7 +5213,9 @@ function ChatViewContent(props: ChatViewProps) {
         setComposerDraftPrompt(threadRef, lastUserMessage.text);
       }
     }
-    setDismissedRateLimitKeys((keys) => new Set(keys).add(rateLimitSuggestion.key));
+    setDismissedRateLimitKeys((keys) =>
+      new Set(keys).add(`${activeThread.id}:${rateLimitSuggestion.key}`),
+    );
     scheduleComposerFocus();
   }, [
     activeThread,
@@ -5226,8 +5228,15 @@ function ChatViewContent(props: ChatViewProps) {
     setStickyComposerModelSelection,
     settings,
   ]);
+  // Dismissal is per thread: the offered switch only changes this thread.
+  const rateLimitDismissKey =
+    activeThread && rateLimitSuggestion ? `${activeThread.id}:${rateLimitSuggestion.key}` : null;
   const rateLimitBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
-    if (!rateLimitSuggestion || dismissedRateLimitKeys.has(rateLimitSuggestion.key)) {
+    if (
+      !rateLimitSuggestion ||
+      rateLimitDismissKey === null ||
+      dismissedRateLimitKeys.has(rateLimitDismissKey)
+    ) {
       return null;
     }
     const reset = formatProviderRateLimitReset(
@@ -5249,14 +5258,14 @@ function ChatViewContent(props: ChatViewProps) {
         </Button>
       ) : undefined,
       dismissLabel: "Dismiss usage limit notice",
-      onDismiss: () =>
-        setDismissedRateLimitKeys((keys) => new Set(keys).add(rateLimitSuggestion.key)),
+      onDismiss: () => setDismissedRateLimitKeys((keys) => new Set(keys).add(rateLimitDismissKey)),
     };
   }, [
     dismissedRateLimitKeys,
     handleSwitchRateLimitedAccount,
     nowMinute,
     providerInstanceLabel,
+    rateLimitDismissKey,
     rateLimitSuggestion,
   ]);
   const handleRestoreThreadBranch = useCallback(() => {

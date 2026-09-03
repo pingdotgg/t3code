@@ -149,6 +149,8 @@ export function readProviderRateLimitFromPayload(input: {
 
 /** How long an error-text detection stays active without a structured update. */
 export const TURN_ERROR_RATE_LIMIT_TTL_MS = 15 * 60 * 1000;
+/** Window name stamped on error-text detections so they are never mistaken for a provider window. */
+export const TURN_ERROR_RATE_LIMIT_WINDOW = "turn-error";
 
 const TURN_ERROR_RATE_LIMIT_DRIVERS = new Set(["claudeAgent", "codex"]);
 
@@ -173,5 +175,10 @@ export function readProviderRateLimitFromTurnError(input: {
   const resetsAt = Number.isFinite(observedMs)
     ? epochToIso(observedMs + TURN_ERROR_RATE_LIMIT_TTL_MS)
     : undefined;
-  return build({ status: "rejected", resetsAt, observedAt: input.observedAt });
+  return build({
+    status: "rejected",
+    resetsAt,
+    window: TURN_ERROR_RATE_LIMIT_WINDOW,
+    observedAt: input.observedAt,
+  });
 }

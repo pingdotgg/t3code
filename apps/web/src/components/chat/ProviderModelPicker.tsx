@@ -164,7 +164,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               driverKind={activeEntry.driverKind}
               displayName={activeEntry.displayName}
               accentColor={activeEntry.accentColor}
-              showBadge={showInstanceBadge}
+              // The tinted glyph is the account marker; initials only for accent-less siblings.
+              showBadge={showInstanceBadge && activeEntry.accentColor === undefined}
               className="size-4"
               iconClassName={cn("size-4", props.activeProviderIconClassName)}
               indicatorBackground="var(--contrast-input)"

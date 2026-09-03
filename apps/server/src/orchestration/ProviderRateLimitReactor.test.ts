@@ -26,12 +26,7 @@ import { ProviderService } from "../provider/Services/ProviderService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
-import {
-  layer as providerRateLimitReactorLayer,
-  mergeCodexRateLimit,
-  PROVIDER_INSTANCE_SWITCHED_ACTIVITY_KIND,
-  ProviderRateLimitReactor,
-} from "./ProviderRateLimitReactor.ts";
+import * as ProviderRateLimitReactor from "./ProviderRateLimitReactor.ts";
 
 const THREAD_ID = ThreadId.make("thread-rate-limit");
 const TURN_ID = TurnId.make("turn-1");
@@ -96,7 +91,7 @@ function makeHarness(autoSwitch: boolean) {
     ]);
     const dispatched: OrchestrationCommand[] = [];
 
-    const layer = providerRateLimitReactorLayer.pipe(
+    const layer = ProviderRateLimitReactor.layer.pipe(
       Layer.provideMerge(
         Layer.mock(ProviderService)({
           get streamEvents() {
@@ -207,11 +202,26 @@ describe("mergeCodexRateLimit", () => {
         observedAt: AT,
       };
       const sparse = { status: "allowed" as const, utilization: 40, observedAt: AT };
-      assert.deepEqual(mergeCodexRateLimit(previous, sparse, Date.parse(AT)), previous);
-      const sameWindow = { ...sparse, resetsAt: "2026-09-02T12:00:00.000Z" };
-      assert.deepEqual(mergeCodexRateLimit(previous, sameWindow, Date.parse(AT)), sameWindow);
       assert.deepEqual(
-        mergeCodexRateLimit(previous, sparse, Date.parse("2026-09-02T12:00:01.000Z")),
+        ProviderRateLimitReactor.mergeCodexRateLimit(previous, sparse, Date.parse(AT)),
+        previous,
+      );
+      const heuristic = { ...previous, window: "turn-error" };
+      assert.deepEqual(
+        ProviderRateLimitReactor.mergeCodexRateLimit(heuristic, sparse, Date.parse(AT)),
+        sparse,
+      );
+      const sameWindow = { ...sparse, resetsAt: "2026-09-02T12:00:00.000Z" };
+      assert.deepEqual(
+        ProviderRateLimitReactor.mergeCodexRateLimit(previous, sameWindow, Date.parse(AT)),
+        sameWindow,
+      );
+      assert.deepEqual(
+        ProviderRateLimitReactor.mergeCodexRateLimit(
+          previous,
+          sparse,
+          Date.parse("2026-09-02T12:00:01.000Z"),
+        ),
         sparse,
       );
     }),
@@ -223,7 +233,7 @@ describe("ProviderRateLimitReactor", () => {
     Effect.gen(function* () {
       const harness = yield* makeHarness(false);
       yield* Effect.gen(function* () {
-        const reactor = yield* ProviderRateLimitReactor;
+        const reactor = yield* ProviderRateLimitReactor.ProviderRateLimitReactor;
         yield* reactor.start();
         // Let the forked subscriber attach before publishing.
         yield* Effect.yieldNow;
@@ -243,7 +253,7 @@ describe("ProviderRateLimitReactor", () => {
     Effect.gen(function* () {
       const harness = yield* makeHarness(true);
       yield* Effect.gen(function* () {
-        const reactor = yield* ProviderRateLimitReactor;
+        const reactor = yield* ProviderRateLimitReactor.ProviderRateLimitReactor;
         yield* reactor.start();
         // Let the forked subscriber attach before publishing.
         yield* Effect.yieldNow;
@@ -256,7 +266,10 @@ describe("ProviderRateLimitReactor", () => {
         const [activity, retry] = harness.dispatched;
         assert.equal(activity?.type, "thread.activity.append");
         if (activity?.type === "thread.activity.append") {
-          assert.equal(activity.activity.kind, PROVIDER_INSTANCE_SWITCHED_ACTIVITY_KIND);
+          assert.equal(
+            activity.activity.kind,
+            ProviderRateLimitReactor.PROVIDER_INSTANCE_SWITCHED_ACTIVITY_KIND,
+          );
         }
         assert.equal(retry?.type, "thread.turn.start");
         if (retry?.type === "thread.turn.start") {
@@ -279,7 +292,7 @@ describe("ProviderRateLimitReactor", () => {
     Effect.gen(function* () {
       const harness = yield* makeHarness(false);
       yield* Effect.gen(function* () {
-        const reactor = yield* ProviderRateLimitReactor;
+        const reactor = yield* ProviderRateLimitReactor.ProviderRateLimitReactor;
         yield* reactor.start();
         // Let the forked subscriber attach before publishing.
         yield* Effect.yieldNow;

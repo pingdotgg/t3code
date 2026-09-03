@@ -48,6 +48,7 @@ import * as Stream from "effect/Stream";
 import {
   readProviderRateLimitFromPayload,
   readProviderRateLimitFromTurnError,
+  TURN_ERROR_RATE_LIMIT_WINDOW,
 } from "../provider/providerRateLimits.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
@@ -104,6 +105,8 @@ export function mergeCodexRateLimit(
 ): ServerProviderRateLimit {
   if (
     previous !== undefined &&
+    // An error-text detection is not a Codex window; a structured update replaces it.
+    previous.window !== TURN_ERROR_RATE_LIMIT_WINDOW &&
     next.status !== "rejected" &&
     isProviderRateLimitActive(previous, nowMs) &&
     previous.resetsAt !== undefined &&
@@ -138,7 +141,18 @@ export const make = Effect.gen(function* () {
   // The user message that started each thread's most recent turn. Messages
   // are stored with a null turn id, so this is the only link back from a
   // failed turn to the prompt that should be retried.
+  // Bounded like the retry set: threads beyond the cap simply lose auto-retry
+  // for their oldest entries, they never leak.
+  const LATEST_TURN_MESSAGE_MAX = 512;
   const latestTurnMessageByThread = new Map<ThreadId, MessageId>();
+  const rememberLatestTurnMessage = (threadId: ThreadId, messageId: MessageId) => {
+    latestTurnMessageByThread.delete(threadId);
+    if (latestTurnMessageByThread.size >= LATEST_TURN_MESSAGE_MAX) {
+      const oldest = latestTurnMessageByThread.keys().next().value;
+      if (oldest !== undefined) latestTurnMessageByThread.delete(oldest);
+    }
+    latestTurnMessageByThread.set(threadId, messageId);
+  };
 
   const autoSwitchEnabled = serverSettingsService.getSettings.pipe(
     Effect.map((settings) => settings.autoSwitchProviderOnRateLimit),
@@ -286,7 +300,13 @@ export const make = Effect.gen(function* () {
       }
 
       const messageId = latestTurnMessageByThread.get(event.threadId);
-      if (messageId === undefined) return;
+      if (messageId === undefined) {
+        yield* Effect.logWarning(
+          "provider rate limit reactor has no turn-start record for the failed turn; not retrying",
+          { threadId: event.threadId, turnId: event.turnId },
+        );
+        return;
+      }
       const thread = yield* resolveThreadDetail(event.threadId);
       const userMessage = thread?.messages.find(
         (message) => message.id === messageId && message.role === "user",
@@ -314,10 +334,7 @@ export const make = Effect.gen(function* () {
   const processInput = (input: ReactorInput) =>
     (input.source === "domain"
       ? Effect.sync(() => {
-          latestTurnMessageByThread.set(
-            input.event.payload.threadId,
-            input.event.payload.messageId,
-          );
+          rememberLatestTurnMessage(input.event.payload.threadId, input.event.payload.messageId);
         })
       : recordRateLimit(input.event).pipe(Effect.andThen(maybeSwitchFailedTurn(input.event)))
     ).pipe(

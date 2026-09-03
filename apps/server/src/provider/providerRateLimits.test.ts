@@ -111,6 +111,7 @@ describe("readProviderRateLimitFromTurnError", () => {
     ).toEqual({
       status: "rejected",
       resetsAt: "2026-09-02T10:15:00.000Z",
+      window: "turn-error",
       observedAt: OBSERVED_AT,
     });
   });

@@ -48,6 +48,17 @@ describe("resolveProviderRateLimitSuggestion", () => {
     expect(suggestion?.key).toBe("claude_work:2026-09-02T12:00:00.000Z");
   });
 
+  it("keys an unknown reset stably across snapshots", () => {
+    const key = (observedAt: string) =>
+      resolveProviderRateLimitSuggestion({
+        providers: [provider("claude_work", { rateLimit: { status: "rejected", observedAt } })],
+        instanceId: ProviderInstanceId.make("claude_work"),
+        autoSwitchEnabled: false,
+        nowMs: NOW,
+      })?.key;
+    expect(key("2026-09-02T09:55:00.000Z")).toBe(key("2026-09-02T09:59:00.000Z"));
+  });
+
   it("still surfaces the limit when no sibling can take over", () => {
     const suggestion = resolveProviderRateLimitSuggestion({
       providers: [limitedWork],
