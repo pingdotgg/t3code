@@ -1247,11 +1247,18 @@ function startAnnotation(): void {
     pendingCapture = true;
     submit.disabled = true;
     submit.textContent = "Capturing…";
+    // Snapshot everything the annotation will carry before the capture runs.
+    // The element context lookup can take up to its timeout, and the user can
+    // keep editing meanwhile; the annotation must describe what they submitted.
+    const submittedComment = comment.value.trim();
+    const submittedRegions = [...regions];
+    const submittedStrokes = [...strokes];
+    const submittedStyleChanges = Array.from(styleChanges.values(), (change) => ({ ...change }));
     void Promise.all(
       Array.from(selected.values()).map(async (target) => {
         const element = await captureElement(target.element);
         if (!element) return null;
-        for (const change of styleChanges.values()) {
+        for (const change of submittedStyleChanges) {
           if (change.targetId === target.id) change.selector = element.selector;
         }
         return {
@@ -1270,11 +1277,11 @@ function startAnnotation(): void {
           id: nextId("annotation"),
           pageUrl: location.href,
           pageTitle: document.title?.trim() || null,
-          comment: comment.value.trim(),
+          comment: submittedComment,
           elements,
-          regions: [...regions],
-          strokes: [...strokes],
-          styleChanges: Array.from(styleChanges.values()),
+          regions: submittedRegions,
+          strokes: submittedStrokes,
+          styleChanges: submittedStyleChanges,
           screenshot: null,
           createdAt: new Date().toISOString(),
         };
@@ -1283,8 +1290,8 @@ function startAnnotation(): void {
         hoverOutline.style.display = "none";
         const screenshotRect = unionRects([
           ...elements.map((target) => target.rect),
-          ...regions.map((region) => region.rect),
-          ...strokes.map((stroke) => stroke.bounds),
+          ...submittedRegions.map((region) => region.rect),
+          ...submittedStrokes.map((stroke) => stroke.bounds),
         ]);
         ipcRenderer.send(ELEMENT_PICKED_CHANNEL, annotation, screenshotRect, submission);
       })
