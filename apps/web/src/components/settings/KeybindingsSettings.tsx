@@ -131,12 +131,12 @@ function ExpandableHeaderSearch({
             render={
               <Button
                 type="button"
-                size="icon-micro"
+                size="icon-xs"
                 variant="ghost-muted"
                 onClick={() => onOpenChange(true)}
                 aria-label="Search keybindings"
               >
-                <SearchIcon className="size-3" />
+                <SearchIcon />
               </Button>
             }
           />
@@ -168,7 +168,7 @@ function ExpandableHeaderSearch({
         placeholder="Search keybindings"
         aria-label="Search keybindings"
         className="w-44 [&_[data-slot=input]]:pl-7"
-        size="compact"
+        size="sm"
       />
     </div>
   );
@@ -850,7 +850,7 @@ function KeybindingKeyControl({
     <>
       {isDirty ? (
         <Button
-          size="compact"
+          size="sm"
           disabled={isSaving || keyDraft.trim().length === 0 || !isWhenDraftValid}
           onClick={save}
         >
@@ -863,7 +863,7 @@ function KeybindingKeyControl({
           onClick={() => setDraft({ isRecording: true })}
           aria-label={`Edit shortcut for ${commandLabel(row.command)}: ${formatShortcutLabel(row.binding.shortcut)}`}
           className={cn(
-            "inline-flex h-7 cursor-pointer items-center rounded-md border border-transparent px-1.5 outline-none transition-colors hover:border-border/70 hover:bg-accent focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24",
+            "inline-flex h-8 cursor-pointer items-center rounded-md border border-transparent px-1.5 sm:h-7 outline-none transition-colors hover:border-border/70 hover:bg-accent focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24",
             pillClassName,
           )}
         >
@@ -876,7 +876,7 @@ function KeybindingKeyControl({
           aria-label={`Keybinding for ${commandLabel(row.command)}`}
           value={isRecording ? "" : keyDraft}
           placeholder={isRecording ? "Press shortcut" : "Unassigned"}
-          size="compact"
+          size="sm"
           className={cn("w-44 font-mono", isRecording && "border-primary/70 bg-primary/5")}
           onFocus={() => setDraft({ isRecording: true })}
           onBlur={() => setDraft({ isRecording: false })}
@@ -954,7 +954,7 @@ function KeybindingRowMenu({
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="size-7 text-muted-foreground hover:text-foreground sm:size-7"
+            className="text-muted-foreground hover:text-foreground"
             disabled={isSaving}
             aria-label={`Actions for ${commandLabel(row.command)}`}
           />
@@ -1155,7 +1155,7 @@ function NewKeybindingCommandSelect({
       value={draft.commandDraft}
       onValueChange={(value) => draft.setCommandDraft(value as KeybindingCommand)}
     >
-      <SelectTrigger size="compact" className={className}>
+      <SelectTrigger size="sm" className={className}>
         <SelectValue placeholder="Command" />
       </SelectTrigger>
       <SelectContent
@@ -1189,7 +1189,7 @@ function NewKeybindingKeyInput({
       aria-label={`Keybinding for ${draft.commandLabelText}`}
       value={draft.isRecording ? "" : draft.keyDraft}
       placeholder={draft.isRecording ? "Press shortcut" : "Unassigned"}
-      size="compact"
+      size="sm"
       className={cn("font-mono", draft.isRecording && "border-primary/70 bg-primary/5", className)}
       onFocus={() => draft.setDraft({ isRecording: true })}
       onBlur={() => draft.setDraft({ isRecording: false })}
@@ -1233,7 +1233,7 @@ function NewKeybindingCancelIcon({
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="size-7 text-muted-foreground hover:text-foreground"
+            className="text-muted-foreground hover:text-foreground"
             disabled={isSaving}
             aria-label="Cancel new keybinding"
             onClick={onCancel}
@@ -1271,7 +1271,7 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
           />
           <KeybindingConflictWarning labels={draft.conflictLabels} />
           <NewKeybindingKeyInput draft={draft} className="w-44" />
-          <Button size="compact" disabled={isSaving || !draft.canSave} onClick={draft.save}>
+          <Button size="sm" disabled={isSaving || !draft.canSave} onClick={draft.save}>
             {isSaving ? "Saving" : "Save"}
           </Button>
           <NewKeybindingCancelIcon isSaving={isSaving} onCancel={onCancel} />
@@ -1514,12 +1514,12 @@ export function KeybindingsSettingsPanel() {
                 render={
                   <Button
                     type="button"
-                    size="icon-micro"
+                    size="icon-xs"
                     variant="ghost-muted"
                     onClick={() => setIsAddingBinding(true)}
                     aria-label="Add keybinding"
                   >
-                    <PlusIcon className="size-3" />
+                    <PlusIcon />
                   </Button>
                 }
               />
@@ -1530,13 +1530,13 @@ export function KeybindingsSettingsPanel() {
                 render={
                   <Button
                     type="button"
-                    size="icon-micro"
+                    size="icon-xs"
                     variant="ghost-muted"
                     disabled={!keybindingsConfigPath}
                     onClick={openKeybindingsFile}
                     aria-label="Open keybindings.json"
                   >
-                    <FileJsonIcon className="size-3" />
+                    <FileJsonIcon />
                   </Button>
                 }
               />

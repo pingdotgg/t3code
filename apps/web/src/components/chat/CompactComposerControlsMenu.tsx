@@ -1,7 +1,6 @@
 import { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
-import { memo, type ReactNode } from "react";
+import { memo, type ReactNode, useState } from "react";
 import { EllipsisIcon } from "lucide-react";
-import { Button } from "../ui/button";
 import {
   Menu,
   MenuPopup,
@@ -10,30 +9,51 @@ import {
   MenuSeparator as MenuDivider,
   MenuTrigger,
 } from "../ui/menu";
+import { ComposerControl, ComposerControlIcon } from "./ComposerControl";
+import { composerFloatingLayerProps } from "./composerEventScope";
 
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
   showInteractionModeToggle: boolean;
   traitsMenuContent?: ReactNode;
+  size?: "sm" | "xs";
+  /**
+   * The resting strip keeps this menu mounted out of flow while every block
+   * fits inline. Its portaled popup would outlive that transition, so an
+   * open menu closes when its trigger hides.
+   */
+  hidden?: boolean;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
+  const size = props.size ?? "sm";
+  const [open, setOpen] = useState(false);
+  const hidden = props.hidden ?? false;
+  // Base UI does not report a close it did not initiate, so clear the state
+  // when the trigger hides or the menu would reopen by itself when the
+  // trigger returns.
+  const [wasHidden, setWasHidden] = useState(hidden);
+  if (hidden !== wasHidden) {
+    setWasHidden(hidden);
+    if (hidden) setOpen(false);
+  }
+
   return (
-    <Menu>
+    <Menu open={open && !hidden} onOpenChange={setOpen}>
       <MenuTrigger
         render={
-          <Button
-            size="sm"
+          <ComposerControl
+            size={size}
             variant="ghost"
-            className="shrink-0 px-2 text-muted-foreground/70 hover:text-foreground/80"
+            className={size === "xs" ? "shrink-0" : "shrink-0 px-2"}
             aria-label="More composer controls"
           />
         }
       >
-        <EllipsisIcon aria-hidden="true" className="size-4" />
+        <ComposerControlIcon icon={EllipsisIcon} size={size} />
       </MenuTrigger>
-      <MenuPopup align="start">
+      <MenuPopup align="start" {...composerFloatingLayerProps}>
         {props.traitsMenuContent ? (
           <>
             {props.traitsMenuContent}

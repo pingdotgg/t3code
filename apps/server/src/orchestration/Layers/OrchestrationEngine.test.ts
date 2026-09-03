@@ -380,12 +380,15 @@ describe("OrchestrationEngine", () => {
           originalUpdatedAt,
         );
 
+        // Automatic settlement stamps the last activity, never the sweep time.
+        const lastActivityAt = "2025-12-20T00:00:00.000Z";
         const staleError = yield* engine
           .dispatch({
             type: "thread.auto-settle",
             commandId: CommandId.make("cmd-auto-settle-stale-snapshot"),
             threadId: guardedThreadId,
             snapshotSequence,
+            settledAt: lastActivityAt,
           })
           .pipe(Effect.flip);
         expect(staleError._tag).toBe("OrchestrationCommandInvariantError");
@@ -413,6 +416,7 @@ describe("OrchestrationEngine", () => {
               commandId: CommandId.make(`cmd-auto-settle-${expectedLiveness}`),
               threadId: liveThreadId,
               snapshotSequence: livenessSnapshotSequence,
+              settledAt: lastActivityAt,
             })
             .pipe(Effect.flip);
           expect(livenessError._tag).toBe("OrchestrationCommandInvariantError");
@@ -425,6 +429,7 @@ describe("OrchestrationEngine", () => {
           commandId: CommandId.make("cmd-auto-settle-after-liveness-cleared"),
           threadId: liveThreadId,
           snapshotSequence: livenessSnapshotSequence,
+          settledAt: lastActivityAt,
         });
 
         const freshSnapshotSequence = yield* engine.latestSequence;
@@ -439,15 +444,16 @@ describe("OrchestrationEngine", () => {
           commandId: CommandId.make("cmd-auto-settle-after-unrelated-update"),
           threadId: guardedThreadId,
           snapshotSequence: freshSnapshotSequence,
+          settledAt: lastActivityAt,
         });
 
         const settled = yield* snapshots.getSnapshot();
-        expect(
-          settled.threads.find((thread) => thread.id === guardedThreadId)?.settledOverride,
-        ).toBe("settled");
-        expect(settled.threads.find((thread) => thread.id === liveThreadId)?.settledOverride).toBe(
-          "settled",
-        );
+        for (const threadId of [guardedThreadId, liveThreadId]) {
+          const thread = settled.threads.find((candidate) => candidate.id === threadId);
+          expect(thread?.settledOverride).toBe("settled");
+          expect(thread?.settledAt).toBe(lastActivityAt);
+          expect(thread?.updatedAt).toBe(now());
+        }
       }).pipe(Effect.provide(makeOrchestrationLayer())),
   );
 

@@ -15,6 +15,7 @@ import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngi
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 
 it("uses the canonical Codex default for the auto-bootstrapped welcome thread", () => {
   assert.deepStrictEqual(ServerRuntimeStartup.getAutoBootstrapThreadModelSelection(), {
@@ -22,6 +23,45 @@ it("uses the canonical Codex default for the auto-bootstrapped welcome thread", 
     model: DEFAULT_MODEL,
   });
 });
+
+it.effect("automatic pull only updates enabled, behind, clean default-branch checkouts", () =>
+  Effect.gen(function* () {
+    const pulled: string[] = [];
+    const git = {
+      statusDetails: (cwd: string) =>
+        Effect.succeed({
+          isRepo: true,
+          isDefaultBranch: cwd !== "/feature",
+          hasUpstream: true,
+          hasWorkingTreeChanges: cwd === "/dirty",
+          aheadCount: cwd === "/ahead" ? 1 : 0,
+          behindCount: cwd === "/current" ? 0 : 1,
+        } as never),
+      pullCurrentBranch: (cwd: string) =>
+        Effect.sync(() => {
+          pulled.push(cwd);
+          return {
+            status: "pulled" as const,
+            refName: "main",
+            upstreamRef: "origin/main",
+          };
+        }),
+    } as unknown as GitVcsDriver.GitVcsDriver["Service"];
+    const project = (workspaceRoot: string, autoPull = true) =>
+      ({ workspaceRoot, autoPull }) as never;
+
+    yield* ServerRuntimeStartup.autoPullProjects([
+      project("/clean"),
+      project("/current"),
+      project("/dirty"),
+      project("/ahead"),
+      project("/feature"),
+      project("/disabled", false),
+    ]).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
+
+    assert.deepStrictEqual(pulled, ["/clean"]);
+  }),
+);
 
 it.effect("enqueueCommand waits for readiness and then drains queued work", () =>
   Effect.scoped(
