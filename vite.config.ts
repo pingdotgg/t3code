@@ -180,13 +180,10 @@ export default defineConfig({
         "apps/server/src/provider/Layers/ProviderService.test.ts": 2,
         "apps/server/src/provider/Layers/ProviderSessionReaper.test.ts": 12,
         "apps/server/src/provider/acp/CursorAcpSupport.test.ts": 1,
-        "apps/server/src/relay/AgentAwarenessRelay.test.ts": 4,
-        "apps/server/src/server.test.ts": 1,
-        "packages/client-runtime/src/relay/managedRelayState.test.ts": 1,
-      }).map(([file, maxOccurrences]) => ({
-        files: [file],
-        rules: { "t3code/no-manual-effect-runtime-in-tests": ["error", { maxOccurrences }] },
-      })),
+      }).map(([file, maxOccurrences]) => {
+        const rule: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
+        return { files: [file], rules: { "t3code/no-manual-effect-runtime-in-tests": rule } };
+      }),
     ],
     options: {
       reportUnusedDisableDirectives: "error",
