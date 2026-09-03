@@ -330,21 +330,11 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
       accessibilityHint="Opens the queued task for editing"
       accessibilityLabel={pendingTask.title}
       accessibilityRole="button"
-      className="bg-screen"
+      className="bg-screen active:opacity-70"
       onPress={() => onSelectPendingTask(pendingTask)}
-      style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
     >
-      <View
-        style={{
-          paddingLeft: THREAD_LIST_COMPACT_INSET,
-          paddingRight: 18,
-          paddingTop: 10,
-        }}
-      >
-        <View
-          className={props.isLast ? undefined : "border-b border-separator"}
-          style={{ gap: 3, paddingBottom: 10 }}
-        >
+      <View className="pl-5 pr-[18px] pt-2.5">
+        <View className={cn("gap-[3px] pb-2.5", !props.isLast && "border-b border-separator")}>
           <View className="flex-row items-center justify-between gap-2">
             <Text className="flex-1 text-lg font-t3-bold text-foreground" numberOfLines={1}>
               {pendingTask.title}
@@ -581,24 +571,14 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         accessibilityHint="Swipe left for archive and delete actions"
         accessibilityLabel={threadAccessibilityLabel}
         accessibilityRole="button"
-        className="bg-screen"
+        className="bg-screen active:opacity-70"
         onPress={() => {
           close();
           onSelectThread(thread);
         }}
-        style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
       >
-        <View
-          style={{
-            paddingLeft: THREAD_LIST_COMPACT_INSET,
-            paddingRight: 18,
-            paddingTop: 10,
-          }}
-        >
-          <View
-            className={props.isLast ? undefined : "border-b border-separator"}
-            style={{ gap: 3, paddingBottom: 10 }}
-          >
+        <View className="pl-5 pr-[18px] pt-2.5">
+          <View className={cn("gap-[3px] pb-2.5", !props.isLast && "border-b border-separator")}>
             <View className="flex-row items-center justify-between gap-2">
               <Text className="flex-1 text-lg font-t3-bold text-foreground" numberOfLines={1}>
                 {thread.title}
