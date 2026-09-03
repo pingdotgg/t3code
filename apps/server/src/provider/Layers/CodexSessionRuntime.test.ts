@@ -2,7 +2,9 @@ import * as NodeAssert from "node:assert/strict";
 
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { describe } from "vite-plus/test";
 import { DEFAULT_MODEL, ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
@@ -917,6 +919,31 @@ describe("resolveCodexThreadConfig", () => {
     NodeAssert.deepStrictEqual(resolved.downgrades, []);
   });
 
+  it("adopts the granular approval policy when that is all the policy allows", () => {
+    const granular = {
+      granular: { mcp_elicitations: true, rules: true, sandbox_approval: true },
+    };
+    const resolved = resolveCodexThreadConfig("full-access", {
+      allowedApprovalPolicies: [granular],
+    });
+
+    NodeAssert.deepStrictEqual(resolved.config.approvalPolicy, granular);
+    NodeAssert.deepStrictEqual(resolved.downgrades, [
+      { setting: "approvalPolicy", requested: "never", applied: "granular" },
+    ]);
+  });
+
+  it("prefers an allowed string policy over a granular one", () => {
+    const resolved = resolveCodexThreadConfig("full-access", {
+      allowedApprovalPolicies: [
+        { granular: { mcp_elicitations: true, rules: true, sandbox_approval: true } },
+        "on-request",
+      ],
+    });
+
+    NodeAssert.equal(resolved.config.approvalPolicy, "on-request");
+  });
+
   it("describes downgrades in one sentence and nothing when there are none", () => {
     NodeAssert.equal(describeCodexThreadSettingDowngrades([]), undefined);
     NodeAssert.equal(
@@ -1030,6 +1057,22 @@ describe("readCodexManagedRequirements", () => {
       };
 
       NodeAssert.equal(yield* readCodexManagedRequirements(client), undefined);
+    }),
+  );
+
+  it.effect("gives up on a request that never answers", () =>
+    Effect.gen(function* () {
+      const client = {
+        request: (
+          _method: "configRequirements/read",
+          _payload: CodexRpc.ClientRequestParamsByMethod["configRequirements/read"],
+        ) => Effect.never,
+      };
+
+      const reading = yield* Effect.forkChild(readCodexManagedRequirements(client));
+      yield* TestClock.adjust("6 seconds");
+
+      NodeAssert.equal(yield* Fiber.join(reading), undefined);
     }),
   );
 

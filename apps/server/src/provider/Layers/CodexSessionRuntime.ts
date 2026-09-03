@@ -25,6 +25,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -587,24 +588,48 @@ export function resolveCodexThreadConfig(
     downgrades.push({ setting: "sandbox", requested: requested.sandbox, applied: sandbox });
   }
 
-  let approvalPolicy = requested.approvalPolicy;
-  if (typeof approvalPolicy === "string") {
-    const allowedApprovalPolicy = mostPermissiveAllowedAtOrBelow(
-      approvalPolicy,
-      APPROVAL_POLICIES_MOST_PERMISSIVE_FIRST,
-      requirements.allowedApprovalPolicies,
-    );
-    if (allowedApprovalPolicy !== approvalPolicy) {
-      downgrades.push({
-        setting: "approvalPolicy",
-        requested: approvalPolicy,
-        applied: allowedApprovalPolicy,
-      });
-      approvalPolicy = allowedApprovalPolicy;
-    }
+  const approvalPolicy = resolveAllowedApprovalPolicy(
+    requested.approvalPolicy,
+    requirements.allowedApprovalPolicies,
+  );
+  if (approvalPolicy !== requested.approvalPolicy) {
+    downgrades.push({
+      setting: "approvalPolicy",
+      requested: describeApprovalPolicy(requested.approvalPolicy),
+      applied: describeApprovalPolicy(approvalPolicy),
+    });
   }
 
   return { config: { ...requested, sandbox, approvalPolicy }, downgrades };
+}
+
+type CodexApprovalPolicy = EffectCodexSchema.V2ThreadStartParams__AskForApproval;
+
+function describeApprovalPolicy(policy: CodexApprovalPolicy): string {
+  return typeof policy === "string" ? policy : "granular";
+}
+
+// A policy that allows only granular entries has no string the runtime mode maps to,
+// so the first allowed entry is the only value Codex will accept.
+function resolveAllowedApprovalPolicy(
+  requested: CodexApprovalPolicy,
+  allowed: ReadonlyArray<CodexApprovalPolicy> | null | undefined,
+): CodexApprovalPolicy {
+  if (!allowed || typeof requested !== "string") {
+    return requested;
+  }
+  const lowered = mostPermissiveAllowedAtOrBelow(
+    requested,
+    APPROVAL_POLICIES_MOST_PERMISSIVE_FIRST,
+    allowed,
+  );
+  if (allowed.includes(lowered)) {
+    return lowered;
+  }
+  if (allowed.some((policy) => typeof policy === "string")) {
+    return requested;
+  }
+  return allowed[0] ?? requested;
 }
 
 export function describeCodexThreadSettingDowngrades(
@@ -619,6 +644,8 @@ export function describeCodexThreadSettingDowngrades(
   return `Managed Codex policy lowered thread settings: ${changes}.`;
 }
 
+const CODEX_REQUIREMENTS_READ_TIMEOUT_MS = 5_000;
+
 export const readCodexManagedRequirements = (client: {
   readonly request: (
     method: "configRequirements/read",
@@ -629,7 +656,13 @@ export const readCodexManagedRequirements = (client: {
   >;
 }): Effect.Effect<CodexManagedRequirements | undefined> =>
   client.request("configRequirements/read", undefined).pipe(
-    Effect.map((response) => response.requirements ?? undefined),
+    Effect.timeoutOption(CODEX_REQUIREMENTS_READ_TIMEOUT_MS),
+    Effect.map(
+      Option.match({
+        onNone: () => undefined,
+        onSome: (response) => response.requirements ?? undefined,
+      }),
+    ),
     Effect.catch((cause) =>
       Effect.logDebug("Codex App Server did not report config requirements.", { cause }).pipe(
         Effect.as(undefined),
