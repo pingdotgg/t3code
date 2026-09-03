@@ -81,8 +81,8 @@ Managed downloads are available for these environment hosts:
 Google does not publish a local Intel Mac runtime. Use an Intel Mac as a client connected to
 a supported remote environment.
 
-The current Linux x64 runtime downloads about 543 MB and uses about 1.65 GB after extraction.
-Allow at least 2.5 GB free for installation. An update keeps the previous runtime too.
+The current Linux x64 runtime downloads about 682 MB and uses about 2.01 GB after extraction.
+Allow at least 3 GB free for installation. An update keeps the previous runtime too.
 T3 Code does not download it until you choose to install it.
 
 On web or desktop, **Update Antigravity** appears when T3 Code has a newer managed release.
