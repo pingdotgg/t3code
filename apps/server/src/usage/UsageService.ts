@@ -258,7 +258,7 @@ export const layerTest = Layer.succeed(
         scanDurationMs: 0,
       }),
     startBackgroundRefresh: Effect.void,
-    refreshSummary: (input) =>
+    refreshSummary: (_input) =>
       Effect.fail(
         new UsageReadError({ reason: "scanFailed", detail: "Usage refresh is unavailable." }),
       ),
