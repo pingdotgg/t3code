@@ -1643,8 +1643,8 @@ code {
 }
 
 .chat-markdown ul {
-  /* Reset for nested uls under a widened ol — --list-gutter is an inherited
-     custom property, so without this a task-list under a 3+ digit ordered
+  /* Reset for nested uls under a widened ol. --list-gutter is an inherited
+     custom property, so without this a task-list under a multi-digit ordered
      list would inherit the outer gutter instead of its own default. */
   --list-gutter: 1.25rem;
   padding-left: 1.25rem;
@@ -1653,7 +1653,7 @@ code {
 
 /* --list-gutter defaults to the same 1.25rem as .chat-markdown ul, but
    ChatMarkdown's `ol` renderer widens it (via inline style) for lists whose
-   widest marker is 3+ characters, so item 100+ isn't clipped by list-style-position:
+   widest marker has multiple characters so it isn't clipped by list-style-position:
    outside painting the marker past the padding box. Reset it here too so a
    nested ol without its own widened marker doesn't inherit the outer one. */
 .chat-markdown ol {

@@ -6,7 +6,7 @@ import {
   TurnId,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
-import { shouldAutoSettleThread } from "./ThreadSettlementPolicy.ts";
+import { resolveAutoSettlementAt } from "./ThreadSettlementPolicy.ts";
 
 const NOW = "2026-08-28T12:00:00.000Z";
 const makeThread = (
@@ -39,15 +39,52 @@ const decide = (
   pullRequest: { state: "open" | "closed" | "merged"; updatedAt: string | null } | null = null,
   settings: { days?: number | null; merge?: boolean } = {},
 ) =>
-  shouldAutoSettleThread({
+  resolveAutoSettlementAt({
     thread,
     pullRequest,
     now: NOW,
     autoSettleAfterDays: settings.days === undefined ? 3 : settings.days,
     autoSettleOnMerge: settings.merge ?? true,
+  }) !== null;
+
+describe("resolveAutoSettlementAt", () => {
+  it("returns the last activity time for persisted settlement", () => {
+    expect(
+      resolveAutoSettlementAt({
+        thread: makeThread({
+          latestTurn: {
+            turnId: TurnId.make("turn-terminal"),
+            state: "completed",
+            requestedAt: "2026-08-19T00:00:00.000Z",
+            startedAt: "2026-08-19T00:01:00.000Z",
+            completedAt: "2026-08-21T00:00:00.000Z",
+            assistantMessageId: null,
+          },
+        }),
+        pullRequest: null,
+        now: NOW,
+        autoSettleAfterDays: 3,
+        autoSettleOnMerge: true,
+      }),
+    ).toBe("2026-08-21T00:00:00.000Z");
   });
 
-describe("shouldAutoSettleThread", () => {
+  it("uses creation time for PR settlement when the thread has no activity", () => {
+    expect(
+      resolveAutoSettlementAt({
+        thread: makeThread({
+          latestUserMessageAt: null,
+          latestTurn: null,
+          updatedAt: "2026-08-27T00:00:00.000Z",
+        }),
+        pullRequest: { state: "closed", updatedAt: NOW },
+        now: NOW,
+        autoSettleAfterDays: null,
+        autoSettleOnMerge: true,
+      }),
+    ).toBe("2026-08-01T00:00:00.000Z");
+  });
+
   it("settles inactive threads and leaves never-used threads active", () => {
     expect(decide(makeThread())).toBe(true);
     expect(decide(makeThread({ latestUserMessageAt: null }))).toBe(false);

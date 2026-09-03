@@ -144,6 +144,8 @@ rustup target add aarch64-pc-windows-msvc
 
 Windows supplies `tar.exe`; it is checked when `--wsl-prebuild` makes the artifact include the WSL
 runtime. NSIS is downloaded by electron-builder and does not need a separate installation.
+When `T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR=true` points the build at an existing resource monitor,
+the artifact script skips the Rust and Visual Studio checks because it does not compile the monitor.
 Unsigned local builds need no Azure credentials. Builds using `--signed` additionally require the
 Azure Trusted Signing configuration described below.
 

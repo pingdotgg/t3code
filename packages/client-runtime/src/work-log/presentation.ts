@@ -2,12 +2,11 @@ import {
   isToolLifecycleItemType,
   type AssetResource,
   type ThreadId,
+  type ToolActivitySource,
   type ToolLifecycleItemType,
 } from "@t3tools/contracts";
-import {
-  classifyMarkdownImageSource,
-  markdownImageSourceFragment,
-} from "@t3tools/client-runtime/markdown-images";
+import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
+import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 
 export function isWorktreeSetupActivity(kind: string): boolean {
@@ -30,6 +29,7 @@ export interface WorkLogPresentationEntry {
   readonly toolLifecycleStatus?: string;
   readonly sourceActivityKind?: string;
   readonly taskId?: string;
+  readonly toolSource?: ToolActivitySource;
 }
 
 export type ToolGroupAction =
@@ -115,12 +115,19 @@ function resolveT3McpToolPresentation(value: string | undefined, status: string 
             ? `Declined to ${action.toLowerCase()}`
             : status === "stopped"
               ? `Stopped ${running.toLowerCase()}`
-              : action;
+              : running;
 
   return {
     displayName: `${verb} ${detail}`,
     icon: name.startsWith("preview_") ? ("browser" as const) : ("t3-code" as const),
   };
+}
+
+/** Latest live activity stays present-tense unless the call itself failed, declined, or stopped. */
+export function liveActivityToolStatus(status: string | undefined, presentTense: boolean) {
+  if (status === "failed" || status === "declined" || status === "stopped") return status;
+  if (presentTense || status === "inProgress") return "inProgress";
+  return "completed";
 }
 
 /** Resolves tool identity before choosing labels or icons in either client. */
@@ -350,14 +357,10 @@ export function workEntryViewedImagePath(entry: WorkLogPresentationEntry): strin
 }
 
 export interface ViewedImageAsset {
-  readonly resource: Extract<AssetResource, { readonly _tag: "attachment" | "media-file" }>;
+  readonly resource: Extract<AssetResource, { readonly _tag: "media-file" }>;
   readonly alt: string;
   readonly srcFragment: string;
 }
-
-const ABSOLUTE_IMAGE_SOURCE_PATTERN = /^(?:file:|[\\/]|[a-z]:[\\/])/i;
-const T3_ATTACHMENT_IMAGE_PATH_PATTERN =
-  /(?:^|[\\/])(?:dev|userdata)[\\/]attachments[\\/]([a-z0-9_-]{1,128})\.[a-z0-9]{1,10}$/i;
 
 export function resolveViewedImageAsset(
   source: string,
@@ -366,24 +369,22 @@ export function resolveViewedImageAsset(
     readonly workspaceRoot?: string | null | undefined;
   },
 ): ViewedImageAsset | null {
+  // A relative path with no known workspace still names a media-file relative
+  // to the thread's workspace, so classify against "." and drop the prefix.
   const imageSource = classifyMarkdownImageSource(source, input.workspaceRoot ?? ".");
   if (imageSource._tag !== "WorkspaceFile") return null;
-
-  const path =
+  const resolvedFilePath =
     input.workspaceRoot == null && imageSource.path.startsWith("./")
       ? imageSource.path.slice(2)
       : imageSource.path;
-  const attachmentId = ABSOLUTE_IMAGE_SOURCE_PATTERN.test(source)
-    ? (T3_ATTACHMENT_IMAGE_PATH_PATTERN.exec(path)?.[1] ?? null)
-    : null;
 
-  return {
-    resource: attachmentId
-      ? { _tag: "attachment", attachmentId }
-      : { _tag: "media-file", threadId: input.threadId, path },
-    alt: path.split(/[\\/]/).at(-1) ?? "image",
-    srcFragment: markdownImageSourceFragment(source),
-  };
+  const media = resolveMediaSource(source, {
+    threadId: input.threadId,
+    workspaceRoot: input.workspaceRoot,
+    resolvedFilePath,
+  });
+  if (media === null || media.access !== "environment") return null;
+  return { resource: media.resource, alt: media.name, srcFragment: media.srcFragment };
 }
 
 function toolGroupActionCount(
@@ -427,8 +428,13 @@ function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
 
 export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEntry>): string {
   const summaryEntries = omitSupersededLifecycleMarkers(entries, (entry) => entry);
+  const sources = new Map<string, ToolActivitySource>();
   const groupedEntries = new Map<ToolGroupAction, WorkLogPresentationEntry[]>();
   for (const entry of summaryEntries) {
+    if (entry.toolSource) {
+      sources.set(entry.toolSource.key, entry.toolSource);
+      continue;
+    }
     const action = toolGroupAction(entry);
     const group = groupedEntries.get(action);
     if (group) group.push(entry);
@@ -437,6 +443,20 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
   const labels = [...groupedEntries].map(([action, actionEntries]) =>
     toolGroupActionLabel(action, toolGroupActionCount(action, actionEntries)),
   );
+  if (sources.size > 0) {
+    const sourceValues = [...sources.values()];
+    const sourceNames = sourceValues.map((source) => source.name);
+    const formattedNames =
+      sourceNames.length < 2
+        ? sourceNames[0]!
+        : sourceNames.length === 2
+          ? sourceNames.join(" and ")
+          : `${sourceNames.slice(0, -1).join(", ")}, and ${sourceNames.at(-1)}`;
+    const allIntegrations = sourceValues.every((source) => source.kind === "integration");
+    labels.unshift(
+      `Used ${formattedNames}${allIntegrations ? ` ${sources.size === 1 ? "integration" : "integrations"}` : ""}`,
+    );
+  }
   const sentenceLabels = labels.map((label, index) =>
     index === 0 ? label : label.charAt(0).toLowerCase() + label.slice(1),
   );
