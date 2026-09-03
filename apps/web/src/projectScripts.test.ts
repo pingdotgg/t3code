@@ -3,10 +3,12 @@ import {
   projectScriptCwd,
   projectScriptRuntimeEnv,
   setupProjectScript,
+  teardownProjectScript,
 } from "@t3tools/shared/projectScripts";
 
 import {
   buildProjectScript,
+  clearProjectScriptLifecycleConflicts,
   commandForProjectScript,
   nextProjectScriptId,
   primaryProjectScript,
@@ -21,6 +23,7 @@ describe("projectScripts helpers", () => {
         command: "pnpm dev",
         icon: "debug",
         runOnWorktreeCreate: false,
+        runOnWorktreeRemove: false,
         previewUrl: "http://localhost:5733",
         autoOpenPreview: true,
       }),
@@ -42,6 +45,7 @@ describe("projectScripts helpers", () => {
         command: "pnpm test",
         icon: "test",
         runOnWorktreeCreate: false,
+        runOnWorktreeRemove: false,
         previewUrl: null,
         autoOpenPreview: false,
       }),
@@ -82,11 +86,26 @@ describe("projectScripts helpers", () => {
         command: "bun test",
         icon: "test" as const,
         runOnWorktreeCreate: false,
+        runOnWorktreeRemove: true,
+      },
+      {
+        id: "lint",
+        name: "Lint",
+        command: "bun lint",
+        icon: "lint" as const,
+        runOnWorktreeCreate: false,
       },
     ];
 
-    expect(primaryProjectScript(scripts)?.id).toBe("test");
+    expect(primaryProjectScript(scripts)?.id).toBe("lint");
     expect(setupProjectScript(scripts)?.id).toBe("setup");
+    expect(teardownProjectScript(scripts)?.id).toBe("test");
+    expect(
+      clearProjectScriptLifecycleConflicts(scripts, {
+        runOnWorktreeCreate: false,
+        runOnWorktreeRemove: true,
+      }).find((script) => script.id === "test")?.runOnWorktreeRemove,
+    ).toBe(false);
   });
 
   it("builds default runtime env for scripts", () => {

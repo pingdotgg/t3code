@@ -113,6 +113,7 @@ export default function ProjectScriptsControl({
       command: fileScript.command,
       icon: fileScript.icon ?? "play",
       runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
+      runOnWorktreeRemove: fileScript.runOnWorktreeRemove ?? false,
       keybinding: null,
       previewUrl: fileScript.previewUrl ?? null,
       autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
@@ -203,7 +204,11 @@ export default function ProjectScriptsControl({
                   >
                     <ScriptIcon icon={script.icon} className="size-4" />
                     <span className="truncate">
-                      {script.runOnWorktreeCreate ? `${script.name} (setup)` : script.name}
+                      {script.runOnWorktreeCreate
+                        ? `${script.name} (setup)`
+                        : script.runOnWorktreeRemove
+                          ? `${script.name} (teardown)`
+                          : script.name}
                     </span>
                     <span className="relative ms-auto flex h-6 min-w-6 items-center justify-end">
                       {shortcutLabel && (

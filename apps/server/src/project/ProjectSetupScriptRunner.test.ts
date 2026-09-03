@@ -1,17 +1,31 @@
 import { describe, expect, it, vi } from "@effect/vitest";
 import { type OrchestrationProject, ProjectId } from "@t3tools/contracts";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectSetupScriptRunner from "./ProjectSetupScriptRunner.ts";
 
 const isProjectSetupScriptOperationError = Schema.is(
   ProjectSetupScriptRunner.ProjectSetupScriptOperationError,
 );
+
+const processOutput = (code: number): ProcessRunner.ProcessRunOutput => ({
+  stdout: "",
+  stderr: "",
+  code: ChildProcessSpawner.ExitCode(code),
+  timedOut: false,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  stdoutInvalidUtf8: false,
+  stderrInvalidUtf8: false,
+});
 
 const makeProject = (scripts: OrchestrationProject["scripts"]): OrchestrationProject => ({
   id: ProjectId.make("project-1"),
@@ -65,10 +79,14 @@ const makeTerminalManagerLayer = (
 const testLayer = (
   project: OrchestrationProject,
   terminal: Pick<TerminalManager.TerminalManager["Service"], "open" | "write">,
+  run: ProcessRunner.ProcessRunner["Service"]["run"] = () => Effect.die("unexpected process"),
 ) =>
   ProjectSetupScriptRunner.layer.pipe(
     Layer.provideMerge(makeProjectionSnapshotQueryLayer(project)),
     Layer.provideMerge(makeTerminalManagerLayer(terminal)),
+    Layer.provideMerge(Layer.succeed(ProcessRunner.ProcessRunner, { run })),
+    Layer.provideMerge(Layer.succeed(HostProcessPlatform, "linux")),
+    Layer.provideMerge(Layer.succeed(HostProcessEnvironment, { SHELL: "/bin/bash" })),
   );
 
 describe("ProjectSetupScriptRunner", () => {
@@ -153,6 +171,76 @@ describe("ProjectSetupScriptRunner", () => {
       }).pipe(Effect.provide(testLayer(project, { open, write })));
     },
   );
+
+  it.effect("runs the teardown script before worktree removal", () => {
+    const open = vi.fn(() => Effect.die("unexpected open"));
+    const write = vi.fn(() => Effect.die("unexpected write"));
+    const run = vi.fn(() => Effect.succeed(processOutput(0)));
+    const project = makeProject([
+      {
+        id: "teardown",
+        name: "Teardown",
+        command: "docker compose down",
+        icon: "configure",
+        runOnWorktreeCreate: false,
+        runOnWorktreeRemove: true,
+      },
+    ]);
+
+    return Effect.gen(function* () {
+      const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+      yield* runner.runBeforeWorktreeRemove({
+        projectCwd: "/repo/project",
+        worktreePath: "/repo/worktrees/a",
+      });
+
+      expect(run).toHaveBeenCalledWith({
+        command: "/bin/bash",
+        args: ["-lc", "docker compose down"],
+        cwd: "/repo/worktrees/a",
+        env: {
+          T3CODE_PROJECT_ROOT: "/repo/project",
+          T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
+        },
+      });
+    }).pipe(Effect.provide(testLayer(project, { open, write }, run)));
+  });
+
+  it.effect("fails before removal when the teardown script exits unsuccessfully", () => {
+    const project = makeProject([
+      {
+        id: "teardown",
+        name: "Teardown",
+        command: "exit 7",
+        icon: "configure",
+        runOnWorktreeCreate: false,
+        runOnWorktreeRemove: true,
+      },
+    ]);
+
+    return Effect.gen(function* () {
+      const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+      const error = yield* runner
+        .runBeforeWorktreeRemove({
+          projectCwd: "/repo/project",
+          worktreePath: "/repo/worktrees/a",
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({ operation: "runCommand", exitCode: 7 });
+    }).pipe(
+      Effect.provide(
+        testLayer(
+          project,
+          {
+            open: () => Effect.die("unexpected open"),
+            write: () => Effect.die("unexpected write"),
+          },
+          () => Effect.succeed(processOutput(7)),
+        ),
+      ),
+    );
+  });
 
   it.effect("keeps terminal failures as the exact cause of a structured operation error", () => {
     const rootCause = new Error("stat failed");

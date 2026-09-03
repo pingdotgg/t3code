@@ -15,6 +15,19 @@ each checkout in the project group and appears on your connected clients.
 
 To use automatic detection again, select **Automatic**.
 
+## Run worktree setup and teardown actions
+
+Project actions can run automatically when T3 Code creates or removes a worktree. Use a setup
+action to install dependencies or copy local environment files. Use a teardown action to stop
+worktree-specific services or remove generated resources.
+
+In **Settings** > **Projects**, edit an action and turn on **Run automatically on worktree
+creation** or **Run automatically before worktree removal**. T3 Code runs teardown before it
+deletes the worktree. If teardown fails, the worktree stays in place so you can fix the command
+and try again.
+
+Actions imported from `t3.json` support `runOnWorktreeCreate` and `runOnWorktreeRemove`.
+
 ## Keep the default branch current
 
 Turn on **Automatically pull** in a project's settings to keep its default-branch checkout current.

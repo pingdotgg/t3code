@@ -262,6 +262,8 @@ export const ProjectScript = Schema.Struct({
   command: TrimmedNonEmptyString,
   icon: ProjectScriptIcon,
   runOnWorktreeCreate: Schema.Boolean,
+  // Optional so project snapshots from older servers still decode.
+  runOnWorktreeRemove: Schema.optional(Schema.Boolean),
   /**
    * URL to open in the in-app browser preview when this script runs (or
    * when the user explicitly requests a preview). Optional; only honored on

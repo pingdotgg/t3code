@@ -12,6 +12,7 @@ export interface ProjectScriptInput {
   readonly command: ProjectScript["command"];
   readonly icon: ProjectScript["icon"];
   readonly runOnWorktreeCreate: ProjectScript["runOnWorktreeCreate"];
+  readonly runOnWorktreeRemove: boolean;
   readonly previewUrl: Exclude<ProjectScript["previewUrl"], undefined> | null;
   readonly autoOpenPreview: boolean;
 }
@@ -23,6 +24,7 @@ export function buildProjectScript(id: string, input: ProjectScriptInput): Proje
     command: input.command,
     icon: input.icon,
     runOnWorktreeCreate: input.runOnWorktreeCreate,
+    ...(input.runOnWorktreeRemove ? { runOnWorktreeRemove: true } : {}),
     ...(input.previewUrl === null
       ? {}
       : {
@@ -30,6 +32,22 @@ export function buildProjectScript(id: string, input: ProjectScriptInput): Proje
           autoOpenPreview: input.autoOpenPreview,
         }),
   };
+}
+
+export function clearProjectScriptLifecycleConflicts(
+  scripts: ReadonlyArray<ProjectScript>,
+  input: Pick<ProjectScriptInput, "runOnWorktreeCreate" | "runOnWorktreeRemove">,
+): ReadonlyArray<ProjectScript> {
+  if (!input.runOnWorktreeCreate && !input.runOnWorktreeRemove) return scripts;
+  return scripts.map((script) => ({
+    ...script,
+    ...(input.runOnWorktreeCreate && script.runOnWorktreeCreate
+      ? { runOnWorktreeCreate: false }
+      : {}),
+    ...(input.runOnWorktreeRemove && script.runOnWorktreeRemove
+      ? { runOnWorktreeRemove: false }
+      : {}),
+  }));
 }
 
 function normalizeScriptId(value: string): string {
@@ -82,6 +100,8 @@ export function nextProjectScriptId(name: string, existingIds: Iterable<string>)
 }
 
 export function primaryProjectScript(scripts: ReadonlyArray<ProjectScript>): ProjectScript | null {
-  const regular = scripts.find((script) => !script.runOnWorktreeCreate);
+  const regular = scripts.find(
+    (script) => !script.runOnWorktreeCreate && !script.runOnWorktreeRemove,
+  );
   return regular ?? scripts[0] ?? null;
 }

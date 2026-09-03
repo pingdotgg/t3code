@@ -8,6 +8,15 @@ import * as GitManager from "./GitManager.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+
+const ProjectSetupScriptRunnerTest = Layer.succeed(
+  ProjectSetupScriptRunner.ProjectSetupScriptRunner,
+  {
+    runForThread: () => Effect.succeed({ status: "no-script" as const }),
+    runBeforeWorktreeRemove: () => Effect.void,
+  },
+);
 
 function makeLayer(input: {
   readonly detect: VcsDriverRegistry.VcsDriverRegistry["Service"]["detect"];
@@ -20,10 +29,40 @@ function makeLayer(input: {
     ),
     Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
     Layer.provide(Layer.mock(GitManager.GitManager)({})),
+    Layer.provide(ProjectSetupScriptRunnerTest),
   );
 }
 
 describe("GitWorkflowService", () => {
+  it.effect("runs teardown before removing a worktree", () => {
+    const calls: string[] = [];
+    const testLayer = GitWorkflowService.layer.pipe(
+      Layer.provide(
+        Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+          resolve: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(GitVcsDriver.GitVcsDriver)({
+          removeWorktree: () => Effect.sync(() => calls.push("remove")),
+        }),
+      ),
+      Layer.provide(Layer.mock(GitManager.GitManager)({})),
+      Layer.provide(
+        Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, {
+          runForThread: () => Effect.succeed({ status: "no-script" as const }),
+          runBeforeWorktreeRemove: () => Effect.sync(() => calls.push("teardown")),
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      yield* workflow.removeWorktree({ cwd: "/repo", path: "/repo/worktree" });
+      assert.deepStrictEqual(calls, ["teardown", "remove"]);
+    }).pipe(Effect.provide(testLayer));
+  });
+
   it.effect("returns an empty local status when no VCS repository is detected", () =>
     Effect.gen(function* () {
       const workflow = yield* GitWorkflowService.GitWorkflowService;
@@ -100,6 +139,7 @@ describe("GitWorkflowService", () => {
           status,
         }),
       ),
+      Layer.provide(ProjectSetupScriptRunnerTest),
     );
 
     return Effect.gen(function* () {

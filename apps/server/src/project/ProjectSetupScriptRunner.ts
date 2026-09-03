@@ -1,5 +1,10 @@
 import { ProjectId } from "@t3tools/contracts";
-import { projectScriptRuntimeEnv, setupProjectScript } from "@t3tools/shared/projectScripts";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  projectScriptRuntimeEnv,
+  setupProjectScript,
+  teardownProjectScript,
+} from "@t3tools/shared/projectScripts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -8,6 +13,7 @@ import * as Schema from "effect/Schema";
 
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import * as ProcessRunner from "../processRunner.ts";
 
 export interface ProjectSetupScriptRunnerResultNoScript {
   readonly status: "no-script";
@@ -33,19 +39,28 @@ export interface ProjectSetupScriptRunnerInput {
   readonly preferredTerminalId?: string;
 }
 
+export interface ProjectTeardownScriptRunnerInput {
+  readonly projectCwd: string;
+  readonly worktreePath: string;
+}
+
 export class ProjectSetupScriptOperationError extends Schema.TaggedErrorClass<ProjectSetupScriptOperationError>()(
   "ProjectSetupScriptOperationError",
   {
-    threadId: Schema.String,
+    threadId: Schema.optional(Schema.String),
     projectId: Schema.optional(Schema.String),
     projectCwd: Schema.optional(Schema.String),
     worktreePath: Schema.String,
-    operation: Schema.Literals(["resolveProject", "openTerminal", "writeCommand"]),
-    cause: Schema.Defect(),
+    operation: Schema.Literals(["resolveProject", "openTerminal", "writeCommand", "runCommand"]),
+    exitCode: Schema.optional(Schema.Number),
+    stdoutLength: Schema.optional(Schema.Number),
+    stderrLength: Schema.optional(Schema.Number),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Project setup script operation '${this.operation}' failed for thread '${this.threadId}' in '${this.worktreePath}'.`;
+    const exit = this.exitCode === undefined ? "" : ` with exit code ${this.exitCode}`;
+    return `Project script operation '${this.operation}' failed${exit} in '${this.worktreePath}'.`;
   }
 }
 
@@ -75,12 +90,18 @@ export class ProjectSetupScriptRunner extends Context.Service<
     readonly runForThread: (
       input: ProjectSetupScriptRunnerInput,
     ) => Effect.Effect<ProjectSetupScriptRunnerResult, ProjectSetupScriptRunnerError>;
+    readonly runBeforeWorktreeRemove: (
+      input: ProjectTeardownScriptRunnerInput,
+    ) => Effect.Effect<void, ProjectSetupScriptOperationError>;
   }
 >()("t3/project/ProjectSetupScriptRunner") {}
 
 export const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const terminalManager = yield* TerminalManager.TerminalManager;
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+  const platform = yield* HostProcessPlatform;
+  const hostEnvironment = yield* HostProcessEnvironment;
 
   const runForThread: ProjectSetupScriptRunner["Service"]["runForThread"] = Effect.fn(
     "ProjectSetupScriptRunner.runForThread",
@@ -182,7 +203,65 @@ export const make = Effect.gen(function* () {
     } as const;
   });
 
-  return ProjectSetupScriptRunner.of({ runForThread });
+  const runBeforeWorktreeRemove: ProjectSetupScriptRunner["Service"]["runBeforeWorktreeRemove"] =
+    Effect.fn("ProjectSetupScriptRunner.runBeforeWorktreeRemove")(function* (input) {
+      const project = yield* projectionSnapshotQuery
+        .getActiveProjectByWorkspaceRoot(input.projectCwd)
+        .pipe(
+          Effect.map(Option.getOrUndefined),
+          Effect.mapError(
+            (cause) =>
+              new ProjectSetupScriptOperationError({
+                ...input,
+                operation: "resolveProject",
+                cause,
+              }),
+          ),
+        );
+      const script = project ? teardownProjectScript(project.scripts) : null;
+      if (!project || !script) return;
+
+      const shell =
+        platform === "win32"
+          ? {
+              command: "powershell.exe",
+              args: ["-NoProfile", "-NonInteractive", "-Command", script.command],
+            }
+          : {
+              command: hostEnvironment.SHELL ?? "/bin/sh",
+              args: ["-lc", script.command],
+            };
+      const result = yield* processRunner
+        .run({
+          ...shell,
+          cwd: input.worktreePath,
+          env: projectScriptRuntimeEnv({
+            project: { cwd: project.workspaceRoot },
+            worktreePath: input.worktreePath,
+          }),
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProjectSetupScriptOperationError({
+                ...input,
+                operation: "runCommand",
+                cause,
+              }),
+          ),
+        );
+      if (result.code !== 0) {
+        return yield* new ProjectSetupScriptOperationError({
+          ...input,
+          operation: "runCommand",
+          exitCode: result.code === null ? undefined : Number(result.code),
+          stdoutLength: result.stdout.length,
+          stderrLength: result.stderr.length,
+        });
+      }
+    });
+
+  return ProjectSetupScriptRunner.of({ runForThread, runBeforeWorktreeRemove });
 });
 
 export const layer = Layer.effect(ProjectSetupScriptRunner, make);
