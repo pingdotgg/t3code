@@ -1,4 +1,5 @@
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
+import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { LegendList } from "@legendapp/list/react-native";
 import {
   isAtomCommandInterrupted,
@@ -21,9 +22,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
+import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { useServerConfigs } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
 import {
@@ -35,7 +38,7 @@ import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
 
 function SelectionRow(props: {
-  readonly icon?: "arrow.triangle.branch" | "desktopcomputer";
+  readonly icon?: "arrow.triangle.branch" | ReactNode;
   readonly onPress: () => void;
   readonly disabled?: boolean;
   readonly selected: boolean;
@@ -56,14 +59,16 @@ function SelectionRow(props: {
       onPress={props.onPress}
       style={{ opacity: props.disabled ? 0.45 : 1 }}
     >
-      {props.icon ? (
+      {props.icon === "arrow.triangle.branch" ? (
         <SymbolView
-          name={props.icon}
+          name="arrow.triangle.branch"
           size={17}
           tintColorClassName={"accent-icon-muted"}
           type="monochrome"
         />
-      ) : null}
+      ) : (
+        (props.icon ?? null)
+      )}
       <View className="min-w-0 flex-1 gap-0.5">
         <Text className="text-base font-t3-medium text-foreground" numberOfLines={1}>
           {props.title}
@@ -145,6 +150,7 @@ export function NewTaskEnvironmentPickerRouteScreen() {
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const serverConfigs = useServerConfigs();
 
   return (
     <View className="flex-1 bg-sheet" collapsable={false}>
@@ -170,7 +176,15 @@ export function NewTaskEnvironmentPickerRouteScreen() {
           {flow.environments.map((environment, index) => (
             <SelectionRow
               key={String(environment.environmentId)}
-              icon="desktopcomputer"
+              icon={
+                <EnvironmentMachineSymbol
+                  kind={resolveEnvironmentMachineKind(
+                    serverConfigs.get(environment.environmentId) ?? null,
+                  )}
+                  size={17}
+                  tintColorClassName="accent-icon-muted"
+                />
+              }
               isLast={index === flow.environments.length - 1}
               onPress={() => {
                 void Haptics.selectionAsync();

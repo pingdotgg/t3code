@@ -12,6 +12,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
+  resolveEnvironmentMachineKind,
   resolveProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
@@ -23,22 +24,14 @@ import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
-import {
-  ChevronDownIcon,
-  CloudIcon,
-  LaptopIcon,
-  LoaderIcon,
-  MonitorIcon,
-  PlusIcon,
-  RefreshCwIcon,
-  TerminalIcon,
-} from "lucide-react";
+import { ChevronDownIcon, LoaderIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import { isElectron } from "../../env";
 import { usePrimarySessionState } from "../../environments/primary";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { cn } from "../../lib/utils";
 import { resolveAppModelSelectionState } from "../../modelSelection";
 import {
@@ -152,14 +145,6 @@ function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }
   );
 }
 
-function providerEnvironmentIcon(environment: EnvironmentPresentation) {
-  if (environment.entry.target._tag === "PrimaryConnectionTarget") return MonitorIcon;
-  if (environment.entry.target._tag === "RelayConnectionTarget") return CloudIcon;
-  if (environment.entry.target._tag === "SshConnectionTarget") return TerminalIcon;
-  if (isDesktopLocalConnectionTarget(environment.entry.target)) return LaptopIcon;
-  return CloudIcon;
-}
-
 function providerEnvironmentDetail(environment: EnvironmentPresentation): string {
   if (environment.entry.target._tag === "PrimaryConnectionTarget") return "Primary device";
   if (environment.relayManaged) return "T3 Connect";
@@ -259,7 +244,7 @@ function ProviderSettingsPanelContent() {
           className="flex h-full w-max min-w-full border-b border-border/70 px-1"
         >
           {options.map((environment) => {
-            const Icon = providerEnvironmentIcon(environment);
+            const machine = resolveEnvironmentMachineKind(environment.serverConfig);
             const selected = environment.environmentId === effectiveEnvironmentId;
             const detail = providerEnvironmentDetail(environment);
             const statusText = connectionStatusText(environment.connection);
@@ -273,7 +258,11 @@ function ProviderSettingsPanelContent() {
                       className={cn(providerSettingsTabClassName(selected), "gap-2 text-left")}
                       onClick={() => setSelectedEnvironmentId(environment.environmentId)}
                     >
-                      <Icon className="size-3.5 shrink-0" aria-hidden />
+                      <EnvironmentMachineIcon
+                        kind={machine}
+                        className="size-3.5 shrink-0"
+                        aria-hidden
+                      />
                       <span className="max-w-40 truncate">{environment.label}</span>
                       {environment.connection.phase !== "connected" ? (
                         <ConnectionStatusDot

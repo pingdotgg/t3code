@@ -23,6 +23,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
+import { composerFloatingLayerProps } from "./composerEventScope";
 
 const CITATION_ACTION_BUTTON_CLASS_NAME = cn(
   COMPOSER_INLINE_CHIP_DISMISS_BUTTON_CLASS_NAME,
@@ -135,6 +136,7 @@ export function AssistantCitationChip({
           </PopoverTrigger>
           {commentEditor.open ? (
             <PopoverPopup
+              {...composerFloatingLayerProps}
               side={sourceAnchor ? "bottom" : "top"}
               align="end"
               anchor={popupAnchor}

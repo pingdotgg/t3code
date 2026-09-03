@@ -59,8 +59,13 @@ export function shouldShowComposerContextStrip(input: {
   hasActiveProject: boolean;
   isGitRepo: boolean;
   showEnvironmentIndicator: boolean;
+  /** A collapsed composer's controls currently fit in their measured strip host. */
+  hostsRestingComposerControls: boolean;
 }): boolean {
-  return input.hasActiveProject && (input.isGitRepo || input.showEnvironmentIndicator);
+  return (
+    input.hasActiveProject &&
+    (input.isGitRepo || input.showEnvironmentIndicator || input.hostsRestingComposerControls)
+  );
 }
 
 export function resolveEnvModeLabel(mode: EnvMode): string {

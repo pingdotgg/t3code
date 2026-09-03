@@ -7,6 +7,7 @@ import {
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
   ProjectFaviconPath,
 } from "./orchestration.ts";
+import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
 
@@ -39,6 +40,9 @@ export const AssetResource = Schema.Union([
     // A cache-key hint only. The server reads the authoritative path from the
     // project projection before it issues the signed URL.
     path: Schema.optional(ProjectFaviconPath),
+  }),
+  Schema.TaggedStruct("native-app-icon", {
+    app: ToolActivityNativeAppReference,
   }),
 ]);
 export type AssetResource = typeof AssetResource.Type;

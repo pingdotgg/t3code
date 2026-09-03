@@ -1501,6 +1501,7 @@ function renderFeedEntry(
     readonly markdownStyles: MarkdownStyleSets;
     readonly reviewCommentColors: ReviewCommentColors;
     readonly reviewCommentBubbleWidth: number;
+    readonly themeAppearance: "light" | "dark";
     readonly userBubbleMaxWidth: number;
   },
 ) {
@@ -1538,12 +1539,16 @@ function renderFeedEntry(
   if (entry.type === "work-toggle") {
     return (
       <ThreadWorkGroupToggle
+        environmentId={props.environmentId}
         rowSizing={props.workRowSizing}
         expanded={entry.expanded}
         hiddenCount={entry.hiddenCount}
         iconSubtleColor={iconSubtleColor}
         summary={entry.summary}
         summaryKind={entry.summaryKind}
+        themeAppearance={props.themeAppearance}
+        toolSurface={entry.toolSurface}
+        toolIcon={entry.toolIcon}
         summaryToolIcon={entry.summaryToolIcon}
         hasFailure={entry.hasFailure}
         shimmer={entry.shimmer}
@@ -1716,12 +1721,14 @@ function renderFeedEntry(
       // Anchors/details live in ThreadFeed and survive this group-only remount.
       key={`${entry.id}:${props.workRowSizing.textSizeKey}`}
       activities={entry.activities}
+      environmentId={props.environmentId}
       anchorKey={entry.id}
       copiedRowId={props.copiedRowId}
       expandedRows={props.expandedWorkRows}
       rowSizing={props.workRowSizing}
       scrollPositions={props.workGroupScrollPositions}
       iconSubtleColor={iconSubtleColor}
+      themeAppearance={props.themeAppearance}
       onCopyRow={props.onCopyWorkRow}
       onToggleRow={props.onToggleWorkRow}
       renderImage={props.renderViewedImage}
@@ -2001,6 +2008,7 @@ function ThreadFeedPlaceholder(props: {
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const navigation = useNavigation();
+  const { themeAppearance } = useAppearancePreferences();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
@@ -2319,6 +2327,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       iconSubtleColor,
       markdownStyles,
       reviewCommentColors,
+      themeAppearance,
       userBubbleColor,
       viewportWidth,
     }),
@@ -2329,6 +2338,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       iconSubtleColor,
       markdownStyles,
       reviewCommentColors,
+      themeAppearance,
       userBubbleColor,
       viewportWidth,
     ],
@@ -2754,6 +2764,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             markdownStyles,
             reviewCommentColors,
             reviewCommentBubbleWidth,
+            themeAppearance,
             userBubbleMaxWidth,
             skills: props.skills,
             onUseArtifactTemplate: props.onUseArtifactTemplate,
@@ -2774,6 +2785,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       markdownStyles,
       reviewCommentColors,
       reviewCommentBubbleWidth,
+      themeAppearance,
       userBubbleMaxWidth,
       onCopyWorkRow,
       markdownLinkHandlers,

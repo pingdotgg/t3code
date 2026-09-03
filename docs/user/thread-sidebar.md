@@ -59,8 +59,10 @@ When you are connected to more than one environment, every thread that lives som
 the machine you are on wears a small icon for that machine at the end of its row: a server, a cloud
 VM, a desktop, a laptop, a Mac mini, or a Mac Studio. In the hosted web app and the mobile app,
 where every environment is remote, each row wears its machine so you can tell them apart at a
-glance. The same icon appears in the thread tooltip, the "Run on" picker, the pull request server
-filter, and the environment lists under **Settings → Connections**.
+glance. The same icon appears wherever an environment is named: the thread tooltip, the command
+palette, the "Run on" picker, the pull request server filter, the provider settings device tabs,
+and the environment lists under **Settings → Connections**. On mobile it appears in the thread
+lists, the archive, the new-task environment picker, and the Environments and storage settings.
 
 Servers pick the icon themselves from the hardware they run on. A Mac reports its model, a Linux
 machine reports its chassis type and whether it is a virtual machine, and anything without a usable
