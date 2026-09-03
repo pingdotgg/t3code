@@ -11,6 +11,7 @@ import {
   decodePullRequestListJson,
   decodePullRequestNodeIdJson,
   decodePullRequestSearchJson,
+  decodeLabelCandidatesJson,
   decodeRepositoryAccessJson,
   decodeReviewerCandidatesJson,
   decodeReviewThreadCommentsJson,
@@ -832,7 +833,7 @@ describe("viewer permission decoding", () => {
           }),
         ),
       ),
-    ).toEqual({ canWrite: false, canUpdate: true, didAuthor: true });
+    ).toEqual({ canWrite: false, canTriage: false, canUpdate: true, didAuthor: true });
   });
 
   it("says no to a passer-by on a repository they can only read", () => {
@@ -845,7 +846,7 @@ describe("viewer permission decoding", () => {
           }),
         ),
       ),
-    ).toEqual({ canWrite: false, canUpdate: false, didAuthor: false });
+    ).toEqual({ canWrite: false, canTriage: false, canUpdate: false, didAuthor: false });
   });
 
   it("reads silence as permission, but not as authorship", () => {
@@ -854,9 +855,78 @@ describe("viewer permission decoding", () => {
     // and claiming it for someone who did not is how an author's own rules get handed out.
     expect(expectSuccess(decodeViewerPermissionsJson(viewerJson({ pullRequest: null })))).toEqual({
       canWrite: false,
+      canTriage: false,
       canUpdate: true,
       didAuthor: false,
     });
+  });
+
+  it("reads triage as enough to label, and not enough to write", () => {
+    const access = expectSuccess(
+      decodeViewerPermissionsJson(
+        viewerJson({
+          viewerPermission: "TRIAGE",
+          pullRequest: { viewerCanUpdate: false, viewerDidAuthor: false },
+        }),
+      ),
+    );
+    expect(access.canTriage).toBe(true);
+    expect(access.canWrite).toBe(false);
+  });
+});
+
+describe("label candidate decoding", () => {
+  const labelsJson = (input: {
+    readonly defined: ReadonlyArray<Record<string, unknown>>;
+    readonly applied?: ReadonlyArray<string>;
+    readonly hasNextPage?: boolean;
+  }) =>
+    JSON.stringify({
+      data: {
+        repository: {
+          labels: {
+            pageInfo: { hasNextPage: input.hasNextPage ?? false },
+            nodes: input.defined,
+          },
+          pullRequest: { labels: { nodes: (input.applied ?? []).map((name) => ({ name })) } },
+        },
+      },
+    });
+
+  it("marks the labels the pull request already wears", () => {
+    const list = expectSuccess(
+      decodeLabelCandidatesJson(
+        labelsJson({
+          defined: [
+            { name: "bug", color: "d73a4a", description: "Something is broken" },
+            { name: "size:XL", color: "e4572e", description: null },
+          ],
+          applied: ["size:XL"],
+        }),
+      ),
+    );
+    expect(list.candidates).toEqual([
+      { name: "bug", color: "d73a4a", description: "Something is broken", isApplied: false },
+      { name: "size:XL", color: "e4572e", description: null, isApplied: true },
+    ]);
+    expect(list.truncated).toBe(false);
+  });
+
+  it("keeps a worn label the repository no longer defines, so it can be taken off", () => {
+    const list = expectSuccess(
+      decodeLabelCandidatesJson(labelsJson({ defined: [{ name: "bug" }], applied: ["legacy"] })),
+    );
+    expect(list.candidates.map((label) => [label.name, label.isApplied])).toEqual([
+      ["legacy", true],
+      ["bug", false],
+    ]);
+  });
+
+  it("says so when the repository defines more labels than the read asked for", () => {
+    expect(
+      expectSuccess(decodeLabelCandidatesJson(labelsJson({ defined: [], hasNextPage: true })))
+        .truncated,
+    ).toBe(true);
   });
 });
 
