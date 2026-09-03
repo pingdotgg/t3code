@@ -1506,6 +1506,102 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("status drops a merged PR once its branch is committed to without pushing", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "develop"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "develop"]);
+      const releasedHead = yield* runGit(repoDir, ["rev-parse", "HEAD"]);
+
+      // Local work that has not been pushed: `origin/develop` still sits on the
+      // released commit, but the branch a thread works on has moved past it.
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(NodePath.join(repoDir, "local.md"), "local\n");
+      yield* runGit(repoDir, ["add", "local.md"]);
+      yield* runGit(repoDir, ["commit", "-m", "Unpushed work after the release merged"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 3,
+                title: "Release develop into main",
+                url: "https://github.com/pingdotgg/t3code/pull/3",
+                baseRefName: "main",
+                headRefName: "develop",
+                headRefOid: releasedHead.stdout.trim(),
+                state: "MERGED",
+                mergedAt: "2026-04-02T15:00:00Z",
+                updatedAt: "2026-04-02T15:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr).toBeNull();
+    }),
+  );
+
+  it.effect("branch PR lookup ignores a nested child ref once the branch itself is gone", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/foo"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/foo"]);
+
+      // Git forbids `feature/foo` and `feature/foo/child` at once, so the
+      // sibling only surfaces once the branch itself is gone — exactly when the
+      // merged badge is supposed to be kept. `for-each-ref` still reports the
+      // child for the pattern `refs/heads/feature/foo`, and standing in for the
+      // deleted branch is what would wrongly drop the badge.
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["push", "origin", "--delete", "feature/foo"]);
+      yield* runGit(repoDir, ["branch", "-D", "feature/foo"]);
+      yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Later work on main"]);
+      yield* runGit(repoDir, ["branch", "feature/foo/child"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 217,
+                title: "Merged then deleted",
+                url: "https://github.com/pingdotgg/t3code/pull/217",
+                baseRefName: "main",
+                headRefName: "feature/foo",
+                headRefOid: "0".repeat(40),
+                state: "MERGED",
+                mergedAt: "2026-04-02T15:00:00Z",
+                updatedAt: "2026-04-02T15:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const pullRequest = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "feature/foo",
+      });
+
+      expect(pullRequest?.state).toBe("merged");
+    }),
+  );
+
   it.effect("status keeps a merged PR while its branch still sits on the merged commit", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
