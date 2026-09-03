@@ -119,7 +119,7 @@ import { LRUCache } from "../lib/lruCache";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { useTheme } from "../hooks/useTheme";
-import { getClientSettings } from "../hooks/useSettings";
+import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
   chatMarkdownClipboardPayload,
   serializeTableElementToCsv,
@@ -173,6 +173,7 @@ import {
   openUrlInPreview,
   BrowserPreviewUnavailableError,
 } from "../browser/openFileInPreview";
+import { resolveLinkTarget } from "../browser/browserLinkTarget";
 
 interface ChatMarkdownProps {
   text: string;
@@ -1274,7 +1275,6 @@ function ChatMarkdownVideo(props: {
   readonly mediaIdentity?: string | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
   readonly onRetry?: (() => Promise<void>) | undefined;
-  readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
   return (
     <MediaVideoPlayer
@@ -1296,27 +1296,6 @@ function ChatMarkdownVideo(props: {
       )}
       onRetry={props.onRetry}
       actionsSource={props.actionsSource}
-      onExpand={
-        props.onImageExpand
-          ? (src) => {
-              props.onImageExpand?.({
-                images: [
-                  {
-                    src,
-                    name: props.alt || "video",
-                    type: "video",
-                    autoPlay: false,
-                    ...(props.originalUrl ? { originalUrl: props.originalUrl } : {}),
-                    ...(props.actionsSource
-                      ? { actionsSource: { ...props.actionsSource, src } }
-                      : {}),
-                  },
-                ],
-                index: 0,
-              });
-            }
-          : undefined
-      }
     />
   );
 }
@@ -1378,7 +1357,6 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         style={props.style}
         mediaIdentity={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
         onRetry={refreshAssetUrl}
-        onImageExpand={props.onImageExpand}
         actionsSource={actionsSource}
       />
     );
@@ -2143,6 +2121,10 @@ function ChatMarkdown({
     event.clipboardData.setData("text/html", payload.html);
   }, []);
   const openChangeRequestLink = useOpenChangeRequestLink(threadRef);
+  // Subscribed rather than read at click time: the anchor has to decide
+  // synchronously whether to intercept its `_blank`, and a subscription is what
+  // makes a persisted "app" apply once settings hydrate after launch.
+  const linkTargetPreference = useClientSettings((settings) => settings.browserLinkTarget);
   const resolveThreadPullRequest = useCallback(
     (href: string): ThreadLinkedPullRequest | null => {
       if (
@@ -2495,9 +2477,35 @@ function ChatMarkdown({
                 }
                 // A link to a change request in a workspace project opens beside the
                 // conversation instead of in a browser: it is the thing being talked about, and
-                // the panel it opens offers the browser as one of its actions. Anything else is
-                // an ordinary link and keeps the `_blank` the shell already handles.
-                if (href) openChangeRequestLink(event, href);
+                // the panel it opens offers the browser as one of its actions.
+                if (!href || openChangeRequestLink(event, href)) return;
+                // Anything else follows the "Open links in" setting. The system browser
+                // keeps the `_blank` the shell already handles; the in-app browser needs
+                // the click intercepted here. A modifier click is the way out of the
+                // in-app default, so it is left to the shell too.
+                if (
+                  event.defaultPrevented ||
+                  resolveLinkTarget({
+                    url: href,
+                    event,
+                    preference: linkTargetPreference,
+                    canOpenInApp: canOpenInPreview,
+                  }) !== "app"
+                ) {
+                  return;
+                }
+                event.preventDefault();
+                event.stopPropagation();
+                // The click was taken from the shell, so an in-app open that fails
+                // hands the link to the system browser instead of dropping it.
+                void openExternalLinkInPreview(href).then((result) => {
+                  if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+                  reportMarkdownActionFailure(
+                    { operation: "open-link-in-preview", target: href },
+                    result.cause,
+                  );
+                  void readLocalApi()?.shell.openExternal(href);
+                });
               }}
               onContextMenu={(event) => {
                 if (!href || !faviconHost) return;
@@ -2642,7 +2650,6 @@ function ChatMarkdown({
                 copyMarkdown={copyMarkdown}
                 originalUrl={originalUrl}
                 style={authoredSizeStyle}
-                onImageExpand={imageExpand}
                 actionsSource={actionsSource}
               />
             );
@@ -2735,6 +2742,7 @@ function ChatMarkdown({
     inlineCodeFileLinkMetaByText,
     imageBaseDir,
     isStreaming,
+    linkTargetPreference,
     markdownFileLinkMetaByHref,
     onTaskListChange,
     onUseArtifactTemplate,

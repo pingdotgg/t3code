@@ -93,6 +93,10 @@ export const PullRequestAction = Schema.Literals([
   "enable-auto-merge",
   /** Take the standing instruction back, which leaves the change request where it was. */
   "disable-auto-merge",
+  /** Open a new change request that reverses a merged one. */
+  "revert",
+  /** Allow Actions workflows from a fork pull request to begin running. */
+  "approve-workflows",
 ]);
 export type PullRequestAction = typeof PullRequestAction.Type;
 
@@ -131,6 +135,7 @@ export type PullRequestLabel = typeof PullRequestLabel.Type;
 
 export const PullRequestCheckStatus = Schema.Literals([
   "pending",
+  "action-required",
   "success",
   "failure",
   "skipped",
@@ -286,6 +291,21 @@ export const PullRequestReviewerCandidateList = Schema.Struct({
 });
 export type PullRequestReviewerCandidateList = typeof PullRequestReviewerCandidateList.Type;
 
+/** A label the repository defines, with whether this change request already wears it. */
+export const PullRequestLabelCandidate = Schema.Struct({
+  ...PullRequestLabel.fields,
+  description: Schema.NullOr(Schema.String),
+  isApplied: Schema.Boolean,
+});
+export type PullRequestLabelCandidate = typeof PullRequestLabelCandidate.Type;
+
+export const PullRequestLabelCandidateList = Schema.Struct({
+  candidates: Schema.Array(PullRequestLabelCandidate),
+  /** The repository defines more labels than the read asked for; the list is not all of them. */
+  truncated: Schema.Boolean,
+});
+export type PullRequestLabelCandidateList = typeof PullRequestLabelCandidateList.Type;
+
 export const PullRequestCommit = Schema.Struct({
   oid: TrimmedNonEmptyString,
   messageHeadline: Schema.String,
@@ -392,6 +412,12 @@ export const PullRequestCapabilities = Schema.Struct({
    * what every server before this one was.
    */
   edit: Schema.optional(PullRequestEditCapabilities),
+  /**
+   * The repository's labels can be listed, and one put on a change request or taken off it.
+   * Optional for the same reason `edit` is: a server that says nothing about labels has no way
+   * to change them, which is what every server before this field was.
+   */
+  labels: Schema.optional(Schema.Boolean),
 });
 export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
 
@@ -421,6 +447,12 @@ export const PullRequestViewerPermissions = Schema.Struct({
    * Absent or empty means they may not, which is also what a host with no such action says.
    */
   updateMethods: Schema.optional(Schema.Array(PullRequestUpdateMethod)),
+  /**
+   * This viewer may put a label on the change request, and take one off. Absent is granted, like
+   * every permission here; the capability beside it is what decides whether a label can be
+   * changed on this host at all.
+   */
+  labels: Schema.optional(Schema.Boolean),
 });
 export type PullRequestViewerPermissions = typeof PullRequestViewerPermissions.Type;
 
@@ -709,6 +741,10 @@ export const PullRequestDetail = Schema.Struct({
    * arm something that is already armed, and a second arming is a write nobody asked for.
    */
   autoMergeEnabled: Schema.optional(Schema.Boolean),
+  /** The strategy the host will use for an armed auto-merge, where it reports one. */
+  autoMergeMethod: Schema.optional(PullRequestMergeMethod),
+  /** GitHub Actions runs on this head commit that are waiting for a maintainer's approval. */
+  workflowApprovalsRequired: Schema.optional(NonNegativeInt),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 
@@ -988,6 +1024,18 @@ export const PullRequestReviewerRequestInput = Schema.Struct({
   requested: Schema.Boolean,
 });
 export type PullRequestReviewerRequestInput = typeof PullRequestReviewerRequestInput.Type;
+
+/**
+ * Putting a label on and taking it off are one operation with `applied` turned around, which is
+ * what pressing the same row in the menu twice is. Named by the label's own name, which is how
+ * GitHub addresses one.
+ */
+export const PullRequestLabelChangeInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  labels: Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1), Schema.isMaxLength(25)),
+  applied: Schema.Boolean,
+});
+export type PullRequestLabelChangeInput = typeof PullRequestLabelChangeInput.Type;
 
 export const PullRequestUnavailableReason = Schema.Literals([
   "cli-missing",

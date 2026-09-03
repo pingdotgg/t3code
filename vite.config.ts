@@ -26,7 +26,6 @@ export default defineConfig({
   },
   fmt: {
     ignorePatterns: [
-      ".reference",
       ".repos/**",
       ".alchemy",
       "dist",
@@ -37,7 +36,6 @@ export default defineConfig({
       "**/routeTree.gen.ts",
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
-      "apps/web/src/lib/vendor/qrcodegen.ts",
       "apps/mobile/uniwind-types.d.ts",
       "*.icon/**",
     ],
@@ -119,11 +117,74 @@ export default defineConfig({
       "t3code/no-global-process-runtime": "error",
       "t3code/no-inline-schema-compile": "warn",
       "t3code/no-manual-effect-runtime-in-tests": "error",
-      "t3code/no-mobile-uniwind-theme-escape-hatches": "error",
       "t3code/no-native-title-tooltip": "error",
       "t3code/namespace-node-imports": "error",
     },
+    overrides: [
+      {
+        // The one place that reads the host platform to seed the injected references.
+        files: ["packages/shared/src/hostProcess.ts"],
+        rules: { "t3code/no-global-process-runtime": "off" },
+      },
+      {
+        files: ["apps/mobile/src/**"],
+        rules: { "t3code/no-mobile-uniwind-theme-escape-hatches": "error" },
+      },
+      {
+        // Reviewed native and third-party interop boundaries that cannot consume a className.
+        files: [
+          "apps/mobile/src/features/archive/ArchivedThreadsScreen.tsx",
+          "apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx",
+          "apps/mobile/src/features/files/FileMarkdownPreview.tsx",
+          "apps/mobile/src/features/files/SourceFileSurface.tsx",
+          "apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx",
+          "apps/mobile/src/features/files/thread-file-navigator-pane.tsx",
+          "apps/mobile/src/features/home/HomeHeader.tsx",
+          "apps/mobile/src/features/review/ReviewSheet.tsx",
+          "apps/mobile/src/features/review/useNativeReviewDiffBridge.ts",
+          "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
+          "apps/mobile/src/features/settings/appearance/components/AppearancePreviews.tsx",
+          "apps/mobile/src/features/threads/GitActionProgressOverlay.tsx",
+          "apps/mobile/src/features/threads/NewTaskDraftScreen.tsx",
+          "apps/mobile/src/features/threads/ThreadComposer.tsx",
+          "apps/mobile/src/features/threads/ThreadFeed.tsx",
+          "apps/mobile/src/features/threads/ThreadSettingsSheet.tsx",
+          "apps/mobile/src/features/threads/git/GitOverviewSheet.tsx",
+          "apps/mobile/src/features/threads/thread-list-items.tsx",
+          "apps/mobile/src/features/threads/thread-list-v2-items.tsx",
+          "apps/mobile/src/lib/useMobileNavigationTheme.ts",
+          "apps/mobile/src/native/T3ComposerEditor.ios.tsx",
+          "apps/mobile/src/native/T3ComposerEditor.native.tsx",
+        ],
+        rules: {
+          "t3code/no-mobile-uniwind-theme-escape-hatches": ["error", { allowUniwindTheme: true }],
+        },
+      },
+      // Legacy manual Effect runners tracked as debt: no net-new occurrences.
+      // Lower a ceiling when you migrate a file, and delete its entry at zero.
+      ...Object.entries({
+        "apps/server/src/orchestration/Layers/CheckpointReactor.test.ts": 42,
+        "apps/server/src/orchestration/Layers/OrchestrationEngine.test.ts": 5,
+        "apps/server/src/orchestration/Layers/OrchestrationReactor.test.ts": 4,
+        "apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts": 66,
+        "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts": 29,
+        "apps/server/src/orchestration/Layers/ThreadDeletionReactor.test.ts": 2,
+        "apps/server/src/orchestration/commandInvariants.test.ts": 5,
+        "apps/server/src/orchestration/projector.test.ts": 20,
+        "apps/server/src/provider/Layers/CodexAdapter.test.ts": 1,
+        "apps/server/src/provider/Layers/CodexSessionRuntime.test.ts": 5,
+        "apps/server/src/provider/Layers/CursorAdapter.test.ts": 1,
+        "apps/server/src/provider/Layers/CursorProvider.test.ts": 1,
+        "apps/server/src/provider/Layers/ProviderService.test.ts": 2,
+        "apps/server/src/provider/Layers/ProviderSessionReaper.test.ts": 12,
+        "apps/server/src/provider/acp/CursorAcpSupport.test.ts": 1,
+      }).map(([file, maxOccurrences]) => {
+        const rule: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
+        return { files: [file], rules: { "t3code/no-manual-effect-runtime-in-tests": rule } };
+      }),
+    ],
     options: {
+      reportUnusedDisableDirectives: "error",
       // Revisit once Oxlint's tsgolint path can integrate with @effect/tsgo diagnostics.
       typeAware: false,
       typeCheck: false,
