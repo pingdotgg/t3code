@@ -447,6 +447,15 @@ const desktopIconPlatformNames = {
   win: "Windows",
 } satisfies Record<typeof BuildPlatform.Type, string>;
 
+export class LinuxBrowserSecretHostError extends Schema.TaggedErrorClass<LinuxBrowserSecretHostError>()(
+  "LinuxBrowserSecretHostError",
+  { hostPlatform: Schema.String },
+) {
+  override get message(): string {
+    return `Linux desktop builds must run on a Linux host: the browser secret helper links against libsecret and cannot be built on '${this.hostPlatform}'.`;
+  }
+}
+
 export class DesktopIconSourceMissingError extends Schema.TaggedErrorClass<DesktopIconSourceMissingError>()(
   "DesktopIconSourceMissingError",
   {
@@ -2220,6 +2229,17 @@ export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (inp
   readonly verbose: boolean;
 }) {
   if (input.platform !== "linux") return;
+  // The helper links against the host's libsecret, so it can only be built on
+  // Linux; the build script is a no-op elsewhere. A Linux artifact from
+  // another host would ship without it and every v11 cookie import would
+  // report the keyring as unavailable, so refuse rather than package that
+  // silently. `universal` is a mac-only arch the option type still admits;
+  // the helper script rejects it, so it maps to the concrete x64 the Linux
+  // resource monitor uses for the same request.
+  const hostPlatform = yield* HostProcessPlatform;
+  if (hostPlatform !== "linux") {
+    return yield* new LinuxBrowserSecretHostError({ hostPlatform });
+  }
   const path = yield* Path.Path;
   yield* runCommand(
     ChildProcess.make(
@@ -2227,7 +2247,7 @@ export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (inp
       [
         path.join(input.repoRoot, "apps/desktop/scripts/build-browser-secret.mjs"),
         "--arch",
-        input.arch,
+        input.arch === "arm64" ? "arm64" : "x64",
         "--output",
         path.join(input.stageResourcesDir, "browser-secret", "t3-browser-secret"),
       ],

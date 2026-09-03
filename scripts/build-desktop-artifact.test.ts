@@ -66,6 +66,8 @@ import {
   STAGE_INSTALL_ARGS,
   ancestorNodeModulesPaths,
   copyDirectoryPreservingSymlinks,
+  LinuxBrowserSecretHostError,
+  stageBrowserSecret,
   validateWindowsPackagedPayload,
   WindowsPrimaryNativeProbeError,
   WindowsDesktopBuildPrerequisitesMissingError,
@@ -1202,6 +1204,84 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           spawnerLayer,
           Layer.succeed(HostProcessPlatform, "win32"),
           Layer.succeed(HostProcessArchitecture, "x64"),
+        ),
+      ),
+    );
+  });
+
+  it.effect("builds the Linux browser secret helper for a concrete architecture", () => {
+    const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
+    const spawnerLayer = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        commands.push(command as unknown as (typeof commands)[number]);
+        return Effect.succeed(mockProcess(0));
+      }),
+    );
+
+    return Effect.gen(function* () {
+      // `universal` is a mac-only arch the option type still admits. The helper
+      // script only knows x64 and arm64, so the request maps to x64, the same
+      // concrete target the Linux resource monitor resolves it to.
+      yield* stageBrowserSecret({
+        repoRoot: "/repo",
+        stageResourcesDir: "/stage/resources",
+        platform: "linux",
+        arch: "universal",
+        verbose: false,
+      });
+      const helper = commands.find((command) =>
+        command.args.some((arg) => arg.endsWith("build-browser-secret.mjs")),
+      );
+      assert.isDefined(helper);
+      assert.deepStrictEqual(helper.args.slice(-4), [
+        "--arch",
+        "x64",
+        "--output",
+        "/stage/resources/browser-secret/t3-browser-secret",
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          spawnerLayer,
+          Layer.succeed(HostProcessPlatform, "linux"),
+          Layer.succeed(HostProcessArchitecture, "x64"),
+        ),
+      ),
+    );
+  });
+
+  it.effect("refuses a Linux build on a host that cannot build the browser secret helper", () => {
+    const commands: Array<{ readonly command: string }> = [];
+    const spawnerLayer = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        commands.push(command as unknown as (typeof commands)[number]);
+        return Effect.succeed(mockProcess(0));
+      }),
+    );
+
+    return Effect.gen(function* () {
+      // The helper links against the host's libsecret and its build script is
+      // a no-op elsewhere, so a Linux artifact built on macOS would ship
+      // without it and report the keyring as unavailable on every import.
+      const error = yield* stageBrowserSecret({
+        repoRoot: "/repo",
+        stageResourcesDir: "/stage/resources",
+        platform: "linux",
+        arch: "x64",
+        verbose: false,
+      }).pipe(Effect.flip);
+      assert.instanceOf(error, LinuxBrowserSecretHostError);
+      assert.equal(error.hostPlatform, "darwin");
+      assert.include(error.message, "Linux host");
+      assert.lengthOf(commands, 0);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          spawnerLayer,
+          Layer.succeed(HostProcessPlatform, "darwin"),
+          Layer.succeed(HostProcessArchitecture, "arm64"),
         ),
       ),
     );
