@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { causeErrorTag } from "@t3tools/shared/observability";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -290,7 +291,10 @@ const runHomebrew = Effect.fn("runHomebrew")(function* (
     Effect.timeoutOption(Duration.millis(HOMEBREW_INFO_TIMEOUT_MS)),
     Effect.map(Option.getOrNull),
     Effect.catchCause((cause) =>
-      Effect.logWarning("Homebrew probe failed", { args, cause }).pipe(Effect.as(null)),
+      Effect.logWarning("Homebrew probe failed", {
+        subcommand: args[0],
+        errorTag: causeErrorTag(cause),
+      }).pipe(Effect.as(null)),
     ),
   );
 });
