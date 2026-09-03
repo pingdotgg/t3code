@@ -9,6 +9,8 @@ Node.js `^22.16 || ^23.11 || >=24.10` on the machine that runs the T3 Code serve
 At least one provider runtime, installed and authenticated. You can install Antigravity from
 T3 Code settings. See [Providers](#providers) below.
 
+The desktop app needs macOS 13 (Ventura) or newer on Mac.
+
 ## Run Without Installing
 
 ```bash

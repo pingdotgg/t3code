@@ -34,6 +34,7 @@ import {
 } from "./lib/cli-external-packages.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
+import { parseUpdateManifest, serializeUpdateManifest } from "./lib/update-manifest.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -2422,6 +2423,32 @@ export function resolveDesktopProductName(version: string): string {
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 
+// Electron 44 dropped macOS 12, so the app cannot launch below Ventura. The
+// product version lands in Info.plist as LSMinimumSystemVersion. The updater
+// manifests need the same floor as a Darwin kernel version, because
+// electron-updater compares `minimumSystemVersion` against `os.release()`
+// (Ventura is Darwin 22) and skips the update instead of installing a build the
+// OS cannot run.
+export const MAC_MINIMUM_SYSTEM_VERSION = "13.0";
+export const MAC_MINIMUM_DARWIN_VERSION = "22.0.0";
+
+// electron-builder names the channel manifests `<channel>-mac.yml`; the
+// builder-debug.yml it drops next to them is not an updater manifest.
+export function isMacUpdateManifestName(fileName: string): boolean {
+  return /^[A-Za-z]+-mac\.yml$/.test(fileName);
+}
+
+export function stampMacUpdateManifest(raw: string, sourcePath: string): string {
+  const manifest = parseUpdateManifest(raw, sourcePath, "macOS");
+  return serializeUpdateManifest(
+    {
+      ...manifest,
+      extras: { ...manifest.extras, minimumSystemVersion: MAC_MINIMUM_DARWIN_VERSION },
+    },
+    { platformLabel: "macOS" },
+  );
+}
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -2485,6 +2512,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      minimumSystemVersion: MAC_MINIMUM_SYSTEM_VERSION,
       protocols: [
         {
           name: "T3 Code",
@@ -3694,7 +3722,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     if (!stat || stat.type !== "File") continue;
 
     const to = path.join(options.outputDir, entry);
-    yield* fs.copyFile(from, to);
+    if (options.platform === "mac" && isMacUpdateManifestName(entry)) {
+      yield* fs.writeFileString(to, stampMacUpdateManifest(yield* fs.readFileString(from), from));
+    } else {
+      yield* fs.copyFile(from, to);
+    }
     copiedArtifacts.push(to);
   }
 

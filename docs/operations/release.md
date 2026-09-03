@@ -215,6 +215,7 @@ available.
 - macOS metadata note:
   - `electron-updater` reads `latest-mac.yml` on stable and `nightly-mac.yml` on nightly, for both Intel and Apple Silicon.
   - The workflow merges the per-arch mac manifests into one channel-specific mac manifest before publishing the GitHub Release.
+  - The desktop artifact build stamps `minimumSystemVersion: '22.0.0'` (Darwin 22, macOS 13 Ventura) into every mac manifest. `electron-updater` compares that field against `os.release()`, which reports the Darwin kernel version rather than the macOS product version, and skips the update on older systems instead of installing an app that cannot launch there.
 
 ### Windows payload topology and update validation
 

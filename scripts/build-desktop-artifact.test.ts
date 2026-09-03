@@ -21,6 +21,8 @@ import {
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
   createBuildConfig,
+  isMacUpdateManifestName,
+  stampMacUpdateManifest,
   DESKTOP_ELECTRON_LANGUAGES,
   DESKTOP_FILE_EXCLUSIONS,
   DESKTOP_EXTRA_RESOURCES,
@@ -563,6 +565,43 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ]);
   });
 
+  it("stamps the macOS floor into updater manifests", () => {
+    const stamped = stampMacUpdateManifest(
+      `version: 1.2.3
+files:
+  - url: T3-Code-1.2.3-arm64.zip
+    sha512: zipsha
+    size: 1
+  - url: T3-Code-1.2.3-arm64.dmg
+    sha512: dmgsha
+    size: 2
+path: T3-Code-1.2.3-arm64.zip
+sha512: zipsha
+releaseDate: '2026-09-03T10:00:00.000Z'
+`,
+      "latest-mac.yml",
+    );
+
+    assert.equal(
+      stamped,
+      `version: '1.2.3'
+files:
+  - url: T3-Code-1.2.3-arm64.zip
+    sha512: zipsha
+    size: 1
+  - url: T3-Code-1.2.3-arm64.dmg
+    sha512: dmgsha
+    size: 2
+minimumSystemVersion: '22.0.0'
+releaseDate: '2026-09-03T10:00:00.000Z'
+`,
+    );
+    assert.isTrue(isMacUpdateManifestName("latest-mac.yml"));
+    assert.isTrue(isMacUpdateManifestName("nightly-mac.yml"));
+    assert.isFalse(isMacUpdateManifestName("builder-debug.yml"));
+    assert.isFalse(isMacUpdateManifestName("latest.yml"));
+  });
+
   it.effect("applies platform-specific packaging to the build config", () =>
     Effect.gen(function* () {
       const mac = yield* createBuildConfig(
@@ -610,6 +649,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.notProperty(mac, "asarUnpack");
       assert.notProperty(linux, "asarUnpack");
       assert.notProperty(win, "asarUnpack");
+      assert.nestedPropertyVal(mac, "mac.minimumSystemVersion", "13.0");
       assert.deepStrictEqual(win.extraResources, [
         {
           from: "apps/desktop/prod-resources/resource-monitor",
