@@ -38,7 +38,8 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 
-import { useComposerDraftStore } from "../../composerDraftStore";
+import { composerTargetKey, useComposerDraftStore } from "../../composerDraftStore";
+import { clearComposerAddonSubmissionPayloads } from "../../addons";
 import { isElectron } from "../../env";
 import {
   useClientSettings,
@@ -778,6 +779,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         );
         const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
         if (projectDraftThread) {
+          void clearComposerAddonSubmissionPayloads(composerTargetKey(projectDraftThread.draftId));
           draftStore.clearDraftThread(projectDraftThread.draftId);
         }
         draftStore.clearProjectDraftThreadId(projectRef);

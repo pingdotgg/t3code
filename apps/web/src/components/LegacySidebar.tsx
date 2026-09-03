@@ -110,7 +110,8 @@ import {
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { ensureLocalApi, readLocalApi } from "../localApi";
-import { useComposerDraftStore } from "../composerDraftStore";
+import { composerTargetKey, useComposerDraftStore } from "../composerDraftStore";
+import { clearComposerAddonSubmissionPayloads } from "../addons";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
 
@@ -1504,6 +1505,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       );
       const projectDraftThread = draftStore.getDraftThreadByProjectRef(memberProjectRef);
       if (projectDraftThread) {
+        void clearComposerAddonSubmissionPayloads(composerTargetKey(projectDraftThread.draftId));
         draftStore.clearDraftThread(projectDraftThread.draftId);
       }
       draftStore.clearProjectDraftThreadId(memberProjectRef);
