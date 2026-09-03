@@ -14,12 +14,8 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
-import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import { PullRequestPeopleGhost } from "./PullRequestGhosts";
+import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { readableFailure } from "./pullRequestDetail.logic";
 import { pullRequestLabelColor } from "./pullRequestList.logic";
 
@@ -87,90 +83,50 @@ export function PullRequestLabelPicker({
     candidatesQuery.refresh();
   };
 
-  if (!allowed) {
-    return (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button size="icon-xs" variant="ghost" disabled aria-label="Change labels">
-              <TagIcon className="size-3.5" />
-            </Button>
-          }
-        />
-        <TooltipPopup side="bottom">
-          Changing labels needs triage access on this repository
-        </TooltipPopup>
-      </Tooltip>
-    );
-  }
-
   return (
-    <Menu open={open} onOpenChange={setOpen}>
-      <MenuTrigger
-        render={
-          <Button size="icon-xs" variant="ghost" aria-label="Change labels">
-            <TagIcon className="size-3.5" />
-          </Button>
-        }
-      />
-      <MenuPopup align="start" side="bottom" className="w-72 p-0">
-        <div className="border-b border-border/60 p-2">
-          <Input
-            autoFocus
-            value={query}
-            onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder="Search labels"
-            aria-label="Search labels"
-            size="compact"
-          />
-        </div>
-        <div className="max-h-72 overflow-y-auto p-1">
-          {candidatesQuery.isPending ? (
-            <PullRequestPeopleGhost rows={4} />
-          ) : candidatesQuery.error !== null ? (
-            <p className="p-2 text-xs text-muted-foreground">
-              The labels could not be read. {candidatesQuery.error}
-            </p>
-          ) : candidates.length === 0 ? (
-            <p className="p-2 text-xs text-muted-foreground">
-              {query.length > 0 ? "No label matches that." : "This repository has no labels."}
-            </p>
-          ) : (
-            candidates.map((candidate) => {
-              const dot = pullRequestLabelColor(candidate.color);
-              return (
-                <button
-                  key={candidate.name}
-                  type="button"
-                  disabled={pending !== null}
-                  onClick={() => void toggle(candidate)}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent/60 disabled:opacity-60"
-                >
-                  <span
-                    aria-hidden
-                    className="size-2 shrink-0 rounded-full bg-muted-foreground"
-                    {...(dot ? { style: { backgroundColor: dot } } : {})}
-                  />
-                  <span className="min-w-0 flex-1 truncate">
-                    {candidate.name}
-                    {candidate.description ? (
-                      <span className="text-muted-foreground"> · {candidate.description}</span>
-                    ) : null}
-                  </span>
-                  {candidate.isApplied ? (
-                    <CheckIcon aria-label="Applied" className="size-3.5 shrink-0" />
-                  ) : null}
-                </button>
-              );
-            })
-          )}
-          {candidatesQuery.data?.truncated ? (
-            <p className="px-2 py-1.5 text-xs text-muted-foreground">
-              This repository has more labels than are listed here. Apply the rest on the host.
-            </p>
-          ) : null}
-        </div>
-      </MenuPopup>
-    </Menu>
+    <PullRequestCandidatePicker
+      icon={<TagIcon className="size-3.5" />}
+      label="Change labels"
+      allowed={allowed}
+      disabledReason="Changing labels needs triage access on this repository"
+      open={open}
+      onOpenChange={setOpen}
+      query={query}
+      onQueryChange={setQuery}
+      searchLabel="Search labels"
+      isPending={candidatesQuery.isPending}
+      error={candidatesQuery.error}
+      candidates={candidates}
+      emptyLabel="This repository has no labels."
+      noMatchLabel="No label matches that."
+      errorLabel="The labels could not be read."
+      truncated={candidatesQuery.data?.truncated === true}
+      truncatedLabel="This repository has more labels than are listed here. Apply the rest on the host."
+      candidateKey={(candidate) => candidate.name}
+      disabled={pending !== null}
+      onSelect={(candidate) => void toggle(candidate)}
+    >
+      {(candidate) => {
+        const dot = pullRequestLabelColor(candidate.color);
+        return (
+          <>
+            <span
+              aria-hidden
+              className="size-2 shrink-0 rounded-full bg-muted-foreground"
+              {...(dot ? { style: { backgroundColor: dot } } : {})}
+            />
+            <span className="min-w-0 flex-1 truncate">
+              {candidate.name}
+              {candidate.description ? (
+                <span className="text-muted-foreground"> · {candidate.description}</span>
+              ) : null}
+            </span>
+            {candidate.isApplied ? (
+              <CheckIcon aria-label="Applied" className="size-3.5 shrink-0" />
+            ) : null}
+          </>
+        );
+      }}
+    </PullRequestCandidatePicker>
   );
 }
