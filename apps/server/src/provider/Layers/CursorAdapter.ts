@@ -767,9 +767,8 @@ export function makeCursorAdapter(
                   const permissionRequest = parsePermissionRequest(params);
                   // Per-mode decision table. Cursor exposes no acceptEdits-like
                   // ACP session mode, so `auto-accept-edits` is applied here by
-                  // tool kind, and `auto` deliberately prompts — the blessed
-                  // fallback for providers without an equivalent mode (see
-                  // docs/user/permission-modes.md).
+                  // tool kind. `auto` is Cursor's Smart Auto (`--auto-review`
+                  // at spawn); leftover permission prompts still surface here.
                   const autoApprove =
                     input.runtimeMode === "full-access" ||
                     (input.runtimeMode === "auto-accept-edits" &&

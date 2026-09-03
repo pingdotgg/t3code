@@ -34,6 +34,10 @@ authenticated.
   without Bun present it selects `NodePtyAdapter` and `NodeHttpServer`.
 - `vp run dev:web`: Starts just the Vite dev server for the web app.
 - `vp run dev:desktop`: Starts the Electron shell against the dev server.
+- `vp run dev:mobile`: Starts Expo Metro for the mobile development client (`apps/mobile`
+  `dev:client`). Pair the app against a separately running `vp run dev` / `vp run dev:server`
+  backend. Use `vp run dev:mobile:reset` once when the Metro transform cache is stale after a
+  dependency/patch change.
 - `vp run dev:marketing`: Starts the Astro marketing site.
 - Pass dev-runner flags directly after the root task name, for example:
   `vp run dev --home-dir /tmp/t3code-dev`

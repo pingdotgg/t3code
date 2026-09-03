@@ -13,7 +13,7 @@ Cursor support is off by default. Turn it on in **Settings** → **Providers**.
    curl https://cursor.com/install -fsS | bash
    ```
 
-2. Log in with `cursor-agent login` (the CLI may also call this `agent login`).
+2. Log in with `agent login` (not `cursor-agent login`).
 3. In T3 Code, open **Settings** → **Providers** and enable Cursor.
 
 T3 Code requires a Cursor CLI from 2026.04.08 or newer. It checks the version before loading
@@ -29,10 +29,10 @@ If `cursor-agent` is not on the PATH T3 Code sees, set its full path in the prov
 - Streaming responses with the model's reasoning shown separately when the CLI reports it.
 - Plans and to-do lists the agent creates appear as structured plans in the thread.
 - Permission modes, within what the Cursor CLI can enforce. **Full access** approves everything.
-  **Auto** and **Accept edits** match Cursor's own behavior: safe commands run, risky commands
-  stop for your approval, and file edits inside the workspace apply without prompting.
-  **Supervised** runs Cursor in its read-only Ask mode: the agent reads and answers, and proposes
-  changes instead of making them — switch to another mode when you want it to act.
+  **Auto** uses Cursor's Smart Auto review. **Accept edits** applies workspace file edits without
+  prompting and still stops for commands. **Supervised** runs Cursor in its read-only Ask mode:
+  the agent reads and answers, and proposes changes instead of making them — switch to another
+  mode when you want it to act.
 - Choosing **Allow always** on a command approval is remembered by Cursor itself, in the
   environment's `~/.cursor` configuration, so it applies to every Cursor session on that machine.
 - Questions the agent asks (multiple choice) appear inline in the conversation.

@@ -14,7 +14,7 @@ This app has three variants:
 - `preview`: persistent internal preview build, installable side-by-side as `T3 Code Preview`
 - `production`: store/release build as `T3 Code`
 
-Run commands from `apps/mobile`.
+Run mobile-only commands from `apps/mobile`, or use the root shortcuts below.
 
 T3 Connect is optional and disabled in a fresh clone. Public configuration belongs in the
 repository-root `.env` or `.env.local`, not an `apps/mobile/.env` file. See
@@ -22,17 +22,19 @@ repository-root `.env` or `.env.local`, not an `apps/mobile/.env` file. See
 
 ## Development
 
-Start Metro for the dev client:
+Start Metro for the dev client (from the repo root, or `vp run dev:client` inside `apps/mobile`):
 
 ```bash
-vp run dev:client
+npm run dev:mobile
+# or: vp run dev:mobile
 ```
 
 Metro keeps its transform cache between ordinary starts. If the cache itself is causing stale or
 invalid output, clear it for one development-client start:
 
 ```bash
-vp run dev:client:reset
+npm run dev:mobile:reset
+# or: vp run dev:mobile:reset
 ```
 
 Run that reset once after installing or changing the Uniwind dependency patch. Cached transforms
