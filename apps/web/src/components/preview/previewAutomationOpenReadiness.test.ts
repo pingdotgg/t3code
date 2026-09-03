@@ -3,8 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   DEFAULT_PREVIEW_AUTOMATION_VIEWPORT,
-  previewAutomationDefaultViewport,
   previewAutomationOpenNeedsOverlay,
+  previewAutomationOpenViewport,
   shouldOpenPreviewMiniPlayer,
 } from "./previewAutomationOpenReadiness";
 
@@ -62,19 +62,14 @@ describe("preview automation open readiness", () => {
   });
 
   it("gives newly-created automation tabs a stable desktop viewport", () => {
-    expect(previewAutomationDefaultViewport(false, snapshot({ _tag: "Idle" }))).toEqual(
+    expect(previewAutomationOpenViewport({ _tag: "fill" })).toEqual(
       DEFAULT_PREVIEW_AUTOMATION_VIEWPORT,
     );
   });
 
-  it("preserves reused and already-fixed browser viewports", () => {
-    expect(previewAutomationDefaultViewport(true, snapshot({ _tag: "Idle" }))).toBeNull();
-    expect(
-      previewAutomationDefaultViewport(false, {
-        ...snapshot({ _tag: "Idle" }),
-        viewport: { _tag: "freeform", width: 900, height: 600 },
-      }),
-    ).toBeNull();
+  it("preserves the configured fixed browser viewport", () => {
+    const configured = { _tag: "freeform", width: 900, height: 600 } as const;
+    expect(previewAutomationOpenViewport(configured)).toBe(configured);
   });
 });
 

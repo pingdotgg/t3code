@@ -2,6 +2,7 @@ import {
   DesktopPreviewAnnotationThemeInputSchema,
   DesktopPreviewArtifactInputSchema,
   DesktopPreviewAutomationClickInputSchema,
+  DesktopPreviewAutomationSetViewportInputSchema,
   DesktopPreviewAutomationEvaluateInputSchema,
   DesktopPreviewAutomationPressInputSchema,
   DesktopPreviewAutomationScrollInputSchema,
@@ -164,6 +165,18 @@ export const setAudioMuted = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.setAudioMuted")(function* ({ tabId, audioMuted }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.setAudioMuted(tabId, audioMuted);
+  }),
+});
+export const setViewport = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_VIEWPORT_CHANNEL,
+  payload: DesktopPreviewAutomationSetViewportInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setViewport")(function* (input) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setViewport(
+      input.tabId,
+      "clear" in input ? { clear: true } : { width: input.width, height: input.height },
+    );
   }),
 });
 export const openDevTools = tabMethod(
@@ -354,6 +367,19 @@ export const automationSnapshot = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const automationSetViewport = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_AUTOMATION_SET_VIEWPORT_CHANNEL,
+  payload: DesktopPreviewAutomationSetViewportInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.automationSetViewport")(function* (input) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.automationSetViewport(
+      input.tabId,
+      "clear" in input ? { clear: true } : { width: input.width, height: input.height },
+    );
+  }),
+});
+
 export const automationClick = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_AUTOMATION_CLICK_CHANNEL,
   payload: DesktopPreviewAutomationClickInputSchema,
@@ -438,6 +464,7 @@ export const methods = [
   hardReload,
   setColorScheme,
   setAudioMuted,
+  setViewport,
   openDevTools,
   clearCookies,
   clearCache,
@@ -452,6 +479,7 @@ export const methods = [
   closePictureInPicture,
   automationStatus,
   automationSnapshot,
+  automationSetViewport,
   automationClick,
   automationType,
   automationPress,

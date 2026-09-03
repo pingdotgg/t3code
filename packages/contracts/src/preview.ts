@@ -180,6 +180,12 @@ export const PreviewSessionSnapshot = Schema.Struct({
 });
 export type PreviewSessionSnapshot = typeof PreviewSessionSnapshot.Type;
 
+export const PreviewStateVersion = Schema.Struct({
+  serverEpoch: TrimmedNonEmptyString,
+  revision: PositiveInt,
+});
+export type PreviewStateVersion = typeof PreviewStateVersion.Type;
+
 export const PreviewOpenInput = Schema.Struct({
   threadId: ThreadId,
   /** Omit to create an empty (Idle) tab the user can type into. */
@@ -223,8 +229,22 @@ export const PreviewResizeInput = Schema.Struct({
   threadId: ThreadId,
   tabId: PreviewTabId,
   viewport: PreviewViewportSetting,
+  /** Apply only while the viewport write identified by this version is current. */
+  expectedStateVersion: Schema.optional(PreviewStateVersion),
 });
 export type PreviewResizeInput = typeof PreviewResizeInput.Type;
+
+/**
+ * The version is optional so new clients can still resize through older
+ * servers. New servers always return it and use it to guard rollback writes.
+ */
+export const PreviewResizeResult = Schema.Struct({
+  ...PreviewSessionSnapshot.fields,
+  stateVersion: Schema.optional(PreviewStateVersion),
+  /** The viewport replaced by this write. Missing when an older server responds. */
+  previousViewport: Schema.optional(PreviewViewportSetting),
+});
+export type PreviewResizeResult = typeof PreviewResizeResult.Type;
 
 export const PreviewCloseInput = Schema.Struct({
   threadId: ThreadId,
@@ -350,5 +370,23 @@ export class PreviewInvalidUrlError extends Schema.TaggedErrorClass<PreviewInval
   }
 }
 
-export const PreviewError = Schema.Union([PreviewSessionLookupError, PreviewInvalidUrlError]);
+export class PreviewResizeConflictError extends Schema.TaggedErrorClass<PreviewResizeConflictError>()(
+  "PreviewResizeConflictError",
+  {
+    threadId: Schema.String,
+    tabId: Schema.String,
+    expectedStateVersion: PreviewStateVersion,
+    actualStateVersion: PreviewStateVersion,
+  },
+) {
+  override get message() {
+    return "The preview viewport changed before this resize could be applied.";
+  }
+}
+
+export const PreviewError = Schema.Union([
+  PreviewSessionLookupError,
+  PreviewInvalidUrlError,
+  PreviewResizeConflictError,
+]);
 export type PreviewError = typeof PreviewError.Type;

@@ -5,11 +5,16 @@ interface PreviewAutomationSessionIndex {
   readonly sessions: Readonly<Record<string, PreviewSessionSnapshot>>;
 }
 
+interface PreviewAutomationSyncState extends PreviewAutomationSessionIndex {
+  readonly serverEpoch: string | null;
+}
+
 export function needsPreviewAutomationSessionSync(
-  state: PreviewAutomationSessionIndex,
+  state: PreviewAutomationSyncState,
   requestedTabId: string | undefined,
 ): boolean {
   return (
+    state.serverEpoch === null ||
     Object.keys(state.sessions).length === 0 ||
     requestedTabId === undefined ||
     state.sessions[requestedTabId] === undefined

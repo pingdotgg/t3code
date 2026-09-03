@@ -263,6 +263,90 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
     }),
   );
 
+  it.effect("rejects a stale viewport rollback after the setting changes away and back", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const collector = yield* collectEvents;
+      const opened = yield* manager.open({ threadId });
+      const requested = { _tag: "freeform" as const, width: 900, height: 600 };
+      const intermediate = { _tag: "freeform" as const, width: 1024, height: 768 };
+
+      const firstWrite = yield* manager.resize({
+        threadId,
+        tabId: opened.tabId,
+        viewport: requested,
+      });
+      yield* manager.resize({
+        threadId,
+        tabId: opened.tabId,
+        viewport: intermediate,
+      });
+      const latestWrite = yield* manager.resize({
+        threadId,
+        tabId: opened.tabId,
+        viewport: requested,
+      });
+      yield* manager.navigate({
+        threadId,
+        tabId: opened.tabId,
+        url: "http://localhost:5173/after-resize",
+      });
+      const firstVersion = firstWrite.stateVersion;
+      const latestVersion = latestWrite.stateVersion;
+      expect(firstVersion).toBeDefined();
+      expect(latestVersion).toBeDefined();
+      expect(firstWrite.previousViewport).toEqual({ _tag: "fill" });
+      expect(latestWrite.previousViewport).toEqual(intermediate);
+      if (!firstVersion || !latestVersion) return;
+
+      const writeEvents = (yield* collector.drain).filter((event) => event.type === "resized");
+      expect(firstVersion.revision).toBe(writeEvents[0]?.revision);
+      expect(latestVersion.revision).toBe(writeEvents[2]?.revision);
+      const beforeConflict = yield* manager.list({ threadId });
+      const error = yield* Effect.flip(
+        manager.resize({
+          threadId,
+          tabId: opened.tabId,
+          viewport: { _tag: "fill" },
+          expectedStateVersion: firstVersion,
+        }),
+      );
+
+      expect(error).toMatchObject({
+        _tag: "PreviewResizeConflictError",
+        expectedStateVersion: firstVersion,
+        actualStateVersion: latestVersion,
+      });
+      const afterConflict = yield* manager.list({ threadId });
+      expect(afterConflict.revision).toBe(beforeConflict.revision);
+      expect(afterConflict.sessions[0]?.viewport).toEqual(requested);
+      expect(yield* collector.drain).toEqual([]);
+
+      const epochError = yield* Effect.flip(
+        manager.resize({
+          threadId,
+          tabId: opened.tabId,
+          viewport: { _tag: "fill" },
+          expectedStateVersion: { ...latestVersion, serverEpoch: "restarted-server" },
+        }),
+      );
+      expect(epochError._tag).toBe("PreviewResizeConflictError");
+      expect((yield* manager.list({ threadId })).revision).toBe(beforeConflict.revision);
+      expect((yield* manager.list({ threadId })).sessions[0]?.viewport).toEqual(requested);
+      expect(yield* collector.drain).toEqual([]);
+
+      const rollback = yield* manager.resize({
+        threadId,
+        tabId: opened.tabId,
+        viewport: latestWrite.previousViewport ?? { _tag: "fill" },
+        expectedStateVersion: latestVersion,
+      });
+      expect(rollback.viewport).toEqual(intermediate);
+      expect(rollback.stateVersion?.revision).toBe(beforeConflict.revision + 1);
+    }),
+  );
+
   it.effect("reportStatus emits failed for LoadFailed nav", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();

@@ -321,6 +321,38 @@ const setupRecordingRaceTabs = (manager: PreviewManager.PreviewManager["Service"
     };
   });
 
+const makeViewportWebContents = (
+  id: number,
+  sendCommand: (method: string, params?: Record<string, unknown>) => Promise<unknown>,
+  isDevToolsOpened: () => boolean = () => false,
+): Electron.WebContents =>
+  ({
+    id,
+    isDestroyed: () => false,
+    isDevToolsOpened,
+    getType: () => "webview",
+    getURL: () => "https://example.com",
+    getTitle: () => "Example",
+    isLoading: () => false,
+    getZoomFactor: () => 1,
+    setZoomFactor: vi.fn(),
+    setAudioMuted: vi.fn(),
+    isCurrentlyAudible: () => false,
+    on: vi.fn(),
+    off: vi.fn(),
+    ipc: { on: vi.fn(), off: vi.fn() },
+    send: webviewSend,
+    navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+    setWindowOpenHandler: vi.fn(),
+    debugger: {
+      isAttached: () => false,
+      attach: vi.fn(),
+      sendCommand,
+      on: vi.fn(),
+      off: vi.fn(),
+    },
+  }) as never;
+
 const TEST_FAVICON = "data:image/png;base64,cG5n";
 
 const makeSourcePng = (width = 1, height = 1): Buffer => {
@@ -1694,6 +1726,817 @@ describe("PreviewManager", () => {
         guest.emitAudioState(false);
         yield* Effect.yieldNow;
         expect(states.at(-1)?.audible).toBe(false);
+      }),
+    ),
+  );
+
+  effectIt.effect("applies logical viewport sizes without mobile emulation or a DPR override", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const sendCommand = vi.fn(async () => undefined);
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          isDevToolsOpened: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+        const controllers: Array<PreviewManager.PreviewTabState["controller"]> = [];
+
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            controllers.push(state.controller);
+          }),
+        );
+        yield* manager.createTab("tab_viewport", { zoomFactor: 0.5 });
+        yield* manager.registerWebview("tab_viewport", 42);
+        yield* manager.setViewport("tab_viewport", { width: 1024, height: 768 });
+        yield* manager.setViewport("tab_viewport", { width: 844, height: 390 });
+        yield* manager.setViewport("tab_viewport", { clear: true });
+
+        expect(sendCommand).toHaveBeenCalledWith("Emulation.setDeviceMetricsOverride", {
+          width: 512,
+          height: 384,
+          deviceScaleFactor: 0,
+          mobile: false,
+        });
+        expect(sendCommand).toHaveBeenCalledWith("Emulation.setDeviceMetricsOverride", {
+          width: 422,
+          height: 195,
+          deviceScaleFactor: 0,
+          mobile: false,
+        });
+        expect(sendCommand).toHaveBeenCalledWith("Emulation.clearDeviceMetricsOverride");
+        expect(controllers).not.toContain("agent");
+      }),
+    ),
+  );
+
+  effectIt.effect("does not retry or restore viewport intents rejected by the guest", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const rejectedSendCommand = vi.fn(async (method: string) => {
+          if (method === "Emulation.setDeviceMetricsOverride") {
+            throw new Error("guest refused viewport");
+          }
+        });
+        const replacementSendCommand = vi.fn(
+          async (_method: string, _params?: Record<string, unknown>) => undefined,
+        );
+        const first = makeViewportWebContents(42, rejectedSendCommand);
+        const replacement = makeViewportWebContents(43, replacementSendCommand);
+        fromId.mockImplementation(
+          (id) => (id === 42 ? first : id === 43 ? replacement : null) as never,
+        );
+
+        yield* manager.createTab("tab_viewport_rejected");
+        yield* manager.registerWebview("tab_viewport_rejected", 42);
+        yield* Effect.yieldNow;
+
+        const humanExit = yield* manager
+          .setViewport("tab_viewport_rejected", { width: 1024, height: 768 })
+          .pipe(Effect.exit);
+        const automationExit = yield* manager
+          .automationSetViewport("tab_viewport_rejected", { width: 844, height: 390 })
+          .pipe(Effect.exit);
+
+        expect(Exit.isFailure(humanExit)).toBe(true);
+        expect(Exit.isFailure(automationExit)).toBe(true);
+        expect(
+          rejectedSendCommand.mock.calls.filter(
+            ([method]) => method === "Emulation.setDeviceMetricsOverride",
+          ),
+        ).toHaveLength(2);
+
+        yield* manager.registerWebview("tab_viewport_rejected", 43);
+        yield* settle(() =>
+          replacementSendCommand.mock.calls.some(
+            ([method]) => method === "Emulation.setDeviceMetricsOverride",
+          ),
+        );
+        expect(
+          replacementSendCommand.mock.calls.filter(
+            ([method]) => method === "Emulation.setDeviceMetricsOverride",
+          ),
+        ).toHaveLength(0);
+      }),
+    ),
+  );
+
+  effectIt.effect("restores the prior viewport after a newer native apply fails", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let rejectViewport = false;
+        const firstSendCommand = vi.fn(
+          async (method: string, _params?: Record<string, unknown>) => {
+            if (rejectViewport && method === "Emulation.setDeviceMetricsOverride") {
+              throw new Error("guest refused viewport");
+            }
+          },
+        );
+        const replacementSendCommand = vi.fn(
+          async (_method: string, _params?: Record<string, unknown>) => undefined,
+        );
+        const first = makeViewportWebContents(42, firstSendCommand);
+        const replacement = makeViewportWebContents(43, replacementSendCommand);
+        fromId.mockImplementation(
+          (id) => (id === 42 ? first : id === 43 ? replacement : null) as never,
+        );
+
+        yield* manager.createTab("tab_viewport_prior");
+        yield* manager.registerWebview("tab_viewport_prior", 42);
+        yield* Effect.yieldNow;
+        yield* manager.setViewport("tab_viewport_prior", { width: 390, height: 844 });
+
+        rejectViewport = true;
+        const exit = yield* manager
+          .setViewport("tab_viewport_prior", { width: 1024, height: 768 })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+
+        yield* manager.registerWebview("tab_viewport_prior", 43);
+        yield* settle(() =>
+          replacementSendCommand.mock.calls.some(
+            ([method, params]) =>
+              method === "Emulation.setDeviceMetricsOverride" && params?.width === 390,
+          ),
+        );
+        expect(replacementSendCommand).toHaveBeenCalledWith(
+          "Emulation.setDeviceMetricsOverride",
+          expect.objectContaining({ width: 390, height: 844 }),
+        );
+      }),
+    ),
+  );
+
+  effectIt.effect("restores the prior viewport when automation control setup fails", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const firstSendCommand = vi.fn(
+          async (_method: string, _params?: Record<string, unknown>) => undefined,
+        );
+        const blockedSendCommand = vi.fn(
+          async (_method: string, _params?: Record<string, unknown>) => undefined,
+        );
+        const finalSendCommand = vi.fn(
+          async (_method: string, _params?: Record<string, unknown>) => undefined,
+        );
+        const first = makeViewportWebContents(42, firstSendCommand);
+        const blocked = makeViewportWebContents(43, blockedSendCommand, () => true);
+        const final = makeViewportWebContents(44, finalSendCommand);
+        fromId.mockImplementation((id) => {
+          if (id === 42) return first as never;
+          if (id === 43) return blocked as never;
+          if (id === 44) return final as never;
+          return null;
+        });
+
+        yield* manager.createTab("tab_viewport_setup_failure");
+        yield* manager.registerWebview("tab_viewport_setup_failure", 42);
+        yield* Effect.yieldNow;
+        yield* manager.setViewport("tab_viewport_setup_failure", { width: 390, height: 844 });
+        yield* manager.registerWebview("tab_viewport_setup_failure", 43);
+        yield* Effect.yieldNow;
+
+        const exit = yield* manager
+          .automationSetViewport("tab_viewport_setup_failure", { width: 1024, height: 768 })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+
+        yield* manager.registerWebview("tab_viewport_setup_failure", 44);
+        yield* settle(() =>
+          finalSendCommand.mock.calls.some(
+            ([method, params]) =>
+              method === "Emulation.setDeviceMetricsOverride" && params?.width === 390,
+          ),
+        );
+        expect(finalSendCommand).toHaveBeenCalledWith(
+          "Emulation.setDeviceMetricsOverride",
+          expect.objectContaining({ width: 390, height: 844 }),
+        );
+      }),
+    ),
+  );
+
+  effectIt.effect("keeps a newer viewport intent when an older apply fails", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const olderApplyStarted = Promise.withResolvers<void>();
+        const releaseOlderApply = Promise.withResolvers<void>();
+        const firstSendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+          if (method !== "Emulation.setDeviceMetricsOverride") return;
+          if (params?.width === 1024) {
+            olderApplyStarted.resolve();
+            await releaseOlderApply.promise;
+            throw new Error("older viewport failed");
+          }
+        });
+        const replacementSendCommand = vi.fn(
+          async (_method: string, _params?: Record<string, unknown>) => undefined,
+        );
+        const first = makeViewportWebContents(42, firstSendCommand);
+        const replacement = makeViewportWebContents(43, replacementSendCommand);
+        fromId.mockImplementation(
+          (id) => (id === 42 ? first : id === 43 ? replacement : null) as never,
+        );
+
+        yield* manager.createTab("tab_viewport_newer_intent");
+        yield* manager.registerWebview("tab_viewport_newer_intent", 42);
+        yield* Effect.yieldNow;
+
+        const older = yield* manager
+          .setViewport("tab_viewport_newer_intent", { width: 1024, height: 768 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => olderApplyStarted.promise);
+        yield* manager.setViewport("tab_viewport_newer_intent", { width: 1440, height: 900 });
+        releaseOlderApply.resolve();
+
+        const olderExit = yield* Fiber.await(older);
+        expect(Exit.isFailure(olderExit)).toBe(true);
+
+        yield* manager.registerWebview("tab_viewport_newer_intent", 43);
+        yield* settle(() =>
+          replacementSendCommand.mock.calls.some(
+            ([method, params]) =>
+              method === "Emulation.setDeviceMetricsOverride" && params?.width === 1440,
+          ),
+        );
+        expect(replacementSendCommand).toHaveBeenCalledWith(
+          "Emulation.setDeviceMetricsOverride",
+          expect.objectContaining({ width: 1440, height: 900 }),
+        );
+      }),
+    ),
+  );
+
+  effectIt.effect("skips rejected prior intents when overlapping viewport applies fail", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const firstApplyStarted = Promise.withResolvers<void>();
+        const secondApplyStarted = Promise.withResolvers<void>();
+        const releaseFirstApply = Promise.withResolvers<void>();
+        const releaseSecondApply = Promise.withResolvers<void>();
+        const firstSendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+          if (method !== "Emulation.setDeviceMetricsOverride") return;
+          if (params?.width === 1024) {
+            firstApplyStarted.resolve();
+            await releaseFirstApply.promise;
+            throw new Error("first viewport failed");
+          }
+          if (params?.width === 1440) {
+            secondApplyStarted.resolve();
+            await releaseSecondApply.promise;
+            throw new Error("second viewport failed");
+          }
+        });
+        const replacementSendCommand = vi.fn(
+          async (_method: string, _params?: Record<string, unknown>) => undefined,
+        );
+        const first = makeViewportWebContents(42, firstSendCommand);
+        const replacement = makeViewportWebContents(43, replacementSendCommand);
+        fromId.mockImplementation(
+          (id) => (id === 42 ? first : id === 43 ? replacement : null) as never,
+        );
+
+        yield* manager.createTab("tab_viewport_overlapping_failures");
+        yield* manager.registerWebview("tab_viewport_overlapping_failures", 42);
+        yield* Effect.yieldNow;
+        yield* manager.setViewport("tab_viewport_overlapping_failures", {
+          width: 390,
+          height: 844,
+        });
+
+        const firstApply = yield* manager
+          .setViewport("tab_viewport_overlapping_failures", { width: 1024, height: 768 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => firstApplyStarted.promise);
+        const secondApply = yield* manager
+          .setViewport("tab_viewport_overlapping_failures", { width: 1440, height: 900 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => secondApplyStarted.promise);
+
+        releaseFirstApply.resolve();
+        const firstExit = yield* Fiber.await(firstApply);
+        expect(Exit.isFailure(firstExit)).toBe(true);
+        releaseSecondApply.resolve();
+        const secondExit = yield* Fiber.await(secondApply);
+        expect(Exit.isFailure(secondExit)).toBe(true);
+
+        yield* manager.registerWebview("tab_viewport_overlapping_failures", 43);
+        yield* settle(() =>
+          replacementSendCommand.mock.calls.some(
+            ([method, params]) =>
+              method === "Emulation.setDeviceMetricsOverride" && params?.width === 390,
+          ),
+        );
+        expect(
+          replacementSendCommand.mock.calls
+            .filter(([method]) => method === "Emulation.setDeviceMetricsOverride")
+            .map(([, params]) => params?.width),
+        ).toEqual([390]);
+      }),
+    ),
+  );
+
+  effectIt.effect(
+    "restores a successful overlapping predecessor when the newer viewport fails",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const priorApplyStarted = Promise.withResolvers<void>();
+          const newerApplyStarted = Promise.withResolvers<void>();
+          const releasePriorApply = Promise.withResolvers<void>();
+          const releaseNewerApply = Promise.withResolvers<void>();
+          let newerApplyCount = 0;
+          const firstSendCommand = vi.fn(
+            async (method: string, params?: Record<string, unknown>) => {
+              if (method !== "Emulation.setDeviceMetricsOverride") return;
+              if (params?.width === 1024) {
+                priorApplyStarted.resolve();
+                await releasePriorApply.promise;
+              }
+              if (params?.width === 1440) {
+                newerApplyCount += 1;
+                if (newerApplyCount === 1) {
+                  newerApplyStarted.resolve();
+                  await releaseNewerApply.promise;
+                  throw new Error("newer viewport failed");
+                }
+              }
+            },
+          );
+          const replacementSendCommand = vi.fn(
+            async (_method: string, _params?: Record<string, unknown>) => undefined,
+          );
+          const first = makeViewportWebContents(42, firstSendCommand);
+          const replacement = makeViewportWebContents(43, replacementSendCommand);
+          fromId.mockImplementation(
+            (id) => (id === 42 ? first : id === 43 ? replacement : null) as never,
+          );
+
+          yield* manager.createTab("tab_viewport_successful_predecessor");
+          yield* manager.registerWebview("tab_viewport_successful_predecessor", 42);
+          yield* Effect.yieldNow;
+          yield* manager.setViewport("tab_viewport_successful_predecessor", {
+            width: 390,
+            height: 844,
+          });
+
+          const priorApply = yield* manager
+            .setViewport("tab_viewport_successful_predecessor", { width: 1024, height: 768 })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Effect.promise(() => priorApplyStarted.promise);
+          const newerApply = yield* manager
+            .setViewport("tab_viewport_successful_predecessor", { width: 1440, height: 900 })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Effect.promise(() => newerApplyStarted.promise);
+
+          releasePriorApply.resolve();
+          const priorExit = yield* Fiber.await(priorApply);
+          expect(Exit.isSuccess(priorExit)).toBe(true);
+          releaseNewerApply.resolve();
+          const newerExit = yield* Fiber.await(newerApply);
+          expect(Exit.isFailure(newerExit)).toBe(true);
+
+          const liveViewportCalls = firstSendCommand.mock.calls.filter(
+            ([method]) => method === "Emulation.setDeviceMetricsOverride",
+          );
+          expect(liveViewportCalls.at(-1)?.[1]).toMatchObject({ width: 1024, height: 768 });
+
+          yield* manager.registerWebview("tab_viewport_successful_predecessor", 43);
+          yield* settle(() =>
+            replacementSendCommand.mock.calls.some(
+              ([method, params]) =>
+                method === "Emulation.setDeviceMetricsOverride" && params?.width === 1024,
+            ),
+          );
+          expect(
+            replacementSendCommand.mock.calls
+              .filter(([method]) => method === "Emulation.setDeviceMetricsOverride")
+              .map(([, params]) => params?.width),
+          ).toEqual([1024]);
+        }),
+      ),
+  );
+
+  effectIt.effect("converts logical viewport sizes at each supported test zoom", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const cases = [
+          { tabId: "tab_zoom_50", webContentsId: 50, zoomFactor: 0.5, width: 512, height: 384 },
+          { tabId: "tab_zoom_80", webContentsId: 80, zoomFactor: 0.8, width: 819, height: 614 },
+          { tabId: "tab_zoom_100", webContentsId: 100, zoomFactor: 1, width: 1024, height: 768 },
+          {
+            tabId: "tab_zoom_125",
+            webContentsId: 125,
+            zoomFactor: 1.25,
+            width: 1280,
+            height: 960,
+          },
+        ] as const;
+        const commandsById = new Map(
+          cases.map(
+            ({ webContentsId }) =>
+              [
+                webContentsId,
+                vi.fn(async (_method: string, _params?: Record<string, unknown>) => undefined),
+              ] as const,
+          ),
+        );
+        const webContentsById = new Map<number, unknown>();
+        for (const { webContentsId } of cases) {
+          webContentsById.set(webContentsId, {
+            id: webContentsId,
+            isDestroyed: () => false,
+            isDevToolsOpened: () => false,
+            getType: () => "webview",
+            getURL: () => "https://example.com",
+            getTitle: () => "Example",
+            isLoading: () => false,
+            getZoomFactor: () => 1,
+            setZoomFactor: vi.fn(),
+            setAudioMuted: vi.fn(),
+            isCurrentlyAudible: () => false,
+            on: vi.fn(),
+            off: vi.fn(),
+            ipc: { on: vi.fn(), off: vi.fn() },
+            send: webviewSend,
+            navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+            setWindowOpenHandler: vi.fn(),
+            debugger: {
+              isAttached: () => false,
+              attach: vi.fn(),
+              sendCommand: commandsById.get(webContentsId),
+              on: vi.fn(),
+              off: vi.fn(),
+            },
+          });
+        }
+        fromId.mockImplementation(
+          (id) => (id === undefined ? null : (webContentsById.get(id) ?? null)) as never,
+        );
+
+        for (const testCase of cases) {
+          yield* manager.createTab(testCase.tabId, { zoomFactor: testCase.zoomFactor });
+          yield* manager.registerWebview(testCase.tabId, testCase.webContentsId);
+          yield* manager.automationSetViewport(testCase.tabId, { width: 1024, height: 768 });
+          const viewportCalls = commandsById
+            .get(testCase.webContentsId)
+            ?.mock.calls.filter(([method]) => method.includes("DeviceMetrics"));
+          const expectedCall = [
+            "Emulation.setDeviceMetricsOverride",
+            {
+              width: testCase.width,
+              height: testCase.height,
+              deviceScaleFactor: 0,
+              mobile: false,
+            },
+          ];
+          expect(viewportCalls?.length).toBeGreaterThanOrEqual(1);
+          for (const call of viewportCalls ?? []) {
+            expect(call).toEqual(expectedCall);
+          }
+        }
+      }),
+    ),
+  );
+
+  effectIt.effect("restores the latest viewport when a webview swap races a newer setting", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const makeWebContents = (
+          id: number,
+          sendCommand: (
+            method: string,
+            params?: Record<string, unknown>,
+          ) => Promise<unknown> = vi.fn(async () => undefined),
+        ) => {
+          return {
+            sendCommand,
+            wc: {
+              id,
+              isDestroyed: () => false,
+              isDevToolsOpened: () => false,
+              getType: () => "webview",
+              getURL: () => "https://example.com",
+              getTitle: () => "Example",
+              isLoading: () => false,
+              getZoomFactor: () => 1,
+              setZoomFactor: vi.fn(),
+              setAudioMuted: vi.fn(),
+              isCurrentlyAudible: () => false,
+              on: vi.fn(),
+              off: vi.fn(),
+              ipc: { on: vi.fn(), off: vi.fn() },
+              send: webviewSend,
+              navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+              setWindowOpenHandler: vi.fn(),
+              debugger: {
+                isAttached: () => false,
+                attach: vi.fn(),
+                sendCommand,
+                on: vi.fn(),
+                off: vi.fn(),
+              },
+            } as never,
+          };
+        };
+        const first = makeWebContents(42);
+        fromId.mockReturnValue(first.wc);
+
+        yield* manager.createTab("tab_viewport_restore");
+        yield* manager.registerWebview("tab_viewport_restore", 42);
+        yield* manager.setViewport("tab_viewport_restore", { width: 390, height: 844 });
+
+        const restoreStarted = Promise.withResolvers<void>();
+        const releaseRestore = Promise.withResolvers<void>();
+        const appliedWidths: number[] = [];
+        let holdRestore = true;
+        const replacementSendCommand = vi.fn(
+          async (method: string, params?: Record<string, unknown>) => {
+            if (method !== "Emulation.setDeviceMetricsOverride") return;
+            if (holdRestore) {
+              holdRestore = false;
+              restoreStarted.resolve();
+              await releaseRestore.promise;
+            }
+            if (typeof params?.width === "number") appliedWidths.push(params.width);
+          },
+        );
+        const replacement = makeWebContents(43, replacementSendCommand);
+        fromId.mockReturnValue(replacement.wc);
+        yield* manager.registerWebview("tab_viewport_restore", 43);
+        yield* Effect.promise(() => restoreStarted.promise);
+        yield* manager.setViewport("tab_viewport_restore", { width: 1024, height: 768 });
+        releaseRestore.resolve();
+        yield* settle(() => appliedWidths.at(-1) === 1024 && appliedWidths.length >= 3);
+
+        expect(appliedWidths).toEqual([1024, 390, 1024]);
+      }),
+    ),
+  );
+
+  effectIt.effect("retries a viewport intent when its captured webview is replaced", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const applyStarted = Promise.withResolvers<void>();
+        const releaseApply = Promise.withResolvers<void>();
+        const firstSendCommand = vi.fn(async (method: string) => {
+          if (method !== "Emulation.setDeviceMetricsOverride") return;
+          applyStarted.resolve();
+          await releaseApply.promise;
+          throw new Error("replaced guest rejected viewport");
+        });
+        const replacementSendCommand = vi.fn(
+          async (_method: string, _params?: Record<string, unknown>) => undefined,
+        );
+        const first = makeViewportWebContents(42, firstSendCommand);
+        const replacement = makeViewportWebContents(43, replacementSendCommand);
+        fromId.mockImplementation(
+          (id) => (id === 42 ? first : id === 43 ? replacement : null) as never,
+        );
+
+        yield* manager.createTab("tab_viewport_replaced_apply");
+        yield* manager.registerWebview("tab_viewport_replaced_apply", 42);
+        yield* Effect.yieldNow;
+
+        const setter = yield* manager
+          .setViewport("tab_viewport_replaced_apply", { width: 1024, height: 768 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => applyStarted.promise);
+        yield* manager.registerWebview("tab_viewport_replaced_apply", 43);
+        releaseApply.resolve();
+        yield* Fiber.join(setter);
+
+        expect(replacementSendCommand).toHaveBeenCalledWith(
+          "Emulation.setDeviceMetricsOverride",
+          expect.objectContaining({ width: 1024, height: 768 }),
+        );
+      }),
+    ),
+  );
+
+  effectIt.effect("clears a rejected viewport after a concurrent session restore", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const initialApplyStarted = Promise.withResolvers<void>();
+        const releaseInitialApply = Promise.withResolvers<void>();
+        const restoreApplyStarted = Promise.withResolvers<void>();
+        const releaseRestoreApply = Promise.withResolvers<void>();
+        const firstClearApplied = Promise.withResolvers<void>();
+        const secondClearApplied = Promise.withResolvers<void>();
+        let viewportApplyCount = 0;
+        let viewportClearCount = 0;
+        const sendCommand = vi.fn(async (method: string) => {
+          if (method === "Emulation.clearDeviceMetricsOverride") {
+            viewportClearCount += 1;
+            if (viewportClearCount === 1) firstClearApplied.resolve();
+            if (viewportClearCount === 2) secondClearApplied.resolve();
+            return;
+          }
+          if (method !== "Emulation.setDeviceMetricsOverride") return;
+          viewportApplyCount += 1;
+          if (viewportApplyCount === 1) {
+            initialApplyStarted.resolve();
+            await releaseInitialApply.promise;
+            throw new Error("guest rejected viewport");
+          }
+          if (viewportApplyCount === 2) {
+            restoreApplyStarted.resolve();
+            await releaseRestoreApply.promise;
+          }
+        });
+        let onDevToolsClosed: (() => void) | undefined;
+        const wc = Object.assign(makeViewportWebContents(42, sendCommand), {
+          once: vi.fn((event: string, listener: () => void) => {
+            if (event === "devtools-closed") onDevToolsClosed = listener;
+          }),
+          openDevTools: vi.fn(),
+        });
+        fromId.mockReturnValue(wc);
+
+        yield* manager.createTab("tab_viewport_rejected_restore");
+        yield* manager.registerWebview("tab_viewport_rejected_restore", 42);
+        yield* Effect.yieldNow;
+
+        const setter = yield* manager
+          .setViewport("tab_viewport_rejected_restore", { width: 1024, height: 768 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => initialApplyStarted.promise);
+        yield* manager.openDevTools("tab_viewport_rejected_restore");
+        expect(onDevToolsClosed).toBeDefined();
+        onDevToolsClosed?.();
+        yield* Effect.promise(() => restoreApplyStarted.promise);
+
+        releaseInitialApply.resolve();
+        const setterExit = yield* Fiber.await(setter);
+        expect(Exit.isFailure(setterExit)).toBe(true);
+        yield* Effect.promise(() => firstClearApplied.promise);
+
+        releaseRestoreApply.resolve();
+        yield* Effect.promise(() => secondClearApplied.promise);
+        const viewportCalls = sendCommand.mock.calls.filter(([method]) =>
+          method.includes("DeviceMetricsOverride"),
+        );
+        expect(viewportCalls.at(-1)?.[0]).toBe("Emulation.clearDeviceMetricsOverride");
+      }),
+    ),
+  );
+
+  effectIt.effect("restores a newer human viewport after a queued agent resize", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const evaluationStarted = Promise.withResolvers<void>();
+        const releaseEvaluation = Promise.withResolvers<unknown>();
+        const sendCommand = vi.fn(
+          async (method: string, params?: Record<string, unknown>): Promise<unknown> => {
+            if (method === "Runtime.evaluate" && params?.expression === "holdViewportQueue") {
+              evaluationStarted.resolve();
+              return releaseEvaluation.promise;
+            }
+            return { result: { value: null } };
+          },
+        );
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          isDevToolsOpened: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_viewport_order");
+        yield* manager.registerWebview("tab_viewport_order", 42);
+        const evaluation = yield* manager
+          .automationEvaluate("tab_viewport_order", { expression: "holdViewportQueue" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => evaluationStarted.promise);
+        const resize = yield* manager
+          .automationSetViewport("tab_viewport_order", { width: 1024, height: 768 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+
+        yield* manager.setViewport("tab_viewport_order", { width: 1440, height: 900 });
+        releaseEvaluation.resolve({ result: { value: null } });
+        yield* Fiber.join(evaluation);
+        yield* Fiber.join(resize);
+
+        const viewportCalls = sendCommand.mock.calls.filter(
+          ([method]) => method === "Emulation.setDeviceMetricsOverride",
+        );
+        expect(viewportCalls.at(-1)?.[1]).toMatchObject({ width: 1440, height: 900 });
+      }),
+    ),
+  );
+
+  effectIt.effect("drops a viewport intent when its tab closes during native apply", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const applyStarted = Promise.withResolvers<void>();
+        const releaseApply = Promise.withResolvers<void>();
+        const firstSendCommand = vi.fn(async (method: string) => {
+          if (method === "Emulation.setDeviceMetricsOverride") {
+            applyStarted.resolve();
+            await releaseApply.promise;
+          }
+        });
+        const replacementSendCommand = vi.fn(async () => undefined);
+        const makeWebContents = (
+          id: number,
+          sendCommand: (method: string, params?: Record<string, unknown>) => Promise<unknown>,
+        ) =>
+          ({
+            id,
+            isDestroyed: () => false,
+            isDevToolsOpened: () => false,
+            getType: () => "webview",
+            getURL: () => "https://example.com",
+            getTitle: () => "Example",
+            isLoading: () => false,
+            getZoomFactor: () => 1,
+            setZoomFactor: vi.fn(),
+            setAudioMuted: vi.fn(),
+            isCurrentlyAudible: () => false,
+            on: vi.fn(),
+            off: vi.fn(),
+            ipc: { on: vi.fn(), off: vi.fn() },
+            send: webviewSend,
+            navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+            setWindowOpenHandler: vi.fn(),
+            debugger: {
+              isAttached: () => false,
+              attach: vi.fn(),
+              sendCommand,
+              on: vi.fn(),
+              off: vi.fn(),
+            },
+          }) as never;
+        const first = makeWebContents(42, firstSendCommand);
+        const replacement = makeWebContents(43, replacementSendCommand);
+        fromId.mockImplementation((id) => (id === 42 ? first : id === 43 ? replacement : null));
+
+        yield* manager.createTab("tab_viewport_close");
+        yield* manager.registerWebview("tab_viewport_close", 42);
+        const setter = yield* manager
+          .setViewport("tab_viewport_close", { width: 1024, height: 768 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => applyStarted.promise);
+        yield* manager.closeTab("tab_viewport_close");
+        releaseApply.resolve();
+
+        const exit = yield* Fiber.await(setter);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "PreviewTabNotFoundError",
+          });
+        }
+
+        yield* manager.createTab("tab_viewport_close");
+        yield* manager.registerWebview("tab_viewport_close", 43);
+        yield* Effect.yieldNow;
+        expect(replacementSendCommand).not.toHaveBeenCalledWith(
+          "Emulation.setDeviceMetricsOverride",
+          expect.anything(),
+        );
       }),
     ),
   );

@@ -168,6 +168,7 @@ import {
   PreviewRefreshInput,
   PreviewReportStatusInput,
   PreviewResizeInput,
+  PreviewResizeResult,
   PreviewSessionSnapshot,
 } from "./preview.ts";
 import {
@@ -966,7 +967,7 @@ export const WsPreviewNavigateRpc = Rpc.make(WS_METHODS.previewNavigate, {
 
 export const WsPreviewResizeRpc = Rpc.make(WS_METHODS.previewResize, {
   payload: PreviewResizeInput,
-  success: PreviewSessionSnapshot,
+  success: PreviewResizeResult,
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 

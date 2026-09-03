@@ -412,6 +412,407 @@ describe("previewStateStore (single-tab)", () => {
     expect(state.sessions[background.tabId]).toEqual(resized);
   });
 
+  it("orders resize responses with their server write version", () => {
+    const snapshot = makeSnapshot();
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch,
+      revision: 1,
+    });
+    const currentSnapshot = {
+      ...snapshot,
+      viewport: { _tag: "freeform" as const, width: 1024, height: 768 },
+      updatedAt: "2026-01-01T00:00:02.000Z",
+    };
+    const current = {
+      ...currentSnapshot,
+      stateVersion: { serverEpoch, revision: 3 },
+      previousViewport: { _tag: "fill" as const },
+    };
+    updatePreviewServerSnapshot(ref, current);
+    updatePreviewServerSnapshot(ref, {
+      ...snapshot,
+      viewport: { _tag: "freeform", width: 900, height: 600 },
+      updatedAt: "2026-01-01T00:00:03.000Z",
+      stateVersion: { serverEpoch, revision: 2 },
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions[snapshot.tabId]).toEqual(currentSnapshot);
+    expect(state.serverEpoch).toBe(serverEpoch);
+    expect(state.serverRevision).toBe(1);
+    expect(state.serverRevisionByTabId[snapshot.tabId]).toBe(3);
+  });
+
+  it("applies an ordered resize response when the server clock moves backward", () => {
+    const snapshot = makeSnapshot({ updatedAt: "2026-01-01T00:00:02.000Z" });
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch,
+      revision: 1,
+    });
+    const resized = {
+      ...snapshot,
+      viewport: { _tag: "freeform" as const, width: 1024, height: 768 },
+      updatedAt: "2026-01-01T00:00:01.000Z",
+    };
+
+    updatePreviewServerSnapshot(ref, {
+      ...resized,
+      stateVersion: { serverEpoch, revision: 2 },
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions[snapshot.tabId]).toEqual(resized);
+    expect(state.serverRevisionByTabId[snapshot.tabId]).toBe(2);
+  });
+
+  it("rejects a resize response superseded by a same-tab server event", () => {
+    const snapshot = makeSnapshot();
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch,
+      revision: 1,
+    });
+    const currentSnapshot = {
+      ...snapshot,
+      viewport: { _tag: "freeform" as const, width: 1200, height: 800 },
+      updatedAt: "2026-01-01T00:00:02.000Z",
+    };
+    applyPreviewServerEventImpl(ref, {
+      type: "resized",
+      threadId: "thread-1",
+      tabId: snapshot.tabId,
+      createdAt: currentSnapshot.updatedAt,
+      serverEpoch,
+      revision: 3,
+      snapshot: currentSnapshot,
+    });
+
+    updatePreviewServerSnapshot(ref, {
+      ...snapshot,
+      viewport: { _tag: "freeform", width: 900, height: 600 },
+      // Make the stale response look newer by wall time. Its server revision
+      // must still lose to the event delivered by another connection.
+      updatedAt: "2026-01-01T00:00:03.000Z",
+      stateVersion: { serverEpoch, revision: 2 },
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions[snapshot.tabId]).toEqual(currentSnapshot);
+    expect(state.serverRevisionByTabId[snapshot.tabId]).toBe(3);
+  });
+
+  it("applies a same-tab server event that follows a resize response", () => {
+    const snapshot = makeSnapshot();
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch,
+      revision: 1,
+    });
+    updatePreviewServerSnapshot(ref, {
+      ...snapshot,
+      viewport: { _tag: "freeform", width: 900, height: 600 },
+      updatedAt: "2026-01-01T00:00:02.000Z",
+      stateVersion: { serverEpoch, revision: 2 },
+    });
+    const currentSnapshot = {
+      ...snapshot,
+      viewport: { _tag: "freeform" as const, width: 1200, height: 800 },
+      updatedAt: "2026-01-01T00:00:03.000Z",
+    };
+
+    applyPreviewServerEventImpl(ref, {
+      type: "resized",
+      threadId: "thread-1",
+      tabId: snapshot.tabId,
+      createdAt: currentSnapshot.updatedAt,
+      serverEpoch,
+      revision: 3,
+      snapshot: currentSnapshot,
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions[snapshot.tabId]).toEqual(currentSnapshot);
+    expect(state.serverRevisionByTabId[snapshot.tabId]).toBe(3);
+  });
+
+  it("does not let one tab's resize response skip earlier events for other tabs", () => {
+    const first = makeSnapshot({ tabId: "tab_a" });
+    const second = makeSnapshot({ tabId: "tab_b" });
+    reconcilePreviewServerSessions(ref, {
+      sessions: [first, second],
+      serverEpoch,
+      revision: 3,
+    });
+    const resizedSecond = {
+      ...second,
+      viewport: { _tag: "freeform" as const, width: 1024, height: 768 },
+      updatedAt: "2026-01-01T00:00:02.000Z",
+    };
+    updatePreviewServerSnapshot(ref, {
+      ...resizedSecond,
+      stateVersion: { serverEpoch, revision: 6 },
+    });
+
+    applyPreviewServerEventImpl(ref, {
+      type: "resized",
+      threadId: "thread-1",
+      tabId: second.tabId,
+      createdAt: "2026-01-01T00:00:03.000Z",
+      serverEpoch,
+      revision: 4,
+      snapshot: {
+        ...second,
+        viewport: { _tag: "freeform", width: 900, height: 600 },
+        updatedAt: "2026-01-01T00:00:03.000Z",
+      },
+    });
+    applyPreviewServerEventImpl(ref, {
+      type: "closed",
+      threadId: "thread-1",
+      tabId: first.tabId,
+      createdAt: "2026-01-01T00:00:04.000Z",
+      serverEpoch,
+      revision: 5,
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions).toEqual({ [second.tabId]: resizedSecond });
+    expect(state.serverRevision).toBe(5);
+    expect(state.serverRevisionByTabId).toEqual({
+      [second.tabId]: 6,
+    });
+  });
+
+  it("rejects a late resize response after pruning a closed tab revision", () => {
+    const snapshot = makeSnapshot();
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch,
+      revision: 1,
+    });
+    applyPreviewServerEventImpl(ref, {
+      type: "closed",
+      threadId: "thread-1",
+      tabId: snapshot.tabId,
+      createdAt: "2026-01-01T00:00:03.000Z",
+      serverEpoch,
+      revision: 3,
+    });
+
+    expect(readThreadPreviewState(ref).serverRevisionByTabId).toEqual({});
+
+    updatePreviewServerSnapshot(ref, {
+      ...snapshot,
+      viewport: { _tag: "freeform", width: 900, height: 600 },
+      updatedAt: "2026-01-01T00:00:04.000Z",
+      stateVersion: { serverEpoch, revision: 2 },
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions).toEqual({});
+    expect(state.serverRevisionByTabId).toEqual({});
+  });
+
+  it("prunes tab revisions that an authoritative list removes", () => {
+    const closed = makeSnapshot({ tabId: "tab_closed" });
+    const active = makeSnapshot({ tabId: "tab_active" });
+    reconcilePreviewServerSessions(ref, {
+      sessions: [closed, active],
+      serverEpoch,
+      revision: 1,
+    });
+
+    reconcilePreviewServerSessions(ref, {
+      sessions: [active],
+      serverEpoch,
+      revision: 2,
+    });
+
+    expect(readThreadPreviewState(ref).serverRevisionByTabId).toEqual({
+      [active.tabId]: 2,
+    });
+  });
+
+  it("retains a pending-close revision until a failed close restores the tab", () => {
+    const snapshot = makeSnapshot();
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch,
+      revision: 1,
+    });
+    beginPreviewSessionClose(ref, snapshot.tabId);
+
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch,
+      revision: 3,
+    });
+    cancelPreviewSessionClose(ref, snapshot, snapshot.tabId);
+    updatePreviewServerSnapshot(ref, {
+      ...snapshot,
+      viewport: { _tag: "freeform", width: 900, height: 600 },
+      updatedAt: "2026-01-01T00:00:04.000Z",
+      stateVersion: { serverEpoch, revision: 2 },
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions[snapshot.tabId]).toEqual(snapshot);
+    expect(state.serverRevisionByTabId).toEqual({ [snapshot.tabId]: 3 });
+  });
+
+  it("retains ignored event revisions until a failed close restores the tab", () => {
+    const snapshot = makeSnapshot();
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch,
+      revision: 1,
+    });
+    beginPreviewSessionClose(ref, snapshot.tabId);
+
+    applyPreviewServerEventImpl(ref, {
+      type: "resized",
+      threadId: "thread-1",
+      tabId: snapshot.tabId,
+      createdAt: "2026-01-01T00:00:03.000Z",
+      serverEpoch,
+      revision: 3,
+      snapshot: {
+        ...snapshot,
+        viewport: { _tag: "freeform", width: 1200, height: 800 },
+        updatedAt: "2026-01-01T00:00:03.000Z",
+      },
+    });
+    applyPreviewServerEventImpl(ref, {
+      type: "resized",
+      threadId: "thread-1",
+      tabId: snapshot.tabId,
+      createdAt: "2026-01-01T00:00:02.000Z",
+      serverEpoch,
+      revision: 2,
+      snapshot: {
+        ...snapshot,
+        viewport: { _tag: "freeform", width: 1000, height: 700 },
+        updatedAt: "2026-01-01T00:00:02.000Z",
+      },
+    });
+    expect(readThreadPreviewState(ref).serverRevisionByTabId).toEqual({ [snapshot.tabId]: 3 });
+
+    cancelPreviewSessionClose(ref, snapshot, snapshot.tabId);
+    updatePreviewServerSnapshot(ref, {
+      ...snapshot,
+      viewport: { _tag: "freeform", width: 900, height: 600 },
+      updatedAt: "2026-01-01T00:00:04.000Z",
+      stateVersion: { serverEpoch, revision: 2 },
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions[snapshot.tabId]).toEqual(snapshot);
+    expect(state.serverRevisionByTabId).toEqual({ [snapshot.tabId]: 3 });
+  });
+
+  it("accepts a newer list that reuses a closed tab id", () => {
+    const original = makeSnapshot();
+    reconcilePreviewServerSessions(ref, {
+      sessions: [original],
+      serverEpoch,
+      revision: 1,
+    });
+    applyPreviewServerEventImpl(ref, {
+      type: "closed",
+      threadId: "thread-1",
+      tabId: original.tabId,
+      createdAt: "2026-01-01T00:00:02.000Z",
+      serverEpoch,
+      revision: 2,
+    });
+    reconcilePreviewServerSessions(ref, {
+      sessions: [original],
+      serverEpoch,
+      revision: 1,
+    });
+    expect(readThreadPreviewState(ref).sessions).toEqual({});
+
+    reconcilePreviewServerSessions(ref, {
+      sessions: [
+        makeSnapshot({
+          navStatus: { _tag: "Success", url: "https://reopened.example", title: "Reopened" },
+          updatedAt: "2026-01-01T00:00:03.000Z",
+        }),
+      ],
+      serverEpoch,
+      revision: 3,
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions[original.tabId]?.navStatus).toEqual({
+      _tag: "Success",
+      url: "https://reopened.example",
+      title: "Reopened",
+    });
+    expect(state.serverRevisionByTabId).toEqual({ [original.tabId]: 3 });
+  });
+
+  it("keeps a tab-specific resize newer than an in-flight list response", () => {
+    const snapshot = makeSnapshot();
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch,
+      revision: 3,
+    });
+    const resized = {
+      ...snapshot,
+      viewport: { _tag: "freeform" as const, width: 1024, height: 768 },
+      updatedAt: "2026-01-01T00:00:02.000Z",
+    };
+    updatePreviewServerSnapshot(ref, {
+      ...resized,
+      stateVersion: { serverEpoch, revision: 6 },
+    });
+
+    reconcilePreviewServerSessions(ref, {
+      sessions: [
+        {
+          ...snapshot,
+          viewport: { _tag: "freeform", width: 900, height: 600 },
+          updatedAt: "2026-01-01T00:00:03.000Z",
+        },
+      ],
+      serverEpoch,
+      revision: 5,
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions[snapshot.tabId]).toEqual(resized);
+    expect(state.serverRevision).toBe(5);
+    expect(state.serverRevisionByTabId[snapshot.tabId]).toBe(6);
+  });
+
+  it("applies a newer ordered list when the server clock moves backward", () => {
+    const snapshot = makeSnapshot({ updatedAt: "2026-01-01T00:00:02.000Z" });
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch,
+      revision: 1,
+    });
+    const listed = {
+      ...snapshot,
+      navStatus: { _tag: "Success" as const, url: "https://example.com", title: "Example" },
+      updatedAt: "2026-01-01T00:00:01.000Z",
+    };
+
+    reconcilePreviewServerSessions(ref, {
+      sessions: [listed],
+      serverEpoch,
+      revision: 2,
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions[snapshot.tabId]).toEqual(listed);
+    expect(state.serverRevisionByTabId[snapshot.tabId]).toBe(2);
+  });
+
   it("reconciles an authoritative session list without focusing a background tab", () => {
     const active = makeSnapshot({ tabId: "tab_a" });
     const stale = makeSnapshot({

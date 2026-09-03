@@ -60,6 +60,7 @@ import type {
   PreviewRefreshInput,
   PreviewReportStatusInput,
   PreviewResizeInput,
+  PreviewResizeResult,
   PreviewSessionSnapshot,
 } from "./preview.ts";
 import {
@@ -966,6 +967,18 @@ export interface DesktopPreviewTabDefaults {
   readonly colorScheme?: DesktopPreviewColorScheme | undefined;
 }
 
+export const DesktopPreviewAutomationSetViewportInputSchema = Schema.Union([
+  Schema.Struct({
+    tabId: DesktopPreviewTabIdSchema,
+    width: Schema.Int.check(Schema.isGreaterThan(0)),
+    height: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
+  Schema.Struct({
+    tabId: DesktopPreviewTabIdSchema,
+    clear: Schema.Literal(true),
+  }),
+]);
+
 export const DesktopPreviewRegisterWebviewInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   webContentsId: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -1174,6 +1187,15 @@ export interface DesktopPreviewBridge {
    * allowed; it simply takes effect once the page plays something.
    */
   setAudioMuted: (tabId: string, audioMuted: boolean) => Promise<void>;
+  /**
+   * Apply or clear a guest device-metrics override without taking agent
+   * control. Used by the toolbar and restore path so a human resize does
+   * not flash the agent-controlling badge.
+   */
+  setViewport: (
+    tabId: string,
+    input: { readonly width: number; readonly height: number } | { readonly clear: true },
+  ) => Promise<void>;
   /** Open the guest webview's DevTools (detached). */
   openDevTools: (tabId: string) => Promise<void>;
   /** Drop cookies + storage data for the preview partition (all tabs). */
@@ -1220,6 +1242,10 @@ export interface DesktopPreviewBridge {
   automation: {
     status: (tabId: string) => Promise<DesktopPreviewAutomationStatus>;
     snapshot: (tabId: string) => Promise<PreviewAutomationSnapshot>;
+    setViewport: (
+      tabId: string,
+      input: { readonly width: number; readonly height: number } | { readonly clear: true },
+    ) => Promise<void>;
     click: (tabId: string, input: PreviewAutomationClickInput) => Promise<void>;
     type: (tabId: string, input: PreviewAutomationTypeInput) => Promise<void>;
     press: (tabId: string, input: PreviewAutomationPressInput) => Promise<void>;
@@ -1375,7 +1401,7 @@ export interface EnvironmentApi {
   preview: {
     open: (input: typeof PreviewOpenInput.Encoded) => Promise<PreviewSessionSnapshot>;
     navigate: (input: typeof PreviewNavigateInput.Encoded) => Promise<PreviewSessionSnapshot>;
-    resize: (input: typeof PreviewResizeInput.Encoded) => Promise<PreviewSessionSnapshot>;
+    resize: (input: typeof PreviewResizeInput.Encoded) => Promise<PreviewResizeResult>;
     refresh: (input: typeof PreviewRefreshInput.Encoded) => Promise<void>;
     close: (input: typeof PreviewCloseInput.Encoded) => Promise<void>;
     list: (input: typeof PreviewListInput.Encoded) => Promise<PreviewListResult>;

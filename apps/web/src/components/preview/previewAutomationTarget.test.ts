@@ -21,7 +21,7 @@ describe("preview automation target selection", () => {
     const active = snapshot("tab-active");
     expect(
       needsPreviewAutomationSessionSync(
-        { snapshot: active, sessions: { [active.tabId]: active } },
+        { snapshot: active, sessions: { [active.tabId]: active }, serverEpoch: "server-a" },
         undefined,
       ),
     ).toBe(true);
@@ -29,9 +29,27 @@ describe("preview automation target selection", () => {
 
   it("refreshes an explicit tab only when it is absent locally", () => {
     const active = snapshot("tab-active");
-    const state = { snapshot: active, sessions: { [active.tabId]: active } };
+    const state = {
+      snapshot: active,
+      sessions: { [active.tabId]: active },
+      serverEpoch: "server-a",
+    };
     expect(needsPreviewAutomationSessionSync(state, active.tabId)).toBe(false);
     expect(needsPreviewAutomationSessionSync(state, "tab-missing")).toBe(true);
+  });
+
+  it("refreshes an explicit local tab when the server epoch is unknown", () => {
+    const active = snapshot("tab-active");
+    expect(
+      needsPreviewAutomationSessionSync(
+        {
+          snapshot: active,
+          sessions: { [active.tabId]: active },
+          serverEpoch: null,
+        },
+        active.tabId,
+      ),
+    ).toBe(true);
   });
 
   it("does not report the active tab under an unknown requested tab id", () => {
