@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import { HostProcessArguments } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -254,6 +255,52 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
 
       const web = yield* describeWith({ mode: "web", desktopTelemetryControlFd: 5 });
       expect(web.capabilities.desktopAppUpdate).toBeUndefined();
+    }),
+  );
+
+  it.effect("reports how the server is installed only when it cannot update itself", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-install-test-",
+      });
+      const serverConfig = yield* makeServerConfig(baseDir);
+      yield* fileSystem.makeDirectory(serverConfig.stateDir, { recursive: true });
+
+      const describeWith = (
+        overrides: Partial<ServerConfig.ServerConfig["Service"]>,
+        entryPath: string,
+      ) =>
+        Effect.gen(function* () {
+          const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+          return yield* serverEnvironment.getDescriptor;
+        }).pipe(
+          Effect.provide(
+            ServerEnvironment.layer.pipe(
+              Layer.provide(ServerSecretStore.layer),
+              Layer.provide(ServerConfig.layer({ ...serverConfig, ...overrides })),
+              Layer.provide(Layer.succeed(HostProcessArguments, ["/usr/bin/node", entryPath])),
+            ),
+          ),
+        );
+
+      const npx = yield* describeWith({}, "/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs");
+      expect(npx.capabilities.serverSelfUpdate).toBeUndefined();
+      expect(npx.capabilities.serverInstall).toBe("npx");
+
+      const global = yield* describeWith({}, "/usr/local/lib/node_modules/t3/dist/bin.mjs");
+      expect(global.capabilities.serverInstall).toBe("global");
+
+      const checkout = yield* describeWith({}, "/home/theo/Code/t3code/apps/server/src/bin.ts");
+      expect(checkout.capabilities.serverInstall).toBeUndefined();
+
+      // A desktop-managed server updates through the app, so it never hands out a command.
+      const desktop = yield* describeWith(
+        { mode: "desktop" },
+        "/usr/local/lib/node_modules/t3/dist/bin.mjs",
+      );
+      expect(desktop.capabilities.serverSelfUpdate).toBe("desktop-managed");
+      expect(desktop.capabilities.serverInstall).toBeUndefined();
     }),
   );
 

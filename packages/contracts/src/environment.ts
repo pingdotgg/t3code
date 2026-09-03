@@ -74,6 +74,10 @@ export const ServerSelfUpdateCapability = Schema.Literals([
 ]);
 export type ServerSelfUpdateCapability = typeof ServerSelfUpdateCapability.Type;
 
+/** How the server's CLI is installed, judged by where its entry script lives. */
+export const ServerInstallKind = Schema.Literals(["npx", "pnpm-dlx", "bunx", "global"]);
+export type ServerInstallKind = typeof ServerInstallKind.Type;
+
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   connectionProbe: Schema.optionalKey(Schema.Boolean),
@@ -117,6 +121,12 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       servers that must be relaunched manually (dev checkouts, Windows
       foreground runs, pre-update servers). */
   serverSelfUpdate: Schema.optionalKey(ServerSelfUpdateCapability),
+  /** How the server's CLI is installed, so the manual update command a
+      client hands out lands on the running install: package runners re-run
+      the pinned version, a global install is upgraded in place. Only sent
+      when serverSelfUpdate is absent. Older servers and dev checkouts leave
+      it out, and clients fall back to the npx relaunch. */
+  serverInstall: Schema.optionalKey(ServerInstallKind),
   /** Server can stream self-update progress before acknowledging the
       restart. Clients fall back to server.updateServer when absent. */
   serverSelfUpdateProgress: Schema.optionalKey(Schema.Boolean),

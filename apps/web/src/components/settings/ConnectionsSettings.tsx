@@ -119,6 +119,7 @@ import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { useUiStateStore } from "~/uiStateStore";
 import {
   resolveServerConfigVersionMismatch,
+  resolveServerInstall,
   resolveServerSelfUpdateCapability,
   supportsDesktopAppUpdate,
   supportsServerUpdateThreadContinuation,
@@ -1527,6 +1528,7 @@ function SavedBackendListRow({
               selfUpdate={resolveServerSelfUpdateCapability(environment.serverConfig)}
               desktopAppUpdate={supportsDesktopAppUpdate(environment.serverConfig)}
               threadContinuation={supportsServerUpdateThreadContinuation(environment.serverConfig)}
+              install={resolveServerInstall(environment.serverConfig)}
               targetVersion={versionMismatch.clientVersion}
               label={serverUpdateState.status === "failed" ? "Retry" : "Update"}
             />
@@ -3144,6 +3146,7 @@ export function ConnectionsSettings() {
                       threadContinuation={supportsServerUpdateThreadContinuation(
                         primaryServerConfig,
                       )}
+                      install={resolveServerInstall(primaryServerConfig)}
                       targetVersion={primaryVersionMismatch.clientVersion}
                       label={primaryServerUpdateState.status === "failed" ? "Retry" : "Update"}
                     />

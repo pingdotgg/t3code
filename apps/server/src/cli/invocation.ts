@@ -1,3 +1,4 @@
+import type { ServerInstallKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
@@ -34,6 +35,26 @@ export function detectCliRunner(entryPath: string): CliRunner | null {
     return "bunx";
   }
   return null;
+}
+
+const SERVER_INSTALL_BY_RUNNER: Record<CliRunner, ServerInstallKind> = {
+  npx: "npx",
+  "pnpm dlx": "pnpm-dlx",
+  bunx: "bunx",
+};
+
+/**
+ * How the CLI is installed, for clients that must tell the user how to update
+ * it by hand. Package runners are recognised as above; any other entry script
+ * under `node_modules` is an installed package, which `npm i -g` upgrades in
+ * place. Repo checkouts return null: no package command updates those.
+ */
+export function detectServerInstall(entryPath: string): ServerInstallKind | null {
+  const runner = detectCliRunner(entryPath);
+  if (runner !== null) {
+    return SERVER_INSTALL_BY_RUNNER[runner];
+  }
+  return entryPath.replaceAll("\\", "/").includes("/node_modules/") ? "global" : null;
 }
 
 /**

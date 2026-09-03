@@ -14,6 +14,7 @@ import {
   dismissVersionMismatch,
   isServerUpdateFailureDismissed,
   isVersionMismatchDismissed,
+  manualServerUpdateCommand,
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
   resolveVersionMismatch,
@@ -27,6 +28,15 @@ const MISMATCH_HINT =
 describe("versionSkew", () => {
   beforeEach(() => {
     branding.APP_VERSION = "0.0.34";
+  });
+
+  it("hands out the update command that matches the server install", () => {
+    expect(manualServerUpdateCommand("0.0.35", "global")).toBe("npm i -g t3@0.0.35");
+    expect(manualServerUpdateCommand("0.0.35", "npx")).toBe("npx t3@0.0.35");
+    expect(manualServerUpdateCommand("0.0.35", "pnpm-dlx")).toBe("pnpm dlx t3@0.0.35");
+    expect(manualServerUpdateCommand("0.0.35", "bunx")).toBe("bunx t3@0.0.35");
+    // Older servers and dev checkouts report no install; the relaunch stays.
+    expect(manualServerUpdateCommand("0.0.35", undefined)).toBe("npx t3@0.0.35");
   });
 
   it("dismisses only the current failed attempt without clearing its retry state", () => {

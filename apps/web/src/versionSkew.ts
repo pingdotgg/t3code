@@ -1,4 +1,9 @@
-import type { EnvironmentId, ServerConfig, ServerSelfUpdateCapability } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ServerConfig,
+  ServerInstallKind,
+  ServerSelfUpdateCapability,
+} from "@t3tools/contracts";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
@@ -114,9 +119,33 @@ export function supportsServerUpdateThreadContinuation(
   return serverConfig?.environment.capabilities.serverUpdateThreadContinuation === true;
 }
 
-/** The command to hand users whose server cannot update itself. */
-export function manualServerUpdateCommand(targetVersion: string): string {
-  return `npx t3@${targetVersion}`;
+/** How the connected server is installed, when it says. Older servers and
+    dev checkouts do not. */
+export function resolveServerInstall(
+  serverConfig: Pick<ServerConfig, "environment"> | null | undefined,
+): ServerInstallKind | undefined {
+  return serverConfig?.environment.capabilities.serverInstall;
+}
+
+/** The command to hand users whose server cannot update itself. A global
+    install is upgraded in place; a server started through a package runner
+    is relaunched at the target version. Servers that do not report their
+    install keep the npx relaunch. */
+export function manualServerUpdateCommand(
+  targetVersion: string,
+  install: ServerInstallKind | undefined,
+): string {
+  switch (install) {
+    case "global":
+      return `npm i -g t3@${targetVersion}`;
+    case "pnpm-dlx":
+      return `pnpm dlx t3@${targetVersion}`;
+    case "bunx":
+      return `bunx t3@${targetVersion}`;
+    case "npx":
+    case undefined:
+      return `npx t3@${targetVersion}`;
+  }
 }
 
 export function serverUpdateGuidance(capability: ServerSelfUpdateCapability): string {

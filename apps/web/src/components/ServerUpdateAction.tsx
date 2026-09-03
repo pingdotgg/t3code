@@ -1,4 +1,8 @@
-import type { EnvironmentId, ServerSelfUpdateCapability } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ServerInstallKind,
+  ServerSelfUpdateCapability,
+} from "@t3tools/contracts";
 import type { ServerUpdateStage, ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import {
   isAtomCommandInterrupted,
@@ -80,6 +84,7 @@ export function ServerUpdateAction({
   selfUpdate,
   desktopAppUpdate = false,
   threadContinuation = false,
+  install,
   targetVersion,
   label = "Update",
   variant = "outline",
@@ -93,6 +98,9 @@ export function ServerUpdateAction({
   readonly desktopAppUpdate?: boolean;
   /** The server can durably continue running provider turns after updating. */
   readonly threadContinuation?: boolean;
+  /** How the server is installed (capabilities.serverInstall), which picks
+      the manual update command when it cannot update itself. */
+  readonly install?: ServerInstallKind | undefined;
   readonly targetVersion: string;
   readonly label?: string;
   readonly variant?: ComponentProps<typeof Button>["variant"];
@@ -185,7 +193,7 @@ export function ServerUpdateAction({
   }
 
   if (selfUpdate === null) {
-    const command = manualServerUpdateCommand(targetVersion);
+    const command = manualServerUpdateCommand(targetVersion, install);
     return (
       <Button size={size} variant={variant} onClick={() => copyToClipboard(command, { command })}>
         Copy update command
