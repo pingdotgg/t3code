@@ -29,6 +29,13 @@ describe("composer event scopes", () => {
     expect(isInsideRestingComposerControlScope(target as unknown as EventTarget)).toBe(true);
   });
 
+  it("recognizes events from the composer context strip controls", () => {
+    vi.stubGlobal("Element", FakeElement);
+
+    const target = new FakeElement("[data-composer-context-control]");
+    expect(isInsideRestingComposerControlScope(target as unknown as EventTarget)).toBe(true);
+  });
+
   it("keeps resting image previews focused without expanding their subtree", () => {
     vi.stubGlobal("Element", FakeElement);
 
