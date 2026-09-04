@@ -73,6 +73,11 @@ describe("Pi RPC protocol", () => {
     const first = cumulativeToolOutputDelta(undefined, "hel", 8);
     const second = cumulativeToolOutputDelta(first.state, "hello", 8);
     const oversizedAppend = cumulativeToolOutputDelta(second.state, `hello${"x".repeat(20)}`, 8);
+    const appendAfterTruncation = cumulativeToolOutputDelta(
+      oversizedAppend.state,
+      `hello${"x".repeat(20)}y`,
+      8,
+    );
     const replacement = cumulativeToolOutputDelta(second.state, "different output", 8);
 
     expect(first).toEqual({
@@ -88,6 +93,11 @@ describe("Pi RPC protocol", () => {
     expect(oversizedAppend).toEqual({
       delta: "xxxxxxxx",
       state: { length: 25, tail: "xxxxxxxx" },
+      replaced: true,
+    });
+    expect(appendAfterTruncation).toEqual({
+      delta: "xxxxxxxy",
+      state: { length: 26, tail: "xxxxxxxy" },
       replaced: true,
     });
     expect(replacement.replaced).toBe(true);

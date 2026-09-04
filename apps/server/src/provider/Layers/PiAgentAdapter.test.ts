@@ -787,6 +787,45 @@ it.effect("rejects Pi modes that RPC cannot enforce without a policy bridge", ()
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
+it.effect("rejects malformed model fields in Pi state without throwing", () =>
+  Effect.gen(function* () {
+    const fake = yield* makeFakeClient;
+    const client: PiRpcClient = {
+      ...fake.client,
+      request: (command) =>
+        command.type === "get_state"
+          ? Effect.succeed({
+              type: "response" as const,
+              command: "get_state" as const,
+              success: true as const,
+              data: {
+                sessionFile: "/tmp/pi/session.jsonl",
+                sessionId: "pi-session-1",
+                model: { provider: 1, id: "model-1" },
+              },
+            })
+          : fake.client.request(command),
+    };
+    const adapter = yield* makePiAgentAdapter(
+      { enabled: true, binaryPath: "pi", agentDir: "", sessionDir: "" },
+      { instanceId, makeClient: () => Effect.succeed(client) },
+    );
+
+    const error = yield* adapter
+      .startSession({
+        threadId,
+        provider: ProviderDriverKind.make("piAgent"),
+        providerInstanceId: instanceId,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      })
+      .pipe(Effect.flip);
+
+    assert.equal(error._tag, "ProviderAdapterRequestError");
+    assert.match(error.message, /durable session file and id/i);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
 it.effect("removes a session after the Pi RPC transport fails", () =>
   Effect.gen(function* () {
     const fake = yield* makeFakeClient;

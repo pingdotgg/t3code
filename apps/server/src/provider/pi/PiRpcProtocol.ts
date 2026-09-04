@@ -328,6 +328,9 @@ export function cumulativeToolOutputDelta(
     current.slice(overlapStart, previous.length) === previous.tail;
   if (prefixStillMatches) {
     const delta = current.slice(previous.length);
+    if (current.length > previous.length && current.length > maxRetainedChars) {
+      return { delta: tail, state, replaced: true };
+    }
     if (delta.length > maxRetainedChars) return { delta: tail, state, replaced: true };
     return {
       delta,

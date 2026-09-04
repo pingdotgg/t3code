@@ -3,8 +3,8 @@ import * as NodeStringDecoder from "node:string_decoder";
 const decoder = new NodeStringDecoder.StringDecoder("utf8");
 let buffer = "";
 
-function send(message) {
-  process.stdout.write(`${JSON.stringify(message)}\n`);
+function send(message, callback) {
+  process.stdout.write(`${JSON.stringify(message)}\n`, callback);
 }
 
 function handle(command) {
@@ -33,10 +33,13 @@ function handle(command) {
   }
 
   if (command.type === "prompt") {
-    send({ id: command.id, type: "response", command: "prompt", success: true });
     if (command.message === "exit") {
-      process.exit(19);
+      send({ id: command.id, type: "response", command: "prompt", success: true }, () => {
+        process.exit(19);
+      });
+      return;
     }
+    send({ id: command.id, type: "response", command: "prompt", success: true });
     send({ type: "agent_start" });
     send({
       type: "message_update",

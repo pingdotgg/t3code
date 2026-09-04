@@ -42,5 +42,8 @@ describe("runtime mode options", () => {
 
   it("does not retain a wider mode when capabilities are explicitly empty", () => {
     expect(reconcileRuntimeMode("full-access", [])).toBe("approval-required");
+    expect(filterRuntimeModeOptions(options, []).map((option) => option.mode)).toEqual([
+      "approval-required",
+    ]);
   });
 });

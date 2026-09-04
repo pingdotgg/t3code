@@ -43,4 +43,10 @@ describe("filterRuntimeModeChoices", () => {
       filterRuntimeModeChoices(["full-access", "approval-required"]).map((choice) => choice.mode),
     ).toEqual(["approval-required", "full-access"]);
   });
+
+  it("keeps the defensive fallback visible for an explicitly empty capability list", () => {
+    expect(filterRuntimeModeChoices([]).map((choice) => choice.mode)).toEqual([
+      "approval-required",
+    ]);
+  });
 });

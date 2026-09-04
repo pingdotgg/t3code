@@ -156,12 +156,23 @@ function readPiState(input: unknown): PiState | undefined {
   const value = input as Record<string, unknown>;
   if (typeof value.sessionFile !== "string" || !value.sessionFile.trim()) return undefined;
   if (typeof value.sessionId !== "string" || !value.sessionId.trim()) return undefined;
-  const model =
-    value.model && typeof value.model === "object"
-      ? (value.model as { readonly provider?: string; readonly id?: string })
-      : value.model === null
-        ? null
-        : undefined;
+  let model: PiState["model"];
+  if (value.model === null) {
+    model = null;
+  } else if (value.model !== undefined) {
+    if (typeof value.model !== "object") return undefined;
+    const candidate = value.model as Record<string, unknown>;
+    if (
+      (candidate.provider !== undefined && typeof candidate.provider !== "string") ||
+      (candidate.id !== undefined && typeof candidate.id !== "string")
+    ) {
+      return undefined;
+    }
+    model = {
+      ...(typeof candidate.provider === "string" ? { provider: candidate.provider } : {}),
+      ...(typeof candidate.id === "string" ? { id: candidate.id } : {}),
+    };
+  }
   return {
     sessionFile: value.sessionFile,
     sessionId: value.sessionId,

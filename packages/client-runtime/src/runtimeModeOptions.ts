@@ -50,6 +50,11 @@ export function filterRuntimeModeOptions<T extends RuntimeMode | { readonly mode
   supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined,
 ): ReadonlyArray<T> {
   if (supportedRuntimeModes === undefined) return options;
+  if (supportedRuntimeModes.length === 0) {
+    return options.filter(
+      (option) => (typeof option === "string" ? option : option.mode) === SAFEST_RUNTIME_MODE,
+    );
+  }
   const supported = new Set(supportedRuntimeModes);
   return options.filter((option) =>
     supported.has(typeof option === "string" ? option : option.mode),
