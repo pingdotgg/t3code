@@ -486,6 +486,34 @@ jobs:
         with:
           targets: ${{ matrix.rust_target }}
 
+      - name: Cache Tailcat runtime
+        id: tailcat_cache
+        uses: actions/cache@v6
+        with:
+          path: native/tailcat/dist/${{ matrix.resource_key }}
+          key: tailcat-${{ matrix.resource_key }}-${{ hashFiles('native/tailcat/manifest.json') }}
+
+      # Upstream publishes no macOS Tailcat archive, so the macOS jobs compile
+      # the pinned tag with the Go toolchain the manifest names.
+      - name: Resolve Tailcat Go version
+        if: matrix.platform == 'mac' && steps.tailcat_cache.outputs.cache-hit != 'true'
+        id: tailcat_go
+        shell: bash
+        run: echo "version=$(node -p "require('./native/tailcat/manifest.json').source.goVersion")" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Go
+        if: matrix.platform == 'mac' && steps.tailcat_cache.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.tailcat_go.outputs.version }}
+          cache: false
+
+      # Verifies a cached runtime against the manifest and only downloads or
+      # builds when nothing valid is staged.
+      - name: Fetch Tailcat runtime
+        shell: bash
+        run: node scripts/fetch-tailcat.ts --platform "${{ matrix.resource_key }}"${{ matrix.platform == 'mac' && ' --build-from-source' || '' }}
+
       - name: Download relay client tracing config
         uses: actions/download-artifact@v8
         with:
@@ -806,8 +834,35 @@ jobs:
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
 
+      - name: Cache Tailcat runtimes
+        id: tailcat_cache
+        uses: actions/cache@v6
+        with:
+          path: native/tailcat/dist
+          key: tailcat-all-${{ hashFiles('native/tailcat/manifest.json') }}
+
+      - name: Resolve Tailcat Go version
+        if: steps.tailcat_cache.outputs.cache-hit != 'true'
+        id: tailcat_go
+        run: echo "version=$(node -p "require('./native/tailcat/manifest.json').source.goVersion")" >> "$GITHUB_OUTPUT"
+
+      # The npm package ships every platform's Tailcat runtime. Linux and
+      # Windows come from the pinned upstream archives; both darwin binaries are
+      # cross-compiled here (CGO_ENABLED=0, -trimpath), which yields the same
+      # bytes as the native build on the macOS runners.
+      - name: Setup Go
+        if: steps.tailcat_cache.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.tailcat_go.outputs.version }}
+          cache: false
+
+      - name: Fetch Tailcat runtimes
+        run: node scripts/fetch-tailcat.ts --all
+
       # The t3 build task depends on @t3tools/web#build, so the web client is
-      # built (once) as part of this step.
+      # built (once) as part of this step. The publish step below stages the
+      # fetched Tailcat runtimes into dist/tailcat/<platform-key>/.
       - name: Build CLI package
         run: vp run --filter t3 build
 
