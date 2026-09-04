@@ -121,6 +121,16 @@ The user message remains the actual run input. The handoff context is a separate
 
 ## Strategy Selection
 
+### Session cleanup
+
+Closing a provider session waits up to 30 seconds for cleanup. A timeout returns an error, records the session as `error`, and leaves cleanup running. It does not confirm that the old process has stopped.
+
+While cleanup is pending, the session manager rejects opens using the same session ID or one of its recorded app threads. Repeated close or detach requests wait for the original cleanup. Successful cleanup removes this block; failed cleanup keeps it until the environment restarts. Other threads can still open sessions.
+
+This applies when a session is released. Detaching a thread from a shared session does not necessarily release that session, so this is not a complete shared-process account-switching protocol.
+
+### Handoff selection
+
 Recommended strategy order:
 
 1. No handoff: target provider thread already has current app run coverage.
