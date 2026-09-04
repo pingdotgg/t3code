@@ -4,6 +4,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  openTerminalLinkInIntegratedBrowser,
   openTerminalLinkInPreview,
   TerminalLinkPreviewOpenError,
 } from "./openTerminalLinkInPreview";
@@ -82,6 +83,22 @@ describe("openTerminalLinkInPreview", () => {
 
     expect(fallbackToBrowser).toHaveBeenCalledOnce();
     expect(openPreview).not.toHaveBeenCalled();
+  });
+
+  it("honors an explicit integrated-browser action regardless of the default", async () => {
+    linkTargetMocks.preference.mockReturnValue("system");
+    const fallbackToBrowser = vi.fn();
+    const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
+
+    await openTerminalLinkInIntegratedBrowser({
+      url: "http://localhost:3000/",
+      threadRef,
+      openPreview,
+      fallbackToBrowser,
+    });
+
+    expect(openPreview).toHaveBeenCalledOnce();
+    expect(fallbackToBrowser).not.toHaveBeenCalled();
   });
 
   it("opens public URLs in-app too, not only local servers", async () => {

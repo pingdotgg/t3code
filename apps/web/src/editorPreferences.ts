@@ -7,7 +7,11 @@ import {
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
+import {
+  getLocalStorageItem,
+  setLocalStorageItemAndNotify,
+  useLocalStorage,
+} from "./hooks/useLocalStorage";
 import { useCallback, useMemo } from "react";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
@@ -51,12 +55,21 @@ export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
 
 export function resolveAndPersistPreferredEditor(
   availableEditors: readonly EditorId[],
+  editorOverride?: EditorId | null,
 ): EditorId | null {
   const availableEditorIds = new Set(availableEditors);
   const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
-  if (stored && availableEditorIds.has(stored)) return stored;
-  const editor = EDITORS.find((editor) => availableEditorIds.has(editor.id))?.id ?? null;
-  if (editor) setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
+  const editor =
+    editorOverride === undefined
+      ? stored && availableEditorIds.has(stored)
+        ? stored
+        : (EDITORS.find((candidate) => availableEditorIds.has(candidate.id))?.id ?? null)
+      : editorOverride !== null && availableEditorIds.has(editorOverride)
+        ? editorOverride
+        : null;
+  if (editor && editor !== stored) {
+    setLocalStorageItemAndNotify(LAST_EDITOR_KEY, editor, EditorId);
+  }
   return editor ?? null;
 }
 
@@ -72,6 +85,7 @@ export function useOpenInPreferredEditor(
   return useCallback(
     async (
       targetPath: string,
+      editorOverride?: EditorId | null,
     ): Promise<
       AtomCommandResult<
         EditorId,
@@ -89,7 +103,7 @@ export function useOpenInPreferredEditor(
           ),
         );
       }
-      const editor = resolveAndPersistPreferredEditor(availableEditors);
+      const editor = resolveAndPersistPreferredEditor(availableEditors, editorOverride);
       if (!editor) {
         return AsyncResult.failure(
           Cause.fail(

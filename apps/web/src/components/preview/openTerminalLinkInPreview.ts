@@ -36,23 +36,30 @@ interface OpenTerminalLinkInPreviewInput<E> {
   readonly fallbackToBrowser: () => void;
 }
 
-/**
- * Opens a terminal hyperlink where the "Open links in" setting says. Terminal
- * links are activated with the platform modifier already held, so unlike chat
- * links the modifier cannot double as the system-browser override; the setting
- * alone decides, and the system browser is the fallback whenever the in-app
- * one cannot take the URL.
- */
+export function canOpenTerminalLinkInPreview(url: string, threadRef: ScopedThreadRef): boolean {
+  return isWebUrl(url) && isPreviewSupportedInRuntime() && threadRef.threadId.length > 0;
+}
+
+/** Opens a terminal URL according to the configured browser-link target. */
 export async function openTerminalLinkInPreview<E>(
   input: OpenTerminalLinkInPreviewInput<E>,
 ): Promise<void> {
   const supportsPreview =
-    isWebUrl(input.url) &&
-    isPreviewSupportedInRuntime() &&
-    input.threadRef.threadId.length > 0 &&
+    canOpenTerminalLinkInPreview(input.url, input.threadRef) &&
     (await resolveBrowserLinkTargetPreference()) === "app";
-
   if (!supportsPreview) {
+    input.fallbackToBrowser();
+    return;
+  }
+
+  await openTerminalLinkInIntegratedBrowser(input);
+}
+
+/** Opens a terminal URL in the integrated browser for an explicit menu action. */
+export async function openTerminalLinkInIntegratedBrowser<E>(
+  input: OpenTerminalLinkInPreviewInput<E>,
+): Promise<void> {
+  if (!canOpenTerminalLinkInPreview(input.url, input.threadRef)) {
     input.fallbackToBrowser();
     return;
   }

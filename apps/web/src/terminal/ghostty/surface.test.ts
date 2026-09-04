@@ -18,6 +18,7 @@ import {
   primeTerminalCopyInput,
   resolveTerminalMouseData,
   resolveTerminalMouseTrackingState,
+  runTerminalLinkContextMenu,
   shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
   terminalGridCellAt,
@@ -756,6 +757,78 @@ describe("application mouse reporting", () => {
       tracking: false,
       motionData: "\u001b[<35;8;4M",
     });
+  });
+
+  it("pins a right-clicked link highlight until its context menu closes", async () => {
+    const link = {
+      text: "src/terminal.ts",
+      range: {
+        start: { x: 3, y: 2 },
+        end: { x: 17, y: 2 },
+      },
+    };
+    const highlights: Array<typeof link | null> = [];
+    let closeMenu = () => {};
+    const menuClosed = new Promise<void>((resolve) => {
+      closeMenu = resolve;
+    });
+
+    const contextMenu = runTerminalLinkContextMenu({
+      link,
+      setContextMenuLink: (nextLink) => highlights.push(nextLink),
+      showContextMenu: () => menuClosed,
+    });
+
+    expect(highlights).toEqual([link]);
+    closeMenu();
+    await contextMenu;
+    expect(highlights).toEqual([link, null]);
+  });
+
+  it("does not let an older context menu clear a newer link highlight", async () => {
+    const firstLink = {
+      text: "src/first.ts",
+      range: {
+        start: { x: 3, y: 2 },
+        end: { x: 14, y: 2 },
+      },
+    };
+    const secondLink = {
+      text: "src/second.ts",
+      range: {
+        start: { x: 5, y: 4 },
+        end: { x: 17, y: 4 },
+      },
+    };
+    const highlights: Array<typeof firstLink | null> = [];
+    let activeRequest = 0;
+    let closeFirst = () => {};
+    let closeSecond = () => {};
+    const firstClosed = new Promise<void>((resolve) => {
+      closeFirst = resolve;
+    });
+    const secondClosed = new Promise<void>((resolve) => {
+      closeSecond = resolve;
+    });
+    const openMenu = (link: typeof firstLink, menuClosed: Promise<void>) => {
+      const request = ++activeRequest;
+      return runTerminalLinkContextMenu({
+        link,
+        setContextMenuLink: (nextLink) => highlights.push(nextLink),
+        showContextMenu: () => menuClosed,
+        isCurrent: () => request === activeRequest,
+      });
+    };
+
+    const firstMenu = openMenu(firstLink, firstClosed);
+    const secondMenu = openMenu(secondLink, secondClosed);
+    closeFirst();
+    await firstMenu;
+    expect(highlights).toEqual([firstLink, secondLink]);
+
+    closeSecond();
+    await secondMenu;
+    expect(highlights).toEqual([firstLink, secondLink, null]);
   });
 });
 
