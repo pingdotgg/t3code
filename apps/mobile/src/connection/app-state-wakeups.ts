@@ -16,3 +16,17 @@ export function mobileApplicationActiveWakeup(
     ? "application-active-reconnect"
     : "application-active-probe";
 }
+
+export function mobileSuspensionStartedAtMs(
+  startedAtMs: number | null,
+  appState: string,
+  nowMs: number,
+): number | null {
+  if (appState === "background" || appState === "inactive") {
+    return startedAtMs ?? nowMs;
+  }
+  if (appState === "active") {
+    return null;
+  }
+  return startedAtMs;
+}

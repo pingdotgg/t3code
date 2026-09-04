@@ -648,7 +648,7 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
-  it.effect("does not let platform wakeups reset an in-flight attempt", () =>
+  it.effect("does not let credential wakeups reset an in-flight primary attempt", () =>
     Effect.gen(function* () {
       const firstAttemptStarted = yield* Deferred.make<void>();
       const harness = yield* makeHarness({
@@ -661,11 +661,7 @@ describe("EnvironmentSupervisor", () => {
 
       yield* Deferred.await(firstAttemptStarted);
       yield* Effect.all(
-        [
-          harness.wake("credentials-changed"),
-          harness.wake("application-active"),
-          harness.wake("credentials-changed"),
-        ],
+        [harness.wake("credentials-changed"), harness.wake("credentials-changed")],
         { concurrency: "unbounded" },
       );
       yield* Effect.yieldNow;
@@ -843,6 +839,35 @@ describe("EnvironmentSupervisor", () => {
       );
 
       yield* harness.wake("application-active-reconnect");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2 && state.attempt === 1,
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("restarts the retry ladder when a short resume interrupts connection setup", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: (attempt) => (attempt === 2 ? Effect.never : Effect.succeed(PREPARED_CONNECTION)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.closeLatestSession();
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      yield* TestClock.adjust("3 seconds");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connecting" && state.attempt === 2,
+      );
+
+      yield* harness.wake("application-active-probe");
       yield* awaitState(
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 2 && state.attempt === 1,
