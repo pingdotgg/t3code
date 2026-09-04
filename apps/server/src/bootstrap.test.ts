@@ -55,6 +55,8 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+const nullDevice = windowsHost ? "\\\\.\\NUL" : "/dev/null";
 const TestEnvelopeSchema = Schema.Struct({ mode: Schema.String });
 const encodeTestEnvelopeSchema = Schema.encodeEffect(Schema.fromJsonString(TestEnvelopeSchema));
 
@@ -146,7 +148,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
 
   it.effect("returns none when the fd is unavailable", () =>
     Effect.gen(function* () {
-      const fd = NodeFS.openSync("/dev/null", "r");
+      const fd = NodeFS.openSync(nullDevice, "r");
       NodeFS.closeSync(fd);
 
       const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, { timeoutMs: 100 });
@@ -157,7 +159,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
   it.effect("preserves fd and cause when stat fails for a non-availability reason", () =>
     Effect.gen(function* () {
       const fd = yield* Effect.acquireRelease(
-        Effect.sync(() => NodeFS.openSync("/dev/null", "r")),
+        Effect.sync(() => NodeFS.openSync(nullDevice, "r")),
         (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
       );
 
@@ -201,40 +203,43 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
     }),
   );
 
-  it.effect("returns none when the bootstrap read times out before any value arrives", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bootstrap-" });
-      const fifoPath = NodePath.join(tempDir, "bootstrap.pipe");
+  // Needs a FIFO, which mkfifo creates; Windows has neither.
+  it.effect.skipIf(windowsHost)(
+    "returns none when the bootstrap read times out before any value arrives",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bootstrap-" });
+        const fifoPath = NodePath.join(tempDir, "bootstrap.pipe");
 
-      yield* Effect.sync(() => NodeChildProcess.execFileSync("mkfifo", [fifoPath]));
+        yield* Effect.sync(() => NodeChildProcess.execFileSync("mkfifo", [fifoPath]));
 
-      const _writer = yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          NodeChildProcess.spawn("sh", ["-c", 'exec 3>"$1"; sleep 60', "sh", fifoPath], {
-            stdio: ["ignore", "ignore", "ignore"],
-          }),
-        ),
-        (writer) =>
-          Effect.sync(() => {
-            writer.kill("SIGKILL");
-          }),
-      );
+        const _writer = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            NodeChildProcess.spawn("sh", ["-c", 'exec 3>"$1"; sleep 60', "sh", fifoPath], {
+              stdio: ["ignore", "ignore", "ignore"],
+            }),
+          ),
+          (writer) =>
+            Effect.sync(() => {
+              writer.kill("SIGKILL");
+            }),
+        );
 
-      const fd = yield* Effect.acquireRelease(
-        Effect.sync(() => NodeFS.openSync(fifoPath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
-      );
+        const fd = yield* Effect.acquireRelease(
+          Effect.sync(() => NodeFS.openSync(fifoPath, "r")),
+          (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
+        );
 
-      const fiber = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
-        timeoutMs: 100,
-      }).pipe(Effect.forkScoped);
+        const fiber = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
+          timeoutMs: 100,
+        }).pipe(Effect.forkScoped);
 
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust(Duration.millis(100));
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(Duration.millis(100));
 
-      const payload = yield* Fiber.join(fiber);
-      assertNone(payload);
-    }).pipe(Effect.provide(TestClock.layer())),
+        const payload = yield* Fiber.join(fiber);
+        assertNone(payload);
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 });

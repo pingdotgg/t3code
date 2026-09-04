@@ -223,6 +223,10 @@
       "types": "./src/hostProcess.ts",
       "import": "./src/hostProcess.ts"
     },
+    "./testing/longTempDir": {
+      "types": "./src/testing/longTempDir.ts",
+      "import": "./src/testing/longTempDir.ts"
+    },
     "./testing/symlinks": {
       "types": "./src/testing/symlinks.ts",
       "import": "./src/testing/symlinks.ts"
