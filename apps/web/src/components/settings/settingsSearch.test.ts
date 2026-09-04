@@ -138,9 +138,16 @@ describe("searchSettings", () => {
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
+      hasTailcatRemoteAccess: false,
+      hasFederation: false,
     });
 
     const gatedIds = new Set<string>([
+      "tailcat-remote-access",
+      "tailcat-connection-code",
+      "tailcat-trusted-devices",
+      "federation",
+      "federation-peers",
       "follow-change-request-templates",
       "git-fetch-interval",
       "network-access",
@@ -166,6 +173,8 @@ describe("searchSettings", () => {
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: true,
+      hasTailcatRemoteAccess: false,
+      hasFederation: false,
     });
 
     expect(searchSettings("auto-settle", available).map((item) => item.id)).toEqual([
@@ -173,6 +182,40 @@ describe("searchSettings", () => {
       "auto-settle-merged-threads",
       "days-before-auto-settle",
     ]);
+  });
+
+  it("shows Tailcat and federation settings only when the server advertises them", () => {
+    const base = {
+      hasCloudPublicConfig: false,
+      hasPrimaryEnvironment: true,
+      hasProviderSettingsEnvironment: false,
+      canManageLocalBackend: true,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    };
+    const withBoth = filterAvailableSettingsSearchItems({
+      ...base,
+      hasTailcatRemoteAccess: true,
+      hasFederation: true,
+    });
+    expect(searchSettings("tailcat", withBoth).map((item) => item.id)).toEqual([
+      "tailcat-remote-access",
+      "tailcat-connection-code",
+      "tailcat-trusted-devices",
+      "remote-environments",
+    ]);
+    expect(searchSettings("peers", withBoth).map((item) => item.id)).toEqual([
+      "federation-peers",
+      "federation",
+    ]);
+
+    const withoutEither = filterAvailableSettingsSearchItems({
+      ...base,
+      hasTailcatRemoteAccess: false,
+      hasFederation: false,
+    });
+    expect(searchSettings("trusted devices", withoutEither)).toEqual([]);
+    expect(searchSettings("federation", withoutEither)).toEqual([]);
   });
 
   it("keeps catalog result ids unique", () => {

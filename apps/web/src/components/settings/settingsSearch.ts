@@ -31,6 +31,10 @@ export interface SettingsSearchItem {
   readonly localBackendManagementOnly?: boolean;
   readonly wslAvailableOnly?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
+  /** Its row only renders when the primary server can serve itself over Tailcat. */
+  readonly requiresTailcatRemoteAccess?: boolean;
+  /** Its section only renders when the primary server speaks the federation protocol. */
+  readonly requiresFederation?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -40,6 +44,8 @@ export interface SettingsSearchAvailability {
   readonly canManageLocalBackend: boolean;
   readonly isWslSettingsRowVisible: boolean;
   readonly hasThreadAutoSettlement: boolean;
+  readonly hasTailcatRemoteAccess: boolean;
+  readonly hasFederation: boolean;
 }
 
 /**
@@ -481,6 +487,32 @@ export const SETTINGS_SEARCH_ITEMS = [
     cloudOnly: true,
   },
   {
+    id: "tailcat-remote-access",
+    title: "Remote access via Tailcat",
+    to: "/settings/connections",
+    searchTerms: [
+      "tailcat remote access wireguard tunnel relay derp enable disable address runtime identity regenerate headless t3 serve",
+    ],
+    localBackendManagementOnly: true,
+    requiresTailcatRemoteAccess: true,
+  },
+  {
+    id: "tailcat-connection-code",
+    title: "Connection code",
+    to: "/settings/connections",
+    searchTerms: ["tailcat create code qr pair another device single use expires"],
+    localBackendManagementOnly: true,
+    requiresTailcatRemoteAccess: true,
+  },
+  {
+    id: "tailcat-trusted-devices",
+    title: "Trusted devices",
+    to: "/settings/connections",
+    searchTerms: ["tailcat node key fingerprint rename revoke last seen paired devices"],
+    localBackendManagementOnly: true,
+    requiresTailcatRemoteAccess: true,
+  },
+  {
     id: "connections-environment",
     title: "This environment",
     to: "/settings/connections",
@@ -492,7 +524,29 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "remote-environments",
     title: "Remote environments",
     to: "/settings/connections",
-    searchTerms: ["add pair backend host code ssh config agent tunnel saved t3 connect"],
+    searchTerms: [
+      "add pair backend host code ssh config agent tunnel saved t3 connect tailcat connection code",
+    ],
+  },
+  {
+    id: "federation",
+    title: "Federation",
+    to: "/settings/connections",
+    searchTerms: [
+      "peers peer code add peer remote runs run on peer artifacts diff scopes identity fingerprint server to server",
+    ],
+    localBackendManagementOnly: true,
+    requiresFederation: true,
+  },
+  {
+    id: "federation-peers",
+    title: "Peers",
+    to: "/settings/connections",
+    searchTerms: [
+      "federation add peer code remove refresh online offline fingerprint scopes granted allowed",
+    ],
+    localBackendManagementOnly: true,
+    requiresFederation: true,
   },
   {
     id: "archive",
@@ -530,7 +584,9 @@ export function filterAvailableSettingsSearchItems(
       (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&
       (!item.localBackendManagementOnly || availability.canManageLocalBackend) &&
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
-      (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement),
+      (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
+      (!item.requiresTailcatRemoteAccess || availability.hasTailcatRemoteAccess) &&
+      (!item.requiresFederation || availability.hasFederation),
   );
 }
 

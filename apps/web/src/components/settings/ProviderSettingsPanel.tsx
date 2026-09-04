@@ -23,6 +23,7 @@ import {
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { ChevronDownIcon, LoaderIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -155,6 +156,10 @@ function providerEnvironmentDetail(environment: EnvironmentPresentation): string
   if (environment.entry.target._tag === "PrimaryConnectionTarget") return "Primary device";
   if (environment.relayManaged) return "T3 Connect";
   if (environment.entry.target._tag === "SshConnectionTarget") return "SSH";
+  if (environment.entry.target._tag === "TailcatConnectionTarget") {
+    const profile = Option.getOrNull(environment.entry.profile);
+    return profile?._tag === "TailcatConnectionProfile" ? `Tailcat ${profile.address}` : "Tailcat";
+  }
   if (isDesktopLocalConnectionTarget(environment.entry.target)) return "Local device";
   return environment.displayUrl ?? "Remote device";
 }

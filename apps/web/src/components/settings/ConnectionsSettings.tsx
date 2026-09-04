@@ -1,4 +1,10 @@
-import { ChevronsLeftRightEllipsisIcon, PlusIcon, QrCodeIcon, TerminalIcon } from "lucide-react";
+import {
+  ChevronsLeftRightEllipsisIcon,
+  PlusIcon,
+  QrCodeIcon,
+  RadioTowerIcon,
+  TerminalIcon,
+} from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type KeyboardEvent,
@@ -59,6 +65,13 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconPicker } from "./EnvironmentIconPicker";
+import { FederationSection } from "./FederationSection";
+import { TailcatConnectForm } from "./TailcatConnectForm";
+import {
+  TailcatEnvironmentDetailsDialog,
+  useTailcatEnvironmentSubtitle,
+} from "./TailcatEnvironmentDetails";
+import { TailcatRemoteAccessRow } from "./TailcatRemoteAccessSection";
 import { Input } from "../ui/input";
 import { CommandShortcut } from "../ui/command";
 import {
@@ -137,6 +150,7 @@ import {
   refreshDesktopNetworkAccessState,
 } from "~/state/desktopNetworkAccess";
 import { desktopSshHostsStateAtom, filterDiscoveredSshHosts } from "~/state/desktopSshHosts";
+import { isDesktopTailcatAvailable } from "~/state/desktopTailcat";
 import { desktopWslStateAtom, refreshDesktopWslState } from "~/state/desktopWslState";
 import {
   type EnvironmentPresentation,
@@ -157,6 +171,9 @@ import {
 } from "../../keybindings";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
+
+/** How a new saved environment is added: pairing link, desktop SSH, or a Tailcat connection code. */
+type SavedBackendMode = "remote" | "ssh" | "tailcat";
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 
@@ -1435,8 +1452,16 @@ function SavedBackendListRow({
     environment.entry.profile.value._tag === "SshConnectionProfile"
       ? environment.entry.profile.value.target
       : null;
+  const tailcatProfile =
+    environment.entry.target._tag === "TailcatConnectionTarget" &&
+    Option.isSome(environment.entry.profile) &&
+    environment.entry.profile.value._tag === "TailcatConnectionProfile"
+      ? environment.entry.profile.value
+      : null;
+  const tailcatSubtitle = useTailcatEnvironmentSubtitle(tailcatProfile?.connectionId ?? null);
   const metadataBits = [
     sshTarget ? `SSH ${formatDesktopSshTarget(sshTarget)}` : null,
+    tailcatSubtitle,
     environment.relayManaged ? "T3 Connect" : null,
   ].filter((value): value is string => value !== null);
 
@@ -1546,6 +1571,15 @@ function SavedBackendListRow({
             </Tooltip>
           ) : (
             <>
+              {tailcatProfile ? (
+                <TailcatEnvironmentDetailsDialog
+                  environmentId={environmentId}
+                  environmentLabel={environment.label}
+                  profile={tailcatProfile}
+                  removing={removingEnvironmentId === environmentId}
+                  onRemove={onRemove}
+                />
+              ) : null}
               {!isConnected ? (
                 <Button
                   size="xs"
@@ -1803,7 +1837,7 @@ export function ConnectionsSettings() {
   >(null);
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
-  const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
+  const [savedBackendMode, setSavedBackendMode] = useState<SavedBackendMode>("remote");
   const [savedBackendHost, setSavedBackendHost] = useState("");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
@@ -1853,6 +1887,10 @@ export function ConnectionsSettings() {
     DesktopServerExposureState["mode"] | null
   >(null);
   const primaryServerConfig = primaryEnvironment?.serverConfig ?? null;
+  const supportsTailcatRemoteAccess =
+    primaryServerConfig?.environment.capabilities.tailcatRemoteAccess === true;
+  const supportsFederation = primaryServerConfig?.environment.capabilities.federation !== undefined;
+  const isDesktopTailcatReady = isDesktopTailcatAvailable();
   const primaryVersionMismatch = resolveServerConfigVersionMismatch(primaryServerConfig);
   const primaryServerUpdateState = useAtomValue(
     serverEnvironment.updateStateAtom(primaryEnvironmentId),
@@ -2432,12 +2470,15 @@ export function ConnectionsSettings() {
   }, []);
 
   const renderConnectionModeCard = (input: {
-    readonly mode: "remote" | "ssh";
+    readonly mode: SavedBackendMode;
     readonly title: string;
     readonly description: string;
     readonly icon?: ReactNode;
+    /** Shown but inert, with the reason under the description (e.g. "Desktop app required"). */
+    readonly unavailableReason?: string;
   }) => {
     const selected = savedBackendMode === input.mode;
+    const unavailable = input.unavailableReason !== undefined;
     return (
       <button
         type="button"
@@ -2445,8 +2486,9 @@ export function ConnectionsSettings() {
         className={cn(
           "group flex min-h-24 items-start gap-3 rounded-lg border p-4 text-left",
           selected ? "border-primary/50 bg-primary/5" : "border-border/60 hover:bg-muted/40",
+          unavailable && "opacity-60",
         )}
-        disabled={isAddingSavedBackend}
+        disabled={isAddingSavedBackend || unavailable}
         onClick={() => {
           setSavedBackendMode(input.mode);
         }}
@@ -2468,10 +2510,28 @@ export function ConnectionsSettings() {
           <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
             {input.description}
           </span>
+          {input.unavailableReason ? (
+            <span className="mt-1 block text-[11px] text-muted-foreground/70">
+              {input.unavailableReason}
+            </span>
+          ) : null}
         </span>
       </button>
     );
   };
+  const renderTailcatModeBody = () => (
+    <TailcatConnectForm
+      mode="add"
+      onConnected={() => {
+        setSavedBackendError(null);
+        setAddBackendDialogOpen(false);
+      }}
+    />
+  );
+  const renderTailcatRemoteAccessRow = () =>
+    supportsTailcatRemoteAccess && primaryEnvironmentId !== null ? (
+      <TailcatRemoteAccessRow environmentId={primaryEnvironmentId} />
+    ) : null;
 
   const renderRemoteFields = () => (
     <div className="space-y-3">
@@ -3168,12 +3228,14 @@ export function ConnectionsSettings() {
                 {renderNetworkAccessRow()}
                 {renderEndpointRows("endpoint-rail")}
                 {renderTailscaleRow()}
+                {renderTailcatRemoteAccessRow()}
                 {renderWslRow()}
                 <CloudLinkRow canManageRelay={canManageRelay} />
               </>
             ) : (
               <>
                 {renderDisabledNetworkAccessRow()}
+                {renderTailcatRemoteAccessRow()}
                 <CloudLinkRow canManageRelay={canManageRelay} />
               </>
             )}
@@ -3522,7 +3584,12 @@ export function ConnectionsSettings() {
               </DialogHeader>
               <DialogPanel>
                 <div className="space-y-4">
-                  <div className="grid gap-3 sm:grid-cols-2">
+                  <div
+                    className={cn(
+                      "grid gap-3",
+                      desktopBridge ? "sm:grid-cols-3" : "sm:grid-cols-2",
+                    )}
+                  >
                     {renderConnectionModeCard({
                       mode: "remote",
                       title: "Remote link",
@@ -3537,9 +3604,23 @@ export function ConnectionsSettings() {
                           icon: <TerminalIcon aria-hidden className="size-4" />,
                         })
                       : null}
+                    {renderConnectionModeCard({
+                      mode: "tailcat",
+                      title: "Tailcat",
+                      description:
+                        "Paste a connection code from the other machine. Tunnels with relay fallback, no VPN account.",
+                      icon: <RadioTowerIcon aria-hidden className="size-4" />,
+                      ...(isDesktopTailcatReady
+                        ? {}
+                        : { unavailableReason: "Desktop app required" }),
+                    })}
                   </div>
                   <AnimatedHeight>
-                    {savedBackendMode === "ssh" ? renderSshFields() : renderRemoteModeBody()}
+                    {savedBackendMode === "ssh"
+                      ? renderSshFields()
+                      : savedBackendMode === "tailcat"
+                        ? renderTailcatModeBody()
+                        : renderRemoteModeBody()}
                   </AnimatedHeight>
                 </div>
               </DialogPanel>
@@ -3561,6 +3642,10 @@ export function ConnectionsSettings() {
           savedEnvironments={savedEnvironments}
         />
       </SettingsSection>
+
+      {canManageLocalBackend && supportsFederation && primaryEnvironmentId !== null ? (
+        <FederationSection environmentId={primaryEnvironmentId} />
+      ) : null}
     </SettingsPageContainer>
   );
 }

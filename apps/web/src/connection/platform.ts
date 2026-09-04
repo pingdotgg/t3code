@@ -4,14 +4,18 @@ import {
   EnvironmentOwnedDataCleanup,
   PlatformConnectionSource,
   PrimaryEnvironmentAuth,
+  type ProvisionedTailcatEnvironment,
+  type PreparedTailcatEnvironment,
   RelayDeviceIdentity,
   SshEnvironmentGateway,
+  TailcatEnvironmentGateway,
 } from "@t3tools/client-runtime/platform";
 import {
   BearerConnectionCredential,
   BearerConnectionProfile,
   BearerConnectionRegistration,
   BearerConnectionTarget,
+  type ConnectionAttemptError,
   ConnectionBlockedError,
   ConnectionTransientError,
   Connectivity,
@@ -21,7 +25,10 @@ import {
   PrimaryConnectionTarget,
   Wakeups,
 } from "@t3tools/client-runtime/connection";
-import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
+import {
+  bootstrapRemoteBearerSession,
+  type RemoteEnvironmentAuthError,
+} from "@t3tools/client-runtime/authorization";
 import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
 import { managedRelayAccountChanges, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import { EnvironmentRpcRequestObserver } from "@t3tools/client-runtime/rpc";
@@ -30,7 +37,10 @@ import {
   type DesktopBridge,
   type DesktopEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
+  type DesktopTailcatEnvironmentEnsureInput,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
+  type TailcatConnectionCodePayload,
+  TailcatFailureCode,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -39,6 +49,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/unstable/http";
 
@@ -53,6 +64,7 @@ import { clearComposerDraftsEnvironment } from "../composerDraftStore";
 import { isHostedStaticApp } from "../hostedPairing";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { acknowledgeRpcRequest, trackRpcRequestSent } from "../rpc/requestLatencyState";
+import { reportTailcatProvisioningProgress } from "../state/tailcatProvisioning";
 import {
   desktopLocalConnectionId,
   readDesktopSecondaryBootstrapsResult,
@@ -175,6 +187,181 @@ export const provisionDesktopSshEnvironment = Effect.fn(
   };
 });
 
+const TAILCAT_DESKTOP_REQUIRED_DETAIL =
+  "Tailcat environments need the T3 Code desktop app, which runs the tunnel for this device.";
+
+export const TAILCAT_RUNTIME_INSTALL_HINT =
+  "Install the tailcat runtime or point T3CODE_TAILCAT_BINARY at one, then restart T3 Code.";
+
+const isTailcatFailureCode = Schema.is(TailcatFailureCode);
+
+/**
+ * Splits the message the desktop forwarder sends across IPC. Electron prefixes
+ * it with the invoked channel and the desktop error itself carries a
+ * `[tailcat:<code>]` marker, so the renderer can map it back to a failure code.
+ */
+export function parseTailcatBridgeError(cause: unknown): {
+  readonly code: TailcatFailureCode | null;
+  readonly detail: string;
+} {
+  const raw = cause instanceof Error ? cause.message : String(cause);
+  const unprefixed = raw
+    .replace(/^Error invoking remote method '[^']+':\s*/u, "")
+    .replace(/^(?:[A-Za-z]*Error):\s*/u, "")
+    .trim();
+  const marker = /^\[tailcat:([a-z-]+)\]\s*/u.exec(unprefixed);
+  if (marker === null) {
+    return { code: null, detail: unprefixed || "The Tailcat tunnel failed." };
+  }
+  const code = marker[1];
+  return {
+    code: code !== undefined && isTailcatFailureCode(code) ? code : null,
+    detail: unprefixed.slice(marker[0].length).trim() || "The Tailcat tunnel failed.",
+  };
+}
+
+/**
+ * Maps a forwarder failure onto the connection error model. Missing or
+ * incompatible runtimes block with an install hint; anything about the remote
+ * side (not trusted yet, offline, timed out) is transient so the supervisor
+ * keeps retrying once the other machine is reachable again.
+ */
+export function tailcatPreparationError(cause: unknown): ConnectionAttemptError {
+  const { code, detail } = parseTailcatBridgeError(cause);
+  switch (code) {
+    case "binary-missing":
+    case "binary-not-executable":
+    case "version-incompatible":
+      return new ConnectionBlockedError({
+        reason: "unsupported",
+        detail: `${detail} ${TAILCAT_RUNTIME_INSTALL_HINT}`,
+      });
+    case "address-invalid":
+    case "identity-failed":
+      return new ConnectionBlockedError({ reason: "configuration", detail });
+    case "remote-unavailable":
+    case "timeout":
+    case "startup-failed":
+    case "process-exited":
+    case "port-in-use":
+    case "unknown":
+      return new ConnectionTransientError({ reason: "tailcat-unavailable", detail });
+    case null: {
+      const lower = detail.toLowerCase();
+      if (lower.includes("binary") || lower.includes("executable")) {
+        return new ConnectionBlockedError({
+          reason: "unsupported",
+          detail: `${detail} ${TAILCAT_RUNTIME_INSTALL_HINT}`,
+        });
+      }
+      return new ConnectionTransientError({
+        reason: "tailcat-unavailable",
+        detail:
+          lower.includes("not trusted") || lower.includes("offline") || lower.includes("time")
+            ? detail
+            : `Could not prepare the Tailcat environment: ${detail}`,
+      });
+    }
+  }
+}
+
+/** A connection code's one-time credential was already redeemed or expired. */
+function tailcatPairingError(error: RemoteEnvironmentAuthError): ConnectionAttemptError {
+  if (error._tag === "EnvironmentAuthInvalidError") {
+    return new ConnectionBlockedError({
+      reason: "authentication",
+      detail:
+        "This connection code was already used or has expired. Create a fresh code on the other machine and paste it again.",
+      traceId: error.traceId,
+    });
+  }
+  return mapRemoteEnvironmentError(error);
+}
+
+const requireTailcatBridge = Effect.fn("web.connectionPlatform.tailcat.requireBridge")(
+  function* () {
+    const bridge = window.desktopBridge;
+    const ensureTailcatEnvironment = bridge?.ensureTailcatEnvironment;
+    if (bridge === undefined || ensureTailcatEnvironment === undefined) {
+      return yield* new ConnectionBlockedError({
+        reason: "unsupported",
+        detail: TAILCAT_DESKTOP_REQUIRED_DETAIL,
+      });
+    }
+    return {
+      ensureTailcatEnvironment: (input: DesktopTailcatEnvironmentEnsureInput) =>
+        ensureTailcatEnvironment.call(bridge, input),
+    };
+  },
+);
+
+const ensureDesktopTailcatEnvironment = Effect.fn("web.connectionPlatform.tailcat.ensure")(
+  function* (input: DesktopTailcatEnvironmentEnsureInput) {
+    const { ensureTailcatEnvironment } = yield* requireTailcatBridge();
+    return yield* Effect.tryPromise({
+      try: () => ensureTailcatEnvironment(input),
+      catch: tailcatPreparationError,
+    });
+  },
+);
+
+/**
+ * Redeems a pasted connection code: start the forward, learn which
+ * environment answers through it, then trade the one-time credential for a
+ * bearer session while presenting this device's Tailcat key so the remote
+ * server keeps admitting it after the pairing window closes.
+ */
+export const provisionDesktopTailcatEnvironment = Effect.fn(
+  "web.connectionPlatform.tailcat.provisionDesktop",
+)(
+  function* (payload: TailcatConnectionCodePayload) {
+    const pairingToken = payload.pairingToken;
+    if (pairingToken === undefined) {
+      return yield* new ConnectionBlockedError({
+        reason: "authentication",
+        detail:
+          "This connection code has no pairing credential. Ask the other machine for a fresh code.",
+      });
+    }
+    const nowMs = yield* Clock.currentTimeMillis;
+    if (payload.expiresAt !== undefined && Date.parse(payload.expiresAt) <= nowMs) {
+      return yield* new ConnectionBlockedError({
+        reason: "authentication",
+        detail:
+          "This connection code has expired. Create a fresh code on the other machine and paste it again.",
+      });
+    }
+    const connectionId = `tailcat:${payload.environmentId ?? payload.address}`;
+    yield* Effect.sync(() =>
+      reportTailcatProvisioningProgress({ connectionId, phase: "starting-tunnel" }),
+    );
+    const bootstrap = yield* ensureDesktopTailcatEnvironment({
+      connectionId,
+      address: payload.address,
+      remotePort: payload.port,
+    });
+    yield* Effect.sync(() => reportTailcatProvisioningProgress({ connectionId, phase: "pairing" }));
+    const descriptor = yield* fetchRemoteEnvironmentDescriptor({
+      httpBaseUrl: bootstrap.httpBaseUrl,
+    }).pipe(Effect.mapError(mapRemoteEnvironmentError));
+    const access = yield* bootstrapRemoteBearerSession({
+      httpBaseUrl: bootstrap.httpBaseUrl,
+      credential: pairingToken,
+      scopes: AuthStandardClientScopes,
+      clientMetadata: clientMetadata(),
+      clientTailcatNodeKey: bootstrap.clientNodeKey,
+    }).pipe(Effect.mapError(tailcatPairingError));
+    return {
+      environmentId: descriptor.environmentId,
+      label: descriptor.label,
+      bootstrap,
+      bearerToken: access.access_token,
+    } satisfies ProvisionedTailcatEnvironment;
+  },
+  Effect.provide(FetchHttpClient.layer),
+  Effect.ensuring(Effect.sync(() => reportTailcatProvisioningProgress(null))),
+);
+
 const capabilitiesLayer = Layer.effectContext(
   Effect.sync(() => {
     const presentation = ClientPresentation.of({
@@ -279,11 +466,39 @@ const capabilitiesLayer = Layer.effectContext(
       }),
     });
 
+    const tailcat = TailcatEnvironmentGateway.of({
+      provision: provisionDesktopTailcatEnvironment,
+      prepare: Effect.fn("web.connectionPlatform.tailcat.prepare")(function* (input) {
+        const bootstrap = yield* ensureDesktopTailcatEnvironment({
+          connectionId: input.connectionId,
+          address: input.address,
+          remotePort: input.remotePort,
+        });
+        return { bootstrap } satisfies PreparedTailcatEnvironment;
+      }),
+      disconnect: Effect.fn("web.connectionPlatform.tailcat.disconnect")(function* (connectionId) {
+        const bridge = window.desktopBridge;
+        const disconnectTailcatEnvironment = bridge?.disconnectTailcatEnvironment;
+        if (bridge === undefined || disconnectTailcatEnvironment === undefined) {
+          return;
+        }
+        yield* Effect.tryPromise({
+          try: () => disconnectTailcatEnvironment.call(bridge, connectionId),
+          catch: (cause) =>
+            new ConnectionTransientError({
+              reason: "tailcat-unavailable",
+              detail: `Could not stop the Tailcat tunnel: ${parseTailcatBridgeError(cause).detail}`,
+            }),
+        });
+      }),
+    });
+
     return Context.make(CloudSession, cloudSession).pipe(
       Context.add(PrimaryEnvironmentAuth, primaryAuth),
       Context.add(RelayDeviceIdentity, identity),
       Context.add(ClientPresentation, presentation),
       Context.add(SshEnvironmentGateway, ssh),
+      Context.add(TailcatEnvironmentGateway, tailcat),
     );
   }),
 );

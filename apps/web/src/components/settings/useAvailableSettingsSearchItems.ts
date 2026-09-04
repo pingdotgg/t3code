@@ -43,6 +43,9 @@ export function useAvailableSettingsSearchItems() {
         }),
         hasThreadAutoSettlement:
           primaryServerConfig?.environment.capabilities.threadAutoSettlement === true,
+        hasTailcatRemoteAccess:
+          primaryServerConfig?.environment.capabilities.tailcatRemoteAccess === true,
+        hasFederation: primaryServerConfig?.environment.capabilities.federation !== undefined,
       }),
     [
       canManageLocalBackend,

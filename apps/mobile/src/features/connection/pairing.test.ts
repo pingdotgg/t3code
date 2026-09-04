@@ -3,9 +3,14 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildPairingUrl,
   extractPairingUrlFromQrPayload,
+  PairingInputNotPairableError,
   PairingQrPayloadEmptyError,
   parsePairingUrl,
+  unsupportedPairingInputMessage,
 } from "./pairing";
+
+const TAILCAT_CODE = "t3c://tailcat/eyJ2IjoxfQ";
+const PEER_CODE = "t3c://peer/eyJ2IjoxfQ";
 
 describe("buildPairingUrl", () => {
   it("uses HTTP for a schemeless IP address", () => {
@@ -42,6 +47,15 @@ describe("extractPairingUrlFromQrPayload", () => {
     ).toBe("https://remote.example.com/pair#token=pairing-token");
   });
 
+  it("explains where a scanned Tailcat connection code belongs", () => {
+    expect(() => extractPairingUrlFromQrPayload(TAILCAT_CODE)).toThrowError(
+      PairingInputNotPairableError,
+    );
+    expect(() => extractPairingUrlFromQrPayload(TAILCAT_CODE)).toThrowError(
+      "This is a Tailcat connection code. Paste it in the desktop app under Add environment → Tailcat.",
+    );
+  });
+
   it("rejects empty qr payloads", () => {
     expect(() => extractPairingUrlFromQrPayload("   ")).toThrowError(PairingQrPayloadEmptyError);
     expect(() => extractPairingUrlFromQrPayload("   ")).toThrowError(
@@ -60,5 +74,29 @@ describe("parsePairingUrl", () => {
       host: "https://desktop.tailnet.ts.net",
       code: "pairing-token",
     });
+  });
+});
+
+describe("unsupportedPairingInputMessage", () => {
+  it("guides Tailcat and peer codes to the desktop app", () => {
+    expect(unsupportedPairingInputMessage(`  ${TAILCAT_CODE} `)).toBe(
+      "This is a Tailcat connection code. Paste it in the desktop app under Add environment → Tailcat.",
+    );
+    expect(unsupportedPairingInputMessage(PEER_CODE)).toBe(
+      "This is a federation peer code. Add it in the desktop app under Settings → Connections → Federation.",
+    );
+    expect(unsupportedPairingInputMessage("t3c://mystery/abc")).toBe(
+      "This is a T3 connection code, not a pairing URL. Use it in the desktop app.",
+    );
+  });
+
+  it("leaves pairing urls and hosts alone", () => {
+    expect(unsupportedPairingInputMessage("https://remote.example.com/#token=abc")).toBeNull();
+    expect(unsupportedPairingInputMessage("192.168.1.100:3773")).toBeNull();
+    expect(unsupportedPairingInputMessage("")).toBeNull();
+  });
+
+  it("keeps a pasted connection code intact instead of mangling it into a host", () => {
+    expect(parsePairingUrl(TAILCAT_CODE)).toEqual({ host: TAILCAT_CODE, code: "" });
   });
 });

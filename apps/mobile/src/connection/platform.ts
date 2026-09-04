@@ -6,6 +6,7 @@ import {
   PrimaryEnvironmentAuth,
   RelayDeviceIdentity,
   SshEnvironmentGateway,
+  TailcatEnvironmentGateway,
 } from "@t3tools/client-runtime/platform";
 import {
   ConnectionBlockedError,
@@ -186,6 +187,28 @@ const capabilitiesLayer = Layer.effectContext(
               new ConnectionBlockedError({
                 reason: "unsupported",
                 detail: "SSH environments are only available in the desktop app.",
+              }),
+            ),
+          disconnect: () => Effect.void,
+        }),
+      ),
+      // A phone has no process to run the tailcat forwarder in, so Tailcat
+      // environments are set up (and saved) from the desktop app.
+      Context.add(
+        TailcatEnvironmentGateway,
+        TailcatEnvironmentGateway.of({
+          provision: () =>
+            Effect.fail(
+              new ConnectionBlockedError({
+                reason: "unsupported",
+                detail: "Tailcat environments are managed from the desktop app.",
+              }),
+            ),
+          prepare: () =>
+            Effect.fail(
+              new ConnectionBlockedError({
+                reason: "unsupported",
+                detail: "Tailcat environments are managed from the desktop app.",
               }),
             ),
           disconnect: () => Effect.void,
