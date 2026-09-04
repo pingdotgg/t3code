@@ -5626,4 +5626,115 @@ describe("ClaudeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
+
+  it.effect(
+    "stops the session after an authentication failure so the next turn resumes fresh",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const sessionExitedFiber = yield* adapter.streamEvents.pipe(
+          Stream.takeUntil((event) => event.type === "session.exited"),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "hello",
+          attachments: [],
+        });
+
+        // Exact shape from the field report: the CLI stamps the assistant
+        // snapshot with `error: "authentication_failed"` and "Not logged in"
+        // content, then finishes the turn with an is_error result.
+        harness.query.emit({
+          type: "assistant",
+          session_id: "sdk-session-1",
+          uuid: "assistant-auth-1",
+          parent_tool_use_id: null,
+          error: "authentication_failed",
+          message: {
+            id: "assistant-auth-message-1",
+            content: [{ type: "text", text: "Not logged in · Please run /login" }],
+          },
+        } as unknown as SDKMessage);
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: true,
+          errors: [],
+          session_id: "sdk-session-1",
+          uuid: "result-auth-1",
+        } as unknown as SDKMessage);
+
+        yield* Fiber.join(sessionExitedFiber);
+
+        // The stale-credentialed process must be gone so the next sendTurn goes
+        // through resume-thread recovery with a fresh process. close() runs
+        // twice by design: once from the auth-failure path, once from the
+        // regular stopSessionInternal teardown.
+        const hasSession = yield* adapter.hasSession(session.threadId);
+        assert.equal(hasSession, false);
+        assert.equal(harness.query.closeCalls > 0, true);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect("keeps the session alive when a failed result is not an authentication failure", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-1",
+        uuid: "assistant-fail-1",
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-fail-message-1",
+          content: [{ type: "text", text: "Something went wrong" }],
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["rate limit exceeded"],
+        session_id: "sdk-session-1",
+        uuid: "result-fail-1",
+      } as unknown as SDKMessage);
+
+      // Give the stream a beat to settle: a session that was wrongly torn
+      // down would emit session.exited before this completes.
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      const hasSession = yield* adapter.hasSession(session.threadId);
+      assert.equal(hasSession, true);
+      assert.equal(harness.query.closeCalls, 0);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
 });

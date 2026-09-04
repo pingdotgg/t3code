@@ -188,10 +188,12 @@ function toSessionPermissionUpdates(
   toolName: string,
   suggestions: ReadonlyArray<PermissionUpdate> | undefined,
 ): Array<PermissionUpdate> {
-  const sessionScoped = (suggestions ?? []).map((suggestion): PermissionUpdate => ({
-    ...suggestion,
-    destination: "session",
-  }));
+  const sessionScoped = (suggestions ?? []).map(
+    (suggestion): PermissionUpdate => ({
+      ...suggestion,
+      destination: "session",
+    }),
+  );
   if (sessionScoped.length > 0) {
     return sessionScoped;
   }
@@ -325,6 +327,13 @@ interface ClaudeSessionContext {
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
   stopped: boolean;
+  /**
+   * Set when the CLI reports an authentication failure (expired credentials).
+   * The session process holds stale OAuth credentials it can never refresh, so
+   * the turn's result tears the session down instead of leaving a permanently
+   * logged-out process in place.
+   */
+  authenticationFailed: boolean;
 }
 
 interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
@@ -462,6 +471,25 @@ function isInterruptedResult(result: SDKResultMessage): boolean {
     (errors.includes("request was aborted") ||
       errors.includes("interrupted by user") ||
       errors.includes("aborted"))
+  );
+}
+
+/**
+ * The Claude CLI loads OAuth credentials once per process, so an expired
+ * session poisons every subsequent turn with the same "Not logged in" failure
+ * until the process is replaced. Recognizing these results lets the adapter
+ * tear the session down (see `handleResultMessage`); the next turn then
+ * resumes through `ProviderService`'s recovery path, which spawns a fresh
+ * process that picks up credentials refreshed in the meantime.
+ */
+function isClaudeAuthenticationErrorText(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return (
+    normalized.includes("authentication_failed") ||
+    normalized.includes("failed to authenticate") ||
+    normalized.includes("oauth session expired") ||
+    normalized.includes("not logged in") ||
+    normalized.includes("please run /login")
   );
 }
 
@@ -2931,6 +2959,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
+    // The CLI stamps auth failures on the assistant snapshot itself
+    // (`error: "authentication_failed"` with "Not logged in" content). Record
+    // it here; the turn's result then tears the session down so the next turn
+    // resumes with a fresh process that reads the refreshed credentials.
+    const assistantError = (message as { error?: unknown }).error;
+    if (typeof assistantError === "string" && isClaudeAuthenticationErrorText(assistantError)) {
+      context.authenticationFailed = true;
+    }
+
     // Subagent-owned assistant snapshots (parent_tool_use_id set) are the
     // subagent's own conversation, not the parent's. Emitting them created
     // interleaved "Agent N done"-adjacent leak messages and spawned synthetic
@@ -3069,6 +3106,37 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     yield* completeTurn(context, status, errorMessage, message);
+
+    // The CLI loads OAuth credentials once per process. An auth failure means
+    // this process can never recover, and leaving it in place makes every
+    // later turn reply "Not logged in" even after the user logs in again.
+    // Closing the query ends the stream, so handleStreamExit tears the session
+    // down; the next turn then goes through the normal resume-thread recovery,
+    // which spawns a fresh process with current credentials. Interrupted and
+    // cancelled turns are left alone: the flag may be stale relative to a
+    // user-initiated stop.
+    const authenticationFailed =
+      context.authenticationFailed ||
+      (message.is_error === true &&
+        (isClaudeAuthenticationErrorText(resultErrorsText(message)) ||
+          isClaudeAuthenticationErrorText(errorMessage ?? "")));
+    if (authenticationFailed && status !== "interrupted" && status !== "cancelled") {
+      yield* Effect.logInfo("claude.session.stopping-after-auth-failure", {
+        threadId: context.session.threadId,
+        turnStatus: status,
+        detectedFrom: context.authenticationFailed ? "assistant-snapshot" : "result",
+      });
+      yield* Effect.try({
+        try: () => context.query.close(),
+        catch: (cause) =>
+          new ProviderAdapterProcessError({
+            provider: PROVIDER,
+            threadId: context.session.threadId,
+            detail: "Failed to close Claude runtime query after authentication failure.",
+            cause,
+          }),
+      });
+    }
   });
 
   /**
@@ -4499,6 +4567,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
         stopped: false,
+        authenticationFailed: false,
       };
       yield* Ref.set(contextRef, context);
       sessions.set(threadId, context);
