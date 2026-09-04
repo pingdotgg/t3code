@@ -493,6 +493,31 @@ export function projectServerWelcome(
   return [Option.some(welcome), [welcome]];
 }
 
+export interface PersistedThreadDiscoveryEnvironment {
+  readonly environmentId: EnvironmentId;
+  readonly connected: boolean;
+}
+
+/** Tracks the one persisted-thread discovery request allowed per environment and app opening. */
+export function createPersistedThreadDiscoverySession() {
+  const requestedEnvironmentIds = new Set<EnvironmentId>();
+
+  return {
+    check(
+      environments: ReadonlyArray<PersistedThreadDiscoveryEnvironment>,
+      discover: (environmentId: EnvironmentId) => Promise<unknown>,
+    ): void {
+      for (const environment of environments) {
+        if (!environment.connected || requestedEnvironmentIds.has(environment.environmentId)) {
+          continue;
+        }
+        requestedEnvironmentIds.add(environment.environmentId);
+        void discover(environment.environmentId).catch(() => undefined);
+      }
+    },
+  };
+}
+
 export function resolveServerConfigValue(
   projection: ServerConfigProjection | null,
   initialConfig: ServerConfig | null,
@@ -930,7 +955,7 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.providerDiscoverPersistedThreads,
       concurrency: {
         mode: "singleFlight",
-        key: ({ environmentId, input }) => `${environmentId}:${input.workspaceRoot}`,
+        key: ({ environmentId }) => environmentId,
       },
     }),
     updateProvider: createEnvironmentRpcCommand(runtime, {

@@ -127,12 +127,11 @@ export type ProviderUploadFeedbackResult = typeof ProviderUploadFeedbackResult.T
 export class ProviderPersistedThreadDiscoveryError extends Schema.TaggedErrorClass<ProviderPersistedThreadDiscoveryError>()(
   "ProviderPersistedThreadDiscoveryError",
   {
-    workspaceRoot: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to discover persisted provider threads for ${this.workspaceRoot}.`;
+    return "Failed to discover persisted provider threads.";
   }
 }
 

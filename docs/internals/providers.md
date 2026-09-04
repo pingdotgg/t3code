@@ -364,13 +364,14 @@ synchronization.
    performs reverts.
 
 Persisted conversation discovery is separate from these queue-backed workers.
-[`ProviderThreadReconciler`][reconciler] runs when provider instances change and periodically in the
-background. It groups compatible instances by continuation identity, asks one healthy adapter in
-each group for persisted threads, and imports missing messages through the internal
+Each client asks [`ProviderThreadReconciler`][reconciler] to check once when the app opens. The
+reconciler groups compatible instances by continuation identity, asks one healthy adapter in each
+group for persisted threads, and imports missing messages through the internal
 `thread.message.import` command. Threads are attached to the project matching their working
 directory; unmatched threads go into an **Unassigned Codex threads** project. Provider thread IDs,
-discovery cursors, and deterministic command and message IDs make retries safe and keep live T3
-threads from being imported twice.
+discovery cursors, and deterministic command and message IDs keep live T3 threads from being
+imported twice. A cursor includes the provider update time, status, and working directory, so an
+unchanged transcript is not read again.
 The imported provider ID, status, update time, and source metadata are also stored on the normal
 thread projection and included in thread and shell snapshots, so every client sees the same
 provider conversation identity.

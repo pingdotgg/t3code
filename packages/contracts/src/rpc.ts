@@ -851,7 +851,7 @@ export const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFee
 export const WsProviderDiscoverPersistedThreadsRpc = Rpc.make(
   WS_METHODS.providerDiscoverPersistedThreads,
   {
-    payload: Schema.Struct({ workspaceRoot: TrimmedNonEmptyString }),
+    payload: Schema.Struct({}),
     success: Schema.Struct({ importedCount: NonNegativeInt }),
     error: Schema.Union([ProviderPersistedThreadDiscoveryError, EnvironmentAuthorizationError]),
   },

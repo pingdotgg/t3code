@@ -124,12 +124,11 @@ Follow-up work runs asynchronously in queue-backed workers built on [`DrainableW
 count reaches zero, so a test can await "queue empty and current item finished" instead of sleeping.
 Each of these four services exposes `drain` for exactly this.
 
-[`ProviderThreadReconciler`][reconciler] is a separate background fiber, not a drainable worker. It
-discovers durable conversations from adapters that support persisted-thread listing, currently
-Codex, whenever the provider registry changes and on a bounded interval while the server runs. It
-imports missing messages through the same event-sourced command path, matches threads to projects
-by working directory, and keeps unmatched conversations in **Unassigned Codex threads**. Because
-this runs in the server, the same history is available to web, desktop, and mobile clients.
+[`ProviderThreadReconciler`][reconciler] discovers durable conversations from adapters that support
+persisted-thread listing, currently Codex. Each client requests one server-side check when the app
+opens. The reconciler imports missing messages through the same event-sourced command path, matches
+threads to projects by working directory, and keeps unmatched conversations in **Unassigned Codex
+threads**. Web, desktop, and mobile clients all use the same request and server-owned result.
 
 Runtime receipts are a test-only mechanism. `RuntimeReceiptBusLive` in
 [`RuntimeReceiptBus.ts`][receipts] publishes nothing; only the test layer is PubSub-backed. Do not

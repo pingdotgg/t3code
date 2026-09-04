@@ -29,10 +29,7 @@ import {
   ProviderSessionDirectory,
   type ProviderSessionDirectory as ProviderSessionDirectoryShape,
 } from "../Services/ProviderSessionDirectory.ts";
-import type {
-  ProviderPersistedThread,
-  ProviderPersistedThreadDiscoveryInput,
-} from "../Services/ProviderAdapter.ts";
+import type { ProviderPersistedThread } from "../Services/ProviderAdapter.ts";
 import {
   groupPersistedThreadDiscoveryCandidates,
   providerThreadDiscoveryExclusions,
@@ -169,7 +166,6 @@ it.effect("does not recover a reconciliation interruption", () =>
 it.effect("discovers every Codex root through the server-owned reconciler", () =>
   Effect.gen(function* () {
     const commands: OrchestrationCommand[] = [];
-    let receivedInput: ProviderPersistedThreadDiscoveryInput | undefined;
     const discoveryInstance = {
       ...instance,
       enabled: true,
@@ -179,15 +175,11 @@ it.effect("discovers every Codex root through the server-owned reconciler", () =
         }),
       },
       adapter: {
-        discoverPersistedThreads: (input?: ProviderPersistedThreadDiscoveryInput) =>
-          Effect.sync(() => {
-            receivedInput = input;
-            return [persistedThread];
-          }),
+        discoverPersistedThreads: () => Effect.succeed([persistedThread]),
       },
     } as unknown as ProviderInstance;
 
-    const importedCount = yield* reconcilePersistedProviderThreads({}).pipe(
+    const importedCount = yield* reconcilePersistedProviderThreads().pipe(
       Effect.provideService(ProviderInstanceRegistry, {
         listInstances: Effect.succeed([discoveryInstance]),
       } as unknown as ProviderInstanceRegistry["Service"]),
@@ -218,7 +210,6 @@ it.effect("discovers every Codex root through the server-owned reconciler", () =
     );
 
     expect(importedCount).toBe(1);
-    expect(receivedInput?.workspaceRoots).toBeUndefined();
     expect(commands.map((command) => command.type)).toEqual([
       "project.create",
       "thread.create",

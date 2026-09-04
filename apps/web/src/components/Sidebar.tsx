@@ -112,11 +112,7 @@ import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
-import {
-  environmentServerConfigsAtom,
-  primaryServerKeybindingsAtom,
-  serverEnvironment,
-} from "../state/server";
+import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
 import { useEnvironmentQuery } from "../state/query";
@@ -2107,25 +2103,6 @@ export default function Sidebar() {
           ),
     [scopedProjectGroup],
   );
-  const discoverPersistedThreads = useAtomCommand(serverEnvironment.discoverPersistedThreads, {
-    reportFailure: false,
-  });
-  const discoveredWorkspaceKeysRef = useRef(new Set<string>());
-  useEffect(() => {
-    if (scopedProjectGroup === null) return;
-
-    for (const project of scopedProjectGroup.memberProjects) {
-      const workspaceKey = `${project.environmentId}:${project.workspaceRoot}`;
-      if (discoveredWorkspaceKeysRef.current.has(workspaceKey)) continue;
-      discoveredWorkspaceKeysRef.current.add(workspaceKey);
-      void discoverPersistedThreads({
-        environmentId: project.environmentId,
-        input: { workspaceRoot: project.workspaceRoot },
-      }).catch(() => {
-        discoveredWorkspaceKeysRef.current.delete(workspaceKey);
-      });
-    }
-  }, [discoverPersistedThreads, scopedProjectGroup]);
   useEffect(() => {
     if (projectScopeKey !== null && scopedProjectGroup === null) {
       setProjectScopeKey(null);

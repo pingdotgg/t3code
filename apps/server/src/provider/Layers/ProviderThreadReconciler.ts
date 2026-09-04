@@ -11,14 +11,13 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -27,15 +26,12 @@ import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
-import { forkParked } from "../../serverActivation.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import type { ProviderPersistedThread } from "../Services/ProviderAdapter.ts";
 
 const CODEX = ProviderDriverKind.make("codex");
-const ACTIVE_RECONCILE_INTERVAL = Duration.seconds(30);
-const IDLE_RECONCILE_INTERVAL = Duration.minutes(2);
 const UNASSIGNED_CODEX_PROJECT_ID = ProjectId.make("codex-unassigned-threads");
 const UNASSIGNED_CODEX_PROJECT_TITLE = "Unassigned Codex threads";
 const UNASSIGNED_CODEX_DIRECTORY = "unassigned-codex-threads";
@@ -147,7 +143,7 @@ export function groupPersistedThreadDiscoveryCandidates(
 }
 
 export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedProviderThreads")(
-  function* (input: { readonly workspaceRoots?: ReadonlySet<string> }) {
+  function* () {
     const registry = yield* ProviderInstanceRegistry;
     const directory = yield* ProviderSessionDirectory;
     const snapshots = yield* ProjectionSnapshotQuery;
@@ -198,7 +194,6 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
     const threadByProviderIdentity = new Map<string, ThreadId>();
     const excludedThreadIdsByContinuation = new Map<string, Set<string>>();
     const cursorByThreadIdByContinuation = new Map<string, Map<string, string>>();
-    const forceReadThreadIdsByContinuation = new Map<string, Set<string>>();
     const importedOwnerInstanceIdsByContinuation = new Map<string, Set<string>>();
     const unresolvedNativeProviderThreadIds = new Set<string>();
 
@@ -232,9 +227,6 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
         excluded.add(binding.resumeCursor.threadId);
         excludedThreadIdsByContinuation.set(continuationKey, excluded);
       } else {
-        const forceRead = forceReadThreadIdsByContinuation.get(continuationKey) ?? new Set();
-        forceRead.add(binding.resumeCursor.threadId);
-        forceReadThreadIdsByContinuation.set(continuationKey, forceRead);
         const importedOwners =
           importedOwnerInstanceIdsByContinuation.get(continuationKey) ?? new Set();
         importedOwners.add(binding.providerInstanceId);
@@ -291,11 +283,6 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
                 cursorByProviderThreadId: ownerChanged
                   ? new Map()
                   : (cursorByThreadIdByContinuation.get(continuationKey) ?? new Map()),
-                forceReadProviderThreadIds:
-                  forceReadThreadIdsByContinuation.get(continuationKey) ?? new Set(),
-                ...(input.workspaceRoots === undefined
-                  ? {}
-                  : { workspaceRoots: input.workspaceRoots }),
               });
               return { instance, model, discovered } as const;
             }).pipe(
@@ -552,33 +539,40 @@ export const reconcilePersistedThread = Effect.fn("reconcilePersistedProviderThr
   },
 );
 
-export const ProviderThreadReconcilerLive = Layer.effectDiscard(
+type ReconcilePersistedProviderThreadsError = Effect.Error<
+  ReturnType<typeof reconcilePersistedProviderThreads>
+>;
+
+export class ProviderThreadReconciler extends Context.Service<
+  ProviderThreadReconciler,
+  {
+    readonly reconcile: () => Effect.Effect<number, ReconcilePersistedProviderThreadsError>;
+  }
+>()("t3/provider/Layers/ProviderThreadReconciler") {}
+
+/** Provides on-demand reconciliation without starting timers or registry-change listeners. */
+export const ProviderThreadReconcilerLive = Layer.effect(
+  ProviderThreadReconciler,
   Effect.gen(function* () {
     const registry = yield* ProviderInstanceRegistry;
-    const changes = yield* registry.subscribeChanges;
-    const reconcileSemaphore = yield* Semaphore.make(1);
-    const reconcile = reconcileSemaphore.withPermits(1)(
-      reconcilePersistedProviderThreads({}).pipe(
-        Effect.catchCause((cause) =>
-          recoverReconciliationCause(
-            cause,
-            "persisted provider thread reconciliation failed",
-            {},
-            0,
-          ),
-        ),
-      ),
-    );
+    const directory = yield* ProviderSessionDirectory;
+    const snapshots = yield* ProjectionSnapshotQuery;
+    const engine = yield* OrchestrationEngineService;
+    const config = yield* ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
 
-    yield* forkParked(
-      Effect.forever(
-        reconcile.pipe(
-          Effect.flatMap((discoveredCount) =>
-            Effect.sleep(discoveredCount > 0 ? ACTIVE_RECONCILE_INTERVAL : IDLE_RECONCILE_INTERVAL),
-          ),
+    return ProviderThreadReconciler.of({
+      reconcile: () =>
+        reconcilePersistedProviderThreads().pipe(
+          Effect.provideService(ProviderInstanceRegistry, registry),
+          Effect.provideService(ProviderSessionDirectory, directory),
+          Effect.provideService(ProjectionSnapshotQuery, snapshots),
+          Effect.provideService(OrchestrationEngineService, engine),
+          Effect.provideService(ServerConfig, config),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
         ),
-      ),
-    );
-    yield* forkParked(Effect.forever(PubSub.take(changes).pipe(Effect.andThen(reconcile))));
+    });
   }),
 );

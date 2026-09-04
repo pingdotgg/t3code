@@ -39,8 +39,13 @@ function unixSecondsToIso(seconds: number): string {
 function discoveryCursorForThread(thread: {
   readonly updatedAt: number;
   readonly status: { readonly type: string };
+  readonly cwd: string;
 }): string {
-  return `${unixSecondsToIso(thread.updatedAt)}:${thread.status.type}`;
+  return JSON.stringify([
+    unixSecondsToIso(thread.updatedAt),
+    thread.status.type,
+    normalizeProjectPathForComparison(thread.cwd),
+  ]);
 }
 
 export function selectCodexThreadsForRead(
@@ -55,19 +60,6 @@ export function selectCodexThreadsForRead(
       discoveryInput?.excludeProviderThreadIds.has(thread.id) === true
     ) {
       return false;
-    }
-    if (
-      discoveryInput?.workspaceRoots !== undefined &&
-      !Array.from(discoveryInput.workspaceRoots).some(
-        (workspaceRoot) =>
-          normalizeProjectPathForComparison(workspaceRoot) ===
-          normalizeProjectPathForComparison(thread.cwd),
-      )
-    ) {
-      return false;
-    }
-    if (discoveryInput?.forceReadProviderThreadIds?.has(thread.id) === true) {
-      return true;
     }
     const knownCursor = discoveryInput?.cursorByProviderThreadId.get(thread.id);
     return knownCursor !== discoveryCursorForThread(thread);
