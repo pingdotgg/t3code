@@ -383,7 +383,7 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
                       modelSelection: { instanceId: instance.instanceId, model },
                     }
                   : binding.runtimePayload;
-                if (bindingOwnershipIsStale) {
+                if (bindingOwnershipIsStale || runtimePayloadIsStale) {
                   yield* directory.upsert({
                     ...binding,
                     providerInstanceId: instance.instanceId,
