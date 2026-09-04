@@ -59,7 +59,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth administrative operations", (it) =
       expect(listedBeforeRevoke).toHaveLength(1);
       expect(listedBeforeRevoke[0]?.id).toBe(created.id);
       expect(listedBeforeRevoke[0]?.label).toBe("CI phone");
-      expect(listedBeforeRevoke[0]?.credential).toBe(created.credential);
+      expect(listedBeforeRevoke[0]).not.toHaveProperty("credential");
       expect(revoked).toBe(true);
       expect(listedAfterRevoke).toHaveLength(0);
     }).pipe(Effect.provide(makeEnvironmentAuthLayer())),

@@ -218,9 +218,9 @@ export const AuthPairingCredentialResult = Schema.Struct({
 });
 export type AuthPairingCredentialResult = typeof AuthPairingCredentialResult.Type;
 
+// Read models contain metadata only. Credentials are returned by creation alone.
 export const AuthPairingLink = Schema.Struct({
   id: TrimmedNonEmptyString,
-  credential: TrimmedNonEmptyString,
   scopes: AuthEnvironmentScopes,
   subject: TrimmedNonEmptyString,
   label: Schema.optionalKey(TrimmedNonEmptyString),
