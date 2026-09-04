@@ -160,6 +160,8 @@ import {
 } from "./SettingsPanels.logic";
 import {
   PolicyTooltip,
+  SETTINGS_MODEL_CONTROLS_CLASSNAME,
+  SETTINGS_MODEL_PICKER_TRIGGER_CLASSNAME,
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
   SettingsPageContainer,
@@ -3106,14 +3108,14 @@ export function GeneralSettingsPanel() {
                 No text generation providers available.
               </span>
             ) : (
-              <div className="flex max-w-full flex-wrap items-center justify-end gap-1.5 sm:max-w-[26rem]">
+              <div className={`${SETTINGS_MODEL_CONTROLS_CLASSNAME} gap-1.5`}>
                 <ProviderModelPicker
                   activeInstanceId={textGenInstanceId}
                   model={textGenModel}
                   lockedProvider={null}
                   instanceEntries={textGenerationModelInstanceEntries}
                   modelOptionsByInstance={textGenerationModelOptionsByInstance}
-                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  triggerClassName={SETTINGS_MODEL_PICKER_TRIGGER_CLASSNAME}
                   {...(mixedTextGenerationModel ? { triggerLabel: "Mixed" } : {})}
                   getModelDisabledReason={textGenerationModelDisabledReason}
                   {...(environmentId
