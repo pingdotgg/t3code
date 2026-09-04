@@ -151,22 +151,24 @@ export function descriptorToEditor(descriptor: ProviderOptionDescriptor): Editor
   const promptInjected = new Set(
     descriptor.type === "select" ? (descriptor.promptInjectedValues ?? []) : [],
   );
+  const choices =
+    descriptor.type === "select"
+      ? descriptor.options.filter((option) => !promptInjected.has(option.id))
+      : [];
+  const defaultChoice =
+    choices.find((option) => option.id === descriptor.currentValue) ??
+    choices.find((option) => option.isDefault);
   return {
     key: newEditorKey(),
     type: descriptor.type,
     id: descriptor.id,
     label: descriptor.label,
-    choices:
-      descriptor.type === "select"
-        ? descriptor.options
-            .filter((option) => !promptInjected.has(option.id))
-            .map((option) => ({
-              key: newEditorKey(),
-              id: option.id,
-              label: option.label,
-              isDefault: option.isDefault === true || descriptor.currentValue === option.id,
-            }))
-        : [],
+    choices: choices.map((option) => ({
+      key: newEditorKey(),
+      id: option.id,
+      label: option.label,
+      isDefault: option === defaultChoice,
+    })),
   };
 }
 

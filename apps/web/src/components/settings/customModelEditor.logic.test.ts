@@ -68,6 +68,27 @@ describe("customModelEditor.logic", () => {
     ]);
   });
 
+  it("preserves the current choice when it differs from the built-in default", () => {
+    const descriptors = descriptorsFromCapabilities({
+      optionDescriptors: [
+        {
+          id: "effort",
+          label: "Reasoning",
+          type: "select",
+          currentValue: "high",
+          options: [
+            { id: "low", label: "Low", isDefault: true },
+            { id: "high", label: "High" },
+          ],
+        },
+      ],
+    });
+    expect(descriptors[0]!.choices.map((choice) => choice.isDefault)).toEqual([false, true]);
+    expect(
+      definitionFromDraft(draft({ descriptors })).capabilities?.optionDescriptors?.[0],
+    ).toMatchObject({ currentValue: "high" });
+  });
+
   it("drops prompt-injected choices when copying a built-in's descriptors", () => {
     const [copied] = descriptorsFromCapabilities({
       optionDescriptors: [
