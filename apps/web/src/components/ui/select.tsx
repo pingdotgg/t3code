@@ -4,7 +4,7 @@ import { mergeProps } from "@base-ui/react/merge-props";
 import { Select as SelectPrimitive } from "@base-ui/react/select";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
-import { ChevronDownIcon, ChevronsUpDownIcon, ChevronUpIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, ChevronsUpDownIcon, ChevronUpIcon } from "lucide-react";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
@@ -180,19 +180,32 @@ function SelectItem({
   className,
   children,
   hideIndicator: _hideIndicator = false,
+  showCheck = false,
   ...props
 }: SelectPrimitive.Item.Props & {
   hideIndicator?: boolean;
+  /** Render a check mark on selected items. Multi-selects use it so every chosen item is visible at once. */
+  showCheck?: boolean;
 }) {
   return (
     <SelectPrimitive.Item
       className={cn(
         "flex min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-pointer items-center rounded-sm px-2 py-1 text-base outline-none data-selected:bg-foreground/[0.08] data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+        showCheck && "gap-2",
         className,
       )}
       data-slot="select-item"
       {...props}
     >
+      {showCheck ? (
+        <SelectPrimitive.ItemIndicator
+          className="flex w-4 shrink-0 items-center justify-center"
+          data-slot="select-item-indicator"
+          keepMounted
+        >
+          <CheckIcon className="in-data-[selected]:opacity-100 opacity-0" />
+        </SelectPrimitive.ItemIndicator>
+      ) : null}
       <SelectPrimitive.ItemText
         className="min-w-0 flex-1 [&_svg:not([class*='text-'])]:text-muted-foreground"
         data-slot="select-item-text"

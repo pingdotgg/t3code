@@ -70,6 +70,35 @@ describe("beginExternalFileOpen", () => {
 });
 
 describe("openFileInExternalBrowser", () => {
+  it.each([
+    ["artifacts/report.html", "/repo", "workspace-file"],
+    ["/repo/artifacts/report.html", "/repo", "workspace-file"],
+    ["/tmp/report.html", "/repo", "media-file"],
+    ["/repo-other/report.pdf", "/repo", "media-file"],
+    ["C:/repo/report.pdf", "C:/repo", "workspace-file"],
+    ["C:/temp/report.pdf", "C:/repo", "media-file"],
+  ] as const)(
+    "opens %s using %s and the matching resource scope",
+    async (filePath, workspaceRoot, resourceTag) => {
+      const createAssetUrl = vi.fn(async () =>
+        AsyncResult.success(assetResult("/api/assets/token/report")),
+      );
+      const result = await openFileInExternalBrowser({
+        threadRef,
+        filePath,
+        workspaceRoot,
+        httpBaseUrl: "http://environment.test",
+        createAssetUrl,
+        beginOpen: () => ({ open: vi.fn(async () => undefined), cancel: vi.fn() }),
+      });
+      expect(result._tag).toBe("Success");
+      expect(createAssetUrl).toHaveBeenCalledWith({
+        environmentId: threadRef.environmentId,
+        input: { resource: { _tag: resourceTag, threadId: threadRef.threadId, path: filePath } },
+      });
+    },
+  );
+
   it("reserves the browser target before requesting the signed URL", async () => {
     const calls: string[] = [];
     const open = vi.fn(async (url: string): Promise<void> => {
@@ -83,6 +112,7 @@ describe("openFileInExternalBrowser", () => {
 
     const result = await openFileInExternalBrowser({
       threadRef,
+      workspaceRoot: "/repo",
       filePath: "artifacts/report.html",
       httpBaseUrl: "http://environment.test:1234",
       createAssetUrl,
@@ -105,6 +135,7 @@ describe("openFileInExternalBrowser", () => {
     const cancel = vi.fn();
     const result = await openFileInExternalBrowser({
       threadRef,
+      workspaceRoot: "/repo",
       filePath: "artifacts/report.html",
       httpBaseUrl: "http://environment.test:1234",
       createAssetUrl: vi.fn(async () =>
@@ -123,6 +154,7 @@ describe("openFileInExternalBrowser", () => {
     await expect(
       openFileInExternalBrowser({
         threadRef,
+        workspaceRoot: "/repo",
         filePath: "artifacts/report.html",
         httpBaseUrl: "http://environment.test:1234",
         createAssetUrl: vi.fn(async () => Promise.reject(failure)),
@@ -138,6 +170,7 @@ describe("openFileInExternalBrowser", () => {
     await expect(
       openFileInExternalBrowser({
         threadRef,
+        workspaceRoot: "/repo",
         filePath: "artifacts/report.pdf",
         httpBaseUrl: "http://environment.test:1234",
         createAssetUrl: vi.fn(async () =>

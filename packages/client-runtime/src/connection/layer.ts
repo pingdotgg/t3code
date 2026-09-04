@@ -15,30 +15,29 @@ const resolverLayer = ConnectionResolver.layer.pipe(
   Layer.provide(RemoteEnvironmentAuthorization.layer),
 );
 
-const driverLayer = ConnectionDriver.layer.pipe(
-  Layer.provide(Layer.mergeAll(resolverLayer, RpcSession.layer)),
-);
+export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
+  const driverLayer = ConnectionDriver.layer.pipe(
+    Layer.provide(Layer.mergeAll(resolverLayer, RpcSession.layerWithOptions(options))),
+  );
+  const registryLayer = EnvironmentRegistry.layer.pipe(Layer.provide(driverLayer));
+  const onboardingLayer = ConnectionOnboarding.layer.pipe(Layer.provide(registryLayer));
+  const connectionServicesLayer = Layer.mergeAll(
+    registryLayer,
+    RelayEnvironmentDiscovery.layer,
+    onboardingLayer,
+  );
+  const connectionStartupLayer = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+      const platformSource = yield* PlatformConnectionSource.PlatformConnectionSource;
+      yield* registry.start;
+      yield* platformSource.registrations.pipe(
+        Stream.runForEach(registry.reconcilePlatform),
+        Effect.forkScoped,
+      );
+    }).pipe(Effect.withSpan("clientRuntime.connection.application.start")),
+  );
+  return connectionStartupLayer.pipe(Layer.provideMerge(connectionServicesLayer));
+}
 
-const registryLayer = EnvironmentRegistry.layer.pipe(Layer.provide(driverLayer));
-
-const onboardingLayer = ConnectionOnboarding.layer.pipe(Layer.provide(registryLayer));
-
-const connectionServicesLayer = Layer.mergeAll(
-  registryLayer,
-  RelayEnvironmentDiscovery.layer,
-  onboardingLayer,
-);
-
-const connectionStartupLayer = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-    const platformSource = yield* PlatformConnectionSource.PlatformConnectionSource;
-    yield* registry.start;
-    yield* platformSource.registrations.pipe(
-      Stream.runForEach(registry.reconcilePlatform),
-      Effect.forkScoped,
-    );
-  }).pipe(Effect.withSpan("clientRuntime.connection.application.start")),
-);
-
-export const layer = connectionStartupLayer.pipe(Layer.provideMerge(connectionServicesLayer));
+export const layer = layerWithOptions({});
