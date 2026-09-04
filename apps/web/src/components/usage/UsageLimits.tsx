@@ -24,7 +24,11 @@ import {
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, useState } from "react";
 
-import { usePrimarySettings } from "../../hooks/useSettings";
+import {
+  useClientSettings,
+  usePrimarySettings,
+  useUpdateClientSettings,
+} from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -42,6 +46,7 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
@@ -397,6 +402,22 @@ const SOURCE_KIND_LABEL: Record<UsageLimitSourceSnapshot["kind"], string> = {
   cliproxy: "CLI Proxy",
 };
 
+function SidebarLimitsToggle() {
+  const checked = useClientSettings((settings) => settings.sidebarUsageLimitsEnabled);
+  const updateSettings = useUpdateClientSettings();
+  return (
+    <label className="flex h-8 shrink-0 cursor-pointer items-center gap-2 rounded-md px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground">
+      <span>Show in sidebar</span>
+      <Switch
+        checked={checked}
+        onCheckedChange={(next) => updateSettings({ sidebarUsageLimitsEnabled: Boolean(next) })}
+        aria-label="Show limits in sidebar"
+        size="sm"
+      />
+    </label>
+  );
+}
+
 type LimitsSource = ReturnType<typeof collectLimitSources>[number];
 
 /** Read-only accounts pooled by a configured usage source. */
@@ -435,6 +456,9 @@ export function UsageLimitsSection() {
 
   return (
     <div className="flex flex-col gap-8">
+      <div className="flex justify-end">
+        <SidebarLimitsToggle />
+      </div>
       {groups.length === 0 && sources.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           No provider on a connected environment reports subscription limits.
