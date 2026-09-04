@@ -55,9 +55,24 @@ const zipFixtures = {
     "UEsDBBQAAAAIAAAAIl1zEy/oFAAAABQAAAASAAAAYWd5X2FjcF9zZXJ2ZXIuZXhlS8wryUwvSizLLKlUKCoFcnJTuQBQSwMEFAAAAAgAAAAiXV9yAykQAAAADgAAABkAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWwuZXhly8lPTsxRyEgsykstLuYCAFBLAQIUAxQAAAAIAAAAIl1zEy/oFAAAABQAAAASAAAAAAAAAAAAAADtgQAAAABhZ3lfYWNwX3NlcnZlci5leGVQSwECFAMUAAAACAAAACJdX3IDKRAAAAAOAAAAGQAAAAAAAAAAAAAA7YFEAAAAbG9jYWxoYXJuZXNzX2V4dGVybmFsLmV4ZVBLBQYAAAAAAgACAIcAAACLAAAAAAA=",
 };
 
-const completeArchive = Buffer.from(zipFixtures.complete, "base64");
+// The installation checks POSIX exec bits off the real filesystem unless the
+// platform is win32, so a linux platform mock cannot pass on NTFS. Default to
+// the host and let the fixture names follow; the suite is about install
+// mechanics, which are the same on every platform.
+const hostPlatform: NodeJS.Platform =
+  HostProcessPlatform.defaultValue() === "win32" ? "win32" : "linux";
+const completeArchive = Buffer.from(
+  hostPlatform === "win32" ? zipFixtures.windows : zipFixtures.complete,
+  "base64",
+);
+const executableName = hostPlatform === "win32" ? "agy_acp_server.exe" : "agy_acp_server.par";
+const harnessName =
+  hostPlatform === "win32" ? "localharness_external.exe" : "localharness_external";
 
-function releaseAsset(archive: Uint8Array = completeArchive, platform: NodeJS.Platform = "linux") {
+function releaseAsset(
+  archive: Uint8Array = completeArchive,
+  platform: NodeJS.Platform = hostPlatform,
+) {
   return {
     version: "fixture-new",
     url: "https://dl.google.com/antigravity-test.zip",
@@ -128,7 +143,7 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
   const path = yield* Path.Path;
   const baseDir =
     options.baseDir ?? (yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-test-" }));
-  const platform = options.platform ?? "linux";
+  const platform = options.platform ?? hostPlatform;
   const archive = options.archive ?? completeArchive;
   const asset = options.asset === undefined ? releaseAsset(archive, platform) : options.asset;
   const managedDirectory = path.join(baseDir, "tools", "antigravity-acp", `${platform}-x64`);
@@ -472,7 +487,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           ...fs,
           sink: (target, options) =>
             (stage === "download" && target.endsWith("download.zip")) ||
-            (stage === "extract" && target.endsWith("agy_acp_server.par"))
+            (stage === "extract" && target.endsWith(executableName))
               ? fs.sink(target, options).pipe(Sink.mapInputEffect(() => Effect.fail(noSpace)))
               : fs.sink(target, options),
           writeFileString: (target, content, options) =>
@@ -525,7 +540,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           fileSystem: FileSystem.FileSystem.of({
             ...fs,
             sink: (target, options) =>
-              phase === "extracting" && target.endsWith("agy_acp_server.par")
+              phase === "extracting" && target.endsWith(executableName)
                 ? fs
                     .sink(target, options)
                     .pipe(
@@ -691,8 +706,8 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
         const path = yield* Path.Path;
         const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-path-test-" });
         const externalDirectory = path.join(baseDir, "external");
-        const externalExecutable = path.join(externalDirectory, "agy_acp_server.par");
-        const externalHarness = path.join(externalDirectory, "localharness_external");
+        const externalExecutable = path.join(externalDirectory, executableName);
+        const externalHarness = path.join(externalDirectory, harnessName);
         yield* fs.makeDirectory(externalDirectory);
         yield* fs.writeFileString(externalExecutable, "external server", { mode: 0o755 });
         yield* fs.writeFileString(externalHarness, "external harness", { mode: 0o755 });
@@ -711,7 +726,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           source: "override",
           managedVersionDirectory: null,
         });
-        expect(yield* installation.resolve("agy_acp_server.par")).toMatchObject({
+        expect(yield* installation.resolve(executableName)).toMatchObject({
           source: "override",
         });
         yield* fs.remove(externalHarness);
@@ -741,7 +756,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           executablePath: externalExecutable,
         });
         expect(
-          yield* isolated.installation.resolve("agy_acp_server.par", { PATH: externalDirectory }),
+          yield* isolated.installation.resolve(executableName, { PATH: externalDirectory }),
         ).toMatchObject({ source: "override", executablePath: externalExecutable });
       }),
   );
@@ -774,20 +789,12 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
         yield* fs.remove(previous.harnessPath);
         const externalDirectory = path.join(baseDir, "external");
         yield* fs.makeDirectory(externalDirectory);
-        yield* fs.writeFileString(
-          path.join(externalDirectory, "agy_acp_server.par"),
-          "external server",
-          {
-            mode: 0o755,
-          },
-        );
-        yield* fs.writeFileString(
-          path.join(externalDirectory, "localharness_external"),
-          "external harness",
-          {
-            mode: 0o755,
-          },
-        );
+        yield* fs.writeFileString(path.join(externalDirectory, executableName), "external server", {
+          mode: 0o755,
+        });
+        yield* fs.writeFileString(path.join(externalDirectory, harnessName), "external harness", {
+          mode: 0o755,
+        });
         const restarted = yield* makeHarness({ baseDir, path: externalDirectory });
         expect(yield* restarted.installation.state).toMatchObject({
           phase: "failed",
@@ -824,8 +831,8 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
         const profileDirectory = path.join(baseDir, "providers", "antigravity", "profile");
         yield* fs.makeDirectory(externalDirectory);
         yield* fs.makeDirectory(profileDirectory, { recursive: true });
-        const externalExecutable = path.join(externalDirectory, "agy_acp_server.par");
-        const externalHarness = path.join(externalDirectory, "localharness_external");
+        const externalExecutable = path.join(externalDirectory, executableName);
+        const externalHarness = path.join(externalDirectory, harnessName);
         const profilePath = path.join(profileDirectory, "preferences.json");
         yield* fs.writeFileString(externalExecutable, "external server", { mode: 0o755 });
         yield* fs.writeFileString(externalHarness, "external harness", { mode: 0o755 });
