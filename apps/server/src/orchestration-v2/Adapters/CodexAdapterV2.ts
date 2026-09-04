@@ -63,7 +63,11 @@ import {
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "../../provider/Drivers/CodexHomeLayout.ts";
-import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
+import {
+  boundProviderEventForLogging,
+  type EventNdjsonLogger,
+  shouldPersistProviderEvent,
+} from "../../provider/Layers/EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
@@ -1154,6 +1158,10 @@ export function codexThreadRuntimeParams(input: {
   };
 }
 
+const decodeCodexResumeMetadata = Schema.decodeUnknownEffect(
+  Schema.Struct({ thread: Schema.Struct({ id: Schema.String, updatedAt: Schema.Number }) }),
+);
+
 export const makeCodexAppServerSpawnCommand = Effect.fn(
   "CodexAdapterV2.makeCodexAppServerSpawnCommand",
 )(function* (input: {
@@ -1227,19 +1235,21 @@ export function makeCodexAppServerProtocolLogger(input: {
     return undefined;
   }
 
-  return (event) =>
-    nativeEventLogger
+  return (event) => {
+    if (!shouldPersistProviderEvent("native", event)) return Effect.void;
+    return nativeEventLogger
       .write(
         {
           provider: CODEX_PROVIDER,
           protocol: "codex.app-server",
           kind: "protocol",
           providerSessionId: input.providerSessionId,
-          event: redactCodexProtocolValue(event),
+          event: redactCodexProtocolValue(boundProviderEventForLogging(event)),
         },
         input.threadId,
       )
       .pipe(Effect.ignore);
+  };
 }
 
 export function redactCodexProtocolValue(value: unknown): unknown {
@@ -1263,7 +1273,9 @@ export function redactCodexProtocolValue(value: unknown): unknown {
       return value;
     }
     try {
-      return JSON.stringify(redactCodexProtocolValue(JSON.parse(trimmed) as unknown));
+      return JSON.stringify(
+        redactCodexProtocolValue(boundProviderEventForLogging(JSON.parse(trimmed) as unknown)),
+      );
     } catch {
       return value;
     }
@@ -4551,8 +4563,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
 
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(
-                  client.request("thread/resume", {
+                  // excludeTurns is not in the generated request schema yet.
+                  client.raw.request("thread/resume", {
                     threadId: nativeThreadId,
+                    excludeTurns: true,
                     ...codexThreadRuntimeParams({
                       threadId: threadInput.threadId ?? threadInput.providerThread.appThreadId,
                       ...(threadInput.modelSelection === undefined
@@ -4564,6 +4578,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     }),
                   }),
                 ),
+                Effect.flatMap(decodeCodexResumeMetadata),
               );
               return {
                 ...threadInput.providerThread,

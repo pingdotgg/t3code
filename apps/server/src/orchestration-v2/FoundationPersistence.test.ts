@@ -46,7 +46,7 @@ import {
   runDaemonWithOptions as runEffectWorkerDaemonWithOptions,
 } from "./EffectWorker.ts";
 import { EventSinkV2, layer as eventSinkLayer } from "./EventSink.ts";
-import { EventStoreV2, layer as eventStoreLayer } from "./EventStore.ts";
+import { EventStoreReadEventsError, EventStoreV2, layer as eventStoreLayer } from "./EventStore.ts";
 import { layer as idAllocatorLayer } from "./IdAllocator.ts";
 import {
   ProjectionMaintenanceV2,
@@ -125,6 +125,129 @@ function threadCreatedEvent(input: {
     payload: input.thread,
   };
 }
+
+it.effect("rebuilds event history one bounded page at a time", () =>
+  Effect.gen(function* () {
+    const eventStore = yield* EventStoreV2;
+    const projectionStore = yield* ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:foundation-paged-rebuild");
+    const thread = makeThread(threadId, now);
+    const eventCount = 1_005;
+    yield* eventStore.append({
+      events: [
+        threadCreatedEvent({ id: "event:paged-rebuild:0", thread, now }),
+        ...Array.from({ length: eventCount - 1 }, (_, index) => ({
+          id: EventId.make(`event:paged-rebuild:${index + 1}`),
+          type: "thread.metadata-updated" as const,
+          threadId,
+          occurredAt: now,
+          payload: { ...thread, title: `Rebuilt update ${index + 1}` },
+        })),
+      ],
+    });
+    let applied = 0;
+    let failAfterFirstPage = false;
+    const appliedAtRead: Array<number> = [];
+    const observedStores = Layer.mergeAll(
+      Layer.succeed(EventStoreV2, {
+        ...eventStore,
+        read: (input) =>
+          Stream.suspend(() => {
+            appliedAtRead.push(applied);
+            if (failAfterFirstPage && applied >= 500) {
+              return Stream.fail(
+                new EventStoreReadEventsError({ afterSequence: input?.afterSequence }),
+              );
+            }
+            return eventStore.read(input);
+          }),
+      }),
+      Layer.succeed(ProjectionStoreV2, {
+        ...projectionStore,
+        apply: (event) =>
+          projectionStore.apply(event).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                applied += 1;
+              }),
+            ),
+          ),
+      }),
+    );
+    const rebuild = Effect.gen(function* () {
+      const maintenance = yield* ProjectionMaintenanceV2;
+      return yield* maintenance.rebuild;
+    }).pipe(
+      Effect.provide(Layer.fresh(projectionMaintenanceLayer.pipe(Layer.provide(observedStores)))),
+    );
+    const rebuilt = yield* rebuild;
+    assert.isTrue(rebuilt.valid);
+    assert.equal(applied, eventCount);
+    assert.deepEqual(appliedAtRead, [0, 500, 1_000]);
+    assert.equal(
+      (yield* projectionStore.getThreadProjection(threadId)).thread.title,
+      "Rebuilt update 1004",
+    );
+    applied = 0;
+    failAfterFirstPage = true;
+    const failed = yield* Effect.exit(rebuild);
+    assert.equal(failed._tag, "Failure");
+    assert.equal(applied, 500);
+    assert.equal(
+      (yield* projectionStore.getThreadProjection(threadId)).thread.title,
+      "Rebuilt update 1004",
+    );
+    const maintenance = yield* ProjectionMaintenanceV2;
+    assert.isTrue((yield* maintenance.verify).valid);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("verifies thread membership using only the thread-created partial index", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const maintenance = yield* ProjectionMaintenanceV2;
+    const now = DateTime.formatIso(yield* DateTime.now);
+    yield* sql`
+      WITH RECURSIVE history(n) AS (
+        SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 25000
+      )
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type,
+        occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+      )
+      SELECT 'history:' || n, 'thread', 'thread:history', n,
+        'provider-session.detached', ${now}, 'server', '{}', '{}', 2
+      FROM history
+    `;
+    let membershipQuery: string | undefined;
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (endTime, exit) => {
+          end(endTime, exit);
+          const query = span.attributes.get("db.query.text");
+          if (
+            typeof query === "string" &&
+            query.includes("SELECT DISTINCT stream_id AS thread_id")
+          ) {
+            membershipQuery = query;
+          }
+        };
+        return span;
+      },
+    });
+    yield* maintenance.verify.pipe(Effect.withTracer(tracer));
+    assert.isDefined(membershipQuery);
+    const plan = yield* sql.unsafe<{ readonly detail: string }>(
+      `EXPLAIN QUERY PLAN ${membershipQuery}`,
+    );
+    const details = plan.map((row) => row.detail).join("\n");
+    assert.match(details, /USING (?:COVERING )?INDEX orchestration_events_v2_created_threads_idx/);
+    assert.notMatch(details, /idx_orch_events_stream_sequence|TEMP B-TREE/);
+  }).pipe(Effect.provide(TestLayer)),
+);
 
 it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
   it.effect("paginates catch-up beyond the event-store read limit", () =>
@@ -409,6 +532,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       const eventSink = yield* EventSinkV2;
       const projectionStore = yield* ProjectionStoreV2;
       const maintenance = yield* ProjectionMaintenanceV2;
+      const sql = yield* SqlClient.SqlClient;
       const now = yield* DateTime.now;
       const parentThreadId = ThreadId.make("thread:foundation-cross-thread:parent");
       const childThreadId = ThreadId.make("thread:foundation-cross-thread:child");
@@ -570,6 +694,14 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
 
       yield* assertCrossThreadProjection;
       assert.isTrue((yield* maintenance.verify).valid);
+      yield* sql`
+        UPDATE orchestration_v2_projection_provider_threads SET payload_json = '{}'
+        WHERE provider_thread_id = ${childProviderThreadId}
+      `;
+      assert.deepEqual(
+        new Set((yield* maintenance.verify).unreadableThreadIds),
+        new Set([parentThreadId, childThreadId]),
+      );
       assert.isTrue((yield* maintenance.rebuild).valid);
       yield* assertCrossThreadProjection;
     }),
