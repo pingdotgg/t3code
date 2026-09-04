@@ -18,6 +18,8 @@ update model pricing.
 compares quota consumed with time elapsed in each window, so you can judge your pace before the
 next reset.
 
+If a window looks stale, refresh Limits to re-check every provider and hub.
+
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 

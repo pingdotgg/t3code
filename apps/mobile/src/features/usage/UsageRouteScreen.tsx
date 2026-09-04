@@ -17,26 +17,44 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
+import { cn } from "../../lib/cn";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
-import { UsageLimitsSection } from "./UsageLimitsSection";
+import { UsageLimitsSection, useRefreshLimits } from "./UsageLimitsSection";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors } from "./usageProviders";
 
+type UsageTab = "usage" | "limits";
+const TAB_OPTIONS = [
+  { value: "usage", label: "Usage" },
+  { value: "limits", label: "Limits" },
+] as const satisfies readonly { value: UsageTab; label: string }[];
+
 const WINDOW_OPTIONS = [
-  { days: 1, label: "Past 24h" },
-  { days: 7, label: "7 days" },
-  { days: 30, label: "30 days" },
-  { days: 90, label: "90 days" },
+  { days: 1, label: "24h" },
+  { days: 7, label: "7d" },
+  { days: 30, label: "30d" },
+  { days: 90, label: "90d" },
 ] as const;
+
+const METRIC_OPTIONS = [
+  { value: "cost", label: "Cost" },
+  { value: "tokens", label: "Tokens" },
+] as const satisfies readonly { value: UsageChartMetric; label: string }[];
 
 const CHART_HEIGHT = 180;
 
+/**
+ * Two tabs over one screen. Usage is the transcript-derived spend for a
+ * period; Limits is the live subscription quota, which has no period. Both
+ * pull to refresh, each refreshing its own data.
+ */
 export function UsageRouteScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const [tab, setTab] = useState<UsageTab>("usage");
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
     window: makeWindow(30),
@@ -45,6 +63,7 @@ export function UsageRouteScreen() {
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
   const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
+  const limits = useRefreshLimits();
 
   const days = useMemo(
     () => enumerateDays(window.sinceDay, window.untilDay),
@@ -73,7 +92,8 @@ export function UsageRouteScreen() {
   // The pull spinner tracks re-scans of environments that have answered
   // before. The initial scan renders its own placeholder, and an unreachable
   // environment stays pending forever — neither may pin the spinner on.
-  const refreshing = environments.some((entry) => entry.isPending && entry.summary !== null);
+  const refreshingUsage = environments.some((entry) => entry.isPending && entry.summary !== null);
+  const showingLimits = tab === "limits";
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
@@ -108,41 +128,70 @@ export function UsageRouteScreen() {
         className="flex-1"
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshWindow} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={showingLimits ? limits.refreshing : refreshingUsage}
+            onRefresh={showingLimits ? () => void limits.refresh() : refreshWindow}
+          />
+        }
       >
-        <SegmentedControl
-          options={WINDOW_OPTIONS.map((option) => ({ value: option.days, label: option.label }))}
-          selected={windowDays}
-          onSelect={selectWindow}
-        />
+        <SegmentedControl options={TAB_OPTIONS} selected={tab} onSelect={setTab} />
 
-        <UsageCoverageNotice environments={environments} merged={merged} isPartial={isPartial} />
-
-        {isPending ? (
-          <Text className="py-16 text-center text-base text-foreground-muted">
-            Scanning provider transcripts…
-          </Text>
-        ) : environments.length === 0 ? (
-          <Text className="py-16 text-center text-base text-foreground-muted">
-            Connect an environment to see usage.
-          </Text>
+        {showingLimits ? (
+          <UsageLimitsSection />
         ) : (
           <>
-            <ChartCard
+            {/* Period and metric together: neither applies to Limits, and
+                both change every number below, so they share one bar. */}
+            <View className="flex-row items-center gap-3">
+              <SegmentedControl
+                options={WINDOW_OPTIONS.map((option) => ({
+                  value: option.days,
+                  label: option.label,
+                }))}
+                selected={windowDays}
+                onSelect={selectWindow}
+                size="compact"
+                className="flex-1"
+              />
+              <SegmentedControl
+                options={METRIC_OPTIONS}
+                selected={metric}
+                onSelect={setMetric}
+                size="compact"
+                className="w-36"
+              />
+            </View>
+            <UsageCoverageNotice
+              environments={environments}
               merged={merged}
-              days={chartDays}
-              daily={chartTotals}
-              metric={metric}
-              onMetricChange={setMetric}
-              sinceDay={window.sinceDay}
-              untilDay={window.untilDay}
-              isPast24Hours={isPast24Hours}
-              timeZone={window.timeZone}
+              isPartial={isPartial}
             />
-            <ProviderSection merged={merged} metric={metric} />
-            <UsageLimitsSection />
-            <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
-            <ModelsSection merged={merged} />
+            {isPending ? (
+              <Text className="py-16 text-center text-base text-foreground-muted">
+                Scanning provider transcripts…
+              </Text>
+            ) : environments.length === 0 ? (
+              <Text className="py-16 text-center text-base text-foreground-muted">
+                Connect an environment to see usage.
+              </Text>
+            ) : (
+              <>
+                <ChartCard
+                  merged={merged}
+                  days={chartDays}
+                  daily={chartTotals}
+                  metric={metric}
+                  sinceDay={window.sinceDay}
+                  untilDay={window.untilDay}
+                  isPast24Hours={isPast24Hours}
+                  timeZone={window.timeZone}
+                />
+                <ProviderSection merged={merged} metric={metric} />
+                <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
+                <ModelsSection merged={merged} />
+              </>
+            )}
           </>
         )}
       </ScrollView>
@@ -154,9 +203,18 @@ function SegmentedControl<Value extends number | string>(props: {
   readonly options: readonly { readonly value: Value; readonly label: string }[];
   readonly selected: Value;
   readonly onSelect: (value: Value) => void;
+  /** The tab bar is full height; filters under it are shorter so it stays primary. */
+  readonly size?: "default" | "compact";
+  readonly className?: string;
 }) {
+  const compact = props.size === "compact";
   return (
-    <View className="flex-row overflow-hidden rounded-full border-continuous bg-card">
+    <View
+      className={cn(
+        "flex-row overflow-hidden rounded-full border-continuous bg-card",
+        props.className,
+      )}
+    >
       {props.options.map((option) => {
         const active = option.value === props.selected;
         return (
@@ -165,16 +223,17 @@ function SegmentedControl<Value extends number | string>(props: {
             accessibilityRole="button"
             accessibilityState={{ selected: active }}
             onPress={() => props.onSelect(option.value)}
-            className={
-              active
-                ? "flex-1 items-center rounded-full bg-subtle-strong py-2"
-                : "flex-1 items-center py-2"
-            }
+            className={cn(
+              "flex-1 items-center justify-center rounded-full",
+              compact ? "h-9" : "h-11",
+              active && "bg-subtle-strong",
+            )}
           >
             <Text
-              className={
-                active ? "text-sm font-t3-medium text-foreground" : "text-sm text-foreground-muted"
-              }
+              className={cn(
+                compact ? "text-xs" : "text-sm",
+                active ? "font-t3-medium text-foreground" : "text-foreground-muted",
+              )}
             >
               {option.label}
             </Text>
@@ -191,7 +250,6 @@ function ChartCard(props: {
   readonly days: readonly string[];
   readonly daily: readonly DailyTotals[];
   readonly metric: UsageChartMetric;
-  readonly onMetricChange: (metric: UsageChartMetric) => void;
   readonly sinceDay: string;
   readonly untilDay: string;
   readonly isPast24Hours: boolean;
@@ -203,21 +261,18 @@ function ChartCard(props: {
 
   return (
     <View className="gap-4 rounded-[24px] border-continuous bg-card p-4">
-      <View className="flex-row items-start justify-between gap-3">
-        <View className="min-w-0 flex-1 gap-0.5">
-          <Text className="text-sm text-foreground-muted">
-            {metric === "cost" ? "Raw token cost" : "Processed tokens"}
-          </Text>
-          <Text className="text-4xl font-t3-bold tabular-nums text-foreground">
-            {metric === "cost" ? `${formatUsd(merged.costUsd)}*` : formatTokens(merged.totalTokens)}
-          </Text>
-          <Text className="text-sm text-foreground-muted">
-            {metric === "cost"
-              ? "* if billed at full API rate"
-              : `Across ${formatCount(merged.sessions)} sessions`}
-          </Text>
-        </View>
-        <MetricToggle metric={metric} onChange={props.onMetricChange} />
+      <View className="gap-0.5">
+        <Text className="text-sm text-foreground-muted">
+          {metric === "cost" ? "Raw token cost" : "Processed tokens"}
+        </Text>
+        <Text className="text-4xl font-t3-bold tabular-nums text-foreground">
+          {metric === "cost" ? `${formatUsd(merged.costUsd)}*` : formatTokens(merged.totalTokens)}
+        </Text>
+        <Text className="text-sm text-foreground-muted">
+          {metric === "cost"
+            ? "* if billed at full API rate"
+            : `Across ${formatCount(merged.sessions)} sessions`}
+        </Text>
       </View>
 
       {hasActivity ? (
@@ -258,38 +313,6 @@ function ChartCard(props: {
             : formatDayShort(props.untilDay)}
         </Text>
       </View>
-    </View>
-  );
-}
-
-function MetricToggle(props: {
-  readonly metric: UsageChartMetric;
-  readonly onChange: (metric: UsageChartMetric) => void;
-}) {
-  return (
-    <View className="flex-row overflow-hidden rounded-full bg-subtle">
-      {(["cost", "tokens"] as const).map((option) => {
-        const active = option === props.metric;
-        return (
-          <Pressable
-            key={option}
-            accessibilityRole="button"
-            accessibilityState={{ selected: active }}
-            onPress={() => props.onChange(option)}
-            className={active ? "rounded-full bg-subtle-strong px-3 py-1.5" : "px-3 py-1.5"}
-          >
-            <Text
-              className={
-                active
-                  ? "text-xs font-t3-medium uppercase text-foreground"
-                  : "text-xs uppercase text-foreground-muted"
-              }
-            >
-              {option}
-            </Text>
-          </Pressable>
-        );
-      })}
     </View>
   );
 }
