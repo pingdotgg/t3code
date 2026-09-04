@@ -29,6 +29,7 @@ import { OtlpTracer } from "effect/unstable/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
+import * as GitHubAttachmentProxy from "./assets/GitHubAttachmentProxy.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
@@ -386,6 +387,22 @@ export const assetRouteLayer = HttpRouter.add(
     );
     if (!asset) {
       return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+    if (asset.kind === "github-attachment") {
+      // serviceOption because route requirements defer to HttpRouter.serve and a hard
+      // dependency leaks into every serve site; a server without the proxy answers 404.
+      const proxy = yield* Effect.serviceOption(GitHubAttachmentProxy.GitHubAttachmentProxy);
+      const location = Option.isSome(proxy)
+        ? yield* proxy.value.resolveAttachmentLocation(asset.url)
+        : null;
+      if (location === null) {
+        return HttpServerResponse.text("Not Found", { status: 404 });
+      }
+      return HttpServerResponse.redirect(location, {
+        status: 302,
+        // Below the 300-second expiry of GitHub's signed storage URL; cached redirects stay fresh.
+        headers: { "cache-control": "private, max-age=240" },
+      });
     }
     return yield* assetFileResponse(
       asset,

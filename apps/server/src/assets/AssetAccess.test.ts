@@ -186,7 +186,7 @@ describe("AssetAccess", () => {
         ["bytes=2-5", "2345", 206],
       ] as const) {
         const asset = yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
-        if (!asset) throw new Error("Expected a resolved media file");
+        if (asset?.kind !== "file") throw new Error("Expected a resolved media file");
 
         yield* fs.rename(filePath, savedPath);
         yield* fs.symlink(secretPath, filePath);
@@ -341,7 +341,7 @@ describe("AssetAccess", () => {
       const name = suffix.slice(separator + 1);
       yield* fs.writeFileString(filePath, "in-place edit");
       const edited = yield* resolveAsset(token, name);
-      if (!edited) throw new Error("Expected the edited media file");
+      if (edited?.kind !== "file") throw new Error("Expected the edited media file");
       const editedResponse = HttpServerResponse.toWeb(yield* assetFileResponse(edited));
       expect(yield* Effect.promise(() => editedResponse.text())).toBe("in-place edit");
 
@@ -357,7 +357,7 @@ describe("AssetAccess", () => {
         renewedSuffix.slice(0, renewedSeparator),
         renewedSuffix.slice(renewedSeparator + 1),
       );
-      if (!renewedAsset) throw new Error("Expected the replacement media file");
+      if (renewedAsset?.kind !== "file") throw new Error("Expected the replacement media file");
       const renewedResponse = HttpServerResponse.toWeb(yield* assetFileResponse(renewedAsset));
       expect(yield* Effect.promise(() => renewedResponse.text())).toBe("replacement");
       yield* fs.remove(filePath);
@@ -886,6 +886,23 @@ describe("AssetAccess", () => {
       expect(error.message).toBe("Failed to resolve project favicon.");
       expect(error._tag).toBe("AssetProjectFaviconResolutionError");
       expect(error.cause).toBe(resolutionCause);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("issues GitHub attachment URLs only for allowlisted uploads", () =>
+    Effect.gen(function* () {
+      const url = "https://github.com/user-attachments/assets/4dcab2ba-0674-4d3b-a3a7-3546601b1550";
+      const result = yield* issueAssetUrl({ resource: { _tag: "github-attachment", url } });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const [token, fileName] = suffix.split("/") as [string, string];
+
+      expect(yield* resolveAsset(token, fileName)).toEqual({ kind: "github-attachment", url });
+      expect(yield* resolveAsset(`${token}tampered`, fileName)).toBeNull();
+
+      const error = yield* issueAssetUrl({
+        resource: { _tag: "github-attachment", url: "https://evil.example.com/assets/abc" },
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("AssetRemoteUrlValidationError");
     }).pipe(Effect.provide(testLayer)),
   );
 });

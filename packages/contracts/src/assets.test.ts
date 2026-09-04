@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { AttachmentCreateUploadUrlInput } from "./assets.ts";
+import { AttachmentCreateUploadUrlInput, isGitHubUserAttachmentUrl } from "./assets.ts";
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -56,5 +56,23 @@ describe("AttachmentCreateUploadUrlInput", () => {
         sizeBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1,
       }),
     ).toBe(false);
+  });
+});
+
+describe("isGitHubUserAttachmentUrl", () => {
+  it("accepts exactly GitHub user-attachment asset URLs", () => {
+    expect(
+      isGitHubUserAttachmentUrl(
+        "https://github.com/user-attachments/assets/4dcab2ba-0674-4d3b-a3a7-3546601b1550",
+      ),
+    ).toBe(true);
+    for (const url of [
+      "https://github.com.evil.example.com/user-attachments/assets/a",
+      "https://github.com/user-attachments/assets/a/../../login",
+      "https://github.com/user-attachments/assets/a?next=b",
+      "https://github.com/owner/repo/blob/main/a.png",
+    ]) {
+      expect(isGitHubUserAttachmentUrl(url)).toBe(false);
+    }
   });
 });

@@ -645,7 +645,10 @@ function ThreadMarkdownImageRequest(props: {
 /** Environment-hosted image that loads through a signed asset URL. */
 function ThreadMarkdownImage(props: {
   readonly environmentId: EnvironmentId;
-  readonly resource: Extract<AssetResource, { readonly _tag: "attachment" | "media-file" }>;
+  readonly resource: Extract<
+    AssetResource,
+    { readonly _tag: "attachment" | "media-file" | "github-attachment" }
+  >;
   readonly alt: string | null;
   readonly srcFragment?: string;
   readonly actionsSource?: MediaActionsSource;
@@ -659,7 +662,9 @@ function ThreadMarkdownImage(props: {
       sourceKey={
         props.resource._tag === "attachment"
           ? `attachment:${props.resource.attachmentId}`
-          : `workspace:${props.resource.path}`
+          : props.resource._tag === "github-attachment"
+            ? `github:${props.resource.url}`
+            : `workspace:${props.resource.path}`
       }
       unavailable={assetUrl._tag === "Failure"}
       alt={props.alt}
@@ -2269,11 +2274,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       return (
         <ThreadMarkdownImage
           environmentId={props.environmentId}
-          resource={{
-            _tag: "media-file",
-            threadId: props.threadId,
-            path: imageSource.path,
-          }}
+          resource={
+            imageSource._tag === "GitHubAttachment"
+              ? { _tag: "github-attachment", url: imageSource.uri }
+              : { _tag: "media-file", threadId: props.threadId, path: imageSource.path }
+          }
           alt={image.alt}
           srcFragment={markdownImageSourceFragment(image.href)}
           actionsSource={media?.source.actionsSource}
