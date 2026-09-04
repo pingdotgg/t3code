@@ -261,7 +261,8 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
 
         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-          if (readOnly || clearingInput || s == null || count <= 0) return
+          if (readOnly) return
+          if (clearingInput || s == null || count <= 0) return
           val end = (start + count).coerceAtMost(s.length)
           if (start >= end) return
           val insertedText = s.subSequence(start, end).toString()
