@@ -303,12 +303,14 @@ describe("DiscoveredLocalServer", () => {
       host: "localhost",
       port: 5173,
       url: "http://localhost:5173",
+      urlKind: "public-tunnel",
       processName: "node",
       pid: 12345,
       terminal: null,
     });
     expect(server.port).toBe(5173);
     expect(server.processName).toBe("node");
+    expect(server.urlKind).toBe("public-tunnel");
   });
 
   it("decodes a server without process metadata", () => {

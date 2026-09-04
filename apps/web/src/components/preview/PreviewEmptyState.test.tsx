@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
     host: string;
     port: number;
     url: string;
+    urlKind?: "local-proxy" | "public-tunnel";
     requestedUrl: string;
     processName: string | null;
     pid: number | null;
@@ -15,7 +16,8 @@ const mocks = vi.hoisted(() => ({
   }>,
 }));
 
-vi.mock("./useDiscoveredLocalServers", () => ({
+vi.mock("./useDiscoveredLocalServers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./useDiscoveredLocalServers")>()),
   useDiscoveredLocalServers: () => mocks.servers,
 }));
 vi.mock("./PreviewFaviconIcon", () => ({
@@ -72,6 +74,20 @@ describe("PreviewEmptyState", () => {
     const html = render([{ url: "https://myapp.test/", lastVisitedAt: 0 }]);
     expect(html).toContain("Recently used");
     expect(html).not.toContain("Local servers");
+  });
+
+  it("labels a remote proxy from its stable requested URL", () => {
+    mocks.servers = [
+      {
+        ...server(4058),
+        url: "http://100.65.180.100:4058/",
+        requestedUrl: "https://feature.artelo.localhost/",
+        urlKind: "local-proxy",
+      },
+    ];
+    const html = render([]);
+    expect(html).toContain("feature.artelo.localhost");
+    expect(html).not.toContain("100.65.180.100:4058");
   });
 
   it("keeps the original empty state when both groups are empty", () => {
