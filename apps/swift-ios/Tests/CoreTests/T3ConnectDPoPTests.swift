@@ -91,6 +91,78 @@ final class T3ConnectDPoPTests: XCTestCase {
         XCTAssertEqual(configuration.relayHTTPURL.absoluteString, "https://relay.example")
     }
 
+    func testBearerRejectionDoesNotGetDPoPClockAdvice() async throws {
+        let environment = Environment(
+            id: "environment-1",
+            label: "Studio",
+            httpBaseURL: URL(string: "https://studio.example")!,
+            webSocketBaseURL: URL(string: "wss://studio.example")!
+        )
+        let credentials = InMemoryCredentialStore(credentials: [
+            environment.id: EnvironmentCredential(accessToken: "bearer-token"),
+        ])
+        let api = EnvironmentAPI(
+            transport: DPoPErrorHTTPTransport(
+                body: #"{"code":"auth_invalid","reason":"invalid_credential","dpopFailureReason":"time_window","message":"The bearer token expired.","traceId":"trace-bearer"}"#
+            ),
+            credentials: credentials
+        )
+
+        do {
+            _ = try await api.session(for: environment)
+            XCTFail("A rejected bearer credential was accepted")
+        } catch let error as HTTPError {
+            XCTAssertEqual(
+                error.errorDescription,
+                "The bearer token expired. (trace trace-bearer)"
+            )
+            XCTAssertFalse(error.errorDescription?.contains("clock") == true)
+        }
+    }
+
+    func testManagedEnvironmentConfirmedClockFailureUsesClockAdvice() async throws {
+        let environment = Environment(
+            id: "managed-1",
+            label: "Managed Studio",
+            httpBaseURL: URL(string: "https://managed.example")!,
+            webSocketBaseURL: URL(string: "wss://managed.example")!,
+            kind: .managedDPoP
+        )
+        let credentials = InMemoryCredentialStore(credentials: [
+            environment.id: EnvironmentCredential.managedDPoP(
+                accessToken: "managed-token",
+                expiresAt: Date().addingTimeInterval(300),
+                scopes: ["orchestration:read"],
+                environmentID: environment.id,
+                proofKeyThumbprint: "proof-key"
+            ),
+        ])
+        let transport = DPoPErrorHTTPTransport(
+            body: #"{"code":"auth_invalid","reason":"invalid_credential","dpopFailureReason":"time_window","traceId":"trace-clock"}"#
+        )
+        let api = EnvironmentAPI(
+            transport: transport,
+            credentials: credentials,
+            managedAuthorization: StaticDPoPAuthorizer()
+        )
+
+        do {
+            _ = try await api.session(for: environment)
+            XCTFail("A rejected managed credential was accepted")
+        } catch let error as HTTPError {
+            XCTAssertEqual(
+                error.errorDescription,
+                "The environment credential is invalid. \(DPoPFailurePresentation.clockHint) (trace trace-clock)"
+            )
+        }
+
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertTrue(requests.allSatisfy {
+            $0.value(forHTTPHeaderField: "DPoP") == "proof"
+        })
+    }
+
     private func jsonObject(_ encoded: String) throws -> [String: Any] {
         let data = try decodeBase64URL(encoded)
         return try XCTUnwrap(
@@ -103,5 +175,63 @@ final class T3ConnectDPoPTests: XCTestCase {
             .replacingOccurrences(of: "_", with: "/")
         base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
         return try XCTUnwrap(Data(base64Encoded: base64))
+    }
+}
+
+private actor DPoPErrorHTTPTransport: HTTPTransport {
+    let body: String
+    private(set) var requests: [URLRequest] = []
+
+    init(body: String) {
+        self.body = body
+    }
+
+    func data(for request: URLRequest) throws -> (Data, HTTPURLResponse) {
+        requests.append(request)
+        return (
+            Data(body.utf8),
+            HTTPURLResponse(
+                url: request.url!,
+                statusCode: 401,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+        )
+    }
+}
+
+private struct StaticDPoPAuthorizer: ManagedEnvironmentAuthorizing {
+    func credentialRequiresRefresh(
+        _: EnvironmentCredential,
+        environment _: Environment
+    ) async throws -> Bool {
+        false
+    }
+
+    func authorize(
+        _ request: URLRequest,
+        environment _: Environment,
+        credential: EnvironmentCredential
+    ) async throws -> URLRequest {
+        var authorized = request
+        authorized.setValue(
+            "DPoP \(credential.accessToken)",
+            forHTTPHeaderField: "Authorization"
+        )
+        authorized.setValue("proof", forHTTPHeaderField: "DPoP")
+        return authorized
+    }
+
+    func refreshCredential(
+        for environment: Environment,
+        replacing _: EnvironmentCredential
+    ) async throws -> EnvironmentCredential {
+        .managedDPoP(
+            accessToken: "refreshed-token",
+            expiresAt: Date().addingTimeInterval(300),
+            scopes: ["orchestration:read"],
+            environmentID: environment.id,
+            proofKeyThumbprint: "proof-key"
+        )
     }
 }

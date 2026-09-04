@@ -311,6 +311,17 @@ public actor WebSocketRPCClient {
         connection != nil
     }
 
+    /// Replaces a socket after suspension without replaying sent commands.
+    /// Resumable subscriptions survive; one-shot owners choose their next cursor.
+    public func reconnect() async {
+        guard desired else { return }
+        loopID = nil
+        loopTask?.cancel()
+        loopTask = nil
+        await disconnected()
+        start()
+    }
+
     public func stop() async {
         let closingConnection = connection
         desired = false

@@ -6,11 +6,18 @@ public struct FeatureFilesView: View {
     let client: any FeatureClient
     let threadID: String
     let initialPath: String?
+    let workspaceRoot: String?
 
-    public init(client: any FeatureClient, threadID: String, initialPath: String? = nil) {
+    public init(
+        client: any FeatureClient,
+        threadID: String,
+        initialPath: String? = nil,
+        workspaceRoot: String? = nil
+    ) {
         self.client = client
         self.threadID = threadID
         self.initialPath = initialPath
+        self.workspaceRoot = workspaceRoot
     }
 
     public var body: some View {
@@ -23,10 +30,17 @@ public struct FeatureFilesView: View {
                         path: initialPath,
                         name: URL(fileURLWithPath: initialPath).lastPathComponent,
                         kind: .file
-                    )
+                    ),
+                    workspaceRoot: workspaceRoot
                 )
             } else {
-                FeatureFileDirectoryView(client: client, threadID: threadID, path: nil, title: "Files")
+                FeatureFileDirectoryView(
+                    client: client,
+                    threadID: threadID,
+                    path: nil,
+                    title: "Files",
+                    workspaceRoot: workspaceRoot
+                )
             }
         }
         .background(T3Colors.background)
@@ -38,6 +52,7 @@ private struct FeatureFileDirectoryView: View {
     let threadID: String
     let path: String?
     let title: String
+    let workspaceRoot: String?
 
     @State private var entries: [FeatureFileEntry] = []
     @State private var searchText = ""
@@ -104,10 +119,16 @@ private struct FeatureFileDirectoryView: View {
                 client: client,
                 threadID: threadID,
                 path: entry.path,
-                title: entry.name
+                title: entry.name,
+                workspaceRoot: workspaceRoot
             )
         } else {
-            FeatureFilePreviewView(client: client, threadID: threadID, entry: entry)
+            FeatureFilePreviewView(
+                client: client,
+                threadID: threadID,
+                entry: entry,
+                workspaceRoot: workspaceRoot
+            )
         }
     }
 
@@ -157,6 +178,9 @@ private struct FeatureFileRow: View {
         case .file:
             switch FeatureFilePreviewKind.infer(path: entry.path) {
             case .image: "photo"
+            case .pdf: "doc.richtext"
+            case .video: "video"
+            case .document: "doc"
             case .markdown: "doc.richtext"
             case .source: entry.name.hasSuffix(".swift") ? "swift" : "chevron.left.forwardslash.chevron.right"
             case .plainText: "doc.text"
@@ -169,10 +193,10 @@ private struct FeatureFilePreviewView: View {
     let client: any FeatureClient
     let threadID: String
     let entry: FeatureFileEntry
+    let workspaceRoot: String?
 
     @State private var content: FeatureFileContent?
     @State private var sourceLines: [FeatureSourceLine] = []
-    @State private var image: UIImage?
     @State private var assetURL: URL?
     @State private var errorMessage: String?
     @State private var isLoading = true
@@ -183,12 +207,15 @@ private struct FeatureFilePreviewView: View {
 
     var body: some View {
         Group {
-            if isLoading, content == nil, image == nil {
+            if isLoading, content == nil, assetURL == nil {
                 ProgressView("Loading file…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let image {
-                FeatureZoomableImageView(image: image)
-                    .background(Color.black)
+            } else if let assetURL {
+                FeatureNativeMediaPreviewView(
+                    source: .remote(assetURL),
+                    kind: previewKind,
+                    fileName: entry.name
+                )
             } else if let content {
                 VStack(spacing: 0) {
                     if content.isTruncated {
@@ -205,7 +232,8 @@ private struct FeatureFilePreviewView: View {
                         ScrollView {
                             MarkdownMessageView(
                                 content.text,
-                                copyActionTitle: "Copy file contents"
+                                copyActionTitle: "Copy file contents",
+                                imageContext: markdownImageContext
                             )
                                 .frame(maxWidth: T3Metrics.readingWidth, alignment: .leading)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -215,7 +243,7 @@ private struct FeatureFilePreviewView: View {
                         .scrollDismissesKeyboard(.interactively)
                     case .source, .plainText:
                         FeatureSourceTextView(lines: sourceLines)
-                    case .image:
+                    case .image, .pdf, .video, .document:
                         EmptyView()
                     }
                 }
@@ -231,14 +259,7 @@ private struct FeatureFilePreviewView: View {
         .navigationTitle(entry.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if let assetURL {
-                ToolbarItem(placement: .topBarTrailing) {
-                    ShareLink(item: assetURL) {
-                        Image(systemName: "square.and.arrow.up")
-                    }
-                    .accessibilityLabel("Share image")
-                }
-            } else if let content {
+            if let content {
                 ToolbarItem(placement: .topBarTrailing) {
                     ShareLink(item: content.text) {
                         Image(systemName: "square.and.arrow.up")
@@ -250,34 +271,33 @@ private struct FeatureFilePreviewView: View {
         .task { await load() }
     }
 
+    private var markdownImageContext: MarkdownImageContext? {
+        guard let workspaceRoot,
+              let resolver = client as? any FeatureWorkspaceAssetResolving else { return nil }
+        return MarkdownImageContext(
+            threadID: threadID,
+            workspaceRoot: workspaceRoot,
+            resolver: resolver,
+            sourceFilePath: entry.path
+        )
+    }
+
     private func load() async {
         isLoading = true
         defer { isLoading = false }
         do {
-            if previewKind == .image {
+            if [.image, .pdf, .video, .document].contains(previewKind) {
                 guard let resolver = client as? any FeatureWorkspaceAssetResolving else {
-                    throw FeatureCapabilityUnavailable("Signed image previews")
+                    throw FeatureCapabilityUnavailable("Native file previews")
                 }
-                let resolvedURL = try await resolver.workspaceAssetURL(
-                    threadID: threadID,
-                    path: entry.path
-                )
-                let (data, response) = try await URLSession.shared.data(from: resolvedURL)
-                if let response = response as? HTTPURLResponse,
-                   !(200 ... 299).contains(response.statusCode) {
-                    throw FeatureImagePreviewError.httpStatus(response.statusCode)
-                }
-                guard data.count <= 64 * 1_024 * 1_024 else {
-                    throw FeatureImagePreviewError.tooLarge
-                }
-                guard let decoded = await Task.detached(priority: .userInitiated, operation: {
-                    FeatureImageDecoder.downsample(data, maxPixelSize: 4_096)
-                }).value else {
-                    throw FeatureImagePreviewError.invalidImage
+                let resolvedURL = if previewKind == .image || previewKind == .video || previewKind == .pdf
+                    || ["html", "htm"].contains(URL(fileURLWithPath: entry.path).pathExtension.lowercased()) {
+                    try await resolver.mediaAssetURL(threadID: threadID, path: entry.path)
+                } else {
+                    try await resolver.workspaceAssetURL(threadID: threadID, path: entry.path)
                 }
                 guard !Task.isCancelled else { return }
                 assetURL = resolvedURL
-                image = decoded
                 content = nil
                 sourceLines = []
             } else {
@@ -304,13 +324,12 @@ private struct FeatureFilePreviewView: View {
                         for: MarkdownContentRevision(loaded.text)
                     )
                     lines = []
-                case .image:
+                case .image, .pdf, .video, .document:
                     lines = []
                 }
                 guard !Task.isCancelled else { return }
                 content = loaded
                 sourceLines = lines
-                image = nil
                 assetURL = nil
             }
             errorMessage = nil

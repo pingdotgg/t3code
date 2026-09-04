@@ -52,6 +52,10 @@ public struct FeatureProviderSkill: Identifiable, Sendable, Equatable, Hashable,
     public let path: String
     public let scope: String?
     public let isEnabled: Bool
+    public var userInvocationOnly: Bool? = nil
+    public var userInvocable: Bool? = nil
+
+    var invocation: String { "\(userInvocationOnly == true ? "/" : "$")\(name) " }
 
     public init(
         name: String,
@@ -312,6 +316,20 @@ enum FeatureComposerMenuItem: Identifiable, Sendable, Equatable {
 }
 
 enum FeatureComposerMenuBuilder {
+    private static func normalizedName(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func enabledSkills(
+        in skills: [FeatureProviderSkill]
+    ) -> [FeatureProviderSkill] {
+        var seenNames = Set<String>()
+        return skills.filter { skill in
+            guard skill.isEnabled else { return false }
+            return seenNames.insert(normalizedName(skill.name)).inserted
+        }
+    }
+
     static func items(
         trigger: FeatureComposerTrigger,
         providers: [FeatureProvider],
@@ -330,8 +348,9 @@ enum FeatureComposerMenuBuilder {
             if query.isEmpty || "model".contains(query) {
                 items.append(.modelCommand)
             }
-            let skills = powerFeatures.skills
-                .filter(\.isEnabled)
+            let enabledSkills = enabledSkills(in: powerFeatures.skills)
+            let skills = enabledSkills
+                .filter { $0.userInvocable != false }
                 .filter { skill in
                     guard !normalizedSkillQuery.isEmpty else { return true }
                     return [skill.name, skill.displayName, skill.shortDescription, skill.description]
@@ -342,10 +361,11 @@ enum FeatureComposerMenuBuilder {
                     ($0.displayName ?? $0.name).localizedStandardCompare($1.displayName ?? $1.name)
                         == .orderedAscending
                 }
-            let visibleSkillNames = Set(skills.map { $0.name.lowercased() })
+            let enabledSkillNames = Set(enabledSkills.map { normalizedName($0.name) })
+            let excludedCommandNames = Set(["model", "plan", "default"].map(normalizedName))
             let commands = powerFeatures.slashCommands
-                .filter { !["model", "plan", "default"].contains($0.name.lowercased()) }
-                .filter { !visibleSkillNames.contains($0.name.lowercased()) }
+                .filter { !excludedCommandNames.contains(normalizedName($0.name)) }
+                .filter { !enabledSkillNames.contains(normalizedName($0.name)) }
                 .filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
                 .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             items.append(contentsOf: commands.map(FeatureComposerMenuItem.providerCommand))
@@ -354,19 +374,16 @@ enum FeatureComposerMenuBuilder {
 
         case .model:
             let query = trigger.query.trimmingCharacters(in: .whitespacesAndNewlines)
-            let lockedProviderID = threadSelection.flatMap { selection in
-                providers.first { $0.id == selection.providerID }?
-                    .requiresNewThreadForModelChange == true
-                    ? selection.providerID
-                    : nil
-            }
             return providers
                 .filter(\.isAvailable)
-                .filter { lockedProviderID == nil || $0.id == lockedProviderID }
+                .filter { provider in
+                    threadSelection == nil || provider.id == threadSelection?.providerID
+                }
                 .flatMap { provider in
                     provider.models
                         .filter { model in
-                            guard lockedProviderID != nil, let threadSelection else { return true }
+                            guard provider.requiresNewThreadForModelChange,
+                                  let threadSelection else { return true }
                             return model.id == threadSelection.modelID
                         }
                         .map { model in
@@ -393,8 +410,7 @@ enum FeatureComposerMenuBuilder {
 
         case .skill:
             let query = trigger.query.trimmingCharacters(in: .whitespacesAndNewlines)
-            return powerFeatures.skills
-                .filter(\.isEnabled)
+            return enabledSkills(in: powerFeatures.skills)
                 .filter { skill in
                     guard !query.isEmpty else { return true }
                     return [skill.name, skill.displayName, skill.shortDescription, skill.description]

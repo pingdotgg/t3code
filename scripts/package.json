@@ -14,8 +14,7 @@
     "@t3tools/shared": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
     "effect": "catalog:",
-    "pngjs": "7.0.0",
-    "yaml": "catalog:"
+    "pngjs": "7.0.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

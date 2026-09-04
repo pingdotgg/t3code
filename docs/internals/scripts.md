@@ -74,6 +74,81 @@ authenticated.
 - `vp run dist:desktop:win`: Builds a Windows NSIS installer into `./release`. `:arm64` and `:x64`
   variants exist.
 
+### Linux AppImage prerequisites
+
+Linux AppImage packaging compiles the Rust resource monitor. Install a Rust toolchain, the standard
+C/C++ build tools, and ImageMagick before running `vp run dist:desktop:linux`.
+
+Ubuntu and Debian:
+
+```bash
+sudo apt-get update
+sudo apt-get install cargo rustc build-essential imagemagick
+```
+
+Fedora:
+
+```bash
+sudo dnf install rust cargo gcc gcc-c++ make ImageMagick
+```
+
+Arch Linux:
+
+```bash
+sudo pacman -S rust base-devel imagemagick
+```
+
+The artifact script checks these capabilities before starting the web and desktop builds. If
+anything is unavailable, it reports every failed check together and prints the Ubuntu/Debian
+installation command. The check compiles and links tiny temporary programs, so it also catches
+installed runtime X11 libraries that are missing their development headers or linker symlinks.
+
+### macOS DMG prerequisites
+
+Install the Xcode Command Line Tools and Rust before building a DMG:
+
+```bash
+xcode-select --install
+```
+
+Install Rust from [rustup.rs](https://rustup.rs). The artifact script checks Cargo, Clang, Make,
+`sips`, and `iconutil`. Universal builds additionally require `lipo`. It also verifies that Rust
+has every requested target; add missing targets with:
+
+```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+```
+
+Unsigned local builds need no Apple credentials. Builds using `--signed` additionally require the
+certificate, provisioning profile, team ID, and notarization configuration described below.
+
+### Windows installer prerequisites
+
+Install Rust from [rustup.rs](https://rustup.rs), Python 3, and Visual Studio Build Tools. In the
+Visual Studio Installer, select **Desktop development with C++** and include:
+
+- MSVC x64/x86 build tools
+- A Windows 10 or Windows 11 SDK
+- MSVC Spectre-mitigated libraries
+
+ARM64 installers require the corresponding MSVC ARM64 build tools and Spectre-mitigated libraries
+instead of the x64/x86 components.
+
+Add the Rust target matching the installer architecture:
+
+```powershell
+rustup target add x86_64-pc-windows-msvc
+# For an arm64 installer:
+rustup target add aarch64-pc-windows-msvc
+```
+
+Windows supplies `tar.exe`; it is checked when `--wsl-prebuild` makes the artifact include the WSL
+runtime. NSIS is downloaded by electron-builder and does not need a separate installation.
+When `T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR=true` points the build at an existing resource monitor,
+the artifact script skips the Rust and Visual Studio checks because it does not compile the monitor.
+Unsigned local builds need no Azure credentials. Builds using `--signed` additionally require the
+Azure Trusted Signing configuration described below.
+
 ### Desktop `.dmg` packaging notes
 
 - Default build is unsigned/not notarized for local sharing.

@@ -12,7 +12,7 @@ import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
 import { splitEnvironmentSections } from "../connection/environmentSections";
 import { cn } from "../../lib/cn";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import {
   applyShowcaseLocalEnvironmentDisplayUrls,
@@ -44,8 +44,7 @@ export function SettingsEnvironmentsRouteScreen() {
     : environmentSections.connectedCloudEnvironments;
   const hasLocalEnvironments = localEnvironments.length > 0;
   const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
-  const accentColor = useThemeColor("--color-icon-muted");
-  const headerIconColor = useThemeColor("--color-icon");
+  const headerIconColor = useUniwindTheme()["--color-icon"];
 
   const handleToggle = useCallback((environmentId: EnvironmentId) => {
     setExpandedId((prev) => (prev === environmentId ? null : environmentId));
@@ -138,6 +137,12 @@ export function SettingsEnvironmentsRouteScreen() {
                   onReconnect={onReconnectEnvironment}
                   onRemove={onRemoveEnvironmentPress}
                   onUpdate={handleUpdateEnvironment}
+                  onSetupProvider={(params) =>
+                    navigation.navigate("SettingsSheet", {
+                      screen: "SettingsContent",
+                      params: { screen: "SettingsProviderSetup", params },
+                    })
+                  }
                 />
               </View>
             ))}
@@ -148,7 +153,7 @@ export function SettingsEnvironmentsRouteScreen() {
               <SymbolView
                 name="point.3.connected.trianglepath.dotted"
                 size={20}
-                tintColor={accentColor}
+                tintColorClassName={"accent-icon-muted"}
                 type="monochrome"
               />
             </View>
@@ -165,6 +170,12 @@ export function SettingsEnvironmentsRouteScreen() {
         <CloudEnvironmentRows
           connectedCloudEnvironments={connectedCloudEnvironments}
           onReconnectEnvironment={onReconnectEnvironment}
+          onSetupProvider={(params) =>
+            navigation.navigate("SettingsSheet", {
+              screen: "SettingsContent",
+              params: { screen: "SettingsProviderSetup", params },
+            })
+          }
           {...(SHOWCASE_ENABLED
             ? {
                 showcaseAvailableEnvironments: SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS,

@@ -1,4 +1,8 @@
-import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import {
+  type ClientConnectionMethod,
+  EnvironmentId,
+  type ExecutionEnvironmentDescriptor,
+} from "@t3tools/contracts";
 import type { RelayManagedEndpoint } from "@t3tools/contracts/relay";
 import {
   exchangeRemoteDpopAccessToken,
@@ -6,7 +10,11 @@ import {
   resolveRemoteDpopWebSocketConnectionUrl,
   resolveRemoteWebSocketConnectionUrl,
 } from "./remote.ts";
-import { environmentMismatchError, mapRemoteEnvironmentError } from "../connection/errors.ts";
+import {
+  environmentMismatchError,
+  mapRemoteDpopEnvironmentError,
+  mapRemoteEnvironmentError,
+} from "../connection/errors.ts";
 import { ConnectionBlockedError, type ConnectionAttemptError } from "../connection/model.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
@@ -22,7 +30,10 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
-import type { PreparedHttpAuthorization } from "../connection/model.ts";
+import {
+  DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS,
+  type PreparedHttpAuthorization,
+} from "../connection/model.ts";
 
 export interface RelayEnvironmentAuthorization {
   readonly environmentId: EnvironmentId;
@@ -46,6 +57,7 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
       readonly httpBaseUrl: string;
       readonly wsBaseUrl: string;
       readonly bearerToken: string;
+      readonly connectionMethod: ClientConnectionMethod;
     }) => Effect.Effect<AuthorizedRemoteEnvironment, ConnectionAttemptError>;
     readonly authorizeDpop: (input: {
       readonly expectedEnvironmentId: EnvironmentId;
@@ -57,14 +69,13 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
   }
 >()("@t3tools/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
 
-const TOKEN_EXPIRY_SAFETY_MARGIN_MS = 60_000;
 const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
 const BEARER_DESCRIPTOR_CACHE_TTL_MS = 10_000;
 
 function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemptError) {
   return error._tag === "ConnectionTransientError" || error._tag === "ConnectionBlockedError"
     ? error
-    : mapRemoteEnvironmentError(error);
+    : mapRemoteDpopEnvironmentError(error);
 }
 
 const fetchDescriptor = Effect.fn("clientRuntime.connection.remote.fetchDescriptor")(function* (
@@ -99,6 +110,7 @@ export const make = Effect.gen(function* () {
       readonly httpBaseUrl: string;
       readonly wsBaseUrl: string;
       readonly bearerToken: string;
+      readonly connectionMethod: ClientConnectionMethod;
     }) {
       const now = yield* Clock.currentTimeMillis;
       const cachedDescriptor = (yield* Ref.get(bearerDescriptors)).get(input.expectedEnvironmentId);
@@ -132,6 +144,7 @@ export const make = Effect.gen(function* () {
         httpBaseUrl: input.httpBaseUrl,
         bearerToken: input.bearerToken,
         clientMetadata: presentation.metadata,
+        connectionMethod: input.connectionMethod,
       }).pipe(
         Effect.mapError(mapRemoteEnvironmentError),
         Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -172,6 +185,7 @@ export const make = Effect.gen(function* () {
         accessToken: token.accessToken,
         dpopProof: ticketProof,
         clientMetadata: presentation.metadata,
+        connectionMethod: "relay",
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
       }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
     },
@@ -204,7 +218,7 @@ export const make = Effect.gen(function* () {
         Option.isSome(cached) &&
         cached.value.environmentId === input.expectedEnvironmentId &&
         cached.value.dpopThumbprint === thumbprint &&
-        cached.value.expiresAtEpochMs > now + TOKEN_EXPIRY_SAFETY_MARGIN_MS
+        cached.value.expiresAtEpochMs > now + DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS
       ) {
         yield* Effect.annotateCurrentSpan({
           "connection.remote_token_cache": "hit",
@@ -222,6 +236,7 @@ export const make = Effect.gen(function* () {
             httpAuthorization: {
               _tag: "Dpop" as const,
               accessToken: cached.value.accessToken,
+              expiresAtEpochMs: cached.value.expiresAtEpochMs,
             },
           };
         }
@@ -268,7 +283,7 @@ export const make = Effect.gen(function* () {
         scopes: presentation.scopes,
         clientMetadata: presentation.metadata,
       }).pipe(
-        Effect.mapError(mapRemoteEnvironmentError),
+        Effect.mapError(mapRemoteDpopEnvironmentError),
         Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.withSpan("environment.authorization.accessToken.exchange"),
       );
@@ -293,6 +308,7 @@ export const make = Effect.gen(function* () {
         httpAuthorization: {
           _tag: "Dpop" as const,
           accessToken: token.accessToken,
+          expiresAtEpochMs: token.expiresAtEpochMs,
         },
       };
     },

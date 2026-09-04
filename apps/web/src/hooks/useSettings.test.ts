@@ -76,4 +76,22 @@ describe("mergeEnvironmentSettings", () => {
     expect(settings.providerInstances).toBe(serverSettings.providerInstances);
     expect(settings.favorites).toBe(clientSettings.favorites);
   });
+
+  it("keeps server settlement settings when legacy client data contains retired keys", () => {
+    const serverSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      sidebarAutoSettleAfterDays: 14,
+      sidebarAutoSettleOnMerge: false,
+    };
+    const legacyClientSettings = {
+      ...DEFAULT_CLIENT_SETTINGS,
+      sidebarAutoSettleAfterDays: 1,
+      sidebarAutoSettleOnMerge: true,
+    };
+
+    const settings = mergeEnvironmentSettings(serverSettings, legacyClientSettings);
+
+    expect(settings.sidebarAutoSettleAfterDays).toBe(14);
+    expect(settings.sidebarAutoSettleOnMerge).toBe(false);
+  });
 });

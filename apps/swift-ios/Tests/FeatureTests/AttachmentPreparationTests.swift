@@ -47,13 +47,13 @@ struct AttachmentPreparationTests {
 
         #expect(state.isPreparing)
         #expect(state.pendingItemCount == 3)
-        #expect(state.statusLabel == "Preparing 3 images…")
+        #expect(state.statusLabel == "Preparing 3 attachments…")
 
         state.finish(first)
 
         #expect(state.isPreparing)
         #expect(state.pendingItemCount == 1)
-        #expect(state.statusLabel == "Preparing image…")
+        #expect(state.statusLabel == "Preparing attachment…")
 
         state.finish(second)
 
@@ -102,6 +102,60 @@ struct AttachmentPreparationTests {
             imagesAllowed: false,
             isSending: false,
             preparationState: state
+        ))
+    }
+
+    @Test
+    func fileSubmissionDoesNotRequireImageCapableModel() {
+        #expect(FeatureComposerSubmissionEligibility.canSend(
+            text: "",
+            attachmentCount: 1,
+            imagesAllowed: false,
+            filesAllowed: true,
+            containsImages: false,
+            containsFiles: true,
+            isSending: false,
+            preparationState: FeatureAttachmentPreparationState()
+        ))
+    }
+
+    @Test
+    func unsupportedFileBlocksSubmission() {
+        #expect(!FeatureComposerSubmissionEligibility.canSend(
+            text: "Describe this file",
+            attachmentCount: 1,
+            imagesAllowed: true,
+            filesAllowed: false,
+            containsImages: false,
+            containsFiles: true,
+            isSending: false,
+            preparationState: FeatureAttachmentPreparationState()
+        ))
+    }
+
+    @Test
+    func completionIdentityRejectsChangedOwnerOrEnvironment() {
+        let generation = UUID()
+        let identity = FeatureAttachmentOperationIdentity(
+            ownerID: "thread:one",
+            environmentID: "local",
+            generation: generation
+        )
+
+        #expect(identity.matches(
+            ownerID: "thread:one",
+            environmentID: "local",
+            generation: generation
+        ))
+        #expect(!identity.matches(
+            ownerID: "thread:two",
+            environmentID: "local",
+            generation: generation
+        ))
+        #expect(!identity.matches(
+            ownerID: "thread:one",
+            environmentID: "remote",
+            generation: generation
         ))
     }
 

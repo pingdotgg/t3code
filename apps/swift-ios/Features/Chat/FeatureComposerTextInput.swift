@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+import Observation
 
 /// The composer's text entry is a UIKit text view because SwiftUI's text
 /// inputs expose no paste hook on iOS: the long-press Paste menu can never
@@ -15,7 +16,9 @@ struct FeatureComposerTextInput: UIViewRepresentable {
     @Binding var focused: Bool
     let placeholder: String
     let acceptsImages: Bool
+    let isReadOnly: Bool
     let selectionRequest: FeatureComposerTextSelectionRequest?
+    let onSelectionChange: (NSRange) -> Void
     let onPasteImages: ([NSItemProvider]) -> Void
     let onDismissKeyboard: (() -> Void)?
 
@@ -27,6 +30,7 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         let textView = FeatureComposerUITextView()
         textView.delegate = context.coordinator
         textView.acceptsImages = acceptsImages
+        textView.isReadOnly = isReadOnly
         textView.onPasteImages = onPasteImages
         textView.onDismissKeyboard = onDismissKeyboard
         if onDismissKeyboard != nil {
@@ -59,10 +63,16 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         textView.acceptsImages = acceptsImages
         textView.onPasteImages = onPasteImages
         textView.onDismissKeyboard = onDismissKeyboard
+        textView.isReadOnly = isReadOnly
 
         let shouldApplySelection = selectionRequest.map {
             context.coordinator.lastAppliedSelectionRequestID != $0.id
         } ?? false
+        context.coordinator.isApplyingProgrammaticUpdate = true
+        defer {
+            context.coordinator.isApplyingProgrammaticUpdate = false
+            onSelectionChange(textView.selectedRange)
+        }
         if textView.text != text {
             let previousText = textView.text ?? ""
             let selectedRange = textView.selectedRange
@@ -132,15 +142,30 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         var parent: FeatureComposerTextInput
         var lastAppliedFocus: Bool?
         var lastAppliedSelectionRequestID: UUID?
+        var isApplyingProgrammaticUpdate = false
 
         init(_ parent: FeatureComposerTextInput) {
             self.parent = parent
         }
 
+        func textView(
+            _ textView: UITextView,
+            shouldChangeTextIn range: NSRange,
+            replacementText text: String
+        ) -> Bool {
+            !parent.isReadOnly
+        }
+
         func textViewDidChange(_ textView: UITextView) {
+            guard !isApplyingProgrammaticUpdate else { return }
             guard parent.text != textView.text else { return }
             parent.text = textView.text
             (textView as? FeatureComposerUITextView)?.scrollSelectionIntoView()
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            guard !isApplyingProgrammaticUpdate else { return }
+            parent.onSelectionChange(textView.selectedRange)
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
@@ -163,6 +188,30 @@ struct FeatureComposerTextInput: UIViewRepresentable {
 /// the attachment pipeline. Text-only pastes fall through to UIKit untouched.
 final class FeatureComposerUITextView: UITextView {
     private static let bottomEditingInset: CGFloat = 10
+    private var lastLaidOutBoundsSize = CGSize.zero
+
+    // Changing isEditable can dismiss an open keyboard. During voice input,
+    // keep the responder and reject user edits without changing isEditable.
+    var isReadOnly = false
+
+    override var canBecomeFirstResponder: Bool {
+        (!isReadOnly || isFirstResponder) && super.canBecomeFirstResponder
+    }
+
+    override func insertText(_ text: String) {
+        guard !isReadOnly else { return }
+        super.insertText(text)
+    }
+
+    override func deleteBackward() {
+        guard !isReadOnly else { return }
+        super.deleteBackward()
+    }
+
+    override func cut(_ sender: Any?) {
+        guard !isReadOnly else { return }
+        super.cut(sender)
+    }
 
     func configureComposerViewport() {
         clipsToBounds = true
@@ -175,6 +224,7 @@ final class FeatureComposerUITextView: UITextView {
     }
 
     func scrollSelectionIntoView() {
+        guard bounds.width > 0, bounds.height > 0 else { return }
         scrollRangeToVisible(selectedRange)
         guard let selection = selectedTextRange else { return }
 
@@ -288,13 +338,23 @@ final class FeatureComposerUITextView: UITextView {
     }
 
     override func layoutSubviews() {
+        let viewportChanged = lastLaidOutBoundsSize != bounds.size
+        lastLaidOutBoundsSize = bounds.size
         super.layoutSubviews()
         if !contentOverflows, contentOffset.y != 0 {
             contentOffset.y = 0
+        } else if viewportChanged, isFirstResponder {
+            // `sizeThatFits` receives a proposal. The final UIKit viewport can
+            // still differ after the footer and attachments take their space.
+            // Recheck the caret against these actual bounds once per resize.
+            scrollSelectionIntoView()
         }
     }
 
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if isReadOnly, action == #selector(paste(_:)) || action == #selector(cut(_:)) {
+            return false
+        }
         if action == #selector(paste(_:)),
            acceptsImages,
            FeatureComposerPasteboardPolicy.containsImage(in: UIPasteboard.general) {
@@ -310,6 +370,7 @@ final class FeatureComposerUITextView: UITextView {
     // image vanishes into UITextView's text-only default and the surface's
     // highlight never hears that the session ended.
     override func canPaste(_ itemProviders: [NSItemProvider]) -> Bool {
+        guard !isReadOnly else { return false }
         let holdsImage = itemProviders.contains {
             $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
         }
@@ -321,6 +382,7 @@ final class FeatureComposerUITextView: UITextView {
     // purpose: Slack and X do the same, and inserting a stray URL next to an
     // attached screenshot reads as a bug.
     override func paste(_ sender: Any?) {
+        guard !isReadOnly else { return }
         guard acceptsImages else {
             super.paste(sender)
             return
@@ -389,6 +451,15 @@ struct FeatureComposerTextSelectionRequest: Equatable {
     let location: Int
 }
 
+/// Selection changes come from `updateUIView` and UIKit delegate callbacks.
+/// Keeping this value outside Observation avoids synchronous SwiftUI state
+/// writes while the representable is updating.
+@MainActor
+@Observable
+final class FeatureComposerTextObservation {
+    @ObservationIgnored var selection = NSRange(location: 0, length: 0)
+}
+
 enum FeatureComposerTextSelectionPolicy {
     /// UTF-16 caret location after `range` (character indices, as produced by
     /// the trigger parser) is replaced with `replacement`.
@@ -416,22 +487,22 @@ enum FeatureComposerTextSelectionPolicy {
 }
 
 /// The editor grows with its content, then scrolls when it reaches the line
-/// cap or the space above the composer controls. A five-line minimum prevents
-/// SwiftUI's repeated height proposals from collapsing the editor.
+/// cap or the space above the composer controls. A finite SwiftUI proposal is
+/// a hard bound. Returning a larger minimum makes the parent clip the editor
+/// under its fixed footer.
 enum FeatureComposerTextInputSizing {
     static let maximumLines: CGFloat = 12
-    static let minimumVisibleLines: CGFloat = 5
 
     static func height(
         fittingHeight: CGFloat,
         lineHeight: CGFloat,
         availableHeight: CGFloat? = nil
     ) -> CGFloat {
-        let maximumHeight = lineHeight * maximumLines
-        guard let availableHeight, availableHeight.isFinite, availableHeight > 0 else {
-            return min(fittingHeight, maximumHeight)
+        let maximumHeight = max(0, lineHeight * maximumLines)
+        let contentHeight = max(0, fittingHeight)
+        guard let availableHeight, availableHeight.isFinite else {
+            return min(contentHeight, maximumHeight)
         }
-        let visibleHeight = max(availableHeight, lineHeight * minimumVisibleLines)
-        return min(fittingHeight, maximumHeight, visibleHeight)
+        return min(contentHeight, maximumHeight, max(0, availableHeight))
     }
 }

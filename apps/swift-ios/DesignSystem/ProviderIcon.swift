@@ -6,6 +6,7 @@ enum ProviderBrand: String {
     case cursor = "ProviderCursor"
     case grok = "ProviderGrok"
     case openCode = "ProviderOpenCode"
+    case antigravity = "ProviderAntigravity"
 
     static func resolve(
         driver: String,
@@ -27,6 +28,8 @@ enum ProviderBrand: String {
                 return .grok
             case "opencode":
                 return .openCode
+            case "antigravity", "googleantigravity":
+                return .antigravity
             default:
                 continue
             }
@@ -37,7 +40,7 @@ enum ProviderBrand: String {
     var usesTemplateRendering: Bool {
         switch self {
         case .openAI, .cursor, .grok: true
-        case .claude, .openCode: false
+        case .claude, .openCode, .antigravity: false
         }
     }
 }
