@@ -2422,7 +2422,9 @@ it.layer(
       const process = ptyAdapter.processes[0]!;
       const historyReceived = yield* Deferred.make<void>();
       const unsubscribeHistory = yield* manager.subscribe((event) =>
-        event.type === "output" ? Deferred.succeed(historyReceived, undefined).pipe(Effect.asVoid) : Effect.void,
+        event.type === "output"
+          ? Deferred.succeed(historyReceived, undefined).pipe(Effect.asVoid)
+          : Effect.void,
       );
       process.emitData("existing history\n");
       yield* Deferred.await(historyReceived);
@@ -2432,18 +2434,29 @@ it.layer(
       const liveReceived = yield* Deferred.make<void>();
       const unsubscribe = yield* manager.observeStream(
         { threadId: opened.threadId, terminalId: opened.terminalId },
-        (event) => Ref.update(observed, (events) => [...events, event]).pipe(
-          Effect.andThen(event.type === "output"
-            ? Deferred.succeed(liveReceived, undefined).pipe(Effect.asVoid)
-            : Effect.void),
-        ),
+        (event) =>
+          Ref.update(observed, (events) => [...events, event]).pipe(
+            Effect.andThen(
+              event.type === "output"
+                ? Deferred.succeed(liveReceived, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            ),
+          ),
       );
       yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
       process.emitData("live output\n");
       yield* Deferred.await(liveReceived);
 
       expect(yield* Ref.get(observed)).toMatchObject([
-        { type: "snapshot", snapshot: { cwd: opened.cwd, worktreePath: opened.worktreePath, pid: opened.pid, history: "existing history\n" } },
+        {
+          type: "snapshot",
+          snapshot: {
+            cwd: opened.cwd,
+            worktreePath: opened.worktreePath,
+            pid: opened.pid,
+            history: "existing history\n",
+          },
+        },
         { type: "output", data: "live output\n" },
       ]);
       expect(ptyAdapter.spawnInputs).toHaveLength(1);
@@ -2458,10 +2471,13 @@ it.layer(
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
       const missingEvents: TerminalAttachStreamEvent[] = [];
-      const missing = yield* manager.observeStream(
-        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
-        (event) => Effect.sync(() => { missingEvents.push(event); }),
-      ).pipe(Effect.flip);
+      const missing = yield* manager
+        .observeStream({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID }, (event) =>
+          Effect.sync(() => {
+            missingEvents.push(event);
+          }),
+        )
+        .pipe(Effect.flip);
       expect(missing._tag).toBe("TerminalSessionLookupError");
       expect(ptyAdapter.spawnInputs).toEqual([]);
 
@@ -2469,19 +2485,26 @@ it.layer(
       const process = ptyAdapter.processes[0]!;
       const exited = yield* Deferred.make<void>();
       const unsubscribeExit = yield* manager.subscribe((event) =>
-        event.type === "exited" ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid) : Effect.void,
+        event.type === "exited"
+          ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid)
+          : Effect.void,
       );
-      process.emitExit({ exitCode: 7 });
+      process.emitExit({ exitCode: 7, signal: 0 });
       yield* Deferred.await(exited);
       unsubscribeExit();
 
       const events: TerminalAttachStreamEvent[] = [];
       const unsubscribe = yield* manager.observeStream(
         { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
-        (event) => Effect.sync(() => { events.push(event); }),
+        (event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
       );
       unsubscribe();
-      expect(events).toMatchObject([{ type: "snapshot", snapshot: { status: "exited", exitCode: 7, pid: null } }]);
+      expect(events).toMatchObject([
+        { type: "snapshot", snapshot: { status: "exited", exitCode: 7, pid: null } },
+      ]);
       expect(ptyAdapter.spawnInputs).toHaveLength(1);
       expect(process.resizeCalls).toEqual([]);
       expect(process.writes).toEqual([]);
