@@ -7,7 +7,7 @@ import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { assert, it } from "@effect/vitest";
 
-import { GitCommandError } from "@t3tools/contracts";
+import { CheckpointRef, GitCommandError } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
@@ -108,3 +108,37 @@ it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
     ),
   );
 });
+
+it.effect("rejects truncated checkpoint numstat instead of returning a partial file list", () =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+
+    const error = yield* Effect.flip(
+      driver.checkpoints.diffCheckpoints({
+        cwd: "/repo",
+        fromCheckpointRef: CheckpointRef.make("refs/t3/checkpoints/from"),
+        toCheckpointRef: CheckpointRef.make("refs/t3/checkpoints/to"),
+        ignoreWhitespace: false,
+        format: "numstat",
+      }),
+    );
+
+    assert.strictEqual(error._tag, "VcsProcessOutputReadError");
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: () =>
+            Effect.succeed({
+              exitCode: ChildProcessSpawner.ExitCode(0),
+              stdout: ["1\t0\tfirst.txt", "2\t0\tlast"].join("\0"),
+              stderr: "",
+              stdoutTruncated: true,
+              stderrTruncated: false,
+            }),
+        }),
+      ),
+    ),
+  ),
+);

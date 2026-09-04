@@ -12,6 +12,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   GitCommandError,
   VcsProcessExitError,
+  VcsProcessOutputReadError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
@@ -838,6 +839,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "checkpoint.from_ref": input.fromCheckpointRef,
         "checkpoint.to_ref": input.toCheckpointRef,
         "checkpoint.ignore_whitespace": input.ignoreWhitespace,
+        "checkpoint.format": input.format ?? "patch",
         "checkpoint.fallback_from_to_head": input.fallbackFromToHead,
       });
 
@@ -869,7 +871,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         cwd: input.cwd,
         args: [
           "diff",
-          "--patch",
+          ...(input.format === "numstat" ? ["--numstat", "-z"] : ["--patch"]),
           "--no-color",
           "--no-ext-diff",
           "--no-textconv",
@@ -889,6 +891,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           cwd: input.cwd,
           exitCode: result.exitCode,
           detail: result.stderr.trim() || "Checkpoint ref is unavailable for diff operation.",
+        });
+      }
+
+      if (input.format === "numstat" && result.stdoutTruncated) {
+        return yield* new VcsProcessOutputReadError({
+          operation,
+          command: "git diff",
+          cwd: input.cwd,
+          stream: "stdout",
+          cause: new Error("Checkpoint numstat output was truncated."),
         });
       }
 
