@@ -745,7 +745,11 @@ export function BranchToolbarBranchSelector({
                 />
               }
             >
-              <ChangeRequestStatusIcon className="size-3" />
+              <ChangeRequestStatusIcon
+                state={branchPr.state}
+                isDraft={branchPr.isDraft}
+                className="size-3"
+              />
               <span
                 data-composer-label
                 className="min-w-0 max-w-12 overflow-hidden group-data-[compact]/composer-context:max-w-0"
