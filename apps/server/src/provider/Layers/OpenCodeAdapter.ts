@@ -2408,7 +2408,10 @@ export function makeOpenCodeAdapter(
 
         case "message.part.updated": {
           const part = event.properties.part;
-          context.partById.set(part.id, part);
+          // Tool events use the incoming part and do not need a cached copy.
+          if (part.type !== "tool") {
+            context.partById.set(part.id, part);
+          }
           const messageRole = messageRoleForPart(context, part);
 
           if (turnId && part.type === "step-finish" && context.turnTokenUsage) {
