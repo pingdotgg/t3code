@@ -285,19 +285,32 @@ const titleSegmenter = new Intl.Segmenter();
 // scripts stay whole. Idle titles are a plain string.
 function ShimmeringTitleText(props: { text: string }) {
   const normalized = props.text.replace(/\s+/g, " ");
-  return (
-    <>
-      {[...titleSegmenter.segment(normalized)].map((segment, index) => (
-        <span
-          key={index}
-          className="title-shimmer-char"
-          style={{ animationDelay: `${index * TITLE_SHIMMER_STAGGER_MS}ms` }}
-        >
-          {segment.segment}
-        </span>
-      ))}
-    </>
-  );
+  const children: ReactNode[] = [];
+  let spaceRun = "";
+  [...titleSegmenter.segment(normalized)].forEach((segment, index) => {
+    // Whitespace runs stay plain text so they collapse and lay out exactly
+    // like the idle title; an inline-block space span would either vanish
+    // (collapsible) or render double-width runs (pre).
+    if (/^\s$/.test(segment.segment)) {
+      spaceRun += segment.segment;
+      return;
+    }
+    if (spaceRun) {
+      children.push(spaceRun);
+      spaceRun = "";
+    }
+    children.push(
+      <span
+        key={index}
+        className="title-shimmer-char"
+        style={{ animationDelay: `${index * TITLE_SHIMMER_STAGGER_MS}ms` }}
+      >
+        {segment.segment}
+      </span>,
+    );
+  });
+  children.push(spaceRun);
+  return <>{children}</>;
 }
 
 function SidebarThreadTooltip({
