@@ -618,9 +618,10 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
       contentLength: Number(fileInfo.size),
     });
   },
-  Effect.catchTag("PlatformError", () =>
-    Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
-  ),
+  Effect.catchTags({
+    PlatformError: () =>
+      Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
+  }),
 );
 
 // Read the installed build's manifest once. Unknown files use revalidation.
