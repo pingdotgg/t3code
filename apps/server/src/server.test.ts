@@ -44,6 +44,7 @@ import {
   type ServerLifecycleStreamEvent,
   ThreadId,
   TurnId,
+  UsageDay,
   WS_METHODS,
   WsRpcGroup,
   EditorId,
@@ -4284,7 +4285,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         yield* Effect.scoped(
           withWsRpcClient(wsUrl, (client) =>
             Effect.gen(function* () {
-              const diagnosticsReads: ReadonlyArray<Effect.Effect<unknown, unknown>> = [
+              const diagnosticsReads = [
                 client[WS_METHODS.serverGetTraceDiagnostics]({}),
                 client[WS_METHODS.serverGetProcessDiagnostics]({}),
                 client[WS_METHODS.serverGetProcessResourceHistory]({
@@ -4297,8 +4298,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 }),
                 client[WS_METHODS.subscribeResourceTelemetry]({}).pipe(Stream.runHead),
                 client[WS_METHODS.serverGetUsageSummary]({
-                  sinceDay: "2026-09-01",
-                  untilDay: "2026-09-01",
+                  sinceDay: UsageDay.make("2026-09-01"),
+                  untilDay: UsageDay.make("2026-09-01"),
                   timeZone: "UTC",
                 }),
                 client[WS_METHODS.serverRefreshUsageRates]({}),
