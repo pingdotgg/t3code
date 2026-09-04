@@ -2,25 +2,29 @@
 
 > For maintainers. Using T3 Code? See [docs/user](../user/).
 
-[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs these quality gates on pull requests
-and pushes to `main`:
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) starts with one small **Classify
+changes** job on pull requests and pushes to `main`. It resolves the complete changed-file list,
+matches both sides of renames, and decides which of the following gates can observe the change:
 
-- **Check**: `vp check` (format and lint; this repo sets `typeCheck: false` in its lint options),
-  then `vpr typecheck` for the workspace type check. The same job
-  builds the desktop pipeline (`vp run build:desktop`) and verifies the preload bundle exists and
-  uses only imports that Electron's sandbox can load. The verifier parses imports, then executes the
-  trusted artifact with controlled bridge stubs to confirm that its required APIs are callable.
-- **Test**: `vp run test` across the workspace.
-- **Mobile Native Static Analysis**: `vp run lint:mobile` on macOS, wrapping
-  `scripts/mobile-native-static-check.ts`. A cheap Linux **Mobile Native Changes** job gates it:
-  the macOS runner only boots when the diff touches `apps/mobile` Swift/Kotlin sources, the
-  SwiftLint/detekt/ktlint configuration, the `Brewfile`, the check script, the root `package.json`
-  that defines `lint:mobile`, or `ci.yml`. Otherwise the job is skipped, which GitHub reports as
-  success for the required check. Renames are matched on both their old and new path. The gate fails
-  open in every other case: if the changed-file list cannot be resolved, GitHub truncates it, or the
-  gate job itself fails, the lint runs.
-- **Release Smoke**: exercises release-only workflow steps through `scripts/release-smoke.ts`, so
-  release breakage surfaces on PRs rather than at tag time.
+- **Check** runs `vp check`, `vpr typecheck`, the desktop pipeline build, and preload bundle
+  verification for Node product and configuration changes. Workflow-only changes keep the required
+  check name but use a no-install parse marker.
+- **Test** runs every package test task except `apps/server`.
+- **Test Server 1/2/3** shards the serialized `apps/server` suite across three runners. Server-only
+  work skips the non-server runner, while client-only work skips all three server runners. Shared
+  contracts, shared runtime code, workspace configuration, and server test dependencies run both.
+- **Rust** formats and tests `native/resource-monitor`, and only runs for that crate or CI-control
+  changes.
+- **Mobile Native Static Analysis** runs `vp run lint:mobile` on macOS for handwritten Swift/Kotlin,
+  its lint configuration, and the command dependencies it imports. Generated `ios/` and `android/`
+  projects remain excluded.
+- **Release Smoke** exercises release-only workflow steps through `scripts/release-smoke.ts`. It runs
+  for release scripts, workspace manifests, patches, mobile dependency archives, and `release.yml`.
+
+Documentation, repository metadata, and agent/editor configuration skip every product runner. CI
+workflow or classifier changes run every gate. Unknown, missing, failed, or truncated changed-file
+classification fails open and runs every gate, so optimization cannot silently remove coverage.
+Skipped jobs retain the existing required-check names and GitHub treats them as successful.
 
 [`.github/workflows/windows-tests.yml`](../../.github/workflows/windows-tests.yml) is a manual
 Windows lane (`workflow_dispatch` only) on a Blacksmith Windows 2025 runner. The suite does not
