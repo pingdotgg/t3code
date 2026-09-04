@@ -816,10 +816,12 @@ export function createEnvironmentThreadStateAtoms<R, E>(
   // Cache definitions must outlive collectible live-atom definitions. The
   // registry retains these nodes without retaining environment or RPC scopes.
   const resumeFamily = Atom.family((key: string) =>
-    Atom.make((): ThreadResumeCache => ({
-      snapshot: undefined,
-      owner: undefined,
-    })).pipe(
+    Atom.make(
+      (): ThreadResumeCache => ({
+        snapshot: undefined,
+        owner: undefined,
+      }),
+    ).pipe(
       Atom.setIdleTTL(THREAD_SNAPSHOT_IDLE_TTL_MS),
       Atom.withLabel(`environment-thread-resume:${key}`),
     ),

@@ -338,10 +338,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         }),
       });
       const lease = yield* effect.pipe(
-        Effect.mapError((error): TracedAttemptFailure => ({
-          error,
-          attemptSpan: Option.some(attemptSpan),
-        })),
+        Effect.mapError(
+          (error): TracedAttemptFailure => ({
+            error,
+            attemptSpan: Option.some(attemptSpan),
+          }),
+        ),
       );
       return { attemptSpan: Option.some(attemptSpan), lease };
     }).pipe(Effect.withSpan("relay.connection.attempt", { root: true }));
@@ -378,10 +380,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         attemptSpan: Option.none<Tracer.Span>(),
         lease,
       })),
-      Effect.mapError((error): TracedAttemptFailure => ({
-        error,
-        attemptSpan: Option.none(),
-      })),
+      Effect.mapError(
+        (error): TracedAttemptFailure => ({
+          error,
+          attemptSpan: Option.none(),
+        }),
+      ),
     );
   });
 
@@ -553,16 +557,20 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     const exit = yield* exitUnlessInterrupted(
       Effect.raceAllFirst([
         active.lease.session.closed.pipe(
-          Effect.mapError((error): TracedAttemptFailure => ({
-            error,
-            attemptSpan: active.attemptSpan,
-          })),
+          Effect.mapError(
+            (error): TracedAttemptFailure => ({
+              error,
+              attemptSpan: active.attemptSpan,
+            }),
+          ),
         ),
         monitorConnectedLease(active.lease).pipe(
-          Effect.mapError((error): TracedAttemptFailure => ({
-            error,
-            attemptSpan: active.attemptSpan,
-          })),
+          Effect.mapError(
+            (error): TracedAttemptFailure => ({
+              error,
+              attemptSpan: active.attemptSpan,
+            }),
+          ),
         ),
       ]),
     );
@@ -667,16 +675,20 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
     const establishment = yield* Effect.raceAllFirst([
       Fiber.await(initial.fiber).pipe(
-        Effect.map((exit): EstablishmentEvent => ({
-          _tag: "Completed",
-          exit,
-        })),
+        Effect.map(
+          (exit): EstablishmentEvent => ({
+            _tag: "Completed",
+            exit,
+          }),
+        ),
       ),
       waitForEstablishmentInterrupt().pipe(
-        Effect.map((resetRetry): EstablishmentEvent => ({
-          _tag: "Interrupted",
-          resetRetry,
-        })),
+        Effect.map(
+          (resetRetry): EstablishmentEvent => ({
+            _tag: "Interrupted",
+            resetRetry,
+          }),
+        ),
       ),
       Effect.sleep(CONNECTION_ESTABLISHMENT_TIMEOUT).pipe(
         Effect.as<EstablishmentEvent>({ _tag: "TimedOut" }),

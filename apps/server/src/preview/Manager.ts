@@ -433,13 +433,15 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   const list: PreviewManager["Service"]["list"] = Effect.fn("PreviewManager.list")(
     function* (input) {
       return yield* SynchronizedRef.get(stateRef).pipe(
-        Effect.map((state): PreviewListResult => ({
-          sessions: sessionsForThread(state, input.threadId)
-            .map((s) => s.snapshot)
-            .toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt)),
-          serverEpoch,
-          revision: state.revision,
-        })),
+        Effect.map(
+          (state): PreviewListResult => ({
+            sessions: sessionsForThread(state, input.threadId)
+              .map((s) => s.snapshot)
+              .toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt)),
+            serverEpoch,
+            revision: state.revision,
+          }),
+        ),
       );
     },
   );

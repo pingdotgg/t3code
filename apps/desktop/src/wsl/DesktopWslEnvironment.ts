@@ -13,6 +13,7 @@ import { buildRemoteNodeEnvScript } from "@t3tools/ssh/tunnel";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopNetworkInterfaces from "../backend/DesktopNetworkInterfaces.ts";
 import { parseWslDistroList, type WslDistro } from "./wslPathParsing.ts";
 
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
@@ -1036,19 +1037,136 @@ const windowsToWslPathImpl = (
 
 const IPV4_PATTERN = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 
+const ipv4ToInt = (ip: string): number | null => {
+  if (!IPV4_PATTERN.test(ip)) return null;
+  let value = 0;
+  for (const part of ip.split(".")) {
+    const octet = Number(part);
+    if (octet > 255) return null;
+    value = value * 256 + octet;
+  }
+  return value;
+};
+
+// Strict dotted-quad check: four octets, each 0–255, so a malformed token
+// from the probe output can never become a candidate.
+const isValidIpv4 = (ip: string): boolean => ipv4ToInt(ip) !== null;
+
+const DISTRO_IP_ROUTE_PREFIX = "route:";
+const DISTRO_IP_ADDRESSES_PREFIX = "all:";
+
+// Emits the distro's IPv4 candidates: the `src` of `ip -4 route get 1.1.1.1`
+// (a pure routing-table lookup, no packet is sent) followed by everything
+// `hostname -I` reports. Neither source alone is trustworthy — `hostname -I`
+// lists Docker bridge addresses before eth0 (#5211), and the Internet route's
+// src is a tunnel address when a VPN/VRF inside the distro owns that route —
+// so pickDistroIp validates the candidates against the Windows-side
+// interfaces instead of trusting either ordering.
+const DISTRO_IP_SCRIPT = `printf "${DISTRO_IP_ROUTE_PREFIX}%s\\n" "$(ip -4 route get 1.1.1.1 2>/dev/null)"; printf "${DISTRO_IP_ADDRESSES_PREFIX}%s\\n" "$(hostname -I 2>/dev/null)"`;
+
+export const parseDistroIpCandidates = (stdout: string): ReadonlyArray<string> => {
+  const candidates: string[] = [];
+  const push = (ip: string) => {
+    if (!candidates.includes(ip)) candidates.push(ip);
+  };
+  for (const line of stdout.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith(DISTRO_IP_ROUTE_PREFIX)) {
+      const tokens = trimmed.slice(DISTRO_IP_ROUTE_PREFIX.length).trim().split(/\s+/);
+      const srcIndex = tokens.indexOf("src");
+      const candidate = srcIndex === -1 ? undefined : tokens[srcIndex + 1];
+      if (candidate !== undefined && isValidIpv4(candidate)) push(candidate);
+    } else if (trimmed.startsWith(DISTRO_IP_ADDRESSES_PREFIX)) {
+      for (const part of trimmed.slice(DISTRO_IP_ADDRESSES_PREFIX.length).split(/\s+/)) {
+        if (isValidIpv4(part)) push(part);
+      }
+    }
+  }
+  return candidates;
+};
+
+export interface WindowsIpv4Interface {
+  readonly name: string;
+  readonly address: string;
+  readonly netmask: string | undefined;
+}
+
+const inSameSubnet = (a: string, b: string, netmask: string): boolean => {
+  const aInt = ipv4ToInt(a);
+  const bInt = ipv4ToInt(b);
+  const maskInt = ipv4ToInt(netmask);
+  if (aInt === null || bInt === null || maskInt === null) return false;
+  return (aInt & maskInt) === (bInt & maskInt);
+};
+
+const inInterfaceSubnet = (candidate: string, iface: WindowsIpv4Interface): boolean =>
+  iface.netmask !== undefined && inSameSubnet(candidate, iface.address, iface.netmask);
+
+const isWslAdapterName = (name: string): boolean => name.toLowerCase().includes("wsl");
+
+// Ranked selection, strongest signal first, so a weak match on an early
+// candidate can never shadow a strong match on a later one:
+// 1. A candidate inside the subnet of a WSL-named adapter ("vEthernet (WSL)",
+//    "vEthernet (WSL (Hyper-V firewall))") is the NAT-mode eth0 address.
+//    Checked before equality so a Docker bridge address that happens to
+//    coincide with some other Windows adapter cannot pose as mirrored mode.
+// 2. A candidate equal to a Windows interface address is the mirrored-mode
+//    signature (DesktopBackendConfiguration then swaps the renderer URL to
+//    loopback); mirrored networking has no WSL NAT adapter to match above.
+// 3. A candidate inside any other Windows interface's subnet covers renamed
+//    or custom Hyper-V switches — ranked last so a Windows-side VPN whose
+//    10.x/172.x space overlaps an in-distro tunnel or Docker bridge cannot
+//    capture the probe while the real WSL adapter has a match.
+// Docker bridges and in-distro VPN tunnels normally match no pass. When
+// nothing matches, a lone candidate is still the only possible answer, but
+// several candidates give no basis to choose, so return none and let the
+// caller fall back to loopback rather than guess an unreachable address.
+export const pickDistroIp = (
+  candidates: ReadonlyArray<string>,
+  windowsInterfaces: ReadonlyArray<WindowsIpv4Interface>,
+): string | null => {
+  const passes: ReadonlyArray<(candidate: string, iface: WindowsIpv4Interface) => boolean> = [
+    (candidate, iface) => isWslAdapterName(iface.name) && inInterfaceSubnet(candidate, iface),
+    (candidate, iface) => candidate === iface.address,
+    (candidate, iface) => inInterfaceSubnet(candidate, iface),
+  ];
+  for (const pass of passes) {
+    for (const candidate of candidates) {
+      if (windowsInterfaces.some((iface) => pass(candidate, iface))) return candidate;
+    }
+  }
+  return candidates.length === 1 ? (candidates[0] ?? null) : null;
+};
+
+export const windowsIpv4Interfaces = (
+  interfaces: DesktopNetworkInterfaces.NetworkInterfaces,
+): ReadonlyArray<WindowsIpv4Interface> => {
+  const flattened: WindowsIpv4Interface[] = [];
+  for (const [name, list] of Object.entries(interfaces)) {
+    if (!list) continue;
+    for (const entry of list) {
+      // Same family normalization as isLocalHostIpv4 in
+      // DesktopBackendConfiguration: Electron's Node reports the string
+      // "IPv4", some Node builds report the numeric 4.
+      const family = String(entry.family);
+      if (family === "IPv4" || family === "4") {
+        flattened.push({ name, address: entry.address, netmask: entry.netmask });
+      }
+    }
+  }
+  return flattened;
+};
+
 const getDistroIpImpl = (
   distro: string | null,
+  readNetworkInterfaces: Effect.Effect<DesktopNetworkInterfaces.NetworkInterfaces>,
 ): Effect.Effect<Option.Option<string>, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      // `hostname -I` prints a space-separated list of all non-loopback
-      // IPs the distro has bound. The first entry on the WSL2 default
-      // network is always the eth0 vEthernet address Windows can reach
-      // directly (no wslhost forwarding required).
       const command = ChildProcess.make(
         "wsl.exe",
-        [...buildDistroArgs(distro), "--", "sh", "-c", "hostname -I"],
+        [...buildDistroArgs(distro), "--", "sh", "-c", DISTRO_IP_SCRIPT],
         {
           stdin: "ignore",
           stdout: "pipe",
@@ -1062,8 +1180,13 @@ const getDistroIpImpl = (
       const exitCode = yield* handle.exitCode;
       if ((exitCode as unknown as number) !== 0) return Option.none<string>();
       const raw = decodeUtf8(concatChunks(stdoutBytes)).trim();
-      const candidate = raw.split(/\s+/).find((part) => IPV4_PATTERN.test(part));
-      return candidate ? Option.some(candidate) : Option.none<string>();
+      const candidates = parseDistroIpCandidates(raw);
+      const interfaces = yield* readNetworkInterfaces;
+      const chosen = pickDistroIp(candidates, windowsIpv4Interfaces(interfaces));
+      yield* Effect.log(
+        `[wsl] distro IP probe chose ${chosen ?? "none"} from candidates [${candidates.join(", ")}]`,
+      );
+      return chosen === null ? Option.none<string>() : Option.some(chosen);
     }),
   ).pipe(
     Effect.timeoutOption(USER_HOME_TIMEOUT),
@@ -1184,6 +1307,7 @@ export const layer = Layer.effect(
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
+    const networkInterfaces = yield* DesktopNetworkInterfaces.DesktopNetworkInterfaces;
     const windir = process.env.WINDIR ?? "C:\\Windows";
 
     const provideSpawner = <A, E>(
@@ -1230,7 +1354,9 @@ export const layer = Layer.effect(
       }).pipe(Effect.withSpan("desktop.wsl.getUserHome"));
 
     const getDistroIp = (distro: string | null) =>
-      provideSpawner(getDistroIpImpl(distro)).pipe(Effect.withSpan("desktop.wsl.getDistroIp"));
+      provideSpawner(getDistroIpImpl(distro, networkInterfaces.read)).pipe(
+        Effect.withSpan("desktop.wsl.getDistroIp"),
+      );
 
     const probeDistros = provideSpawner(probeWslDistros).pipe(
       Effect.withSpan("desktop.wsl.probeDistros"),

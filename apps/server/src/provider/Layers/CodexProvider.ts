@@ -427,15 +427,19 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       // Usage is an enrichment: a failure or a slow answer degrades to "no
       // usage this probe" rather than costing the account and models.
       client.request("account/rateLimits/read", undefined).pipe(
-        Effect.map((response): CodexRateLimitsProbe => ({
-          snapshot: response.rateLimits,
-          resetCredits: response.rateLimitResetCredits,
-        })),
+        Effect.map(
+          (response): CodexRateLimitsProbe => ({
+            snapshot: response.rateLimits,
+            resetCredits: response.rateLimitResetCredits,
+          }),
+        ),
         Effect.timeoutOption(Duration.millis(RATE_LIMITS_PROBE_TIMEOUT_MS)),
         Effect.map(
-          Option.getOrElse((): CodexRateLimitsProbe => ({
-            failure: "Codex did not answer the usage request.",
-          })),
+          Option.getOrElse(
+            (): CodexRateLimitsProbe => ({
+              failure: "Codex did not answer the usage request.",
+            }),
+          ),
         ),
         Effect.catch((error) =>
           Effect.logDebug("Codex rate-limit read failed.", { cause: error }).pipe(

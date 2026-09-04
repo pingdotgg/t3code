@@ -20,13 +20,16 @@ import {
   formatMissingToolsReason,
   formatNodePtyProbeFailureReason,
   formatWslShellTransportFailureReason,
+  parseDistroIpCandidates,
   parseNodePath,
   parseNodeVersion,
   parseResolvedPath,
   parseToolchainReport,
   parseWslRuntimeRoot,
+  pickDistroIp,
   probeWslDistros,
   sanitizeWslRuntimeId,
+  windowsIpv4Interfaces,
 } from "./DesktopWslEnvironment.ts";
 
 const encoder = new TextEncoder();
@@ -141,6 +144,139 @@ describe("probeWslDistros", () => {
       expect(error).toBeInstanceOf(DesktopWslDistroListError);
       expect(error.message).toContain("timed out");
     }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("parseDistroIpCandidates", () => {
+  it("orders the route src ahead of the hostname -I list and dedupes", () => {
+    const stdout = [
+      "route:1.1.1.1 via 172.27.0.1 dev eth0 src 172.27.5.44 uid 1000",
+      "all:172.17.0.1 172.27.5.44",
+    ].join("\n");
+    expect(parseDistroIpCandidates(stdout)).toEqual(["172.27.5.44", "172.17.0.1"]);
+  });
+
+  it("collects only hostname -I addresses when there is no default route", () => {
+    expect(parseDistroIpCandidates("route:\nall:172.27.5.44 fe80::1")).toEqual(["172.27.5.44"]);
+  });
+
+  it("skips a route line without a valid IPv4 src token", () => {
+    const stdout = ["route:1.1.1.1 dev eth0 src fdcc::2 metric 256", "all:172.27.5.44"].join("\n");
+    expect(parseDistroIpCandidates(stdout)).toEqual(["172.27.5.44"]);
+  });
+
+  it("accepts CRLF output", () => {
+    expect(parseDistroIpCandidates("route:\r\nall:172.27.5.44\r\n")).toEqual(["172.27.5.44"]);
+  });
+
+  it("rejects tokens with out-of-range octets", () => {
+    const stdout = [
+      "route:1.1.1.1 via 10.0.0.1 dev eth0 src 300.1.2.3 uid 1000",
+      "all:999.1.1.1 172.27.5.44 172.27.5.256",
+    ].join("\n");
+    expect(parseDistroIpCandidates(stdout)).toEqual(["172.27.5.44"]);
+  });
+
+  it("returns no candidates when neither probe produced an IPv4 address", () => {
+    expect(parseDistroIpCandidates("route:\nall:")).toEqual([]);
+    expect(parseDistroIpCandidates("")).toEqual([]);
+  });
+});
+
+describe("pickDistroIp", () => {
+  const wslVEthernet = {
+    name: "vEthernet (WSL (Hyper-V firewall))",
+    address: "172.27.0.1",
+    netmask: "255.255.240.0",
+  };
+  const wifi = { name: "Wi-Fi", address: "192.168.1.219", netmask: "255.255.255.0" };
+
+  it("picks the eth0 address in the WSL vEthernet subnet over Docker bridges (#5211)", () => {
+    // Docker bridge networks sort first in `hostname -I` but are internal to
+    // the distro; only eth0 shares a subnet with a Windows interface.
+    expect(pickDistroIp(["172.17.0.1", "172.19.0.1", "172.27.5.44"], [wslVEthernet, wifi])).toBe(
+      "172.27.5.44",
+    );
+  });
+
+  it("skips a VPN tunnel src that owns the Internet route inside the distro", () => {
+    // A full-tunnel VPN inside WSL makes `ip route get 1.1.1.1` report the
+    // tunnel address, which Windows cannot reach; eth0 must still win.
+    expect(pickDistroIp(["10.8.0.5", "172.17.0.1", "172.27.5.44"], [wslVEthernet, wifi])).toBe(
+      "172.27.5.44",
+    );
+  });
+
+  it("picks the mirrored-mode address that equals a Windows interface IP", () => {
+    expect(pickDistroIp(["192.168.1.219"], [wifi])).toBe("192.168.1.219");
+  });
+
+  it("picks the mirrored host address even when Docker bridges sort first (#5211)", () => {
+    // The exact `hostname -I` ordering from the issue under mirrored
+    // networking: three Docker bridge addresses ahead of the mirrored IP.
+    expect(pickDistroIp(["172.22.0.1", "172.19.0.1", "172.17.0.1", "192.168.1.219"], [wifi])).toBe(
+      "192.168.1.219",
+    );
+  });
+
+  it("prefers the WSL subnet match over a Docker bridge that equals another Windows adapter", () => {
+    // Docker's default bridge (172.17.0.1) can coincide with a Hyper-V
+    // adapter address on Windows; that equality must not pose as mirrored
+    // mode while eth0 sits inside the real WSL adapter's subnet.
+    const defaultSwitch = {
+      name: "vEthernet (Default Switch)",
+      address: "172.17.0.1",
+      netmask: "255.255.240.0",
+    };
+    expect(pickDistroIp(["172.17.0.1", "172.27.5.44"], [defaultSwitch, wslVEthernet])).toBe(
+      "172.27.5.44",
+    );
+  });
+
+  it("outranks a Windows VPN whose address space overlaps an in-distro tunnel", () => {
+    // A corporate VPN adapter on Windows can share 10.x/172.x space with an
+    // in-distro tunnel or Docker bridge; the WSL adapter match must win even
+    // though the tunnel src is the first candidate.
+    const corporateVpn = { name: "Ethernet 3", address: "10.8.44.7", netmask: "255.255.0.0" };
+    expect(
+      pickDistroIp(["10.8.0.5", "172.17.0.1", "172.27.5.44"], [corporateVpn, wslVEthernet]),
+    ).toBe("172.27.5.44");
+  });
+
+  it("still accepts a subnet match on a custom-named switch when no WSL adapter matches", () => {
+    const customSwitch = {
+      name: "vEthernet (Custom)",
+      address: "192.168.100.1",
+      netmask: "255.255.255.0",
+    };
+    expect(pickDistroIp(["192.168.100.44"], [customSwitch])).toBe("192.168.100.44");
+  });
+
+  it("returns a lone unmatched candidate but never guesses between several", () => {
+    expect(pickDistroIp(["172.27.5.44"], [])).toBe("172.27.5.44");
+    expect(pickDistroIp(["10.8.0.5", "172.17.0.1"], [wifi])).toBeNull();
+  });
+
+  it("returns null with no candidates", () => {
+    expect(pickDistroIp([], [wslVEthernet])).toBeNull();
+  });
+});
+
+describe("windowsIpv4Interfaces", () => {
+  it("flattens IPv4 entries across adapters, accepting string and numeric family", () => {
+    expect(
+      windowsIpv4Interfaces({
+        "vEthernet (WSL)": [
+          { address: "172.27.0.1", family: "IPv4", internal: false, netmask: "255.255.240.0" },
+          { address: "fe80::1", family: "IPv6", internal: false, netmask: "ffff:ffff:ffff:ffff::" },
+        ],
+        "Wi-Fi": [{ address: "192.168.1.219", family: 4, internal: false }],
+        Disconnected: undefined,
+      }),
+    ).toEqual([
+      { name: "vEthernet (WSL)", address: "172.27.0.1", netmask: "255.255.240.0" },
+      { name: "Wi-Fi", address: "192.168.1.219", netmask: undefined },
+    ]);
   });
 });
 

@@ -14,6 +14,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
+import * as DesktopNetworkInterfaces from "./DesktopNetworkInterfaces.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
@@ -1343,6 +1344,11 @@ describe("DesktopBackendConfiguration", () => {
         Layer.provideMerge(DesktopAppSettings.layerTest()),
         Layer.provideMerge(DesktopWslServerTree.layerTest()),
         Layer.provideMerge(DesktopWslEnvironment.layer),
+        Layer.provideMerge(
+          Layer.succeed(DesktopNetworkInterfaces.DesktopNetworkInterfaces, {
+            read: Effect.succeed({}),
+          }),
+        ),
         // isAvailable on win32 only touches the filesystem, never the spawner,
         // so a die-stub is enough to satisfy the layer's deps.
         Layer.provideMerge(
