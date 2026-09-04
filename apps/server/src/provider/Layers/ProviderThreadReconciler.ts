@@ -335,10 +335,12 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
                 const existingThread = yield* snapshots.getThreadShellById(binding.threadId);
                 const projectedOwnershipIsStale =
                   Option.isSome(existingThread) &&
-                  existingThread.value.modelSelection.instanceId !== instance.instanceId;
+                  (existingThread.value.modelSelection.instanceId !== instance.instanceId ||
+                    existingThread.value.modelSelection.model !== model);
                 const runtimePayloadIsStale =
                   isImportedRuntimePayload(binding.runtimePayload) &&
-                  binding.runtimePayload.modelSelection?.instanceId !== instance.instanceId;
+                  (binding.runtimePayload.modelSelection?.instanceId !== instance.instanceId ||
+                    binding.runtimePayload.modelSelection?.model !== model);
                 const bindingOwnershipIsStale =
                   binding.providerInstanceId !== instance.instanceId || runtimePayloadIsStale;
                 if (!projectedOwnershipIsStale && !bindingOwnershipIsStale) return;

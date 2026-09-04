@@ -27,6 +27,7 @@ import type { ProviderInstance } from "../ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import {
   ProviderSessionDirectory,
+  type ProviderRuntimeBindingWithMetadata,
   type ProviderSessionDirectory as ProviderSessionDirectoryShape,
 } from "../Services/ProviderSessionDirectory.ts";
 import type { ProviderPersistedThread } from "../Services/ProviderAdapter.ts";
@@ -421,27 +422,33 @@ it.effect("rebinds an imported thread without rereading its unchanged transcript
   }),
 );
 
-it.effect("repairs a stale projection left by a partial ownership handoff", () =>
+it.effect("repairs a partial handoff when the selected model changes before retry", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project-1");
     const oldInstanceId = ProviderInstanceId.make("codex-old");
     const commands: OrchestrationCommand[] = [];
-    const bindings: Array<Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]> = [];
-    let failProjectionUpdate = true;
+    const repairedBindings: Array<Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]> =
+      [];
+    let selectedModel = "gpt-5.6-sol";
+    let projectedModel = selectedModel;
+    let projectedInstanceId = oldInstanceId;
+    let failBindingUpdate = true;
     const discoveryInstance = {
       ...instance,
       enabled: true,
       snapshot: {
-        getSnapshot: Effect.succeed({ models: [{ slug: "gpt-5.6-sol", isDefault: true }] }),
+        getSnapshot: Effect.sync(() => ({
+          models: [{ slug: selectedModel, isDefault: true }],
+        })),
       },
       adapter: {
         discoverPersistedThreads: () => Effect.succeed([]),
       },
     } as unknown as ProviderInstance;
-    const binding = {
+    let persistedBinding: ProviderRuntimeBindingWithMetadata = {
       threadId: importedThreadId,
       provider: ProviderDriverKind.make("codex"),
-      providerInstanceId: instance.instanceId,
+      providerInstanceId: oldInstanceId,
       resumeCursor: { threadId: PROVIDER_THREAD_ID },
       runtimePayload: {
         imported: true,
@@ -457,10 +464,15 @@ it.effect("repairs a stale projection left by a partial ownership handoff", () =
         listInstances: Effect.succeed([discoveryInstance]),
       } as unknown as ProviderInstanceRegistry["Service"],
       directory: {
-        listBindings: () => Effect.succeed([binding]),
+        listBindings: () => Effect.succeed([persistedBinding]),
         upsert: (nextBinding: Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]) =>
-          Effect.sync(() => {
-            bindings.push(nextBinding);
+          Effect.gen(function* () {
+            persistedBinding = { ...nextBinding, lastSeenAt: persistedBinding.lastSeenAt };
+            if (failBindingUpdate) {
+              failBindingUpdate = false;
+              return yield* Effect.die("binding update failed after persistence");
+            }
+            repairedBindings.push(nextBinding);
           }),
       } as unknown as ProviderSessionDirectoryShape["Service"],
       snapshots: {
@@ -474,18 +486,23 @@ it.effect("repairs a stale projection left by a partial ownership handoff", () =
             Option.some({
               id: importedThreadId,
               projectId,
-              modelSelection: { instanceId: oldInstanceId, model: "gpt-5.6-sol" },
+              modelSelection: {
+                instanceId: projectedInstanceId,
+                model: projectedModel,
+              },
             }),
           ),
       } as unknown as ProjectionSnapshotQueryShape["Service"],
       engine: {
         dispatch: (command: OrchestrationCommand) =>
-          failProjectionUpdate
-            ? Effect.die("projection update failed")
-            : Effect.sync(() => {
-                commands.push(command);
-                return { sequence: commands.length };
-              }),
+          Effect.sync(() => {
+            commands.push(command);
+            if (command.type === "thread.meta.update" && command.modelSelection !== undefined) {
+              projectedInstanceId = command.modelSelection.instanceId;
+              projectedModel = command.modelSelection.model;
+            }
+            return { sequence: commands.length };
+          }),
       } as unknown as OrchestrationEngineServiceShape["Service"],
     };
     const reconciliation = reconcilePersistedProviderThreads().pipe(
@@ -504,21 +521,29 @@ it.effect("repairs a stale projection left by a partial ownership handoff", () =
     );
 
     yield* reconciliation;
-    failProjectionUpdate = false;
+    selectedModel = "gpt-5.6-sol-retry";
     yield* reconciliation;
 
-    expect(commands).toEqual([
+    expect(commands).toHaveLength(2);
+    expect(commands[0]).toEqual(
       expect.objectContaining({
         type: "thread.meta.update",
         threadId: importedThreadId,
         modelSelection: { instanceId: instance.instanceId, model: "gpt-5.6-sol" },
       }),
-    ]);
-    expect(bindings).toHaveLength(1);
-    expect(bindings[0]).toMatchObject({
+    );
+    expect(commands[1]).toEqual(
+      expect.objectContaining({
+        type: "thread.meta.update",
+        threadId: importedThreadId,
+        modelSelection: { instanceId: instance.instanceId, model: "gpt-5.6-sol-retry" },
+      }),
+    );
+    expect(repairedBindings).toHaveLength(1);
+    expect(repairedBindings[0]).toMatchObject({
       providerInstanceId: instance.instanceId,
       runtimePayload: {
-        modelSelection: { instanceId: instance.instanceId, model: "gpt-5.6-sol" },
+        modelSelection: { instanceId: instance.instanceId, model: "gpt-5.6-sol-retry" },
       },
     });
   }),
