@@ -747,8 +747,9 @@ export const layerWithOptions = (
                         .sort()
                         .reduceRight(
                           (effect, threadId) => threadLifecycle.withLock(threadId, effect),
-                          sessionOpen.withLock(input.providerSessionId, cleanup),
-                        ),
+                          sessionOpen.withLock(input.providerSessionId, Effect.void),
+                        )
+                        .pipe(Effect.andThen(cleanup)),
                 Effect.catchCause((cause) =>
                   Effect.fail(
                     new ProviderSessionReleaseError({

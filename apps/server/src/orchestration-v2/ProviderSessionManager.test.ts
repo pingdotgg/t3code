@@ -1519,6 +1519,73 @@ for (const operation of ["close", "detach"] as const) {
   );
 }
 
+it.effect(
+  "ProviderSessionManagerV2 can close another session while cleanup hangs on the same thread",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const closes = yield* Ref.make(0);
+      const closeEntered = yield* Deferred.make<void>();
+      const closeGate = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSinkV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const manager = yield* ProviderSessionManagerV2;
+        const threadId = ThreadId.make("thread-two-cleanups");
+        const allocate = idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const firstId = yield* allocate;
+        const secondId = yield* allocate;
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+          ],
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId: firstId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId: secondId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const first = yield* manager.close(firstId).pipe(Effect.result, Effect.forkChild);
+        yield* Deferred.await(closeEntered);
+        const second = yield* manager.close(secondId).pipe(Effect.result, Effect.forkChild);
+        yield* TestClock.adjust("30 seconds");
+        assert.equal((yield* Fiber.join(first))._tag, "Failure");
+        assert.equal((yield* Fiber.join(second))._tag, "Success");
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        yield* Deferred.succeed(closeGate, undefined);
+        yield* manager.close(firstId);
+        assert.equal((yield* Ref.get(state)).closeCount, 2);
+      }).pipe(
+        Effect.ensuring(Deferred.succeed(closeGate, undefined)),
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            beforeClose: Ref.getAndUpdate(closes, (n) => n + 1).pipe(
+              Effect.flatMap((n) =>
+                n === 0
+                  ? Deferred.succeed(closeEntered, undefined).pipe(
+                      Effect.andThen(Deferred.await(closeGate)),
+                    )
+                  : Effect.void,
+              ),
+            ),
+          }),
+        ),
+      );
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 blocks replacement when cleanup fails", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
