@@ -465,6 +465,16 @@ describe("buildCodexDeveloperInstructions", () => {
     NodeAssert.match(instructions, /as gpt-5\.3-codex with high reasoning effort/);
   });
 
+  it("tells the agent to embed result images as markdown in both modes", () => {
+    for (const mode of ["default", "plan"] as const) {
+      const instructions = buildCodexDeveloperInstructions(mode, {
+        model: "gpt-5.3-codex",
+        reasoningEffort: "high",
+      });
+      NodeAssert.match(instructions, /<response_format>.*!\[.*\]\(.*\).*<\/response_format>/);
+    }
+  });
+
   it("includes runtime info alongside plan mode instructions", () => {
     const instructions = buildCodexDeveloperInstructions("plan", {
       model: "gpt-5.3-codex",
