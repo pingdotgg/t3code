@@ -4,6 +4,7 @@ import { cn } from "~/lib/utils";
 interface Props {
   handlers: ResizableWidthHandlers;
   className?: string;
+  onDoubleClick?: () => void;
 }
 
 /**
@@ -14,7 +15,7 @@ interface Props {
  * - Visual indicator is a 1px line that lights up on hover/active to mirror
  *   VS Code / Cursor.
  */
-export function RightPanelResizeHandle({ handlers, className }: Props) {
+export function RightPanelResizeHandle({ handlers, className, onDoubleClick }: Props) {
   return (
     <div
       role="separator"
@@ -23,6 +24,7 @@ export function RightPanelResizeHandle({ handlers, className }: Props) {
         "group absolute inset-y-0 -left-1 z-20 w-2 cursor-col-resize select-none",
         className,
       )}
+      onDoubleClick={onDoubleClick}
       {...handlers}
     >
       <span

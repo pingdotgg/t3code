@@ -1,7 +1,17 @@
 import * as Schema from "effect/Schema";
-import { type PointerEvent as ReactPointerEvent, useCallback, useRef, useState } from "react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
-import { getLocalStorageItem, setLocalStorageItem } from "./useLocalStorage";
+import {
+  getLocalStorageItem,
+  removeLocalStorageItem,
+  setLocalStorageItem,
+} from "./useLocalStorage";
 
 const WidthSchema = Schema.Finite;
 
@@ -38,6 +48,7 @@ export interface ResizableWidthHandlers {
 export function useResizableWidth(options: UseResizableWidthOptions): {
   readonly width: number;
   readonly handlers: ResizableWidthHandlers;
+  readonly resetWidth: () => void;
 } {
   const { storageKey, defaultWidth, minWidth, maxWidth, edge } = options;
 
@@ -89,6 +100,14 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     document.body.style.removeProperty("user-select");
     dragStateRef.current = null;
   }, []);
+
+  useEffect(
+    () => () => {
+      const pointerId = dragStateRef.current?.pointerId;
+      if (pointerId !== undefined) releasePointer(pointerId);
+    },
+    [releasePointer],
+  );
 
   const onPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
@@ -161,8 +180,18 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     [releasePointer],
   );
 
+  const resetWidth = useCallback(() => {
+    try {
+      removeLocalStorageItem(storageKey);
+    } catch (error) {
+      console.error("Could not reset persisted panel width.", error);
+    }
+    setWidth(defaultWidth);
+  }, [defaultWidth, storageKey]);
+
   return {
     width: clampedWidth,
     handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
+    resetWidth,
   };
 }
