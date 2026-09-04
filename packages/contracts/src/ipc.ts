@@ -96,6 +96,12 @@ import type {
 } from "./browserImport.ts";
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
+import type {
+  DesktopTailcatEnvironmentBootstrap,
+  DesktopTailcatEnvironmentEnsureInput,
+  TailcatConnectionDiagnostics,
+  TailcatRuntimeAvailability,
+} from "./tailcat.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import type { ClientSettings, QuitConfirmationMode } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
@@ -1093,6 +1099,23 @@ export interface DesktopBridge {
   ) => Promise<AuthWebSocketTicketResult>;
   onSshPasswordPrompt: (listener: (request: DesktopSshPasswordPromptRequest) => void) => () => void;
   resolveSshPasswordPrompt: (requestId: string, password: string | null) => Promise<void>;
+  /**
+   * Tailcat transport, managed by the desktop main process like SSH. All
+   * optional: older desktop shells predate Tailcat, and web/mobile never have
+   * a process host.
+   */
+  getTailcatRuntimeAvailability?: () => Promise<TailcatRuntimeAvailability>;
+  ensureTailcatEnvironment?: (
+    input: DesktopTailcatEnvironmentEnsureInput,
+  ) => Promise<DesktopTailcatEnvironmentBootstrap>;
+  restartTailcatEnvironment?: (connectionId: string) => Promise<DesktopTailcatEnvironmentBootstrap>;
+  disconnectTailcatEnvironment?: (connectionId: string) => Promise<void>;
+  getTailcatConnectionDiagnostics?: (
+    connectionId: string,
+  ) => Promise<TailcatConnectionDiagnostics | null>;
+  probeTailcatConnectionPath?: (
+    connectionId: string,
+  ) => Promise<TailcatConnectionDiagnostics | null>;
   getServerExposureState: () => Promise<DesktopServerExposureState>;
   setServerExposureMode: (mode: DesktopServerExposureMode) => Promise<DesktopServerExposureState>;
   setTailscaleServeEnabled: (input: {
