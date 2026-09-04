@@ -3,6 +3,7 @@ import { describe, it, assert } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -345,6 +346,21 @@ function makeMutableServerSettingsService(
     } satisfies ServerSettingsModule.ServerSettingsService["Service"];
   });
 }
+
+// The registry writes the status cache and only then publishes the change, so
+// a subscriber that sees `checkedAt` on the stream knows the file is on disk.
+// Subscribed before the publish that triggers it; a spin on the file would
+// race the write and lose on a slow host.
+const awaitPersistedProvider = (
+  registry: ProviderRegistry.ProviderRegistry["Service"],
+  checkedAt: string,
+) =>
+  registry.streamChanges.pipe(
+    Stream.filter((providers) => providers.some((provider) => provider.checkedAt === checkedAt)),
+    Stream.take(1),
+    Stream.runDrain,
+    Effect.forkScoped,
+  );
 
 it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), TestHttpClientLive))(
   "ProviderRegistry",
@@ -1752,18 +1768,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.deepStrictEqual((yield* registry.getProviders)[0]?.models, [
               ...initialProvider.models,
             ]);
+            const persisted = yield* awaitPersistedProvider(registry, refreshedProvider.checkedAt);
             yield* PubSub.publish(changes, refreshedProvider);
-
-            let cachedProvider = yield* readProviderStatusCache(filePath);
-            for (
-              let attempt = 0;
-              attempt < 50 && cachedProvider?.checkedAt !== refreshedProvider.checkedAt;
-              attempt += 1
-            ) {
-              yield* TestClock.adjust("10 millis");
-              yield* Effect.yieldNow;
-              cachedProvider = yield* readProviderStatusCache(filePath);
-            }
+            yield* Fiber.join(persisted);
+            const cachedProvider = yield* readProviderStatusCache(filePath);
 
             assert.deepStrictEqual(cachedProvider, {
               ...refreshedProvider,
@@ -1878,31 +1886,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 instanceId: openCodeInstanceId,
               });
 
+              const authoritativePersisted = yield* awaitPersistedProvider(
+                registry,
+                authoritativeProvider.checkedAt,
+              );
               yield* PubSub.publish(changes, authoritativeProvider);
-
+              yield* Fiber.join(authoritativePersisted);
               let cachedProvider = yield* readProviderStatusCache(filePath);
-              for (
-                let attempt = 0;
-                attempt < 50 && cachedProvider?.checkedAt !== authoritativeProvider.checkedAt;
-                attempt += 1
-              ) {
-                yield* TestClock.adjust("10 millis");
-                yield* Effect.yieldNow;
-                cachedProvider = yield* readProviderStatusCache(filePath);
-              }
 
               assert.deepStrictEqual(cachedProvider?.models, [authoritativeProvider.models[0]!]);
 
+              const failedPersisted = yield* awaitPersistedProvider(
+                registry,
+                failedProvider.checkedAt,
+              );
               yield* PubSub.publish(changes, failedProvider);
-              for (
-                let attempt = 0;
-                attempt < 50 && cachedProvider?.checkedAt !== failedProvider.checkedAt;
-                attempt += 1
-              ) {
-                yield* TestClock.adjust("10 millis");
-                yield* Effect.yieldNow;
-                cachedProvider = yield* readProviderStatusCache(filePath);
-              }
+              yield* Fiber.join(failedPersisted);
+              cachedProvider = yield* readProviderStatusCache(filePath);
 
               assert.deepStrictEqual(cachedProvider?.models, [authoritativeProvider.models[0]!]);
               assert.deepStrictEqual((yield* registry.getProviders)[0]?.models, [
@@ -2715,9 +2715,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             claudeCapabilities(),
           );
           assert.strictEqual(status.status, "ready");
+          // The home is resolved through the host Path before it reaches the env.
           assert.deepStrictEqual(
             recorded.commands.map((command) => command.env?.CLAUDE_CONFIG_DIR),
-            [claudeConfigDir],
+            [(yield* Path.Path).resolve(claudeConfigDir)],
           );
         }).pipe(Effect.provide(recorded.layer));
       });
