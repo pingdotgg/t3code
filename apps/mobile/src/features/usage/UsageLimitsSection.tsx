@@ -285,6 +285,8 @@ function SourceAccountLimits(props: {
  * environment; the fresh snapshots then arrive over the config stream.
  * Countdowns and pace anchor to `now` rather than ticking, so a refresh also
  * re-anchors the clock: quota and elapsed time move together, or not at all.
+ * Environments whose probe failed are named, since their rows keep showing
+ * the previous quota with nothing else to say so.
  */
 export function useRefreshLimits() {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
@@ -293,27 +295,38 @@ export function useRefreshLimits() {
   });
   const [now, setNow] = useState(() => Date.now());
   const [refreshing, setRefreshing] = useState(false);
+  const [failedLabels, setFailedLabels] = useState<readonly string[]>([]);
   const refresh = async () => {
-    const environmentIds = [...presentations.keys()];
-    if (environmentIds.length === 0) return;
+    const connected = [...presentations].filter(
+      ([, presentation]) => presentation.connection.phase === "connected",
+    );
+    if (connected.length === 0) return;
     setRefreshing(true);
     try {
-      await Promise.all(
-        environmentIds.map((environmentId) => refreshProviders({ environmentId, input: {} })),
+      const results = await Promise.all(
+        connected.map(([environmentId]) => refreshProviders({ environmentId, input: {} })),
+      );
+      setFailedLabels(
+        connected
+          .filter((_, index) => results[index]?._tag === "Failure")
+          .map(([, presentation]) => presentation.entry.target.label),
       );
     } finally {
       setNow(Date.now());
       setRefreshing(false);
     }
   };
-  return { now, refreshing, refresh };
+  return { now, refreshing, failedLabels, refresh };
 }
 
 /**
  * Subscription quota windows from every connected environment's providers,
  * read from the config each environment already streams.
  */
-export function UsageLimitsSection(props: { readonly now: number }) {
+export function UsageLimitsSection(props: {
+  readonly now: number;
+  readonly failedLabels: readonly string[];
+}) {
   const { now } = props;
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const groups = collectLimitsGroups(presentations);
@@ -329,6 +342,13 @@ export function UsageLimitsSection(props: { readonly now: number }) {
 
   return (
     <>
+      {props.failedLabels.length > 0 ? (
+        <View className="rounded-[16px] border-continuous bg-card px-4 py-3">
+          <Text className="text-sm text-foreground-muted">
+            {props.failedLabels.join(", ")} could not refresh limits. Showing the last known values.
+          </Text>
+        </View>
+      ) : null}
       {groups.map((group) => (
         <SettingsSection
           key={group.environmentId}

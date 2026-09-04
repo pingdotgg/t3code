@@ -11,7 +11,7 @@ import {
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -96,6 +96,14 @@ export function UsageRouteScreen() {
   // environment stays pending forever — neither may pin the spinner on.
   const refreshingUsage = environments.some((entry) => entry.isPending && entry.summary !== null);
   const showingLimits = tab === "limits";
+  // One ScrollView serves both tabs, so the offset would otherwise carry over
+  // and a short Limits list could open scrolled past its own content.
+  const scrollRef = useRef<ScrollView>(null);
+  const selectTab = (next: UsageTab) => {
+    if (next === tab) return;
+    setTab(next);
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+  };
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
@@ -125,6 +133,7 @@ export function UsageRouteScreen() {
         </>
       ) : null}
       <ScrollView
+        ref={scrollRef}
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
         className="flex-1"
@@ -137,10 +146,10 @@ export function UsageRouteScreen() {
           />
         }
       >
-        <SegmentedControl options={TAB_OPTIONS} selected={tab} onSelect={setTab} role="tab" />
+        <SegmentedControl options={TAB_OPTIONS} selected={tab} onSelect={selectTab} role="tab" />
 
         {showingLimits ? (
-          <UsageLimitsSection now={limits.now} />
+          <UsageLimitsSection now={limits.now} failedLabels={limits.failedLabels} />
         ) : (
           <>
             {/* Period and metric together: neither applies to Limits, and
