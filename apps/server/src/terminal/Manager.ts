@@ -75,6 +75,8 @@ export {
 };
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
+const DEFAULT_HISTORY_BYTE_LIMIT = 8 * 1024 * 1024;
+const MAX_HISTORY_CHUNK_LENGTH = 16 * 1024;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
@@ -784,74 +786,186 @@ const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnaps
   },
 );
 
-function capHistory(history: string, maxLines: number): string {
-  if (history.length === 0) return history;
-  const hasTrailingNewline = history.endsWith("\n");
-  const lines = history.split("\n");
-  if (hasTrailingNewline) {
-    lines.pop();
-  }
-  if (lines.length <= maxLines) return history;
-  const capped = lines.slice(lines.length - maxLines).join("\n");
-  return hasTrailingNewline ? `${capped}\n` : capped;
+interface TerminalHistoryChunk {
+  data: string;
+  byteLength: number;
+  lineBreaks: number;
 }
 
 export class BoundedTerminalHistory {
   private readonly maxLines: number;
-  private lines: Array<string>;
+  private readonly maxBytes: number;
+  private chunks: Array<TerminalHistoryChunk | undefined> = [];
   private start = 0;
-  private trailingNewline: boolean;
-  private cachedValue: string | null = null;
+  private byteLength = 0;
+  private lineBreaks = 0;
+  // Reading the old string's tail on each append can force chunk concatenation.
+  private lastCodeUnit: number | undefined;
+  private cachedValue: string | null = "";
 
-  constructor(maxLines: number, initial: string) {
+  constructor(maxLines: number, initial: string, maxBytes = DEFAULT_HISTORY_BYTE_LIMIT) {
     this.maxLines = maxLines;
-    const capped = capHistory(initial, maxLines);
-    this.trailingNewline = capped.endsWith("\n");
-    this.lines = capped.length === 0 ? [] : capped.split("\n");
-    if (this.trailingNewline) this.lines.pop();
+    this.maxBytes = maxBytes;
+    this.append(initial);
   }
 
   append(text: string): void {
     if (text.length === 0) return;
+    this.cachedValue = null;
+    if (this.maxBytes <= 0 || this.maxLines <= 0) {
+      this.clear();
+      // Preserve the existing zero-line limit's trailing newline behavior.
+      if (this.maxBytes > 0 && text.endsWith("\n")) this.appendChunk("\n");
+      return;
+    }
 
-    const trailingNewline = text.endsWith("\n");
-    const appendedLines = text.split("\n");
-    if (trailingNewline) appendedLines.pop();
+    let offset = 0;
+    const previous = this.chunks.at(-1);
+    const lastCode = this.lastCodeUnit;
+    const firstCode = text.charCodeAt(0);
+    if (
+      previous &&
+      lastCode !== undefined &&
+      lastCode >= 0xd800 &&
+      lastCode <= 0xdbff &&
+      firstCode >= 0xdc00 &&
+      firstCode <= 0xdfff
+    ) {
+      // Joining a split surrogate changes its UTF-8 size from 3 to 4 bytes.
+      previous.data += text[0];
+      previous.byteLength += 1;
+      this.byteLength += 1;
+      this.lastCodeUnit = firstCode;
+      offset = 1;
+      this.trim();
+    }
 
-    const activeLines = this.lines.length - this.start;
-    if (activeLines === 0 || this.trailingNewline) {
-      for (const line of appendedLines) this.lines.push(line);
-    } else {
-      this.lines[this.lines.length - 1] += appendedLines[0] ?? "";
-      for (let index = 1; index < appendedLines.length; index += 1) {
-        this.lines.push(appendedLines[index] ?? "");
+    while (offset < text.length) {
+      let end = Math.min(offset + MAX_HISTORY_CHUNK_LENGTH, text.length);
+      const before = text.charCodeAt(end - 1);
+      const after = text.charCodeAt(end);
+      if (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) {
+        end -= 1;
       }
+      const data = text.slice(offset, end);
+      // Detach small chunks from large input strings so evicted prefixes can be collected.
+      this.appendChunk(
+        text.length > MAX_HISTORY_CHUNK_LENGTH
+          ? Buffer.from(data, "utf16le").toString("utf16le")
+          : data,
+      );
+      this.trim();
+      offset = end;
     }
-    this.trailingNewline = trailingNewline;
+  }
 
-    const overflow = this.lines.length - this.start - this.maxLines;
-    if (overflow > 0) {
-      this.lines.fill("", this.start, this.start + overflow);
-      this.start += overflow;
+  private appendChunk(data: string): void {
+    const byteLength = Buffer.byteLength(data);
+    let lineBreaks = 0;
+    for (let index = data.indexOf("\n"); index !== -1; index = data.indexOf("\n", index + 1)) {
+      lineBreaks += 1;
     }
-    if (this.start > 2_048 && this.start * 2 >= this.lines.length) {
-      this.lines = this.lines.slice(this.start);
-      this.start = 0;
+    const previous = this.chunks.at(-1);
+    if (previous && previous.data.length + data.length <= MAX_HISTORY_CHUNK_LENGTH) {
+      previous.data += data;
+      previous.byteLength += byteLength;
+      previous.lineBreaks += lineBreaks;
+    } else {
+      this.chunks.push({ data, byteLength, lineBreaks });
     }
+    this.byteLength += byteLength;
+    this.lineBreaks += lineBreaks;
+    this.lastCodeUnit = data.charCodeAt(data.length - 1);
     this.cachedValue = null;
   }
 
+  private discardChunk(): void {
+    const first = this.chunks[this.start]!;
+    this.byteLength -= first.byteLength;
+    this.lineBreaks -= first.lineBreaks;
+    this.chunks[this.start++] = undefined;
+  }
+
+  private trimChunk(offset: number, byteLength: number, lineBreaks: number): void {
+    const first = this.chunks[this.start]!;
+    if (offset === first.data.length) {
+      this.discardChunk();
+      return;
+    }
+    first.data = first.data.slice(offset);
+    first.byteLength -= byteLength;
+    first.lineBreaks -= lineBreaks;
+    this.byteLength -= byteLength;
+    this.lineBreaks -= lineBreaks;
+  }
+
+  private trim(): void {
+    const trailingNewline = this.lastCodeUnit === 10;
+    let linesToDrop = this.lineBreaks + (trailingNewline ? 0 : 1) - this.maxLines;
+    while (linesToDrop > 0) {
+      const first = this.chunks[this.start]!;
+      if (first.lineBreaks < linesToDrop) {
+        linesToDrop -= first.lineBreaks;
+        this.discardChunk();
+        continue;
+      }
+      let offset = 0;
+      for (let line = 0; line < linesToDrop; line += 1) {
+        offset = first.data.indexOf("\n", offset) + 1;
+      }
+      this.trimChunk(offset, Buffer.byteLength(first.data.slice(0, offset)), linesToDrop);
+      linesToDrop = 0;
+    }
+
+    while (this.byteLength > this.maxBytes) {
+      const first = this.chunks[this.start]!;
+      const bytesToDrop = this.byteLength - this.maxBytes;
+      if (first.byteLength <= bytesToDrop) {
+        this.discardChunk();
+        continue;
+      }
+      if (first.byteLength === first.data.length && first.lineBreaks === 0) {
+        // ASCII without newlines needs no scan to find the byte cutoff.
+        this.trimChunk(bytesToDrop, bytesToDrop, 0);
+        continue;
+      }
+      let offset = 0;
+      let bytes = 0;
+      let lineBreaks = 0;
+      // Scan only the discarded prefix of one small chunk, never all history.
+      while (bytes < bytesToDrop) {
+        const codePoint = first.data.codePointAt(offset)!;
+        bytes += codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
+        offset += codePoint <= 0xffff ? 1 : 2;
+        if (codePoint === 10) lineBreaks += 1;
+      }
+      this.trimChunk(offset, bytes, lineBreaks);
+    }
+    if (
+      this.start === this.chunks.length ||
+      (this.start > 2_048 && this.start * 2 >= this.chunks.length)
+    ) {
+      this.chunks = this.chunks.slice(this.start);
+      this.start = 0;
+      if (this.chunks.length === 0) this.lastCodeUnit = undefined;
+    }
+  }
+
   clear(): void {
-    this.lines = [];
+    this.chunks = [];
     this.start = 0;
-    this.trailingNewline = false;
+    this.byteLength = 0;
+    this.lineBreaks = 0;
+    this.lastCodeUnit = undefined;
     this.cachedValue = "";
   }
 
   value(): string {
     if (this.cachedValue !== null) return this.cachedValue;
-    const joined = this.lines.slice(this.start).join("\n");
-    this.cachedValue = this.trailingNewline ? `${joined}\n` : joined;
+    this.cachedValue = this.chunks
+      .slice(this.start)
+      .map((chunk) => chunk!.data)
+      .join("");
     return this.cachedValue;
   }
 }
@@ -1171,6 +1285,7 @@ function normalizedRuntimeEnv(
 interface TerminalManagerOptions {
   logsDir: string;
   historyLineLimit?: number;
+  historyByteLimit?: number;
   ptyAdapter: PtyAdapter.PtyAdapter["Service"];
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
@@ -1211,6 +1326,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const logsDir = options.logsDir;
   const historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
+  const historyByteLimit = options.historyByteLimit ?? DEFAULT_HISTORY_BYTE_LIMIT;
   const platform = yield* HostProcessPlatform;
   // Terminals must inherit the user's full environment (minus the blocklist
   // applied in createTerminalSpawnEnv) — an allowlist here silently strips
@@ -1476,6 +1592,30 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* flushPersist(threadId, terminalId);
   });
 
+  const readHistoryTail = Effect.fn("terminal.readHistoryTail")(function* (filePath: string) {
+    const file = yield* fileSystem.open(filePath, { flag: "r" });
+    const info = yield* file.stat;
+    const limit = BigInt(historyByteLimit);
+    const offset = info.size > limit ? info.size - limit : 0n;
+    yield* file.seek(offset, "start");
+    const bytes = new Uint8Array(Number(info.size - offset));
+    let length = 0;
+    while (length < bytes.length) {
+      const read = Number(yield* file.read(bytes.subarray(length)));
+      if (read === 0) break;
+      length += read;
+    }
+    let start = 0;
+    if (offset > 0n) {
+      // A tail read can start inside a UTF-8 code point. Skip its remaining bytes.
+      while (start < length && ((bytes[start] ?? 0) & 0xc0) === 0x80) start += 1;
+    }
+    return {
+      history: new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes.subarray(start, length)),
+      truncated: offset > 0n,
+    };
+  });
+
   const readHistory = Effect.fn("terminal.readHistory")(function* (
     threadId: string,
     terminalId: string,
@@ -1490,15 +1630,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           ),
         )
     ) {
-      const raw = yield* fileSystem
-        .readFileString(nextPath)
-        .pipe(
-          Effect.mapError(
-            (cause) => new TerminalHistoryError({ operation: "read", threadId, terminalId, cause }),
-          ),
-        );
-      const capped = capHistory(raw, historyLineLimit);
-      if (capped !== raw) {
+      const { history: raw, truncated } = yield* readHistoryTail(nextPath).pipe(
+        Effect.scoped,
+        Effect.mapError(
+          (cause) => new TerminalHistoryError({ operation: "read", threadId, terminalId, cause }),
+        ),
+      );
+      const history = new BoundedTerminalHistory(historyLineLimit, raw, historyByteLimit);
+      const capped = history.value();
+      if (truncated || capped !== raw) {
         yield* fileSystem
           .writeFileString(nextPath, capped)
           .pipe(
@@ -1508,11 +1648,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             ),
           );
       }
-      return capped;
+      return history;
     }
 
     if (terminalId !== DEFAULT_TERMINAL_ID) {
-      return "";
+      return new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit);
     }
 
     const legacyPath = legacyHistoryPath(threadId);
@@ -1526,18 +1666,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           ),
         ))
     ) {
-      return "";
+      return new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit);
     }
 
-    const raw = yield* fileSystem
-      .readFileString(legacyPath)
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new TerminalHistoryError({ operation: "migrate", threadId, terminalId, cause }),
-        ),
-      );
-    const capped = capHistory(raw, historyLineLimit);
+    const { history: raw } = yield* readHistoryTail(legacyPath).pipe(
+      Effect.scoped,
+      Effect.mapError(
+        (cause) => new TerminalHistoryError({ operation: "migrate", threadId, terminalId, cause }),
+      ),
+    );
+    const history = new BoundedTerminalHistory(historyLineLimit, raw, historyByteLimit);
+    const capped = history.value();
     yield* fileSystem
       .writeFileString(nextPath, capped)
       .pipe(
@@ -1554,7 +1693,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         }),
       ),
     );
-    return capped;
+    return history;
   });
 
   const deleteHistory = Effect.fn("terminal.deleteHistory")(function* (
@@ -2219,7 +2358,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         worktreePath: input.worktreePath ?? null,
         status: "starting",
         pid: null,
-        history: new BoundedTerminalHistory(historyLineLimit, history),
+        history,
         pendingHistoryControlSequence: "",
         pendingProcessEvents: [],
         pendingProcessEventIndex: 0,
@@ -2631,7 +2770,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             worktreePath: input.worktreePath ?? null,
             status: "starting",
             pid: null,
-            history: new BoundedTerminalHistory(historyLineLimit, ""),
+            history: new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit),
             pendingHistoryControlSequence: "",
             pendingProcessEvents: [],
             pendingProcessEventIndex: 0,
