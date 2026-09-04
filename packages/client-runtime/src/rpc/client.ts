@@ -178,15 +178,27 @@ interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
   readonly resubscribe?: Stream.Stream<unknown, never, never>;
 }
 
-export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
+export type DynamicSubscriptionGeneration = symbol;
+
+export interface DynamicSubscriptionItem<A> {
+  readonly generation: DynamicSubscriptionGeneration;
+  readonly session: RpcSession;
+  readonly value: A;
+}
+
+function subscribeDynamicInternal<TTag extends EnvironmentSubscriptionRpcTag, A>(
   tag: TTag,
-  makeInput: (session: RpcSession) => Effect.Effect<EnvironmentRpcInput<TTag>>,
+  makeInput: (
+    session: RpcSession,
+    generation: DynamicSubscriptionGeneration,
+  ) => Effect.Effect<EnvironmentRpcInput<TTag>>,
+  mapValue: (
+    value: EnvironmentRpcStreamValue<TTag>,
+    session: RpcSession,
+    generation: DynamicSubscriptionGeneration,
+  ) => A,
   options?: SubscriptionOptions<TTag>,
-): Stream.Stream<
-  EnvironmentRpcStreamValue<TTag>,
-  EnvironmentRpcStreamFailure<TTag>,
-  EnvironmentSupervisor
-> {
+): Stream.Stream<A, EnvironmentRpcStreamFailure<TTag>, EnvironmentSupervisor> {
   return Stream.unwrap(
     Effect.gen(function* () {
       const supervisor = yield* EnvironmentSupervisor;
@@ -216,20 +228,19 @@ export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
                 EnvironmentRpcStreamValue<TTag>,
                 EnvironmentRpcStreamFailure<TTag>
               >;
-              const subscribeToSession = (): Stream.Stream<
-                EnvironmentRpcStreamValue<TTag>,
-                EnvironmentRpcStreamFailure<TTag>
-              > =>
-                Stream.suspend(() =>
-                  Stream.unwrap(
+              const subscribeToSession = (): Stream.Stream<A, EnvironmentRpcStreamFailure<TTag>> =>
+                Stream.suspend(() => {
+                  const generation: DynamicSubscriptionGeneration = Symbol();
+                  return Stream.unwrap(
                     Effect.gen(function* () {
-                      const input = yield* makeInput(session);
+                      const input = yield* makeInput(session, generation);
                       const completeObservation = yield* observer.observe({
                         environmentId: supervisor.target.environmentId,
                         method: tag,
                         input,
                       });
                       return method(input).pipe(
+                        Stream.map((value) => mapValue(value, session, generation)),
                         Stream.ensuring(completeObservation),
                         Stream.catchCause((cause) => {
                           const hasOnlyExpectedFailures =
@@ -272,8 +283,8 @@ export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
                         }),
                       );
                     }),
-                  ),
-                );
+                  );
+                });
               return subscribeToSession();
             },
           }),
@@ -284,6 +295,47 @@ export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
     Stream.withSpan("EnvironmentRpc.subscribe", {
       attributes: { "rpc.method": tag },
     }),
+  );
+}
+
+/**
+ * Preserves each value's subscription identity so asynchronous downstream
+ * buffers can reject work after a session switch or same-session resubscribe.
+ */
+export function subscribeDynamicWithGeneration<TTag extends EnvironmentSubscriptionRpcTag>(
+  tag: TTag,
+  makeInput: (
+    session: RpcSession,
+    generation: DynamicSubscriptionGeneration,
+  ) => Effect.Effect<EnvironmentRpcInput<TTag>>,
+  options?: SubscriptionOptions<TTag>,
+): Stream.Stream<
+  DynamicSubscriptionItem<EnvironmentRpcStreamValue<TTag>>,
+  EnvironmentRpcStreamFailure<TTag>,
+  EnvironmentSupervisor
+> {
+  return subscribeDynamicInternal(
+    tag,
+    makeInput,
+    (value, session, generation) => ({ generation, session, value }),
+    options,
+  );
+}
+
+export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
+  tag: TTag,
+  makeInput: (session: RpcSession) => Effect.Effect<EnvironmentRpcInput<TTag>>,
+  options?: SubscriptionOptions<TTag>,
+): Stream.Stream<
+  EnvironmentRpcStreamValue<TTag>,
+  EnvironmentRpcStreamFailure<TTag>,
+  EnvironmentSupervisor
+> {
+  return subscribeDynamicInternal(
+    tag,
+    (session) => makeInput(session),
+    (value) => value,
+    options,
   );
 }
 
