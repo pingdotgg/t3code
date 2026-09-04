@@ -1,8 +1,22 @@
 import type * as NodeWorkerThreads from "node:worker_threads";
-import { FileRenderer, getSharedHighlighter, type FileContents } from "@pierre/diffs";
+import {
+  FileRenderer,
+  getSharedHighlighter,
+  type CodeViewScrollTarget,
+  type FileContents,
+} from "@pierre/diffs";
 import { useWorkerPool, type CodeViewProps } from "@pierre/diffs/react";
 import { WorkerPoolManager, type WorkerRequest, type WorkerResponse } from "@pierre/diffs/worker";
-import { act, useEffect, useState } from "react";
+import {
+  act,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Ref,
+} from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -96,6 +110,7 @@ vi.mock("@pierre/diffs/react", async (importOriginal) => ({
 }));
 
 import { StyledDiffCodeView } from "./StyledDiffCodeView";
+import { useCodeViewFileReveal } from "./useCodeViewFileReveal";
 
 function FileOutput({ file }: { file: FileContents }) {
   const pool = useWorkerPool();
@@ -318,5 +333,196 @@ describe("code-view worker lifecycle", () => {
     expect(testState.terminations).toHaveLength(2);
     expect(testState.renderPools).toHaveLength(0);
     expect(renderer!.root.findAllByType("pre")).toHaveLength(0);
+  });
+});
+
+type RevealHandle = NonNullable<Parameters<typeof useCodeViewFileReveal>[0]>;
+const revealCalls: {
+  scope: string;
+  fileKey: string;
+  mounted: boolean;
+  collapsed: boolean | undefined;
+}[] = [];
+
+function RevealViewer({
+  viewerRef,
+  scope,
+  collapsed,
+}: {
+  viewerRef: Ref<RevealHandle>;
+  scope: string;
+  collapsed: boolean;
+}) {
+  const instance = useRef<{ collapsed: boolean } | undefined>(undefined);
+  useLayoutEffect(() => {
+    instance.current = { collapsed };
+    return () => {
+      instance.current = undefined;
+    };
+  }, [collapsed]);
+  const handle = useMemo(
+    () => ({
+      getInstance: () => instance.current,
+      scrollTo: (target: CodeViewScrollTarget) => {
+        if (target.type !== "item") return;
+        revealCalls.push({
+          scope,
+          fileKey: target.id,
+          mounted: instance.current !== undefined,
+          collapsed: instance.current?.collapsed,
+        });
+      },
+    }),
+    [scope],
+  );
+  useImperativeHandle(viewerRef, () => handle, [handle]);
+  return null;
+}
+
+function RevealViews({
+  scope,
+  visible,
+  selectedFile = null,
+  requestId = 0,
+}: {
+  scope: string;
+  visible: boolean;
+  selectedFile?: string | null;
+  requestId?: number;
+}) {
+  const [viewer, setViewer] = useState<RevealHandle | null>(null);
+  const [collapsed, setCollapsed] = useState(true);
+  const selectedRequest = useMemo(() => ({ selectedFile, requestId }), [requestId, selectedFile]);
+  useEffect(() => {
+    if (!selectedRequest.selectedFile || !viewer?.getInstance()) return;
+    viewer.scrollTo({ type: "item", id: selectedRequest.selectedFile, align: "start" });
+  }, [selectedRequest, viewer]);
+  const revealScope = useMemo(() => ({ scope, selectedRequest }), [scope, selectedRequest]);
+  const requestReveal = useCodeViewFileReveal(viewer, revealScope);
+  return (
+    <>
+      {visible && (
+        <RevealViewer key={scope} viewerRef={setViewer} scope={scope} collapsed={collapsed} />
+      )}
+      <button
+        onClick={() => {
+          setCollapsed(false);
+          requestReveal("tree-file");
+        }}
+      >
+        Reveal file
+      </button>
+    </>
+  );
+}
+
+describe("code-view file reveals", () => {
+  let renderer: ReactTestRenderer | undefined;
+
+  beforeEach(() => {
+    revealCalls.length = 0;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  });
+
+  afterEach(async () => {
+    await act(async () => renderer?.unmount());
+    renderer = undefined;
+    vi.unstubAllGlobals();
+  });
+
+  it("does not replay a handled tree click or scroll an old handle when a selected file remounts the view", async () => {
+    await act(async () => {
+      renderer = create(<RevealViews scope="first" visible selectedFile="external-a" />);
+    });
+    await act(async () => {
+      (renderer!.root.findByType("button").props as { onClick(): void }).onClick();
+    });
+    expect(revealCalls.at(-1)?.fileKey).toBe("tree-file");
+    revealCalls.length = 0;
+
+    await act(async () => {
+      renderer!.update(
+        <RevealViews scope="second" visible selectedFile="external-b" requestId={1} />,
+      );
+    });
+    expect(revealCalls).toEqual([
+      { scope: "second", fileKey: "external-b", mounted: true, collapsed: false },
+    ]);
+  });
+
+  it("waits for a live viewer and applies each pending tree click only once", async () => {
+    await act(async () => {
+      renderer = create(<RevealViews scope="diff" visible={false} selectedFile="external" />);
+    });
+    await act(async () => {
+      (renderer!.root.findByType("button").props as { onClick(): void }).onClick();
+    });
+    expect(revealCalls).toEqual([]);
+
+    await act(async () => {
+      renderer!.update(<RevealViews scope="diff" visible selectedFile="external" />);
+    });
+    expect(revealCalls.map((call) => call.fileKey)).toEqual(["external", "tree-file"]);
+    revealCalls.length = 0;
+    await act(async () => {
+      renderer!.update(<RevealViews scope="diff" visible={false} selectedFile="external" />);
+    });
+    await act(async () => {
+      renderer!.update(<RevealViews scope="diff" visible selectedFile="external" />);
+    });
+    expect(revealCalls).toEqual([
+      { scope: "diff", fileKey: "external", mounted: true, collapsed: false },
+    ]);
+
+    revealCalls.length = 0;
+    await act(async () => {
+      (renderer!.root.findByType("button").props as { onClick(): void }).onClick();
+      renderer!.update(<RevealViews scope="diff" visible={false} selectedFile="external" />);
+    });
+    expect(revealCalls).toEqual([]);
+    await act(async () => {
+      renderer!.update(<RevealViews scope="diff" visible selectedFile="external" />);
+    });
+    expect(revealCalls).toEqual([
+      { scope: "diff", fileKey: "external", mounted: true, collapsed: false },
+      { scope: "diff", fileKey: "tree-file", mounted: true, collapsed: false },
+    ]);
+  });
+
+  it("cancels pending tree clicks when an external selection or diff scope changes", async () => {
+    await act(async () => {
+      renderer = create(<RevealViews scope="first" visible={false} selectedFile="external-a" />);
+    });
+    await act(async () => {
+      (renderer!.root.findByType("button").props as { onClick(): void }).onClick();
+    });
+    await act(async () => {
+      renderer!.update(
+        <RevealViews scope="first" visible selectedFile="external-b" requestId={1} />,
+      );
+    });
+    expect(revealCalls.map((call) => call.fileKey)).toEqual(["external-b"]);
+    revealCalls.length = 0;
+
+    await act(async () => renderer!.update(<RevealViews scope="first" visible={false} />));
+    await act(async () => {
+      (renderer!.root.findByType("button").props as { onClick(): void }).onClick();
+    });
+    await act(async () => renderer!.update(<RevealViews scope="second" visible={false} />));
+    await act(async () => renderer!.update(<RevealViews scope="first" visible />));
+    expect(revealCalls).toEqual([]);
+  });
+
+  it("reveals after a collapsed file expands and honors another click on the same file", async () => {
+    await act(async () => {
+      renderer = create(<RevealViews scope="diff" visible />);
+    });
+    const reveal = renderer!.root.findByType("button").props as { onClick(): void };
+    await act(async () => reveal.onClick());
+    await act(async () => reveal.onClick());
+    expect(revealCalls).toEqual([
+      { scope: "diff", fileKey: "tree-file", mounted: true, collapsed: false },
+      { scope: "diff", fileKey: "tree-file", mounted: true, collapsed: false },
+    ]);
   });
 });

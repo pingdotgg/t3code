@@ -60,6 +60,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
+import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
 import { Button } from "../ui/button";
@@ -602,21 +603,15 @@ export function PullRequestCodeTab({
     [],
   );
 
-  // Held as state so the scroll runs after a folded file has been drawn open; scrolling in the
-  // same tick would land on the folded header's position.
-  const [treeReveal, setTreeReveal] = useState<{ fileKey: string; id: number } | null>(null);
-  useEffect(() => {
-    if (treeReveal === null) return;
-    viewer?.scrollTo({ type: "item", id: treeReveal.fileKey, align: "start" });
-  }, [treeReveal, viewer]);
+  const requestTreeReveal = useCodeViewFileReveal(viewer, scopeKey);
   const revealFile = useCallback(
     (path: string) => {
       const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
       if (item === undefined) return;
       if (item.collapsed === true) toggleFile(item.id);
-      setTreeReveal((current) => ({ fileKey: item.id, id: (current?.id ?? 0) + 1 }));
+      requestTreeReveal(item.id);
     },
-    [items, toggleFile],
+    [items, requestTreeReveal, toggleFile],
   );
 
   const toggleAllFiles = () => {

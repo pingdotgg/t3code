@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { type DraftId } from "../composerDraftStore";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
@@ -448,17 +449,15 @@ export default function DiffPanel({
     : null;
 
   useEffect(() => {
-    if (!selectedDiffFileKey) return;
-    codeView?.scrollTo({ type: "item", id: selectedDiffFileKey, align: "start" });
+    if (!selectedDiffFileKey || !codeView?.getInstance()) return;
+    codeView.scrollTo({ type: "item", id: selectedDiffFileKey, align: "start" });
   }, [codeView, codeViewMountKey, selectedDiffFileKey, selectedFileRevealRequestId]);
 
-  // Held as state so the scroll runs after a collapsed file has been drawn open again; scrolling
-  // in the same tick would land on the folded header's position.
-  const [treeReveal, setTreeReveal] = useState<{ fileKey: string; id: number } | null>(null);
-  useEffect(() => {
-    if (treeReveal === null) return;
-    codeView?.scrollTo({ type: "item", id: treeReveal.fileKey, align: "start" });
-  }, [codeView, treeReveal]);
+  const treeRevealScope = useMemo(
+    () => ({ collapseScopeKey, diffSelection }),
+    [collapseScopeKey, diffSelection],
+  );
+  const requestTreeReveal = useCodeViewFileReveal(codeView, treeRevealScope);
   const revealDiffFile = useCallback(
     (filePath: string) => {
       const file = codeViewFiles.find((candidate) => candidate.filePath === filePath);
@@ -470,9 +469,9 @@ export default function DiffPanel({
           return { scopeKey: collapseScopeKey, fileKeys: next };
         });
       }
-      setTreeReveal((current) => ({ fileKey: file.fileKey, id: (current?.id ?? 0) + 1 }));
+      requestTreeReveal(file.fileKey);
     },
-    [codeViewFiles, collapseScopeKey],
+    [codeViewFiles, collapseScopeKey, requestTreeReveal],
   );
 
   const openDiffFile = useCallback(
