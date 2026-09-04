@@ -580,6 +580,120 @@ struct HomeThreadSwipeActionTests {
         ])
     }
 
+    @Test(arguments: [false, true])
+    func settlingReplacesTheInboxCellInsteadOfMovingAndResizingIt(forceRichRows: Bool) throws {
+        let client = SwipeSettlementClientStub()
+        let active = thread(id: "active")
+        let remaining = thread(id: "remaining")
+        var previouslySettled = thread(id: "previously-settled")
+        previouslySettled.isSettled = true
+        previouslySettled.settledAt = now.addingTimeInterval(-60)
+        let initial = threadList(
+            client: client,
+            snapshot: snapshot(threads: [active, remaining, previouslySettled]),
+            isSettledExpanded: true,
+            forceRichRows: forceRichRows
+        )
+        var settled = active
+        settled.isSettled = true
+        settled.settledAt = now
+        let updated = threadList(
+            client: client,
+            snapshot: snapshot(threads: [settled, remaining, previouslySettled]),
+            isSettledExpanded: true,
+            forceRichRows: forceRichRows
+        )
+
+        let before = initial.collectionItems.map(\.id)
+        let after = updated.collectionItems.map(\.id)
+        let changes = after.difference(from: before).inferringMoves()
+        let changedThread = changes.filter { change in
+            switch change {
+            case let .remove(_, identifier, _), let .insert(_, identifier, _):
+                identifier.threadID == active.id
+            }
+        }
+        #expect(changedThread.count == 2)
+        for change in changedThread {
+            switch change {
+            case let .remove(_, _, associatedWith), let .insert(_, _, associatedWith):
+                #expect(associatedWith == nil)
+            }
+        }
+        let remainingID = try #require(before.first { $0.threadID == remaining.id })
+        #expect(after.contains(remainingID))
+        #expect(Set(after.compactMap(\.threadID)).count == 3)
+
+        let reopened = before.difference(from: after).inferringMoves()
+        #expect(reopened.count == 2)
+    }
+
+    @Test
+    func settlingKeepsTheSameCellInSearchResults() throws {
+        let client = SwipeSettlementClientStub()
+        let active = thread(id: "search")
+        var settled = active
+        settled.isSettled = true
+        let initial = threadList(client: client, snapshot: snapshot(threads: [active]), query: "Task")
+        let updated = threadList(client: client, snapshot: snapshot(threads: [settled]), query: "Task")
+
+        #expect(initial.collectionItems.map(\.id) == updated.collectionItems.map(\.id))
+    }
+
+    @Test
+    func repeatedSwipeOnTheSameRowDoesNotSendAnotherSettlement() {
+        let client = SwipeSettlementClientStub()
+        let active = thread(id: "active")
+        var requests = 0
+        let initial = threadList(client: client, snapshot: snapshot(threads: [active])) { _, _, _ in
+            requests += 1
+        }
+        let coordinator = initial.makeCoordinator()
+        let collectionView = testCollectionView()
+        coordinator.configure(collectionView)
+        defer {
+            coordinator.invalidateTimer()
+            coordinator.cancelPendingSwipeActions()
+        }
+
+        var firstResult: Bool?
+        var secondResult: Bool?
+        coordinator.performSwipe(.settle, for: active) { firstResult = $0 }
+        coordinator.performSwipe(.settle, for: active) { secondResult = $0 }
+
+        #expect(requests == 1)
+        #expect(firstResult == nil)
+        #expect(secondResult == false)
+        coordinator.cancelPendingSwipeActions()
+        #expect(firstResult == false)
+    }
+
+    @Test
+    func cancellationFinishesEachSwipeOnlyOnce() {
+        let client = SwipeSettlementClientStub()
+        let active = thread(id: "active")
+        var respond: ((Bool) -> Void)?
+        let initial = threadList(
+            client: client,
+            snapshot: snapshot(threads: [active]),
+            settlementResult: nil
+        ) { _, _, completion in
+            respond = completion
+        }
+        let coordinator = initial.makeCoordinator()
+        let collectionView = testCollectionView()
+        coordinator.configure(collectionView)
+        defer { coordinator.invalidateTimer() }
+        var results: [Bool] = []
+        coordinator.performSwipe(.settle, for: active) { results.append($0) }
+
+        coordinator.cancelPendingSwipeActions()
+        respond?(false)
+        coordinator.cancelPendingSwipeActions()
+
+        #expect(results == [false])
+    }
+
     @Test
     func swipeCompletionWaitsUntilTheCollectionHasRemovedTheThread() async {
         let client = SwipeSettlementClientStub()
@@ -587,7 +701,7 @@ struct HomeThreadSwipeActionTests {
         let remaining = thread(id: "remaining")
         let initial = snapshot(threads: [first, remaining])
         var requests: [SettlementRequest] = []
-        let initialList = threadList(client: client, snapshot: initial) { thread, settled in
+        let initialList = threadList(client: client, snapshot: initial) { thread, settled, _ in
             requests.append(SettlementRequest(id: thread.id, settled: settled))
         }
         let coordinator = initialList.makeCoordinator()
@@ -645,7 +759,8 @@ struct HomeThreadSwipeActionTests {
         }
 
         var settled = active
-        settled.isSettled = true
+        // Modern servers can report only the authoritative override.
+        settled.settlementFacts = .init(settlementOverride: .settled)
         settled.settledAt = now
         let updated = threadList(
             client: client,
@@ -657,6 +772,152 @@ struct HomeThreadSwipeActionTests {
         var results = completions.stream.makeAsyncIterator()
         #expect(await results.next() == true)
         #expect(collectionView.numberOfItems(inSection: 0) == 1)
+    }
+
+    @Test
+    func expandedSettledShelfKeepsAdjacentRowsAtTheirFullHeight() async throws {
+        let client = SwipeSettlementClientStub()
+        let active = thread(id: "active")
+        let remaining = thread(id: "remaining")
+        let initial = threadList(
+            client: client,
+            snapshot: snapshot(threads: [active, remaining]),
+            isSettledExpanded: true
+        )
+        let coordinator = initial.makeCoordinator()
+        let collectionView = testCollectionView()
+        coordinator.configure(collectionView)
+        collectionView.layoutIfNeeded()
+        defer {
+            coordinator.invalidateTimer()
+            coordinator.cancelPendingSwipeActions()
+        }
+        let original = try #require(collectionView.visibleCells.first { $0.accessibilityLabel == remaining.title })
+        let originalHeight = original.bounds.height
+        let completions = AsyncStream<Bool>.makeStream()
+        coordinator.performSwipe(.settle, for: active) { completions.continuation.yield($0) }
+
+        var settled = active
+        settled.isSettled = true
+        settled.settledAt = now
+        coordinator.update(
+            parent: threadList(
+                client: client,
+                snapshot: snapshot(threads: [settled, remaining]),
+                isSettledExpanded: true
+            ),
+            collectionView: collectionView
+        )
+        var results = completions.stream.makeAsyncIterator()
+        #expect(await results.next() == true)
+        collectionView.layoutIfNeeded()
+
+        let remainingCell = try #require(collectionView.visibleCells.first { $0.accessibilityLabel == remaining.title })
+        let settledCell = try #require(collectionView.visibleCells.first { $0.accessibilityLabel == active.title })
+        #expect(abs(remainingCell.bounds.height - originalHeight) < 0.5)
+        #expect(remainingCell.frame.maxY <= settledCell.frame.minY)
+        #expect(settledCell.bounds.height < remainingCell.bounds.height)
+        #expect(collectionView.visibleCells.filter { $0.accessibilityLabel == active.title }.count == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+    func streamUpdatesAndRollbackWaitForTheRemovalAnimation(rollbackFirst: Bool) async throws {
+        let client = SwipeSettlementClientStub()
+        let first = thread(id: "first")
+        let second = thread(id: "second")
+        let remaining = thread(id: "remaining")
+        var respondToFirst: ((Bool) -> Void)?
+        let initial = threadList(
+            client: client,
+            snapshot: snapshot(threads: [first, second, remaining]),
+            isSettledExpanded: true,
+            settlementResult: nil
+        ) { _, _, completion in respondToFirst = completion }
+        let coordinator = initial.makeCoordinator()
+        let collectionView = testCollectionView()
+        coordinator.configure(collectionView)
+        collectionView.layoutIfNeeded()
+
+        let controller = UIViewController()
+        controller.view = collectionView
+        let window = UIWindow(frame: collectionView.frame)
+        window.rootViewController = controller
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            coordinator.invalidateTimer()
+            coordinator.cancelPendingSwipeActions()
+        }
+        #expect(collectionView.window === window)
+        let retainedCell = try #require(collectionView.visibleCells.first {
+            $0.accessibilityLabel == remaining.title
+        })
+
+        let completions = AsyncStream<String>.makeStream()
+        var swipeResults: [String: [Bool]] = [:]
+        coordinator.performSwipe(.settle, for: first) { succeeded in
+            swipeResults[first.id, default: []].append(succeeded)
+            completions.continuation.yield(first.id)
+        }
+        var settledFirst = first
+        settledFirst.isSettled = true
+        settledFirst.settledAt = now
+        coordinator.update(
+            parent: threadList(
+                client: client,
+                snapshot: snapshot(threads: [settledFirst, second, remaining]),
+                isSettledExpanded: true
+            ),
+            collectionView: collectionView
+        )
+
+        var latest = remaining
+        for update in 0..<100 {
+            latest.title = "Latest server title \(update)"
+            coordinator.update(
+                parent: threadList(
+                    client: client,
+                    snapshot: snapshot(threads: [settledFirst, second, latest]),
+                    isSettledExpanded: true
+                ),
+                collectionView: collectionView
+            )
+        }
+        if !UIAccessibility.isReduceMotionEnabled, UIView.areAnimationsEnabled {
+            #expect(retainedCell.accessibilityLabel == remaining.title)
+        }
+
+        if rollbackFirst { respondToFirst?(false) }
+        coordinator.performSwipe(.settle, for: second) { succeeded in
+            swipeResults[second.id, default: []].append(succeeded)
+            completions.continuation.yield(second.id)
+        }
+        var settledSecond = second
+        settledSecond.isSettled = true
+        settledSecond.settledAt = now
+        coordinator.update(
+            parent: threadList(
+                client: client,
+                snapshot: snapshot(threads: [rollbackFirst ? first : settledFirst, settledSecond, latest]),
+                isSettledExpanded: true
+            ),
+            collectionView: collectionView
+        )
+
+        var results = completions.stream.makeAsyncIterator()
+        let finished = await [results.next(), results.next()].compactMap { $0 }
+        #expect(Set(finished) == [first.id, second.id])
+        #expect(swipeResults[first.id]?.count == 1)
+        #expect(swipeResults[second.id] == [true])
+        collectionView.layoutIfNeeded()
+        #expect(retainedCell.accessibilityLabel == latest.title)
+        let firstCell = try #require(collectionView.visibleCells.first { $0.accessibilityLabel == first.title })
+        #expect(firstCell.accessibilityValue?.contains("Settled") == !rollbackFirst)
+        let threadCells = collectionView.visibleCells.filter { $0.accessibilityTraits.contains(.button) }
+        let frames = threadCells.map(\.frame).sorted { $0.minY < $1.minY }
+        for (before, after) in zip(frames, frames.dropFirst()) {
+            #expect(before.maxY <= after.minY + 0.5)
+        }
     }
 
     @Test
@@ -808,8 +1069,10 @@ struct HomeThreadSwipeActionTests {
         snapshot: FeatureSnapshot,
         query: String = "",
         selectedThreadID: String? = nil,
-        settlementResult: Bool = true,
-        onSettle: @escaping (FeatureThread, Bool) -> Void = { _, _ in }
+        isSettledExpanded: Bool = false,
+        forceRichRows: Bool = false,
+        settlementResult: Bool? = true,
+        onSettle: @escaping (FeatureThread, Bool, @escaping (Bool) -> Void) -> Void = { _, _, _ in }
     ) -> HomeThreadCollectionView {
         HomeThreadCollectionView(
             presentation: HomePresentation(
@@ -821,12 +1084,12 @@ struct HomeThreadSwipeActionTests {
             projectFaviconClient: client,
             query: query,
             selectedThreadID: selectedThreadID,
-            forceRichRows: false,
+            forceRichRows: forceRichRows,
             hapticsEnabled: false,
             settings: snapshot.settings,
             pullRequestsByThreadID: [:],
             isSnoozedExpanded: false,
-            isSettledExpanded: false,
+            isSettledExpanded: isSettledExpanded,
             isArchiveExpanded: false,
             settledLimit: 12,
             onOpen: { _ in },
@@ -838,8 +1101,8 @@ struct HomeThreadSwipeActionTests {
             onRegenerateTitle: { _ in },
             onArchive: { _, _ in },
             onSettle: { thread, settled, completion in
-                onSettle(thread, settled)
-                completion(settlementResult)
+                onSettle(thread, settled, completion)
+                if let settlementResult { completion(settlementResult) }
             },
             onSnooze: { _, _ in },
             onPin: { _, _ in },
