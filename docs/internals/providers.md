@@ -7,7 +7,7 @@ orchestration layer does not know which one is behind a thread.
 
 ## Built-in drivers
 
-[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with six entries:
+[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with seven entries:
 
 | Driver kind   | Driver source                                 |
 | ------------- | --------------------------------------------- |
@@ -15,6 +15,7 @@ orchestration layer does not know which one is behind a thread.
 | `claudeAgent` | [`Drivers/ClaudeDriver.ts`][claude]           |
 | `cursor`      | [`Drivers/CursorDriver.ts`][cursor]           |
 | `grok`        | [`Drivers/GrokDriver.ts`][grok]               |
+| `omp`         | [`Drivers/OmpDriver.ts`][omp]                 |
 | `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode]       |
 | `antigravity` | [`Drivers/AntigravityDriver.ts`][antigravity] |
 
@@ -356,6 +357,7 @@ when a request opens (approval) or user input is requested, via
 [claude]: ../../apps/server/src/provider/Drivers/ClaudeDriver.ts
 [cursor]: ../../apps/server/src/provider/Drivers/CursorDriver.ts
 [grok]: ../../apps/server/src/provider/Drivers/GrokDriver.ts
+[omp]: ../../apps/server/src/provider/Drivers/OmpDriver.ts
 [opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts
 [antigravity]: ../../apps/server/src/provider/Drivers/AntigravityDriver.ts
 [antigravity-adapter]: ../../apps/server/src/provider/Layers/AntigravityAdapter.ts

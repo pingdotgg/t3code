@@ -994,6 +994,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           grok: {
             enabled: false,
           },
+          omp: {
+            enabled: false,
+          },
           opencode: {
             enabled: false,
             serverUrl: "http://127.0.0.1:4096",

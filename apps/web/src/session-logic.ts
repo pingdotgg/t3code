@@ -62,6 +62,12 @@ export const PROVIDER_OPTIONS: Array<{
     pickerSidebarBadge: "new",
   },
   {
+    value: ProviderDriverKind.make("omp"),
+    label: "Oh My Pi",
+    available: true,
+    pickerSidebarBadge: "new",
+  },
+  {
     value: ProviderDriverKind.make("antigravity"),
     label: "Antigravity",
     available: true,

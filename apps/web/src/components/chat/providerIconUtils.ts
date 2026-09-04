@@ -7,7 +7,9 @@ import {
   Icon,
   OpenAI,
   OpenCodeIcon,
+  PiAgentIcon,
 } from "../Icons";
+import { PROVIDER_OPTIONS } from "../../session-logic";
 
 export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
   [ProviderDriverKind.make("codex")]: OpenAI,
@@ -15,6 +17,7 @@ export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>
   [ProviderDriverKind.make("opencode")]: OpenCodeIcon,
   [ProviderDriverKind.make("cursor")]: CursorIcon,
   [ProviderDriverKind.make("grok")]: GrokIcon,
+  [ProviderDriverKind.make("omp")]: PiAgentIcon,
   [ProviderDriverKind.make("antigravity")]: AntigravityIcon,
 };
 

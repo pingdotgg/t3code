@@ -94,10 +94,11 @@ provider's CLI, or use T3 Code's managed setup for Antigravity.
 | Claude      | [Claude Code](https://claude.com/product/claude-code)                                                      | `claude`           | `claude auth login`                |
 | Cursor      | [Cursor CLI](https://cursor.com/cli)                                                                       | `cursor-agent`     | `agent login`                      |
 | Grok Build  | [Grok Build CLI](https://x.ai/cli)                                                                         | `grok`             | `grok login`                       |
+| Oh My Pi    | [Oh My Pi](https://github.com/can1357/oh-my-pi)                                                            | `omp`              | `omp`                              |
 | OpenCode    | [OpenCode](https://opencode.ai)                                                                            | `opencode`         | `opencode auth login`              |
 | Antigravity | [Official ACP agent](https://github.com/agentclientprotocol/registry/blob/main/antigravity-acp/agent.json) | Managed by T3 Code | **Sign in with Google** in T3 Code |
 
-Codex and Claude are on by default. Cursor, Grok Build, OpenCode, and Antigravity are off by
+Codex and Claude are on by default. Cursor, Grok Build, Oh My Pi, OpenCode, and Antigravity are off by
 default. Turn them on in **Settings** > **Providers** when you want to use them.
 
 For Antigravity, select the environment in provider settings, then install and sign in there.

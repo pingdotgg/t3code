@@ -49,7 +49,15 @@ const emitStaleXAiPromptCompleteBeforeSecondHang =
 const emitOverlappingXAiPromptCompleteOutOfOrder =
   process.env.T3_ACP_EMIT_OVERLAPPING_XAI_PROMPT_COMPLETE_OUT_OF_ORDER === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
+// Oh My Pi shape: serve omp-style modes (default/plan) and configOptions
+// (mode/model/thinking) instead of the default/Grok shapes.
+const ompShapes = process.env.T3_ACP_OMP_SHAPES === "1";
+const emitTaskTool = process.env.T3_ACP_EMIT_TASK_TOOL === "1";
+const emitElicitation = process.env.T3_ACP_EMIT_ELICITATION === "1";
+const emitTaskToolBatch = process.env.T3_ACP_EMIT_TASK_TOOL_BATCH === "1";
+const emitTaskToolFail = process.env.T3_ACP_EMIT_TASK_TOOL_FAIL === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
+const setConfigOptionDelayMs = Number(process.env.T3_ACP_SET_CONFIG_OPTION_DELAY_MS ?? "0");
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const initialGrokReasoningEffort =
@@ -67,8 +75,13 @@ const permissionRequestCount = Math.max(
 );
 const sessionId = "mock-session-1";
 
-let currentModeId = antigravityProfile ? "default" : "ask";
-let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
+let currentModeId = ompShapes || antigravityProfile ? "default" : "ask";
+let currentModelId = ompShapes
+  ? "zhipu-coding-plan/glm-5.3"
+  : antigravityProfile
+    ? "gemini-test-low"
+    : "default";
+let currentThinking = "high";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
 let currentContext = "272k";
@@ -114,6 +127,49 @@ process.once("exit", (code) => {
 });
 
 function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
+  if (ompShapes) {
+    return [
+      {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        type: "select",
+        currentValue: currentModeId,
+        options: availableModes.map((mode) => ({
+          value: mode.id,
+          name: mode.name,
+          ...(mode.description ? { description: mode.description } : {}),
+        })),
+      },
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: currentModelId,
+        options: [
+          { value: "zhipu-coding-plan/glm-5.3", name: "GLM 5.3" },
+          { value: "anthropic/claude-opus-4-6", name: "Claude Opus 4.6" },
+          { value: "openai/gpt-5.4", name: "GPT-5.4" },
+        ],
+      },
+      {
+        id: "thinking",
+        name: "Thinking",
+        category: "thought_level",
+        type: "select",
+        currentValue: currentThinking,
+        options: [
+          { value: "off", name: "Off" },
+          { value: "low", name: "Low" },
+          { value: "medium", name: "Medium" },
+          { value: "high", name: "High" },
+          { value: "max", name: "Max" },
+        ],
+      },
+    ];
+  }
+
   if (antigravityProfile) {
     return [
       {
@@ -298,29 +354,42 @@ const antigravityModels = [
   { modelId: "gemini-test-high", name: "Gemini Test High" },
 ] satisfies ReadonlyArray<AcpSchema.ModelInfo>;
 
-const availableModes: ReadonlyArray<AcpSchema.SessionMode> = antigravityProfile
+const availableModes: ReadonlyArray<AcpSchema.SessionMode> = ompShapes
   ? [
-      { id: "default", name: "Default" },
-      { id: "auto_edit", name: "Auto edit" },
-      { id: "yolo", name: "YOLO" },
-    ]
-  : [
       {
-        id: "ask",
-        name: "Ask",
-        description: "Request permission before making any changes",
-      },
-      {
-        id: "architect",
-        name: "Architect",
-        description: "Design and plan software systems without implementation",
-      },
-      {
-        id: "code",
-        name: "Code",
+        id: "default",
+        name: "Default",
         description: "Write and modify code with full tool access",
       },
-    ];
+      {
+        id: "plan",
+        name: "Plan",
+        description: "Design and plan without making changes",
+      },
+    ]
+  : antigravityProfile
+    ? [
+        { id: "default", name: "Default" },
+        { id: "auto_edit", name: "Auto edit" },
+        { id: "yolo", name: "YOLO" },
+      ]
+    : [
+        {
+          id: "ask",
+          name: "Ask",
+          description: "Request permission before making any changes",
+        },
+        {
+          id: "architect",
+          name: "Architect",
+          description: "Design and plan software systems without implementation",
+        },
+        {
+          id: "code",
+          name: "Code",
+          description: "Write and modify code with full tool access",
+        },
+      ];
 
 function modeState(): AcpSchema.SessionModeState {
   return {
@@ -549,6 +618,9 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionConfigOption((request) =>
     Effect.gen(function* () {
+      if (Number.isFinite(setConfigOptionDelayMs) && setConfigOptionDelayMs > 0) {
+        yield* Effect.sleep(`${setConfigOptionDelayMs} millis`);
+      }
       if (exitOnSetConfigOption) {
         return yield* Effect.sync(() => {
           process.exit(7);
@@ -577,6 +649,9 @@ const program = Effect.gen(function* () {
       }
       if (request.configId === "fast") {
         currentFast = request.value === true || request.value === "true";
+      }
+      if (request.configId === "thinking" && typeof request.value === "string") {
+        currentThinking = request.value;
       }
       return {
         configOptions: configOptions(),
@@ -879,6 +954,91 @@ const program = Effect.gen(function* () {
           update: {
             sessionUpdate: "agent_message_chunk",
             content: { type: "text", text: "after tool" },
+          },
+        });
+
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitElicitation) {
+        // Mirror real omp (official @agent-client-protocol/sdk): the request
+        // goes out as the extension method `elicitation/create`, and the
+        // response is the FLAT shape { action: "accept", content } — not
+        // effect-acp's nested ElicitationResponse.
+        const result = yield* agent.client.extRequest("elicitation/create", {
+          sessionId: requestedSessionId,
+          mode: "form",
+          message: "Approve this action?",
+          requestedSchema: {
+            type: "object",
+            properties: {
+              value: {
+                type: "string",
+                title: "Decision",
+                enum: ["Approve", "Deny"],
+              },
+            },
+            required: ["value"],
+          },
+        });
+        const action =
+          typeof result === "object" && result !== null && "action" in result
+            ? result.action
+            : undefined;
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: `elicitation ${typeof action === "string" ? action : "unknown"}`,
+            },
+          },
+        });
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitTaskTool || emitTaskToolBatch || emitTaskToolFail) {
+        const toolCallId = "task-tool-call-1";
+        const rawInput = emitTaskToolBatch
+          ? {
+              tasks: [
+                { agent: "scout", task: "Research the codebase layout", effort: "low" },
+                { agent: "worker", task: "Implement the feature", effort: "high" },
+              ],
+              context: "shared batch context",
+            }
+          : { agent: "worker", task: "Implement the feature", effort: "high" };
+
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: "Task",
+            kind: "other",
+            status: "pending",
+            rawInput,
+          },
+        });
+
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            status: emitTaskToolFail ? "failed" : "completed",
+            rawOutput: {
+              output: emitTaskToolFail ? "subagent failed to finish" : "subagent finished the work",
+            },
+          },
+        });
+
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "task tool done" },
           },
         });
 
