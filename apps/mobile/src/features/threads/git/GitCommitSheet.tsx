@@ -68,7 +68,14 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
         ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
       });
     },
-    [allSelected, canWriteSourceControl, dialogCommitMessage, gitActions, navigation, selectedFiles],
+    [
+      allSelected,
+      canWriteSourceControl,
+      dialogCommitMessage,
+      gitActions,
+      navigation,
+      selectedFiles,
+    ],
   );
 
   return (
