@@ -5286,6 +5286,68 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("uses OpenCode tool titles and hides raw tool output from timeline labels", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-tool-labels");
+      const readPart = {
+        id: "part-read-1",
+        sessionID: "http://127.0.0.1:9999/session",
+        messageID: "msg-tool-1",
+        type: "tool",
+        callID: "call-read-1",
+        tool: "read",
+        state: {
+          status: "completed",
+          input: { filePath: "/Users/baptistearno/.agents/skills/manage-skills/SKILL.md" },
+          output:
+            "<path>/Users/baptistearno/.agents/skills/manage-skills/SKILL.md</path>\n<type>file</type>\n<content>\n1: ---\n2: ...\n</content>",
+          title: ".agents/skills/manage-skills/SKILL.md",
+          metadata: {},
+          time: { start: 1, end: 2 },
+        },
+      };
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            part: readPart,
+            time: 1,
+          },
+        },
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        ["session.started", "thread.started", "item.completed"],
+      );
+      const completed = events.find((event) => event.type === "item.completed");
+      NodeAssert.ok(completed?.type === "item.completed");
+      if (completed?.type === "item.completed") {
+        NodeAssert.equal(completed.payload.title, ".agents/skills/manage-skills/SKILL.md");
+        NodeAssert.ok(!("detail" in completed.payload));
+        NodeAssert.match(
+          String((completed.payload.data as { state: { output: string } }).state.output),
+          /<content>/,
+        );
+      }
+    }),
+  );
+
   it.effect("lets OpenCode own session title generation and emits title metadata updates", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

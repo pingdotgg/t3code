@@ -612,16 +612,7 @@ function messageRoleForPart(
 }
 
 function detailFromToolPart(part: Extract<Part, { type: "tool" }>): string | undefined {
-  switch (part.state.status) {
-    case "completed":
-      return part.state.output;
-    case "error":
-      return part.state.error;
-    case "running":
-      return part.state.title;
-    default:
-      return undefined;
-  }
+  return part.state.status === "error" ? part.state.error : undefined;
 }
 
 function toolStateCreatedAt(part: Extract<Part, { type: "tool" }>): string | undefined {
@@ -2179,8 +2170,8 @@ export function makeOpenCodeAdapter(
 
           if (part.type === "tool") {
             const itemType = toToolLifecycleItemType(part.tool);
-            const title =
-              part.state.status === "running" ? (part.state.title ?? part.tool) : part.tool;
+            const stateTitle = "title" in part.state ? part.state.title?.trim() : undefined;
+            const title = stateTitle ? stateTitle : part.tool;
             const detail = detailFromToolPart(part);
             const payload = {
               itemType,
