@@ -7,9 +7,13 @@ import {
   type ChatAttachment,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
@@ -19,7 +23,98 @@ import {
   antigravityPermissionMode,
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
+  makeAntigravityAcpRuntime,
 } from "./AntigravityAcpSupport.ts";
+
+it.layer(NodeServices.layer)("makeAntigravityAcpRuntime", (it) => {
+  it.effect("reclaims an orphan and removes the current extraction when interrupted", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const crypto = yield* Crypto.Crypto;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const runtimeReady = yield* Deferred.make<void>();
+      const orphan = yield* fileSystem.makeTempDirectory({
+        prefix: "t3-antigravity-runtime-2147483647-",
+      });
+      yield* Effect.addFinalizer(() =>
+        fileSystem.remove(orphan, { recursive: true, force: true }).pipe(Effect.ignore),
+      );
+      yield* fileSystem.makeDirectory(path.join(orphan, "_MEIorphan"));
+      const active = yield* fileSystem.makeTempDirectory({
+        prefix: `t3-antigravity-runtime-${process.pid}-`,
+      });
+      yield* Effect.addFinalizer(() =>
+        fileSystem.remove(active, { recursive: true, force: true }).pipe(Effect.ignore),
+      );
+      yield* fileSystem.makeDirectory(path.join(active, "_MEIactive"));
+      let runtimeTempDirectory: string | undefined;
+      let child: ChildProcessSpawner.ChildProcessHandle | undefined;
+      const observedSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (command._tag !== "StandardCommand") {
+            return yield* Effect.die("Unexpected process pipeline.");
+          }
+          const environment = command.options.env ?? {};
+          runtimeTempDirectory = environment.TEMP;
+          if (!runtimeTempDirectory) {
+            return yield* Effect.die("Missing isolated runtime temp directory.");
+          }
+          expect(environment.TMP).toBe(runtimeTempDirectory);
+          expect(environment.CUSTOM_SETTING).toBe("kept");
+          expect(
+            Object.keys(environment)
+              .filter((key) => key.toUpperCase() === "TEMP" || key.toUpperCase() === "TMP")
+              .sort(),
+          ).toEqual(["TEMP", "TMP"]);
+          const extraction = path.join(runtimeTempDirectory, "_MEIfixture");
+          yield* fileSystem.makeDirectory(extraction);
+          yield* fileSystem.writeFileString(path.join(extraction, "payload"), "fixture");
+          child = yield* spawner.spawn(command);
+          return child;
+        }),
+      );
+      const runtime = Effect.scoped(
+        Effect.gen(function* () {
+          yield* makeAntigravityAcpRuntime({
+            childProcessSpawner: observedSpawner,
+            fileSystem,
+            path,
+            platform: "win32",
+            spawn: {
+              command: process.execPath,
+              args: ["-e", "setInterval(() => {}, 1000)"],
+              cwd: process.cwd(),
+              env: {
+                ...process.env,
+                temp: "ambient-lowercase-temp",
+                TMP: "ambient-uppercase-tmp",
+                CUSTOM_SETTING: "kept",
+              },
+              extendEnv: false,
+            },
+            cwd: process.cwd(),
+            clientInfo: { name: "t3-code-test", version: "0.0.0" },
+          }).pipe(Effect.provideService(Crypto.Crypto, crypto));
+          yield* Deferred.succeed(runtimeReady, undefined);
+          return yield* Effect.never;
+        }),
+      );
+      const fiber = yield* runtime.pipe(Effect.forkChild);
+      yield* Deferred.await(runtimeReady);
+      expect(yield* fileSystem.exists(orphan)).toBe(false);
+      expect(yield* fileSystem.exists(active)).toBe(true);
+      yield* Fiber.interrupt(fiber);
+
+      if (!runtimeTempDirectory || !child) {
+        return yield* Effect.die("Runtime process was not observed.");
+      }
+      expect(path.basename(runtimeTempDirectory)).toMatch(/^t3-antigravity-runtime-/u);
+      expect(yield* fileSystem.exists(runtimeTempDirectory)).toBe(false);
+      expect(yield* child.isRunning).toBe(false);
+    }),
+  );
+});
 
 const modelConfig = {
   id: "model",

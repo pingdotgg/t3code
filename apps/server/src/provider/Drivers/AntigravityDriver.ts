@@ -117,7 +117,10 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         );
 
       const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
-        input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
+        input: Omit<
+          AntigravityAcpRuntimeInput,
+          "spawn" | "childProcessSpawner" | "fileSystem" | "path" | "platform"
+        >,
       ): Effect.fn.Return<
         AcpSessionRuntime["Service"],
         AcpError | ProviderSetupError,
@@ -155,6 +158,9 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
           ...input,
           authMethod: auth.authMethod,
           childProcessSpawner: spawner,
+          fileSystem,
+          path,
+          platform: profile.platform,
           spawn: buildAntigravityAcpSpawnInput({
             installation: executable,
             profile,
