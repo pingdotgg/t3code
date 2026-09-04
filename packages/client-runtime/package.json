@@ -155,6 +155,10 @@
       "types": "./src/state/session.ts",
       "default": "./src/state/session.ts"
     },
+    "./state/usage-access": {
+      "types": "./src/state/usageAccess.ts",
+      "default": "./src/state/usageAccess.ts"
+    },
     "./state/shared-settings": {
       "types": "./src/state/sharedSettings.ts",
       "default": "./src/state/sharedSettings.ts"
