@@ -85,6 +85,10 @@ export function createTerminalEnvironmentAtoms<R, E>(
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),
+    inspectSubprocesses: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:terminal:inspect-subprocesses",
+      tag: WS_METHODS.terminalInspectSubprocesses,
+    }),
     close: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:terminal:close",
       tag: WS_METHODS.terminalClose,

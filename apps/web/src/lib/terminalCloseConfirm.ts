@@ -12,6 +12,19 @@ interface TerminalCloseTarget {
   readonly hasRunningSubprocess?: boolean | undefined;
 }
 
+interface InspectedTerminalActivity {
+  readonly terminalId: string;
+  readonly hasRunningSubprocess: boolean | null;
+}
+
+interface ConfirmInspectedTerminalCloseOptions {
+  readonly terminalIds: readonly [string, ...string[]];
+  readonly labelFor: (terminalId: string) => string;
+  readonly inspect: (
+    terminalIds: readonly [string, ...string[]],
+  ) => Promise<ReadonlyArray<InspectedTerminalActivity> | undefined>;
+}
+
 /**
  * Confirmation for individual terminal close actions: drawer buttons, panel
  * buttons, the `terminal.close` keybinding, and closing a terminal surface from
@@ -49,4 +62,21 @@ export async function confirmTerminalClose(
   } finally {
     pendingConfirmations -= 1;
   }
+}
+
+/** Refresh activity immediately before deciding whether a close is destructive. */
+export async function confirmInspectedTerminalClose(
+  options: ConfirmInspectedTerminalCloseOptions,
+): Promise<boolean> {
+  const inspected = await options.inspect(options.terminalIds).catch(() => undefined);
+  const activityByTerminalId = new Map(
+    inspected?.map((terminal) => [terminal.terminalId, terminal.hasRunningSubprocess] as const) ??
+      [],
+  );
+  const targetFor = (terminalId: string): TerminalCloseTarget => ({
+    label: options.labelFor(terminalId),
+    hasRunningSubprocess: activityByTerminalId.get(terminalId) ?? undefined,
+  });
+  const [firstTerminalId, ...otherTerminalIds] = options.terminalIds;
+  return confirmTerminalClose([targetFor(firstTerminalId), ...otherTerminalIds.map(targetFor)]);
 }

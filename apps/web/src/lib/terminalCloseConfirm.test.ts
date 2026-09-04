@@ -16,7 +16,11 @@ vi.mock("~/localApi", () => ({
   readLocalApi: () => readLocalApiMock(),
 }));
 
-import { confirmTerminalClose, isTerminalCloseConfirmPending } from "./terminalCloseConfirm";
+import {
+  confirmInspectedTerminalClose,
+  confirmTerminalClose,
+  isTerminalCloseConfirmPending,
+} from "./terminalCloseConfirm";
 
 describe("terminal close confirmation", () => {
   beforeEach(() => {
@@ -98,6 +102,38 @@ describe("terminal close confirmation", () => {
       { label: "Terminal 1", hasRunningSubprocess: false },
       { label: "Terminal 2" },
     ]);
+
+    expect(confirmMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("uses a fresh inspection and fails safe when inspection is unavailable", async () => {
+    confirmMock.mockResolvedValue(true);
+    const labelFor = (terminalId: string) => `Terminal ${terminalId}`;
+
+    await expect(
+      confirmInspectedTerminalClose({
+        terminalIds: ["1"],
+        labelFor,
+        inspect: async () => [{ terminalId: "1", hasRunningSubprocess: false }],
+      }),
+    ).resolves.toBe(true);
+    expect(confirmMock).not.toHaveBeenCalled();
+
+    await confirmInspectedTerminalClose({
+      terminalIds: ["1"],
+      labelFor,
+      inspect: async () => [{ terminalId: "1", hasRunningSubprocess: true }],
+    });
+    await confirmInspectedTerminalClose({
+      terminalIds: ["1"],
+      labelFor,
+      inspect: async () => undefined,
+    });
+    await confirmInspectedTerminalClose({
+      terminalIds: ["1"],
+      labelFor,
+      inspect: async () => [{ terminalId: "1", hasRunningSubprocess: null }],
+    });
 
     expect(confirmMock).toHaveBeenCalledTimes(3);
   });
