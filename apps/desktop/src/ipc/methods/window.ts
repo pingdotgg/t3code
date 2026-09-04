@@ -30,6 +30,7 @@ import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../../electron/ElectronMenu.ts";
+import * as ElectronNotification from "../../electron/ElectronNotification.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
@@ -319,6 +320,16 @@ export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
       }
     }
     return available;
+  }),
+});
+
+export const notifyAgentTurnCompleted = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.NOTIFY_AGENT_TURN_COMPLETED_CHANNEL,
+  payload: Schema.Struct({ threadTitle: Schema.String }),
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.notifyAgentTurnCompleted")(function* (input) {
+    const notification = yield* ElectronNotification.ElectronNotification;
+    return yield* notification.showAgentTurnCompleted(input);
   }),
 });
 

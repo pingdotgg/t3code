@@ -74,7 +74,7 @@ export function projectThreadAwareness(
   };
 }
 
-function resolveThreadAwarenessPhase(
+export function resolveThreadAwarenessPhase(
   thread: ProjectThreadAwarenessInput["thread"],
 ): AgentAwarenessPhase | null {
   if (thread.hasPendingApprovals) {

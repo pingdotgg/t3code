@@ -1125,6 +1125,13 @@ export interface DesktopBridge {
    * builds lack it; callers fall back to VS Code only.
    */
   probeRemoteEditors?: () => Promise<readonly EditorId[]>;
+  /**
+   * Report a finished agent turn from the renderer. The desktop main process
+   * owns platform (Windows-only), window-focus, and support gating, and
+   * returns whether a notification was shown. Optional: older desktop builds
+   * lack it; callers skip notifying.
+   */
+  notifyAgentTurnCompleted?: (input: { threadTitle: string }) => Promise<boolean>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   /**
    * Quit-confirmation hint pushes. Optional: older desktop builds never emit
