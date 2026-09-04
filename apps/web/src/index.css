@@ -1818,6 +1818,25 @@ code {
   background: transparent !important;
 }
 
+.chat-markdown .chat-markdown-mermaid {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 1rem;
+}
+
+.chat-markdown .chat-markdown-codeblock:has(.chat-markdown-mermaid) .chat-markdown-wrap-action {
+  display: none;
+}
+
+/* Mermaid emits width="100%" plus an inline max-width equal to the diagram's
+   native width, so the SVG shrinks to fit the chat column and never grows past
+   its natural size. Only the height needs help: it must follow the viewBox. */
+.chat-markdown .chat-markdown-mermaid svg {
+  display: block;
+  height: auto;
+  margin: 0 auto;
+}
+
 /* Diagnostics-style tables: row separators only, uppercase headers, and a
    scroll-fade container for horizontal overflow. The root chat-markdown
    wrapping rules (overflow-wrap: anywhere) would let columns shrink to single

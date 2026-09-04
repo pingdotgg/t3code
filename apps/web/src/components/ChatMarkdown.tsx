@@ -174,6 +174,7 @@ import {
   BrowserPreviewUnavailableError,
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
+import { MermaidDiagram } from "./MermaidDiagram";
 
 interface ChatMarkdownProps {
   text: string;
@@ -897,7 +898,7 @@ function MarkdownCodeBlock({
                   type="button"
                   variant="ghost"
                   size="icon-xs"
-                  className="chat-markdown-chrome-action"
+                  className="chat-markdown-chrome-action chat-markdown-wrap-action"
                   aria-pressed={wrapped}
                   onClick={() => setWrapped((value) => !value)}
                   aria-label={wrapLabel}
@@ -2713,6 +2714,19 @@ function ChatMarkdown({
 
         const language = extractFenceLanguage(codeBlock.className);
         const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
+        const codeFallback = (
+          <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
+            <Suspense fallback={<pre {...props}>{children}</pre>}>
+              <SuspenseShikiCodeBlock
+                className={codeBlock.className}
+                code={codeBlock.code}
+                themeName={diffThemeName}
+                isStreaming={isStreaming}
+              />
+            </Suspense>
+          </RenderErrorBoundary>
+        );
+        const renderMermaid = !isStreaming && language.toLowerCase() === "mermaid";
         return (
           <MarkdownCodeBlock
             code={codeBlock.code}
@@ -2720,16 +2734,16 @@ function ChatMarkdown({
             fenceTitle={fenceTitle}
             theme={resolvedTheme}
           >
-            <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
-              <Suspense fallback={<pre {...props}>{children}</pre>}>
-                <SuspenseShikiCodeBlock
-                  className={codeBlock.className}
-                  code={codeBlock.code}
-                  themeName={diffThemeName}
-                  isStreaming={isStreaming}
-                />
-              </Suspense>
-            </RenderErrorBoundary>
+            {renderMermaid ? (
+              <MermaidDiagram
+                key={`${resolvedTheme}:${codeBlock.code}`}
+                code={codeBlock.code}
+                theme={resolvedTheme}
+                fallback={codeFallback}
+              />
+            ) : (
+              codeFallback
+            )}
           </MarkdownCodeBlock>
         );
       },
