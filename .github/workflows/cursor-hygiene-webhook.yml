@@ -32,7 +32,7 @@ jobs:
             echo "Missing CURSOR_T3CODE_WEBHOOK_URL or CURSOR_T3CODE_WEBHOOK_AUTH — skipping."
             exit 0
           fi
-          curl -fsS -X POST "$URL" \
+          curl -fsS --max-time 60 -X POST "$URL" \
             -H "Authorization: $AUTH" \
             -H "Content-Type: application/json" \
             -H "X-GitHub-Event: ${{ github.event_name }}" \
