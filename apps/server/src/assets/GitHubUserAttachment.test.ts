@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient } from "effect/unstable/http";
 import { vi } from "vite-plus/test";
 
@@ -197,6 +199,86 @@ describe("GitHub user attachments", () => {
 
       expect(error.reason).toBe("transport");
       expect(error.cause).toBeDefined();
+    }),
+  );
+
+  it.effect("times out stalled initial and redirected requests", () =>
+    Effect.gen(function* () {
+      for (const redirectBeforeStall of [false, true]) {
+        const sourceUrl =
+          "https://github.com/user-attachments/assets/f1d65268-4213-47a5-864d-5067e8bf5918";
+        const redirectedUrl =
+          "https://github-production-user-asset-6210df.s3.amazonaws.com/asset?signature=redacted";
+        const fetchMock = Object.assign(
+          vi.fn((input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+            if (redirectBeforeStall && String(input) === sourceUrl) {
+              return Promise.resolve(
+                new Response(null, { status: 302, headers: { location: redirectedUrl } }),
+              );
+            }
+            return new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
+                once: true,
+              });
+            });
+          }),
+          { preconnect: vi.fn() },
+        );
+        const errorFiber = yield* loadGitHubUserAttachment(sourceUrl).pipe(
+          Effect.provide(FetchHttpClient.layer),
+          Effect.provideService(FetchHttpClient.Fetch, fetchMock),
+          Effect.flip,
+          Effect.forkChild,
+        );
+
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("10 seconds");
+        const error = yield* Fiber.join(errorFiber);
+
+        expect(error.reason).toBe("transport");
+        expect(error.cause).toBeDefined();
+        expect(fetchMock).toHaveBeenCalledTimes(redirectBeforeStall ? 2 : 1);
+      }
+    }),
+  );
+
+  it.effect("times out a stalled response body", () =>
+    Effect.gen(function* () {
+      let bodyCancelled = false;
+      const fetchMock = Object.assign(
+        vi.fn(async () =>
+          Promise.resolve(
+            new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(PNG_SIGNATURE);
+                },
+                cancel() {
+                  bodyCancelled = true;
+                },
+              }),
+              { status: 200, headers: { "content-type": "image/png" } },
+            ),
+          ),
+        ),
+        { preconnect: vi.fn() },
+      );
+      const errorFiber = yield* loadGitHubUserAttachment(
+        "https://github.com/user-attachments/assets/f1d65268-4213-47a5-864d-5067e8bf5918",
+      ).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, fetchMock),
+        Effect.flip,
+        Effect.forkChild,
+      );
+
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("30 seconds");
+      const error = yield* Fiber.join(errorFiber);
+
+      expect(error.reason).toBe("transport");
+      expect(error.cause).toBeDefined();
+      expect(bodyCancelled).toBe(true);
     }),
   );
 });

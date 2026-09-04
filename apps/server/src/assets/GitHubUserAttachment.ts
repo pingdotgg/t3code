@@ -1,3 +1,4 @@
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -12,6 +13,8 @@ const SRGB_CHROMATICITIES = [
 ] as const;
 const INITIAL_GITHUB_USER_ATTACHMENT_BUFFER_BYTES = 64 * 1024;
 const MAX_GITHUB_USER_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const GITHUB_USER_ATTACHMENT_REQUEST_TIMEOUT = Duration.seconds(10);
+const GITHUB_USER_ATTACHMENT_BODY_TIMEOUT = Duration.seconds(30);
 const GITHUB_ASSET_REDIRECT_HOST_PATTERN =
   /^github-production-user-asset-[a-z0-9]+\.s3\.amazonaws\.com$/i;
 const SUPPORTED_IMAGE_CONTENT_TYPES = new Set([
@@ -41,6 +44,12 @@ export class GitHubUserAttachmentFetchError extends Schema.TaggedErrorClass<GitH
   }
 }
 const isGitHubUserAttachmentFetchError = Schema.is(GitHubUserAttachmentFetchError);
+
+function transportFailure(cause: unknown): GitHubUserAttachmentFetchError {
+  return isGitHubUserAttachmentFetchError(cause)
+    ? cause
+    : new GitHubUserAttachmentFetchError({ reason: "transport", cause });
+}
 
 function bytesEqualAt(bytes: Uint8Array, offset: number, expected: ReadonlyArray<number>): boolean {
   return expected.every((byte, index) => bytes[offset + index] === byte);
@@ -131,7 +140,12 @@ function trustedRedirectUrl(location: string, sourceUrl: string): string | null 
 
 const executeWithoutRedirects = <E, R>(
   effect: Effect.Effect<HttpClientResponse.HttpClientResponse, E, R>,
-) => effect.pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
+) =>
+  effect.pipe(
+    Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+    Effect.timeout(GITHUB_USER_ATTACHMENT_REQUEST_TIMEOUT),
+    Effect.mapError(transportFailure),
+  );
 
 const readLimitedBody = Effect.fn("GitHubUserAttachment.readLimitedBody")(function* (
   response: HttpClientResponse.HttpClientResponse,
@@ -166,11 +180,8 @@ const readLimitedBody = Effect.fn("GitHubUserAttachment.readLimitedBody")(functi
       byteLength = nextByteLength;
       return Effect.void;
     }),
-    Effect.mapError((error) =>
-      isGitHubUserAttachmentFetchError(error)
-        ? error
-        : new GitHubUserAttachmentFetchError({ reason: "transport", cause: error }),
-    ),
+    Effect.timeout(GITHUB_USER_ATTACHMENT_BODY_TIMEOUT),
+    Effect.mapError(transportFailure),
   );
 
   return bytes.subarray(0, byteLength);
@@ -179,11 +190,7 @@ const readLimitedBody = Effect.fn("GitHubUserAttachment.readLimitedBody")(functi
 export const loadGitHubUserAttachment = Effect.fn("GitHubUserAttachment.loadGitHubUserAttachment")(
   function* (sourceUrl: string) {
     const httpClient = yield* HttpClient.HttpClient;
-    const initialResponse = yield* executeWithoutRedirects(httpClient.get(sourceUrl)).pipe(
-      Effect.mapError(
-        (cause) => new GitHubUserAttachmentFetchError({ reason: "transport", cause }),
-      ),
-    );
+    const initialResponse = yield* executeWithoutRedirects(httpClient.get(sourceUrl));
     const response =
       initialResponse.status >= 300 && initialResponse.status < 400
         ? yield* Effect.gen(function* () {
@@ -193,11 +200,7 @@ export const loadGitHubUserAttachment = Effect.fn("GitHubUserAttachment.loadGitH
             if (redirectUrl === null) {
               return yield* new GitHubUserAttachmentFetchError({ reason: "redirect" });
             }
-            return yield* executeWithoutRedirects(httpClient.get(redirectUrl)).pipe(
-              Effect.mapError(
-                (cause) => new GitHubUserAttachmentFetchError({ reason: "transport", cause }),
-              ),
-            );
+            return yield* executeWithoutRedirects(httpClient.get(redirectUrl));
           })
         : initialResponse;
 
