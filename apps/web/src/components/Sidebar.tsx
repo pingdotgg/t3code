@@ -4541,7 +4541,9 @@ export default function Sidebar() {
                         const rowVariant = isCard ? "card" : "slim";
                         return (
                           <SidebarThreadRow
-                            key={threadKey}
+                            // Fade between card and compact rows while the outer
+                            // sortable wrapper keeps its identity during a drag.
+                            key={`${threadKey}:${rowVariant}`}
                             thread={thread}
                             variant={rowVariant}
                             // Snoozed rows wake, settled rows un-settle, and cards settle.
