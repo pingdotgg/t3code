@@ -25,6 +25,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -70,6 +71,7 @@ interface ClientConnection {
 
 interface PendingRequest {
   readonly queue: ClientConnection["queue"];
+  readonly started: Deferred.Deferred<void>;
   readonly deferred: Deferred.Deferred<unknown, PreviewAutomationError>;
   readonly context: PreviewAutomationRequestErrorContext;
 }
@@ -112,6 +114,14 @@ interface BrokerState {
   readonly requestSequence: number;
   readonly focusSequence: number;
 }
+
+const PREVIEW_AUTOMATION_RESPONSE_GRACE_MS = 1_000;
+
+const initialResponseTimeoutMs = (
+  operation: PreviewAutomationOperation,
+  timeoutMs: number,
+): number =>
+  operation === "navigate" ? timeoutMs * 2 + PREVIEW_AUTOMATION_RESPONSE_GRACE_MS : timeoutMs;
 
 const removeConnectionFromState = (
   current: BrokerState,
@@ -406,11 +416,18 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       ) {
         return [undefined, current] as const;
       }
+      if (response.phase === "started" && response.ok) {
+        return [entry, current] as const;
+      }
       const next = new Map(current.pending);
       next.delete(response.requestId);
       return [entry, { ...current, pending: next }] as const;
     });
     if (!pending) return;
+    if (response.phase === "started" && response.ok) {
+      yield* Deferred.succeed(pending.started, undefined);
+      return;
+    }
     if (response.ok) {
       yield* Deferred.succeed(pending.deferred, response.result);
     } else {
@@ -427,6 +444,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     input: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0],
   ): Effect.fn.Return<A, PreviewAutomationError> {
     const timeoutMs = input.timeoutMs ?? 15_000;
+    const started = yield* Deferred.make<void>();
     const deferred = yield* Deferred.make<unknown, PreviewAutomationError>();
     const route = yield* SynchronizedRef.modify(state, (current) => {
       const assignments = new Map(
@@ -501,7 +519,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         ...selectorDiagnostics,
       };
       const pending = new Map(current.pending);
-      pending.set(requestId, { queue: connection.queue, deferred, context });
+      pending.set(requestId, { queue: connection.queue, started, deferred, context });
       return [
         { connection, requestId, requestContext: context, requestSequence },
         { ...current, assignments, pending, requestSequence: current.requestSequence + 1 },
@@ -544,7 +562,26 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         }
         return yield* new PreviewAutomationRequestQueueClosedError(requestContext);
       }
-      const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(timeoutMs));
+      const first = yield* Effect.raceFirst(
+        Deferred.await(started).pipe(Effect.as({ _tag: "Started" as const })),
+        Deferred.await(deferred).pipe(
+          Effect.exit,
+          Effect.map((exit) => ({ _tag: "Completed" as const, exit })),
+        ),
+      ).pipe(Effect.timeoutOption(initialResponseTimeoutMs(input.operation, timeoutMs)));
+      if (Option.isNone(first)) {
+        return yield* new PreviewAutomationTimeoutError(requestContext);
+      }
+      if (first.value._tag === "Completed") {
+        if (Exit.isFailure(first.value.exit)) {
+          return yield* Effect.failCause(first.value.exit.cause);
+        }
+        return first.value.exit.value as A;
+      }
+
+      const result = yield* Deferred.await(deferred).pipe(
+        Effect.timeoutOption(timeoutMs + PREVIEW_AUTOMATION_RESPONSE_GRACE_MS),
+      );
       return yield* Option.match(result, {
         onNone: () => Effect.fail(new PreviewAutomationTimeoutError(requestContext)),
         onSome: (value) => Effect.succeed(value as A),

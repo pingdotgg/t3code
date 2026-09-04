@@ -53,6 +53,59 @@ const consumerState = (handleRequest: (request: PreviewAutomationRequest) => Pro
 });
 
 describe("previewAutomationRequestConsumer", () => {
+  it("reports when a request starts before sending its final response", async () => {
+    const requestsAtom = Atom.make<AsyncResult.AsyncResult<PreviewAutomationStreamEvent, Error>>(
+      AsyncResult.initial<PreviewAutomationStreamEvent, Error>(false),
+    );
+    const responses: PreviewAutomationResponse[] = [];
+    const state = {
+      connectionAtom: Atom.make<string | null>(null),
+      requestHandlerAtom: Atom.make({
+        handle: async (
+          _: PreviewAutomationRequest,
+          controls: { readonly notifyStarted: () => Promise<void> },
+        ) => {
+          await controls.notifyStarted();
+          return { loading: false };
+        },
+      }),
+    };
+    const consumerAtom = createPreviewAutomationRequestConsumerAtom({
+      requestsAtom,
+      clientId,
+      connectionAtom: state.connectionAtom,
+      environmentId,
+      requestHandlerAtom: state.requestHandlerAtom,
+      respond: async (response) => {
+        responses.push(response);
+      },
+      label: "test:preview-automation-started",
+    });
+    const registry = AtomRegistry.make();
+    registry.mount(consumerAtom);
+
+    registry.set(requestsAtom, AsyncResult.success(requestEvent("request-started")));
+
+    await vi.waitFor(() => expect(responses).toHaveLength(2));
+    expect(responses).toEqual([
+      {
+        clientId,
+        connectionId,
+        requestId: "request-started",
+        phase: "started",
+        ok: true,
+      },
+      {
+        clientId,
+        connectionId,
+        requestId: "request-started",
+        ok: true,
+        result: { loading: false },
+      },
+    ]);
+    registry.dispose();
+  });
+
   it("acknowledges a replacement stream before consuming requests from it", async () => {
     const requestsAtom = Atom.make(
       AsyncResult.success<PreviewAutomationStreamEvent, Error>({

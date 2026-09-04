@@ -19,6 +19,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
@@ -82,6 +83,140 @@ it.effect("atomically registers a connected host and correlates its response", (
       expect(result).toEqual({ available: true });
     }),
   ),
+);
+
+it.effect("starts a fresh response deadline when the host begins navigation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const started = yield* Deferred.make<void>();
+      const releaseResponse = yield* Deferred.make<void>();
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) =>
+        Effect.gen(function* () {
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            phase: "started",
+            ok: true,
+          });
+          yield* Deferred.succeed(started, undefined);
+          yield* Deferred.await(releaseResponse);
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: { loading: false },
+          });
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const invocation = yield* broker
+        .invoke<{ loading: boolean }>({
+          scope,
+          operation: "navigate",
+          input: { url: "https://example.com", timeoutMs: 100 },
+          timeoutMs: 100,
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("100 millis");
+
+      expect(invocation.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(releaseResponse, undefined);
+      expect(yield* Fiber.join(invocation)).toEqual({ loading: false });
+    }),
+  ).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("allows the host a setup budget before navigation starts", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const requestReceived = yield* Deferred.make<void>();
+      const releaseStarted = yield* Deferred.make<void>();
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(requestReceived, undefined);
+          yield* Deferred.await(releaseStarted);
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            phase: "started",
+            ok: true,
+          });
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: { loading: false },
+          });
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const invocation = yield* broker
+        .invoke<{ loading: boolean }>({
+          scope,
+          operation: "navigate",
+          input: { url: "https://example.com", timeoutMs: 100 },
+          timeoutMs: 100,
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(requestReceived);
+      yield* TestClock.adjust("101 millis");
+
+      expect(invocation.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(releaseStarted, undefined);
+      expect(yield* Fiber.join(invocation)).toEqual({ loading: false });
+    }),
+  ).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("keeps response grace for hosts that do not report navigation start", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const requestReceived = yield* Deferred.make<void>();
+      const releaseResponse = yield* Deferred.make<void>();
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(requestReceived, undefined);
+          yield* Deferred.await(releaseResponse);
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: { loading: false },
+          });
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const invocation = yield* broker
+        .invoke<{ loading: boolean }>({
+          scope,
+          operation: "navigate",
+          input: { url: "https://example.com", timeoutMs: 100 },
+          timeoutMs: 100,
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(requestReceived);
+      yield* TestClock.adjust("1.1 seconds");
+
+      expect(invocation.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(releaseResponse, undefined);
+      expect(yield* Fiber.join(invocation)).toEqual({ loading: false });
+    }),
+  ).pipe(Effect.provide(TestClock.layer())),
 );
 
 it.effect("targets multiple tabs explicitly while retaining a default tab", () =>
@@ -434,6 +569,36 @@ it.effect("distinguishes malformed remote failures", () =>
         requestId: "preview-0",
         timeoutMs: 2_000,
       });
+    }),
+  ),
+);
+
+it.effect("does not swallow a failed navigation-start response", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) =>
+        broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          phase: "started",
+          ok: false,
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const error = yield* broker
+        .invoke<void>({
+          scope,
+          operation: "navigate",
+          input: { url: "https://example.com" },
+          timeoutMs: 2_000,
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(PreviewAutomationMalformedResponseError);
     }),
   ),
 );
