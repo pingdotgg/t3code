@@ -1565,7 +1565,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
             {prBadge}
-            {dragDestination ?? (
+            {sortable?.isDragging ? (
+              dragDestination
+            ) : (
               <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
                 <span
                   className={cn(
@@ -1718,7 +1720,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   actions on hover/keyboard focus or while the popover is open. Keeping
                   the hidden state out of flow lets the project label reclaim
                   space without either state overlapping it. */}
-              {dragDestination ?? (
+              {sortable?.isDragging ? (
+                dragDestination
+              ) : (
                 <span className="group/sidebar-status-slot relative ml-auto flex h-5 min-w-8 shrink-0 items-stretch justify-end text-xs">
                   {/* Read-only status labels yield to the hover actions. Woke is
                     itself an action, so it stays pointer-enabled and visible
