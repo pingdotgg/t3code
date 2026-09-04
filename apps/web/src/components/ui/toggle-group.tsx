@@ -16,7 +16,7 @@ const ToggleGroupContext = React.createContext<VariantProps<typeof toggleVariant
 
 function ToggleGroup({
   className,
-  variant = "default",
+  variant = "segmented",
   size = variant === "segmented" ? "segmented" : "default",
   orientation = "horizontal",
   children,

@@ -42,6 +42,7 @@ import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "~/components/Icons";
 import { RadioGroup } from "~/components/ui/radio-group";
 import { Spinner } from "~/components/ui/spinner";
+import { toggleVariants } from "~/components/ui/toggle";
 import { cn } from "~/lib/utils";
 import {
   buildGitActionProgressStages,
@@ -831,32 +832,29 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                           Protocol
                         </span>
                         <RadioGroup
+                          className="w-fit flex-row gap-0.5 rounded-lg bg-input/40 p-0.5"
                           value={publishProtocol}
-                          onValueChange={(value) =>
-                            setPublishProtocol(value as SourceControlCloneProtocol)
-                          }
+                          onValueChange={(protocol) => {
+                            if (protocol === "ssh" || protocol === "https") {
+                              setPublishProtocol(protocol);
+                            }
+                          }}
                           aria-labelledby="publish-protocol-label"
                           disabled={publishRepositoryAction.isPending}
-                          className="grid grid-cols-2 gap-2"
                         >
-                          {(["ssh", "https"] as const).map((value) => {
-                            const isSelected = publishProtocol === value;
-                            return (
-                              <RadioPrimitive.Root
-                                key={value}
-                                value={value}
-                                className={cn(
-                                  "rounded-md border px-3 py-1.5 text-center text-sm font-medium outline-none transition",
-                                  "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-                                  isSelected
-                                    ? "border-primary bg-background ring-2 ring-primary/35 text-foreground dark:border-transparent dark:bg-primary/10 dark:ring-1 dark:ring-primary/30"
-                                    : "border-border bg-background text-muted-foreground hover:border-foreground/20 hover:text-foreground dark:border-transparent dark:bg-white/[0.035]",
-                                )}
-                              >
-                                {value === "ssh" ? "SSH" : "HTTPS"}
-                              </RadioPrimitive.Root>
-                            );
-                          })}
+                          {(["ssh", "https"] as const).map((protocol) => (
+                            <RadioPrimitive.Root
+                              key={protocol}
+                              value={protocol}
+                              data-pressed={publishProtocol === protocol ? "" : undefined}
+                              className={toggleVariants({
+                                variant: "segmented",
+                                size: "segmented",
+                              })}
+                            >
+                              {protocol.toUpperCase()}
+                            </RadioPrimitive.Root>
+                          ))}
                         </RadioGroup>
                       </div>
                     </div>
