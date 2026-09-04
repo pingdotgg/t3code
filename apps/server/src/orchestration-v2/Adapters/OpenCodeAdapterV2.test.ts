@@ -622,6 +622,7 @@ describe("OpenCodeAdapterV2", () => {
           },
         }),
       );
+      assert.equal(statusCalls, 0, "an unrelated user message must not release prompt admission");
       yield* Effect.promise(() =>
         nativeEvents.push({
           type: "session.status",
