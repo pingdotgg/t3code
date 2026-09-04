@@ -25,6 +25,7 @@ import {
   createBrowseNavigationCoordinator,
   filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
+  resolveFilesystemReadAccess,
 } from "@t3tools/client-runtime/state/filesystem";
 import {
   appendBrowsePathSegment,
@@ -56,7 +57,8 @@ import { useProjects, useServerConfigs } from "../../state/entities";
 import { filesystemEnvironment } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
-import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { environmentSession, useEnvironmentScope, readEnvironmentScope } from "../../state/session";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
@@ -790,10 +792,17 @@ function FolderBrowser(props: {
     () => (browsePath.directoryPath.length > 0 ? { partialPath: browsePath.directoryPath } : null),
     [browsePath.directoryPath],
   );
-  const canReadFiles = useEnvironmentScope(
-    props.environment.environmentId,
-    AuthFilesystemReadScope,
+  const fileAccessSession = useEnvironmentQuery(
+    environmentSession.sessionStateAtom(props.environment.environmentId),
   );
+  const fileEnvironment = useEnvironmentPresentation(props.environment.environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
   const browseState = useEnvironmentQuery(
     !canReadFiles || browseInput === null
       ? null
@@ -817,10 +826,12 @@ function FolderBrowser(props: {
   return (
     <>
       <SectionTitle>Browse folders</SectionTitle>
-      {!canReadFiles ? <ErrorBanner message="This connection cannot browse host folders." /> : null}
+      {!canReadFiles && !fileAccess.isPending ? (
+        <ErrorBanner message={fileAccess.error ?? "This connection cannot browse host folders."} />
+      ) : null}
       {browseState.error ? <ErrorBanner message={browseState.error} /> : null}
       <ListSection>
-        {browseState.isPending && browseState.data === null ? (
+        {fileAccess.isPending || (browseState.isPending && browseState.data === null) ? (
           <View className="items-center py-5">
             <ActivityIndicator colorClassName={"accent-icon-muted"} />
           </View>

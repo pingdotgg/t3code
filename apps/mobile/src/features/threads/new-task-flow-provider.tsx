@@ -1,4 +1,5 @@
-import { AuthFilesystemReadScope } from "@t3tools/contracts";
+import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { environmentSession } from "../../state/session";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -385,15 +386,16 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       ? environmentSession.sessionStateAtom(selectedProject.environmentId)
       : null,
   );
+  const fileEnvironment = useEnvironmentPresentation(selectedProject?.environmentId ?? null);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
   const fileAccessPending =
-    selectedProject !== null &&
-    selectedProject.workspaceRoot !== "" &&
-    fileAccessSession.data === null &&
-    fileAccessSession.error === null;
-  const canReadFiles =
-    fileAccessSession.error === null &&
-    fileAccessSession.data?.authenticated === true &&
-    fileAccessSession.data.scopes?.includes(AuthFilesystemReadScope) === true;
+    selectedProject !== null && selectedProject.workspaceRoot !== "" && fileAccess.isPending;
   const t3ProjectFileQuery = useEnvironmentQuery(
     canReadFiles && selectedProject !== null && selectedProject.workspaceRoot !== ""
       ? projectEnvironment.readFile({

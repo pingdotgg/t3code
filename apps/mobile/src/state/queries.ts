@@ -1,5 +1,6 @@
-import { AuthFilesystemReadScope } from "@t3tools/contracts";
-import { useEnvironmentScope } from "./session";
+import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
+import { environmentSession } from "./session";
+import { useEnvironmentPresentation } from "./presentation";
 import type { VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
@@ -255,27 +256,48 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
     [target.cwd, target.environmentId, target.query],
   );
   const debouncedTarget = useDebouncedValue(normalizedTarget, COMPOSER_PATH_SEARCH_DEBOUNCE_MS);
-  const canReadFiles = useEnvironmentScope(debouncedTarget.environmentId, AuthFilesystemReadScope);
-  const result = useEnvironmentQuery(
-    canReadFiles &&
-      debouncedTarget.environmentId !== null &&
-      debouncedTarget.cwd !== null &&
-      debouncedTarget.query.length > 0
-      ? projectEnvironment.searchEntries({
+  const fileAccessSession = useEnvironmentQuery(
+    debouncedTarget.environmentId === null
+      ? null
+      : environmentSession.sessionStateAtom(debouncedTarget.environmentId),
+  );
+  const fileEnvironment = useEnvironmentPresentation(debouncedTarget.environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
+  const searchTarget =
+    debouncedTarget.environmentId !== null &&
+    debouncedTarget.cwd !== null &&
+    debouncedTarget.query.length > 0
+      ? {
           environmentId: debouncedTarget.environmentId,
           input: {
             cwd: debouncedTarget.cwd,
             query: debouncedTarget.query,
             limit: COMPOSER_PATH_SEARCH_LIMIT,
           },
-        })
-      : null,
+        }
+      : null;
+  const result = useEnvironmentQuery(
+    canReadFiles && searchTarget !== null ? projectEnvironment.searchEntries(searchTarget) : null,
   );
+  const hasTarget = searchTarget !== null;
 
   return {
     entries: result.data?.entries ?? [],
-    error: canReadFiles ? result.error : "This connection cannot search host files.",
-    isPending: normalizedTarget.query !== debouncedTarget.query || result.isPending,
+    error:
+      !hasTarget || fileAccess.isPending
+        ? null
+        : canReadFiles
+          ? result.error
+          : (fileAccess.error ?? "This connection cannot search host files."),
+    isPending:
+      normalizedTarget.query !== debouncedTarget.query ||
+      (hasTarget && (fileAccess.isPending || result.isPending)),
     refresh: result.refresh,
   };
 }
