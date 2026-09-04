@@ -613,18 +613,22 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   // and machine values overlap, and `resolveKnownWindowsCliDirs` appends
   // entries that are frequently already present. Visiting a directory twice
   // inside one walk cannot produce a different answer, so drop the repeats
-  // before spending syscalls on them. `mergePathValues` above already
-  // de-duplicates this way; the scan simply never did.
+  // before spending syscalls on them.
+  //
+  // Entries are compared verbatim rather than through
+  // `normalizePathEntryForComparison`. That helper case-folds on Windows, which
+  // is right when it picks which spelling of an entry to keep, but skipping a
+  // probe is a stronger claim: Windows 10+ can mark a directory case-sensitive
+  // (`fsutil file setCaseSensitiveInfo`), so `C:\Tools` and `C:\tools` are not
+  // provably the same directory. Exact matching still drops 15 of the 75
+  // entries on my PATH, and it cannot hide a command that exists.
   const pathEntries: string[] = [];
   const seenPathEntries = new Set<string>();
   for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
     const pathEntry = stripWrappingQuotes(entry.trim());
-    if (pathEntry.length === 0) continue;
+    if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
 
-    const normalizedPathEntry = normalizePathEntryForComparison(pathEntry, platform);
-    if (seenPathEntries.has(normalizedPathEntry)) continue;
-
-    seenPathEntries.add(normalizedPathEntry);
+    seenPathEntries.add(pathEntry);
     pathEntries.push(pathEntry);
   }
 

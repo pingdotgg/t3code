@@ -407,14 +407,27 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
   it.effect("visits a repeated PATH directory only once", () =>
     Effect.gen(function* () {
       const probed = yield* recordProbes({
-        PATH: "C:\\bin;C:\\other;C:\\BIN;C:\\bin",
+        PATH: "C:\\bin;C:\\other;C:\\bin;C:\\other",
         PATHEXT: ".COM;.EXE",
       });
 
-      // Two distinct directories, two extensions. The repeats of C:\bin, one of
-      // them differing only in case, cost nothing.
+      // Two distinct directories, two extensions. The repeats cost nothing.
       expect(probed).toHaveLength(4);
       expect(new Set(probed).size).toBe(probed.length);
+    }),
+  );
+
+  it.effect("still visits a PATH entry that differs only in case", () =>
+    Effect.gen(function* () {
+      const probed = yield* recordProbes({
+        PATH: "C:\\bin;C:\\BIN",
+        PATHEXT: ".COM;.EXE",
+      });
+
+      // Deliberately not folded together. Windows 10+ can mark a directory
+      // case-sensitive, so the two spellings are not provably one directory and
+      // skipping the second could hide a command that is really there.
+      expect(probed).toHaveLength(4);
     }),
   );
 
