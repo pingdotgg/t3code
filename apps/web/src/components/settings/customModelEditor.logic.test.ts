@@ -208,6 +208,13 @@ describe("customModelEditor.logic", () => {
     );
   });
 
+  it.each(Object.entries(DESCRIPTOR_PRESETS_BY_KIND))(
+    "offers saveable presets for %s",
+    (_driver, presets) => {
+      expect(validateDraft(draft({ descriptors: presets.map(descriptorFromPreset) }))).toBeNull();
+    },
+  );
+
   it("collapses a blank name and no options back to a bare definition", () => {
     expect(definitionFromDraft(draft({ name: "  " }))).toEqual({
       slug: "my-model",
