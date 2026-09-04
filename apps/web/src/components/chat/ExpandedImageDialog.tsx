@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
@@ -9,6 +9,7 @@ import { OpenMediaLink } from "../media/OpenMediaLink";
 import { MediaActions, type MediaActionSource } from "../media/MediaActions";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { isContextMenuOpen } from "../../contextMenuFallback";
+import { composerFloatingLayerProps } from "./composerEventScope";
 
 interface ExpandedImageDialogProps {
   preview: ExpandedImagePreview;
@@ -79,6 +80,20 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     setImageOffset((current) => current + direction);
   }, []);
 
+  // The element that opened the preview gets focus back on close. Without
+  // this a close button click leaves focus on the unmounted dialog, and the
+  // composer that owned the opener reads that as a blur and rests.
+  const openerRef = useRef<Element | null>(null);
+  useEffect(() => {
+    openerRef.current = document.activeElement;
+    return () => {
+      const opener = openerRef.current;
+      if (opener instanceof HTMLElement && opener.isConnected) {
+        opener.focus({ preventScroll: true });
+      }
+    };
+  }, []);
+
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.defaultPrevented || isContextMenuOpen()) {
@@ -115,6 +130,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
 
   return createPortal(
     <div
+      {...composerFloatingLayerProps}
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 px-4 py-6 [-webkit-app-region:no-drag]"
       role="dialog"
       aria-modal="true"
