@@ -102,6 +102,7 @@ export function applyThreadDetailEvent(
           settledOverride: null,
           settledAt: null,
           unsettledAt: null,
+          activeOrderKey: null,
           snoozedUntil: null,
           snoozedAt: null,
           deletedAt: null,
@@ -141,6 +142,7 @@ export function applyThreadDetailEvent(
           settledOverride: "settled",
           settledAt: event.payload.settledAt,
           unsettledAt: null,
+          activeOrderKey: null,
           updatedAt: event.payload.updatedAt,
         },
       };
@@ -237,6 +239,9 @@ export function applyThreadDetailEvent(
             : {}),
           ...(event.payload.linkedPullRequest !== undefined
             ? { linkedPullRequest: event.payload.linkedPullRequest }
+            : {}),
+          ...(event.payload.activeOrderKey !== undefined
+            ? { activeOrderKey: event.payload.activeOrderKey }
             : {}),
           updatedAt: event.payload.updatedAt,
         },
