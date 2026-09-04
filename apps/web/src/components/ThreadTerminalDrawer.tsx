@@ -419,6 +419,9 @@ export function TerminalViewport({
       ...(providerInstanceId ? { providerInstanceId } : {}),
     },
   });
+  const canResizeTerminal =
+    canOperateTerminal && terminalSession.version > 0 && terminalSession.status === "running";
+  const resizeSessionGeneration = canResizeTerminal ? terminalSession.output.generation : null;
   const writeTerminal = useEffectEvent((data: string) =>
     runTerminalWrite({
       environmentId,
@@ -426,7 +429,7 @@ export function TerminalViewport({
     }),
   );
   const resizeTerminal = useEffectEvent((cols: number, rows: number) => {
-    if (!canOperateTerminal) return;
+    if (!canResizeTerminal) return;
     return runTerminalResize({
       environmentId,
       input: { threadId, terminalId, cols, rows },
@@ -476,6 +479,13 @@ export function TerminalViewport({
   useLayoutEffect(() => {
     if (terminalRef.current) terminalRef.current.input.readOnly = !canOperateTerminal;
   }, [canOperateTerminal]);
+
+  useEffect(() => {
+    if (resizeSessionGeneration === null) return;
+    // The first fit can finish before authorization or the attach snapshot.
+    // Replay its grid once this writable session exists, including reconnects.
+    terminalRef.current?.resendSize();
+  }, [resizeSessionGeneration]);
 
   useLayoutEffect(() => {
     visibleRef.current = visible;
