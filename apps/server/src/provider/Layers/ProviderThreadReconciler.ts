@@ -333,17 +333,34 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
                 const resumeCursor = binding.resumeCursor;
                 if (!isResumeCursor(resumeCursor)) return;
                 const existingThread = yield* snapshots.getThreadShellById(binding.threadId);
-                const projectedOwnershipIsStale =
+                const projectedInstanceIsStale =
                   Option.isSome(existingThread) &&
-                  (existingThread.value.modelSelection.instanceId !== instance.instanceId ||
+                  existingThread.value.modelSelection.instanceId !== instance.instanceId;
+                const runtimePayloadInstanceIsStale =
+                  isImportedRuntimePayload(binding.runtimePayload) &&
+                  binding.runtimePayload.modelSelection?.instanceId !== instance.instanceId;
+                const bindingOwnershipIsStale =
+                  binding.providerInstanceId !== instance.instanceId ||
+                  runtimePayloadInstanceIsStale;
+                const ownershipHandoffIsIncomplete =
+                  projectedInstanceIsStale || bindingOwnershipIsStale;
+                const projectedOwnershipIsStale =
+                  projectedInstanceIsStale ||
+                  (ownershipHandoffIsIncomplete &&
+                    Option.isSome(existingThread) &&
                     existingThread.value.modelSelection.model !== model);
                 const runtimePayloadIsStale =
                   isImportedRuntimePayload(binding.runtimePayload) &&
-                  (binding.runtimePayload.modelSelection?.instanceId !== instance.instanceId ||
-                    binding.runtimePayload.modelSelection?.model !== model);
-                const bindingOwnershipIsStale =
-                  binding.providerInstanceId !== instance.instanceId || runtimePayloadIsStale;
-                if (!projectedOwnershipIsStale && !bindingOwnershipIsStale) return;
+                  (runtimePayloadInstanceIsStale ||
+                    (ownershipHandoffIsIncomplete &&
+                      binding.runtimePayload.modelSelection?.model !== model));
+                if (
+                  !projectedOwnershipIsStale &&
+                  !runtimePayloadIsStale &&
+                  !bindingOwnershipIsStale
+                ) {
+                  return;
+                }
 
                 if (projectedOwnershipIsStale) {
                   yield* engine.dispatch({
