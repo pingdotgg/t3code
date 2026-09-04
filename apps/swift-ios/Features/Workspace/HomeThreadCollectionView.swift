@@ -429,13 +429,17 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         private func configureAccessibility(_ cell: HomeCollectionCell, item: HomeCollectionItem) {
             cell.accessibilityCustomActions = nil
             switch item {
-            case let .thread(thread, context, _, isArchived, _, _):
+            case let .thread(thread, context, style, isArchived, _, _):
                 cell.isAccessibilityElement = true
                 cell.accessibilityTraits = selectedThreadID == thread.id
                     ? [.button, .selected]
                     : .button
                 cell.accessibilityLabel = thread.title
-                cell.accessibilityValue = threadAccessibilityValue(thread, context: context)
+                cell.accessibilityValue = threadAccessibilityValue(
+                    thread,
+                    context: context,
+                    style: style
+                )
                 cell.accessibilityHint = "Opens thread. More actions are available."
                 cell.accessibilityCustomActions = threadAccessibilityActions(
                     for: thread,
@@ -491,9 +495,10 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
         private func threadAccessibilityValue(
             _ thread: FeatureThread,
-            context: HomeThreadRowContext
+            context: HomeThreadRowContext,
+            style: FeatureThreadRow.Style
         ) -> String {
-            var status = thread.homeStatusLabel ?? "Ready"
+            var status = thread.homeRowAccessibilityStatus(rich: style == .rich, at: .now)
             if let duration = thread.homeWorkingDuration(at: .now) {
                 status += " for \(duration)"
             }
@@ -524,7 +529,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             cell: HomeCollectionCell
         ) {
             guard let identifier = threadItemIDs[threadID],
-                  case let .thread(thread, context, _, _, _, _) = itemsByID[identifier],
+                  case let .thread(thread, context, style, _, _, _) = itemsByID[identifier],
                   let indexPath = dataSource?.indexPath(for: identifier),
                   collectionView?.cellForItem(at: indexPath) === cell else {
                 return
@@ -534,7 +539,11 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             } else {
                 pullRequestsByThreadID.removeValue(forKey: threadID)
             }
-            cell.accessibilityValue = threadAccessibilityValue(thread, context: context)
+            cell.accessibilityValue = threadAccessibilityValue(
+                thread,
+                context: context,
+                style: style
+            )
         }
 
         private func threadAccessibilityActions(
