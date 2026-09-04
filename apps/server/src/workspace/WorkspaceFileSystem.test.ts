@@ -14,6 +14,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const ProjectLayer = WorkspaceFileSystem.layer.pipe(
@@ -100,28 +101,31 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
-    it.effect("rejects a FIFO without blocking on open", () =>
-      Effect.gen(function* () {
-        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-        const path = yield* Path.Path;
-        const cwd = yield* makeTempDir;
-        const outsideDir = yield* makeTempDir;
-        const fifoPath = path.join(outsideDir, "pipe");
-        yield* Effect.promise(
-          () =>
-            new Promise<void>((resolve, reject) =>
-              NodeChildProcess.execFile("mkfifo", [fifoPath], (error) =>
-                error ? reject(error) : resolve(),
+    // Needs mkfifo; Windows has no FIFOs to reject.
+    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+      "rejects a FIFO without blocking on open",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          const outsideDir = yield* makeTempDir;
+          const fifoPath = path.join(outsideDir, "pipe");
+          yield* Effect.promise(
+            () =>
+              new Promise<void>((resolve, reject) =>
+                NodeChildProcess.execFile("mkfifo", [fifoPath], (error) =>
+                  error ? reject(error) : resolve(),
+                ),
               ),
-            ),
-        );
+          );
 
-        const error = yield* workspaceFileSystem
-          .readFile({ cwd, relativePath: fifoPath })
-          .pipe(Effect.flip);
+          const error = yield* workspaceFileSystem
+            .readFile({ cwd, relativePath: fifoPath })
+            .pipe(Effect.flip);
 
-        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspacePathNotFileError);
-      }),
+          expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspacePathNotFileError);
+        }),
     );
 
     it.effect("rejects reads outside the workspace root", () =>
