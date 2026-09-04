@@ -30,6 +30,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
+  const { canWriteSourceControl } = gitActions;
 
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
@@ -57,6 +58,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
 
   const runCommitAction = useCallback(
     async (featureBranch: boolean) => {
+      if (!canWriteSourceControl) return;
       const commitMessage = dialogCommitMessage.trim();
       navigation.goBack();
       await gitActions.onRunSelectedThreadGitAction({
@@ -66,7 +68,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
         ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
       });
     },
-    [allSelected, dialogCommitMessage, gitActions, navigation, selectedFiles],
+    [allSelected, canWriteSourceControl, dialogCommitMessage, gitActions, navigation, selectedFiles],
   );
 
   return (

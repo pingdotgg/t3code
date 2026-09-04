@@ -131,6 +131,7 @@ export function PullRequestThreadDialog({
 
   const handleConfirm = useCallback(
     async (mode: "local" | "worktree") => {
+      if (!preparePullRequestThreadAction.isAllowed) return;
       if (!parsedReference) {
         setReferenceDirty(true);
         return;
@@ -277,6 +278,7 @@ export function PullRequestThreadDialog({
               void handleConfirm("local");
             }}
             disabled={
+              !preparePullRequestThreadAction.isAllowed ||
               !cwd ||
               !resolvedPullRequest ||
               isResolving ||
@@ -292,6 +294,7 @@ export function PullRequestThreadDialog({
               void handleConfirm("worktree");
             }}
             disabled={
+              !preparePullRequestThreadAction.isAllowed ||
               !cwd ||
               !resolvedPullRequest ||
               isResolving ||

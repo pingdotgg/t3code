@@ -9,12 +9,14 @@ import {
   type VcsActionOperation,
   type RunVcsStackedActionInput,
 } from "@t3tools/client-runtime/state/vcs";
-import type {
-  EnvironmentId,
-  GitResolvePullRequestResult,
-  SourceControlCloneProtocol,
-  SourceControlRepositoryVisibility,
-  ThreadId,
+import {
+  AuthSourceControlWriteScope,
+  EnvironmentAuthorizationError,
+  type EnvironmentId,
+  type GitResolvePullRequestResult,
+  type SourceControlCloneProtocol,
+  type SourceControlRepositoryVisibility,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
@@ -24,6 +26,7 @@ import { useCallback } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { gitEnvironment } from "./git";
 import { useEnvironmentQuery } from "./query";
+import { useEnvironmentScope } from "./session";
 import { sourceControlEnvironment } from "./sourceControl";
 import { useAtomCommand } from "./use-atom-command";
 import { vcsActionManager, vcsEnvironment } from "./vcs";
@@ -45,11 +48,15 @@ interface SourceControlActionState<
   R extends AtomCommandResult<unknown, unknown>,
 > {
   readonly isPending: boolean;
+  readonly isAllowed: boolean;
   readonly error: unknown;
   readonly run: (
     ...args: TArgs
   ) => Promise<
-    AtomCommandResult<AtomCommandSuccess<R>, AtomCommandFailure<R> | VcsActionUnavailableError>
+    AtomCommandResult<
+      AtomCommandSuccess<R>,
+      AtomCommandFailure<R> | VcsActionUnavailableError | EnvironmentAuthorizationError
+    >
   >;
   readonly resetError: () => void;
 }
@@ -73,6 +80,7 @@ function useAction<
   readonly onSuccess?: () => void;
   readonly managedExternally?: boolean;
 }): SourceControlActionState<TArgs, R> {
+  const isAllowed = useEnvironmentScope(input.scope.environmentId, AuthSourceControlWriteScope);
   const operation = ACTION_OPERATION[input.kind];
   const state = useAtomValue(vcsActionManager.stateAtom(input.scope));
   const ownsState = state.operation === operation;
@@ -83,6 +91,16 @@ function useAction<
 
   const run = useCallback(
     async (...args: TArgs) => {
+      if (!isAllowed) {
+        return AsyncResult.failure<never, EnvironmentAuthorizationError>(
+          Cause.fail(
+            new EnvironmentAuthorizationError({
+              requiredScope: AuthSourceControlWriteScope,
+              message: "This connection cannot change source control.",
+            }),
+          ),
+        );
+      }
       const execute = async (): Promise<
         AtomCommandResult<AtomCommandSuccess<R>, AtomCommandFailure<R>>
       > => {
@@ -104,10 +122,19 @@ function useAction<
             execute,
           );
     },
-    [input.action, input.label, input.managedExternally, input.onSuccess, input.scope, operation],
+    [
+      input.action,
+      input.label,
+      input.managedExternally,
+      input.onSuccess,
+      input.scope,
+      isAllowed,
+      operation,
+    ],
   );
 
   return {
+    isAllowed,
     error: ownsState ? state.error : null,
     isPending: ownsState && state.isRunning,
     resetError,

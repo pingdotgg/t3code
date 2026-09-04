@@ -7,7 +7,12 @@ import {
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
-import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import {
+  AuthSourceControlWriteScope,
+  EnvironmentId,
+  type ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
@@ -17,6 +22,7 @@ import { useCallback, useMemo, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { readEnvironmentScope } from "../state/session";
 import { terminalEnvironment } from "../state/terminal";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
@@ -459,6 +465,7 @@ export function useThreadActions() {
       // A Scratch thread's folder is not a git worktree, and deleting the
       // thread keeps its files.
       const canDeleteWorktree =
+        readEnvironmentScope(threadRef.environmentId, AuthSourceControlWriteScope) &&
         orphanedWorktreePath !== null &&
         threadProject !== null &&
         !isScratchProject(threadProject, environmentConfig?.scratchWorkspaceRoot);
