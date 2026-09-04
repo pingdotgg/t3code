@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
+import { HostProcessPlatform } from "./hostProcess.ts";
 
 import {
   RotatingFileSink,
@@ -10,6 +11,7 @@ import {
   RotatingFileSinkError,
 } from "./logging.ts";
 
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 const tempDirectories: string[] = [];
 
 const makeTempDirectory = (): string => {
@@ -69,7 +71,10 @@ describe("RotatingFileSink", () => {
     expect((thrown as RotatingFileSinkError).cause).toBeInstanceOf(Error);
   });
 
-  it("only treats a missing log file as an empty current size", () => {
+  // An over-long name is the one stat failure that is neither ENOENT nor a
+  // permission problem on posix. Windows reports it as ENOENT, so the sink
+  // correctly treats it as an absent file and there is nothing to assert.
+  it.skipIf(windowsHost)("only treats a missing log file as an empty current size", () => {
     const directory = makeTempDirectory();
     const filePath = NodePath.join(directory, "a".repeat(300));
 

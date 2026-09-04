@@ -7,6 +7,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runSqliteState } from "./t3-sqlite-state.ts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const createFixtureDatabase = Effect.fn("createSqliteStateFixtureDatabase")(function* (
@@ -89,7 +90,8 @@ it.layer(NodeServices.layer)("t3-sqlite-state", (it) => {
           sql: "INSERT INTO fixtures (id, label) VALUES (2, 'seeded')",
         });
         assert.equal(mutation.operation, "exec");
-        if (mutation.operation === "exec") {
+        if (mutation.operation === "exec" && (yield* HostProcessPlatform) !== "win32") {
+          // NTFS has no POSIX mode bits to report.
           assert.equal((yield* fs.stat(mutation.backup)).mode & 0o777, 0o600);
         }
 
