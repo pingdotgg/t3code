@@ -77,6 +77,19 @@ it.layer(NodeServices.layer)("makeAntigravityAcpRuntime", (it) => {
         runtimeTempDirectoryMarkerContents(path.basename(active), process.pid),
       );
       yield* fileSystem.makeDirectory(path.join(active, "_MEIactive"));
+      const runtimeFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        makeTempDirectory: (options) =>
+          fileSystem
+            .exists(orphan)
+            .pipe(
+              Effect.flatMap((exists) =>
+                exists
+                  ? Effect.die("Owned orphans must be reclaimed before temp allocation.")
+                  : fileSystem.makeTempDirectory(options),
+              ),
+            ),
+      });
       let runtimeTempDirectory: string | undefined;
       let child: ChildProcessSpawner.ChildProcessHandle | undefined;
       const observedSpawner = ChildProcessSpawner.make((command) =>
@@ -107,7 +120,7 @@ it.layer(NodeServices.layer)("makeAntigravityAcpRuntime", (it) => {
         Effect.gen(function* () {
           yield* makeAntigravityAcpRuntime({
             childProcessSpawner: observedSpawner,
-            fileSystem,
+            fileSystem: runtimeFileSystem,
             path,
             platform: "win32",
             spawn: {

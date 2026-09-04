@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type AntigravityAuthMethod,
@@ -92,8 +94,7 @@ const removeRuntimeTempDirectory = Effect.fn("removeRuntimeTempDirectory")(funct
 
 /** Recovers hard-exit residue without touching directories owned by another live T3 server. */
 const reclaimOrphanedRuntimeTempDirectories = Effect.fn("reclaimOrphanedRuntimeTempDirectories")(
-  function* (fileSystem: FileSystem.FileSystem, path: Path.Path, directory: string) {
-    const parent = path.dirname(directory);
+  function* (fileSystem: FileSystem.FileSystem, path: Path.Path, parent: string) {
     const entries = yield* fileSystem.readDirectory(parent).pipe(Effect.orElseSucceed(() => []));
     for (const entry of entries) {
       const owner = runtimeTempDirectoryOwner.exec(entry)?.[1];
@@ -126,6 +127,7 @@ const makeWindowsRuntimeTempDirectory = Effect.fn("makeWindowsRuntimeTempDirecto
   fileSystem: FileSystem.FileSystem,
   path: Path.Path,
 ) {
+  yield* reclaimOrphanedRuntimeTempDirectories(fileSystem, path, NodeOS.tmpdir());
   const directory = yield* fileSystem
     .makeTempDirectory({ prefix: `${runtimeTempDirectoryPrefix}${process.pid}-` })
     .pipe(
@@ -152,7 +154,6 @@ const makeWindowsRuntimeTempDirectory = Effect.fn("makeWindowsRuntimeTempDirecto
           }),
       ),
     );
-  yield* reclaimOrphanedRuntimeTempDirectories(fileSystem, path, directory);
   return directory;
 });
 
