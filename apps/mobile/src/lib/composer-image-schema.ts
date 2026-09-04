@@ -8,7 +8,10 @@ export const DraftComposerImageAttachmentSchema = Schema.Struct({
   name: Schema.String,
   mimeType: Schema.String,
   sizeBytes: Schema.Number,
-  dataUrl: Schema.String,
+  // New attachments persist an owned file path; drafts saved by older app
+  // versions carry inline dataUrl bytes instead and must keep decoding.
+  fileUri: Schema.optional(Schema.String),
+  dataUrl: Schema.optional(Schema.String),
   uploadedAttachmentId: Schema.optional(Schema.String),
   uploadEnvironmentId: Schema.optional(EnvironmentId),
 });

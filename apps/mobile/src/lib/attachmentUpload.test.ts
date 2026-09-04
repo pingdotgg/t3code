@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   upload: vi.fn(),
   writeFile: vi.fn(),
   deleteFile: vi.fn(),
+  readBase64: vi.fn(),
 }));
 
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
@@ -68,6 +69,10 @@ vi.mock("expo-file-system", () => ({
       mocks.deleteFile(this.uri);
     }
 
+    async base64() {
+      return mocks.readBase64(this.uri);
+    }
+
     upload(url: string, options: unknown) {
       return mocks.upload(this.uri, url, options);
     }
@@ -100,6 +105,16 @@ const image = {
   sizeBytes: 3,
   dataUrl: "data:image/png;base64,YWJj",
   previewUri: "file:///images/screenshot.png",
+} as const satisfies DraftComposerAttachment;
+
+const fileBackedImage = {
+  id: "image-2",
+  type: "image",
+  name: "photo.png",
+  mimeType: "image/png",
+  sizeBytes: 3,
+  fileUri: "file:///documents/t3-composer-attachments/photo.png",
+  previewUri: "file:///documents/t3-composer-attachments/photo.png",
 } as const satisfies DraftComposerAttachment;
 
 const file = {
@@ -174,6 +189,8 @@ describe("prepareTurnAttachments", () => {
     mocks.upload.mockReset();
     mocks.writeFile.mockReset();
     mocks.deleteFile.mockReset();
+    mocks.readBase64.mockReset();
+    mocks.readBase64.mockResolvedValue("YWJj");
     mocks.readAtom.mockReturnValue(Option.some({ httpBaseUrl: "https://environment.example/" }));
     mocks.runAtomCommand.mockImplementation(async (_registry: unknown, command: unknown) =>
       command === mocks.createUploadUrl
@@ -206,6 +223,55 @@ describe("prepareTurnAttachments", () => {
     ]);
     expect(prepared.pendingAttachmentIds).toEqual([]);
     expect(mocks.upload).not.toHaveBeenCalled();
+  });
+
+  it("inlines a file-backed image lazily when the server lacks image uploads", async () => {
+    const prepared = await prepareTurnAttachments({
+      environmentId,
+      attachments: [fileBackedImage],
+    });
+
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") return;
+    expect(prepared.attachments).toEqual([
+      {
+        type: "image",
+        name: "photo.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+        dataUrl: "data:image/png;base64,YWJj",
+      },
+    ]);
+    expect(mocks.readBase64).toHaveBeenCalledExactlyOnceWith(fileBackedImage.fileUri);
+    expect(mocks.upload).not.toHaveBeenCalled();
+  });
+
+  it("uploads a file-backed image from its owned copy without staging base64", async () => {
+    const prepared = await prepareTurnAttachments({
+      environmentId,
+      attachments: [fileBackedImage],
+      supportsImageUploads: true,
+    });
+
+    expect(mocks.upload).toHaveBeenCalledWith(
+      fileBackedImage.fileUri,
+      "https://environment.example/api/attachments/upload/signed",
+      expect.objectContaining({ headers: { "Content-Type": "image/png" } }),
+    );
+    expect(mocks.readBase64).not.toHaveBeenCalled();
+    expect(mocks.writeFile).not.toHaveBeenCalled();
+    expect(mocks.deleteFile).not.toHaveBeenCalled();
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") return;
+    expect(prepared.attachments).toEqual([
+      {
+        type: "image",
+        id: MINTED_ID,
+        name: "photo.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+      },
+    ]);
   });
 
   it("uploads generic file bytes directly and keeps mixed attachment order", async () => {

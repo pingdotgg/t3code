@@ -1,7 +1,7 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { TextInputWrapper } from "expo-paste-input";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View, useWindowDimensions } from "react-native";
 import { KeyboardAvoidingView, KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -15,6 +15,7 @@ import { cn } from "../../lib/cn";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
 import { useNativePaste } from "../../lib/useNativePaste";
+import { scheduleUnusedComposerAttachmentCleanup } from "../../state/use-composer-drafts";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
 import { appendReviewCommentToDraft } from "../../state/use-thread-composer-state";
 import {
@@ -53,6 +54,21 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
     Record<string, ReadonlyArray<ReviewHighlightedToken>>
   >({});
   const [attachments, setAttachments] = useState<ReadonlyArray<DraftComposerImageAttachment>>([]);
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
+  // Attachments live in local state until submit copies them into the thread
+  // draft, but their image bytes already live in the app-owned attachment
+  // directory. Whatever is still here when the sheet unmounts was neither
+  // submitted nor removed; release those copies so dismissal does not leak
+  // storage. Cleanup is reference-checked, so submitted files stay.
+  useEffect(
+    () => () => {
+      if (attachmentsRef.current.length > 0) {
+        scheduleUnusedComposerAttachmentCleanup(attachmentsRef.current);
+      }
+    },
+    [],
+  );
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
 
   const selectedLines = useMemo(
@@ -275,9 +291,13 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
                         onPressPreview={setPreviewFile}
                         removeButtonPlacement="gutter"
                         onRemove={(imageId) => {
+                          const removed = attachments.find((image) => image.id === imageId);
                           setAttachments((current) =>
                             current.filter((image) => image.id !== imageId),
                           );
+                          if (removed) {
+                            scheduleUnusedComposerAttachmentCleanup([removed]);
+                          }
                         }}
                       />
                     </View>

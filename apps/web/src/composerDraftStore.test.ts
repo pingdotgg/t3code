@@ -74,6 +74,7 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   composerFileNeedsReattach,
+  partializeComposerDraftStoreState,
   useComposerDraftStore,
   DraftId,
 } from "./composerDraftStore";
@@ -83,7 +84,7 @@ import {
   insertInlineTerminalContextPlaceholder,
   type TerminalContextDraft,
 } from "./lib/terminalContext";
-import { createDebouncedStorage } from "./lib/storage";
+import { createDeferredStorage } from "./lib/storage";
 
 function makeImage(input: {
   id: string;
@@ -362,7 +363,6 @@ describe("composerDraftStore file attachments", () => {
 
     const persistApi = useComposerDraftStore.persist as unknown as {
       getOptions: () => {
-        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
         merge: (
           persistedState: unknown,
           currentState: ReturnType<typeof useComposerDraftStore.getState>,
@@ -370,9 +370,7 @@ describe("composerDraftStore file attachments", () => {
       };
     };
     const options = persistApi.getOptions();
-    const persisted = options.partialize(useComposerDraftStore.getState()) as {
-      draftsByThreadKey: Record<string, { files?: Array<Record<string, unknown>> }>;
-    };
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
 
     expect(persisted.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]?.files).toEqual(
       [
@@ -410,7 +408,6 @@ describe("composerDraftStore file attachments", () => {
 
     const persistApi = useComposerDraftStore.persist as unknown as {
       getOptions: () => {
-        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
         merge: (
           persistedState: unknown,
           currentState: ReturnType<typeof useComposerDraftStore.getState>,
@@ -418,9 +415,7 @@ describe("composerDraftStore file attachments", () => {
       };
     };
     const options = persistApi.getOptions();
-    const persisted = options.partialize(useComposerDraftStore.getState()) as {
-      draftsByThreadKey: Record<string, { files?: Array<Record<string, unknown>> }>;
-    };
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
 
     expect(persisted.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]?.files).toEqual(
       [
@@ -809,12 +804,9 @@ describe("composerDraftStore terminal contexts", () => {
       .getState()
       .addTerminalContext(threadRef, makeTerminalContext({ id: "ctx-persist" }));
 
-    const persistApi = useComposerDraftStore.persist as unknown as {
-      getOptions: () => {
-        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
-      };
-    };
-    const persistedState = persistApi.getOptions().partialize(useComposerDraftStore.getState()) as {
+    const persistedState = partializeComposerDraftStoreState(
+      useComposerDraftStore.getState(),
+    ) as unknown as {
       draftsByThreadKey?: Record<string, { terminalContexts?: Array<Record<string, unknown>> }>;
     };
 
@@ -983,12 +975,9 @@ describe("composerDraftStore element contexts", () => {
 
   it("persists element contexts via the partializer (round-trippable)", () => {
     useComposerDraftStore.getState().addElementContext(threadRef, baseSelection);
-    const persistApi = useComposerDraftStore.persist as unknown as {
-      getOptions: () => {
-        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
-      };
-    };
-    const persisted = persistApi.getOptions().partialize(useComposerDraftStore.getState()) as {
+    const persisted = partializeComposerDraftStoreState(
+      useComposerDraftStore.getState(),
+    ) as unknown as {
       draftsByThreadKey?: Record<string, { elementContexts?: Array<Record<string, unknown>> }>;
     };
     const entry =
@@ -1041,12 +1030,9 @@ describe("composerDraftStore review comments", () => {
   it("persists review comments and clears them with composer content", () => {
     const store = useComposerDraftStore.getState();
     store.addReviewComment(threadRef, comment);
-    const persistApi = useComposerDraftStore.persist as unknown as {
-      getOptions: () => {
-        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
-      };
-    };
-    const persisted = persistApi.getOptions().partialize(useComposerDraftStore.getState()) as {
+    const persisted = partializeComposerDraftStoreState(
+      useComposerDraftStore.getState(),
+    ) as unknown as {
       draftsByThreadKey?: Record<string, { reviewComments?: Array<Record<string, unknown>> }>;
     };
 
@@ -2491,7 +2477,7 @@ describe("composerDraftStore runtime and interaction settings", () => {
 });
 
 // ---------------------------------------------------------------------------
-// createDebouncedStorage
+// createDeferredStorage
 // ---------------------------------------------------------------------------
 
 function createMockStorage() {
@@ -2507,9 +2493,12 @@ function createMockStorage() {
   };
 }
 
-describe("createDebouncedStorage", () => {
+describe("createDeferredStorage", () => {
+  const serialize = vi.fn((value: string) => `s:${value}`);
+
   beforeEach(() => {
     vi.useFakeTimers();
+    serialize.mockClear();
   });
 
   afterEach(() => {
@@ -2519,69 +2508,74 @@ describe("createDebouncedStorage", () => {
   it("delegates getItem immediately", () => {
     const base = createMockStorage();
     base.getItem.mockReturnValueOnce("value");
-    const storage = createDebouncedStorage(base);
+    const storage = createDeferredStorage(base, serialize);
 
     expect(storage.getItem("key")).toBe("value");
     expect(base.getItem).toHaveBeenCalledWith("key");
   });
 
-  it("does not write to base storage until the debounce fires", () => {
+  it("neither serializes nor writes until the debounce fires", () => {
     const base = createMockStorage();
-    const storage = createDebouncedStorage(base);
+    const storage = createDeferredStorage(base, serialize);
 
     storage.setItem("key", "v1");
+    expect(serialize).not.toHaveBeenCalled();
     expect(base.setItem).not.toHaveBeenCalled();
 
     vi.advanceTimersByTime(299);
+    expect(serialize).not.toHaveBeenCalled();
     expect(base.setItem).not.toHaveBeenCalled();
 
     vi.advanceTimersByTime(1);
-    expect(base.setItem).toHaveBeenCalledWith("key", "v1");
+    expect(base.setItem).toHaveBeenCalledWith("key", "s:v1");
   });
 
-  it("only writes the last value when setItem is called rapidly", () => {
+  it("serializes and writes only the last value when setItem is called rapidly", () => {
     const base = createMockStorage();
-    const storage = createDebouncedStorage(base);
+    const storage = createDeferredStorage(base, serialize);
 
     storage.setItem("key", "v1");
     storage.setItem("key", "v2");
     storage.setItem("key", "v3");
 
     vi.advanceTimersByTime(300);
+    expect(serialize).toHaveBeenCalledTimes(1);
     expect(base.setItem).toHaveBeenCalledTimes(1);
-    expect(base.setItem).toHaveBeenCalledWith("key", "v3");
+    expect(base.setItem).toHaveBeenCalledWith("key", "s:v3");
   });
 
   it("removeItem cancels a pending setItem write", () => {
     const base = createMockStorage();
-    const storage = createDebouncedStorage(base);
+    const storage = createDeferredStorage(base, serialize);
 
     storage.setItem("key", "v1");
     storage.removeItem("key");
 
     vi.advanceTimersByTime(300);
+    expect(serialize).not.toHaveBeenCalled();
     expect(base.setItem).not.toHaveBeenCalled();
     expect(base.removeItem).toHaveBeenCalledWith("key");
   });
 
-  it("flush writes the pending value immediately", () => {
+  it("flush serializes and writes the pending value immediately", () => {
     const base = createMockStorage();
-    const storage = createDebouncedStorage(base);
+    const storage = createDeferredStorage(base, serialize);
 
     storage.setItem("key", "v1");
     expect(base.setItem).not.toHaveBeenCalled();
 
     storage.flush();
-    expect(base.setItem).toHaveBeenCalledWith("key", "v1");
+    expect(base.setItem).toHaveBeenCalledWith("key", "s:v1");
 
     // Timer should be cancelled; no duplicate write.
     vi.advanceTimersByTime(300);
+    expect(serialize).toHaveBeenCalledTimes(1);
     expect(base.setItem).toHaveBeenCalledTimes(1);
   });
 
   it("flush is a no-op when nothing is pending", () => {
     const base = createMockStorage();
-    const storage = createDebouncedStorage(base);
+    const storage = createDeferredStorage(base, serialize);
 
     storage.flush();
     expect(base.setItem).not.toHaveBeenCalled();
@@ -2589,7 +2583,7 @@ describe("createDebouncedStorage", () => {
 
   it("flush after removeItem is a no-op", () => {
     const base = createMockStorage();
-    const storage = createDebouncedStorage(base);
+    const storage = createDeferredStorage(base, serialize);
 
     storage.setItem("key", "v1");
     storage.removeItem("key");
@@ -2600,7 +2594,7 @@ describe("createDebouncedStorage", () => {
 
   it("setItem works normally after removeItem cancels a pending write", () => {
     const base = createMockStorage();
-    const storage = createDebouncedStorage(base);
+    const storage = createDeferredStorage(base, serialize);
 
     storage.setItem("key", "v1");
     storage.removeItem("key");
@@ -2608,6 +2602,6 @@ describe("createDebouncedStorage", () => {
 
     vi.advanceTimersByTime(300);
     expect(base.setItem).toHaveBeenCalledTimes(1);
-    expect(base.setItem).toHaveBeenCalledWith("key", "v2");
+    expect(base.setItem).toHaveBeenCalledWith("key", "s:v2");
   });
 });

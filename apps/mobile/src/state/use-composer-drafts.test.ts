@@ -303,6 +303,48 @@ describe("mobile composer drafts", () => {
     expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledWith(file.fileUri);
   });
 
+  it("retains a referenced file-backed image and releases it once unreferenced", async () => {
+    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    onTestFinished(() => outboxLoad.mockRestore());
+    const image = {
+      id: "image-1",
+      type: "image" as const,
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      fileUri: "file:///documents/t3-composer-attachments/photo.png",
+      previewUri: "file:///documents/t3-composer-attachments/photo.png",
+    };
+    appAtomRegistry.set(composerDraftsAtom, {
+      "environment-1:thread-1": { text: "look at this", attachments: [image] },
+    });
+
+    await releaseUnusedComposerAttachmentFiles([image]);
+    expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
+
+    // A queued outbox message must keep the bytes alive after the draft clears.
+    appAtomRegistry.set(composerDraftsAtom, {});
+    appAtomRegistry.set(threadOutboxManager.queuedMessagesByThreadKeyAtom, {
+      "environment-1:thread-1": [
+        {
+          environmentId: EnvironmentId.make("environment-1"),
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("queued-image"),
+          commandId: CommandId.make("command-image"),
+          text: "look at this",
+          attachments: [image],
+          createdAt: "2026-08-31T12:00:00.000Z",
+        },
+      ],
+    });
+    await releaseUnusedComposerAttachmentFiles([image]);
+    expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
+
+    appAtomRegistry.set(threadOutboxManager.queuedMessagesByThreadKeyAtom, {});
+    await releaseUnusedComposerAttachmentFiles([image]);
+    expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledExactlyOnceWith(image.fileUri);
+  });
+
   it("keeps a failed-send draft's pending upload for retry", async () => {
     const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
     onTestFinished(() => outboxLoad.mockRestore());
