@@ -68,6 +68,9 @@ export function formatServiceStatus(
     return "T3 Code service\n  Status: not installed\n  Next: Run `t3 service install`.";
   }
   const installedVersion = status.installedVersion ?? cliVersion;
+  const problems = (status.problems ?? []).map(
+    (problem) => `  [${problem}] ${BootService.formatBootServiceProblem(problem)}`,
+  );
   if (
     !status.current &&
     status.installedVersion !== undefined &&
@@ -78,6 +81,7 @@ export function formatServiceStatus(
       `  Status: installed · t3@${installedVersion} (newer than this t3@${cliVersion} CLI)`,
       `  Unit: ${status.unitPath}`,
       `  Logs: ${status.logPath}`,
+      ...problems,
       `  Next: Use \`npx t3@${installedVersion} service update\` to repair it, or pass \`--allow-downgrade\` explicitly.`,
     ].join("\n");
   }
@@ -86,7 +90,8 @@ export function formatServiceStatus(
     `  Status: ${status.current ? `installed · t3@${installedVersion}` : "needs an update or repair"}`,
     `  Unit: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
-    ...(status.current ? [] : ["  Next: Run `npx t3@latest service update`."]),
+    ...problems,
+    ...(status.current ? [] : [`  Next: Run \`npx t3@${cliVersion} service update\`.`]),
   ].join("\n");
 }
 
@@ -189,6 +194,9 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
     yield* Console.log("T3 Code is already set up to run in the background on this machine.");
     return true;
   }
+  for (const problem of status.problems ?? []) {
+    yield* Console.warn(`[${problem}] ${BootService.formatBootServiceProblem(problem)}`);
+  }
   if (
     installed &&
     status.installedVersion !== undefined &&
@@ -238,6 +246,8 @@ export const recoverServiceOnboardingOffer = <R>(
       BootServiceCommandError: (error) =>
         Console.warn(`Background setup did not finish: ${error.message}`).pipe(Effect.as(false)),
       BootServiceInstallError: (error) =>
+        Console.warn(`Background setup did not finish: ${error.message}`).pipe(Effect.as(false)),
+      BootServicePrerequisiteError: (error) =>
         Console.warn(`Background setup did not finish: ${error.message}`).pipe(Effect.as(false)),
       BootServiceUpdatePendingError: (error) =>
         Console.warn(`Background setup did not finish: ${error.message}`).pipe(Effect.as(false)),

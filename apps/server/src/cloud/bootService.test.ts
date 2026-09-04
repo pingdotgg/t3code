@@ -127,8 +127,17 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
 
   const commands: string[] = [];
   const timeouts = new Map<string, unknown>();
-  const control: { failCommand: string | undefined; stateAfterStop?: string } = {
+  const control: {
+    failCommand: string | undefined;
+    stateAfterStop?: string;
+    linger: string;
+    enabled: boolean;
+    active: boolean;
+  } = {
     failCommand: undefined,
+    linger: "yes",
+    enabled: true,
+    active: true,
   };
   const runner = ProcessRunner.ProcessRunner.of({
     run: Effect.fn("test.run_boot_service_command")(function* (
@@ -137,6 +146,11 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       const command = `${input.command} ${input.args.join(" ")}`;
       commands.push(command);
       timeouts.set(command, input.timeout);
+      const failed = command === control.failCommand;
+      if (!failed && command === "loginctl enable-linger --no-ask-password 501")
+        control.linger = "yes";
+      if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
+      if (!failed && command === "systemctl --user restart t3code.service") control.active = true;
       if (
         control.stateAfterStop !== undefined &&
         (command === "systemctl --user stop t3code.service" ||
@@ -145,9 +159,20 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         yield* fs.writeFileString(statePath, control.stateAfterStop).pipe(Effect.orDie);
       }
       return {
-        stdout: input.args[1] === "--version" ? "t3 v1.2.3\n" : "",
+        stdout:
+          input.args[1] === "--version"
+            ? "t3 v1.2.3\n"
+            : input.command === "loginctl" && input.args[0] === "show-user"
+              ? `${control.linger}\n`
+              : input.args[1] === "is-enabled"
+                ? control.enabled
+                  ? "enabled\n"
+                  : "disabled\n"
+                : "",
         stderr: "",
-        code: ChildProcessSpawner.ExitCode(command === control.failCommand ? 1 : 0),
+        code: ChildProcessSpawner.ExitCode(
+          failed || (input.args[1] === "is-active" && !control.active) ? 1 : 0,
+        ),
         timedOut: false,
         stdoutTruncated: false,
         stderrTruncated: false,
@@ -182,10 +207,103 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       ),
     );
   const service = yield* makeService();
-  return { service, makeService, fs, statePath, commands, timeouts, control };
+  return { service, makeService, fs, statePath, commands, timeouts, control, runtime };
 });
 
 it.layer(NodeServices.layer)("boot service install", (it) => {
+  it.effect(
+    "fails before installing files or validating a runtime when lingering needs an administrator",
+    () =>
+      Effect.gen(function* () {
+        const { service, fs, statePath, commands, control, runtime } = yield* makeHarness();
+        const before = yield* service.status;
+        control.linger = "no";
+        control.failCommand = "loginctl enable-linger --no-ask-password 501";
+        yield* fs.remove(runtime.sentinelPath);
+
+        const error = yield* service.install().pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          _tag: "BootServicePrerequisiteError",
+          problem: "linger-disabled",
+        });
+        expect(error.message).toContain('sudo loginctl enable-linger "$(id -un)"');
+        expect(error.message).toContain("last login session ends");
+        expect(yield* fs.exists(before.unitPath)).toBe(false);
+        expect(yield* fs.exists(statePath)).toBe(false);
+        expect(
+          commands.some((command) => command.startsWith("npm ") || command.includes("--version")),
+        ).toBe(false);
+        expect(
+          commands.some(
+            (command) => command.includes("daemon-reload") || command.includes("restart"),
+          ),
+        ).toBe(false);
+        expect(yield* fs.readFileString(before.logPath)).toContain("[linger-disabled]");
+      }),
+  );
+
+  it.effect(
+    "detects a partial install and preserves the running service when repair lacks permission",
+    () =>
+      Effect.gen(function* () {
+        const { service, fs, statePath, commands, control } = yield* makeHarness();
+        const plan = yield* service.install();
+        const before = yield* fs.readFileString(statePath);
+        const unit = yield* fs.readFileString(plan.unitPath);
+        control.linger = "no";
+        control.failCommand = "loginctl enable-linger --no-ask-password 501";
+
+        expect(yield* service.status).toMatchObject({
+          current: false,
+          problems: ["linger-disabled"],
+        });
+        commands.length = 0;
+        expect((yield* service.install().pipe(Effect.flip))._tag).toBe(
+          "BootServicePrerequisiteError",
+        );
+        expect(yield* fs.readFileString(statePath)).toBe(before);
+        expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
+        expect(commands).not.toContain("systemctl --user stop t3code.service");
+      }),
+  );
+
+  it.effect("enables lingering before installing and repairs stopped or disabled services", () =>
+    Effect.gen(function* () {
+      const { service, commands, control } = yield* makeHarness();
+      control.linger = "no";
+      yield* service.install();
+      expect(control.linger).toBe("yes");
+      expect(commands.indexOf("loginctl enable-linger --no-ask-password 501")).toBeLessThan(
+        commands.indexOf("systemctl --user daemon-reload"),
+      );
+
+      control.enabled = false;
+      control.active = false;
+      expect(yield* service.status).toMatchObject({
+        current: false,
+        problems: ["service-disabled", "service-stopped"],
+      });
+      yield* service.install();
+      expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
+  it.effect.each([
+    { command: "systemctl --user show-environment", problem: "user-manager-unavailable" },
+    { command: "loginctl show-user 501 --property=Linger --value", problem: "linger-unavailable" },
+  ])("reports failed prerequisite probes without installing: $command", ({ command, problem }) =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, control } = yield* makeHarness();
+      control.failCommand = command;
+      expect(yield* service.install().pipe(Effect.flip)).toMatchObject({
+        _tag: "BootServicePrerequisiteError",
+        problem,
+      });
+      expect(yield* fs.exists(statePath)).toBe(false);
+    }),
+  );
+
   it.effect("installs, reports current state, and uninstalls", () =>
     Effect.gen(function* () {
       const { service, fs, statePath, commands, timeouts } = yield* makeHarness();
@@ -286,8 +404,10 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         expect(yield* fs.readFileString(plan.launcherPath)).toBe(launcher);
         expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
         expect(
-          commands.filter((command) =>
-            command.startsWith(platform === "linux" ? "systemctl " : "launchctl "),
+          commands.filter(
+            (command) =>
+              command.startsWith(platform === "linux" ? "systemctl " : "launchctl ") &&
+              !command.includes("show-environment"),
           ),
         ).toEqual(
           platform === "linux"
@@ -351,7 +471,11 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
       const error = yield* service.install().pipe(Effect.flip);
       expect(error._tag).toBe("BootServiceCommandError");
-      expect(commands.filter((command) => command.startsWith("systemctl "))).toEqual([
+      expect(
+        commands.filter(
+          (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
+        ),
+      ).toEqual([
         "systemctl --user stop t3code.service",
         "systemctl --user daemon-reload",
         "systemctl --user restart t3code.service",
@@ -382,7 +506,11 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           "BootServiceUpdatePendingError",
         );
         expect(serviceStateHasPendingUpdate(yield* fs.readFileString(statePath))).toBe(true);
-        expect(commands.filter((command) => command.startsWith("systemctl "))).toEqual([
+        expect(
+          commands.filter(
+            (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
+          ),
+        ).toEqual([
           "systemctl --user stop t3code.service",
           "systemctl --user restart t3code.service",
         ]);
