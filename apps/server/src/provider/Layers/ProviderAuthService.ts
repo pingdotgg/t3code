@@ -1,17 +1,21 @@
-import { ProviderSetupError, type ProviderInstanceId } from "@t3tools/contracts";
+import {
+  ProviderSetupError,
+  type ProviderInstanceId,
+  type ProviderSessionId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
+import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSessionManager.ts";
+import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
 import { ProviderAuthService } from "../Services/ProviderAuthService.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
-import { ProviderService } from "../Services/ProviderService.ts";
-import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 
 export const makeProviderAuthService = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry;
-  const providers = yield* ProviderService;
-  const directory = yield* ProviderSessionDirectory;
+  const projections = yield* ProjectionStoreV2;
+  const providerSessions = yield* ProviderSessionManagerV2;
 
   const getController = Effect.fn("ProviderAuthService.getController")(function* (
     instanceId: ProviderInstanceId,
@@ -30,43 +34,46 @@ export const makeProviderAuthService = Effect.gen(function* () {
     return instance.auth;
   });
 
+  // Native sessions may still belong to the previous provider after the
+  // selected model changes. Read session bindings, not the selected model,
+  // when invalidating credentials for sign-in or sign-out.
   const stopSessions = Effect.fn("ProviderAuthService.stopSessions")(function* (
     instanceId: ProviderInstanceId,
   ) {
-    const bindings = yield* directory.listBindings().pipe(
-      Effect.mapError(
-        () =>
-          new ProviderSetupError({
-            instanceId,
-            operation: "stopSessions",
-            detail: "Could not read the provider's active sessions. Try again.",
-          }),
-      ),
-    );
-    const sessions = yield* providers.listSessions();
-    const threadIds = new Set(
-      bindings
-        .filter(
-          (binding) => binding.providerInstanceId === instanceId && binding.status !== "stopped",
-        )
-        .map((binding) => binding.threadId),
-    );
-    for (const session of sessions) {
-      if (session.providerInstanceId === instanceId) {
-        threadIds.add(session.threadId);
-      }
-    }
+    const failure = (detail: string) =>
+      new ProviderSetupError({ instanceId, operation: "stopSessions", detail });
+    const threadIds = yield* projections
+      .getRecoveryThreadIds("runtime")
+      .pipe(
+        Effect.mapError(() => failure("Could not read the provider's active sessions. Try again.")),
+      );
+    const released = new Set<ProviderSessionId>();
     yield* Effect.forEach(
       threadIds,
       (threadId) =>
-        providers.stopSession({ threadId }).pipe(
-          Effect.mapError(
-            () =>
-              new ProviderSetupError({
-                instanceId,
-                operation: "stopSessions",
-                detail: "Could not stop all sessions for this provider. Try again.",
-              }),
+        projections.getThreadProjection(threadId).pipe(
+          Effect.flatMap((projection) =>
+            Effect.forEach(
+              projection.providerSessions.filter(
+                (session) =>
+                  session.providerInstanceId === instanceId &&
+                  session.status !== "stopped" &&
+                  session.status !== "error" &&
+                  !released.has(session.id),
+              ),
+              (session) =>
+                providerSessions
+                  .release({
+                    providerSessionId: session.id,
+                    reason: "manual_shutdown",
+                    detail: "Provider sign-in changed.",
+                  })
+                  .pipe(Effect.tap(() => Effect.sync(() => released.add(session.id)))),
+              { discard: true },
+            ),
+          ),
+          Effect.mapError(() =>
+            failure("Could not stop all sessions for this provider. Try again."),
           ),
         ),
       { discard: true },

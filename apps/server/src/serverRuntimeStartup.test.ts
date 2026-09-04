@@ -6,6 +6,8 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 
+import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+
 import * as ServerConfig from "./config.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 
@@ -135,5 +137,44 @@ it.effect("resolveWelcomeBase derives cwd and project name from server config", 
       cwd: "/tmp/startup-project",
       projectName: "startup-project",
     });
+  }),
+);
+
+it.effect("automatic pull only updates enabled, behind, clean default-branch checkouts", () =>
+  Effect.gen(function* () {
+    const pulled: string[] = [];
+    const git = {
+      statusDetails: (cwd: string) =>
+        Effect.succeed({
+          isRepo: true,
+          isDefaultBranch: cwd !== "/feature",
+          hasUpstream: true,
+          hasWorkingTreeChanges: cwd === "/dirty",
+          aheadCount: cwd === "/ahead" ? 1 : 0,
+          behindCount: cwd === "/current" ? 0 : 1,
+        } as never),
+      pullCurrentBranch: (cwd: string) =>
+        Effect.sync(() => {
+          pulled.push(cwd);
+          return {
+            status: "pulled" as const,
+            refName: "main",
+            upstreamRef: "origin/main",
+          };
+        }),
+    } as unknown as GitVcsDriver.GitVcsDriver["Service"];
+    const project = (workspaceRoot: string, autoPull = true) =>
+      ({ workspaceRoot, autoPull }) as never;
+
+    yield* ServerRuntimeStartup.autoPullProjects([
+      project("/clean"),
+      project("/current"),
+      project("/dirty"),
+      project("/ahead"),
+      project("/feature"),
+      project("/disabled", false),
+    ]).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
+
+    assert.deepStrictEqual(pulled, ["/clean"]);
   }),
 );

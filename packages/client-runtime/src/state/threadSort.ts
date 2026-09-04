@@ -1,5 +1,8 @@
-import type { OrchestrationThreadShell, ProjectId } from "@t3tools/contracts";
+import type { ProjectId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import type { EnvironmentThreadShell } from "./models.ts";
+import * as Arr from "effect/Array";
+import * as Order from "effect/Order";
 
 export interface ThreadSortInput {
   readonly createdAt: string;
@@ -18,8 +21,8 @@ export function toSortableTimestamp(iso: string | undefined): number | null {
 }
 
 export type SettledThreadTimestampInput = Pick<
-  OrchestrationThreadShell,
-  "settledAt" | "latestUserMessageAt" | "latestTurn" | "updatedAt"
+  EnvironmentThreadShell,
+  "settledAt" | "latestUserMessageAt" | "latestRun" | "updatedAt"
 >;
 
 /** The timestamp a settled row sorts and labels by on every client: settledAt
@@ -33,9 +36,9 @@ export function resolveSettledThreadTimestamp(thread: SettledThreadTimestampInpu
   let latestMs = Number.NEGATIVE_INFINITY;
   for (const candidate of [
     thread.latestUserMessageAt,
-    thread.latestTurn?.requestedAt,
-    thread.latestTurn?.startedAt,
-    thread.latestTurn?.completedAt,
+    thread.latestRun?.requestedAt,
+    thread.latestRun?.startedAt,
+    thread.latestRun?.completedAt,
   ]) {
     const parsed = toSortableTimestamp(candidate ?? undefined);
     if (candidate != null && parsed !== null && parsed > latestMs) {
@@ -119,15 +122,19 @@ export function sortThreads<T extends { readonly id: string } & ThreadSortInput>
   threads: readonly T[],
   sortOrder: SidebarThreadSortOrder,
 ): T[] {
-  if (threads.length < 2) return [...threads];
-  return threads
-    .map((thread) => ({ thread, timestamp: getThreadSortTimestamp(thread, sortOrder) }))
-    .sort(
-      (left, right) =>
-        right.timestamp - left.timestamp ||
-        (left.thread.id < right.thread.id ? 1 : left.thread.id > right.thread.id ? -1 : 0),
-    )
-    .map(({ thread }) => thread);
+  return Arr.sort(
+    threads,
+    Order.mapInput(
+      Order.Struct({
+        timestamp: Order.flip(Order.Number),
+        id: Order.flip(Order.String),
+      }),
+      (thread: T) => ({
+        timestamp: getThreadSortTimestamp(thread, sortOrder),
+        id: thread.id,
+      }),
+    ),
+  );
 }
 
 export function getLatestThreadForProject<
@@ -137,21 +144,12 @@ export function getLatestThreadForProject<
     readonly archivedAt: string | null;
   } & ThreadSortInput,
 >(threads: readonly T[], projectId: ProjectId, sortOrder: SidebarThreadSortOrder): T | null {
-  let latest: T | null = null;
-  let latestTimestamp = Number.NEGATIVE_INFINITY;
-  for (const thread of threads) {
-    if (thread.projectId !== projectId || thread.archivedAt !== null) continue;
-    const timestamp = getThreadSortTimestamp(thread, sortOrder);
-    if (
-      latest === null ||
-      timestamp > latestTimestamp ||
-      (timestamp === latestTimestamp && thread.id > latest.id)
-    ) {
-      latest = thread;
-      latestTimestamp = timestamp;
-    }
-  }
-  return latest;
+  return (
+    sortThreads(
+      threads.filter((thread) => thread.projectId === projectId && thread.archivedAt === null),
+      sortOrder,
+    )[0] ?? null
+  );
 }
 
 // ── Pinned reorder: fractional index keys ──────────────────────────────
@@ -293,7 +291,6 @@ export function sortPinnedThreadsByOrderKey<
     readonly environmentId?: string | undefined;
   },
 >(threads: readonly T[]): T[] {
-  if (threads.length < 2) return [...threads];
   const keyed: T[] = [];
   const keyless: T[] = [];
   for (const thread of threads) {
@@ -307,13 +304,14 @@ export function sortPinnedThreadsByOrderKey<
     const rightKey = right.pinOrderKey!;
     return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : identityTiebreak(left, right);
   });
-  const timestamps = new Map(
-    keyless.map((thread) => [thread, toSortableTimestamp(thread.createdAt) ?? 0]),
-  );
-  keyless.sort(
-    (left, right) =>
-      timestamps.get(right)! - timestamps.get(left)! || identityTiebreak(left, right),
-  );
+  keyless.sort((left, right) => {
+    const leftMs = Date.parse(left.createdAt);
+    const rightMs = Date.parse(right.createdAt);
+    return (
+      (Number.isNaN(rightMs) ? 0 : rightMs) - (Number.isNaN(leftMs) ? 0 : leftMs) ||
+      identityTiebreak(left, right)
+    );
+  });
   return [...keyed, ...keyless];
 }
 
@@ -328,13 +326,6 @@ export function sortActiveThreadsByOrderKey<
     readonly environmentId?: string | undefined;
   },
 >(threads: readonly T[]): T[] {
-  if (threads.length < 2) return [...threads];
-  const timestamps = new Map<T, number>();
-  for (const thread of threads) {
-    if (thread.activeOrderKey == null) {
-      timestamps.set(thread, activeThreadAnchorTimestampMs(thread));
-    }
-  }
   return [...threads].sort((left, right) => {
     const leftKey = left.activeOrderKey;
     const rightKey = right.activeOrderKey;
@@ -344,7 +335,7 @@ export function sortActiveThreadsByOrderKey<
     if (leftKey != null && rightKey != null) {
       order = leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
     } else {
-      order = timestamps.get(right)! - timestamps.get(left)!;
+      order = activeThreadAnchorTimestampMs(right) - activeThreadAnchorTimestampMs(left);
     }
     return (
       order ||

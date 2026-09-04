@@ -24,11 +24,16 @@ const PREVIEW_PANEL_DEFAULT_WIDTH = 540;
 
 export function usePreviewPanelInlineSize(
   hostRef?: RefObject<HTMLElement | null>,
+  options: {
+    readonly enabled?: boolean | undefined;
+    readonly widthStorageKey?: string | undefined;
+    readonly defaultWidth?: number | undefined;
+  } = {},
 ): PreviewPanelInlineSize {
-  const maxWidth = useViewportClampedMaxWidth(hostRef);
+  const maxWidth = useViewportClampedMaxWidth(hostRef, options.enabled ?? true);
   return useResizableWidth({
-    storageKey: PREVIEW_PANEL_WIDTH_STORAGE_KEY,
-    defaultWidth: PREVIEW_PANEL_DEFAULT_WIDTH,
+    storageKey: options.widthStorageKey ?? PREVIEW_PANEL_WIDTH_STORAGE_KEY,
+    defaultWidth: options.defaultWidth ?? PREVIEW_PANEL_DEFAULT_WIDTH,
     minWidth: PREVIEW_PANEL_MIN_WIDTH,
     maxWidth,
     edge: "left",
@@ -40,7 +45,10 @@ export function usePreviewPanelInlineSize(
  * it sits in. Resize-aware so dragging the OS window narrower (or expanding
  * the app sidebar) re-clamps the stored width on the next render.
  */
-function useViewportClampedMaxWidth(hostRef?: RefObject<HTMLElement | null>): number {
+function useViewportClampedMaxWidth(
+  hostRef: RefObject<HTMLElement | null> | undefined,
+  enabled: boolean,
+): number {
   const [vw, setVw] = useState(() => (typeof window === "undefined" ? 1280 : window.innerWidth));
   const [containerWidth, setContainerWidth] = useState<number | undefined>(undefined);
   useEffect(() => {
@@ -60,6 +68,7 @@ function useViewportClampedMaxWidth(hostRef?: RefObject<HTMLElement | null>): nu
     };
   }, []);
   useLayoutEffect(() => {
+    if (!enabled) return;
     const parent = hostRef?.current?.parentElement;
     if (!parent) return;
     // Measure before first paint: the persisted width must be clamped against
@@ -76,7 +85,7 @@ function useViewportClampedMaxWidth(hostRef?: RefObject<HTMLElement | null>): nu
     return () => {
       observer.disconnect();
     };
-  }, [hostRef]);
+  }, [hostRef, enabled]);
   return getPreviewPanelMaxWidth(vw, containerWidth);
 }
 export function getPreviewPanelMaxWidth(viewportWidth: number, containerWidth?: number): number {

@@ -6,6 +6,9 @@ import {
   ContextTransferId,
   EventId,
   MessageId,
+  NodeId,
+  RuntimeRequestId,
+  TurnItemId,
   type ModelSelection,
   ProjectId,
   ProviderDriverKind,
@@ -198,6 +201,148 @@ it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
       assert.equal(projection.thread.projectId, projectId);
       assert.equal(projection.thread.providerInstanceId, "codex");
       assert.deepEqual(projection.runs, []);
+    }),
+  );
+
+  it.effect("answers an async question after its provider exits and commits the answer once", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const eventSink = yield* EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("runtime-async-question");
+      const requestId = RuntimeRequestId.make("runtime-async-question-request");
+      const nodeId = NodeId.make("runtime-async-question-node");
+      const itemId = TurnItemId.make("runtime-async-question-item");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("runtime-async-question-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId,
+        projectId: ProjectId.make("runtime-async-question-project"),
+        title: "Async question",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      yield* eventSink.write({
+        commandId: CommandId.make("runtime-async-question-seed"),
+        events: [
+          {
+            id: EventId.make("runtime-async-question-node-event"),
+            type: "node.updated",
+            threadId,
+            nodeId,
+            occurredAt: now,
+            payload: {
+              id: nodeId,
+              threadId,
+              runId: null,
+              parentNodeId: null,
+              rootNodeId: nodeId,
+              kind: "user_input_request",
+              status: "waiting",
+              countsForRun: false,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              runtimeRequestId: requestId,
+              checkpointScopeId: null,
+              startedAt: now,
+              completedAt: null,
+            },
+          },
+          {
+            id: EventId.make("runtime-async-question-request-event"),
+            type: "runtime-request.updated",
+            threadId,
+            nodeId,
+            occurredAt: now,
+            payload: {
+              id: requestId,
+              nodeId,
+              providerTurnId: null,
+              nativeRequestRef: null,
+              kind: "user_input",
+              status: "pending",
+              responseCapability: { type: "message" },
+              createdAt: now,
+              resolvedAt: null,
+            },
+          },
+          {
+            id: EventId.make("runtime-async-question-item-event"),
+            type: "turn-item.updated",
+            threadId,
+            nodeId,
+            occurredAt: now,
+            payload: {
+              id: itemId,
+              type: "user_input_request",
+              threadId,
+              runId: null,
+              nodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 0,
+              status: "waiting",
+              title: null,
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+              requestId,
+              responseMode: "message",
+              questions: [{ id: "color", header: "Color", question: "Which color?", options: [] }],
+            },
+          },
+        ],
+      });
+      const invalid = yield* orchestrator
+        .dispatch({
+          type: "runtime-request.respond",
+          commandId: CommandId.make("runtime-async-question-blank"),
+          threadId,
+          requestId,
+          answers: { color: " " },
+        })
+        .pipe(Effect.result);
+      assert.equal(invalid._tag, "Failure");
+      const unanswered = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(unanswered.runtimeRequests[0]?.status, "pending");
+      assert.deepEqual(unanswered.messages, []);
+
+      const command = {
+        type: "runtime-request.respond" as const,
+        commandId: CommandId.make("runtime-async-question-answer"),
+        threadId,
+        requestId,
+        answers: { color: "  Blue  " },
+      };
+      const accepted = yield* orchestrator.dispatch(command);
+      const repeated = yield* orchestrator.dispatch(command);
+      assert.equal(repeated.sequence, accepted.sequence);
+      const answered = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(answered.runtimeRequests[0]?.status, "resolved");
+      assert.deepEqual(answered.runtimeRequests[0]?.answers, command.answers);
+      assert.equal(answered.nodes.find((node) => node.id === nodeId)?.status, "completed");
+      assert.equal(answered.turnItems.find((item) => item.id === itemId)?.status, "completed");
+      assert.equal(answered.messages.length, 1);
+      assert.equal(answered.messages[0]?.text, "Which color?\nBlue");
+      assert.equal(answered.messages[0]?.role, "user");
+      assert.equal(answered.runs.length, 1);
+
+      const duplicate = yield* orchestrator
+        .dispatch({
+          ...command,
+          commandId: CommandId.make("runtime-async-question-duplicate"),
+        })
+        .pipe(Effect.result);
+      assert.equal(duplicate._tag, "Failure");
+      assert.equal((yield* orchestrator.getThreadProjection(threadId)).messages.length, 1);
     }),
   );
 
