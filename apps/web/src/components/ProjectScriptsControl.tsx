@@ -11,7 +11,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { ChevronDownIcon, DownloadIcon, PlusIcon, SettingsIcon } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { Fragment, useCallback, useMemo, useState } from "react";
 
 import { commandForProjectScript, primaryProjectScript } from "~/projectScripts";
 import { shortcutLabelForCommand } from "~/keybindings";
@@ -50,7 +50,7 @@ interface ProjectScriptsControlProps {
   /** Scripts declared in the project's checked-in t3.json, offered for import. */
   fileScripts?: ReadonlyArray<T3ProjectFileScript>;
   preferredScriptId?: string | null;
-  onRunScript: (script: ProjectScript) => void;
+  onRunScript?: ((script: ProjectScript) => void) | undefined;
   onAddScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateScript: (
     scriptId: string,
@@ -175,7 +175,8 @@ export default function ProjectScriptsControl({
                   // The tooltip wrapper replaces data-slot="button", so themed
                   // toolbar styling needs its own hook.
                   data-toolbar-control=""
-                  onClick={() => onRunScript(primaryScript)}
+                  disabled={!onRunScript}
+                  onClick={() => onRunScript?.(primaryScript)}
                 />
               }
             >
@@ -204,41 +205,54 @@ export default function ProjectScriptsControl({
                   commandForProjectScript(script.id),
                 );
                 return (
-                  <MenuItem
-                    key={script.id}
-                    className={`group ${dropdownItemClassName}`}
-                    onClick={() => onRunScript(script)}
-                  >
-                    <ScriptIcon icon={script.icon} className="size-4" />
-                    <span className="truncate">
-                      {script.runOnWorktreeCreate ? `${script.name} (setup)` : script.name}
-                    </span>
-                    <span className="relative ms-auto flex h-6 min-w-6 items-center justify-end">
-                      {shortcutLabel && (
-                        <MenuShortcut className="ms-0 transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0">
-                          {shortcutLabel}
-                        </MenuShortcut>
-                      )}
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        className="absolute right-0 top-1/2 size-6 -translate-y-1/2 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto group-focus-visible:opacity-100 group-focus-visible:pointer-events-auto"
-                        aria-label={`Edit ${script.name}`}
-                        onPointerDown={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                        }}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          openEditDialog(script);
-                        }}
+                  <Fragment key={script.id}>
+                    <MenuItem
+                      className={`group ${dropdownItemClassName}`}
+                      disabled={!onRunScript}
+                      onClick={() => onRunScript?.(script)}
+                    >
+                      <ScriptIcon icon={script.icon} className="size-4" />
+                      <span className="truncate">
+                        {script.runOnWorktreeCreate ? `${script.name} (setup)` : script.name}
+                      </span>
+                      <span className="relative ms-auto flex h-6 min-w-6 items-center justify-end">
+                        {shortcutLabel && (
+                          <MenuShortcut className="ms-0 transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0">
+                            {shortcutLabel}
+                          </MenuShortcut>
+                        )}
+                        {onRunScript && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            className="absolute right-0 top-1/2 size-6 -translate-y-1/2 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto group-focus-visible:opacity-100 group-focus-visible:pointer-events-auto"
+                            aria-label={`Edit ${script.name}`}
+                            onPointerDown={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                            }}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              openEditDialog(script);
+                            }}
+                          >
+                            <SettingsIcon className="size-3.5" />
+                          </Button>
+                        )}
+                      </span>
+                    </MenuItem>
+                    {!onRunScript && (
+                      <MenuItem
+                        className={dropdownItemClassName}
+                        onClick={() => openEditDialog(script)}
                       >
-                        <SettingsIcon className="size-3.5" />
-                      </Button>
-                    </span>
-                  </MenuItem>
+                        <SettingsIcon className="size-4" />
+                        Edit {script.name}
+                      </MenuItem>
+                    )}
+                  </Fragment>
                 );
               })}
               {importMenuItems}
