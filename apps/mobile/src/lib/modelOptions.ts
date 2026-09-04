@@ -7,6 +7,7 @@ import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
+import { rateLimitReason } from "@t3tools/shared/usageLimits";
 
 export type ModelOption = {
   readonly key: string;
@@ -18,6 +19,7 @@ export type ModelOption = {
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
   readonly isUnavailable?: boolean;
+  readonly unavailableReason?: string;
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
 };
@@ -164,6 +166,7 @@ export function buildModelOptions(
     }
 
     const providerLabel = providerDisplayLabel(provider);
+    const unavailableReason = rateLimitReason(provider.usageLimits, Date.now());
     for (const model of provider.models) {
       const key = `${provider.instanceId}:${model.slug}`;
       options.set(key, {
@@ -175,6 +178,7 @@ export function buildModelOptions(
         providerDriver: provider.driver,
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
+        ...(unavailableReason ? { isUnavailable: true, unavailableReason } : {}),
         capabilities: model.capabilities,
         selection: normalizeSelectionOptions(
           {
@@ -213,6 +217,7 @@ export function buildModelOptions(
         displayName: provider?.displayName ?? instanceConfig?.displayName,
         instanceId: fallbackModelSelection.instanceId,
       });
+      const unavailableReason = rateLimitReason(provider?.usageLimits, Date.now());
       options.set(key, {
         key,
         label: model?.name ?? fallbackModelSelection.model,
@@ -222,9 +227,10 @@ export function buildModelOptions(
         providerDriver,
         isDefault: false,
         isLegacy: model?.isLegacy === true,
-        ...(isModelSelectionUnavailable(config, fallbackModelSelection)
+        ...(isModelSelectionUnavailable(config, fallbackModelSelection) || unavailableReason
           ? { isUnavailable: true }
           : {}),
+        ...(unavailableReason ? { unavailableReason } : {}),
         capabilities: model?.capabilities ?? null,
         selection: fallbackModelSelection,
       });

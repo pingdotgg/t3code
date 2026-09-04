@@ -5,9 +5,10 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
+import { rateLimitReason } from "@t3tools/shared/usageLimits";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import { ChevronRightIcon, SearchIcon } from "lucide-react";
+import { CircleAlertIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
@@ -269,6 +270,22 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     () => new Map(instanceEntries.map((entry) => [entry.instanceId, entry])),
     [instanceEntries],
   );
+  const [rateLimitNow] = useState(Date.now);
+  const rateLimitReasonByInstanceId = useMemo(() => {
+    return new Map(
+      instanceEntries.flatMap((entry) => {
+        const reason = rateLimitReason(entry.snapshot.usageLimits, rateLimitNow);
+        return reason ? [[entry.instanceId, reason] as const] : [];
+      }),
+    );
+  }, [instanceEntries, rateLimitNow]);
+  const modelDisabledReason = useCallback(
+    (instanceId: ProviderInstanceId, model: string) =>
+      getModelDisabledReason?.(instanceId, model) ??
+      rateLimitReasonByInstanceId.get(instanceId) ??
+      null,
+    [getModelDisabledReason, rateLimitReasonByInstanceId],
+  );
   const matchesLockedProvider = useCallback(
     (entry: Pick<ProviderInstanceEntry, "driverKind" | "continuationGroupKey">): boolean => {
       if (props.lockedProvider === null) return true;
@@ -349,18 +366,17 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const isLocked = props.lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
-  const lockedDisabledInstanceIds = useMemo(() => {
-    if (!isLocked) {
-      return undefined;
-    }
-    const disabled = new Set<ProviderInstanceId>();
-    for (const entry of instanceEntries) {
-      if (!matchesLockedProvider(entry)) {
-        disabled.add(entry.instanceId);
+  const disabledInstanceIds = useMemo(() => {
+    const disabled = new Set(rateLimitReasonByInstanceId.keys());
+    if (isLocked) {
+      for (const entry of instanceEntries) {
+        if (!matchesLockedProvider(entry)) {
+          disabled.add(entry.instanceId);
+        }
       }
     }
-    return disabled;
-  }, [instanceEntries, isLocked, matchesLockedProvider]);
+    return disabled.size > 0 ? disabled : undefined;
+  }, [instanceEntries, isLocked, matchesLockedProvider, rateLimitReasonByInstanceId]);
   const sidebarInstanceEntries = useMemo(() => {
     const enabledEntries = instanceEntries.filter(isProviderInstancePickerVisible);
     if (!isLocked) {
@@ -518,6 +534,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const selectedEntry =
     selectedInstanceId === "favorites" ? undefined : entryByInstanceId.get(selectedInstanceId);
+  const selectedRateLimitReason = selectedEntry
+    ? rateLimitReasonByInstanceId.get(selectedEntry.instanceId)
+    : undefined;
   const providerSetupEntries =
     !isSearching && props.onOpenProviderSetup
       ? instanceEntries.filter(
@@ -547,7 +566,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const handleModelSelect = useCallback(
     (modelSlug: string, instanceId: ProviderInstanceId) => {
-      if (getModelDisabledReason?.(instanceId, modelSlug)) {
+      if (modelDisabledReason(instanceId, modelSlug)) {
         return;
       }
       const options = modelOptionsByInstance.get(instanceId);
@@ -566,7 +585,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         onInstanceModelChange(instanceId, resolvedModel);
       }
     },
-    [entryByInstanceId, getModelDisabledReason, modelOptionsByInstance, onInstanceModelChange],
+    [entryByInstanceId, modelDisabledReason, modelOptionsByInstance, onInstanceModelChange],
   );
 
   const toggleFavorite = useCallback(
@@ -590,7 +609,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     >();
     let selectableModelIndex = 0;
     for (const model of visibleModels) {
-      if (getModelDisabledReason?.(model.instanceId, model.slug)) {
+      if (modelDisabledReason(model.instanceId, model.slug)) {
         continue;
       }
       const jumpCommand = modelPickerJumpCommandForIndex(selectableModelIndex);
@@ -601,7 +620,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       selectableModelIndex += 1;
     }
     return mapping;
-  }, [getModelDisabledReason, visibleModels]);
+  }, [modelDisabledReason, visibleModels]);
   const modelJumpModelKeys = useMemo(
     () => [...modelJumpCommandByKey.keys()],
     [modelJumpCommandByKey],
@@ -739,10 +758,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             instanceEntries={sidebarInstanceEntries}
             showFavorites
             {...(selectableUnavailableInstanceIds ? { selectableUnavailableInstanceIds } : {})}
-            {...(lockedDisabledInstanceIds
+            {...(disabledInstanceIds
               ? {
-                  disabledInstanceIds: lockedDisabledInstanceIds,
+                  disabledInstanceIds,
                   getDisabledInstanceTooltip: (entry: ProviderInstanceEntry) =>
+                    rateLimitReasonByInstanceId.get(entry.instanceId) ??
                     `${entry.displayName} is unavailable in this thread. Start a new thread to switch providers.`,
                 }
               : {})}
@@ -839,6 +859,16 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               </div>
             </div>
 
+            {selectedRateLimitReason ? (
+              <div
+                role="status"
+                className="mx-2 mt-2 flex items-start gap-2 rounded-md bg-warning-surface px-2 py-1.5 text-xs leading-snug text-warning-foreground"
+              >
+                <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                <span>{selectedRateLimitReason} Choose another account.</span>
+              </div>
+            ) : null}
+
             {/* Model list */}
             <div className="relative min-h-0 flex-1 overflow-hidden pr-px">
               <ComboboxListVirtualized className="size-full min-w-0 p-0 not-empty:p-0">
@@ -877,8 +907,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     if (!model) {
                       return null;
                     }
-                    const disabledReason =
-                      getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
+                    const disabledReason = modelDisabledReason(model.instanceId, model.slug);
+                    const isRateLimited = rateLimitReasonByInstanceId.has(model.instanceId);
                     return (
                       <ModelListRow
                         key={modelKey}
@@ -897,6 +927,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         useTriggerLabel={false}
                         showNewBadge={model.badge === "new"}
                         unavailable={model.isUnavailable === true}
+                        rateLimited={isRateLimited}
                         jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
                         disabledReason={disabledReason}
                         onToggleFavorite={() => toggleFavorite(model.instanceId, model.slug)}

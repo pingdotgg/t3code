@@ -130,6 +130,10 @@ click the blurred email to reveal it.
 
 Use display names and accent colors to make accounts easy to tell apart in the model picker.
 
+When Codex reports that an account has reached its usage limit, T3 Code marks that account as
+limited in the model picker and disables its models until the reported limit resets. Choose another
+configured account to continue the thread.
+
 ## I Need A Different API Key Or Endpoint
 
 Use the provider's Environment variables section in Settings.

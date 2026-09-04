@@ -16,6 +16,7 @@ import {
   limitsNotice,
   paceOf,
   providersWithLimits,
+  rateLimitReason,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -86,6 +87,27 @@ describe("limitsNotice", () => {
         unavailable: { reason: "probeFailed", message: "Codex timed out." },
       }),
     ).toBe("Codex timed out.");
+  });
+});
+
+describe("rateLimitReason", () => {
+  it("disables exhausted windows only until their latest reset", () => {
+    const limits = {
+      checkedAt: "2026-09-03T11:00:00.000Z",
+      windows: [
+        { ...window, usedPercent: 100 },
+        { ...window, id: "weekly", usedPercent: 100, resetsAt: "2026-09-04T12:00:00.000Z" },
+      ],
+    };
+
+    expect(rateLimitReason(limits, now)).toBe("Usage limit reached. Resets in 1d 0h.");
+    expect(rateLimitReason(limits, Date.parse("2026-09-04T12:00:00.000Z"))).toBeNull();
+    expect(
+      rateLimitReason(
+        { ...limits, windows: [{ ...window, usedPercent: 100, resetsAt: undefined }] },
+        now,
+      ),
+    ).toBe("Usage limit reached.");
   });
 });
 

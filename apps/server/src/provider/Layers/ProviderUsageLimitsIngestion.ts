@@ -1,6 +1,6 @@
 /**
- * ProviderUsageLimitsIngestionLive — folds `account.rate-limits.updated`
- * runtime events into the owning instance's published snapshot.
+ * ProviderUsageLimitsIngestionLive — keeps owning-instance usage snapshots
+ * current from runtime telemetry.
  *
  * Adapters normalise their native payloads before emitting, so this layer
  * never sees a driver shape: it routes the typed update to the instance and
@@ -23,7 +23,11 @@ export const ProviderUsageLimitsIngestionLive = Layer.effectDiscard(
     const instanceRegistry = yield* ProviderInstanceRegistry;
 
     yield* providerService.streamEvents.pipe(
-      Stream.filter((event) => event.type === "account.rate-limits.updated"),
+      Stream.filter(
+        (event) =>
+          event.type === "account.rate-limits.updated" ||
+          (event.type === "runtime.error" && event.payload.class === "rate_limit"),
+      ),
       Stream.runForEach((event) =>
         Effect.gen(function* () {
           if (!event.providerInstanceId) {
@@ -34,7 +38,11 @@ export const ProviderUsageLimitsIngestionLive = Layer.effectDiscard(
             return;
           }
           const checkedAt = DateTime.formatIso(yield* DateTime.now);
-          yield* instance.snapshot.applyUsageLimits({ ...event.payload.limits, checkedAt });
+          if (event.type === "account.rate-limits.updated") {
+            yield* instance.snapshot.applyUsageLimits({ ...event.payload.limits, checkedAt });
+          } else {
+            yield* instance.snapshot.refresh;
+          }
           // One bad event must not end the subscriber for every later one.
         }).pipe(Effect.ignoreCause({ log: true })),
       ),

@@ -4,6 +4,7 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { rateLimitReason } from "@t3tools/shared/usageLimits";
 import { memo, useEffect, useMemo, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { Badge } from "../ui/badge";
@@ -88,6 +89,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const triggerLabel = selectedModel
     ? `${getTriggerDisplayModelLabel(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
     : triggerTitle;
+  const [rateLimitNow] = useState(Date.now);
+  const activeRateLimitReason = rateLimitReason(activeEntry?.snapshot.usageLimits, rateLimitNow);
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
 
@@ -208,11 +211,21 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             >
               {triggerTitle}
             </TooltipTrigger>
-            <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
+            <TooltipPopup side="top">
+              {activeRateLimitReason ? `${triggerLabel}. ${activeRateLimitReason}` : triggerLabel}
+            </TooltipPopup>
           </Tooltip>
           {selectedModel?.isUnavailable ? (
             <Badge variant="outline" size="sm">
               Unavailable
+            </Badge>
+          ) : activeRateLimitReason ? (
+            <Badge
+              variant="outline"
+              size="sm"
+              className="border-warning/35 text-warning-foreground"
+            >
+              Limited
             </Badge>
           ) : null}
         </span>

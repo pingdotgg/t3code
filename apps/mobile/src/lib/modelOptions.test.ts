@@ -13,6 +13,46 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("marks models unavailable while their account limit is exhausted", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "codex_work",
+          driver: "codex",
+          displayName: "Codex Work",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "gpt-5.6-sol",
+              name: "GPT-5.6 Sol",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+          usageLimits: {
+            checkedAt: "2026-09-04T00:00:00.000Z",
+            windows: [
+              {
+                id: "primary",
+                kind: "session",
+                label: "Session",
+                usedPercent: 100,
+                resetsAt: "2999-09-04T02:00:00.000Z",
+              },
+            ],
+          },
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    expect(buildModelOptions(config, null)[0]).toMatchObject({
+      isUnavailable: true,
+      unavailableReason: expect.stringContaining("Usage limit reached"),
+    });
+  });
+
   it("groups models by provider and flags legacy entries", () => {
     const config = {
       providers: [

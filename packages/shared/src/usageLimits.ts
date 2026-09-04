@@ -209,3 +209,20 @@ export function formatResetsIn(window: ServerProviderUsageWindow, now: number): 
   if (resetsAt === null) return null;
   return resetsAt <= now ? "resets now" : `resets in ${formatDuration(resetsAt - now)}`;
 }
+
+/** Picker warning while any exhausted account window is still active. */
+export function rateLimitReason(
+  limits: ServerProviderUsageLimits | undefined,
+  now: number,
+): string | null {
+  const exhausted = limits?.windows.filter((window) => {
+    if (window.usedPercent < 100) return false;
+    const resetsAt = resetMillis(window);
+    return resetsAt === null || resetsAt > now;
+  });
+  if (!exhausted?.length) return null;
+  const resets = exhausted.map(resetMillis);
+  if (resets.some((reset) => reset === null)) return "Usage limit reached.";
+  const resetsAt = Math.max(...resets.filter((reset): reset is number => reset !== null));
+  return `Usage limit reached. Resets in ${formatDuration(resetsAt - now)}.`;
+}

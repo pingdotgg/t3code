@@ -1888,13 +1888,15 @@ function mapToRuntimeEvents(
     const payload = readPayload(EffectCodexSchema.V2ErrorNotification, event.payload);
     const message = payload?.error.message ?? event.message ?? "Provider runtime error";
     const willRetry = payload?.willRetry === true;
+    const errorClass =
+      payload?.error.codexErrorInfo === "usageLimitExceeded" ? "rate_limit" : "provider_error";
     return [
       {
         type: willRetry ? "runtime.warning" : "runtime.error",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           message,
-          ...(!willRetry ? { class: "provider_error" as const } : {}),
+          ...(!willRetry ? { class: errorClass } : {}),
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },

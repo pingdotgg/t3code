@@ -658,6 +658,69 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
 
 const routing = makeProviderServiceLayer();
 
+const codexWorkInstanceId = ProviderInstanceId.make("codex_work");
+const primaryCodex = makeFakeCodexAdapter();
+const workCodex = makeFakeCodexAdapter();
+const codexAccountRegistryBase = makeAdapterRegistryMock({
+  [CODEX_DRIVER]: primaryCodex.adapter,
+});
+const codexAccountSwitching = makeProviderServiceLayer({
+  registry: {
+    ...codexAccountRegistryBase,
+    getByInstance: (instanceId) =>
+      instanceId === codexWorkInstanceId
+        ? Effect.succeed(workCodex.adapter)
+        : codexAccountRegistryBase.getByInstance(instanceId),
+    getInstanceInfo: (instanceId) =>
+      instanceId === codexInstanceId || instanceId === codexWorkInstanceId
+        ? Effect.succeed({
+            instanceId,
+            driverKind: CODEX_DRIVER,
+            displayName: undefined,
+            enabled: true,
+            continuationIdentity: {
+              driverKind: CODEX_DRIVER,
+              continuationKey: "codex:shared",
+            },
+          })
+        : codexAccountRegistryBase.getInstanceInfo(instanceId),
+    listInstances: () => Effect.succeed([codexInstanceId, codexWorkInstanceId]),
+  },
+});
+
+codexAccountSwitching.layer("ProviderServiceLive Codex account switching", (it) => {
+  it.effect("stops the old Codex writer before resuming on another instance", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-codex-account-switch");
+      const firstSession = yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      primaryCodex.stopSession.mockClear();
+      workCodex.startSession.mockClear();
+
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexWorkInstanceId,
+        threadId,
+        resumeCursor: firstSession.resumeCursor,
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(primaryCodex.stopSession.mock.calls.length, 1);
+      assert.equal(workCodex.startSession.mock.calls.length, 1);
+      assert.isBelow(
+        primaryCodex.stopSession.mock.invocationCallOrder[0] ?? Infinity,
+        workCodex.startSession.mock.invocationCallOrder[0] ?? -Infinity,
+      );
+    }),
+  );
+});
+
 const antigravityDriver = ProviderDriverKind.make("antigravity");
 const replacementAntigravity = makeFakeCodexAdapter(antigravityDriver);
 const originalAntigravityInstanceId = ProviderInstanceId.make("antigravity-personal");

@@ -36,6 +36,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   useTriggerLabel?: boolean;
   showNewBadge?: boolean;
   unavailable?: boolean;
+  rateLimited?: boolean;
   jumpLabel?: string | null;
   disabledReason?: string | null;
   onToggleFavorite: () => void;
@@ -80,6 +81,15 @@ export const ModelListRow = memo(function ModelListRow(props: {
           {props.unavailable ? (
             <Badge variant="outline" size="sm">
               Unavailable
+            </Badge>
+          ) : null}
+          {props.rateLimited ? (
+            <Badge
+              variant="outline"
+              size="sm"
+              className="border-warning/35 text-warning-foreground"
+            >
+              Limited
             </Badge>
           ) : null}
         </div>
