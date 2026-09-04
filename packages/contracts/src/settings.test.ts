@@ -50,6 +50,22 @@ describe("ClaudeSettings auto-compaction", () => {
   });
 });
 
+describe("ClaudeSettings advisor model", () => {
+  it("inherits Claude's own advisor setting when none is configured", () => {
+    expect(decodeClaudeSettings({}).advisorModel).toBe("");
+  });
+
+  it("keeps a configured advisor alias", () => {
+    expect(decodeClaudeSettings({ advisorModel: "opus" }).advisorModel).toBe("opus");
+  });
+
+  it("accepts an advisor model at the settings patch boundary", () => {
+    expect(
+      decodeServerSettingsPatch({ providers: { claudeAgent: { advisorModel: "fable" } } }),
+    ).toBeDefined();
+  });
+});
+
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
     expect(decodeClientSettings({}).wordWrap).toBe(true);

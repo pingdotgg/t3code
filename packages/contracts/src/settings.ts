@@ -528,9 +528,21 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    advisorModel: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Advisor model",
+        description:
+          "Let Claude consult a second model during a turn. Use fable, opus, or sonnet. The advisor must be at least as capable as the thread model. Leave empty to use Claude's own setting.",
+        providerSettingsForm: {
+          placeholder: "e.g. opus",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs"],
+    order: ["binaryPath", "homePath", "advisorModel", "autoCompactWindow", "launchArgs"],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
@@ -1050,6 +1062,7 @@ const ClaudeSettingsPatch = Schema.Struct({
   autoCompactWindow: Schema.optionalKey(
     TrimmedString.check(Schema.isPattern(CLAUDE_AUTO_COMPACT_WINDOW_PATTERN)),
   ),
+  advisorModel: Schema.optionalKey(TrimmedString),
 });
 
 const CursorSettingsPatch = Schema.Struct({

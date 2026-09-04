@@ -1228,6 +1228,24 @@ function summarizeToolRequest(toolName: string, input: Record<string, unknown>):
   return `${toolName}: ${serialized.slice(0, 397)}...`;
 }
 
+/**
+ * The advisor is a server-side tool: Claude consults a second model mid-turn.
+ * It arrives as a `server_tool_use` block named `advisor` and its result comes
+ * back in the assistant stream, never as a `tool_result` user message.
+ */
+function isAdvisorToolName(toolName: string): boolean {
+  return toolName.toLowerCase() === "advisor";
+}
+
+/** The advisor result block, which closes the advisor tool item it names. */
+function isAdvisorResultBlock(block: unknown): block is { readonly tool_use_id?: unknown } {
+  return (
+    typeof block === "object" &&
+    block !== null &&
+    (block as { readonly type?: unknown }).type === "advisor_tool_result"
+  );
+}
+
 function titleForTool(itemType: CanonicalItemType): string {
   switch (itemType) {
     case "command_execution":
@@ -2471,11 +2489,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // Drop only the subagent's narration (text/thinking); tool_use blocks
       // and their input_json_delta frames must flow so attributed tool items
       // keep their inputs (review finding: dropping deltas emptied inputs).
+      // The advisor result block flows for the same reason: it is what closes
+      // the subagent's advisor tool item.
       const dropStart =
         event.type === "content_block_start" &&
         event.content_block.type !== "tool_use" &&
         event.content_block.type !== "server_tool_use" &&
-        event.content_block.type !== "mcp_tool_use";
+        event.content_block.type !== "mcp_tool_use" &&
+        !isAdvisorResultBlock(event.content_block);
       const dropDelta =
         event.type === "content_block_delta" &&
         (event.delta.type === "text_delta" || event.delta.type === "thinking_delta");
@@ -2668,6 +2689,59 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       }
+      // The advisor's result closes the tool block that started it. It never
+      // arrives as a `tool_result` user message, so without this the item
+      // spins until the turn's end-of-result sweep completes it.
+      if (isAdvisorResultBlock(block)) {
+        const advisorToolUseId =
+          typeof block.tool_use_id === "string" ? block.tool_use_id : undefined;
+        const advisorEntry = advisorToolUseId
+          ? Array.from(context.inFlightTools.entries()).find(
+              ([, inFlight]) => inFlight.itemId === advisorToolUseId,
+            )
+          : undefined;
+        if (!advisorEntry) {
+          return;
+        }
+        const [advisorIndex, advisorTool] = advisorEntry;
+        context.inFlightTools.delete(advisorIndex);
+        const advisorStamp = yield* makeEventStamp();
+        yield* offerRuntimeEvent({
+          type: "item.completed",
+          eventId: advisorStamp.eventId,
+          provider: PROVIDER,
+          createdAt: advisorStamp.createdAt,
+          threadId: context.session.threadId,
+          ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+          itemId: asRuntimeItemId(advisorTool.itemId),
+          payload: {
+            itemType: advisorTool.itemType,
+            status: "completed",
+            title: advisorTool.title,
+            ...(advisorTool.detail ? { detail: advisorTool.detail } : {}),
+            ...(advisorTool.agentId ? { agentId: advisorTool.agentId } : {}),
+            ...(advisorTool.parentToolUseId
+              ? { parentToolUseId: advisorTool.parentToolUseId }
+              : {}),
+            // The advisor's advice is returned encrypted, so there is no result
+            // text to carry: the item records that the consult happened.
+            data: {
+              toolName: advisorTool.toolName,
+              input: advisorTool.input,
+            },
+          },
+          providerRefs: nativeProviderRefs(context, {
+            providerItemId: advisorTool.itemId,
+          }),
+          raw: {
+            source: "claude.sdk.message",
+            method: "claude/stream_event/content_block_start",
+            payload: message,
+          },
+        });
+        return;
+      }
+
       if (
         block.type !== "tool_use" &&
         block.type !== "server_tool_use" &&
@@ -2683,7 +2757,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           : {};
       const itemType = classifyToolItemType(toolName, toolInput);
       const itemId = block.id;
-      const detail = summarizeToolRequest(toolName, toolInput);
+      // The advisor takes no arguments, so the generic input summary reads
+      // "advisor: {}". Its title carries the meaning instead.
+      const isAdvisor = isAdvisorToolName(toolName);
+      const detail = isAdvisor ? undefined : summarizeToolRequest(toolName, toolInput);
       const inputFingerprint =
         Object.keys(toolInput).length > 0 ? toolInputFingerprint(toolInput) : undefined;
 
@@ -2699,8 +2776,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         itemId,
         itemType,
         toolName,
-        title: titleForTool(itemType),
-        detail,
+        title: isAdvisor ? "Advisor consult" : titleForTool(itemType),
+        ...(detail ? { detail } : {}),
         input: toolInput,
         partialInputJson: "",
         ...(inputFingerprint ? { lastEmittedInputFingerprint: inputFingerprint } : {}),
@@ -4357,6 +4434,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(claudeSettings.autoCompactWindow
           ? { autoCompactWindow: Number(claudeSettings.autoCompactWindow) }
           : {}),
+        // Settings key, not the `--advisor` flag: the flag aborts session start
+        // when the advisor cannot advise the thread model, while this path logs
+        // and runs the turn without an advisor.
+        ...(claudeSettings.advisorModel ? { advisorModel: claudeSettings.advisorModel } : {}),
       };
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
       // The attachments dir grant lets the agent Read/copy pasted images at

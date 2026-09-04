@@ -46,6 +46,26 @@ offers to compact the conversation before you continue. You can also select **Co
 from the context meter. On every client, you can enter `/compact` in the message composer, and
 Claude can show its own resume prompt when you continue an old session.
 
+## Let Claude Ask A Second Model For Advice
+
+Claude can consult a stronger model during a turn. The second model sees the work so far and gives
+guidance before Claude continues.
+
+In Settings, open your Claude provider and set **Advisor model** to `fable`, `opus`, or `sonnet`.
+Leave the field empty to keep the advisor setting from your Claude Code configuration.
+
+The advisor must be at least as capable as the model of the thread. For example, `sonnet` cannot
+advise an Opus thread. If the two models do not match, Claude Code runs the turn without an
+advisor.
+
+`fable` bills to usage credits. You must set up usage credits for your account before the advisor
+can use `fable`. Run `/model fable` in an interactive Claude Code session to review and enable it.
+Until you do this, T3 Code runs the turn without an advisor and shows no message.
+
+Each consult shows in the timeline as **Advisor consult**. The advice itself is encrypted, so the
+item shows that the consult happened and no text. The advisor model uses its own tokens, which are
+additional to the tokens of the thread model.
+
 ## Where Claude Skills Are Loaded
 
 T3 Code looks for Claude skills in the Claude config directory's `skills` folder and
