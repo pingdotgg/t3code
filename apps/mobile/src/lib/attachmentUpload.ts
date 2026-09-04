@@ -263,13 +263,11 @@ export async function prepareTurnAttachments(input: {
   });
 
   if (input.attachments.length === 0 || (files.length === 0 && !input.supportsImageUploads)) {
-    return ready(
-      await toUploadChatImageAttachments(
-        input.attachments.filter((attachment) => attachment.type === "image"),
-      ),
-      [],
-      input.attachments,
+    const imageAttachments = await toUploadChatImageAttachments(
+      input.attachments.filter((attachment) => attachment.type === "image"),
     );
+    if (input.signal?.aborted) return { status: "abandoned" };
+    return ready(imageAttachments, [], input.attachments);
   }
 
   const connection = appAtomRegistry.get(

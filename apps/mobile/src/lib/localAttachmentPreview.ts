@@ -41,7 +41,10 @@ export async function loadLocalAttachmentPreview(
             uri: file.uri,
             attachment: {
               name: attachment.name,
-              mimeType: videoMimeType(attachment) ?? attachment.mimeType,
+              mimeType:
+                attachment.type === "file"
+                  ? (videoMimeType(attachment) ?? attachment.mimeType)
+                  : attachment.mimeType,
             },
             signal: shareSignal,
             sourceIdentifier,

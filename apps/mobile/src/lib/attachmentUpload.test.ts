@@ -246,6 +246,26 @@ describe("prepareTurnAttachments", () => {
     expect(mocks.upload).not.toHaveBeenCalled();
   });
 
+  it("abandons a legacy send canceled while reading image bytes", async () => {
+    const readStarted = Promise.withResolvers<void>();
+    const read = Promise.withResolvers<string>();
+    const controller = new AbortController();
+    mocks.readBase64.mockImplementation(() => {
+      readStarted.resolve();
+      return read.promise;
+    });
+    const preparing = prepareTurnAttachments({
+      environmentId,
+      attachments: [fileBackedImage],
+      signal: controller.signal,
+    });
+    await readStarted.promise;
+    controller.abort();
+    read.resolve("YWJj");
+
+    await expect(preparing).resolves.toEqual({ status: "abandoned" });
+  });
+
   it("uploads a file-backed image from its owned copy without staging base64", async () => {
     const prepared = await prepareTurnAttachments({
       environmentId,
