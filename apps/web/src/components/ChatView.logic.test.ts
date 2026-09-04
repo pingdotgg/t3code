@@ -25,6 +25,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
   buildRevertTurnCountByUserMessageId,
+  buildRunningThreadTurnInterruptInput,
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -691,6 +692,20 @@ describe("buildThreadTurnInterruptInput", () => {
       threadId,
     });
   });
+
+  it("omits a turn id when a running session has not projected its active turn yet", () => {
+    expect(
+      buildThreadTurnInterruptInput(
+        makeThread({
+          session: {
+            ...readySession,
+            status: "running",
+            activeTurnId: null,
+          },
+        }),
+      ),
+    ).toEqual({ threadId });
+  });
 });
 
 describe("resolveComposerProviderSelection", () => {
@@ -1013,6 +1028,41 @@ describe("buildRevertTurnCountByUserMessageId", () => {
         inferredCheckpointTurnCountByTurnId: {},
       }).size,
     ).toBe(0);
+  });
+});
+
+describe("buildRunningThreadTurnInterruptInput", () => {
+  it("targets only the active turn of a running thread", () => {
+    const activeTurnId = TurnId.make("turn-running");
+    const runningThread = makeThread({
+      session: {
+        ...readySession,
+        status: "running",
+        activeTurnId,
+      },
+    });
+
+    expect(buildRunningThreadTurnInterruptInput(runningThread, "running")).toEqual({
+      threadId,
+      turnId: activeTurnId,
+    });
+    expect(buildRunningThreadTurnInterruptInput(runningThread, "ready")).toBeNull();
+    expect(
+      buildRunningThreadTurnInterruptInput(makeThread({ session: readySession }), "ready"),
+    ).toBeNull();
+    expect(buildRunningThreadTurnInterruptInput(null, "disconnected")).toBeNull();
+  });
+
+  it("targets a running thread before its active turn has been projected", () => {
+    const runningThread = makeThread({
+      session: {
+        ...readySession,
+        status: "running",
+        activeTurnId: null,
+      },
+    });
+
+    expect(buildRunningThreadTurnInterruptInput(runningThread, "running")).toEqual({ threadId });
   });
 });
 
