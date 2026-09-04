@@ -26,8 +26,12 @@ import {
   makeAntigravityAcpRuntime,
 } from "./AntigravityAcpSupport.ts";
 
+const runtimeTempDirectoryMarkerName = ".t3-antigravity-runtime-owner";
+const runtimeTempDirectoryMarkerContents = (directory: string, ownerProcessId: number) =>
+  `${JSON.stringify({ schemaVersion: 1, ownerProcessId, directory })}\n`;
+
 it.layer(NodeServices.layer)("makeAntigravityAcpRuntime", (it) => {
-  it.effect("reclaims an orphan and removes the current extraction when interrupted", () =>
+  it.effect("reclaims only owned orphans and removes the current extraction when interrupted", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -40,12 +44,37 @@ it.layer(NodeServices.layer)("makeAntigravityAcpRuntime", (it) => {
       yield* Effect.addFinalizer(() =>
         fileSystem.remove(orphan, { recursive: true, force: true }).pipe(Effect.ignore),
       );
+      yield* fileSystem.writeFileString(
+        path.join(orphan, runtimeTempDirectoryMarkerName),
+        runtimeTempDirectoryMarkerContents(path.basename(orphan), 2147483647),
+      );
       yield* fileSystem.makeDirectory(path.join(orphan, "_MEIorphan"));
+      const unowned = yield* fileSystem.makeTempDirectory({
+        prefix: "t3-antigravity-runtime-2147483647-",
+      });
+      yield* Effect.addFinalizer(() =>
+        fileSystem.remove(unowned, { recursive: true, force: true }).pipe(Effect.ignore),
+      );
+      yield* fileSystem.writeFileString(path.join(unowned, "keep"), "unowned");
+      const mismatched = yield* fileSystem.makeTempDirectory({
+        prefix: "t3-antigravity-runtime-2147483647-",
+      });
+      yield* Effect.addFinalizer(() =>
+        fileSystem.remove(mismatched, { recursive: true, force: true }).pipe(Effect.ignore),
+      );
+      yield* fileSystem.writeFileString(
+        path.join(mismatched, runtimeTempDirectoryMarkerName),
+        runtimeTempDirectoryMarkerContents(path.basename(mismatched), 2147483646),
+      );
       const active = yield* fileSystem.makeTempDirectory({
         prefix: `t3-antigravity-runtime-${process.pid}-`,
       });
       yield* Effect.addFinalizer(() =>
         fileSystem.remove(active, { recursive: true, force: true }).pipe(Effect.ignore),
+      );
+      yield* fileSystem.writeFileString(
+        path.join(active, runtimeTempDirectoryMarkerName),
+        runtimeTempDirectoryMarkerContents(path.basename(active), process.pid),
       );
       yield* fileSystem.makeDirectory(path.join(active, "_MEIactive"));
       let runtimeTempDirectory: string | undefined;
@@ -103,10 +132,20 @@ it.layer(NodeServices.layer)("makeAntigravityAcpRuntime", (it) => {
       const fiber = yield* runtime.pipe(Effect.forkChild);
       yield* Deferred.await(runtimeReady);
       expect(yield* fileSystem.exists(orphan)).toBe(false);
+      expect(yield* fileSystem.exists(unowned)).toBe(true);
+      expect(yield* fileSystem.exists(mismatched)).toBe(true);
       expect(yield* fileSystem.exists(active)).toBe(true);
+      if (!runtimeTempDirectory) {
+        return yield* Effect.die("Runtime process was not observed.");
+      }
+      expect(
+        yield* fileSystem.readFileString(
+          path.join(runtimeTempDirectory, runtimeTempDirectoryMarkerName),
+        ),
+      ).toBe(runtimeTempDirectoryMarkerContents(path.basename(runtimeTempDirectory), process.pid));
       yield* Fiber.interrupt(fiber);
 
-      if (!runtimeTempDirectory || !child) {
+      if (!child) {
         return yield* Effect.die("Runtime process was not observed.");
       }
       expect(path.basename(runtimeTempDirectory)).toMatch(/^t3-antigravity-runtime-/u);

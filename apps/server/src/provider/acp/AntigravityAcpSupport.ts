@@ -56,7 +56,12 @@ export interface AntigravityAcpRuntimeInput extends Omit<
 
 const windowsTempEnvironmentKeys = new Set(["TEMP", "TMP"]);
 const runtimeTempDirectoryPrefix = "t3-antigravity-runtime-";
-const runtimeTempDirectoryOwner = /^t3-antigravity-runtime-(\d+)-/u;
+const runtimeTempDirectoryOwner = /^t3-antigravity-runtime-(\d+)-.+$/u;
+const runtimeTempDirectoryMarkerName = ".t3-antigravity-runtime-owner";
+
+function runtimeTempDirectoryMarkerContents(directory: string, ownerProcessId: number): string {
+  return `${JSON.stringify({ schemaVersion: 1, ownerProcessId, directory })}\n`;
+}
 
 function withWindowsRuntimeTempDirectory(
   spawn: AcpSessionRuntime.AcpSpawnInput,
@@ -94,8 +99,24 @@ const reclaimOrphanedRuntimeTempDirectories = Effect.fn("reclaimOrphanedRuntimeT
       const owner = runtimeTempDirectoryOwner.exec(entry)?.[1];
       if (!owner) continue;
       const ownerProcessId = Number(owner);
-      if (!Number.isSafeInteger(ownerProcessId) || isProcessAlive(ownerProcessId)) continue;
-      yield* removeRuntimeTempDirectory(fileSystem, path.join(parent, entry));
+      if (
+        !Number.isSafeInteger(ownerProcessId) ||
+        ownerProcessId <= 0 ||
+        isProcessAlive(ownerProcessId)
+      ) {
+        continue;
+      }
+      const candidate = path.join(parent, entry);
+      const markerMatches = yield* fileSystem
+        .readFileString(path.join(candidate, runtimeTempDirectoryMarkerName))
+        .pipe(
+          Effect.map(
+            (contents) => contents === runtimeTempDirectoryMarkerContents(entry, ownerProcessId),
+          ),
+          Effect.orElseSucceed(() => false),
+        );
+      if (!markerMatches) continue;
+      yield* removeRuntimeTempDirectory(fileSystem, candidate);
     }
   },
 );
@@ -117,6 +138,20 @@ const makeWindowsRuntimeTempDirectory = Effect.fn("makeWindowsRuntimeTempDirecto
       ),
     );
   yield* Effect.addFinalizer(() => removeRuntimeTempDirectory(fileSystem, directory));
+  yield* fileSystem
+    .writeFileString(
+      path.join(directory, runtimeTempDirectoryMarkerName),
+      runtimeTempDirectoryMarkerContents(path.basename(directory), process.pid),
+    )
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new EffectAcpErrors.AcpTransportError({
+            detail: "Could not mark the isolated Antigravity runtime temp directory.",
+            cause,
+          }),
+      ),
+    );
   yield* reclaimOrphanedRuntimeTempDirectories(fileSystem, path, directory);
   return directory;
 });
