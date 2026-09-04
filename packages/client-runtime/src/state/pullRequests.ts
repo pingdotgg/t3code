@@ -69,6 +69,7 @@ export function pullRequestDetailToVcsStatus(
     baseRef: detail.baseBranch,
     headRef: detail.headBranch,
     state: detail.state,
+    ...(detail.isDraft === true ? { isDraft: true } : {}),
     updatedAt: detail.updatedAt,
   };
 }

@@ -33,9 +33,9 @@ interface StatePresentation {
 }
 
 /**
- * How a pull request's state reads on this page. Open, closed and merged use the same ink as
- * the thread badge in `ThreadStatusIndicators`, so one pull request cannot look like two
- * different things in two places; draft and conflicts are states that badge never shows.
+ * How a pull request's state reads on this page. Open, closed, merged, and draft use the same
+ * ink as the thread badge in `ThreadStatusIndicators`, so one pull request cannot look like two
+ * different things in two places.
  *
  * Draft outranks conflicts: a draft is not heading for a merge yet, so conflicts only surface
  * once it is real work.

@@ -10,6 +10,7 @@ import {
   resolveDisplayedThreadPrProvider,
   resolveThreadPr,
   settledPrHoverColorClass,
+  threadChangeRequestSnapshotsEqual,
   threadChangeRequestSnapshotsAtom,
   type ThreadChangeRequestSnapshot,
 } from "./ThreadStatusIndicators";
@@ -559,6 +560,18 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
     });
     expect(displayed?.state).toBe("merged");
   });
+
+  it("refreshes a cached snapshot when a pull request becomes ready", () => {
+    const readyPr = { ...mergedPr, state: "open" as const };
+    const draftPr = { ...readyPr, isDraft: true };
+
+    expect(
+      threadChangeRequestSnapshotsEqual(
+        snapshotFor(featureBranch, draftPr),
+        snapshotFor(featureBranch, readyPr),
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("threadChangeRequestSnapshotsAtom", () => {
@@ -600,6 +613,17 @@ describe("prStatusIndicator", () => {
       "text-red-600",
     );
   });
+
+  it("uses gray and draft wording for draft pull requests", () => {
+    const draftPr = status().pr;
+    if (!draftPr) throw new Error("Expected pull request fixture");
+
+    expect(prStatusIndicator({ ...draftPr, isDraft: true }, undefined)).toMatchObject({
+      label: "PR draft",
+      colorClass: "text-zinc-500 dark:text-zinc-400/80",
+      tooltipLead: "PR #42 - Draft",
+    });
+  });
 });
 
 describe("settledPrHoverColorClass", () => {
@@ -609,5 +633,9 @@ describe("settledPrHoverColorClass", () => {
     ["closed", "text-red-600"],
   ] as const)("restores the %s pull request color on row hover", (state, colorClass) => {
     expect(settledPrHoverColorClass(state)).toContain(`group-hover/v2-row:${colorClass}`);
+  });
+
+  it("keeps draft pull requests gray on row hover", () => {
+    expect(settledPrHoverColorClass("open", true)).toContain("group-hover/v2-row:text-zinc-500");
   });
 });

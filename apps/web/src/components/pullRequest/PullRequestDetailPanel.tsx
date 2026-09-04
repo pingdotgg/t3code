@@ -625,7 +625,13 @@ export function PullRequestDetailPanel({
     () =>
       resolvedCoreDetail === null || sharedSummary === null || sharedSummary === resolvedCoreDetail
         ? resolvedCoreDetail
-        : { ...resolvedCoreDetail, ...sharedSummary },
+        : {
+            ...resolvedCoreDetail,
+            ...sharedSummary,
+            // A summary may come from an older server that does not report draft state. Keep the
+            // detail's required value instead of making the complete detail shape partial.
+            isDraft: sharedSummary.isDraft ?? resolvedCoreDetail.isDraft,
+          },
     [resolvedCoreDetail, sharedSummary],
   );
   const activity = activityQuery.data;
@@ -1297,7 +1303,7 @@ export function PullRequestDetailPanel({
     !conflicting &&
     allowedMergeMethods.length > 1;
   // The pull request number carries this state in the overview and the right-panel tab mirrors
-  // it. The conflict action is separate from this state: an open pull request remains green.
+  // it. Conflicts take the action slot while they need a person, but do not change the PR state.
   const statePresentation = detail
     ? resolvePullRequestState({ state: detail.state, isDraft: detail.isDraft })
     : null;

@@ -61,6 +61,7 @@ function toChangeRequest(summary: {
   readonly baseRefName: string;
   readonly headRefName: string;
   readonly state: "open" | "closed" | "merged";
+  readonly isDraft?: boolean;
   readonly updatedAt: ChangeRequest["updatedAt"];
 }): ChangeRequest {
   return {
@@ -71,6 +72,7 @@ function toChangeRequest(summary: {
     baseRefName: summary.baseRefName,
     headRefName: summary.headRefName,
     state: summary.state,
+    ...(summary.isDraft === true ? { isDraft: true } : {}),
     updatedAt: summary.updatedAt,
     isCrossRepository: false,
   };

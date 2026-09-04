@@ -23,7 +23,7 @@ import { relativeTime } from "../../lib/time";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
-import { useThreadPr, type ThreadPr } from "../../state/use-thread-pr";
+import { useThreadPr, type ThreadPrPresentation } from "../../state/use-thread-pr";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
@@ -42,9 +42,15 @@ export type ThreadListVariant = "compact" | "sidebar";
 export const THREAD_LIST_COMPACT_INSET = HOME_HORIZONTAL_INSET;
 const SIDEBAR_ROW_RADIUS = 12;
 
-function pullRequestTintColor(state: ThreadPr["state"], colorScheme: "light" | "dark") {
+function pullRequestTintColor(
+  pr: Pick<ThreadPrPresentation, "state" | "isDraft">,
+  colorScheme: "light" | "dark",
+) {
   const dark = colorScheme === "dark";
-  switch (state) {
+  if (pr.state === "open" && pr.isDraft === true) {
+    return dark ? "#a1a1aa" : "#71717a";
+  }
+  switch (pr.state) {
     case "open":
       return dark ? "#34d399" : "#059669";
     case "merged":
@@ -548,9 +554,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             <PullRequestIcon
               size={compact ? 13 : 11}
               color={
-                selected
-                  ? String(selectedForegroundColor)
-                  : pullRequestTintColor(pr.state, colorScheme)
+                selected ? String(selectedForegroundColor) : pullRequestTintColor(pr, colorScheme)
               }
             />
             <Text
