@@ -501,30 +501,64 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       }
     }
 
-    const fileInfo = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
+    let fileInfo = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
     if (!fileInfo || fileInfo.type !== "File") {
-      const indexPath = path.resolve(staticRoot, "index.html");
-      const indexData = yield* fileSystem
-        .readFile(indexPath)
-        .pipe(Effect.orElseSucceed(() => null));
-      if (!indexData) {
+      filePath = path.resolve(staticRoot, "index.html");
+      fileInfo = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
+      if (!fileInfo || fileInfo.type !== "File") {
         return HttpServerResponse.text("Not Found", { status: 404 });
       }
-      return HttpServerResponse.uint8Array(indexData, {
-        status: 200,
-        contentType: "text/html; charset=utf-8",
+    }
+
+    // Only Vite's content-hashed assets are immutable. Decide from the served
+    // file so a missing old chunk cannot cache the SPA fallback for a year.
+    const relativePath = path.relative(staticRoot, filePath).replaceAll("\\", "/");
+    const immutable = /^assets\/.+-[\w-]{8}\.[^/]+$/.test(relativePath);
+    const headers: Record<string, string> = {
+      "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "no-cache",
+    };
+    const modifiedAt = Option.getOrUndefined(fileInfo.mtime);
+    const etag = modifiedAt
+      ? `W/"${fileInfo.size.toString(16)}-${modifiedAt.getTime().toString(16)}"`
+      : undefined;
+    if (etag !== undefined && modifiedAt !== undefined) {
+      headers.ETag = etag;
+      headers["Last-Modified"] = modifiedAt.toUTCString();
+    }
+
+    // If-None-Match takes precedence over dates and uses weak comparison for
+    // GET/HEAD, including when compression changes the transferred bytes.
+    const ifNoneMatch = request.headers["if-none-match"];
+    const ifModifiedSince = request.headers["if-modified-since"];
+    const unchanged =
+      ifNoneMatch !== undefined
+        ? ifNoneMatch.split(",").some((value) => {
+            const candidate = value.trim();
+            return (
+              candidate === "*" ||
+              (etag !== undefined && candidate.replace(/^W\//i, "") === etag.slice(2))
+            );
+          })
+        : ifModifiedSince !== undefined &&
+          modifiedAt !== undefined &&
+          Date.parse(modifiedAt.toUTCString()) <= Date.parse(ifModifiedSince);
+    if (unchanged) {
+      return HttpServerResponse.empty({
+        status: 304,
+        headers: { ...headers, Vary: "Accept-Encoding" },
       });
     }
 
-    const contentType = Mime.getType(filePath) ?? "application/octet-stream";
-    const data = yield* fileSystem.readFile(filePath).pipe(Effect.orElseSucceed(() => null));
-    if (!data) {
-      return HttpServerResponse.text("Internal Server Error", { status: 500 });
-    }
-
-    return HttpServerResponse.uint8Array(data, {
-      status: 200,
+    const contentType =
+      path.extname(filePath) === ".html"
+        ? "text/html; charset=utf-8"
+        : (Mime.getType(filePath) ?? "application/octet-stream");
+    // The server omits HEAD bodies after response middleware, so compression
+    // can select the same headers as GET without opening the lazy file stream.
+    return HttpServerResponse.stream(fileSystem.stream(filePath), {
+      headers,
       contentType,
+      contentLength: Number(fileInfo.size),
     });
   }),
 );

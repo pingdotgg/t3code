@@ -1647,6 +1647,123 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("revalidates static files without sending unchanged bodies", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-cache-" });
+      const indexPath = path.join(staticDir, "index.html");
+      yield* fileSystem.writeFileString(indexPath, "<html>first build</html>");
+      yield* buildAppUnderTest({ config: { staticDir } });
+
+      const initial = yield* HttpClient.get("/");
+      assert.equal(initial.status, 200);
+      assert.equal(initial.headers["cache-control"], "no-cache");
+      assert.include(yield* initial.text, "first build");
+      const etag = initial.headers.etag;
+      assert.isDefined(etag);
+      assert.isDefined(initial.headers["last-modified"]);
+
+      for (const headers of [
+        { "if-none-match": etag! },
+        { "if-none-match": `"older", ${etag!.replace(/^W\//, "")}` },
+        { "if-none-match": "*" },
+        { "if-modified-since": initial.headers["last-modified"]! },
+      ]) {
+        const response = yield* HttpClient.get("/", { headers });
+        assert.equal(response.status, 304);
+        assert.equal(response.headers.etag, etag);
+        assert.equal(response.headers["cache-control"], "no-cache");
+        assert.equal(yield* response.text, "");
+      }
+
+      const mismatched = yield* HttpClient.get("/", {
+        headers: {
+          "if-none-match": '"another-build"',
+          "if-modified-since": initial.headers["last-modified"]!,
+        },
+      });
+      assert.equal(mismatched.status, 200);
+      assert.include(yield* mismatched.text, "first build");
+
+      yield* fileSystem.writeFileString(indexPath, "<html>the next build is available</html>");
+      const changed = yield* HttpClient.get("/", { headers: { "if-none-match": etag! } });
+      assert.equal(changed.status, 200);
+      assert.notEqual(changed.headers.etag, etag);
+      assert.include(yield* changed.text, "next build");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("caches hashed static assets without freezing mutable files or SPA fallbacks", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-hashes-" });
+      yield* fileSystem.makeDirectory(path.join(staticDir, "assets"));
+      yield* fileSystem.writeFileString(path.join(staticDir, "index.html"), "<html>app</html>");
+      yield* fileSystem.writeFileString(
+        path.join(staticDir, "assets", "index-AbCd0123.js"),
+        "export const app = true;",
+      );
+      yield* fileSystem.writeFileString(path.join(staticDir, "assets", "config.json"), "{}");
+      const largeAsset = "export const value = 123;\n".repeat(8192);
+      yield* fileSystem.writeFileString(
+        path.join(staticDir, "assets", "large-aBcD9876.js"),
+        largeAsset,
+      );
+      yield* buildAppUnderTest({ config: { staticDir } });
+
+      const asset = yield* HttpClient.get("/assets/index-AbCd0123.js");
+      assert.equal(asset.status, 200);
+      assert.equal(asset.headers["cache-control"], "public, max-age=31536000, immutable");
+      assert.equal(yield* asset.text, "export const app = true;");
+
+      const head = yield* HttpClient.head("/assets/index-AbCd0123.js", {
+        headers: { "accept-encoding": "identity" },
+      });
+      assert.equal(head.status, 200);
+      assert.equal(head.headers.etag, asset.headers.etag);
+      assert.equal(head.headers["content-length"], String("export const app = true;".length));
+      assert.equal(yield* head.text, "");
+
+      const compressed = yield* HttpClient.get("/assets/large-aBcD9876.js", {
+        headers: { "accept-encoding": "gzip" },
+      });
+      assert.equal(compressed.headers["content-encoding"], "gzip");
+      assert.equal(compressed.headers.vary, "Accept-Encoding");
+      assert.equal(yield* compressed.text, largeAsset);
+      const compressedHead = yield* HttpClient.head("/assets/large-aBcD9876.js", {
+        headers: { "accept-encoding": "gzip" },
+      });
+      assert.equal(compressedHead.status, 200);
+      assert.equal(compressedHead.headers["content-encoding"], "gzip");
+      assert.equal(compressedHead.headers.vary, "Accept-Encoding");
+      assert.equal(compressedHead.headers.etag, compressed.headers.etag);
+      assert.equal(compressedHead.headers["content-length"], compressed.headers["content-length"]);
+      assert.equal(yield* compressedHead.text, "");
+      const unchanged = yield* HttpClient.get("/assets/large-aBcD9876.js", {
+        headers: { "accept-encoding": "identity", "if-none-match": compressed.headers.etag! },
+      });
+      assert.equal(unchanged.status, 304);
+      assert.equal(unchanged.headers.vary, "Accept-Encoding");
+      assert.equal(yield* unchanged.text, "");
+
+      for (const resource of [
+        "/assets/config.json",
+        "/threads/example",
+        "/assets/old-ZyXw9876.js",
+      ]) {
+        const response = yield* HttpClient.get(resource);
+        assert.equal(response.status, 200);
+        assert.equal(response.headers["cache-control"], "no-cache");
+        assert.equal(
+          yield* response.text,
+          resource.endsWith("config.json") ? "{}" : "<html>app</html>",
+        );
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("redirects to dev URL when configured", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({
