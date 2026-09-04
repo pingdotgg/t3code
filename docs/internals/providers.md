@@ -58,9 +58,10 @@ See [helper constraints](../../apps/server/src/textGeneration/AntigravityTextGen
 ## Provider updates run only through the owning installer
 
 A one-click update is offered only when the resolved executable's real path proves which installer
-owns it: a native installer layout, a versioned keg or cask under `brew --prefix`, or
-`<prefix>/lib/node_modules/<pkg>/` for npm (Windows: the shim beside `node_modules`). Anything
-unproven stays manual-only but still reports the version gap. npm updates pin `--prefix` because
+owns it: a native installer layout, a versioned keg or cask under `brew --prefix`,
+`<prefix>/lib/node_modules/<pkg>/` for npm (Windows: the shim beside `node_modules`), or the global
+bin directories of pnpm, Bun, and Vite+. Anything unproven stays manual-only but still reports the
+version gap. npm updates pin `--prefix` because
 the `npm` on `PATH` can belong to a different Node than the one that owns the provider. Homebrew
 compares against `brew info` since casks trail npm by hours; native installs share npm's version
 train, so the registry stays authoritative for them.
