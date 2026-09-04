@@ -11,6 +11,7 @@
  */
 import { useAtomValue } from "@effect/atom-react";
 import {
+  AuthDiagnosticsReadScope,
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
   type UsageSummary,
@@ -25,12 +26,14 @@ import { useCallback, useMemo } from "react";
 import { appAtomRegistry } from "./atom-registry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
+import { environmentSession, readEnvironmentScope } from "./session";
 
 export interface EnvironmentUsageStatus {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly isPending: boolean;
   readonly isConnected: boolean;
+  readonly canReadDiagnostics: boolean;
   readonly error: string | null;
   readonly summary: UsageSummary | null;
 }
@@ -49,12 +52,36 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
 
     const statuses: EnvironmentUsageStatus[] = [];
     for (const [environmentId, presentation] of presentations) {
+      const sessionResult = get(environmentSession.sessionStateAtom(environmentId));
+      const session = Option.getOrNull(AsyncResult.value(sessionResult));
+      const isCheckingAccess =
+        sessionResult.waiting || (session === null && sessionResult._tag !== "Failure");
+      const canReadDiagnostics =
+        sessionResult._tag === "Success" &&
+        !isCheckingAccess &&
+        session?.authenticated === true &&
+        (session.scopes?.includes(AuthDiagnosticsReadScope) ?? false);
+      if (!canReadDiagnostics) {
+        statuses.push({
+          environmentId,
+          label: presentation.entry.target.label,
+          isPending: isCheckingAccess,
+          isConnected: presentation.connection.phase === "connected",
+          canReadDiagnostics: false,
+          error: isCheckingAccess
+            ? null
+            : "This connection does not have access to diagnostics and usage.",
+          summary: null,
+        });
+        continue;
+      }
       const result = get(serverEnvironment.usageSummary({ environmentId, input }));
       statuses.push({
         environmentId,
         label: presentation.entry.target.label,
         isPending: result.waiting,
         isConnected: presentation.connection.phase === "connected",
+        canReadDiagnostics: true,
         error: result._tag === "Failure" ? "This environment could not report usage." : null,
         summary: Option.getOrNull(AsyncResult.value(result)),
       });
@@ -117,7 +144,15 @@ export function useUsage(
         registry: appAtomRegistry,
         server: serverEnvironment,
         presentations: environmentPresentations,
-        environmentIds: selectedEnvironments.map(({ environmentId }) => environmentId),
+        // Only environments this connection may read; the others report a
+        // permission error instead of a stale or failed rescan.
+        environmentIds: selectedEnvironments
+          .filter(
+            (environment) =>
+              environment.canReadDiagnostics &&
+              readEnvironmentScope(environment.environmentId, AuthDiagnosticsReadScope),
+          )
+          .map(({ environmentId }) => environmentId),
         input: nextInput ?? (JSON.parse(windowKey) as UsageSummaryInput),
       }),
     [selectedEnvironments, windowKey],
