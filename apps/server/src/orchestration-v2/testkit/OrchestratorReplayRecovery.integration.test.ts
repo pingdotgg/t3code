@@ -43,6 +43,7 @@ import { runOrchestratorV2ProviderReplayScenario } from "./ProviderReplayHarness
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
 import {
   decodeProviderReplayNdjson,
+  materializeReplayTranscriptRuntimeInstructions,
   materializeReplayTranscriptWorkspace,
 } from "./ReplayTranscriptNdjson.ts";
 
@@ -67,7 +68,12 @@ const readCursorTranscript = Effect.fn("readCursorRecoveryTranscript")(function*
   const transcript = yield* readRawTranscript(
     new URL("./fixtures/provider_thread_resume/cursor_transcript.ndjson", import.meta.url),
   );
-  return yield* CursorOrchestratorReplayHarness.decodeTranscript(transcript);
+  return yield* CursorOrchestratorReplayHarness.decodeTranscript(
+    materializeReplayTranscriptRuntimeInstructions(transcript, {
+      driver: ProviderDriverKind.make("cursor"),
+      model: CURSOR_MODEL_SELECTION.model,
+    }),
+  );
 });
 
 function splitAfterFirstIdle(materialized: MaterializedOrchestratorFixtureInput) {
