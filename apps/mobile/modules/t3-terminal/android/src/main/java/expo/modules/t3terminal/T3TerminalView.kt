@@ -379,7 +379,15 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   }
 
   private fun requestKeyboardFocus() {
+    // requestFocus on an already-focused EditText fires no focus callback, so
+    // emit it here: an explicit show request means the keyboard stream is live
+    // again, and the JS recovery quarantine must lift even when the IME was
+    // retained across an Android resume.
+    val retainedFocus = inputView.hasFocus()
     inputView.requestFocus()
+    if (retainedFocus) {
+      onTerminalFocus(emptyMap<String, Any>())
+    }
     val inputMethodManager = context.getSystemService(
       Context.INPUT_METHOD_SERVICE
     ) as? InputMethodManager
