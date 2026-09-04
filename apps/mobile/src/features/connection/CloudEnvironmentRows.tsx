@@ -103,8 +103,11 @@ function CloudEnvironmentRowsContent(
     ? (props.showcaseAvailableEnvironments ?? controller.availableRelayEnvironments)
     : [];
   const [expandedErrorId, setExpandedErrorId] = useState<string | null>(null);
-  const [deregisteringEnvironmentId, setDeregisteringEnvironmentId] =
-    useState<EnvironmentId | null>(null);
+  // Deregistrations run serially per account, so a second tap queues behind the
+  // first; every queued row stays disabled until its own command settles.
+  const [deregisteringEnvironmentIds, setDeregisteringEnvironmentIds] = useState<
+    ReadonlySet<EnvironmentId>
+  >(() => new Set());
   const hasCloudRows =
     props.connectedCloudEnvironments.length > 0 || availableCloudEnvironments.length > 0;
 
@@ -140,12 +143,18 @@ function CloudEnvironmentRowsContent(
                 );
                 return;
               }
-              setDeregisteringEnvironmentId(environment.environmentId);
+              setDeregisteringEnvironmentIds((current) =>
+                new Set(current).add(environment.environmentId),
+              );
               const result = await deregisterEnvironment({
                 accountId: managedRelaySession.accountId,
                 environmentId: environment.environmentId,
               });
-              setDeregisteringEnvironmentId(null);
+              setDeregisteringEnvironmentIds((current) => {
+                const next = new Set(current);
+                next.delete(environment.environmentId);
+                return next;
+              });
               if (AsyncResult.isSuccess(result)) {
                 await controller.refreshRelayEnvironments();
                 return;
@@ -215,7 +224,7 @@ function CloudEnvironmentRowsContent(
               borderTop={props.connectedCloudEnvironments.length > 0 || index !== 0}
               onConnect={() => handleConnectCloudEnvironment(environment)}
               onDeregister={() => handleDeregisterCloudEnvironment(environment.environment)}
-              deregistering={deregisteringEnvironmentId === environment.environment.environmentId}
+              deregistering={deregisteringEnvironmentIds.has(environment.environment.environmentId)}
               errorExpanded={expandedErrorId === environment.environment.environmentId}
               onToggleError={() => handleToggleCloudError(environment.environment.environmentId)}
             />
