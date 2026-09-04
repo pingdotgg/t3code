@@ -115,8 +115,13 @@ export function BrowserImportWizard({
       });
   };
 
-  const recheckAfterQuit = () => {
-    setStep({ step: "checking", check: "browser" });
+  // Re-lists the source after the user did something outside the app (quit the
+  // browser, granted access) and routes to wherever the refreshed source says.
+  const recheckSource = (
+    check: "browser" | "fullDiskAccess",
+    nextStep: (refreshed: BrowserImportSource | undefined) => WizardStep,
+  ) => {
+    setStep({ step: "checking", check });
     void onRefreshSource()
       .then((refreshed) => {
         if (refreshed) {
@@ -125,25 +130,12 @@ export function BrowserImportWizard({
             refreshedSourceProfileDirectory(current, refreshed),
           );
         }
-        setStep(refreshedSourceStep(refreshed));
+        setStep(nextStep(refreshed));
       })
       .catch(() => setStep({ step: "blocked", reason: "readFailed" }));
   };
-
-  const recheckFullDiskAccess = () => {
-    setStep({ step: "checking", check: "fullDiskAccess" });
-    void onRefreshSource()
-      .then((refreshed) => {
-        if (refreshed) {
-          setSource(refreshed);
-          setSourceProfileDirectory((current) =>
-            refreshedSourceProfileDirectory(current, refreshed),
-          );
-        }
-        setStep(fullDiskAccessRecheckStep(refreshed));
-      })
-      .catch(() => setStep({ step: "blocked", reason: "readFailed" }));
-  };
+  const recheckAfterQuit = () => recheckSource("browser", refreshedSourceStep);
+  const recheckFullDiskAccess = () => recheckSource("fullDiskAccess", fullDiskAccessRecheckStep);
 
   return (
     <Dialog open onOpenChange={(open) => (open || !canCloseWizard(step) ? undefined : onClose())}>
@@ -276,7 +268,8 @@ function FullDiskAccessStep({
       {stillRequired ? (
         <DialogPanel>
           <p role="status" className="text-sm text-muted-foreground">
-            Full Disk Access is still required. Turn it on, then check again.
+            Full Disk Access is still required. If you just turned it on, quit and reopen T3 Code,
+            then try again.
           </p>
         </DialogPanel>
       ) : null}

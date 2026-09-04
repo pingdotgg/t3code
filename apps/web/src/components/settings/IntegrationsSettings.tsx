@@ -1171,22 +1171,17 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
           }
           onRefreshSource={() => refreshImportSource(importSession.source.id)}
           onOpenFullDiskAccessSettings={() => {
-            const localApi = readLocalApi();
-            if (!localApi) {
-              toastManager.add({
-                type: "error",
-                title: "Open Full Disk Access manually",
-                description: "In System Settings, go to Privacy & Security → Full Disk Access.",
+            // Rejects outside the desktop shell (and on shells that predate the
+            // method), so the one toast covers every way the link can fail.
+            void readLocalApi()
+              ?.shell.openSystemSettings("full-disk-access")
+              .catch(() => {
+                toastManager.add({
+                  type: "error",
+                  title: "Could not open System Settings",
+                  description: "Open Privacy & Security → Full Disk Access manually.",
+                });
               });
-              return;
-            }
-            void localApi.shell.openSystemSettings("full-disk-access").catch(() => {
-              toastManager.add({
-                type: "error",
-                title: "Could not open System Settings",
-                description: "Open Privacy & Security → Full Disk Access manually.",
-              });
-            });
           }}
           onClose={() => setImportSession(null)}
         />
