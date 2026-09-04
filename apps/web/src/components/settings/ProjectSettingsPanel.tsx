@@ -384,6 +384,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         defaultModelSelection: ModelSelection | null;
         defaultThreadEnvMode: ThreadEnvMode | null;
         autoPull: boolean;
+        worktreeRoot: string | null;
         faviconPath: string | null;
         projectIcon: ProjectIconOverride | null;
       }>,
@@ -476,6 +477,28 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         "Failed to update new-thread workspace",
       ),
     [updateAllMembers],
+  );
+
+  const worktreeRoot = representative.worktreeRoot ?? null;
+  const setWorktreeRoot = useCallback(
+    (nextRoot: string) => {
+      const trimmed = nextRoot.trim();
+      if (trimmed === (worktreeRoot ?? "")) return;
+      // Caught here so a relative path reports itself instead of failing the write.
+      if (trimmed !== "" && !/^(?:~(?:$|[/\\])|\/|\\\\|[A-Za-z]:[/\\])/.test(trimmed)) {
+        toastManager.add({
+          type: "warning",
+          title: "Worktree location must be an absolute path",
+          description: "Start it with / or ~/ so it does not depend on where the server runs.",
+        });
+        return;
+      }
+      void updateAllMembers(
+        { worktreeRoot: trimmed === "" ? null : trimmed },
+        "Failed to update worktree location",
+      );
+    },
+    [updateAllMembers, worktreeRoot],
   );
 
   const autoPull = representative.autoPull ?? false;
@@ -985,6 +1008,33 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                   <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
                 </SelectPopup>
               </Select>
+            }
+          />
+          <SettingsRow
+            title="Worktree location"
+            description="Directory new worktrees for this project are created in, one per branch. Leave empty to use T3 Code's own worktrees directory. Existing worktrees stay where they are."
+            resetAction={
+              worktreeRoot !== null ? (
+                <SettingResetButton
+                  label="project worktree location"
+                  onClick={() => setWorktreeRoot("")}
+                />
+              ) : null
+            }
+            control={
+              <Input
+                key={`${group.projectKey}:worktree-root:${worktreeRoot ?? ""}`}
+                size="sm"
+                className="w-full sm:w-72"
+                aria-label="Worktree location"
+                placeholder="~/code/myrepo.worktrees"
+                spellCheck={false}
+                defaultValue={worktreeRoot ?? ""}
+                onBlur={(event) => setWorktreeRoot(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
+              />
             }
           />
           <SettingsRow

@@ -239,6 +239,7 @@ export function projectEvent(
             defaultModelSelection: payload.defaultModelSelection,
             defaultThreadEnvMode: null,
             autoPull: false,
+            worktreeRoot: null,
             faviconPath: payload.faviconPath ?? null,
             projectIcon: payload.projectIcon ?? null,
             scripts: payload.scripts,
@@ -277,6 +278,9 @@ export function projectEvent(
                     ? { defaultThreadEnvMode: payload.defaultThreadEnvMode }
                     : {}),
                   ...(payload.autoPull !== undefined ? { autoPull: payload.autoPull } : {}),
+                  ...(payload.worktreeRoot !== undefined
+                    ? { worktreeRoot: payload.worktreeRoot }
+                    : {}),
                   ...(payload.faviconPath !== undefined
                     ? { faviconPath: payload.faviconPath }
                     : {}),
