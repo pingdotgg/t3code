@@ -891,6 +891,14 @@ interface TrackedRunningCommandItem {
   readonly processId?: string;
 }
 
+function isPersistentCodexDynamicTool(item: CodexDynamicToolItem): boolean {
+  const input = item.arguments;
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return false;
+  }
+  return Reflect.get(input, "persistent") === true;
+}
+
 type CodexRootTerminalEvent = Extract<ProviderAdapterV2Event, { readonly type: "turn.terminal" }>;
 
 interface DeferredCodexRootTerminal {
@@ -1571,6 +1579,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         const runningCommandItemsByTurn = yield* Ref.make(
           new Map<string, Map<string, TrackedRunningCommandItem>>(),
         );
+        const runningDynamicToolsByTurn = yield* Ref.make(
+          new Map<string, Map<string, CodexDynamicToolItem>>(),
+        );
         const interruptingNativeTurns = yield* Ref.make(new Set<string>());
         const terminalizedNonCompletedNativeTurns = yield* Ref.make(new Set<string>());
         // Keep the run event stream open until descendant provider state is
@@ -1748,6 +1759,89 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             return [remaining.size === 0, updated] as const;
           });
 
+        const trackRunningDynamicTool = (nativeTurnId: string, item: CodexDynamicToolItem) =>
+          Ref.update(runningDynamicToolsByTurn, (current) => {
+            const updated = new Map(current);
+            const items = new Map(updated.get(nativeTurnId) ?? []);
+            items.set(item.id, item);
+            updated.set(nativeTurnId, items);
+            return updated;
+          });
+
+        const clearRunningDynamicTool = (nativeTurnId: string, nativeItemId: string) =>
+          Ref.update(runningDynamicToolsByTurn, (current) => {
+            const items = current.get(nativeTurnId);
+            if (items === undefined || !items.has(nativeItemId)) {
+              return current;
+            }
+            const remaining = new Map(items);
+            remaining.delete(nativeItemId);
+            const updated = new Map(current);
+            if (remaining.size === 0) {
+              updated.delete(nativeTurnId);
+            } else {
+              updated.set(nativeTurnId, remaining);
+            }
+            return updated;
+          });
+
+        const turnHasRetainedBackgroundWork = (nativeTurnId: string) =>
+          Effect.gen(function* () {
+            const commands = (yield* Ref.get(runningCommandItemsByTurn)).get(nativeTurnId);
+            if (commands !== undefined && commands.size > 0) {
+              return true;
+            }
+            const tools = (yield* Ref.get(runningDynamicToolsByTurn)).get(nativeTurnId);
+            if (tools === undefined) {
+              return false;
+            }
+            for (const item of tools.values()) {
+              if (isPersistentCodexDynamicTool(item)) {
+                return true;
+              }
+            }
+            return false;
+          });
+
+        const releaseSettledTurnIfIdle = (nativeTurnId: string) =>
+          Effect.gen(function* () {
+            if (yield* turnHasRetainedBackgroundWork(nativeTurnId)) {
+              return;
+            }
+            yield* Ref.update(settledTurns, (current) => {
+              if (!current.has(nativeTurnId)) {
+                return current;
+              }
+              const updated = new Map(current);
+              updated.delete(nativeTurnId);
+              return updated;
+            });
+            yield* Ref.update(offeredContinuationItemsByTurn, (current) => {
+              if (!current.has(nativeTurnId)) {
+                return current;
+              }
+              const updated = new Map(current);
+              updated.delete(nativeTurnId);
+              return updated;
+            });
+            yield* Ref.update(completedFinalAnswerTextsByTurn, (current) => {
+              if (!current.has(nativeTurnId)) {
+                return current;
+              }
+              const updated = new Map(current);
+              updated.delete(nativeTurnId);
+              return updated;
+            });
+            yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
+              if (!current.has(nativeTurnId)) {
+                return current;
+              }
+              const updated = new Map(current);
+              updated.delete(nativeTurnId);
+              return updated;
+            });
+          });
+
         /**
          * When a turn is interrupted or failed, Codex often leaves commandExecution
          * items mid-flight (no item/completed). Emit terminal turn items before
@@ -1824,6 +1918,69 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 turnItem,
               });
             }
+          });
+
+        /**
+         * Yielded exec cells can start MCP / dynamic tools that never receive
+         * item/completed when functions.wait terminates the cell. Terminalize
+         * leftover nonpersistent tools before turn.terminal. Persistent tools
+         * can outlive the root turn and must stay running.
+         */
+        const terminalizeRunningDynamicTools = (
+          context: ActiveCodexTurnContext,
+          nativeTurnId: string,
+          status: "cancelled" | "interrupted" | "failed",
+          completedAt: DateTime.Utc,
+          includePersistent: boolean,
+        ) =>
+          Effect.gen(function* () {
+            const items = (yield* Ref.get(runningDynamicToolsByTurn)).get(nativeTurnId);
+            if (items === undefined || items.size === 0) {
+              return;
+            }
+            for (const tracked of items.values()) {
+              if (!includePersistent && isPersistentCodexDynamicTool(tracked)) {
+                continue;
+              }
+              const artifacts = yield* buildDynamicToolArtifacts(context, tracked);
+              yield* emitProviderEvent({
+                type: "node.updated",
+                driver: CODEX_PROVIDER,
+                node: {
+                  ...artifacts.node,
+                  status,
+                  completedAt,
+                },
+              });
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CODEX_PROVIDER,
+                turnItem: {
+                  ...artifacts.turnItem,
+                  status,
+                  completedAt,
+                  updatedAt: completedAt,
+                },
+              });
+            }
+            yield* Ref.update(runningDynamicToolsByTurn, (current) => {
+              if (!current.has(nativeTurnId)) {
+                return current;
+              }
+              const remaining = new Map(current.get(nativeTurnId) ?? []);
+              for (const tracked of remaining.values()) {
+                if (includePersistent || !isPersistentCodexDynamicTool(tracked)) {
+                  remaining.delete(tracked.id);
+                }
+              }
+              const updated = new Map(current);
+              if (remaining.size === 0) {
+                updated.delete(nativeTurnId);
+              } else {
+                updated.set(nativeTurnId, remaining);
+              }
+              return updated;
+            });
           });
 
         const resolveItemOrdinal = (context: ActiveCodexTurnContext, nativeItemId: string) =>
@@ -3555,6 +3712,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }
 
             if (payload.item.type === "mcpToolCall" || payload.item.type === "dynamicToolCall") {
+              if (!codexItemStatus(payload.item.status).completed) {
+                yield* trackRunningDynamicTool(payload.turnId, payload.item);
+              }
               const artifacts = yield* buildDynamicToolArtifacts(context, payload.item);
               yield* emitProviderEvent({
                 type: "node.updated",
@@ -3649,41 +3809,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   }
                 }
                 if (turnDrained) {
-                  yield* Ref.update(settledTurns, (current) => {
-                    const updated = new Map(current);
-                    updated.delete(payload.turnId);
-                    return updated;
-                  });
-                  yield* Ref.update(offeredContinuationItemsByTurn, (current) => {
-                    if (!current.has(payload.turnId)) {
-                      return current;
-                    }
-                    const updated = new Map(current);
-                    updated.delete(payload.turnId);
-                    return updated;
-                  });
-                  yield* Ref.update(completedFinalAnswerTextsByTurn, (current) => {
-                    if (!current.has(payload.turnId)) {
-                      return current;
-                    }
-                    const updated = new Map(current);
-                    updated.delete(payload.turnId);
-                    return updated;
-                  });
-                  yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
-                    if (!current.has(payload.turnId)) {
-                      return current;
-                    }
-                    const updated = new Map(current);
-                    updated.delete(payload.turnId);
-                    return updated;
-                  });
+                  yield* releaseSettledTurnIfIdle(payload.turnId);
                 }
               }
               return;
             }
 
             if (payload.item.type === "mcpToolCall" || payload.item.type === "dynamicToolCall") {
+              yield* clearRunningDynamicTool(payload.turnId, payload.item.id);
               const artifacts = yield* buildDynamicToolArtifacts(context, payload.item);
               yield* emitProviderEvent({
                 type: "node.updated",
@@ -3695,6 +3828,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 driver: CODEX_PROVIDER,
                 turnItem: artifacts.turnItem,
               });
+              if (settled) {
+                yield* releaseSettledTurnIfIdle(payload.turnId);
+              }
               return;
             }
 
@@ -4575,6 +4711,17 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   input.completedAt,
                 );
               }
+              const dynamicToolStatus: "cancelled" | "interrupted" | "failed" =
+                input.status === "interrupted" || input.status === "failed"
+                  ? input.status
+                  : "cancelled";
+              yield* terminalizeRunningDynamicTools(
+                input.context,
+                input.nativeTurnId,
+                dynamicToolStatus,
+                input.completedAt,
+                input.status === "interrupted" || input.status === "failed",
+              );
               if (input.context.subagent === null) {
                 yield* emitOrDeferRootTerminal({
                   ...input,
@@ -4585,16 +4732,15 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               if (waiter !== undefined) {
                 yield* Deferred.succeed(waiter, undefined);
               }
-              const runningItems = (yield* Ref.get(runningCommandItemsByTurn)).get(
-                input.nativeTurnId,
-              );
               const interruptInProgress = (yield* Ref.get(interruptingNativeTurns)).has(
                 input.nativeTurnId,
               );
-              // Completed turns can retain late background command context.
-              // Interrupted and failed turns never wake from late item events.
+              // Completed turns can retain late background command context and
+              // leftover persistent dynamic tools. Interrupted and failed turns
+              // never wake from late item events.
               const retainSettledContext =
-                input.status === "completed" && runningItems !== undefined && runningItems.size > 0;
+                input.status === "completed" &&
+                (yield* turnHasRetainedBackgroundWork(input.nativeTurnId));
               if (retainSettledContext) {
                 yield* Ref.update(settledTurns, (current) => {
                   const updated = new Map(current);
@@ -4610,6 +4756,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               yield* flushReadyRootTerminals();
               if (!retainSettledContext && !interruptInProgress) {
                 yield* Ref.update(runningCommandItemsByTurn, (current) => {
+                  if (!current.has(input.nativeTurnId)) {
+                    return current;
+                  }
+                  const updated = new Map(current);
+                  updated.delete(input.nativeTurnId);
+                  return updated;
+                });
+                yield* Ref.update(runningDynamicToolsByTurn, (current) => {
                   if (!current.has(input.nativeTurnId)) {
                     return current;
                   }
@@ -4676,6 +4830,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           // signal to pin on.
           hasPendingBackgroundWork: Effect.gen(function* () {
             for (const items of (yield* Ref.get(runningCommandItemsByTurn)).values()) {
+              if (items.size > 0) {
+                return true;
+              }
+            }
+            for (const items of (yield* Ref.get(runningDynamicToolsByTurn)).values()) {
               if (items.size > 0) {
                 return true;
               }
