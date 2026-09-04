@@ -1,4 +1,6 @@
 import { ProcessSignalActions } from "./ProcessSignalActions";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { AlertTriangleIcon, CopyIcon, FolderOpenIcon, InfoIcon } from "lucide-react";
 import { ChevronDown, ChevronRight } from "lucide";
@@ -296,11 +298,13 @@ function ProcessNameCell({
 
 function ProcessDiagnosticsTable({
   processes,
+  canMaintainEnvironment,
   signalingPid,
   onSignal,
   emptyLabel,
 }: {
   processes: ReadonlyArray<ServerProcessDiagnosticsEntry>;
+  canMaintainEnvironment: boolean;
   signalingPid: number | null;
   onSignal: (pid: number, signal: ServerProcessSignal) => void;
   emptyLabel?: string;
@@ -408,7 +412,7 @@ function ProcessDiagnosticsTable({
                 </td>
                 <td className="p-2 align-middle sm:pr-4">
                   <ProcessSignalActions
-                    disabled={signalingPid === process.pid}
+                    disabled={!canMaintainEnvironment || signalingPid === process.pid}
                     onSignal={(signal) => onSignal(process.pid, signal)}
                   />
                 </td>
@@ -710,6 +714,7 @@ export function DiagnosticsSettingsPanel() {
   // The boundary only mounts this page when the selection resolves to one
   // connected environment, so the representative is the one to inspect.
   const environmentId = environment?.environmentId ?? null;
+  const canMaintainEnvironment = useEnvironmentScope(environmentId, AuthEnvironmentMaintainScope);
   const observability = environment?.serverConfig?.observability;
   const availableEditors = environment?.serverConfig?.availableEditors;
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
@@ -809,7 +814,7 @@ export function DiagnosticsSettingsPanel() {
     async (pid: number, signal: ServerProcessSignal) => {
       const targetEnvironmentId = environmentIdRef.current;
       const process = processDataRef.current?.processes.find((entry) => entry.pid === pid);
-      if (targetEnvironmentId === null || process === undefined) return;
+      if (targetEnvironmentId === null || process === undefined || !readEnvironmentScope(targetEnvironmentId, AuthEnvironmentMaintainScope)) return;
       if (signalingPidRef.current !== null) return;
       signalingPidRef.current = pid;
       setSignalingPid(pid);
@@ -838,7 +843,12 @@ export function DiagnosticsSettingsPanel() {
           return;
         }
       }
-      if (environmentIdRef.current !== targetEnvironmentId) {
+      const currentEnvironmentId = environmentIdRef.current;
+      if (
+        currentEnvironmentId === null ||
+        currentEnvironmentId !== targetEnvironmentId ||
+        !readEnvironmentScope(currentEnvironmentId, AuthEnvironmentMaintainScope)
+      ) {
         clearSignaling();
         return;
       }
@@ -956,6 +966,7 @@ export function DiagnosticsSettingsPanel() {
         ) : null}
         <ProcessDiagnosticsTable
           processes={processData?.processes ?? []}
+          canMaintainEnvironment={canMaintainEnvironment}
           signalingPid={signalingPid}
           onSignal={signalProcess}
           emptyLabel={

@@ -26,6 +26,8 @@ const commands = vi.hoisted(() => ({
   updateProvider: vi.fn(),
   uninstall: vi.fn(),
   acceptUrlAuth: vi.fn(),
+  canManageProviders: true,
+  canWriteSettings: true,
 }));
 
 const settingsState = vi.hoisted(() => ({
@@ -118,6 +120,20 @@ vi.mock("../../environments/primary", () => ({
 
 vi.mock("../../state/session", () => ({
   useEnvironmentSessionState: () => ({ data: null, hasError: false, isPending: true }),
+  useEnvironmentScope: (environmentId: EnvironmentId, scope: string) =>
+    environmentId === "remote-device" &&
+    (scope === "providers:manage"
+      ? commands.canManageProviders
+      : scope === "settings:write"
+        ? commands.canWriteSettings
+        : scope === "orchestration:read"),
+  readEnvironmentScope: (environmentId: EnvironmentId, scope: string) =>
+    environmentId === "remote-device" &&
+    (scope === "providers:manage"
+      ? commands.canManageProviders
+      : scope === "settings:write"
+        ? commands.canWriteSettings
+        : scope === "orchestration:read"),
 }));
 
 vi.mock("../../state/entities", () => ({
@@ -209,6 +225,8 @@ describe("EnvironmentProviderSettings routing", () => {
     settingsState.mutateProviderInstance
       .mockReset()
       .mockResolvedValue({ _tag: "Success", value: {} });
+    commands.canManageProviders = true;
+    commands.canWriteSettings = true;
     commands.refresh.mockReset().mockResolvedValue({ _tag: "Success" });
     commands.updateProvider.mockReset().mockResolvedValue({ _tag: "Success" });
     commands.uninstall.mockReset().mockResolvedValue({ _tag: "Success", value: {} });
@@ -355,6 +373,7 @@ describe("EnvironmentProviderSettings routing", () => {
   });
 
   it("keeps provider selection available while write controls are read only", () => {
+    commands.canWriteSettings = false;
     settingsState.value = {
       ...DEFAULT_UNIFIED_SETTINGS,
       providerInstances: {
@@ -388,7 +407,7 @@ describe("EnvironmentProviderSettings routing", () => {
     const notice = visitElements(panel, (element) => element.props.title === "Limited permissions");
     expect(notice).not.toBeNull();
 
-    expect(visitElements(panel, isRefreshButton)).toBeNull();
+    expect(visitElements(panel, isRefreshButton)).not.toBeNull();
     expect(visitElements(panel, isAddProviderButton)).toBeNull();
   });
 

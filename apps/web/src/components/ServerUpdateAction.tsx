@@ -1,3 +1,5 @@
+import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
+import { useEnvironmentScope, readEnvironmentScope } from "~/state/session";
 import type {
   EnvironmentId,
   ServerInstallation,
@@ -204,6 +206,7 @@ export function ServerUpdateAction({
   appearance = "button",
 }: Omit<ServerUpdateTarget, "continueThreadsAfterServerUpdate"> & UpdateButtonProps) {
   const isDesktopAppUpdate = selfUpdate === "desktop-managed";
+  const canMaintain = useEnvironmentScope(environmentId, AuthEnvironmentMaintainScope);
   const continueThreadsAfterServerUpdate = useEnvironmentSettings(
     environmentId,
     (settings) => settings.continueThreadsAfterServerUpdate,
@@ -232,7 +235,10 @@ export function ServerUpdateAction({
   });
 
   const handleUpdate = async () => {
-    if (pendingUpdateEnvironmentIds.has(environmentId)) {
+    if (
+      !readEnvironmentScope(environmentId, AuthEnvironmentMaintainScope) ||
+      pendingUpdateEnvironmentIds.has(environmentId)
+    ) {
       return;
     }
     if (isDesktopAppUpdate) {
@@ -247,6 +253,7 @@ export function ServerUpdateAction({
         return;
       }
     }
+    if (!readEnvironmentScope(environmentId, AuthEnvironmentMaintainScope)) return;
     await update({
       environmentId,
       serverLabel,
@@ -301,7 +308,7 @@ export function ServerUpdateAction({
   }
 
   return (
-    <Button size={size} variant={variant} className={className} onClick={onClick}>
+    <Button size={size} variant={variant} className={className} disabled={!canMaintain} onClick={onClick}>
       {actionLabel}
     </Button>
   );

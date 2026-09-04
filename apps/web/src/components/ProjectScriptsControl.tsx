@@ -1,9 +1,12 @@
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import type {
+  EnvironmentId,
   ProjectScript,
   ResolvedKeybindingsConfig,
   T3ProjectFileScript,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -13,6 +16,7 @@ import React, { useCallback, useMemo, useState } from "react";
 
 import { commandForProjectScript, primaryProjectScript } from "~/projectScripts";
 import { shortcutLabelForCommand } from "~/keybindings";
+import { serverEnvironment } from "~/state/server";
 import {
   EMPTY_PROJECT_SCRIPT_INPUT,
   editorRequestForScript,
@@ -55,10 +59,10 @@ interface ProjectScriptsControlProps {
   displayMode?: "toolbar" | "panel";
   presentation?: "toolbar" | "menu";
   onRequestMenuClose?: () => void;
+  environmentId: EnvironmentId;
   scripts: ReadonlyArray<ProjectScript>;
   /** Scripts declared in the project's checked-in t3.json, offered for import. */
   fileScripts?: ReadonlyArray<T3ProjectFileScript>;
-  keybindings: ResolvedKeybindingsConfig;
   preferredScriptId?: string | null;
   onRunScript: (script: ProjectScript) => void;
   onAddScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
@@ -73,9 +77,9 @@ export default function ProjectScriptsControl({
   displayMode = "toolbar",
   presentation = "toolbar",
   onRequestMenuClose,
+  environmentId,
   scripts,
   fileScripts = NO_FILE_SCRIPTS,
-  keybindings,
   preferredScriptId = null,
   onRunScript,
   onAddScript,
@@ -85,6 +89,9 @@ export default function ProjectScriptsControl({
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
   const panelAnchorRef = React.useRef<HTMLDivElement | null>(null);
+  const keybindings =
+    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.keybindings ??
+    DEFAULT_RESOLVED_KEYBINDINGS;
   const [actionsMenuOpen, setActionsMenuOpen] = useState({
     presentation,
     scripts: false,
@@ -459,6 +466,7 @@ export default function ProjectScriptsControl({
       )}
 
       <ProjectScriptEditorDialog
+        environmentId={environmentId}
         request={editorRequest}
         scripts={scripts}
         onSubmit={submitScript}

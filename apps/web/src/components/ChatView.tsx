@@ -48,6 +48,7 @@ import {
 } from "../questionAttachments";
 import { useAttachmentUploadStore } from "../lib/attachmentUploadQueue";
 import {
+  AuthSettingsWriteScope,
   type AssistantCitation,
   type ChatFileAttachment,
   CommandId,
@@ -555,7 +556,7 @@ import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/at
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { fileAttachmentCapabilityBlockReason } from "./chat/composerAttachmentFiles";
 import { assetEnvironment } from "../state/assets";
-import { readPreparedConnection } from "../state/session";
+import { readEnvironmentScope, readPreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button, InlineButton } from "./ui/button";
@@ -5000,6 +5001,29 @@ export default function ChatView(props: ChatViewProps) {
       keybinding?: string | null;
       keybindingCommand: KeybindingCommand | null;
     }): Promise<AtomCommandResult<void, unknown>> => {
+      const previousKeybinding = keybindingValueForCommand(
+        appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.keybindings ?? [],
+        input.keybindingCommand,
+      );
+      const isDeletingScript = !input.nextScripts.some(
+        (script) => commandForProjectScript(script.id) === input.keybindingCommand,
+      );
+      const changesKeybinding =
+        isElectron &&
+        input.keybinding !== undefined &&
+        (input.keybinding?.trim() || null) !== previousKeybinding &&
+        (!isDeletingScript || readEnvironmentScope(environmentId, AuthSettingsWriteScope));
+      if (changesKeybinding && !readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
+        return AsyncResult.failure(
+          Cause.fail(new Error("This connection cannot change keyboard shortcuts.")),
+        );
+      }
+      const keybindingRule = changesKeybinding
+        ? decodeProjectScriptKeybindingRule({
+            keybinding: input.keybinding,
+            command: input.keybindingCommand,
+          })
+        : null;
       const updateResult = mapAtomCommandResult(
         await updateProjectScriptSettings({
           environmentId,
@@ -5028,10 +5052,10 @@ export default function ChatView(props: ChatViewProps) {
         return updateResult;
       }
 
-      const keybindingRule = decodeProjectScriptKeybindingRule({
-        keybinding: input.keybinding,
-        command: input.keybindingCommand,
-      });
+      if (!changesKeybinding) return updateResult;
+      if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
+        return isDeletingScript ? updateResult : AsyncResult.failure(Cause.fail(new Error("The script was saved, but this connection can no longer change keyboard shortcuts.")));
+      }
 
       if (!isElectron) return updateResult;
 
