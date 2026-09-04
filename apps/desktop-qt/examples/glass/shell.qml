@@ -160,6 +160,10 @@ ShellWindow {
                         visible: ready
                         color: "transparent"
                     }
+
+                    TerminalDrawer {
+                        Layout.fillWidth: true
+                    }
                 }
             }
 

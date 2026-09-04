@@ -28,7 +28,7 @@ What you can reach from `shell.qml`: `ShellWindow` as the root (window
 colour, opacity and frame from the theme, `sidebarCollapsed` and
 `settingsActive` from the page, the error overlay and the page's window
 commands built in), the bricks (`TitleBar`, `Sidebar`, `SettingsNav`,
-`Workspace`, `GitActions`, `WebSurface`, `Composer`, `RightPanel`,
+`Workspace`, `GitActions`, `WebSurface`, `Composer`, `RightPanel`, `TerminalDrawer`,
 `Notifications`), the themed controls (`ShellCard`, `ShellButton`,
 `ShellComboBox`, `ShellTextField`, `ShellMenu`, `ShellMenuItem`, `ShellIcon`,
 `WindowControls`), and the `T3.Shell` singletons: `Shell.state.<key>` for

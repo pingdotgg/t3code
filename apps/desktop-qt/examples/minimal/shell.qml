@@ -63,6 +63,10 @@ ShellWindow {
                     Layout.fillWidth: true
                     visible: ready
                 }
+
+                TerminalDrawer {
+                    Layout.fillWidth: true
+                }
             }
 
             RightPanel {

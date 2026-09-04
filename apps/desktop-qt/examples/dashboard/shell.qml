@@ -1069,6 +1069,19 @@ ShellWindow {
                         color: "transparent"
                     }
                 }
+
+                ShellCard {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: terminal.implicitHeight
+                    visible: terminal.open
+                    clip: true
+
+                    TerminalDrawer {
+                        id: terminal
+
+                        anchors.fill: parent
+                    }
+                }
             }
 
             ShellCard {
