@@ -6,11 +6,12 @@ import {
   type KnownTerminalSession,
   type TerminalSessionState,
 } from "@t3tools/client-runtime/state/terminal";
-import { ThreadId, type EnvironmentId, type TerminalAttachInput } from "@t3tools/contracts";
+import { AuthTerminalReadScope, AuthTerminalOperateScope, ThreadId, type EnvironmentId, type TerminalAttachInput } from "@t3tools/contracts";
 import { useMemo } from "react";
 
 import { useEnvironmentQuery } from "./query";
 import { terminalEnvironment } from "./terminal";
+import { useEnvironmentScope } from "./session";
 
 type LegacyTerminalSessionState = TerminalSessionState & { readonly buffer: string };
 const EMPTY_LEGACY_TERMINAL_SESSION_STATE: LegacyTerminalSessionState = {
@@ -22,16 +23,25 @@ export function useAttachedTerminalSession(input: {
   readonly environmentId: EnvironmentId | null;
   readonly terminal: TerminalAttachInput | null;
 }): LegacyTerminalSessionState {
+  const canRead = useEnvironmentScope(input.environmentId, AuthTerminalReadScope);
+  const canOperate = useEnvironmentScope(input.environmentId, AuthTerminalOperateScope);
   const attach = useEnvironmentQuery(
     input.environmentId !== null && input.terminal !== null
-      ? terminalEnvironment.attach({
-          environmentId: input.environmentId,
-          input: input.terminal,
-        })
+      ? canOperate
+        ? terminalEnvironment.attach({
+            environmentId: input.environmentId,
+            input: input.terminal,
+          })
+        : canRead
+          ? terminalEnvironment.observe({
+              environmentId: input.environmentId,
+              input: { threadId: input.terminal.threadId, terminalId: input.terminal.terminalId },
+            })
+          : null
       : null,
   );
   const metadata = useEnvironmentQuery(
-    input.environmentId === null
+    input.environmentId === null || !canRead
       ? null
       : terminalEnvironment.metadata({
           environmentId: input.environmentId,
@@ -65,8 +75,9 @@ export function useKnownTerminalSessions(input: {
   readonly environmentId: EnvironmentId | null;
   readonly threadId: ThreadId | null;
 }): ReadonlyArray<KnownTerminalSession> {
+  const canRead = useEnvironmentScope(input.environmentId, AuthTerminalReadScope);
   const metadata = useEnvironmentQuery(
-    input.environmentId === null
+    input.environmentId === null || !canRead
       ? null
       : terminalEnvironment.metadata({
           environmentId: input.environmentId,
