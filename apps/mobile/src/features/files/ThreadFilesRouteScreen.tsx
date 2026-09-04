@@ -48,7 +48,6 @@ import {
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
-import { ReviewHighlighterProvider } from "../review/ReviewHighlighterProvider";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadRouteScreen } from "../threads/ThreadRouteScreen";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
@@ -823,123 +822,121 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     : [projectName, parentDir].filter(Boolean).join(" · ");
 
   return (
-    <ReviewHighlighterProvider>
-      <View className="flex-1 bg-sheet">
-        <NativeStackScreenOptions
-          options={{
-            // Static header config lives in Stack.tsx (SOLID_HEADER_OPTIONS: solid
-            // sheet-colored header — this route's content scrolls internally, so
-            // there is nothing for glass to sample). Only dynamic values here.
-            headerShown: !isAndroid,
-            headerTintColor: iconColor,
-            headerTitle: basename(relativePath),
-            title: basename(relativePath),
-            unstable_headerSubtitle:
-              Platform.OS === "ios" && headerSubtitle.length > 0 ? headerSubtitle : undefined,
-          }}
+    <View className="flex-1 bg-sheet">
+      <NativeStackScreenOptions
+        options={{
+          // Static header config lives in Stack.tsx (SOLID_HEADER_OPTIONS: solid
+          // sheet-colored header — this route's content scrolls internally, so
+          // there is nothing for glass to sample). Only dynamic values here.
+          headerShown: !isAndroid,
+          headerTintColor: iconColor,
+          headerTitle: basename(relativePath),
+          title: basename(relativePath),
+          unstable_headerSubtitle:
+            Platform.OS === "ios" && headerSubtitle.length > 0 ? headerSubtitle : undefined,
+        }}
+      />
+      {isAndroid ? (
+        <AndroidScreenHeader
+          title={basename(relativePath)}
+          subtitle={headerSubtitle}
+          onBack={handleBack}
+          trailing={
+            <>
+              {fileInspector.supported ? (
+                <AndroidHeaderIconButton
+                  accessibilityLabel={
+                    panes.auxiliaryPaneVisible ? "Hide file navigator" : "Show file navigator"
+                  }
+                  icon="sidebar.right"
+                  onPress={toggleAuxiliaryPane}
+                />
+              ) : null}
+              <ControlPillMenu
+                actions={androidFileMenuActions}
+                isAnchoredToRight
+                title="File actions"
+                onPressAction={handleAndroidFileMenuAction}
+              >
+                <AndroidHeaderIconButton accessibilityLabel="File actions" icon="ellipsis" />
+              </ControlPillMenu>
+            </>
+          }
         />
-        {isAndroid ? (
-          <AndroidScreenHeader
-            title={basename(relativePath)}
-            subtitle={headerSubtitle}
-            onBack={handleBack}
-            trailing={
-              <>
-                {fileInspector.supported ? (
-                  <AndroidHeaderIconButton
-                    accessibilityLabel={
-                      panes.auxiliaryPaneVisible ? "Hide file navigator" : "Show file navigator"
-                    }
-                    icon="sidebar.right"
-                    onPress={toggleAuxiliaryPane}
-                  />
-                ) : null}
-                <ControlPillMenu
-                  actions={androidFileMenuActions}
-                  isAnchoredToRight
-                  title="File actions"
-                  onPressAction={handleAndroidFileMenuAction}
-                >
-                  <AndroidHeaderIconButton accessibilityLabel="File actions" icon="ellipsis" />
-                </ControlPillMenu>
-              </>
-            }
+      ) : null}
+      <WorkspaceSidebarToolbar>
+        {fileInspector.supported ? (
+          <NativeHeaderToolbar.Button
+            accessibilityLabel="Return to chat"
+            icon="chevron.left"
+            onPress={handleReturnToThread}
           />
         ) : null}
-        <WorkspaceSidebarToolbar>
-          {fileInspector.supported ? (
-            <NativeHeaderToolbar.Button
-              accessibilityLabel="Return to chat"
-              icon="chevron.left"
-              onPress={handleReturnToThread}
-            />
+      </WorkspaceSidebarToolbar>
+      <NativeHeaderToolbar placement="right">
+        {fileInspector.supported ? (
+          <NativeHeaderToolbar.Button
+            accessibilityLabel={
+              panes.auxiliaryPaneVisible ? "Hide file navigator" : "Show file navigator"
+            }
+            icon="sidebar.right"
+            onPress={toggleAuxiliaryPane}
+            separateBackground
+          />
+        ) : null}
+        <NativeHeaderToolbar.Menu accessibilityLabel="File actions" icon="ellipsis">
+          {fileMenuActions.some(({ inline }) => inline) ? (
+            <NativeHeaderToolbar.Menu inline>
+              {fileMenuActions
+                .filter(({ inline }) => inline)
+                .map((action) => (
+                  <NativeHeaderToolbar.MenuAction
+                    key={action.id}
+                    icon={action.icon}
+                    isOn={action.id === resolvedActiveMode}
+                    onPress={action.onPress}
+                  >
+                    {action.title}
+                  </NativeHeaderToolbar.MenuAction>
+                ))}
+            </NativeHeaderToolbar.Menu>
           ) : null}
-        </WorkspaceSidebarToolbar>
-        <NativeHeaderToolbar placement="right">
-          {fileInspector.supported ? (
-            <NativeHeaderToolbar.Button
-              accessibilityLabel={
-                panes.auxiliaryPaneVisible ? "Hide file navigator" : "Show file navigator"
-              }
-              icon="sidebar.right"
-              onPress={toggleAuxiliaryPane}
-              separateBackground
-            />
-          ) : null}
-          <NativeHeaderToolbar.Menu accessibilityLabel="File actions" icon="ellipsis">
-            {fileMenuActions.some(({ inline }) => inline) ? (
-              <NativeHeaderToolbar.Menu inline>
-                {fileMenuActions
-                  .filter(({ inline }) => inline)
-                  .map((action) => (
-                    <NativeHeaderToolbar.MenuAction
-                      key={action.id}
-                      icon={action.icon}
-                      isOn={action.id === resolvedActiveMode}
-                      onPress={action.onPress}
-                    >
-                      {action.title}
-                    </NativeHeaderToolbar.MenuAction>
-                  ))}
-              </NativeHeaderToolbar.Menu>
-            ) : null}
-            {fileMenuActions
-              .filter(({ inline }) => !inline)
-              .map((action) => (
-                <NativeHeaderToolbar.MenuAction
-                  key={action.id}
-                  icon={action.icon}
-                  onPress={action.onPress}
-                >
-                  {action.title}
-                </NativeHeaderToolbar.MenuAction>
-              ))}
-          </NativeHeaderToolbar.Menu>
-        </NativeHeaderToolbar>
-        <FileContent
-          key={previewKey}
-          activeMode={resolvedActiveMode}
-          cwd={cwd}
-          environmentId={environmentId}
-          previewUri={previewUri}
-          previewFailure={assetPreview._tag === "Failure" ? assetPreview.reason : null}
-          onRetryPreview={handleRetryPreview}
-          videoSource={videoSource}
-          mediaSource={mediaSource}
-          resolveVideoUri={assetPreview.refresh}
-          fileContents={fileData?.contents ?? null}
-          fileError={fileQuery.error}
-          initialLine={targetLine}
-          relativePath={relativePath}
-          threadId={threadId}
-          truncated={fileData?.truncated ?? false}
-          onRefresh={() => fileQuery.refresh()}
-        />
-        <FilePreviewModal
-          source={fullScreenPreview}
-          onRequestClose={() => setFullScreenPreview(null)}
-        />
-      </View>
-    </ReviewHighlighterProvider>
+          {fileMenuActions
+            .filter(({ inline }) => !inline)
+            .map((action) => (
+              <NativeHeaderToolbar.MenuAction
+                key={action.id}
+                icon={action.icon}
+                onPress={action.onPress}
+              >
+                {action.title}
+              </NativeHeaderToolbar.MenuAction>
+            ))}
+        </NativeHeaderToolbar.Menu>
+      </NativeHeaderToolbar>
+      <FileContent
+        key={previewKey}
+        activeMode={resolvedActiveMode}
+        cwd={cwd}
+        environmentId={environmentId}
+        previewUri={previewUri}
+        previewFailure={assetPreview._tag === "Failure" ? assetPreview.reason : null}
+        onRetryPreview={handleRetryPreview}
+        videoSource={videoSource}
+        mediaSource={mediaSource}
+        resolveVideoUri={assetPreview.refresh}
+        fileContents={fileData?.contents ?? null}
+        fileError={fileQuery.error}
+        initialLine={targetLine}
+        relativePath={relativePath}
+        threadId={threadId}
+        truncated={fileData?.truncated ?? false}
+        onRefresh={() => fileQuery.refresh()}
+      />
+      <FilePreviewModal
+        source={fullScreenPreview}
+        onRequestClose={() => setFullScreenPreview(null)}
+      />
+    </View>
   );
 }
