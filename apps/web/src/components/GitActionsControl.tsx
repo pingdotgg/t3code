@@ -2171,6 +2171,7 @@ export default function GitActionsControl({
               variant="outline"
               size="sm-multiline"
               onClick={continuePendingDefaultBranchAction}
+              disabled={!canWriteSourceControl}
             >
               {pendingDefaultBranchActionCopy?.continueLabel ?? "Continue"}
             </Button>
@@ -2178,6 +2179,7 @@ export default function GitActionsControl({
               className="w-full max-w-full sm:w-auto"
               size="sm-multiline"
               onClick={checkoutFeatureBranchAndContinuePendingAction}
+              disabled={!canWriteSourceControl}
             >
               Check out feature branch & continue
             </Button>

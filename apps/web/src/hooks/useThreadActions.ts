@@ -22,7 +22,7 @@ import { useCallback, useMemo, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
-import { readEnvironmentScope } from "../state/session";
+import { environmentSession } from "../state/session";
 import { terminalEnvironment } from "../state/terminal";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
@@ -55,6 +55,7 @@ import { useClientSettings } from "./useSettings";
 import * as ThreadUndo from "./threadUndo";
 import { showThreadUndoNotice } from "./showThreadUndoNotice";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedError<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
@@ -292,6 +293,9 @@ export function useThreadActions() {
   const removeWorktree = useAtomCommand(vcsEnvironment.removeWorktree, {
     reportFailure: false,
   });
+  const loadSessionState = useAtomQueryRunner(environmentSession.sessionStateAtom, {
+    reportFailure: false,
+  });
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
@@ -462,14 +466,17 @@ export function useThreadActions() {
       const environmentConfig = appAtomRegistry
         .get(environmentServerConfigsAtom)
         .get(threadRef.environmentId);
-      // A Scratch thread's folder is not a git worktree, and deleting the
-      // thread keeps its files.
-      const canDeleteWorktree =
-        readEnvironmentScope(threadRef.environmentId, AuthSourceControlWriteScope) &&
-        orphanedWorktreePath !== null &&
-        threadProject !== null &&
-        !isScratchProject(threadProject, environmentConfig?.scratchWorkspaceRoot);
       const localApi = readLocalApi();
+      let canDeleteWorktree = false;
+      if (orphanedWorktreePath !== null && threadProject !== null && !isScratchProject(threadProject, environmentConfig?.scratchWorkspaceRoot) && localApi) {
+        const sessionResult = await loadSessionState(threadRef.environmentId);
+        if (sessionResult._tag === "Failure") {
+          return sessionResult;
+        }
+        canDeleteWorktree =
+          sessionResult.value.authenticated &&
+          sessionResult.value.scopes?.includes(AuthSourceControlWriteScope) === true;
+      }
       let shouldDeleteWorktree = false;
       const environmentSettings = environmentConfig?.settings;
       const automaticWorktreeCleanup = environmentSettings
@@ -607,6 +614,7 @@ export function useThreadActions() {
       closeTerminal,
       deleteThreadMutation,
       getCurrentRouteThreadRef,
+      loadSessionState,
       refreshVcsStatus,
       removeWorktree,
       router,
