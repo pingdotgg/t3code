@@ -25,6 +25,17 @@ describe("renderMermaidDiagram", () => {
       startOnLoad: false,
       securityLevel: "strict",
       suppressErrorRendering: true,
+      secure: [
+        "secure",
+        "securityLevel",
+        "startOnLoad",
+        "maxTextSize",
+        "suppressErrorRendering",
+        "maxEdges",
+        "themeCSS",
+        "fontFamily",
+        "altFontFamily",
+      ],
       theme: "dark",
     });
     expect(mermaid.render).toHaveBeenCalledWith("diagram-1", "flowchart LR\nA-->B");

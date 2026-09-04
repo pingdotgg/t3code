@@ -1820,6 +1820,10 @@ code {
   padding: 1rem;
 }
 
+.chat-markdown .chat-markdown-codeblock:has(.chat-markdown-mermaid) .chat-markdown-wrap-action {
+  display: none;
+}
+
 .chat-markdown .chat-markdown-mermaid svg {
   display: block;
   max-width: none;

@@ -22,6 +22,17 @@ export function renderMermaidDiagram(
       startOnLoad: false,
       securityLevel: "strict",
       suppressErrorRendering: true,
+      secure: [
+        "secure",
+        "securityLevel",
+        "startOnLoad",
+        "maxTextSize",
+        "suppressErrorRendering",
+        "maxEdges",
+        "themeCSS",
+        "fontFamily",
+        "altFontFamily",
+      ],
       theme: theme === "dark" ? "dark" : "default",
     });
     return mermaid.render(id, code);
@@ -48,14 +59,18 @@ export function MermaidDiagram({
   const diagramId = `t3-mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const renderSequenceRef = useRef(0);
   const diagramRef = useRef<HTMLDivElement>(null);
-  const [result, setResult] = useState<RenderResult | null>(null);
+  const [renderedDiagram, setRenderedDiagram] = useState<{
+    code: string;
+    theme: MermaidTheme;
+    result: RenderResult;
+  } | null>(null);
 
   useEffect(() => {
     let active = true;
     const renderId = `${diagramId}-${renderSequenceRef.current++}`;
     void renderMermaidDiagram(renderId, code, theme, () => active).then(
       (nextResult) => {
-        if (active && nextResult) setResult(nextResult);
+        if (active && nextResult) setRenderedDiagram({ code, theme, result: nextResult });
       },
       () => undefined,
     );
@@ -73,6 +88,10 @@ export function MermaidDiagram({
     }
   });
 
+  const result =
+    renderedDiagram?.code === code && renderedDiagram.theme === theme
+      ? renderedDiagram.result
+      : null;
   if (!result) return fallback;
 
   return (

@@ -824,14 +824,12 @@ function MarkdownCodeBlock({
   language,
   fenceTitle,
   theme,
-  showWrapAction = true,
   children,
 }: {
   code: string;
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
-  showWrapAction?: boolean;
   children: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
@@ -893,26 +891,24 @@ function MarkdownCodeBlock({
           />
         </span>
         <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
-          {showWrapAction ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    className="chat-markdown-chrome-action"
-                    aria-pressed={wrapped}
-                    onClick={() => setWrapped((value) => !value)}
-                    aria-label={wrapLabel}
-                  />
-                }
-              >
-                <WrapTextIcon className="size-3" />
-              </TooltipTrigger>
-              <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
-            </Tooltip>
-          ) : null}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  className="chat-markdown-chrome-action chat-markdown-wrap-action"
+                  aria-pressed={wrapped}
+                  onClick={() => setWrapped((value) => !value)}
+                  aria-label={wrapLabel}
+                />
+              }
+            >
+              <WrapTextIcon className="size-3" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -2737,7 +2733,6 @@ function ChatMarkdown({
             language={language}
             fenceTitle={fenceTitle}
             theme={resolvedTheme}
-            showWrapAction={!renderMermaid}
           >
             {renderMermaid ? (
               <MermaidDiagram
