@@ -14,6 +14,7 @@ import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/prev
 import { useRightPanelStore } from "~/rightPanelStore";
 
 import { previewBridge } from "./previewBridge";
+import { PreviewMiniPlayerUnreachable } from "./PreviewMiniPlayerUnreachable";
 import {
   clampPreviewMiniPlayerPosition,
   clampPreviewMiniPlayerSize,
@@ -63,8 +64,20 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
     miniPlayer?.tabId === tabId && miniPlayer.size
       ? miniPlayer.size
       : PREVIEW_MINI_PLAYER_DEFAULT_SIZE;
+  const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
+  const isUnreachable = navStatus._tag === "LoadFailed";
   const close = () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
+  };
+  const retry = () => {
+    if (!previewBridge || !runtimeTabId || !desktopOverlay?.hasWebContents) return;
+    void previewBridge.refresh(runtimeTabId).catch((error) => {
+      toastManager.add({
+        type: "error",
+        title: "Unable to retry preview",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    });
   };
 
   const openInPanel = () => {
@@ -244,7 +257,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
             }
       }
     >
-      <div className="group pointer-events-auto absolute right-2 top-2 z-[49] size-3">
+      <div className="group pointer-events-auto absolute right-2 top-2 z-[50] size-3">
         <div
           aria-hidden="true"
           className="absolute right-0 top-0 size-2 rounded-full bg-foreground/25 shadow-sm ring-1 ring-background/70 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
@@ -273,28 +286,33 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
             <TooltipPopup side="top">Open in right panel</TooltipPopup>
           </Tooltip>
           <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant={desktopOverlay?.pictureInPicture ? "secondary" : "ghost"}
-                  size="icon-xs"
-                  aria-label={
-                    desktopOverlay?.pictureInPicture
-                      ? "Close popped-out preview"
-                      : "Pop preview into separate window"
-                  }
-                  disabled={!desktopOverlay?.hasWebContents}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={toggleNativePictureInPicture}
-                />
-              }
-            >
-              <PictureInPicture2 />
+            <TooltipTrigger render={<span className="flex shrink-0" />}>
+              <Button
+                variant={desktopOverlay?.pictureInPicture ? "secondary" : "ghost"}
+                size="icon-xs"
+                aria-label={
+                  desktopOverlay?.pictureInPicture
+                    ? "Close popped-out preview"
+                    : "Pop preview into separate window"
+                }
+                disabled={
+                  !desktopOverlay?.hasWebContents ||
+                  (isUnreachable && !desktopOverlay.pictureInPicture)
+                }
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={toggleNativePictureInPicture}
+              >
+                <PictureInPicture2 />
+              </Button>
             </TooltipTrigger>
             <TooltipPopup side="top">
               {desktopOverlay?.pictureInPicture
                 ? "Close separate window"
-                : "Pop into separate window"}
+                : isUnreachable
+                  ? "Retry preview before popping out"
+                  : !desktopOverlay?.hasWebContents
+                    ? "Preview is reconnecting"
+                    : "Pop into separate window"}
             </TooltipPopup>
           </Tooltip>
           <Tooltip>
@@ -320,7 +338,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
         <div className="absolute inset-0 z-[47] rounded-xl bg-muted shadow-2xl/35" />
         <BrowserSurfaceSlot
           tabId={runtimeTabId}
-          visible={Boolean(desktopOverlay?.hasWebContents)}
+          visible={Boolean(desktopOverlay?.hasWebContents) && !isUnreachable}
           cornerRadius={12}
           zIndex={PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX}
           fitSourceContent
@@ -332,7 +350,14 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
           className="absolute inset-0"
         />
         <div className="pointer-events-none absolute inset-0 z-[49] rounded-xl ring-1 ring-inset ring-border/80" />
-        {!desktopOverlay?.hasWebContents ? (
+        {isUnreachable && navStatus._tag === "LoadFailed" && desktopOverlay?.hasWebContents ? (
+          <PreviewMiniPlayerUnreachable
+            url={navStatus.url}
+            description={navStatus.description}
+            onRetry={retry}
+            onClose={close}
+          />
+        ) : !desktopOverlay?.hasWebContents ? (
           <div className="pointer-events-none absolute inset-0 z-[49] flex items-center justify-center rounded-xl bg-muted text-xs text-muted-foreground">
             Reconnecting preview…
           </div>

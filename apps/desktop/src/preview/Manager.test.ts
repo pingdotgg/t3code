@@ -484,6 +484,7 @@ describe("PreviewManager", () => {
           url: null,
           title: null,
           loading: false,
+          attached: false,
         });
 
         yield* manager.createTab("tab_1");
@@ -495,8 +496,102 @@ describe("PreviewManager", () => {
           url: null,
           title: null,
           loading: false,
+          attached: false,
         });
         expect(fromId).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("reports a failed navigation as unavailable automation", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const listeners = new Map<string, (...args: unknown[]) => void>();
+        let url = "http://localhost:5173/";
+        let loading = false;
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => url,
+          getTitle: () => "localhost:5173",
+          isLoading: () => loading,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
+          loadURL: vi.fn(async () => undefined),
+          on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+            listeners.set(event, listener);
+          }),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_failed");
+        yield* manager.registerWebview("tab_failed", 42);
+        listeners.get("did-fail-load")?.(
+          {},
+          -102,
+          "ERR_CONNECTION_REFUSED",
+          "http://localhost:5173/",
+          true,
+        );
+        yield* Effect.yieldNow;
+
+        expect(yield* manager.automationStatus("tab_failed")).toEqual({
+          available: false,
+          visible: true,
+          tabId: "tab_failed",
+          url: "http://localhost:5173/",
+          title: "ERR_CONNECTION_REFUSED",
+          loading: false,
+          attached: true,
+        });
+
+        url = "chrome-error://chromewebdata/";
+        loading = true;
+        expect(yield* manager.automationStatus("tab_failed")).toEqual({
+          available: false,
+          visible: true,
+          tabId: "tab_failed",
+          url: "http://localhost:5173/",
+          title: "ERR_CONNECTION_REFUSED",
+          loading: true,
+          attached: true,
+        });
+      }),
+    ),
+  );
+
+  effectIt.effect("reports a destroyed guest as detached even when webContentsId remains", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.createTab("tab_destroyed_status");
+        yield* manager.registerWebview("tab_destroyed_status", 42);
+        preview.setDestroyed(true);
+
+        expect(yield* manager.automationStatus("tab_destroyed_status")).toEqual({
+          available: false,
+          visible: true,
+          tabId: "tab_destroyed_status",
+          url: "http://localhost:3200/",
+          title: null,
+          loading: false,
+          attached: false,
+        });
       }),
     ),
   );
@@ -636,6 +731,7 @@ describe("PreviewManager", () => {
           url: "http://localhost:3200/",
           title: "",
           loading: true,
+          attached: false,
         });
 
         yield* manager.registerWebview("tab_pending", 42);

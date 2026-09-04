@@ -591,6 +591,12 @@ export const DesktopPreviewTabIdSchema = Schema.String.check(Schema.isTrimmed())
 export const DesktopPreviewAutomationStatusSchema = Schema.Struct({
   ...PreviewAutomationStatus.fields,
   tabId: Schema.NullOr(DesktopPreviewTabIdSchema),
+  /**
+   * Live guest process, not the renderer overlay. Optional for desktop hosts
+   * that predate this field. `webContentsId !== null` can stay true after
+   * destroy; this is the main-process check.
+   */
+  attached: Schema.optional(Schema.Boolean),
 });
 export type DesktopPreviewAutomationStatus = typeof DesktopPreviewAutomationStatusSchema.Type;
 

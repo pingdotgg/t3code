@@ -71,6 +71,7 @@ import {
 } from "./previewNavigationReadiness";
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
+import { applyPreviewLoadFailureToAutomationStatus } from "./previewAutomationStatus";
 import {
   needsPreviewAutomationSessionSync,
   resolvePreviewAutomationOpenTab,
@@ -103,9 +104,23 @@ const waitForDesktopOverlay = async (
       operation,
       requestId,
     });
-    if (state.desktopByTabId[tabId] && previewBridge && isPreviewWebviewRendering(runtimeTabId)) {
-      const status = await previewBridge.automation.status(runtimeTabId);
-      if (status.available) return;
+    // Attachment only. LoadFailed still has a live guest and must stay
+    // reachable so navigate/retry can recover. Page health is reported by
+    // preview_status, not this wait. Re-read the main-process attachment bit
+    // because a stale overlay snapshot can retain hasWebContents after destroy.
+    if (state.desktopByTabId[tabId]?.hasWebContents && previewBridge) {
+      const status = await previewBridge.automation.status(runtimeTabId).catch(() => null);
+      if (status?.attached === false) {
+        throw new PreviewAutomationTargetUnavailableError({
+          requestId,
+          operation,
+          environmentId: threadRef.environmentId,
+          threadId: threadRef.threadId,
+          tabId,
+          bridgeAvailable: true,
+        });
+      }
+      if (status) return;
     }
     await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
   }
@@ -234,18 +249,33 @@ const currentStatus = async (
   };
   if (runtimeTabId && tabId && previewBridge && state.desktopByTabId[tabId]) {
     const status = await previewBridge.automation.status(runtimeTabId);
-    return { ...status, tabId, visible, ...viewportStatus };
+    return applyPreviewLoadFailureToAutomationStatus(
+      {
+        available: status.available,
+        visible,
+        tabId,
+        url: status.url,
+        title: status.title,
+        loading: status.loading,
+        ...viewportStatus,
+      },
+      snapshot?.navStatus,
+      { preferLiveStatus: true },
+    );
   }
   const navStatus = snapshot?.navStatus;
-  return {
-    available: Boolean(previewBridge?.automation),
-    visible,
-    tabId,
-    url: navStatus && navStatus._tag !== "Idle" ? navStatus.url : null,
-    title: navStatus && navStatus._tag !== "Idle" ? navStatus.title : null,
-    loading: navStatus?._tag === "Loading",
-    ...viewportStatus,
-  };
+  return applyPreviewLoadFailureToAutomationStatus(
+    {
+      available: Boolean(previewBridge?.automation),
+      visible,
+      tabId,
+      url: navStatus && navStatus._tag !== "Idle" ? navStatus.url : null,
+      title: navStatus && navStatus._tag !== "Idle" ? navStatus.title : null,
+      loading: navStatus?._tag === "Loading",
+      ...viewportStatus,
+    },
+    navStatus,
+  );
 };
 
 const raiseAtomCommandFailure = (result: Parameters<typeof squashAtomCommandFailure>[0]): never => {
