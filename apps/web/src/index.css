@@ -518,7 +518,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
   :root {
     /* Keep the original T3 Code artwork palettes as the defaults. Built-in
-       themes override them with their own pigments in the components layer. */
+       themes override them with their own pigments in the components layer;
+       custom themes get every pigment derived from their palette, set inline
+       by applyThemePalette. */
     --stage-art-top: oklch(0.782169 0.123386 240.226);
     --stage-art-mid: oklch(0.616111 0.195824 259.735);
     --stage-art-bottom: oklch(0.441553 0.232394 265.474);
@@ -731,7 +733,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     html[data-theme-id="grove"],
     html[data-theme-id="ocean"],
     html[data-theme-id="ember"],
-    html[data-theme-id="iris"]
+    html[data-theme-id="iris"],
+    html[data-theme-artwork="derived"]
   ) {
     --stage-art-celeste-highlight: var(--stage-art-highlight);
     --stage-art-celeste-secondary: var(--stage-art-secondary);

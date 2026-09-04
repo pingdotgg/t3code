@@ -74,49 +74,61 @@ export function StageBackdropButtonArt({ variant }: { variant: SidebarStageBackd
   return variant === "nightly" ? <NightlySkyArt compact /> : <DevBlueprintArt compact />;
 }
 
-const NIGHTLY_STARS: ReadonlyArray<{
-  cx: number;
-  cy: number;
-  r: number;
-  opacity: number;
-}> = [
-  { cx: 14, cy: 10, r: 0.6, opacity: 0.85 },
-  { cx: 38, cy: 22, r: 0.4, opacity: 0.55 },
-  { cx: 58, cy: 8, r: 0.5, opacity: 0.7 },
-  { cx: 84, cy: 16, r: 0.4, opacity: 0.5 },
-  { cx: 104, cy: 7, r: 0.6, opacity: 0.8 },
-  { cx: 126, cy: 20, r: 0.4, opacity: 0.55 },
-  { cx: 148, cy: 11, r: 0.5, opacity: 0.7 },
-  { cx: 170, cy: 24, r: 0.4, opacity: 0.5 },
-  { cx: 192, cy: 9, r: 0.6, opacity: 0.8 },
-  { cx: 214, cy: 18, r: 0.4, opacity: 0.55 },
-  { cx: 236, cy: 8, r: 0.5, opacity: 0.7 },
-  { cx: 258, cy: 20, r: 0.45, opacity: 0.6 },
-  { cx: 278, cy: 11, r: 0.55, opacity: 0.75 },
-  { cx: 26, cy: 34, r: 0.4, opacity: 0.45 },
-  { cx: 118, cy: 34, r: 0.4, opacity: 0.45 },
-  { cx: 202, cy: 32, r: 0.4, opacity: 0.5 },
-  { cx: 268, cy: 34, r: 0.4, opacity: 0.45 },
-];
+/** The sidebar background the header art dissolves into, set by the sidebar-stage-backdrop utility. */
+const STAGE_FADE = "var(--stage-fade)";
 
-const NIGHTLY_SPARKLES: ReadonlyArray<{ x: number; y: number }> = [
-  { x: 70, y: 28 },
-  { x: 160, y: 36 },
-  { x: 246, y: 26 },
-];
+/** A dissolve into the sidebar across the lower part of the art, stepping in OKLCH so light sidebars pass through tints of the art's own hue instead of gray. */
+function StageDissolve({ id, anchor }: { id: string; anchor: string }) {
+  const mix = (pct: number) => `color-mix(in oklch, ${STAGE_FADE} ${pct}%, ${anchor})`;
+  return (
+    <linearGradient id={id} x1="0" y1="20" x2="0" y2="96" gradientUnits="userSpaceOnUse">
+      <stop style={{ stopColor: mix(15) }} stopOpacity="0" />
+      <stop offset="0.25" style={{ stopColor: mix(30) }} stopOpacity="0.35" />
+      <stop offset="0.5" style={{ stopColor: mix(55) }} stopOpacity="0.7" />
+      <stop offset="0.75" style={{ stopColor: mix(80) }} stopOpacity="0.92" />
+      <stop offset="1" style={{ stopColor: STAGE_FADE }} />
+    </linearGradient>
+  );
+}
+
+type Star = { cx: number; cy: number; r: number; opacity: number };
+
+/**
+ * Deterministic star field for one 640-unit tile, kept out of the wordmark corner and
+ * the lower half where the sky dissolves. Three size classes; the largest get a glint.
+ */
+function createStarField(seed: number, count: number): ReadonlyArray<Star> {
+  const stars: Star[] = [];
+  let n = seed;
+  const random = () => {
+    n = (n * 1103515245 + 12345) % 2147483648;
+    return n / 2147483648;
+  };
+  while (stars.length < count) {
+    const cx = Math.round(random() * 640);
+    const cy = Math.round(random() * 70 + 2);
+    if ((cx < 96 && cy < 36) || cy > 50) continue;
+    const k = random();
+    const r = k > 0.94 ? 0.95 : k > 0.72 ? 0.62 : 0.38;
+    const opacity = k > 0.94 ? 0.95 : k > 0.72 ? 0.75 : 0.35 + random() * 0.3;
+    stars.push({ cx, cy, r, opacity: Number(opacity.toFixed(2)) });
+  }
+  return stars;
+}
+
+const NIGHTLY_STARS = createStarField(79, 28);
 
 function NightlySkyArt({ compact = false }: { compact?: boolean }) {
   const idPrefix = useId().replaceAll(":", "");
   const skyId = `${idPrefix}-stage-night-sky`;
-  const glowId = `${idPrefix}-stage-night-glow`;
-  const cloudId = `${idPrefix}-stage-night-cloud`;
-  const softId = `${idPrefix}-stage-night-soft`;
+  const hazeId = `${idPrefix}-stage-night-haze`;
+  const hazePatternId = `${idPrefix}-stage-night-haze-pattern`;
   const starsId = `${idPrefix}-stage-night-stars`;
-  const glowsId = `${idPrefix}-stage-night-glows`;
+  const fadeId = `${idPrefix}-stage-night-fade`;
 
   return (
     <svg
-      className="stage-art stage-nightly h-full w-full"
+      className={`stage-art stage-nightly h-full w-full${compact ? " scale-110 blur-[1.6px]" : ""}`}
       fill="none"
       preserveAspectRatio="xMinYMin slice"
       viewBox={compact ? "96 0 8192 96" : STAGE_BACKDROP_VIEW_BOX}
@@ -136,35 +148,27 @@ function NightlySkyArt({ compact = false }: { compact?: boolean }) {
           <stop offset="0.5" style={{ stopColor: "var(--stage-night-mid)" }} />
           <stop offset="1" style={{ stopColor: "var(--stage-night-top)" }} />
         </linearGradient>
-        <radialGradient
-          id={glowId}
-          cx="0"
-          cy="0"
-          r="1"
-          gradientTransform="translate(216 18) rotate(137) scale(120 84)"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop style={{ stopColor: "var(--stage-night-glow-highlight)" }} stopOpacity="0.4" />
-          <stop
-            offset="0.5"
-            style={{ stopColor: "var(--stage-night-glow-secondary)" }}
-            stopOpacity="0.16"
-          />
-          <stop offset="1" style={{ stopColor: "var(--stage-night-bottom)" }} stopOpacity="0" />
-        </radialGradient>
-        <linearGradient id={cloudId} x1="0" y1="60" x2="288" y2="96" gradientUnits="userSpaceOnUse">
-          <stop style={{ stopColor: "var(--stage-night-highlight)" }} stopOpacity="0.5" />
-          <stop
-            offset="0.52"
-            style={{ stopColor: "var(--stage-night-secondary)" }}
-            stopOpacity="0.62"
-          />
-          <stop offset="1" style={{ stopColor: "var(--stage-night-tertiary)" }} stopOpacity="0.5" />
-        </linearGradient>
-        <filter id={softId} x="-24" y="-24" width="336" height="144" filterUnits="userSpaceOnUse">
-          <feGaussianBlur stdDeviation="4" />
+        {/* Soft diagonal haze instead of a radial glow, blurred once and tiled. */}
+        <filter id={hazeId} x="-10%" y="-60%" width="120%" height="220%">
+          <feGaussianBlur stdDeviation="9" />
         </filter>
-        <pattern id={starsId} width="288" height="96" patternUnits="userSpaceOnUse">
+        <pattern id={hazePatternId} width="640" height="96" patternUnits="userSpaceOnUse">
+          <g filter={`url(#${hazeId})`} fill="none" strokeLinecap="round">
+            <path
+              d="M-40 72C80 30 170 92 300 40S520 18 680 58"
+              style={{ stroke: "var(--stage-night-glow-highlight)" }}
+              strokeOpacity="0.26"
+              strokeWidth="24"
+            />
+            <path
+              d="M-40 18C100 62 220 -4 360 52S560 92 680 28"
+              style={{ stroke: "var(--stage-night-glow-secondary)" }}
+              strokeOpacity="0.22"
+              strokeWidth="34"
+            />
+          </g>
+        </pattern>
+        <pattern id={starsId} width="640" height="96" patternUnits="userSpaceOnUse">
           <g style={{ fill: "var(--stage-night-line)" }}>
             {NIGHTLY_STARS.map((star) => (
               <circle
@@ -179,39 +183,25 @@ function NightlySkyArt({ compact = false }: { compact?: boolean }) {
           <g
             style={{ stroke: "var(--stage-night-sparkle)" }}
             strokeLinecap="round"
-            strokeOpacity="0.7"
+            strokeOpacity="0.85"
             strokeWidth="0.6"
           >
-            {NIGHTLY_SPARKLES.map((sparkle) => (
-              <g key={`${sparkle.x}-${sparkle.y}`}>
-                <path d={`M${sparkle.x - 1.5} ${sparkle.y}H${sparkle.x + 1.5}`} />
-                <path d={`M${sparkle.x} ${sparkle.y - 1.5}V${sparkle.y + 1.5}`} />
+            {NIGHTLY_STARS.filter((star) => star.r > 0.9).map((star) => (
+              <g key={`${star.cx}-${star.cy}`}>
+                <path d={`M${star.cx - 2.4} ${star.cy}H${star.cx + 2.4}`} />
+                <path d={`M${star.cx} ${star.cy - 2.4}V${star.cy + 2.4}`} />
               </g>
             ))}
           </g>
         </pattern>
-        <pattern id={glowsId} width="640" height="96" patternUnits="userSpaceOnUse">
-          <rect width="640" height="96" fill={`url(#${glowId})`} />
-        </pattern>
+        <StageDissolve id={fadeId} anchor="var(--stage-night-mid)" />
       </defs>
 
       <rect width="100%" height="96" fill={`url(#${skyId})`} />
-      <rect width="100%" height="96" fill={`url(#${glowsId})`} />
+      <rect width="100%" height="96" fill={`url(#${hazePatternId})`} />
       <rect width="100%" height="96" fill={`url(#${starsId})`} />
-
-      <g filter={`url(#${softId})`}>
-        <path
-          d="M-12 88C-12 74 0 63 14 63C18 50 30 41 44 41C58 41 70 49 74 62C79 57 86 54 94 54C110 54 123 66 124 82C132 83 138 88 141 96H-12V88Z"
-          fill={`url(#${cloudId})`}
-        />
-      </g>
-      <g filter={`url(#${softId})`}>
-        <path
-          d="M150 96C151 84 161 75 173 75C176 64 186 57 198 57C210 57 220 64 223 75C231 75 238 80 241 87C250 87 257 91 260 96H150Z"
-          fill={`url(#${cloudId})`}
-          fillOpacity="0.8"
-        />
-      </g>
+      {/* The send-button crop sits on the composer, not the sidebar, so it keeps the raw art. */}
+      {compact ? null : <rect width="100%" height="96" fill={`url(#${fadeId})`} />}
     </svg>
   );
 }
@@ -227,10 +217,11 @@ function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
   const rulerId = `${idPrefix}-stage-bp-ruler`;
   const glowsId = `${idPrefix}-stage-bp-glows`;
   const annotationsId = `${idPrefix}-stage-bp-annotations`;
+  const fadeId = `${idPrefix}-stage-bp-fade`;
 
   return (
     <svg
-      className="stage-art stage-blueprint h-full w-full"
+      className={`stage-art stage-blueprint h-full w-full${compact ? " scale-110 blur-[1.6px]" : ""}`}
       fill="none"
       preserveAspectRatio="xMinYMin slice"
       viewBox={compact ? "64 0 8192 96" : STAGE_BACKDROP_VIEW_BOX}
@@ -384,6 +375,7 @@ function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
             <path d="M648 26V38M642 32H654" strokeOpacity="0.6" strokeWidth="0.4" />
           </g>
         </pattern>
+        <StageDissolve id={fadeId} anchor="var(--stage-art-mid)" />
       </defs>
 
       <rect width="100%" height="96" fill={`url(#${paperId})`} />
@@ -392,6 +384,8 @@ function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
       <rect width="100%" height="96" fill={`url(#${majorGridId})`} />
       <rect width="100%" height="6" fill={`url(#${rulerId})`} />
       <rect width="100%" height="96" fill={`url(#${annotationsId})`} />
+      {/* The send-button crop sits on the composer, not the sidebar, so it keeps the raw art. */}
+      {compact ? null : <rect width="100%" height="96" fill={`url(#${fadeId})`} />}
     </svg>
   );
 }

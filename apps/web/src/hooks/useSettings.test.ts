@@ -168,35 +168,10 @@ describe("resolveEnvironmentIdentificationMode", () => {
     );
   });
 
-  it("uses a pill instead of artwork with a palette theme", () => {
-    expect(
-      resolveEnvironmentIdentificationMode({
-        mode: "artwork",
-        settingsHydrated: true,
-        paletteThemeActive: true,
-      }),
-    ).toBe("pill");
-  });
-
-  it("respects none with a palette theme", () => {
-    expect(
-      resolveEnvironmentIdentificationMode({
-        mode: "none",
-        settingsHydrated: true,
-        paletteThemeActive: true,
-      }),
-    ).toBe("none");
-  });
-
-  it("keeps artwork when the palette theme opts into it", () => {
-    expect(
-      resolveEnvironmentIdentificationMode({
-        mode: "artwork",
-        settingsHydrated: true,
-        paletteThemeActive: true,
-        paletteThemeAllowsArtwork: true,
-      }),
-    ).toBe("artwork");
+  it("keeps the chosen mode once settings hydrate", () => {
+    for (const mode of ["artwork", "pill", "none"] as const) {
+      expect(resolveEnvironmentIdentificationMode({ mode, settingsHydrated: true })).toBe(mode);
+    }
   });
 });
 

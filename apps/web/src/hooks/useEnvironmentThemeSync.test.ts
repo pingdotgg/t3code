@@ -155,7 +155,7 @@ describe("published theme refresh", () => {
       palette.getThemeDefinition(NIGHTFALL_THEME.id)?.colors.canvas,
     );
     expect(root.classList.contains("dark")).toBe(true);
-    expect(palette.getThemePreviewSidebarArtwork()).toBeNull();
+    expect(root.dataset.themeArtwork).toBe("derived");
   });
 
   it("keeps a draft visible when default adoption changes the theme and appearance", async () => {
@@ -176,6 +176,6 @@ describe("published theme refresh", () => {
     current.refreshTheme();
     expect(root.dataset.themeId).toBe("ocean");
     expect(root.classList.contains("dark")).toBe(false);
-    expect(palette.getThemePreviewSidebarArtwork()).toBeNull();
+    expect(root.dataset.themeArtwork).toBeUndefined();
   });
 });

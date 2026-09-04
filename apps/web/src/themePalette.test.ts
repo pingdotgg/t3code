@@ -7,7 +7,6 @@ import {
   getThemeColorsForMode,
   getThemeDefinition,
   getThemeModes,
-  getThemePreviewSidebarArtwork,
   getThemePreferenceMode,
   isKnownThemePreference,
   getCustomThemes,
@@ -24,9 +23,7 @@ import {
   resolveDesktopTheme,
   resolveThemeAppearance,
   serializeThemeFile,
-  subscribeToThemePreview,
   subscribeToCustomThemes,
-  themeAllowsSidebarArtwork,
   T3_CHAT_THEME,
   EMBER_THEME,
   GROVE_THEME,
@@ -36,6 +33,7 @@ import {
   CUSTOM_THEMES_STORAGE_KEY,
   createManagedThemeColors,
   createVividThemeColors,
+  deriveStageArtworkColors,
   getDefaultThemeColors,
   themeColorToHex,
   toCanonicalThemeColor,
@@ -47,6 +45,12 @@ function asHex(value: string): string {
   const hex = themeColorToHex(value);
   if (!hex) throw new Error(`Expected a theme color, received ${value}`);
   return hex.slice(0, 7);
+}
+
+function parseOklch(value: string): { L: number; C: number; h: number } {
+  const match = value.match(/^oklch\(([\d.]+) ([\d.]+) ([\d.]+)\)$/);
+  if (!match) throw new Error(`Not a bare oklch color: ${value}`);
+  return { L: Number(match[1]), C: Number(match[2]), h: Number(match[3]) };
 }
 
 function canonical(value: string): string {
@@ -346,40 +350,85 @@ describe("theme files", () => {
     expect(parseThemeFile(JSON.parse(serialized)).collection).toEqual(theme.collection);
   });
 
-  it("keeps sidebar artwork disabled for custom theme files", () => {
-    const theme = parseThemeFile({
-      version: THEME_FILE_VERSION,
-      name: "Art sidebar",
-      appearance: "light",
-      colors: { accent: "#5b6cff" },
-      sidebarArtwork: true,
-    });
-
-    expect(theme.sidebarArtwork).toBeUndefined();
-    expect(JSON.parse(serializeThemeFile(theme))).not.toHaveProperty("sidebarArtwork");
-  });
-
-  it("suppresses sidebar artwork during a live custom-theme preview", () => {
-    const listener = vi.fn();
-    const unsubscribe = subscribeToThemePreview(listener);
-    vi.stubGlobal("document", {
-      documentElement: {
-        classList: { toggle: vi.fn() },
-        dataset: {},
-        style: { removeProperty: vi.fn(), setProperty: vi.fn() },
+  it("derives environment artwork for user themes and clears it for built-ins", () => {
+    const styles = new Map<string, string>();
+    const root = {
+      classList: { toggle: vi.fn() },
+      dataset: {} as Record<string, string | undefined>,
+      style: {
+        removeProperty: (name: string) => styles.delete(name),
+        setProperty: (name: string, value: string) => styles.set(name, value),
+      },
+    };
+    vi.stubGlobal("document", { documentElement: root });
+    const stored = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem: (key: string, value: string) => stored.set(key, value),
       },
     });
+    invalidateCustomThemes();
+    const custom = installCustomTheme(
+      parseThemeFile({
+        version: THEME_FILE_VERSION,
+        id: "meadow",
+        name: "Meadow",
+        appearance: "light",
+        colors: { canvas: "#f6fbf4", accent: "oklch(0.55 0.14 145)" },
+      }),
+    );
 
-    applyThemeColorPreview(T3_CHAT_THEME.colors, "light");
-    expect(getThemePreviewSidebarArtwork()).toBe(false);
-    expect(listener).toHaveBeenCalledTimes(1);
+    applyThemePalette(custom.id);
+    expect(root.dataset.themeArtwork).toBe("derived");
+    const artwork = deriveStageArtworkColors(custom.colors, "light");
+    expect(styles.get("--stage-art-mid")).toBe(artwork["--stage-art-mid"]);
+    expect(artwork["--stage-art-mid"]).toMatch(/^oklch\(0\.59 /);
+    expect(parseOklch(artwork["--stage-art-mid"]).h).toBeCloseTo(145, 0);
+    // The tertiary glow follows the generated companion action color, not the accent.
+    expect(parseOklch(artwork["--stage-art-tertiary"]).h).not.toBeCloseTo(145, 0);
+
+    applyThemePalette("ocean");
+    expect(root.dataset.themeArtwork).toBeUndefined();
+    expect(styles.has("--stage-art-mid")).toBe(false);
+
+    applyThemeColorPreview(T3_CHAT_THEME.colors, "dark");
+    expect(root.dataset.themeArtwork).toBe("derived");
+    expect(styles.get("--stage-art-top")).toBe(
+      deriveStageArtworkColors(T3_CHAT_THEME.colors, "dark")["--stage-art-top"],
+    );
 
     applyThemePalette("system");
-    expect(getThemePreviewSidebarArtwork()).toBeNull();
-    expect(listener).toHaveBeenCalledTimes(2);
+    expect(root.dataset.themeArtwork).toBeUndefined();
+    expect(styles.has("--stage-art-top")).toBe(false);
 
-    unsubscribe();
+    removeCustomTheme(custom.id);
+    invalidateCustomThemes();
     vi.unstubAllGlobals();
+  });
+
+  it("keeps the Nightly sky in a warm theme's own hue", () => {
+    const artwork = deriveStageArtworkColors(
+      { ...getDefaultThemeColors("light"), accent: "oklch(0.58 0.15 40)" },
+      "light",
+    );
+    for (const variable of [
+      "--stage-night-top",
+      "--stage-night-mid",
+      "--stage-night-bottom",
+    ] as const) {
+      expect(parseOklch(artwork[variable]).h).toBeCloseTo(40, 0);
+    }
+  });
+
+  it("keeps a gray accent's artwork grayscale", () => {
+    const artwork = deriveStageArtworkColors(
+      { ...getDefaultThemeColors("dark"), accent: "#9a9a9a", messageAction: "#777777" },
+      "dark",
+    );
+    for (const value of Object.values(artwork)) {
+      expect(parseOklch(value).C).toBeLessThan(0.005);
+    }
   });
 
   it("keeps optional light and dark palettes under one theme id", () => {
@@ -458,8 +507,6 @@ describe("theme files", () => {
     for (const theme of [T3_CHAT_THEME, GROVE_THEME, OCEAN_THEME, EMBER_THEME, IRIS_THEME]) {
       expect(getThemeDefinition(theme.id)).toBe(theme);
       expect(getThemeModes(theme)).toEqual(["light", "dark"]);
-      expect(theme.sidebarArtwork).toBe(true);
-      expect(themeAllowsSidebarArtwork(theme.id)).toBe(true);
       expect(theme.colors.accent).toMatch(/^oklch\(/);
       expect(theme.variants?.dark?.accent).toMatch(/^oklch\(/);
 
@@ -494,7 +541,6 @@ describe("theme files", () => {
         );
       }
     }
-    expect(themeAllowsSidebarArtwork("my-custom-theme")).toBe(false);
   });
 
   it("rejects a variant that repeats the base appearance", () => {
@@ -757,7 +803,6 @@ describe("theme files", () => {
         name: "Aurora",
         appearance: "light",
         colors: { canvas: "#f8fbff", accent: "#5b6cff" },
-        sidebarArtwork: true,
       }),
     );
     const updatedTheme = updateCustomTheme({
@@ -771,7 +816,6 @@ describe("theme files", () => {
       label: "Aurora Night",
       colors: { accent: canonical("hsl(263 70% 58%)") },
     });
-    expect(updatedTheme).not.toHaveProperty("sidebarArtwork");
     const storedThemes = JSON.parse(stored.get(CUSTOM_THEMES_STORAGE_KEY) ?? "[]");
     expect(storedThemes[0]).toEqual(untouchedTheme);
     expect(storedThemes[1]).toMatchObject({
@@ -779,7 +823,6 @@ describe("theme files", () => {
       label: "Aurora Night",
       colors: { accent: canonical("hsl(263 70% 58%)") },
     });
-    expect(storedThemes[1]).not.toHaveProperty("sidebarArtwork");
     invalidateCustomThemes();
     expect(getCustomThemes().find((theme) => theme.id === "aurora")).toMatchObject({
       id: "aurora",
