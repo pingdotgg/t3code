@@ -590,7 +590,10 @@ export function UsageLimitsSection() {
             Quota from a CLIProxyAPI hub shows beside the providers signed in on this machine.
           </p>
         </div>
-        {targetEnvironment && canOperateTarget ? (
+        {/* The picker stays whenever several environments are connected, so
+            a read-only default target does not hide the way to an operable
+            one; only the button follows the picked target's access. */}
+        {targetEnvironment ? (
           <div className="flex items-center gap-2">
             {connected.length > 1 ? (
               <Select
@@ -616,10 +619,33 @@ export function UsageLimitsSection() {
                 </SelectPopup>
               </Select>
             ) : null}
-            <Button size="xs" variant="outline" onClick={() => setAdding(true)}>
-              <PlusIcon className="size-3" aria-hidden />
-              Add hub
-            </Button>
+            {canOperateTarget ? (
+              <Button size="xs" variant="outline" onClick={() => setAdding(true)}>
+                <PlusIcon className="size-3" aria-hidden />
+                Add hub
+              </Button>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      tabIndex={0}
+                      className="rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                  }
+                >
+                  <span className="inline-flex" inert>
+                    <Button size="xs" variant="outline" disabled>
+                      <PlusIcon className="size-3" aria-hidden />
+                      Add hub
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipPopup side="top" className="max-w-72">
+                  Your session cannot change settings on {targetEnvironment.label}.
+                </TooltipPopup>
+              </Tooltip>
+            )}
           </div>
         ) : null}
       </div>
