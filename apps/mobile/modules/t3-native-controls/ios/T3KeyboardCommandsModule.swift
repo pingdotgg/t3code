@@ -23,6 +23,13 @@ public final class T3KeyboardCommandsView: ExpoView {
   public override var keyCommands: [UIKeyCommand]? {
     [
       enabledCommand("newTask", input: "n", modifiers: .command, action: #selector(newTask), title: "New Task"),
+      enabledCommand(
+        "account",
+        input: "a",
+        modifiers: [.command, .shift],
+        action: #selector(openAccount),
+        title: "Switch Account"
+      ),
       enabledCommand("focusSearch", input: "f", modifiers: .command, action: #selector(focusSearch), title: "Find"),
       enabledCommand("focusSearch", input: "k", modifiers: .command, action: #selector(focusSearch), title: "Focus Search"),
       enabledCommand("back", input: "[", modifiers: .command, action: #selector(goBack), title: "Back"),
@@ -108,6 +115,7 @@ public final class T3KeyboardCommandsView: ExpoView {
   }
 
   @objc private func newTask() { emit("newTask") }
+  @objc private func openAccount() { emit("account") }
   @objc private func focusSearch() { emit("focusSearch") }
   @objc private func goBack() { emit("back") }
   @objc private func openFiles() { emit("files") }

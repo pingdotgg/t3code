@@ -29,6 +29,18 @@ class T3KeyboardCommandsView(
   var enabledCommands = emptySet<String>()
 
   override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    val opensAccount =
+      event.action == KeyEvent.ACTION_DOWN &&
+        event.repeatCount == 0 &&
+        event.keyCode == KeyEvent.KEYCODE_A &&
+        event.isCtrlPressed &&
+        event.isShiftPressed &&
+        !event.isAltPressed &&
+        enabledCommands.contains("account")
+    if (opensAccount) {
+      onCommand(mapOf("command" to "account"))
+      return true
+    }
     val copiesThreadReference =
       event.action == KeyEvent.ACTION_DOWN &&
         event.repeatCount == 0 &&

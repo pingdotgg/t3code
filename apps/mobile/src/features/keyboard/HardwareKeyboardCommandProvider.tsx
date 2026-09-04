@@ -16,6 +16,7 @@ import { useProject, useThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
 import { vcsEnvironment } from "../../state/vcs";
+import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { GitActionProgressOverlay } from "../threads/GitActionProgressOverlay";
 import {
   dispatchHardwareKeyboardCommand,
@@ -114,6 +115,7 @@ export function HardwareKeyboardCommandProvider({
   const enabledCommands = useMemo(() => {
     const commands = new Set<HardwareKeyboardCommand>(getRegisteredHardwareKeyboardCommands());
     commands.add("newTask");
+    if (hasCloudPublicConfig()) commands.add("account");
     if (pathname !== "/" || navigation.canGoBack()) commands.add("back");
     if (activeThreadRef !== null) {
       commands.add("files");
@@ -154,6 +156,10 @@ export function HardwareKeyboardCommandProvider({
 
       if (command === "newTask") {
         navigation.navigate("NewTaskSheet", { screen: "NewTask" });
+        return;
+      }
+      if (command === "account") {
+        navigation.navigate("SettingsSheet", { screen: "SettingsAuth" });
         return;
       }
       if (command === "back") {

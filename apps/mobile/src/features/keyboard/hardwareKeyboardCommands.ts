@@ -3,6 +3,7 @@ import { useEffect } from "react";
 
 export type HardwareKeyboardCommand =
   | "newTask"
+  | "account"
   | "focusSearch"
   | "back"
   | "files"
