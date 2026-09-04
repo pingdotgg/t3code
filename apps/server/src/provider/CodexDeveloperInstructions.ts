@@ -197,7 +197,5 @@ export function buildCodexDeveloperInstructions(
       : codexDefaultModeDeveloperInstructions(browserToolsAvailable);
   return `${base}
 
-<response_format>${T3_CODE_INLINE_IMAGE_INSTRUCTIONS}</response_format>
-
-<runtime_info>In case you're asked: you are running in T3 Code through the Codex harness, as ${toSingleLine(runtime.model)} with ${toSingleLine(runtime.reasoningEffort)} reasoning effort. No need to mention this otherwise.</runtime_info>`;
+<runtime_info>In case you're asked: you are running in T3 Code through the Codex harness, as ${toSingleLine(runtime.model)} with ${toSingleLine(runtime.reasoningEffort)} reasoning effort. No need to mention this otherwise. ${T3_CODE_INLINE_IMAGE_INSTRUCTIONS}</runtime_info>`;
 }
