@@ -421,6 +421,109 @@ it.effect("rebinds an imported thread without rereading its unchanged transcript
   }),
 );
 
+it.effect("repairs a stale projection left by a partial ownership handoff", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project-1");
+    const oldInstanceId = ProviderInstanceId.make("codex-old");
+    const commands: OrchestrationCommand[] = [];
+    const bindings: Array<Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]> = [];
+    let failProjectionUpdate = true;
+    const discoveryInstance = {
+      ...instance,
+      enabled: true,
+      snapshot: {
+        getSnapshot: Effect.succeed({ models: [{ slug: "gpt-5.6-sol", isDefault: true }] }),
+      },
+      adapter: {
+        discoverPersistedThreads: () => Effect.succeed([]),
+      },
+    } as unknown as ProviderInstance;
+    const binding = {
+      threadId: importedThreadId,
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: instance.instanceId,
+      resumeCursor: { threadId: PROVIDER_THREAD_ID },
+      runtimePayload: {
+        imported: true,
+        continuationKey: CONTINUATION_KEY,
+        cwd: persistedThread.cwd,
+        providerDiscoveryCursor: persistedThread.discoveryCursor,
+        modelSelection: { instanceId: oldInstanceId, model: "gpt-5.6-sol" },
+      },
+      lastSeenAt: persistedThread.updatedAt,
+    };
+    const services = {
+      registry: {
+        listInstances: Effect.succeed([discoveryInstance]),
+      } as unknown as ProviderInstanceRegistry["Service"],
+      directory: {
+        listBindings: () => Effect.succeed([binding]),
+        upsert: (nextBinding: Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]) =>
+          Effect.sync(() => {
+            bindings.push(nextBinding);
+          }),
+      } as unknown as ProviderSessionDirectoryShape["Service"],
+      snapshots: {
+        getShellSnapshot: () =>
+          Effect.succeed({
+            projects: [{ id: projectId, workspaceRoot: persistedThread.cwd }],
+            threads: [{ id: importedThreadId, projectId }],
+          }),
+        getThreadShellById: () =>
+          Effect.succeed(
+            Option.some({
+              id: importedThreadId,
+              projectId,
+              modelSelection: { instanceId: oldInstanceId, model: "gpt-5.6-sol" },
+            }),
+          ),
+      } as unknown as ProjectionSnapshotQueryShape["Service"],
+      engine: {
+        dispatch: (command: OrchestrationCommand) =>
+          failProjectionUpdate
+            ? Effect.die("projection update failed")
+            : Effect.sync(() => {
+                commands.push(command);
+                return { sequence: commands.length };
+              }),
+      } as unknown as OrchestrationEngineServiceShape["Service"],
+    };
+    const reconciliation = reconcilePersistedProviderThreads().pipe(
+      Effect.provideService(ProviderInstanceRegistry, services.registry),
+      Effect.provideService(ProviderSessionDirectory, services.directory),
+      Effect.provideService(ProjectionSnapshotQuery, services.snapshots),
+      Effect.provideService(OrchestrationEngineService, services.engine),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-provider-thread-reconciler-recovery-test-",
+          }).pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    );
+
+    yield* reconciliation;
+    failProjectionUpdate = false;
+    yield* reconciliation;
+
+    expect(commands).toEqual([
+      expect.objectContaining({
+        type: "thread.meta.update",
+        threadId: importedThreadId,
+        modelSelection: { instanceId: instance.instanceId, model: "gpt-5.6-sol" },
+      }),
+    ]);
+    expect(bindings).toHaveLength(1);
+    expect(bindings[0]).toMatchObject({
+      providerInstanceId: instance.instanceId,
+      runtimePayload: {
+        modelSelection: { instanceId: instance.instanceId, model: "gpt-5.6-sol" },
+      },
+    });
+  }),
+);
+
 it.effect("imports an unmatched Codex thread into the unassigned project", () =>
   Effect.gen(function* () {
     const commands: OrchestrationCommand[] = [];

@@ -40,6 +40,9 @@ const isResumeCursor = Schema.is(ResumeCursor);
 const ImportedRuntimePayload = Schema.Struct({
   continuationKey: Schema.optional(Schema.String),
   cwd: Schema.optional(Schema.String),
+  modelSelection: Schema.optional(
+    Schema.Struct({ instanceId: Schema.String, model: Schema.String }),
+  ),
   providerUpdatedAt: Schema.optional(Schema.String),
   providerDiscoveryCursor: Schema.optional(Schema.String),
 });
@@ -316,7 +319,6 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
               (binding) =>
                 binding.provider === CODEX &&
                 binding.providerInstanceId !== undefined &&
-                binding.providerInstanceId !== instance.instanceId &&
                 isResumeCursor(binding.resumeCursor) &&
                 binding.threadId ===
                   importedThreadIdFor(continuationKey, binding.resumeCursor.threadId) &&
@@ -330,32 +332,45 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
               Effect.gen(function* () {
                 const resumeCursor = binding.resumeCursor;
                 if (!isResumeCursor(resumeCursor)) return;
+                const existingThread = yield* snapshots.getThreadShellById(binding.threadId);
+                const projectedOwnershipIsStale =
+                  Option.isSome(existingThread) &&
+                  existingThread.value.modelSelection.instanceId !== instance.instanceId;
+                const runtimePayloadIsStale =
+                  isImportedRuntimePayload(binding.runtimePayload) &&
+                  binding.runtimePayload.modelSelection?.instanceId !== instance.instanceId;
+                const bindingOwnershipIsStale =
+                  binding.providerInstanceId !== instance.instanceId || runtimePayloadIsStale;
+                if (!projectedOwnershipIsStale && !bindingOwnershipIsStale) return;
+
+                if (projectedOwnershipIsStale) {
+                  yield* engine.dispatch({
+                    type: "thread.meta.update",
+                    commandId: importCommandId(
+                      continuationIdentityDigest(continuationKey),
+                      resumeCursor.threadId,
+                      "owner",
+                      String(instance.instanceId),
+                      model,
+                    ),
+                    threadId: binding.threadId,
+                    modelSelection: { instanceId: instance.instanceId, model },
+                  });
+                }
+
                 const runtimePayload = isImportedRuntimePayload(binding.runtimePayload)
                   ? {
                       ...binding.runtimePayload,
                       modelSelection: { instanceId: instance.instanceId, model },
                     }
                   : binding.runtimePayload;
-                yield* directory.upsert({
-                  ...binding,
-                  providerInstanceId: instance.instanceId,
-                  runtimePayload,
-                });
-
-                const existingThread = yield* snapshots.getThreadShellById(binding.threadId);
-                if (Option.isNone(existingThread)) return;
-                yield* engine.dispatch({
-                  type: "thread.meta.update",
-                  commandId: importCommandId(
-                    continuationIdentityDigest(continuationKey),
-                    resumeCursor.threadId,
-                    "owner",
-                    String(instance.instanceId),
-                    model,
-                  ),
-                  threadId: binding.threadId,
-                  modelSelection: { instanceId: instance.instanceId, model },
-                });
+                if (bindingOwnershipIsStale) {
+                  yield* directory.upsert({
+                    ...binding,
+                    providerInstanceId: instance.instanceId,
+                    runtimePayload,
+                  });
+                }
               }),
             { concurrency: 1, discard: true },
           );
