@@ -23,7 +23,7 @@ import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/sh
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
-import { environmentSession } from "./session";
+import { environmentSession, readEnvironmentScope } from "./session";
 
 export interface EnvironmentUsageStatus {
   readonly environmentId: EnvironmentId;
@@ -50,8 +50,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
     for (const [environmentId, presentation] of presentations) {
       const sessionResult = get(environmentSession.sessionStateAtom(environmentId));
       const session = Option.getOrNull(AsyncResult.value(sessionResult));
-      const isCheckingAccess =
-        sessionResult.waiting || (session === null && sessionResult._tag !== "Failure");
+      const isCheckingAccess = session === null && sessionResult._tag !== "Failure";
       const canReadDiagnostics =
         sessionResult._tag === "Success" &&
         !isCheckingAccess &&
@@ -145,16 +144,7 @@ export function useUsage(
     const input = JSON.parse(windowKey) as UsageSummaryInput;
     for (const environment of selectedEnvironments) {
       const { environmentId } = environment;
-      const hasAccess = () => {
-        const result = appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId));
-        const session = Option.getOrNull(AsyncResult.value(result));
-        return (
-          result._tag === "Success" &&
-          !result.waiting &&
-          session?.authenticated === true &&
-          (session.scopes?.includes(AuthDiagnosticsReadScope) ?? false)
-        );
-      };
+      const hasAccess = () => readEnvironmentScope(environmentId, AuthDiagnosticsReadScope);
       if (!environment.canReadDiagnostics || !hasAccess()) continue;
       const query = serverEnvironment.usageSummary({ environmentId, input });
       void runAtomCommand(

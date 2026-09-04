@@ -4296,7 +4296,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   windowMs: 60_000,
                   bucketMs: 10_000,
                 }).pipe(Effect.asVoid),
-                client[WS_METHODS.subscribeResourceTelemetry]({}).pipe(Stream.runHead, Effect.asVoid),
+                client[WS_METHODS.subscribeResourceTelemetry]({}).pipe(
+                  Stream.runHead,
+                  Effect.asVoid,
+                ),
                 client[WS_METHODS.serverGetUsageSummary]({
                   sinceDay: UsageDay.make("2026-09-01"),
                   untilDay: UsageDay.make("2026-09-01"),
