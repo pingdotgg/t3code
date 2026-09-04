@@ -997,6 +997,27 @@ describe("CodexAdapterV2 fork mapping", () => {
         lastTurnId: "native-provider-turn-boundary",
         rollbackTurnCount: 0,
       });
+
+      const identitylessBoundary = yield* resolveCodexForkBoundary({
+        sourceProviderThread,
+        sourceProviderTurns: [
+          {
+            ...boundaryTurn,
+            nativeTurnRef: {
+              driver: CODEX_DRIVER_KIND,
+              nativeId: null,
+              strength: "none",
+            },
+          },
+          laterTurn,
+        ],
+        providerTurnId: boundaryTurn.id,
+        targetThreadId: ThreadId.make("thread-codex-fork"),
+      });
+
+      assert.deepEqual(identitylessBoundary, {
+        rollbackTurnCount: 1,
+      });
     }),
   );
 });

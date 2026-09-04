@@ -811,12 +811,12 @@ export const resolveCodexForkBoundary = Effect.fn("CodexAdapterV2.resolveForkBou
     input.sourceProviderTurns,
     input.sourceProviderThread,
   ).find((turn) => turn.id === input.providerTurnId);
-  const nativeTurnRef = boundaryTurn?.nativeTurnRef;
-  if (nativeTurnRef === null || nativeTurnRef === undefined) {
+  const nativeTurnId = boundaryTurn?.nativeTurnRef?.nativeId;
+  if (nativeTurnId === null || nativeTurnId === undefined) {
     return { rollbackTurnCount };
   }
 
-  return { lastTurnId: nativeTurnRef.nativeId, rollbackTurnCount: 0 };
+  return { lastTurnId: nativeTurnId, rollbackTurnCount: 0 };
 });
 
 export const resolveCodexRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveRollbackTurnCount")(
