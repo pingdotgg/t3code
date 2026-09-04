@@ -273,23 +273,26 @@ export const make = Effect.gen(function* () {
       ),
   );
 
+  // Closes and replaces the running supervisor, so callers must already hold
+  // the environment's lease.
+  const acquireSupervisorLocked = Effect.fn("EnvironmentRegistry.acquireSupervisorLocked")(
+    function* (environmentId: EnvironmentId) {
+      const entry = yield* getEntry(environmentId);
+      const existing = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
+      if (existing !== undefined) {
+        if (Equal.equals(existing.entry, entry)) {
+          return existing.supervisor;
+        }
+        yield* closeServiceScope(environmentId);
+      }
+      return yield* createServiceScope(entry);
+    },
+  );
+
   const acquireSupervisor = Effect.fn("EnvironmentRegistry.acquireSupervisor")(function* (
     environmentId: EnvironmentId,
   ) {
-    return yield* withLeaseLock(
-      environmentId,
-      Effect.gen(function* () {
-        const entry = yield* getEntry(environmentId);
-        const existing = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
-        if (existing !== undefined) {
-          if (Equal.equals(existing.entry, entry)) {
-            return existing.supervisor;
-          }
-          yield* closeServiceScope(environmentId);
-        }
-        return yield* createServiceScope(entry);
-      }),
-    );
+    return yield* withLeaseLock(environmentId, acquireSupervisorLocked(environmentId));
   });
 
   const run: EnvironmentRegistry["Service"]["run"] = Effect.fn("EnvironmentRegistry.run")(
@@ -631,15 +634,26 @@ export const make = Effect.gen(function* () {
       Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
       Effect.withSpan("EnvironmentRegistry.retryNow"),
     );
+  // Acquisition and the intent change share one lease: releasing in between
+  // would let a concurrent register or platform reconcile swap in a fresh,
+  // connected supervisor while we flip the intent on the discarded one.
   const connect = (environmentId: EnvironmentId) =>
-    acquireSupervisor(environmentId).pipe(
-      Effect.flatMap((supervisor) => supervisor.connect),
+    withLeaseLock(
+      environmentId,
+      acquireSupervisorLocked(environmentId).pipe(
+        Effect.flatMap((supervisor) => supervisor.connect),
+      ),
+    ).pipe(
       Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
       Effect.withSpan("EnvironmentRegistry.connect"),
     );
   const disconnect = (environmentId: EnvironmentId) =>
-    acquireSupervisor(environmentId).pipe(
-      Effect.flatMap((supervisor) => supervisor.disconnect),
+    withLeaseLock(
+      environmentId,
+      acquireSupervisorLocked(environmentId).pipe(
+        Effect.flatMap((supervisor) => supervisor.disconnect),
+      ),
+    ).pipe(
       Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
       Effect.withSpan("EnvironmentRegistry.disconnect"),
     );
