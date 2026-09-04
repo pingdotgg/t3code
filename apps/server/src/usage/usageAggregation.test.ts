@@ -56,7 +56,7 @@ function aggregate(
     ...hourlyBounds,
     rates,
   });
-  for (const item of records) aggregator.add(item);
+  for (const item of records) aggregator.add(item, 0);
   return aggregator.finish();
 }
 
@@ -83,6 +83,7 @@ describe("UsageAggregator", () => {
 
     expect(result.duplicatesDropped).toBe(2);
     expect(result.buckets).toHaveLength(1);
+    expect(result.buckets[0]?.sourceIndex).toBe(0);
     expect(result.buckets[0]?.records).toBe(1);
     expect(result.buckets[0]?.totals.outputTokens).toBe(50);
   });
@@ -187,9 +188,25 @@ describe("UsageAggregator", () => {
       rates,
     });
 
-    expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(true);
-    expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(false);
-    expect(aggregator.add(record({ timestampMs: Date.parse("2026-07-01T12:00:00Z") }))).toBe(false);
+    expect(aggregator.add(record({ dedupeKey: "msg_1:" }), 0)).toBe(true);
+    expect(aggregator.add(record({ dedupeKey: "msg_1:" }), 0)).toBe(false);
+    expect(aggregator.add(record({ timestampMs: Date.parse("2026-07-01T12:00:00Z") }), 0)).toBe(
+      false,
+    );
+  });
+
+  it("keeps otherwise identical buckets separate by transcript source", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+    });
+
+    aggregator.add(record({ sessionId: "session-a" }), 0);
+    aggregator.add(record({ sessionId: "session-b" }), 1);
+
+    expect(aggregator.finish().buckets.map((bucket) => bucket.sourceIndex)).toEqual([0, 1]);
   });
 
   it("separates providers and models into their own buckets", () => {

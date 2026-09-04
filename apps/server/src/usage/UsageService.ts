@@ -259,19 +259,34 @@ export const make = Effect.gen(function* () {
       dir: string;
       fileName?: string;
     }> = [];
-    const claudeDirs = new Set<string>();
+    const seen = new Set<string>();
+    // Two configured homes can name one physical transcript directory through
+    // symlinks (including Codex shadow overlays). Canonicalize the final
+    // transcript directory before de-duplicating it. If the directory does not
+    // exist, keep its configured path so the scan reports a missing source.
+    const pushDir = Effect.fn("UsageService.pushTranscriptDir")(function* (
+      provider: UsageProviderKind,
+      dir: string,
+      fileName?: string,
+    ) {
+      const canonical = yield* fileSystem
+        .realPath(dir)
+        .pipe(Effect.catchCause(() => Effect.succeed(dir)));
+      const key = `${provider}\u0000${canonical}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      dirs.push({ provider, dir: canonical, ...(fileName === undefined ? {} : { fileName }) });
+    });
+
     for (const home of homes.claudeHomePaths) {
       // Distinct homes can probe to the same transcript dir (e.g. `~/x` with
       // a nested `.claude` next to `~/x/.claude` itself), so dedupe post-probe.
-      const dir = yield* resolveClaudeTranscriptDir(home);
-      if (claudeDirs.has(dir)) continue;
-      claudeDirs.add(dir);
-      dirs.push({ provider: "claude", dir });
+      yield* pushDir("claude", yield* resolveClaudeTranscriptDir(home));
     }
     for (const dir of homes.codexSessionDirs) {
-      dirs.push({ provider: "codex", dir });
+      yield* pushDir("codex", dir);
     }
-    dirs.push({ provider: "grok", dir: homes.grokSessionsDir, fileName: "updates.jsonl" });
+    yield* pushDir("grok", homes.grokSessionsDir, "updates.jsonl");
     return dirs;
   });
 
@@ -486,6 +501,7 @@ export const make = Effect.gen(function* () {
     const walkedRoots: string[] = [];
 
     for (const { provider, dir, volumeId, files } of scannedDirs) {
+      const sourceIndex = sources.length;
       if (files === null) {
         sources.push({
           fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
@@ -516,7 +532,7 @@ export const make = Effect.gen(function* () {
         for (const record of file.records) {
           // Only sessions that contributed in-window count: the mtime slack
           // admits boundary files whose records fall outside the range.
-          if (aggregator.add(record) && record.sessionId.length > 0) {
+          if (aggregator.add(record, sourceIndex) && record.sessionId.length > 0) {
             sessionIds.add(record.sessionId);
           }
         }
