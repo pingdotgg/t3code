@@ -7733,6 +7733,10 @@ export default function ChatView(props: ChatViewProps) {
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
+            providers={providerStatuses}
+            activeProviderInstanceId={
+              activeThread.session?.providerInstanceId ?? activeProviderInstanceId
+            }
             onNewThreadInProject={handleNewThreadInActiveProject}
             {...(activeDraftLogicalProjectKey
               ? { onOpenProjectSettings: handleOpenDraftProjectSettings }

@@ -11,6 +11,23 @@ record are missing from the totals.
 
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.
+The thread title bar shows a compact limits pill beside the project actions as soon as a connected
+provider reports usage. The pill follows the provider running that thread, and its percentage is
+the provider's fullest reported window. Select the pill to inspect every window and switch between
+other connected providers that report limits. If the thread's provider does not report subscription
+limits, the pill falls back to the connected provider with the fullest window; providers without
+reported windows stay hidden. Snapshots refresh on connection, every minute while the app is open,
+and when the app regains focus.
+
+If you pool accounts behind a CLIProxyAPI hub, open **Settings → Providers → Usage providers**
+and choose **Add hub**. Select the device that should connect to the hub; its accounts appear on
+the Limits view. Remove hubs from the same settings section. Each limits row shows its provider
+and instance name, or a small _CLI Proxy_ label for
+hub accounts. When a connected provider reports limits for the same provider and email, its row
+replaces the hub copy, keeping details such as banked reset credits. The hub copy remains visible
+if the connected provider cannot report limits. Enter the hub's URL and management key; the key
+is stored on the server and never sent back to a client. Emails are blurred until clicked, as in
+provider settings.
 
 ## Track subscription limits
 
