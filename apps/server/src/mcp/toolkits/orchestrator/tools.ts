@@ -62,7 +62,7 @@ export const DelegateTaskTool = Tool.make("delegate_task", {
 
 export const TaskStatusTool = Tool.make("task_status", {
   description:
-    "Read the latest durable state and final summary for a T3-owned delegated task created by this parent thread. Reading a terminal result acknowledges its automatic parent delivery.",
+    "Read a T3-owned delegated task created by this parent thread. The primary status, childRunId, summary, and resultContextTransferId stay tied to the original delegated run. hasPendingChildRuns reports whether later work is still queued or executing, while latestTerminal* exposes the original run or the newest later terminal run that began execution. Reading a terminal result acknowledges its automatic parent delivery.",
   parameters: OrchestratorMcpTaskStatusInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
