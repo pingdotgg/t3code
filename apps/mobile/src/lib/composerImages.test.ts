@@ -4,44 +4,16 @@ import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
 const files = new Map<string, { base64: string; deleted: boolean }>();
 const paths = { documentUri: "file:///documents" };
 
-vi.mock("expo-file-system", () => {
-  class Directory {
+vi.mock("expo-file-system", () => ({
+  File: class {
     readonly uri: string;
 
-    constructor(root: string | { readonly uri: string }, name: string) {
-      this.uri = `${typeof root === "string" ? root : root.uri}/${name}`;
-    }
-
-    create(): void {}
-  }
-
-  class File {
-    readonly uri: string;
-
-    constructor(source: string | Directory, name?: string) {
-      this.uri = source instanceof Directory ? `${source.uri}/${name}` : source;
+    constructor(uri: string) {
+      this.uri = uri;
     }
 
     get exists(): boolean {
       return files.has(this.uri) && files.get(this.uri)?.deleted === false;
-    }
-
-    get size(): number | null {
-      const entry = files.get(this.uri);
-      if (!entry || entry.deleted) {
-        return null;
-      }
-      return Buffer.from(entry.base64, "base64").byteLength;
-    }
-
-    create(): void {}
-
-    async copy(destination: File): Promise<void> {
-      const entry = files.get(this.uri);
-      if (!entry || entry.deleted) {
-        throw new Error("missing file");
-      }
-      files.set(destination.uri, { base64: entry.base64, deleted: false });
     }
 
     async base64(): Promise<string> {
@@ -58,19 +30,13 @@ vi.mock("expo-file-system", () => {
         entry.deleted = true;
       }
     }
-  }
-
-  return {
-    Directory,
-    File,
-    FileMode: { ReadOnly: "r", WriteOnly: "w" },
-    Paths: {
-      get document() {
-        return { uri: paths.documentUri };
-      },
+  },
+  Paths: {
+    get document() {
+      return { uri: paths.documentUri };
     },
-  };
-});
+  },
+}));
 
 vi.mock("./uuid", () => ({
   uuidv4: () => "attachment-id",
@@ -116,17 +82,20 @@ describe("toUploadChatImageAttachments", () => {
   it("reads file-backed image bytes lazily from the owned copy", async () => {
     const fileUri = "file:///documents/t3-composer-attachments/attachment-id-photo.png";
     files.set(fileUri, { base64: "aGVsbG8=", deleted: false });
-    const attachment = {
-      id: "client-draft-id",
-      type: "image" as const,
-      name: "photo.png",
-      mimeType: "image/png",
-      sizeBytes: 5,
-      fileUri,
-      previewUri: fileUri,
-    };
 
-    await expect(toUploadChatImageAttachments([attachment])).resolves.toEqual([
+    await expect(
+      toUploadChatImageAttachments([
+        {
+          id: "client-draft-id",
+          type: "image",
+          name: "photo.png",
+          mimeType: "image/png",
+          sizeBytes: 5,
+          fileUri,
+          previewUri: fileUri,
+        },
+      ]),
+    ).resolves.toEqual([
       {
         type: "image",
         name: "photo.png",
@@ -186,7 +155,7 @@ describe("native pasted image cleanup", () => {
     expect(isOwnedPastedImageUri("https://example.com/t3-composer-paste/id.png")).toBe(false);
   });
 
-  it("copies owned files into durable storage without inlining bytes, deleting the source", async () => {
+  it("converts owned files to data-backed previews and deletes the source", async () => {
     const uri =
       "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/id.png";
     files.set(uri, { base64: "aGVsbG8=", deleted: false });
@@ -196,20 +165,13 @@ describe("native pasted image cleanup", () => {
       existingCount: 0,
     });
 
-    const fileUri = "file:///documents/t3-composer-attachments/attachment-id-pasted-image.png";
     expect(attachments).toEqual([
-      {
-        id: "attachment-id",
-        type: "image",
-        name: "pasted-image.png",
-        mimeType: "image/png",
-        sizeBytes: 5,
-        fileUri,
-        previewUri: fileUri,
-      },
+      expect.objectContaining({
+        dataUrl: "data:image/png;base64,aGVsbG8=",
+        previewUri: "data:image/png;base64,aGVsbG8=",
+      }),
     ]);
     expect(files.get(uri)?.deleted).toBe(true);
-    expect(files.get(fileUri)?.deleted).toBe(false);
   });
 
   it("deletes rejected and overflow owned files without deleting user-owned files", async () => {
@@ -230,10 +192,5 @@ describe("native pasted image cleanup", () => {
     expect(files.get(rejected)?.deleted).toBe(true);
     expect(files.get(overflow)?.deleted).toBe(true);
     expect(files.get(userOwned)?.deleted).toBe(false);
-    // The rejected paste's partial durable copy must not leak either.
-    expect(
-      files.get("file:///documents/t3-composer-attachments/attachment-id-pasted-image.png")
-        ?.deleted,
-    ).toBe(true);
   });
 });

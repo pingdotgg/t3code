@@ -1,6 +1,6 @@
 import { SymbolView } from "../components/AppSymbol";
 import { videoMimeType } from "@t3tools/shared/video";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Image, Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "./AppText";

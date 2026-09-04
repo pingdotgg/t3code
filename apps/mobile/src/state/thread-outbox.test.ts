@@ -196,7 +196,7 @@ describe("thread outbox", () => {
     expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(message))).toEqual(message);
   });
 
-  it("persists image attachment paths without embedding their contents", () => {
+  it("reads file-backed images from v4 queued messages", () => {
     const message = {
       ...queuedMessage({
         messageId: "message-image",
@@ -217,9 +217,7 @@ describe("thread outbox", () => {
       ],
     } satisfies QueuedThreadMessage;
 
-    const encoded = encodeQueuedThreadMessage(message);
-    expect(JSON.stringify(encoded)).not.toContain("dataUrl");
-    expect(decodeQueuedThreadMessage(encoded)).toEqual(message);
+    expect(decodeQueuedThreadMessage({ ...message, schemaVersion: 4 })).toEqual(message);
   });
 
   it("persists the exact selector snapshot while remaining compatible with v1 messages", () => {

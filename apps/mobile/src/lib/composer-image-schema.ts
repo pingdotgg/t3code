@@ -8,13 +8,19 @@ export const DraftComposerImageAttachmentSchema = Schema.Struct({
   name: Schema.String,
   mimeType: Schema.String,
   sizeBytes: Schema.Number,
-  // New attachments persist an owned file path; drafts saved by older app
-  // versions carry inline dataUrl bytes instead and must keep decoding.
-  fileUri: Schema.optional(Schema.String),
-  dataUrl: Schema.optional(Schema.String),
+  // Accept future file-backed records before enabling the new image writers.
+  fileUri: Schema.optional(Schema.String.check(Schema.isNonEmpty())),
+  dataUrl: Schema.optional(Schema.String.check(Schema.isNonEmpty())),
   uploadedAttachmentId: Schema.optional(Schema.String),
   uploadEnvironmentId: Schema.optional(EnvironmentId),
-});
+}).check(
+  Schema.makeFilter(
+    ({ fileUri, dataUrl }) =>
+      fileUri !== undefined ||
+      dataUrl !== undefined ||
+      "Image attachment has no file or inline bytes.",
+  ),
+);
 
 export const DraftComposerFileAttachmentSchema = Schema.Struct({
   id: Schema.String,
