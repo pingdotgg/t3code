@@ -26,6 +26,7 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
+import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
@@ -291,7 +292,12 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         promptRequests.map(
           (request) => (request.params as Record<string, unknown> | undefined)?.prompt,
         ),
-        [[{ type: "text", text: "please /review this" }]],
+        [
+          [
+            { type: "text", text: "please /review this" },
+            { type: "text", text: buildRuntimeInstructions({ harness: "Cursor" }) },
+          ],
+        ],
       );
     }),
   );
