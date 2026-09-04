@@ -53,7 +53,6 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -209,29 +208,29 @@ function LimitWindows({
 }
 
 /**
- * Heading shared by local providers and source accounts: icon, name, plan,
+ * Heading shared by local providers and source accounts: icon, driver, instance, plan,
  * and the signed-in email blurred until clicked, as provider settings do.
  */
 function AccountHeading({
   driver,
   label,
+  instanceLabel,
   plan,
   email,
   accentColor,
-  badge,
 }: {
   readonly driver: ServerProvider["driver"];
   readonly label: string;
+  readonly instanceLabel: string;
   readonly plan: string | undefined;
   readonly email: string | undefined;
   readonly accentColor?: string | undefined;
-  readonly badge?: string | undefined;
 }) {
   return (
-    <h2 className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
+    <h2 className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium text-foreground">
       <ProviderInstanceIcon
         driverKind={driver}
-        displayName={label}
+        displayName={instanceLabel}
         accentColor={accentColor}
         showBadge={Boolean(accentColor)}
         indicatorBackground="var(--background)"
@@ -239,7 +238,12 @@ function AccountHeading({
         iconClassName="size-4 text-foreground/80"
       />
       <span className="truncate">{label}</span>
-      {plan ? <span className="shrink-0 font-normal text-muted-foreground">· {plan}</span> : null}
+      {instanceLabel !== label ? (
+        <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">
+          · {instanceLabel}
+        </span>
+      ) : null}
+      {plan ? <span className="font-normal text-muted-foreground">· {plan}</span> : null}
       {email ? (
         <RedactedSensitiveText
           value={email}
@@ -247,11 +251,6 @@ function AccountHeading({
           revealTooltip="Click to reveal email"
           hideTooltip="Click to hide email"
         />
-      ) : null}
-      {badge ? (
-        <Badge variant="outline" size="sm" className="ms-auto shrink-0 font-normal">
-          {badge}
-        </Badge>
       ) : null}
     </h2>
   );
@@ -273,7 +272,8 @@ function ProviderLimits({
     <section className="flex flex-col gap-3">
       <AccountHeading
         driver={provider.driver}
-        label={providerLimitsLabel(provider, (driver) => getDriverOption(driver)?.label)}
+        label={getDriverOption(provider.driver)?.label ?? String(provider.driver)}
+        instanceLabel={providerLimitsLabel(provider, (driver) => getDriverOption(driver)?.label)}
         plan={provider.auth.label}
         email={provider.auth.email}
         accentColor={provider.accentColor}
@@ -394,9 +394,9 @@ function SourceAccountLimits({
       <AccountHeading
         driver={account.driver}
         label={getDriverOption(account.driver)?.label ?? String(account.driver)}
+        instanceLabel={sourceKind}
         plan={account.plan}
         email={account.email}
-        badge={`via ${sourceKind}`}
       />
       {notice ? (
         <span className="text-xs text-muted-foreground">{notice}</span>
@@ -413,8 +413,10 @@ function SourceAccountLimits({
  * environment can run a turn against them.
  */
 const SOURCE_KIND_LABEL: Record<UsageLimitSourceSnapshot["kind"], string> = {
-  cliproxy: "CLIProxyAPI",
+  cliproxy: "CLI Proxy",
 };
+
+type LimitsSource = ReturnType<typeof collectLimitSources>[number];
 
 /**
  * Removing a hub also deletes its management key from the server, so it
@@ -467,7 +469,7 @@ function SourceLimits({
   now,
   onRemove,
 }: {
-  readonly source: UsageLimitSourceSnapshot;
+  readonly source: LimitsSource;
   readonly now: number;
   readonly onRemove: (() => void) | null;
 }) {
@@ -475,15 +477,17 @@ function SourceLimits({
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-xs tracking-wide text-muted-foreground uppercase">
-          {source.label} · {kind}
-        </h2>
+        <h2 className="text-xs tracking-wide text-muted-foreground uppercase">{source.label}</h2>
         {onRemove ? <RemoveSourceButton source={source} onConfirm={onRemove} /> : null}
       </div>
       {source.error ? (
         <span className="text-xs text-muted-foreground">{source.error}</span>
       ) : source.accounts.length === 0 ? (
-        <span className="text-xs text-muted-foreground">No accounts reported.</span>
+        <span className="text-xs text-muted-foreground">
+          {source.hiddenAccountCount > 0
+            ? "All accounts are shown by connected providers."
+            : "No accounts reported."}
+        </span>
       ) : (
         source.accounts.map((account) => (
           <SourceAccountLimits key={account.id} account={account} sourceKind={kind} now={now} />
@@ -524,16 +528,7 @@ function useCanOperateEnvironment(environment: EnvironmentPresentation | null): 
 }
 
 /** One source with a remove control bound to the environment it lives in. */
-function SourceLimitsRow({
-  source,
-  now,
-}: {
-  readonly source: UsageLimitSourceSnapshot & {
-    readonly key: string;
-    readonly environmentId: EnvironmentId;
-  };
-  readonly now: number;
-}) {
+function SourceLimitsRow({ source, now }: { readonly source: LimitsSource; readonly now: number }) {
   const updateSettings = useUpdateEnvironmentSettings(source.environmentId);
   const { environments } = useEnvironments();
   const environment =
