@@ -8,6 +8,7 @@ import {
   openPullRequestLink,
   parseChangeRequestUrl,
   PullRequestLinkOpenError,
+  resolveThreadPullRequestLink,
   shouldOpenPullRequestExternally,
 } from "./openPullRequestLink";
 import { ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
@@ -204,6 +205,7 @@ describe("parseChangeRequestUrl", () => {
       host: "github.com",
       repository: "t3tools/t3code",
       number: 123,
+      provider: "github",
     });
   });
 
@@ -212,6 +214,13 @@ describe("parseChangeRequestUrl", () => {
       host: "github.acme.test",
       repository: "platform/api",
       number: 7,
+      provider: "github",
+    });
+    expect(parseChangeRequestUrl("https://github.acme.test:8443/platform/api/pull/7")).toEqual({
+      host: "github.acme.test",
+      repository: "platform/api",
+      number: 7,
+      provider: "github",
     });
   });
 
@@ -222,6 +231,7 @@ describe("parseChangeRequestUrl", () => {
       host: "gitlab.com",
       repository: "t3tools/platform/t3code",
       number: 42,
+      provider: "gitlab",
     });
   });
 
@@ -231,6 +241,7 @@ describe("parseChangeRequestUrl", () => {
         host: "code.acme.test",
         repository: "team/project",
         number: 9,
+        provider: "gitlab",
       },
     );
   });
@@ -240,6 +251,7 @@ describe("parseChangeRequestUrl", () => {
       host: "bitbucket.org",
       repository: "workspace/repo",
       number: 5,
+      provider: "bitbucket",
     });
   });
 
@@ -250,6 +262,7 @@ describe("parseChangeRequestUrl", () => {
       host: "dev.azure.com",
       repository: "acme/platform/_git/t3code",
       number: 17,
+      provider: "azure-devops",
     });
     expect(
       parseChangeRequestUrl("https://acme.visualstudio.com/platform/_git/t3code/pullrequest/17"),
@@ -257,6 +270,7 @@ describe("parseChangeRequestUrl", () => {
       host: "acme.visualstudio.com",
       repository: "platform/_git/t3code",
       number: 17,
+      provider: "azure-devops",
     });
   });
 
@@ -265,17 +279,29 @@ describe("parseChangeRequestUrl", () => {
       host: "github.com",
       repository: "t3tools/t3code",
       number: 123,
+      provider: "github",
     });
     expect(
       parseChangeRequestUrl("https://gitlab.com/team/project/-/merge_requests/42/diffs#note_1"),
-    ).toEqual({ host: "gitlab.com", repository: "team/project", number: 42 });
+    ).toEqual({
+      host: "gitlab.com",
+      repository: "team/project",
+      number: 42,
+      provider: "gitlab",
+    });
     expect(
       parseChangeRequestUrl("https://bitbucket.org/team/repo/pull-requests/5/commits"),
-    ).toEqual({ host: "bitbucket.org", repository: "team/repo", number: 5 });
+    ).toEqual({
+      host: "bitbucket.org",
+      repository: "team/repo",
+      number: 5,
+      provider: "bitbucket",
+    });
     expect(parseChangeRequestUrl("https://github.com/t3tools/t3code/pull/123/")).toEqual({
       host: "github.com",
       repository: "t3tools/t3code",
       number: 123,
+      provider: "github",
     });
   });
 
@@ -300,9 +326,65 @@ describe("parseChangeRequestUrl", () => {
   });
 });
 
+describe("resolveThreadPullRequestLink", () => {
+  const parentProjectId = ProjectId.make("parent");
+  const parentProject = {
+    id: parentProjectId,
+    repositoryIdentity: null,
+  } as never;
+
+  it("uses a non-Git parent as the context for a URL-only link", () => {
+    expect(
+      resolveThreadPullRequestLink(
+        [parentProject],
+        parentProjectId,
+        "https://github.com/pingdotgg/t3code/pull/9435",
+        true,
+      ),
+    ).toEqual({
+      projectId: parentProjectId,
+      repository: "pingdotgg/t3code",
+      number: 9435,
+      url: "https://github.com/pingdotgg/t3code/pull/9435",
+    });
+  });
+
+  it("keeps URL-only linking behind its server capability", () => {
+    expect(
+      resolveThreadPullRequestLink(
+        [parentProject],
+        parentProjectId,
+        "https://github.com/pingdotgg/t3code/pull/9435",
+        false,
+      ),
+    ).toBeNull();
+  });
+
+  it.each([
+    "https://gitlab.com/pingdotgg/t3code/-/merge_requests/9435",
+    "https://dev.azure.com/pingdotgg/t3code/_git/t3code/pullrequest/9435",
+    "https://bitbucket.acme.test/pingdotgg/t3code/pull-requests/9435",
+    "https://github.acme.test/pingdotgg/t3code/pull/9435",
+  ])("does not offer URL-only linking when the provider cannot resolve the host", (url) => {
+    expect(resolveThreadPullRequestLink([parentProject], parentProjectId, url, true)).toBeNull();
+  });
+});
+
 describe("findProjectForChangeRequest", () => {
   const project = (identity: Record<string, unknown>) =>
     ({ id: "p1", repositoryIdentity: identity }) as never;
+
+  it("matches a custom-port link by its canonical hostname", () => {
+    const candidate = project({
+      canonicalKey: "github.acme.test/platform/api",
+      provider: "github",
+      displayName: "platform/api",
+    });
+    const link = parseChangeRequestUrl("https://github.acme.test:8443/platform/api/pull/7");
+
+    if (link === null) throw new Error("expected a GitHub Enterprise pull request");
+    expect(findProjectForChangeRequest([candidate], link)).toBe(candidate);
+  });
 
   it("matches a nested GitLab group by the whole path below the host", () => {
     // The server identifies a repository by `displayName`, which keeps every group segment; the

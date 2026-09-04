@@ -63,6 +63,7 @@ export function useLinkedThreadPullRequest(
             projectId: linkedPullRequest.projectId,
             repository: linkedPullRequest.repository,
             number: linkedPullRequest.number,
+            url: linkedPullRequest.url,
           },
         }),
   ).data;

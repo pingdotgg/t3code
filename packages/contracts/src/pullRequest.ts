@@ -619,6 +619,7 @@ export const PullRequestRef = Schema.Struct({
   projectId: ProjectId,
   repository: TrimmedNonEmptyString,
   number: PositiveInt,
+  url: Schema.optional(TrimmedNonEmptyString),
 });
 export type PullRequestRef = typeof PullRequestRef.Type;
 

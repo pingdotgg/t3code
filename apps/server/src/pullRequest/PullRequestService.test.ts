@@ -3172,6 +3172,159 @@ it.effect("shares linked summaries and reuses them for display without asking th
   }),
 );
 
+it.effect("reads a linked pull request URL from a non-Git project", () =>
+  Effect.gen(function* () {
+    const requests: Array<{
+      readonly cwd: string;
+      readonly host: string;
+      readonly repository: string;
+      readonly number: number;
+    }> = [];
+    const service = yield* makeService({
+      projects: [project({ id: "parent", title: "work", workspaceRoot: "/work" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequestSummary: (input) => {
+            requests.push(input);
+            return Effect.succeed(changeRequest(9435, "2026-09-03T00:00:00Z"));
+          },
+        }),
+      ],
+    });
+
+    const summary = yield* service.summary({
+      projectId: "parent" as ProjectId,
+      repository: "pingdotgg/t3code",
+      number: 9435,
+      url: "https://github.com/pingdotgg/t3code/pull/9435",
+    });
+
+    assert.deepStrictEqual(requests, [
+      {
+        cwd: "/work",
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 9435,
+      },
+    ]);
+    assert.strictEqual(summary.projectId, "parent");
+    assert.strictEqual(summary.number, 9435);
+  }),
+);
+
+it.effect("keeps URL-only summaries on different hosts separate", () =>
+  Effect.gen(function* () {
+    let githubCalls = 0;
+    let bitbucketCalls = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "parent", title: "work", workspaceRoot: "/work" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequestSummary: () => {
+            githubCalls += 1;
+            return Effect.succeed(changeRequest(7, "2026-09-03T00:00:00Z"));
+          },
+        }),
+        fakeProvider("bitbucket", {
+          getChangeRequestSummary: () => {
+            bitbucketCalls += 1;
+            return Effect.succeed(changeRequest(7, "2026-09-03T00:00:00Z"));
+          },
+        }),
+      ],
+    });
+    const reference = {
+      projectId: "parent" as ProjectId,
+      repository: "acme/web",
+      number: 7,
+    };
+
+    yield* service.summary({ ...reference, url: "https://github.com/acme/web/pull/7" });
+    yield* service.summary({
+      ...reference,
+      url: "https://bitbucket.org/acme/web/pull-requests/7",
+    });
+
+    assert.deepStrictEqual([githubCalls, bitbucketCalls], [1, 1]);
+  }),
+);
+
+it.effect("does not use providers that cannot resolve URL-only summary hosts", () =>
+  Effect.gen(function* () {
+    for (const testCase of [
+      {
+        provider: "gitlab" as const,
+        repository: "pingdotgg/t3code",
+        url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/9435",
+      },
+      {
+        provider: "azure-devops" as const,
+        repository: "pingdotgg/t3code/_git/t3code",
+        url: "https://dev.azure.com/pingdotgg/t3code/_git/t3code/pullrequest/9435",
+      },
+      {
+        provider: "bitbucket" as const,
+        repository: "pingdotgg/t3code",
+        url: "https://bitbucket.acme.test/pingdotgg/t3code/pull-requests/9435",
+      },
+      {
+        provider: "github" as const,
+        repository: "pingdotgg/t3code",
+        url: "https://github.acme.test/pingdotgg/t3code/pull/9435",
+      },
+    ]) {
+      const service = yield* makeService({
+        projects: [project({ id: "parent", title: "work", workspaceRoot: "/work" })],
+        providers: [
+          fakeProvider(testCase.provider, {
+            getChangeRequest: () => Effect.die("unsupported URL-only provider was called"),
+          }),
+        ],
+      });
+
+      const error = yield* Effect.flip(
+        service.summary({
+          projectId: "parent" as ProjectId,
+          repository: testCase.repository,
+          number: 9435,
+          url: testCase.url,
+        }),
+      );
+
+      assert.strictEqual(error._tag, "PullRequestUnavailableError");
+    }
+  }),
+);
+
+it.effect("refuses a URL-only summary whose repository does not match the URL", () =>
+  Effect.gen(function* () {
+    let calls = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "parent", title: "work", workspaceRoot: "/work" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequestSummary: () => {
+            calls += 1;
+            return Effect.succeed(changeRequest(9435, "2026-09-03T00:00:00Z"));
+          },
+        }),
+      ],
+    });
+
+    const error = yield* Effect.flip(
+      service.summary({
+        projectId: "parent" as ProjectId,
+        repository: "other/repository",
+        number: 9435,
+        url: "https://github.com/pingdotgg/t3code/pull/9435",
+      }),
+    );
+
+    assert.strictEqual(error._tag, "PullRequestOperationError");
+    assert.strictEqual(calls, 0);
+  }),
+);
+
 it.effect("answers a known pull request immediately while the host refreshes", () =>
   Effect.gen(function* () {
     const gate = yield* Deferred.make<void>();
@@ -3253,6 +3406,43 @@ it.effect("reuses an observed merged state for strict settlement reads", () =>
     const summary = yield* service.summary(reference, { recoverTransientFailure: false });
     assert.strictEqual(summary.state, "merged");
     assert.strictEqual(summary.updatedAt, "2026-07-03T00:00:00Z");
+  }),
+);
+
+it.effect("shares detail updates with a registered project's linked summary", () =>
+  Effect.gen(function* () {
+    let summaryCalls = 0;
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const linkedReference = {
+      ...reference,
+      url: "https://github.com/acme/web/pull/1",
+    };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: () =>
+            Effect.succeed({
+              ...hostedChangeRequest("merged body", 4),
+              url: linkedReference.url,
+              state: "merged",
+              updatedAt: "2026-07-03T00:00:00Z",
+            }),
+          getChangeRequestSummary: () => {
+            summaryCalls += 1;
+            return Effect.succeed({
+              ...changeRequest(1, "2026-07-02T00:00:00Z"),
+              url: linkedReference.url,
+            });
+          },
+        }),
+      ],
+    });
+
+    assert.strictEqual((yield* service.summary(linkedReference)).state, "open");
+    yield* service.detail(reference);
+    assert.strictEqual((yield* service.summary(linkedReference)).state, "merged");
+    assert.strictEqual(summaryCalls, 1);
   }),
 );
 

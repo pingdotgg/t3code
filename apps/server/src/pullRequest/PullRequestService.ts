@@ -54,7 +54,11 @@ import {
   type SourceControlProviderInfo,
   type SourceControlProviderKind,
 } from "@t3tools/contracts";
-import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
+import {
+  canReadChangeRequestSummaryWithoutCheckout,
+  detectSourceControlProviderFromRemoteUrl,
+  parseChangeRequestUrl,
+} from "@t3tools/shared/sourceControl";
 
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -252,6 +256,7 @@ interface SupportedProject {
  */
 interface WorkspaceProjects {
   readonly supported: ReadonlyArray<SupportedProject>;
+  readonly selectedProject: OrchestrationProjectShell | undefined;
   /** Keyed by host, as the readable ones are: an unimplemented host is its own switcher entry. */
   readonly unimplemented: ReadonlyMap<
     string,
@@ -659,29 +664,70 @@ export const make = Effect.gen(function* () {
             host,
           });
         }
-        return { supported, unimplemented, viewerRoots };
+        return {
+          supported,
+          selectedProject: snapshot.projects.find((project) => project.id === filter.projectId),
+          unimplemented,
+          viewerRoots,
+        };
       }),
     );
 
-  const requireProject = (ref: PullRequestRef): Effect.Effect<SupportedProject, PullRequestError> =>
+  const requireProject = (
+    ref: PullRequestRef,
+    options?: { readonly allowUrlReference?: boolean },
+  ): Effect.Effect<SupportedProject, PullRequestError> =>
     listWorkspaceProjects({ projectId: ref.projectId }).pipe(
-      Effect.flatMap(({ supported }): Effect.Effect<SupportedProject, PullRequestError> => {
-        const match = supported[0];
-        if (!match) {
-          return Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" }));
-        }
-        // The repository travels through the client, so it is checked against the project's
-        // own remote rather than being handed to a provider verbatim.
-        if (match.repository.toLowerCase() !== ref.repository.trim().toLowerCase()) {
-          return Effect.fail(
-            new PullRequestOperationError({
-              operation: "resolveRepository",
-              detail: "The change request does not belong to the selected project.",
-            }),
-          );
-        }
-        return Effect.succeed(match);
-      }),
+      Effect.flatMap(
+        ({ selectedProject, supported }): Effect.Effect<SupportedProject, PullRequestError> => {
+          const match = supported[0];
+          if (!match) {
+            if (
+              options?.allowUrlReference === true &&
+              selectedProject !== undefined &&
+              selectedProject.repositoryIdentity == null &&
+              ref.url !== undefined
+            ) {
+              const parsed = parseChangeRequestUrl(ref.url);
+              if (
+                parsed === null ||
+                parsed.repository !== ref.repository.trim().toLowerCase() ||
+                parsed.number !== ref.number
+              ) {
+                return Effect.fail(
+                  new PullRequestOperationError({
+                    operation: "resolveRepository",
+                    detail: "The linked change request does not match its URL.",
+                  }),
+                );
+              }
+              const api = canReadChangeRequestSummaryWithoutCheckout(parsed)
+                ? registry.get(parsed.provider)
+                : null;
+              if (api !== null) {
+                return Effect.succeed({
+                  project: selectedProject,
+                  api: withRateLimitBackoff(api, parsed.host, rateLimits),
+                  repository: parsed.repository,
+                  host: parsed.host,
+                });
+              }
+            }
+            return Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" }));
+          }
+          // The repository travels through the client, so it is checked against the project's
+          // own remote rather than being handed to a provider verbatim.
+          if (match.repository.toLowerCase() !== ref.repository.trim().toLowerCase()) {
+            return Effect.fail(
+              new PullRequestOperationError({
+                operation: "resolveRepository",
+                detail: "The change request does not belong to the selected project.",
+              }),
+            );
+          }
+          return Effect.succeed(match);
+        },
+      ),
     );
 
   /**
@@ -1228,7 +1274,7 @@ export const make = Effect.gen(function* () {
     resolveViewers([project], new Map()).pipe(Effect.map(([resolved]) => resolved?.viewer ?? null));
 
   const summaryUncached: PullRequestService["Service"]["summary"] = (input) =>
-    requireProject(input).pipe(
+    requireProject(input, { allowUrlReference: true }).pipe(
       Effect.flatMap((project) => {
         const providerInput = {
           cwd: project.project.workspaceRoot,
@@ -2129,6 +2175,31 @@ export const make = Effect.gen(function* () {
   const refEpoch = (ref: PullRequestRef) => refEpochs.get(refScope(ref)) ?? 0;
   const refCacheKey = (ref: PullRequestRef) =>
     JSON.stringify([refEpoch(ref), ref.projectId, ref.repository, ref.number]);
+  const summaryCacheKey = (ref: PullRequestRef) =>
+    ref.url === undefined
+      ? refCacheKey(ref)
+      : JSON.stringify([refEpoch(ref), ref.projectId, ref.repository, ref.number, ref.url]);
+  const heldSummaryCacheKey = (ref: PullRequestRef) => {
+    if (ref.url === undefined) return refCacheKey(ref);
+    const parsed = parseChangeRequestUrl(ref.url);
+    return parsed === null
+      ? summaryCacheKey(ref)
+      : JSON.stringify([
+          refEpoch(ref),
+          ref.projectId,
+          ref.repository,
+          ref.number,
+          parsed.provider,
+          parsed.host,
+        ]);
+  };
+  const recordHeldSummary = (key: string, next: PullRequestSummary) => {
+    const current = lastGoodSummary.peek(key);
+    if (current?.state === "merged" && next.state !== "merged") return Effect.void;
+    return current === undefined || next.updatedAt >= current.updatedAt
+      ? lastGoodSummary.record(key, next)
+      : Effect.void;
+  };
   const bumpRefEpoch = (ref: PullRequestRef) => {
     const scope = refScope(ref);
     if (!refEpochs.has(scope) && refEpochs.size >= REF_EPOCH_CAPACITY) {
@@ -2157,8 +2228,19 @@ export const make = Effect.gen(function* () {
 
   const summaryCache = yield* Cache.makeWith(
     (key: string) => {
-      const [, projectId, repository, number] = JSON.parse(key) as [number, string, string, number];
-      return summaryUncached({ projectId, repository, number } as PullRequestRef);
+      const [, projectId, repository, number, url] = JSON.parse(key) as [
+        number,
+        string,
+        string,
+        number,
+        string | undefined,
+      ];
+      return summaryUncached({
+        projectId,
+        repository,
+        number,
+        ...(url ? { url } : {}),
+      } as PullRequestRef);
     },
     {
       capacity: DETAIL_CACHE_CAPACITY,
@@ -2166,8 +2248,15 @@ export const make = Effect.gen(function* () {
     },
   );
   const summary: PullRequestService["Service"]["summary"] = (input, options) => {
-    const key = refCacheKey(input);
-    const cached = Cache.get(summaryCache, key);
+    const cacheKey = summaryCacheKey(input);
+    const key = heldSummaryCacheKey(input);
+    const cached = Cache.get(summaryCache, cacheKey).pipe(
+      Effect.tap((value) =>
+        input.url === undefined
+          ? recordHeldSummary(heldSummaryCacheKey({ ...input, url: value.url }), value)
+          : Effect.void,
+      ),
+    );
     if (options?.recoverTransientFailure !== false) {
       return lastGoodSummary.serveHeld(key, cached, "reuse");
     }
@@ -2276,12 +2365,6 @@ export const make = Effect.gen(function* () {
     baseBranch: detail.baseBranch,
     updatedAt: detail.updatedAt,
   });
-  const shouldReplaceHeldSummary = (key: string, next: PullRequestSummary) => {
-    const current = lastGoodSummary.peek(key);
-    if (current === undefined) return true;
-    if (current.state === "merged" && next.state !== "merged") return false;
-    return next.updatedAt >= current.updatedAt;
-  };
   const detail: PullRequestService["Service"]["detail"] = (input) => {
     const key = refCacheKey(input);
     // Record the summary from a host or cache read, not the stale value
@@ -2293,9 +2376,13 @@ export const make = Effect.gen(function* () {
       Cache.get(detailCache, key).pipe(
         Effect.tap((value) => {
           const summary = summaryFromDetail(value);
-          return shouldReplaceHeldSummary(key, summary)
-            ? lastGoodSummary.record(key, summary)
-            : Effect.void;
+          return Effect.all(
+            [
+              recordHeldSummary(key, summary),
+              recordHeldSummary(heldSummaryCacheKey({ ...input, url: summary.url }), summary),
+            ],
+            { discard: true },
+          );
         }),
       ),
       "revalidate",

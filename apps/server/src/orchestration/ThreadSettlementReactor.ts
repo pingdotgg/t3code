@@ -91,6 +91,7 @@ export const make = Effect.gen(function* () {
           thread.linkedPullRequest.projectId,
           thread.linkedPullRequest.repository,
           thread.linkedPullRequest.number,
+          thread.linkedPullRequest.url,
         ]);
       }
       if (thread.branch === null) return JSON.stringify(["none", thread.id]);
@@ -130,6 +131,7 @@ export const make = Effect.gen(function* () {
             projectId: thread.linkedPullRequest.projectId,
             repository: thread.linkedPullRequest.repository,
             number: thread.linkedPullRequest.number,
+            url: thread.linkedPullRequest.url,
           },
           { recoverTransientFailure: false },
         );

@@ -158,6 +158,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       readonly projectId: ProjectId;
       readonly repository: string;
       readonly number: number;
+      readonly url?: string | undefined;
     }>
   >([]);
   const summaryRecovery = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
@@ -348,7 +349,12 @@ describe("ThreadSettlementReactor", () => {
             { cwd: "/workspace/project", branch: "inactive-feature" },
           ]);
           assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), [
-            { projectId: LINKED_PROJECT_ID, repository: "owner/repository", number: 42 },
+            {
+              projectId: LINKED_PROJECT_ID,
+              repository: "owner/repository",
+              number: 42,
+              url: "https://example.test/owner/repository/pull/42",
+            },
           ]);
           assert.deepStrictEqual(yield* Ref.get(fixture.summaryRecovery), [false]);
         }).pipe(Effect.provide(fixture.layer));
@@ -698,7 +704,12 @@ describe("ThreadSettlementReactor", () => {
 
           assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
           assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), [
-            { projectId: LINKED_PROJECT_ID, repository: "owner/repository", number: 10 },
+            {
+              projectId: LINKED_PROJECT_ID,
+              repository: "owner/repository",
+              number: 10,
+              url: "https://example.test/owner/repository/pull/10",
+            },
           ]);
           assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), []);
         }).pipe(Effect.provide(fixture.layer));
@@ -748,7 +759,12 @@ describe("ThreadSettlementReactor", () => {
             { cwd: "/workspace/project-root", branch: "saved-feature" },
           ]);
           assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), [
-            { projectId: LINKED_PROJECT_ID, repository: "owner/repository", number: 77 },
+            {
+              projectId: LINKED_PROJECT_ID,
+              repository: "owner/repository",
+              number: 77,
+              url: "https://example.test/owner/repository/pull/77",
+            },
           ]);
           assert.deepStrictEqual(
             new Set((yield* Ref.get(fixture.commands)).map((command) => command.threadId)),

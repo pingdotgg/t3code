@@ -954,6 +954,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     linkedPullRequestStatus,
   });
   const prStatus = prStatusIndicator(pr, prProvider);
+  const prLinkUrl = pr?.url ?? thread.linkedPullRequest?.url ?? null;
+  const prLinkNumber = pr?.number ?? thread.linkedPullRequest?.number ?? null;
   const settledPrHoverClass = pr ? settledPrHoverColorClass(pr.state) : undefined;
   useEffect(() => {
     const nextSnapshot = nextThreadChangeRequestSnapshot({
@@ -1139,17 +1141,24 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   }, [showSnoozeButton]);
   const handlePrClick = useCallback(
     (event: ReactMouseEvent<HTMLAnchorElement>) => {
-      if (!pr?.url) return;
+      if (prLinkUrl === null) return;
       const openedInRightPanel = openPrLink(
         event,
-        pr.url,
+        prLinkUrl,
         openPullRequestsInRightPanel ? threadRef : undefined,
       );
       if (openedInRightPanel && openPullRequestsInRightPanel && !props.isActive) {
         onThreadActivate(threadRef);
       }
     },
-    [onThreadActivate, openPrLink, openPullRequestsInRightPanel, pr, props.isActive, threadRef],
+    [
+      onThreadActivate,
+      openPrLink,
+      openPullRequestsInRightPanel,
+      prLinkUrl,
+      props.isActive,
+      threadRef,
+    ],
   );
 
   // All sidebar rows share one surface model. Live threads used to look
@@ -1218,9 +1227,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // A real link so cmd/ctrl+click and middle-click open the host in the
   // browser. A plain click still opens T3's pull request view.
   const prBadge =
-    prStatus && pr ? (
+    prLinkUrl !== null && prLinkNumber !== null ? (
       <a
-        href={pr.url}
+        href={prLinkUrl}
         target="_blank"
         rel="noopener noreferrer"
         onPointerDown={(event) => event.stopPropagation()}
@@ -1233,11 +1242,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             ? props.isActive
               ? "text-secondary-label"
               : cn("text-secondary-label transition-colors", settledPrHoverClass)
-            : prStatus.colorClass,
+            : (prStatus?.colorClass ?? "text-secondary-label"),
         )}
-        aria-label={prStatus.tooltip}
+        aria-label={prStatus?.tooltip ?? `Change request #${prLinkNumber}`}
       >
-        #{pr.number}
+        #{prLinkNumber}
       </a>
     ) : null;
   const terminalStatusIcon = terminalStatus ? (

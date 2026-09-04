@@ -26,7 +26,6 @@ import type {
   EnvironmentId,
   ScopedThreadRef,
   ServerProviderSkill,
-  ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -159,9 +158,8 @@ import {
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
 } from "../workspaceBasenameLookup";
 import {
-  findProjectForChangeRequest,
   matchesLinkedPullRequestUrl,
-  parseChangeRequestUrl,
+  resolveThreadPullRequestLink,
   useOpenChangeRequestLink,
 } from "~/lib/openPullRequestLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
@@ -2126,27 +2124,21 @@ function ChatMarkdown({
   // makes a persisted "app" apply once settings hydrate after launch.
   const linkTargetPreference = useClientSettings((settings) => settings.browserLinkTarget);
   const resolveThreadPullRequest = useCallback(
-    (href: string): ThreadLinkedPullRequest | null => {
+    (href: string) => {
+      const thread = threadRef === undefined ? null : readThreadShell(threadRef);
       if (
         threadRef === undefined ||
-        readThreadShell(threadRef) === null ||
+        thread === null ||
         threadServerConfig?.environment.capabilities.threadPullRequestLinking !== true
       ) {
         return null;
       }
-      const parsed = parseChangeRequestUrl(href);
-      if (parsed === null) return null;
-      const project = findProjectForChangeRequest(
+      return resolveThreadPullRequestLink(
         projects.filter((candidate) => candidate.environmentId === threadRef.environmentId),
-        parsed,
+        thread.projectId,
+        href,
+        threadServerConfig.environment.capabilities.threadPullRequestUrlLinking === true,
       );
-      if (project === undefined) return null;
-      return {
-        projectId: project.id,
-        repository: project.repositoryIdentity?.displayName ?? parsed.repository,
-        number: parsed.number,
-        url: href,
-      };
     },
     [projects, threadRef, threadServerConfig],
   );

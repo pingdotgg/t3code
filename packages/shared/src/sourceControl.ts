@@ -16,6 +16,74 @@ export interface ChangeRequestTerminology {
   readonly singular: string;
 }
 
+export interface ChangeRequestLink {
+  readonly host: string;
+  readonly repository: string;
+  readonly number: number;
+}
+
+export interface ParsedChangeRequestLink extends ChangeRequestLink {
+  readonly provider: Exclude<SourceControlProviderKind, "unknown">;
+}
+
+/** Providers whose linked-thread summary can be read without repository checkout context. */
+export function canReadChangeRequestSummaryWithoutCheckout(link: ParsedChangeRequestLink): boolean {
+  return (
+    (link.provider === "github" && link.host === "github.com") ||
+    (link.provider === "bitbucket" && link.host === "bitbucket.org")
+  );
+}
+
+function isHostOf(hostname: string, apex: string, label?: string): boolean {
+  if (hostname === apex || hostname.endsWith(`.${apex}`)) return true;
+  return label !== undefined && hostname.startsWith(`${label}.`);
+}
+
+function claim(
+  host: string,
+  provider: ParsedChangeRequestLink["provider"],
+  match: RegExpExecArray | null,
+): ParsedChangeRequestLink | null {
+  const repository = match?.[1];
+  const number = Number(match?.[2]);
+  return repository && Number.isSafeInteger(number) && number > 0
+    ? { host, repository: repository.toLowerCase(), number, provider }
+    : null;
+}
+
+/** A supported source-control change request parsed from its browser URL. */
+export function parseChangeRequestUrl(targetUrl: string): ParsedChangeRequestLink | null {
+  let url: URL;
+  try {
+    url = new URL(targetUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  const host = url.hostname.toLowerCase();
+
+  if (isHostOf(host, "github.com", "github")) {
+    return claim(host, "github", /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u.exec(url.pathname));
+  }
+  const gitlab = /^\/([^/]+(?:\/[^/]+)+)\/-\/merge_requests\/(\d+)(?:\/|$)/u.exec(url.pathname);
+  if (gitlab) return claim(host, "gitlab", gitlab);
+  if (isHostOf(host, "bitbucket.org", "bitbucket")) {
+    return claim(
+      host,
+      "bitbucket",
+      /^\/([^/]+\/[^/]+)\/pull-requests\/(\d+)(?:\/|$)/u.exec(url.pathname),
+    );
+  }
+  if (isHostOf(host, "dev.azure.com") || host.endsWith(".visualstudio.com")) {
+    return claim(
+      host,
+      "azure-devops",
+      /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:\/|$)/u.exec(url.pathname),
+    );
+  }
+  return null;
+}
+
 export const DEFAULT_CHANGE_REQUEST_TERMINOLOGY: ChangeRequestTerminology = {
   shortLabel: "PR",
   singular: "pull request",

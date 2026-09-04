@@ -6,6 +6,7 @@ import {
   PullRequestCapabilities,
   PullRequestListInput,
   PullRequestListResult,
+  PullRequestRef,
   PullRequestReviewerRequestInput,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
@@ -14,6 +15,7 @@ const decodeListResult = Schema.decodeUnknownSync(PullRequestListResult);
 const decodeListInput = Schema.decodeUnknownSync(PullRequestListInput);
 const decodeReviewerRequest = Schema.decodeUnknownSync(PullRequestReviewerRequestInput);
 const decodeAction = Schema.decodeUnknownSync(PullRequestActionInput);
+const decodeRef = Schema.decodeUnknownSync(PullRequestRef);
 
 const LIST_RESULT: PullRequestListResult = {
   viewers: { "github.com": "bilal", "gitlab.com": "bilal.hassan" },
@@ -63,6 +65,14 @@ const LIST_RESULT: PullRequestListResult = {
   truncated: false,
   nextCursors: { "github.com pingdotgg/t3code": "2026-07-02T00:00:00Z|1|1" },
 };
+
+it("keeps the URL that identifies a linked pull request without a Git project", () => {
+  const url = "https://github.com/pingdotgg/t3code/pull/9435";
+
+  expect(
+    decodeRef({ projectId: "parent", repository: "pingdotgg/t3code", number: 9435, url }).url,
+  ).toBe(url);
+});
 
 describe("PullRequestListResult", () => {
   /**

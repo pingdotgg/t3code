@@ -76,6 +76,7 @@ export function useThreadPr(
             projectId: thread.linkedPullRequest.projectId,
             repository: thread.linkedPullRequest.repository,
             number: thread.linkedPullRequest.number,
+            url: thread.linkedPullRequest.url,
           },
         }),
   );
