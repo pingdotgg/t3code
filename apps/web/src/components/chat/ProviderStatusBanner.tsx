@@ -1,4 +1,4 @@
-import { type ServerProvider } from "@t3tools/contracts";
+import { type ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { memo } from "react";
 import { InfoIcon, XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
@@ -20,11 +20,43 @@ export function shouldShowProviderStatusBanner(
   return bannerKey !== null && bannerKey !== dismissedBannerKey;
 }
 
+export function hasProviderSetup(status: ServerProvider): boolean {
+  return (
+    status.driver === "antigravity" ||
+    status.setup?.canAuthenticate === true ||
+    status.setup?.canInstall === true
+  );
+}
+
+/** Keep the environment's error intact in both the banner and model picker. */
+export function getProviderStatusMessage(status: ServerProvider): string {
+  if (status.message) return status.message;
+  const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
+  if (!status.installed && hasProviderSetup(status)) {
+    return `Open provider setup to install ${formatProviderDriverKindLabel(status.driver)} on this environment.`;
+  }
+  if (status.auth.status === "unauthenticated") {
+    if (hasProviderSetup(status)) {
+      return status.driver === "antigravity"
+        ? "Open provider setup to sign in with Google."
+        : "Open provider setup to sign in.";
+    }
+    return "Sign in via the CLI to authenticate again.";
+  }
+  return status.status === "ready"
+    ? "No models are available for this provider."
+    : status.status === "error"
+      ? `${providerName} provider is unavailable.`
+      : `${providerName} provider has limited availability.`;
+}
+
 export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   onDismiss,
+  onOpenProviderSetup,
   status,
 }: {
   onDismiss: () => void;
+  onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   status: ServerProvider | null;
 }) {
   if (!status || status.status === "ready" || status.status === "disabled") {
@@ -36,12 +68,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   const title = isUnauthenticated
     ? `${providerName} is unauthenticated`
     : `${providerName} provider status`;
-  const message = isUnauthenticated
-    ? "Sign in via the CLI to authenticate again."
-    : (status.message ??
-      (status.status === "error"
-        ? `${providerName} provider is unavailable.`
-        : `${providerName} provider has limited availability.`));
+  const message = getProviderStatusMessage(status);
 
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
@@ -66,6 +93,16 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
               {message}
             </TooltipPopup>
           </Tooltip>
+          {onOpenProviderSetup && hasProviderSetup(status) ? (
+            <Button
+              className="self-start px-0 text-foreground"
+              onClick={() => onOpenProviderSetup(status.instanceId)}
+              size="xs"
+              variant="link"
+            >
+              Open provider setup
+            </Button>
+          ) : null}
         </div>
         <Button
           aria-label={`Dismiss ${providerName} provider ${status.status}`}

@@ -6,6 +6,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 
 import {
   AuthAccessTokenType,
+  AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
   CommandId,
@@ -29,8 +30,11 @@ import {
   ORCHESTRATION_WS_METHODS,
   type PreviewEvent,
   ProjectId,
+  type ProviderAuthState,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderInstallState,
+  ProviderSetupError,
   ResolvedKeybindingRule,
   ThreadId,
   TurnId,
@@ -60,6 +64,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -98,6 +103,7 @@ import {
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
+import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
@@ -112,6 +118,13 @@ import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
+import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts";
+import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
+import {
+  AntigravityInstallation,
+  AntigravityInstallationError,
+} from "./provider/AntigravityInstallation.ts";
+import type { ProviderInstance } from "./provider/ProviderDriver.ts";
 import { ProviderAdapterRequestError } from "./provider/Errors.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -142,6 +155,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
@@ -191,6 +205,47 @@ const defaultModelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5-codex",
 } as const;
+
+const providerSetupInstanceId = ProviderInstanceId.make("antigravity-custom-profile");
+const providerSetupDriver = ProviderDriverKind.make("antigravity");
+const providerSetupInstallState: ProviderInstallState = {
+  driver: providerSetupDriver,
+  operationId: "install-operation",
+  phase: "downloading",
+  downloadedBytes: 128,
+  totalBytes: 256,
+  version: "test-release",
+  installedVersion: null,
+  canRemove: false,
+  message: null,
+};
+const providerSetupAuthState: ProviderAuthState = {
+  instanceId: providerSetupInstanceId,
+  phase: "idle",
+  flowId: null,
+  authorizationUrl: null,
+  expiresAt: null,
+  message: null,
+};
+const providerSetupInstance: ProviderInstance = {
+  instanceId: providerSetupInstanceId,
+  driverKind: providerSetupDriver,
+  enabled: false,
+  displayName: "Google account",
+  continuationIdentity: {
+    driverKind: providerSetupDriver,
+    continuationKey: providerSetupInstanceId,
+  },
+  get adapter(): never {
+    throw new Error("Provider setup must not start a chat session.");
+  },
+  get snapshot(): never {
+    throw new Error("Installation routing must not probe the provider.");
+  },
+  get textGeneration(): never {
+    throw new Error("Provider setup must not generate text.");
+  },
+};
 
 const makeLiveToolActivityEvent = (
   sequence: number,
@@ -431,12 +486,16 @@ const makeBrowserOtlpPayload = (spanName: string) =>
   });
 
 const buildAppUnderTest = (options?: {
+  onPairingChangesSubscribed?: Effect.Effect<void>;
   config?: Partial<ServerConfig.ServerConfig["Service"]>;
   layers?: {
     keybindings?: Partial<Keybindings.Keybindings["Service"]>;
     environmentTheme?: Partial<EnvironmentTheme.EnvironmentThemeService["Service"]>;
     providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
     providerService?: Partial<ProviderService.ProviderService["Service"]>;
+    providerAuth?: Partial<ProviderAuthService["Service"]>;
+    providerInstanceRegistry?: Partial<ProviderInstanceRegistry["Service"]>;
+    antigravityInstallation?: Partial<AntigravityInstallation["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
@@ -686,6 +745,11 @@ const buildAppUnderTest = (options?: {
             streamChanges: Stream.empty,
             ...options?.layers?.environmentTheme,
           }),
+          Layer.mock(UsageLimitSources.UsageLimitSources)({
+            current: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            refresh: Effect.void,
+          }),
         ),
       ),
       Layer.provide(
@@ -705,6 +769,18 @@ const buildAppUnderTest = (options?: {
           Layer.mock(ProviderService.ProviderService)({
             uploadFeedback: () => Effect.die("Provider feedback is not stubbed in this test"),
             ...options?.layers?.providerService,
+          }),
+          Layer.mock(ProviderAuthService)({
+            ...options?.layers?.providerAuth,
+          }),
+          Layer.mock(ProviderInstanceRegistry)({
+            getInstance: () => Effect.succeed(undefined),
+            listInstances: Effect.succeed([]),
+            ...options?.layers?.providerInstanceRegistry,
+          }),
+          Layer.mock(AntigravityInstallation)({
+            managedDirectory: "unused-test-antigravity-runtime",
+            ...options?.layers?.antigravityInstallation,
           }),
         ),
       ),
@@ -856,6 +932,7 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+          getUserInputActivity: () => Effect.die("unused"),
           getCommandReadModel: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
           getSnapshot: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
           getShellSnapshot: () =>
@@ -1042,6 +1119,24 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.cloudCliTokenManager,
         }),
       ),
+      Layer.updateService(PairingGrantStore.PairingGrantStore, (grants) => {
+        const subscribed = options?.onPairingChangesSubscribed;
+        if (!subscribed) return grants;
+        return {
+          ...grants,
+          streamChanges: Stream.unwrap(
+            Effect.gen(function* () {
+              const changes = yield* Queue.unbounded<PairingGrantStore.BootstrapCredentialChange>();
+              yield* grants.streamChanges.pipe(
+                Stream.runForEach((change) => Queue.offer(changes, change)),
+                Effect.forkScoped({ startImmediately: true }),
+              );
+              yield* subscribed;
+              return Stream.fromQueue(changes);
+            }),
+          ),
+        };
+      }),
       Layer.provideMerge(makeAuthTestLayer()),
       Layer.provideMerge(ServerSecretStore.layer),
       Layer.provide(workspaceAndProjectServicesLayer),
@@ -1068,16 +1163,19 @@ const parseSessionCookieFromWsUrl = (
   };
 };
 
-const wsRpcProtocolLayer = (wsUrl: string) => {
+const wsRpcProtocolLayer = (wsUrl: string, onMessage?: (message: string) => void) => {
   const { cookie, url } = parseSessionCookieFromWsUrl(wsUrl);
   const webSocketConstructorLayer = Layer.succeed(
     Socket.WebSocketConstructor,
-    (socketUrl, protocols) =>
-      new NodeSocket.NodeWS.WebSocket(
+    (socketUrl, protocols) => {
+      const socket = new NodeSocket.NodeWS.WebSocket(
         socketUrl,
         protocols,
         cookie ? { headers: { cookie } } : undefined,
-      ) as unknown as globalThis.WebSocket,
+      );
+      if (onMessage) socket.on("message", (data) => onMessage(data.toString()));
+      return socket as unknown as globalThis.WebSocket;
+    },
   );
 
   return RpcClient.layerProtocolSocket().pipe(
@@ -1093,7 +1191,8 @@ type WsRpcClient =
 const withWsRpcClient = <A, E, R>(
   wsUrl: string,
   f: (client: WsRpcClient) => Effect.Effect<A, E, R>,
-) => makeWsRpcClient.pipe(Effect.flatMap(f), Effect.provide(wsRpcProtocolLayer(wsUrl)));
+  onMessage?: (message: string) => void,
+) => makeWsRpcClient.pipe(Effect.flatMap(f), Effect.provide(wsRpcProtocolLayer(wsUrl, onMessage)));
 
 const appendSessionCookieToWsUrl = (url: string, sessionCookieHeader: string) => {
   const isAbsoluteUrl = /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(url);
@@ -3869,6 +3968,128 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("returns only pairing metadata to access-read HTTP sessions", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const reader = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "access:read",
+      });
+      assert.equal(reader.response.status, 200);
+      assert.equal(reader.body.scope, "access:read");
+      const createdResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { cookie: yield* getAuthenticatedSessionCookieHeader() },
+        body: yield* HttpBody.json({ label: "Synthetic phone" }),
+      });
+      const created = (yield* createdResponse.json) as { id: string; credential: string };
+      assert.equal(createdResponse.status, 200);
+      const response = yield* HttpClient.get("/api/auth/pairing-links", {
+        headers: { authorization: `Bearer ${reader.body.access_token ?? ""}` },
+      });
+      assert.equal(response.status, 200);
+      const responseText = yield* response.text;
+      assert.notInclude(responseText, '"credential"');
+      assert.notInclude(responseText, created.credential);
+      const links = yield* responseJsonEffect<
+        ReadonlyArray<{
+          readonly id: string;
+          readonly label?: string;
+          readonly scopes: ReadonlyArray<string>;
+        }>
+      >(response);
+      const listed = links.find((link) => link.id === created.id);
+      assert.isDefined(listed);
+      assert.deepInclude(listed, {
+        label: "Synthetic phone",
+        scopes: [...AuthStandardClientScopes],
+      });
+
+      const unauthorizedCreate = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { authorization: `Bearer ${reader.body.access_token ?? ""}` },
+        body: yield* HttpBody.json({}),
+      });
+      assert.equal(unauthorizedCreate.status, 403);
+      const idExchange = yield* exchangeAccessToken(created.id, { scope: "terminal:operate" });
+      assert.equal(idExchange.response.status, 401);
+      const authorized = yield* exchangeAccessToken(created.credential, {
+        scope: AuthStandardClientScopes.join(" "),
+      });
+      assert.equal(authorized.response.status, 200);
+      assert.equal(authorized.body.scope, AuthStandardClientScopes.join(" "));
+      const reused = yield* exchangeAccessToken(created.credential, { scope: "terminal:operate" });
+      assert.equal(reused.response.status, 401);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("returns only pairing metadata in access-read WebSocket snapshots and updates", () =>
+    Effect.gen(function* () {
+      const changesSubscribed = yield* Deferred.make<void>();
+      yield* buildAppUnderTest({
+        onPairingChangesSubscribed: Deferred.succeed(changesSubscribed, undefined).pipe(
+          Effect.asVoid,
+        ),
+      });
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const createLink = Effect.gen(function* () {
+        const response = yield* HttpClient.post("/api/auth/pairing-token", {
+          headers: { cookie: ownerCookie },
+          body: yield* HttpBody.json({}),
+        });
+        assert.equal(response.status, 200);
+        return (yield* response.json) as { id: string; credential: string };
+      });
+      const initialLink = yield* createLink;
+      const reader = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "access:read",
+      });
+      assert.equal(reader.body.scope, "access:read");
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${reader.body.access_token ?? ""}` },
+      });
+      assert.equal(ticketResponse.status, 200);
+      const { ticket } = (yield* ticketResponse.json) as { ticket: string };
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+      const frames: string[] = [];
+      yield* withWsRpcClient(
+        wsUrl,
+        (client) =>
+          Effect.gen(function* () {
+            const snapshotReceived = yield* Deferred.make<void>();
+            const eventsFiber = yield* client.subscribeAuthAccess({}).pipe(
+              Stream.tap((event) =>
+                event.type === "snapshot"
+                  ? Deferred.succeed(snapshotReceived, undefined)
+                  : Effect.void,
+              ),
+              Stream.takeUntil((event) => event.type === "pairingLinkUpserted"),
+              Stream.runCollect,
+              Effect.forkChild,
+            );
+            yield* Deferred.await(snapshotReceived);
+            yield* Deferred.await(changesSubscribed);
+            const liveLink = yield* createLink;
+            const events = yield* Fiber.join(eventsFiber);
+            const snapshot = events.find((event) => event.type === "snapshot");
+            const update = events.find((event) => event.type === "pairingLinkUpserted");
+            assert.isDefined(snapshot);
+            assert.isDefined(update);
+            assert.isTrue(
+              snapshot?.payload.pairingLinks.some((link) => link.id === initialLink.id),
+            );
+            assert.equal(update?.payload.id, liveLink.id);
+            // Inspect the wire frames so client schema decoding cannot hide a leak.
+            assert.notInclude(frames.join(""), '"credential"');
+            assert.notInclude(frames.join(""), initialLink.credential);
+            assert.notInclude(frames.join(""), liveLink.credential);
+            const paired = yield* exchangeAccessToken(liveLink.credential, {
+              scope: AuthStandardClientScopes.join(" "),
+            });
+            assert.equal(paired.response.status, 200);
+          }),
+        (frame) => frames.push(frame),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("lists and revokes pairing links for access management sessions", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({
@@ -3896,7 +4117,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
       const listedLinks = (yield* listResponse.json) as ReadonlyArray<{
         readonly id: string;
-        readonly credential: string;
       }>;
 
       const revokeResponse = yield* HttpClient.post("/api/auth/pairing-links/revoke", {
@@ -4979,6 +5199,307 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           failureMessage.includes("An error occurred during Open"),
       );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("provider setup lets read-only clients observe installation but not change setup", () =>
+    Effect.gen(function* () {
+      let installStarts = 0;
+      let authCalls = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          providerInstanceRegistry: {
+            getInstance: (instanceId) =>
+              Effect.succeed(
+                instanceId === providerSetupInstanceId ? providerSetupInstance : undefined,
+              ),
+          },
+          antigravityInstallation: {
+            start: Effect.sync(() => {
+              installStarts += 1;
+              return providerSetupInstallState;
+            }),
+            changes: Stream.succeed(providerSetupInstallState),
+          },
+          providerAuth: {
+            start: () =>
+              Effect.sync(() => {
+                authCalls += 1;
+                return providerSetupAuthState;
+              }),
+            subscribe: () =>
+              Stream.fromEffect(
+                Effect.sync(() => {
+                  authCalls += 1;
+                  return providerSetupAuthState;
+                }),
+              ),
+          },
+        },
+      });
+      const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "orchestration:read",
+      });
+      assert.equal(token.response.status, 200);
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${token.body.access_token ?? ""}` },
+      });
+      const { ticket } = yield* responseJsonEffect<{ readonly ticket: string }>(ticketResponse);
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const observed = yield* client[WS_METHODS.providerInstallSubscribe]({
+              instanceId: providerSetupInstanceId,
+            }).pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+            assert.deepEqual(observed, providerSetupInstallState);
+            const errors = [
+              yield* client[WS_METHODS.providerInstallStart]({
+                instanceId: providerSetupInstanceId,
+              }).pipe(Effect.flip),
+              yield* client[WS_METHODS.providerAuthStart]({
+                instanceId: providerSetupInstanceId,
+              }).pipe(Effect.flip),
+              yield* client[WS_METHODS.providerAuthSubscribe]({
+                instanceId: providerSetupInstanceId,
+              }).pipe(Stream.runHead, Effect.flip),
+            ];
+            for (const error of errors) {
+              assert.equal(error._tag, "EnvironmentAuthorizationError");
+              if (error._tag === "EnvironmentAuthorizationError") {
+                assert.equal(error.requiredScope, "orchestration:operate");
+              }
+            }
+          }),
+        ),
+      );
+      assert.equal(installStarts, 0);
+      assert.equal(authCalls, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("provider setup binds private sign-in to the authenticated websocket session", () =>
+    Effect.gen(function* () {
+      const flowId = "private-sign-in-flow";
+      const callbackUrl = "http://127.0.0.1:51234/?state=test-state&code=test-code";
+      const waiting: ProviderAuthState = {
+        ...providerSetupAuthState,
+        phase: "waiting",
+        flowId,
+        authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth?state=test-state",
+        expiresAt: "2026-09-02T00:05:00.000Z",
+      };
+      const calls: Array<{
+        readonly operation: string;
+        readonly instanceId: ProviderInstanceId;
+        readonly ownerSessionId: string;
+      }> = [];
+      const forwardedCallbacks: string[] = [];
+      const logoutInstances: ProviderInstanceId[] = [];
+      let flowOwner = "";
+      yield* buildAppUnderTest({
+        layers: {
+          providerAuth: {
+            start: (input, ownerSessionId) =>
+              Effect.sync(() => {
+                flowOwner = ownerSessionId;
+                calls.push({ operation: "start", instanceId: input.instanceId, ownerSessionId });
+                return waiting;
+              }),
+            subscribe: (input, ownerSessionId) =>
+              Stream.fromEffect(
+                Effect.sync(() => {
+                  calls.push({
+                    operation: "subscribe",
+                    instanceId: input.instanceId,
+                    ownerSessionId,
+                  });
+                  return ownerSessionId === flowOwner
+                    ? waiting
+                    : { ...waiting, flowId: null, authorizationUrl: null, expiresAt: null };
+                }),
+              ),
+            complete: (input, ownerSessionId) =>
+              Effect.gen(function* () {
+                calls.push({ operation: "complete", instanceId: input.instanceId, ownerSessionId });
+                if (ownerSessionId !== flowOwner) {
+                  return yield* new ProviderSetupError({
+                    instanceId: input.instanceId,
+                    operation: "complete",
+                    detail: "This sign-in belongs to another client.",
+                  });
+                }
+                assert.equal(input.flowId, flowId);
+                forwardedCallbacks.push(input.callbackUrl);
+                return { ...waiting, phase: "verifying" as const, authorizationUrl: null };
+              }),
+            cancel: (input, ownerSessionId) =>
+              Effect.sync(() => {
+                assert.equal(input.flowId, flowId);
+                calls.push({ operation: "cancel", instanceId: input.instanceId, ownerSessionId });
+                return { ...providerSetupAuthState, phase: "cancelled" as const, flowId };
+              }),
+            logout: (input) =>
+              Effect.sync(() => {
+                logoutInstances.push(input.instanceId);
+                return providerSetupAuthState;
+              }),
+          },
+        },
+      });
+      const firstCookie = yield* getAuthenticatedSessionCookieHeader();
+      const secondCookie = yield* getAuthenticatedSessionCookieHeader();
+      const firstClients = yield* HttpClient.get("/api/auth/clients", {
+        headers: { cookie: firstCookie },
+      }).pipe(
+        Effect.flatMap(
+          responseJsonEffect<
+            ReadonlyArray<{ readonly sessionId: string; readonly current: boolean }>
+          >,
+        ),
+      );
+      const secondClients = yield* HttpClient.get("/api/auth/clients", {
+        headers: { cookie: secondCookie },
+      }).pipe(
+        Effect.flatMap(
+          responseJsonEffect<
+            ReadonlyArray<{ readonly sessionId: string; readonly current: boolean }>
+          >,
+        ),
+      );
+      const firstOwner = firstClients.find((session) => session.current)?.sessionId;
+      const secondOwner = secondClients.find((session) => session.current)?.sessionId;
+      assert.isString(firstOwner);
+      assert.isString(secondOwner);
+      assert.notEqual(firstOwner, secondOwner);
+      const baseWsUrl = yield* getWsServerUrl("/ws", { authenticated: false });
+      const target = {
+        instanceId: providerSetupInstanceId,
+        ownerSessionId: "client-supplied-owner",
+      };
+      yield* Effect.scoped(
+        withWsRpcClient(appendSessionCookieToWsUrl(baseWsUrl, firstCookie), (client) =>
+          Effect.gen(function* () {
+            const started = yield* client[WS_METHODS.providerAuthStart](target);
+            assert.equal(started.flowId, flowId);
+            const ownState = yield* client[WS_METHODS.providerAuthSubscribe](target).pipe(
+              Stream.runHead,
+              Effect.map(Option.getOrThrow),
+            );
+            assert.equal(ownState.authorizationUrl, waiting.authorizationUrl);
+            yield* Effect.scoped(
+              withWsRpcClient(appendSessionCookieToWsUrl(baseWsUrl, secondCookie), (otherClient) =>
+                Effect.gen(function* () {
+                  const otherState = yield* otherClient[WS_METHODS.providerAuthSubscribe](
+                    target,
+                  ).pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+                  assert.isNull(otherState.authorizationUrl);
+                  assert.isNull(otherState.flowId);
+                  const forged = { ...target, ownerSessionId: firstOwner, flowId, callbackUrl };
+                  const denied = yield* otherClient[WS_METHODS.providerAuthComplete](forged).pipe(
+                    Effect.flip,
+                  );
+                  assert.equal(denied._tag, "ProviderSetupError");
+                  assert.deepEqual(forwardedCallbacks, []);
+                }),
+              ),
+            );
+            const completed = yield* client[WS_METHODS.providerAuthComplete]({
+              ...target,
+              flowId,
+              callbackUrl,
+            });
+            assert.equal(completed.phase, "verifying");
+            const cancelled = yield* client[WS_METHODS.providerAuthCancel]({ ...target, flowId });
+            assert.equal(cancelled.phase, "cancelled");
+            const signedOut = yield* client[WS_METHODS.providerAuthLogout](target);
+            assert.equal(signedOut.phase, "idle");
+          }),
+        ),
+      );
+      assert.deepEqual(forwardedCallbacks, [callbackUrl]);
+      assert.deepEqual(logoutInstances, [providerSetupInstanceId]);
+      assert.isTrue(calls.every((call) => call.instanceId === providerSetupInstanceId));
+      assert.deepEqual(
+        calls.map((call) => call.ownerSessionId),
+        [firstOwner, firstOwner, secondOwner, secondOwner, firstOwner, firstOwner],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "provider setup routes installation operations and returns only safe typed errors",
+    () =>
+      Effect.gen(function* () {
+        const calls: string[] = [];
+        let state = providerSetupInstallState;
+        yield* buildAppUnderTest({
+          layers: {
+            providerInstanceRegistry: {
+              getInstance: (instanceId) =>
+                Effect.succeed(
+                  instanceId === providerSetupInstanceId ? providerSetupInstance : undefined,
+                ),
+            },
+            antigravityInstallation: {
+              start: Effect.sync(() => {
+                calls.push("start");
+                return state;
+              }),
+              cancel: (operationId) =>
+                Effect.gen(function* () {
+                  calls.push(`cancel:${operationId}`);
+                  if (operationId !== state.operationId) {
+                    return yield* new AntigravityInstallationError({
+                      operation: "cancel",
+                      detail: "This installation is no longer running.",
+                      cause: new Error("Private download diagnostics."),
+                    });
+                  }
+                  state = { ...state, phase: "cancelled" };
+                  return state;
+                }),
+              changes: Stream.fromEffect(Effect.sync(() => state)),
+            },
+          },
+        });
+        const wsUrl = yield* getWsServerUrl("/ws");
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              const unknownInstance = yield* client[WS_METHODS.providerInstallStart]({
+                instanceId: ProviderInstanceId.make("unknown-instance"),
+              }).pipe(Effect.flip);
+              assert.equal(unknownInstance._tag, "ProviderSetupError");
+              assert.deepEqual(calls, []);
+              const started = yield* client[WS_METHODS.providerInstallStart]({
+                instanceId: providerSetupInstanceId,
+              });
+              assert.deepEqual(started, providerSetupInstallState);
+              const stale = yield* client[WS_METHODS.providerInstallCancel]({
+                instanceId: providerSetupInstanceId,
+                operationId: "old-operation",
+              }).pipe(Effect.flip);
+              assert.equal(stale._tag, "ProviderSetupError");
+              if (stale._tag === "ProviderSetupError") {
+                assert.equal(stale.instanceId, providerSetupInstanceId);
+                assert.equal(stale.operation, "cancel");
+                assert.equal(stale.detail, "This installation is no longer running.");
+                assert.notProperty(stale, "cause");
+              }
+              const cancelled = yield* client[WS_METHODS.providerInstallCancel]({
+                instanceId: providerSetupInstanceId,
+                operationId: "install-operation",
+              });
+              assert.equal(cancelled.phase, "cancelled");
+              const observed = yield* client[WS_METHODS.providerInstallSubscribe]({
+                instanceId: providerSetupInstanceId,
+              }).pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+              assert.deepEqual(observed, cancelled);
+            }),
+          ),
+        );
+        assert.deepEqual(calls, ["start", "cancel:old-operation", "cancel:install-operation"]);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("routes websocket rpc subscribeServerConfig streams snapshot then update", () =>
@@ -6937,7 +7458,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           projectionSnapshotQuery: {
             getThreadDetailSnapshot: () =>
               Effect.gen(function* () {
-                yield* Effect.sleep("25 millis");
                 yield* PubSub.publish(liveEvents, messageEvent);
                 return Option.some({ snapshotSequence: 1, thread });
               }),
@@ -6950,14 +7470,19 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.subscribeThread]({
             threadId: defaultThreadId,
-          }).pipe(Stream.take(2), Stream.runCollect),
+            requestCompletionMarker: true,
+          }).pipe(
+            Stream.takeUntil((item) => item.kind === "synchronized"),
+            Stream.runCollect,
+          ),
         ),
-      ).pipe(Effect.timeout("2 seconds"));
+      );
 
       assert.equal(items[0]?.kind, "snapshot");
       assert.equal(items[1]?.kind, "event");
       assert.equal(items[1]?.kind === "event" ? items[1].event.sequence : null, 2);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+      assert.equal(items[2]?.kind, "synchronized");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("coalesces buffered live tool updates to the latest state", () =>

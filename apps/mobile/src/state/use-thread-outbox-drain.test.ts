@@ -80,6 +80,11 @@ vi.mock("./entities", () => ({
   useThreadShells: () => [],
 }));
 
+vi.mock("./server", async () => {
+  const { Atom } = await import("effect/unstable/reactivity");
+  return { serverEnvironment: { configValueAtom: Atom.family(() => Atom.make(null)) } };
+});
+
 vi.mock("./threads", () => ({
   threadEnvironment: {},
 }));

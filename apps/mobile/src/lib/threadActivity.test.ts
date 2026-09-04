@@ -16,6 +16,7 @@ import {
   buildPendingUserInputAnswers,
   buildThreadFeed,
   derivePendingApprovals,
+  derivePendingUserInputs,
   deriveThreadFeedPresentation,
   isPendingUserInputOptionSelected,
   setPendingUserInputCustomAnswer,
@@ -74,15 +75,71 @@ const multiSelectQuestion = {
   multiSelect: true,
 } as const;
 
+const nativeQuestion = {
+  id: "choice",
+  header: "File",
+  question: "Which file should be used?",
+  options: [
+    { label: "Use this", description: "First file", value: " choice " },
+    { label: "Use this", description: "Second file", value: "choice" },
+  ],
+  multiSelect: false,
+  allowCustomAnswer: false,
+} as const;
+
 describe("pending user input answers", () => {
+  it("accepts free-text answers to async questions without options", () => {
+    const question = {
+      id: "0",
+      header: "Question",
+      question: "What should it be named?",
+      options: [],
+      allowCustomAnswer: true,
+      multiSelect: false,
+    };
+    const requested = makeActivity({
+      id: EventId.make("async-question"),
+      kind: "user-input.requested",
+      summary: "User input requested",
+      createdAt: "2026-09-03T00:00:00.000Z",
+      payload: { requestId: "async-1", responseMode: "message", questions: [question] },
+    });
+    const questions = derivePendingUserInputs([requested])[0]?.questions;
+    expect(questions).toEqual([question]);
+    expect(buildPendingUserInputAnswers(questions!, { "0": { customAnswer: "Example" } })).toEqual({
+      "0": "Example",
+    });
+  });
+
+  it("preserves native choice values and custom-answer rules from activities", () => {
+    const requested = makeActivity({
+      id: EventId.make("native-question"),
+      kind: "user-input.requested",
+      summary: "User input requested",
+      createdAt: "2026-09-02T00:00:00.000Z",
+      payload: {
+        requestId: "interaction_1",
+        questions: [nativeQuestion, singleSelectQuestion],
+      },
+    });
+
+    expect(derivePendingUserInputs([requested])).toEqual([
+      {
+        requestId: "interaction_1",
+        createdAt: requested.createdAt,
+        questions: [nativeQuestion, singleSelectQuestion],
+      },
+    ]);
+  });
+
   it("replaces single-select options and toggles multi-select options", () => {
     expect(
       togglePendingUserInputOptionSelection(
         singleSelectQuestion,
-        { selectedOptionLabels: ["Go"] },
+        { selectedOptionValues: ["Go"] },
         "Node.js",
       ),
-    ).toEqual({ customAnswer: "", selectedOptionLabels: ["Node.js"] });
+    ).toEqual({ customAnswer: "", selectedOptionValues: ["Node.js"] });
 
     const orders = togglePendingUserInputOptionSelection(multiSelectQuestion, undefined, "Orders");
     const ordersAndListings = togglePendingUserInputOptionSelection(
@@ -92,18 +149,18 @@ describe("pending user input answers", () => {
     );
     expect(ordersAndListings).toEqual({
       customAnswer: "",
-      selectedOptionLabels: ["Orders", "Listings"],
+      selectedOptionValues: ["Orders", "Listings"],
     });
     expect(
       togglePendingUserInputOptionSelection(multiSelectQuestion, ordersAndListings, "Orders"),
-    ).toEqual({ customAnswer: "", selectedOptionLabels: ["Listings"] });
+    ).toEqual({ customAnswer: "", selectedOptionValues: ["Listings"] });
 
     const paddedOrders = togglePendingUserInputOptionSelection(
       multiSelectQuestion,
       undefined,
       "  Orders  ",
     );
-    expect(paddedOrders).toEqual({ customAnswer: "", selectedOptionLabels: ["Orders"] });
+    expect(paddedOrders).toEqual({ customAnswer: "", selectedOptionValues: ["Orders"] });
     expect(
       togglePendingUserInputOptionSelection(multiSelectQuestion, paddedOrders, "  Orders  "),
     ).toEqual({ customAnswer: "" });
@@ -112,8 +169,8 @@ describe("pending user input answers", () => {
   it("builds array answers for multi-select questions", () => {
     expect(
       buildPendingUserInputAnswers([singleSelectQuestion, multiSelectQuestion], {
-        runtime: { selectedOptionLabels: ["Go"] },
-        scope: { selectedOptionLabels: ["Orders", "Listings"] },
+        runtime: { selectedOptionValues: ["Go"] },
+        scope: { selectedOptionValues: ["Orders", "Listings"] },
       }),
     ).toEqual({
       runtime: "Go",
@@ -124,22 +181,84 @@ describe("pending user input answers", () => {
   it("clears selected options while a custom answer is active", () => {
     expect(
       setPendingUserInputCustomAnswer(
-        { selectedOptionLabels: ["Orders", "Listings"] },
+        multiSelectQuestion,
+        { selectedOptionValues: ["Orders", "Listings"] },
         "Orders first",
       ),
     ).toEqual({ customAnswer: "Orders first" });
   });
 
-  it("matches selected chips against normalized option labels", () => {
+  it("matches selected options against normalized legacy labels", () => {
     expect(
-      isPendingUserInputOptionSelected({ selectedOptionLabels: ["Orders"] }, "  Orders  "),
+      isPendingUserInputOptionSelected(
+        multiSelectQuestion,
+        { selectedOptionValues: ["Orders"] },
+        "  Orders  ",
+      ),
     ).toBe(true);
     expect(
       isPendingUserInputOptionSelected(
-        { selectedOptionLabels: ["Orders"], customAnswer: "Orders first" },
+        multiSelectQuestion,
+        { selectedOptionValues: ["Orders"], customAnswer: "Orders first" },
         "  Orders  ",
       ),
     ).toBe(false);
+  });
+
+  it("keeps custom answers enabled for legacy questions", () => {
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion], {
+        runtime: { selectedOptionValues: ["Go"], customAnswer: "  Use Bun  " },
+      }),
+    ).toEqual({ runtime: "Use Bun" });
+  });
+
+  it("keeps duplicate labels and whitespace-sensitive native values separate", () => {
+    const first = togglePendingUserInputOptionSelection(nativeQuestion, undefined, " choice ");
+    expect(isPendingUserInputOptionSelected(nativeQuestion, first, " choice ")).toBe(true);
+    expect(isPendingUserInputOptionSelected(nativeQuestion, first, "choice")).toBe(false);
+    expect(buildPendingUserInputAnswers([nativeQuestion], { choice: first })).toEqual({
+      choice: " choice ",
+    });
+
+    const second = togglePendingUserInputOptionSelection(nativeQuestion, first, "choice");
+    expect(isPendingUserInputOptionSelected(nativeQuestion, second, " choice ")).toBe(false);
+    expect(isPendingUserInputOptionSelected(nativeQuestion, second, "choice")).toBe(true);
+    expect(buildPendingUserInputAnswers([nativeQuestion], { choice: second })).toEqual({
+      choice: "choice",
+    });
+  });
+
+  it("keeps exact native values in multi-select answers", () => {
+    const question = { ...nativeQuestion, multiSelect: true };
+    const first = togglePendingUserInputOptionSelection(question, undefined, " choice ");
+    const both = togglePendingUserInputOptionSelection(question, first, "choice");
+    expect(buildPendingUserInputAnswers([question], { choice: both })).toEqual({
+      choice: [" choice ", "choice"],
+    });
+
+    const second = togglePendingUserInputOptionSelection(question, both, " choice ");
+    expect(buildPendingUserInputAnswers([question], { choice: second })).toEqual({
+      choice: ["choice"],
+    });
+  });
+
+  it("ignores custom answers when a question only accepts choices", () => {
+    const draft = { selectedOptionValues: [" choice "], customAnswer: "Other" };
+    expect(setPendingUserInputCustomAnswer(nativeQuestion, draft, "Custom text")).toBe(draft);
+    expect(isPendingUserInputOptionSelected(nativeQuestion, draft, " choice ")).toBe(true);
+    expect(buildPendingUserInputAnswers([nativeQuestion], { choice: draft })).toEqual({
+      choice: " choice ",
+    });
+  });
+
+  it.each([
+    { customAnswer: "Other" },
+    { selectedOptionValues: ["Use this"] },
+    { selectedOptionValues: ["not offered"] },
+    { selectedOptionValues: ["  choice  "] },
+  ])("requires an offered value for a choice-only question: %j", (draft) => {
+    expect(buildPendingUserInputAnswers([nativeQuestion], { choice: draft })).toBeNull();
   });
 });
 
@@ -234,6 +353,33 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("keeps context compaction as a standalone timeline row", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-context-compaction"),
+      projectId: ProjectId.make("project-1"),
+      title: "Context compaction",
+      activities: [
+        makeActivity({
+          id: EventId.make("context-compaction"),
+          kind: "context-compaction",
+          tone: "info",
+          summary: "Compacted context 899K → 19K tokens",
+          createdAt: "2026-09-01T00:00:00.000Z",
+          turnId: TurnId.make("turn-context-compaction"),
+        }),
+      ],
+    });
+
+    const presented = deriveThreadFeedPresentation(buildThreadFeed(thread), null, new Set());
+    expect(presented).toMatchObject([
+      {
+        type: "activity-group",
+        id: "context-compaction",
+        activities: [{ summary: "Compacted context 899K → 19K tokens" }],
+      },
+    ]);
+  });
+
   it("keeps long Claude commands expandable without repeating them in full detail", () => {
     const command = `printf 'first line\nsecond line'\n&& printf done`;
     const thread = makeThread({
@@ -1844,6 +1990,49 @@ describe("buildThreadFeed", () => {
     },
   );
 
+  it("preserves serialized shell wrappers with non-matching boundary quotes", () => {
+    const turnId = TurnId.make("turn-serialized-shell-wrapper");
+    const command =
+      "/bin/zsh -lc 'git status\nsed -n '\"'1,20p' apps/web/src/components/DiffPanel.tsx\"";
+    const thread = makeThread({
+      id: ThreadId.make("thread-serialized-shell-wrapper"),
+      projectId: ProjectId.make("project-1"),
+      title: "Serialized shell wrapper",
+      latestTurn: {
+        turnId,
+        state: "running",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:00.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("serialized-shell-wrapper"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Ran command",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId,
+          payload: {
+            itemType: "command_execution",
+            status: "inProgress",
+            data: { item: { command } },
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(feed[0]).toMatchObject({
+      type: "activity-group",
+      activities: [{ workEntry: { command } }],
+    });
+    if (feed[0]?.type === "activity-group") {
+      expect(feed[0].activities[0]?.workEntry.rawCommand).toBeUndefined();
+    }
+  });
+
   it.each([
     ["inProgress", true],
     ["completed", false],
@@ -2025,6 +2214,104 @@ describe("buildThreadFeed", () => {
 });
 
 describe("quiet timeline: nested agents", () => {
+  it.each(["task.updated", "task.progress"] as const)(
+    "does not mark an ordinary task complete when it resumes through %s",
+    (resumeKind) => {
+      const thread = makeThread({
+        id: ThreadId.make("resumed-agent"),
+        projectId: ProjectId.make("project-1"),
+        title: "Resumed agent",
+        activities: (
+          [
+            ["task.progress", "running", "Review"],
+            ["task.updated", "idle", "Task idle"],
+            [resumeKind, "running", "Review resumed"],
+          ] as const
+        ).map(([kind, status, summary], index) =>
+          makeActivity({
+            id: EventId.make(`resumed-${index}`),
+            kind,
+            summary,
+            createdAt: `2026-04-01T00:00:0${index + 1}.000Z`,
+            payload: {
+              taskId: "agent-1",
+              agentKind: "agent",
+              title: "Reviewer",
+              status,
+              detail: summary,
+            },
+          }),
+        ),
+      });
+      const rows = buildThreadFeed(thread).flatMap((entry) =>
+        entry.type === "activity-group" ? entry.activities : [],
+      );
+      expect(rows).toMatchObject([
+        {
+          lifecycleStatus: "inProgress",
+          summary: "Reviewer",
+          workEntry: { label: resumeKind === "task.progress" ? "Review resumed" : "Review" },
+        },
+      ]);
+    },
+  );
+
+  it.each(["cancelled", "failed", "interrupted"] as const)(
+    "replaces Antigravity progress with %s without a timeline bypass flag",
+    (status) => {
+      const thread = makeThread({
+        id: ThreadId.make("antigravity-agents"),
+        projectId: ProjectId.make("project-1"),
+        title: "Antigravity subagents",
+        activities: [
+          ...["trajectory:4", "trajectory:5"].map((taskId, index) =>
+            makeActivity({
+              id: EventId.make(`progress-${index}`),
+              kind: "task.progress",
+              summary: "Antigravity subagent",
+              createdAt: `2026-04-01T00:00:0${index + 1}.000Z`,
+              payload: {
+                taskId,
+                taskType: "subagent",
+                agentKind: "agent",
+                title: "Antigravity subagent",
+                detail: "Antigravity subagent",
+                status: "running",
+              },
+            }),
+          ),
+          makeActivity({
+            id: EventId.make("agent-stopped"),
+            kind: "task.updated",
+            summary: `Task ${status}`,
+            createdAt: "2026-04-01T00:00:03.000Z",
+            payload: {
+              taskId: "trajectory:4",
+              taskType: "subagent",
+              agentKind: "agent",
+              title: "Antigravity subagent",
+              status,
+              error: "Antigravity process stopped.",
+            },
+          }),
+        ],
+      });
+      const rows = buildThreadFeed(thread).flatMap((entry) =>
+        entry.type === "activity-group" ? entry.activities : [],
+      );
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toMatchObject({
+        lifecycleStatus: status === "failed" ? "failed" : "stopped",
+        detail: "Antigravity process stopped.",
+        workEntry: { taskId: "trajectory:4", toolTitle: "Antigravity subagent" },
+      });
+      expect(rows[1]).toMatchObject({
+        lifecycleStatus: "inProgress",
+        workEntry: { taskId: "trajectory:5" },
+      });
+    },
+  );
+
   it("keeps a nested agent's terminal row but hides its background work", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-nested"),

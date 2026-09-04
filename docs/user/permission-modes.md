@@ -18,7 +18,7 @@ without prompting; commands and anything else still stop for approval.
 **Auto**: routine actions proceed without you; risky ones still ask. How this is enforced depends
 on the provider: Codex delegates routine approvals to an AI reviewer, Claude uses its own auto
 permission mode, Cursor uses Smart Auto review, and providers without an equivalent (such as
-OpenCode) fall back to asking, like Supervised.
+OpenCode and Antigravity) fall back to asking, like Supervised.
 
 **Full access**: allow commands and edits without prompts. The default. The agent runs
 unattended until it finishes or asks a question of its own.
@@ -28,6 +28,11 @@ there.
 
 For Grok, **Always allow this session** remembers the matching command or tool input. Other
 actions still ask for approval. It does not change the thread to **Full access**.
+
+Antigravity uses its own permission policy for each mode. T3 Code still shows any approval or
+question the official agent sends in **Full access**. A remembered approval is available only
+when the agent offers it for that action. Fixed-choice questions require one of the offered
+answers and do not accept custom text.
 
 ## Choosing a Mode
 
@@ -49,3 +54,7 @@ set to always-approve, and **Full access** starts Grok with always-approve. The 
 describe what you get; the exact per-provider translation is internal and may change.
 
 Mobile offers the same four modes with the same labels and descriptions.
+
+Antigravity's native `/plan` command requests a plan. It does not change the permission mode.
+T3 Code's separate Plan mode control is not available for Antigravity. See
+[Antigravity](./providers-antigravity.md) for setup and thread limits.

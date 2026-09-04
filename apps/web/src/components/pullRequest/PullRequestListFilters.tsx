@@ -78,7 +78,6 @@ export function PullRequestFilterOptionIcon<Value extends string>({
       projectName={option.label}
       faviconPath={option.favicon.faviconPath}
       projectIcon={option.favicon.projectIcon}
-      fallbackIcon={FolderGit2Icon}
       className="size-3.5"
     />
   ) : (

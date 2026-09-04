@@ -206,7 +206,9 @@ it.effect("reveals a file in File Explorer through PowerShell on Windows", () =>
       const launcher = yield* ExternalLauncher.ExternalLauncher;
       yield* launcher.launchEditor({
         editor: "file-manager",
-        cwd: "C:\\workspace with spaces\\media\\author's clip.mp4",
+        // Web file links normalize separators even when the server runs on
+        // Windows. Explorer's `/select` switch requires Windows separators.
+        cwd: "C:/workspace with spaces/media/author's clip.mp4",
         reveal: true,
       });
       return yield* launcher.resolveFileManagerRevealKind();
@@ -261,8 +263,12 @@ it.skipIf(process.platform !== "win32")(
       const outputPath = NodePath.join(tempDir, "argv.txt");
       NodeFS.writeFileSync(recorderPath, `@echo off\r\n>"${outputPath}" echo(%*\r\n`);
 
-      const target = "C:\\workspace with spaces\\media\\author's clip.mp4";
-      const source = ExternalLauncher.buildFileExplorerRevealPowerShellSource(recorderPath, target);
+      const target = "C:/workspace with spaces/media/author's clip.mp4";
+      const explorerTarget = target.replaceAll("/", "\\");
+      const source = ExternalLauncher.buildFileExplorerRevealPowerShellSource(
+        recorderPath,
+        explorerTarget,
+      );
       const powerShellPath = `${process.env.SYSTEMROOT ?? "C:\\Windows"}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
       NodeChildProcess.execFileSync(
         powerShellPath,
@@ -290,7 +296,7 @@ it.skipIf(process.platform !== "win32")(
       }
       await sleep(200);
       const recorded = NodeFS.readFileSync(outputPath, "utf8").trim();
-      assert.equal(recorded, `/select,"${target}"`);
+      assert.equal(recorded, `/select,"${explorerTarget}"`);
     } finally {
       NodeFS.rmSync(tempDir, { recursive: true, force: true });
     }
