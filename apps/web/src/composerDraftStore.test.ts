@@ -197,37 +197,42 @@ describe("composerDraftStore assistant citations", () => {
   beforeEach(resetComposerDraftStore);
   afterEach(resetComposerDraftStore);
 
-  it("keeps quotes, comments, and remote source IDs through persistence and removes them on clear", () => {
-    const threadId = ThreadId.make("citation-draft");
-    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
-    const citation = {
-      version: 1 as const,
-      environmentId: EnvironmentId.make("remote-source"),
-      threadId: ThreadId.make("source-thread"),
-      messageId: MessageId.make("source-message"),
-      text: "Preserve the selected text after reload.",
-      comment: "Why is this important?\nPlease show an example.",
-      start: 12,
-      end: 52,
-      prefix: "Before. ",
-      suffix: " After.",
-    };
-    const prompt = `Explain ${serializeAssistantCitation(citation)} further.`;
-    useComposerDraftStore.getState().setPrompt(threadRef, prompt);
-    const options = useComposerDraftStore.persist.getOptions();
-    const saved = JSON.parse(
-      JSON.stringify(options.partialize!(useComposerDraftStore.getState())),
-    ) as unknown;
-    resetComposerDraftStore();
-    const hydrated = options.merge!(saved, useComposerDraftStore.getState());
-    useComposerDraftStore.setState(hydrated);
-    const restored = draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt ?? "";
-    expect(restored).toBe(prompt);
-    expect(collectAssistantCitations(restored).map((entry) => entry.citation)).toEqual([citation]);
-    useComposerDraftStore.getState().clearComposerContent(threadRef);
-    expect(
-      collectAssistantCitations(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt ?? ""),
-    ).toEqual([]);
+  it("keeps quotes, comments, and remote source IDs through persistence and removes them on clear", async () => {
+    await useComposerDraftStore.persist.clearStorage();
+    vi.useFakeTimers();
+    try {
+      const threadId = ThreadId.make("citation-draft");
+      const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+      const citation = {
+        version: 1 as const,
+        environmentId: EnvironmentId.make("remote-source"),
+        threadId: ThreadId.make("source-thread"),
+        messageId: MessageId.make("source-message"),
+        text: "Preserve the selected text after reload.",
+        comment: "Why is this important?\nPlease show an example.",
+        start: 12,
+        end: 52,
+        prefix: "Before. ",
+        suffix: " After.",
+      };
+      const prompt = `Explain ${serializeAssistantCitation(citation)} further.`;
+      useComposerDraftStore.getState().setPrompt(threadRef, prompt);
+      await vi.advanceTimersByTimeAsync(300);
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
+      const restored = draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt ?? "";
+      expect(restored).toBe(prompt);
+      expect(collectAssistantCitations(restored).map((entry) => entry.citation)).toEqual([
+        citation,
+      ]);
+      useComposerDraftStore.getState().clearComposerContent(threadRef);
+      expect(
+        collectAssistantCitations(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt ?? ""),
+      ).toEqual([]);
+    } finally {
+      await useComposerDraftStore.persist.clearStorage();
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -2518,6 +2523,69 @@ function createMockStorage() {
     }),
   };
 }
+
+describe("composer draft persistence", () => {
+  it("defers attachment reads and serialization until typing stops, then restores the last draft", async () => {
+    await useComposerDraftStore.persist.clearStorage();
+    vi.useFakeTimers();
+    const stringify = vi.spyOn(JSON, "stringify");
+    try {
+      resetComposerDraftStore();
+      const heavyThreadId = ThreadId.make("heavy-draft");
+      const typingThreadId = ThreadId.make("typing-draft");
+      const heavyRef = scopeThreadRef(TEST_ENVIRONMENT_ID, heavyThreadId);
+      const typingRef = scopeThreadRef(TEST_ENVIRONMENT_ID, typingThreadId);
+      const heavyKey = scopedThreadKey(heavyRef);
+      useComposerDraftStore.getState().setPrompt(heavyRef, "Keep this image");
+      const attachments = [
+        {
+          id: "heavy-image",
+          name: "image.png",
+          mimeType: "image/png",
+          sizeBytes: 49_152,
+          dataUrl: `data:image/png;base64,${"AQID".repeat(16_384)}`,
+        },
+      ];
+      let attachmentReads = 0;
+      useComposerDraftStore.setState((state) => ({
+        draftsByThreadKey: {
+          ...state.draftsByThreadKey,
+          [heavyKey]: {
+            ...state.draftsByThreadKey[heavyKey]!,
+            get persistedAttachments() {
+              attachmentReads += 1;
+              return attachments;
+            },
+          },
+        },
+      }));
+      attachmentReads = 0;
+      stringify.mockClear();
+
+      for (let index = 1; index <= 20; index++) {
+        useComposerDraftStore.getState().setPrompt(typingRef, `Draft ${index}`);
+      }
+      expect(attachmentReads).toBe(0);
+      expect(stringify).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(300);
+      expect(attachmentReads).toBe(1);
+      expect(stringify).toHaveBeenCalledTimes(1);
+
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
+      expect(draftFor(typingThreadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("Draft 20");
+      expect(draftFor(heavyThreadId, TEST_ENVIRONMENT_ID)?.persistedAttachments).toEqual(
+        attachments,
+      );
+    } finally {
+      stringify.mockRestore();
+      await useComposerDraftStore.persist.clearStorage();
+      vi.useRealTimers();
+      resetComposerDraftStore();
+    }
+  });
+});
 
 describe("createDeferredStorage", () => {
   const serialize = vi.fn((value: string) => `s:${value}`);

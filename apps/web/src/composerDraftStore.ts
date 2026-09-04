@@ -73,15 +73,7 @@ export type DraftId = typeof DraftId.Type;
 
 const COMPOSER_PERSIST_DEBOUNCE_MS = 300;
 
-/**
- * What flows from `partialize` into the debounced storage. The persist
- * pipeline used to run the full draft walk + JSON.stringify on every store
- * write — every keystroke serialized all persisted drafts, including base64
- * image attachments. `partialize` now only captures the live state reference,
- * and the real walk + stringify run once per debounced flush. Already
- * persisted-shape values (migration seeds written straight to storage) pass
- * through serialization untouched.
- */
+// Keep the immutable state until flush. Migration writebacks already have the persisted shape.
 type ComposerPersistState =
   | { capturedState: ComposerDraftStoreState }
   | PersistedComposerDraftStoreState;
@@ -2049,11 +2041,7 @@ function migratePersistedComposerDraftStoreState(
   };
 }
 
-/**
- * Produces the persisted draft-store shape. Runs once per debounced storage
- * flush (see ComposerPersistState), not on every store write. Exported so
- * tests can exercise the persistence round trip directly.
- */
+/** Select the persisted draft fields when the storage write is ready to flush. */
 export function partializeComposerDraftStoreState(
   state: ComposerDraftStoreState,
 ): PersistedComposerDraftStoreState {
@@ -3919,8 +3907,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
       version: COMPOSER_DRAFT_STORAGE_VERSION,
       storage: composerPersistStorage,
       migrate: migratePersistedComposerDraftStoreState,
-      // Cheap capture only; the draft walk + stringify happen at flush time
-      // inside composerDebouncedStorage. See ComposerPersistState.
+      // Defer the draft walk and serialization until the storage write flushes.
       partialize: (state): ComposerPersistState => ({ capturedState: state }),
       merge: (persistedState, currentState) => {
         const normalizedPersisted =
