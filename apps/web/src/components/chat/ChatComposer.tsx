@@ -303,7 +303,6 @@ function useComposerRestingTransition(
   }, [clearOverlayPin]);
 
   isCollapsedRef.current = isCollapsed;
-  isRestingRef.current = isResting;
 
   const transitionToCurrentGeometry = useCallback(
     (stateChanged: boolean) => {
@@ -598,7 +597,12 @@ function useComposerRestingTransition(
     [clearTransitionStyles, onOverlayGeometryChange, restingControlsRef],
   );
 
+  // The resting flag can change without the collapsed layout changing, for
+  // example when an unfocused thread crosses the phone breakpoint. Republish
+  // the geometry then too, so the chat view's next measurement is paired
+  // with the right state. Only a collapsed-layout change animates.
   useLayoutEffect(() => {
+    isRestingRef.current = isResting;
     const requestId = transitionLayoutRequestRef.current + 1;
     transitionLayoutRequestRef.current = requestId;
     const stateChanged = previousCollapsedRef.current !== isCollapsed;
@@ -614,7 +618,7 @@ function useComposerRestingTransition(
         transitionLayoutRequestRef.current += 1;
       }
     };
-  }, [isCollapsed, transitionToCurrentGeometry]);
+  }, [isCollapsed, isResting, transitionToCurrentGeometry]);
 
   useLayoutEffect(() => {
     const element = elementRef.current;
