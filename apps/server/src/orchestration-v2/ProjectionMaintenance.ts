@@ -1,4 +1,4 @@
-import { type OrchestrationV2StoredEvent, ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -65,24 +65,6 @@ export const layer: Layer.Layer<
     const eventStore = yield* EventStoreV2;
     const projectionStore = yield* ProjectionStoreV2;
 
-    const readAllEvents = Effect.gen(function* () {
-      const events: Array<OrchestrationV2StoredEvent> = [];
-      const pageSize = 500;
-      let afterSequence = 0;
-      while (true) {
-        const page = yield* eventStore.read({ afterSequence, limit: pageSize }).pipe(
-          Stream.runCollect,
-          Effect.map((chunk) => Array.from(chunk)),
-        );
-        events.push(...page);
-        if (page.length < pageSize) {
-          break;
-        }
-        afterSequence = page.at(-1)?.sequence ?? afterSequence;
-      }
-      return events;
-    });
-
     /**
      * EventSink commits the event, its projection updates, and projection metadata in one SQL
      * transaction. Startup verification therefore checks that transaction boundary and that every
@@ -93,7 +75,7 @@ export const layer: Layer.Layer<
     const verify = Effect.gen(function* () {
       const expectedThreadRows = yield* sql<{ readonly thread_id: string }>`
         SELECT DISTINCT stream_id AS thread_id
-        FROM orchestration_events
+        FROM orchestration_events INDEXED BY orchestration_events_v2_created_threads_idx
         WHERE application_event_version = 2
           AND aggregate_kind = 'thread'
           AND event_type = 'thread.created'
@@ -110,15 +92,7 @@ export const layer: Layer.Layer<
       const expectedSet = new Set(expectedIds);
       const missingThreadIds = expectedIds.filter((threadId) => !actualSet.has(threadId));
       const unexpectedThreadIds = actualIds.filter((threadId) => !expectedSet.has(threadId));
-      const unreadableThreadIds = (yield* Effect.forEach(
-        actualIds,
-        (threadId) =>
-          projectionStore.getThreadProjection(threadId).pipe(
-            Effect.as<ThreadId | null>(null),
-            Effect.orElseSucceed((): ThreadId | null => threadId),
-          ),
-        { concurrency: 8 },
-      )).filter((threadId): threadId is ThreadId => threadId !== null);
+      const unreadableThreadIds = yield* projectionStore.getUnreadableThreadIds();
       const metadata = yield* sql<ProjectionMetadataRow>`
         SELECT schema_version, last_sequence
         FROM orchestration_v2_projection_metadata
@@ -142,12 +116,12 @@ export const layer: Layer.Layer<
         missingThreadIds,
         unexpectedThreadIds,
       } satisfies ProjectionVerificationV2;
-    });
+    }).pipe(sql.withTransaction);
 
     const rebuild = Effect.gen(function* () {
-      const events = yield* readAllEvents;
       yield* sql.withTransaction(
         Effect.gen(function* () {
+          const throughSequence = yield* eventStore.latestSequence();
           yield* sql`DELETE FROM orchestration_v2_projection_context_transfers`;
           yield* sql`DELETE FROM orchestration_v2_projection_context_handoffs`;
           yield* sql`DELETE FROM orchestration_v2_projection_checkpoints`;
@@ -167,10 +141,16 @@ export const layer: Layer.Layer<
           yield* sql`DELETE FROM orchestration_v2_projection_threads`;
           yield* sql`DELETE FROM orchestration_v2_turn_item_positions`;
 
-          for (const stored of events) {
-            yield* projectionStore.apply(stored.event);
-            if (stored.event.type === "turn-item.updated") {
-              yield* sql`
+          const pageSize = 500;
+          let lastSequence = 0;
+          while (true) {
+            const page = yield* eventStore
+              .read({ afterSequence: lastSequence, throughSequence, limit: pageSize })
+              .pipe(Stream.runCollect);
+            for (const stored of page) {
+              yield* projectionStore.apply(stored.event);
+              if (stored.event.type === "turn-item.updated") {
+                yield* sql`
                 INSERT INTO orchestration_v2_turn_item_positions (
                   thread_id,
                   turn_item_id,
@@ -183,11 +163,14 @@ export const layer: Layer.Layer<
                 )
                 ON CONFLICT(thread_id, turn_item_id) DO UPDATE SET
                   ordinal = excluded.ordinal
-              `;
+                `;
+              }
+              lastSequence = stored.sequence;
             }
+            if (page.length < pageSize) break;
+            yield* Effect.yieldNow;
           }
           const now = DateTime.formatIso(yield* DateTime.now);
-          const lastSequence = events.at(-1)?.sequence ?? 0;
           yield* sql`
             INSERT INTO orchestration_v2_projection_metadata (
               projection_name,
