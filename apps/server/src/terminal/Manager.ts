@@ -796,7 +796,7 @@ function capHistory(history: string, maxLines: number): string {
   return hasTrailingNewline ? `${capped}\n` : capped;
 }
 
-class BoundedTerminalHistory {
+export class BoundedTerminalHistory {
   private readonly maxLines: number;
   private lines: Array<string>;
   private start = 0;
@@ -830,7 +830,10 @@ class BoundedTerminalHistory {
     this.trailingNewline = trailingNewline;
 
     const overflow = this.lines.length - this.start - this.maxLines;
-    if (overflow > 0) this.start += overflow;
+    if (overflow > 0) {
+      this.lines.fill("", this.start, this.start + overflow);
+      this.start += overflow;
+    }
     if (this.start > 2_048 && this.start * 2 >= this.lines.length) {
       this.lines = this.lines.slice(this.start);
       this.start = 0;
