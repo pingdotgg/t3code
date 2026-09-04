@@ -327,6 +327,14 @@ interface ClaudeSessionContext {
   lastKnownTotalProcessedTokens: number | undefined;
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
+  /**
+   * Message of the CLI's authentication failure, when it reported one. The CLI
+   * loads credentials once per process and never re-reads them, so a session
+   * whose credentials expired stays broken even after the user logs in again.
+   * The turn fails with this message and the session is stopped, so the next
+   * turn spawns a fresh CLI with the current credentials.
+   */
+  authenticationError: string | undefined;
   stopped: boolean;
 }
 
@@ -3085,6 +3093,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
+    if (message.error === "authentication_failed" && context.authenticationError === undefined) {
+      const authenticationText = trimmedString(extractAssistantTextBlocks(message).join("\n"));
+      context.authenticationError = authenticationText ?? "Claude authentication failed.";
+      // The CLI's own text reaches the transcript below; a message without
+      // text needs a runtime error so the failure is still visible.
+      if (authenticationText === undefined) {
+        yield* emitRuntimeError(context, context.authenticationError);
+      }
+    }
+
     // Subagent-owned assistant snapshots (parent_tool_use_id set) are the
     // subagent's own conversation, not the parent's. Emitting them created
     // interleaved "Agent N done"-adjacent leak messages and spawned synthetic
@@ -3216,14 +3234,24 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
-    const status = turnStatusFromResult(message);
-    const errorMessage = resultUserFacingError(message);
+    const authenticationError = context.authenticationError;
+    const status = authenticationError === undefined ? turnStatusFromResult(message) : "failed";
+    const errorMessage = authenticationError ?? resultUserFacingError(message);
 
-    if (status === "failed") {
+    // The authentication failure already reached the transcript as the CLI's
+    // assistant message, so it is not repeated as a runtime error.
+    if (status === "failed" && authenticationError === undefined) {
       yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
     }
 
     yield* completeTurn(context, status, errorMessage, message);
+
+    if (authenticationError !== undefined) {
+      yield* Effect.logInfo("claude.session.stopped.authentication-failed", {
+        threadId: context.session.threadId,
+      });
+      yield* stopSessionInternal(context, { emitExitEvent: true });
+    }
   });
 
   /**
@@ -4000,9 +4028,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     yield* Queue.shutdown(context.promptQueue);
 
+    // The stream fiber ends on its own once `stopped` is set, so a stop issued
+    // from a message handler running on that fiber must not wait on itself.
     const streamFiber = context.streamFiber;
     context.streamFiber = undefined;
-    if (streamFiber && streamFiber.pollUnsafe() === undefined) {
+    const currentFiber = yield* Effect.withFiber((fiber) => Effect.succeed(fiber));
+    if (streamFiber && streamFiber !== currentFiber && streamFiber.pollUnsafe() === undefined) {
       yield* Fiber.interrupt(streamFiber);
     }
 
@@ -4688,6 +4719,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastKnownTotalProcessedTokens: undefined,
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
+        authenticationError: undefined,
         stopped: false,
       };
       yield* Ref.set(contextRef, context);
