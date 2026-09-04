@@ -8,6 +8,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AuthStandardClientScopes,
   CommandId,
   EnvironmentOrchestrationHttpApi,
   ProviderInstanceId,
@@ -592,6 +593,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const created = JSON.parse(createdOutput.output) as {
         readonly id: string;
         readonly credential: string;
+        readonly scopes: ReadonlyArray<string>;
       };
       const listedOutput = yield* captureStdout(
         runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
@@ -605,6 +607,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       assert.equal(typeof created.id, "string");
       assert.equal(typeof created.credential, "string");
       assert.equal(created.credential.length > 0, true);
+      assert.deepEqual(created.scopes, AuthStandardClientScopes);
       assert.equal(listed.length, 1);
       assert.equal(listed[0]?.id, created.id);
       assert.equal("credential" in (listed[0] ?? {}), false);
@@ -663,6 +666,77 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       assert.equal("token" in (listed[0] ?? {}), false);
     }).pipe(Effect.provide(DisconnectedLauncherChildLayer)),
   );
+
+  for (const [group, action] of [
+    ["pairing", "create"],
+    ["session", "issue"],
+  ] as const) {
+    it.effect(`issues and persists only the selected scopes for auth ${group} ${action}`, () =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(
+          NodePath.join(NodeOS.tmpdir(), "t3-cli-auth-scopes-test-"),
+        );
+        const { output } = yield* captureStdout(
+          runCli([
+            "auth",
+            group,
+            action,
+            "--base-dir",
+            baseDir,
+            "--json",
+            "--scope",
+            "orchestration:read",
+            "--scope",
+            "access:read",
+            "--scope",
+            "orchestration:read",
+          ]),
+        );
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - CLI JSON is a presentation DTO.
+        const issued = JSON.parse(output) as { readonly scopes: ReadonlyArray<string> };
+        const { output: listOutput } = yield* captureStdout(
+          runCli(["auth", group, "list", "--base-dir", baseDir, "--json"]),
+        );
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - CLI JSON is a presentation DTO.
+        const listed = JSON.parse(listOutput) as ReadonlyArray<{
+          readonly scopes: ReadonlyArray<string>;
+        }>;
+
+        assert.deepEqual(issued.scopes, ["orchestration:read", "access:read"]);
+        assert.lengthOf(listed, 1);
+        assert.deepEqual(listed[0]?.scopes, issued.scopes);
+      }).pipe(Effect.provide(DisconnectedLauncherChildLayer)),
+    );
+  }
+
+  for (const command of [
+    ["pair"],
+    ["auth", "pairing", "create"],
+    ["auth", "session", "issue"],
+  ]) {
+    it.effect(`rejects invalid scopes before running ${command.join(" ")}`, () =>
+      Effect.gen(function* () {
+        const error = yield* runCliWithRuntime([
+          ...command,
+          "--scope",
+          "orchestration:read",
+          "--scope",
+          "admin",
+        ]).pipe(Effect.flip);
+
+        if (!CliError.isCliError(error) || error._tag !== "ShowHelp") {
+          assert.fail(`Expected ShowHelp, got ${String(error)}`);
+        }
+        assert.deepEqual(error.commandPath, ["t3", ...command]);
+        const scopeError = error.errors[0];
+        if (scopeError?._tag !== "InvalidValue") {
+          assert.fail(`Expected InvalidValue, got ${String(scopeError?._tag)}`);
+        }
+        assert.equal(scopeError.option, "scope");
+        assert.equal(scopeError.value, "admin");
+      }),
+    );
+  }
 
   it.effect("rejects invalid ttl values before running auth commands", () =>
     Effect.gen(function* () {

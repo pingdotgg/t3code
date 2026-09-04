@@ -1,4 +1,8 @@
-import { AuthStandardClientScopes, EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthAdministrativeScopes,
+  AuthStandardClientScopes,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import {
   RelayEnvironmentConnectScope,
   type RelayEnvironmentConnectResponse,
@@ -46,7 +50,9 @@ const BOOTSTRAP: RelayEnvironmentConnectResponse = {
   expiresAt: "2026-06-06T01:00:00.000Z",
 };
 
-function recordedFetch(responses: ReadonlyArray<Response>) {
+type RecordedResponse = Response | ((init: RequestInit) => Response);
+
+function recordedFetch(responses: ReadonlyArray<RecordedResponse>) {
   const calls: Array<readonly [RequestInfo | URL, RequestInit]> = [];
   let responseIndex = 0;
   const fetchFn = ((input, init) => {
@@ -54,7 +60,7 @@ function recordedFetch(responses: ReadonlyArray<Response>) {
     const response = responses[responseIndex++];
     return response === undefined
       ? Promise.reject(new Error(`Unexpected fetch call to ${String(input)}`))
-      : Promise.resolve(response);
+      : Promise.resolve(typeof response === "function" ? response(init ?? {}) : response);
   }) satisfies typeof fetch;
   return { calls, fetchFn };
 }
@@ -65,13 +71,13 @@ const websocketTicket = (ticket: string) =>
     expiresAt: "2026-06-06T01:00:00.000Z",
   });
 
-const accessToken = (token: string) =>
+const accessToken = (token: string, scope = AuthStandardClientScopes.join(" ")) =>
   Response.json({
     access_token: token,
     issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
     token_type: "DPoP",
     expires_in: 3_600,
-    scope: AuthStandardClientScopes.join(" "),
+    scope,
   });
 
 const authInvalid = () =>
@@ -105,7 +111,7 @@ const persistedToken = (
 
 const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (input: {
   readonly initialToken?: TokenStore.RemoteDpopAccessToken;
-  readonly responses: ReadonlyArray<Response>;
+  readonly responses: ReadonlyArray<RecordedResponse>;
   readonly bootstrap?: RelayEnvironmentConnectResponse;
   readonly beforeBootstrap?: Effect.Effect<void, ManagedRelay.ManagedRelayClientError>;
   readonly beforePut?: Effect.Effect<void>;
@@ -210,7 +216,6 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
               deviceType: "mobile",
               os: "test",
             },
-            scopes: AuthStandardClientScopes,
           }),
         ),
       ),
@@ -378,6 +383,83 @@ describe("RemoteEnvironmentAuthorization", () => {
       expect(harness.fetch.calls).toHaveLength(3);
     }),
   );
+
+  for (const [name, grantScopes] of [
+    ["read-only", ["orchestration:read"]],
+    ["administrative", AuthAdministrativeScopes],
+  ] as const) {
+    it.effect(
+      `inherits ${name} pairing grant scopes for websocket authorization and HTTP renewal`,
+      () =>
+        Effect.gen(function* () {
+          const grantedScope = grantScopes.join(" ");
+          let exchangeCount = 0;
+          const tokenFields = (init: RequestInit) =>
+            new URLSearchParams(
+              init.body instanceof Uint8Array
+                ? new TextDecoder().decode(init.body)
+                : String(init.body),
+            );
+          const exchangeGrant = (init: RequestInit) => {
+            const fields = tokenFields(init);
+            const scope = fields.get("scope") ?? grantedScope;
+            const scopes = scope.split(" ");
+            if (scopes.some((requested) => !grantScopes.some((grant) => grant === requested))) {
+              return authInvalid();
+            }
+            return accessToken(`access-token:${++exchangeCount}:${scopes.join(",")}`, scope);
+          };
+          const harness = yield* makeHarness({
+            responses: [
+              Response.json(DESCRIPTOR),
+              exchangeGrant,
+              websocketTicket("granted-ticket"),
+              Response.json(DESCRIPTOR),
+              exchangeGrant,
+            ],
+          });
+
+          const [authorized, refreshed] = yield* Effect.gen(function* () {
+            const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+            const first = yield* remote.authorizeDpop({
+              expectedEnvironmentId: ENVIRONMENT_ID,
+            });
+            yield* TestClock.adjust("1 hour");
+            const refreshed = yield* remote.authorizeDpopHttp({
+              expectedEnvironmentId: ENVIRONMENT_ID,
+            });
+            return [first, refreshed] as const;
+          }).pipe(Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+
+          expect(authorized.socketUrl).toContain("wsTicket=granted-ticket");
+          expect(authorized.httpAuthorization).toMatchObject({
+            _tag: "Dpop",
+            accessToken: `access-token:1:${grantScopes.join(",")}`,
+          });
+          expect(refreshed.httpAuthorization).toMatchObject({
+            _tag: "Dpop",
+            accessToken: `access-token:2:${grantScopes.join(",")}`,
+          });
+          expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)).toMatchObject({
+            accessToken: `access-token:2:${grantScopes.join(",")}`,
+            dpopThumbprint: "thumbprint-1",
+          });
+          expect(yield* Ref.get(harness.bootstrapCalls)).toBe(2);
+          const exchanges = harness.fetch.calls.filter(([url]) =>
+            String(url).endsWith("/oauth/token"),
+          );
+          expect(exchanges).toHaveLength(2);
+          for (const [, init] of exchanges) {
+            expect(Object.fromEntries(tokenFields(init))).toMatchObject({
+              subject_token: BOOTSTRAP.credential,
+              client_label: "T3 Code Test",
+              client_device_type: "mobile",
+              client_os: "test",
+            });
+          }
+        }),
+    );
+  }
 
   it.effect("evicts an auth-invalid cached token and obtains a fresh bootstrap", () =>
     Effect.gen(function* () {
