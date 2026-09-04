@@ -103,6 +103,7 @@ import {
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
+import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
@@ -743,6 +744,11 @@ const buildAppUnderTest = (options?: {
             current: Effect.succeed([]),
             streamChanges: Stream.empty,
             ...options?.layers?.environmentTheme,
+          }),
+          Layer.mock(UsageLimitSources.UsageLimitSources)({
+            current: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            refresh: Effect.void,
           }),
         ),
       ),

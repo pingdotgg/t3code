@@ -714,7 +714,9 @@ describe("RpcSessionFactory", () => {
             clearVcsRefs: () => Effect.void,
             clear: () => Effect.void,
           });
-          const configState = yield* makeEnvironmentServerConfigState(true).pipe(
+          const configState = yield* makeEnvironmentServerConfigState({
+            environmentThemes: true,
+          }).pipe(
             Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
             Effect.provideService(Persistence.EnvironmentCacheStore, cache),
           );
