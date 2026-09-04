@@ -1205,13 +1205,13 @@ export function makeCursorAdapter(
       provider: PROVIDER,
       capabilities: { sessionModelSwitch: "in-session" },
       startSession,
-      isSameResumeCursor: (persisted, recovered) => {
+      isSameResumeCursor: (_threadId, persisted, recovered) => {
         const persistedSession = parseCursorResume(persisted);
         const recoveredSession = parseCursorResume(recovered);
-        return (
+        return Effect.succeed(
           persistedSession !== undefined &&
-          recoveredSession !== undefined &&
-          persistedSession.sessionId === recoveredSession.sessionId
+            recoveredSession !== undefined &&
+            persistedSession.sessionId === recoveredSession.sessionId,
         );
       },
       sendTurn,

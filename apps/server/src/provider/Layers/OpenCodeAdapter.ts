@@ -3267,13 +3267,13 @@ export function makeOpenCodeAdapter(
         sessionModelSwitch: "in-session",
       },
       startSession,
-      isSameResumeCursor: (persisted, recovered) => {
+      isSameResumeCursor: (_threadId, persisted, recovered) => {
         const persistedSession = parseOpenCodeResume(persisted);
         const recoveredSession = parseOpenCodeResume(recovered);
-        return (
+        return Effect.succeed(
           persistedSession !== undefined &&
-          recoveredSession !== undefined &&
-          persistedSession.sessionId === recoveredSession.sessionId
+            recoveredSession !== undefined &&
+            persistedSession.sessionId === recoveredSession.sessionId,
         );
       },
       sendTurn,

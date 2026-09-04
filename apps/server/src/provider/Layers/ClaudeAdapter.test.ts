@@ -4247,6 +4247,52 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("rejects an echoed Claude resume cursor when the SDK starts a fresh session", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const persistedResumeCursor = {
+        threadId: RESUME_THREAD_ID,
+        resume: "550e8400-e29b-41d4-a716-446655440000",
+        turnCount: 3,
+      };
+      const session = yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        resumeCursor: persistedResumeCursor,
+        runtimeMode: "full-access",
+      });
+      assert.notEqual(adapter.isSameResumeCursor, undefined);
+      if (adapter.isSameResumeCursor === undefined) return;
+
+      const verification = yield* adapter
+        .isSameResumeCursor(RESUME_THREAD_ID, persistedResumeCursor, session.resumeCursor)
+        .pipe(Effect.forkChild);
+      harness.query.emit({
+        type: "system",
+        subtype: "init",
+        apiKeySource: "none",
+        claude_code_version: "test",
+        cwd: "/tmp/claude-adapter-test",
+        tools: [],
+        mcp_servers: [],
+        model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+        permissionMode: "bypassPermissions",
+        slash_commands: [],
+        output_style: "default",
+        skills: [],
+        plugins: [],
+        session_id: "7368d0c7-40a3-4d8a-bcc1-ac80c49f2719",
+        uuid: "fresh-init",
+      } as unknown as SDKMessage);
+
+      assert.equal(yield* Fiber.join(verification), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("preserves durable resume ids across Claude resume hooks", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -4259,7 +4305,7 @@ describe("ClaudeAdapterLive", () => {
         Effect.forkChild,
       );
 
-      yield* adapter.startSession({
+      const session = yield* adapter.startSession({
         threadId: RESUME_THREAD_ID,
         provider: ProviderDriverKind.make("claudeAgent"),
         resumeCursor: {
@@ -4331,6 +4377,17 @@ describe("ClaudeAdapterLive", () => {
           }
         | undefined;
       assert.equal(resumeCursor?.resume, durableSessionId);
+      assert.notEqual(adapter.isSameResumeCursor, undefined);
+      if (adapter.isSameResumeCursor !== undefined) {
+        assert.equal(
+          yield* adapter.isSameResumeCursor(
+            RESUME_THREAD_ID,
+            session.resumeCursor,
+            activeSessions[0]?.resumeCursor,
+          ),
+          true,
+        );
+      }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

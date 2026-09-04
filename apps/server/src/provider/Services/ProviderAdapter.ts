@@ -66,7 +66,11 @@ export interface ProviderAdapterShape<TError> {
    * conversation. Used by automatic restart recovery to avoid sending a
    * continuation turn into a newly-created empty session.
    */
-  readonly isSameResumeCursor?: (persisted: unknown, recovered: unknown) => boolean;
+  readonly isSameResumeCursor?: (
+    threadId: ThreadId,
+    persisted: unknown,
+    recovered: unknown,
+  ) => Effect.Effect<boolean, TError>;
 
   /**
    * Send a turn to an active provider session.

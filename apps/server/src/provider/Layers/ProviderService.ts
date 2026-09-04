@@ -409,6 +409,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     () => reconcileInstanceSubscriptions,
   ).pipe(Effect.forkScoped);
 
+  const isSameResumeCursor = (
+    adapter: ProviderAdapterShape<ProviderAdapterError>,
+    threadId: ThreadId,
+    persisted: unknown,
+    recovered: unknown,
+  ) => adapter.isSameResumeCursor?.(threadId, persisted, recovered) ?? Effect.succeed(false);
+
   const recoverSessionForThread = Effect.fn("recoverSessionForThread")(function* (input: {
     readonly binding: ProviderSessionDirectory.ProviderRuntimeBinding;
     readonly operation: string;
@@ -432,10 +439,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           (session) => session.threadId === input.binding.threadId,
         );
         if (existing) {
-          if (
-            input.requireResumeCursor !== undefined &&
-            adapter.isSameResumeCursor?.(input.requireResumeCursor, existing.resumeCursor) !== true
-          ) {
+          const resumeCursorMatches =
+            input.requireResumeCursor === undefined ||
+            (yield* isSameResumeCursor(
+              adapter,
+              input.binding.threadId,
+              input.requireResumeCursor,
+              existing.resumeCursor,
+            ));
+          if (input.requireResumeCursor !== undefined && !resumeCursorMatches) {
             return yield* toValidationError(
               input.operation,
               `Cannot automatically continue thread '${input.binding.threadId}' because its active provider session does not match the persisted conversation.`,
@@ -484,10 +496,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         );
       }
 
-      if (
-        input.requireResumeCursor !== undefined &&
-        adapter.isSameResumeCursor?.(input.requireResumeCursor, resumed.resumeCursor) !== true
-      ) {
+      const resumeCursorMatches =
+        input.requireResumeCursor === undefined ||
+        (yield* isSameResumeCursor(
+          adapter,
+          input.binding.threadId,
+          input.requireResumeCursor,
+          resumed.resumeCursor,
+        ));
+      if (input.requireResumeCursor !== undefined && !resumeCursorMatches) {
         yield* adapter.stopSession(input.binding.threadId).pipe(Effect.ignore);
         yield* clearMcpSession(input.binding.threadId);
         return yield* toValidationError(
@@ -538,11 +555,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       if (input.requireResumeCursor !== undefined) {
         const activeSessions = yield* adapter.listSessions();
         const activeSession = activeSessions.find((session) => session.threadId === input.threadId);
-        if (
-          activeSession === undefined ||
-          adapter.isSameResumeCursor?.(input.requireResumeCursor, activeSession.resumeCursor) !==
-            true
-        ) {
+        const resumeCursorMatches =
+          activeSession !== undefined &&
+          (yield* isSameResumeCursor(
+            adapter,
+            input.threadId,
+            input.requireResumeCursor,
+            activeSession.resumeCursor,
+          ));
+        if (activeSession === undefined || !resumeCursorMatches) {
           return yield* toValidationError(
             input.operation,
             `Cannot automatically continue thread '${input.threadId}' because its active provider session does not match the persisted conversation.`,

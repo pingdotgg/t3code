@@ -246,7 +246,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
       ...(provider === CODEX_DRIVER ? { promptlessTurnContinuation: true } : {}),
     },
     startSession,
-    isSameResumeCursor: (persisted, recovered) => {
+    isSameResumeCursor: (_threadId, persisted, recovered) => {
       const readOpaque = (value: unknown) =>
         typeof value === "object" &&
         value !== null &&
@@ -255,7 +255,9 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
           ? (value as { opaque: string }).opaque
           : undefined;
       const persistedOpaque = readOpaque(persisted);
-      return persistedOpaque !== undefined && persistedOpaque === readOpaque(recovered);
+      return Effect.succeed(
+        persistedOpaque !== undefined && persistedOpaque === readOpaque(recovered),
+      );
     },
     sendTurn,
     interruptTurn,
