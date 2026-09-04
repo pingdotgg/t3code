@@ -146,6 +146,12 @@ have a cached copy. Supported video formats and codecs depend on the browser or 
 Bare paths in ordinary prose and paths inside code blocks stay text. Raw HTML `<video>` tags
 are not supported; use the Markdown embed syntax above.
 
+## Source files in the file viewer
+
+For a project hosted on GitHub, right-click a source line in the desktop file viewer and choose
+**Copy GitHub link** to copy a link to that line on the checked-out branch. This action is only
+available when the project has a GitHub remote and the checkout is on a published branch.
+
 ## Files outside the workspace
 
 When an agent links to a file it wrote outside the workspace, such as a Markdown report in

@@ -2,6 +2,7 @@ import type {
   ChatFileAttachment,
   EditorId,
   EnvironmentId,
+  RepositoryIdentity,
   ResolvedKeybindingsConfig,
   ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -19,7 +20,7 @@ import {
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { Code2, Eye, FolderTree, Globe2, LoaderCircle } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
@@ -31,10 +32,13 @@ import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
+import { readLocalApi } from "~/localApi";
+import { isElectron } from "~/env";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { isAbsolutePath, resolvePathLinkTarget } from "~/terminal-links";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -47,8 +51,10 @@ import { assetEnvironment } from "~/state/assets";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { projectEnvironment } from "~/state/projects";
+import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
+import { vcsEnvironment } from "~/state/vcs";
 
 import FileBrowserPanel from "./FileBrowserPanel";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
@@ -63,6 +69,11 @@ import {
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
 import { installFileEditorDismissal } from "./fileEditorDismissal";
+import {
+  FILE_LINE_CONTEXT_MENU_ITEMS,
+  buildGitHubFileLineUrl,
+  fileLineNumberFromComposedPath,
+} from "./fileGitHubLink";
 import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
@@ -83,6 +94,9 @@ interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
+  repositoryIdentity: RepositoryIdentity | null;
+  repositoryRoot: string | undefined;
+  gitRef: string | null;
   relativePath: string | null;
   attachment?: ChatFileAttachment;
   threadRef: ScopedThreadRef;
@@ -983,6 +997,9 @@ export default function FilePreviewPanel({
   environmentId,
   cwd,
   projectName,
+  repositoryIdentity,
+  repositoryRoot,
+  gitRef,
   relativePath,
   attachment,
   threadRef,
@@ -1021,6 +1038,29 @@ export default function FilePreviewPanel({
     cwd,
     relativePath,
     attachment === undefined && !isMedia && !isPdf,
+  );
+  const sourceEditable = file.data !== null && !file.data.truncated && !isHostFile;
+  const shouldResolvePublishedRef =
+    isElectron &&
+    attachment === undefined &&
+    relativePath !== null &&
+    !isMedia &&
+    !isPdf &&
+    repositoryIdentity?.provider === "github" &&
+    gitRef !== null;
+  const publishedRefQuery = useEnvironmentQuery(
+    shouldResolvePublishedRef && repositoryIdentity !== null && gitRef !== null
+      ? vcsEnvironment.listRefs({
+          environmentId,
+          input: {
+            cwd,
+            exactName: `${repositoryIdentity.locator.remoteName}/${gitRef}`,
+            includeMatchingRemoteRefs: true,
+            refKind: "remote",
+            limit: 1,
+          },
+        })
+      : null,
   );
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const showExplorer = shouldShowFileExplorer({
@@ -1079,6 +1119,12 @@ export default function FilePreviewPanel({
     refresh: file.refresh,
     resourceKey: `file:${environmentId}:${cwd}:${relativePath ?? ""}`,
   });
+  useWorkspaceMutationRefresh({
+    enabled: shouldResolvePublishedRef,
+    mutationId: workspaceMutationId,
+    refresh: publishedRefQuery.refresh,
+    resourceKey: `published-ref:${environmentId}:${cwd}:${repositoryIdentity?.locator.remoteName ?? ""}:${gitRef ?? ""}`,
+  });
 
   useEffect(() => {
     const currentCrumb = breadcrumbRef.current?.querySelector<HTMLElement>(
@@ -1123,6 +1169,63 @@ export default function FilePreviewPanel({
       );
     })();
   }, [absolutePath, createAssetUrl, cwd, environmentHttpBaseUrl, openPreview, threadRef]);
+
+  const handleSourceLineContextMenu = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      if (!isElectron || attachment !== undefined || relativePath === null) return;
+      const line = fileLineNumberFromComposedPath(event.nativeEvent.composedPath());
+      if (line === null) return;
+      const url = buildGitHubFileLineUrl({
+        identity: repositoryIdentity,
+        refName: gitRef,
+        relativePath,
+        workspaceRoot: cwd,
+        repositoryRoot,
+        remoteRefs: publishedRefQuery.data?.refs,
+        line,
+      });
+      if (url === null) return;
+
+      const api = readLocalApi();
+      if (!api) return;
+      event.preventDefault();
+      const position = { x: event.clientX, y: event.clientY };
+      const selection = event.currentTarget.ownerDocument.getSelection();
+      void (async () => {
+        try {
+          const action = await api.contextMenu.show(FILE_LINE_CONTEXT_MENU_ITEMS, position, {
+            canCut: sourceEditable && selection?.isCollapsed === false,
+            canCopy: selection?.isCollapsed === false,
+            canPaste: sourceEditable,
+            canSelectAll: true,
+          });
+          if (action !== "copy-github-link") return;
+          await writeTextToClipboard(url, "GitHub link");
+          toastManager.add({
+            type: "success",
+            title: "GitHub link copied",
+            description: `${relativePath}#L${line}`,
+          });
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: "Could not copy GitHub link",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        }
+      })();
+    },
+    [
+      attachment,
+      cwd,
+      gitRef,
+      publishedRefQuery.data?.refs,
+      relativePath,
+      repositoryIdentity,
+      repositoryRoot,
+      sourceEditable,
+    ],
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
@@ -1251,6 +1354,7 @@ export default function FilePreviewPanel({
             "min-w-0 flex-1 flex-col overflow-hidden",
             relativePath ? "flex" : "hidden",
           )}
+          onContextMenu={handleSourceLineContextMenu}
         >
           {relativePath && attachment ? (
             <AttachmentBrowserPreview environmentId={environmentId} attachment={attachment} />

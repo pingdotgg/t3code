@@ -1273,6 +1273,54 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("refName operations", () => {
+    it.effect("filters exact ref names before pagination", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+
+        const targetBranch = "feature/github-links";
+        const newerSimilarBranch = `${targetBranch}-next`;
+        yield* git(cwd, ["branch", targetBranch]);
+        yield* git(cwd, ["checkout", "-b", newerSimilarBranch]);
+        yield* writeTextFile(cwd, "newer.txt", "newer\n");
+        yield* git(cwd, ["add", "newer.txt"]);
+        yield* git(cwd, ["commit", "-m", "newer similar branch"], {
+          GIT_AUTHOR_DATE: "2030-01-02T00:00:00Z",
+          GIT_COMMITTER_DATE: "2030-01-02T00:00:00Z",
+        });
+        yield* git(cwd, ["push", "origin", initialBranch, targetBranch, newerSimilarBranch]);
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const exactRefName = `origin/${targetBranch}`;
+        const fuzzy = yield* driver.listRefs({
+          cwd,
+          query: exactRefName,
+          includeMatchingRemoteRefs: true,
+          refKind: "remote",
+          limit: 1,
+          refresh: true,
+        });
+        assert.equal(fuzzy.refs[0]?.name, `origin/${newerSimilarBranch}`);
+
+        const exact = yield* driver.listRefs({
+          cwd,
+          exactName: exactRefName,
+          includeMatchingRemoteRefs: true,
+          refKind: "remote",
+          limit: 1,
+        });
+        assert.deepEqual(
+          exact.refs.map((ref) => ref.name),
+          [exactRefName],
+        );
+        assert.equal(exact.totalCount, 1);
+        assert.equal(exact.nextCursor, null);
+      }),
+    );
+
     it.effect("optionally includes remote refs that match local branches", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

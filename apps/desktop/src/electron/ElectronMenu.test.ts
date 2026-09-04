@@ -7,13 +7,17 @@ import * as Option from "effect/Option";
 import type * as Electron from "electron";
 import { beforeEach, vi } from "vite-plus/test";
 
-const { buildFromTemplateMock, createFromNamedImageMock, setApplicationMenuMock } = vi.hoisted(
-  () => ({
-    buildFromTemplateMock: vi.fn(),
-    createFromNamedImageMock: vi.fn(),
-    setApplicationMenuMock: vi.fn(),
-  }),
-);
+const {
+  buildFromTemplateMock,
+  createFromBufferMock,
+  createFromNamedImageMock,
+  setApplicationMenuMock,
+} = vi.hoisted(() => ({
+  buildFromTemplateMock: vi.fn(),
+  createFromBufferMock: vi.fn(),
+  createFromNamedImageMock: vi.fn(),
+  setApplicationMenuMock: vi.fn(),
+}));
 
 vi.mock("electron", () => ({
   Menu: {
@@ -21,6 +25,7 @@ vi.mock("electron", () => ({
     setApplicationMenu: setApplicationMenuMock,
   },
   nativeImage: {
+    createFromBuffer: createFromBufferMock,
     createFromNamedImage: createFromNamedImageMock,
   },
 }));
@@ -29,6 +34,9 @@ import * as ElectronMenu from "./ElectronMenu.ts";
 
 const TestLayer = ElectronMenu.layer.pipe(
   Layer.provide(Layer.succeed(HostProcessPlatform, "linux")),
+);
+const DarwinTestLayer = ElectronMenu.layer.pipe(
+  Layer.provide(Layer.succeed(HostProcessPlatform, "darwin")),
 );
 
 const makeWindow = (zoomFactor = 1): Electron.BrowserWindow =>
@@ -40,6 +48,7 @@ const makeWindow = (zoomFactor = 1): Electron.BrowserWindow =>
 describe("ElectronMenu", () => {
   beforeEach(() => {
     buildFromTemplateMock.mockReset();
+    createFromBufferMock.mockReset();
     createFromNamedImageMock.mockReset();
     setApplicationMenuMock.mockReset();
   });
@@ -120,6 +129,55 @@ describe("ElectronMenu", () => {
         ["Copy", "separator", "Delete"],
       );
     }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("appends renderer actions to the native edit menu", () =>
+    Effect.gen(function* () {
+      const gitHubIcon = {
+        isEmpty: () => false,
+        setTemplateImage: vi.fn(),
+      };
+      const nativeGitHubIcon = gitHubIcon as unknown as Electron.NativeImage;
+      createFromBufferMock.mockReturnValue(nativeGitHubIcon);
+      buildFromTemplateMock.mockImplementation(() => ({
+        popup: (options: Electron.PopupOptions) => options.callback?.(),
+      }));
+
+      const electronMenu = yield* ElectronMenu.ElectronMenu;
+      yield* electronMenu.showContextMenu({
+        window: makeWindow(),
+        items: [
+          {
+            id: "copy-github-link",
+            label: "Copy GitHub link",
+            icon: "github",
+            accelerator: "CmdOrCtrl+Shift+C",
+          },
+        ],
+        position: Option.none(),
+        editFlags: {
+          canCut: false,
+          canCopy: true,
+          canPaste: false,
+          canSelectAll: true,
+        },
+      });
+
+      const template = buildFromTemplateMock.mock.calls[0]?.[0] as
+        | Electron.MenuItemConstructorOptions[]
+        | undefined;
+      assert.deepEqual(
+        template?.map((item) => item.type ?? item.role ?? item.label),
+        ["cut", "copy", "paste", "selectAll", "Copy GitHub link"],
+      );
+      assert.deepEqual(
+        template?.slice(0, 4).map((item) => item.enabled),
+        [false, true, false, true],
+      );
+      assert.equal(template?.at(-1)?.accelerator, "CmdOrCtrl+Shift+C");
+      assert.strictEqual(template?.at(-1)?.icon, nativeGitHubIcon);
+      assert.deepEqual(createFromBufferMock.mock.calls[0]?.[1], { scaleFactor: 2 });
+    }).pipe(Effect.provide(DarwinTestLayer)),
   );
 
   it.effect("keeps a preceding non-destructive action in the destructive section", () =>

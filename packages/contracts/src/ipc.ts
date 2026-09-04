@@ -119,11 +119,20 @@ export interface ContextMenuItem<T extends string = string> {
   disabled?: boolean;
   /** Renders as a non-interactive section header label. Web fallback only — stripped on desktop native menus. */
   header?: boolean;
-  /** Icon keyword resolved by the web fallback. Stripped on desktop native menus. */
+  /** Icon keyword resolved by the active menu surface. */
   icon?: string;
+  /** Electron accelerator displayed and handled by desktop native menus. */
+  accelerator?: string;
   /** Inserts a visual section divider immediately before this item. */
   separatorBefore?: boolean;
   children?: readonly ContextMenuItem<T>[];
+}
+
+export interface ContextMenuEditFlags {
+  readonly canCut: boolean;
+  readonly canCopy: boolean;
+  readonly canPaste: boolean;
+  readonly canSelectAll: boolean;
 }
 
 export type QuitShortcutHintEvent =
@@ -137,6 +146,7 @@ export interface ContextMenuItemSchemaType {
   readonly disabled?: boolean;
   readonly header?: boolean;
   readonly icon?: string;
+  readonly accelerator?: string;
   readonly separatorBefore?: boolean;
   readonly children?: readonly ContextMenuItemSchemaType[];
 }
@@ -148,12 +158,20 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
   disabled: Schema.optionalKey(Schema.Boolean),
   header: Schema.optionalKey(Schema.Boolean),
   icon: Schema.optionalKey(Schema.String),
+  accelerator: Schema.optionalKey(Schema.String),
   separatorBefore: Schema.optionalKey(Schema.Boolean),
   children: Schema.optionalKey(
     Schema.Array(
       Schema.suspend((): Schema.Codec<ContextMenuItemSchemaType> => ContextMenuItemSchema),
     ),
   ),
+});
+
+export const ContextMenuEditFlagsSchema: Schema.Codec<ContextMenuEditFlags> = Schema.Struct({
+  canCut: Schema.Boolean,
+  canCopy: Schema.Boolean,
+  canPaste: Schema.Boolean,
+  canSelectAll: Schema.Boolean,
 });
 
 export type DesktopUpdateStatus =
@@ -1117,6 +1135,7 @@ export interface DesktopBridge {
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },
+    editFlags?: ContextMenuEditFlags,
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
   /**
@@ -1272,6 +1291,7 @@ export interface LocalApi {
     show: <T extends string>(
       items: readonly ContextMenuItem<T>[],
       position?: { x: number; y: number },
+      editFlags?: ContextMenuEditFlags,
     ) => Promise<T | null>;
     close: () => Promise<void>;
   };

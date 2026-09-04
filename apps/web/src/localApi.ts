@@ -34,9 +34,14 @@ function createBrowserLocalApi(): LocalApi {
       show: async <T extends string>(
         items: readonly ContextMenuItem<T>[],
         position?: { x: number; y: number },
+        editFlags?: Parameters<LocalApi["contextMenu"]["show"]>[2],
       ): Promise<T | null> => {
         if (window.desktopBridge) {
-          return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
+          return window.desktopBridge.showContextMenu(
+            items,
+            position,
+            editFlags,
+          ) as Promise<T | null>;
         }
         return showContextMenuFallback(items, position);
       },

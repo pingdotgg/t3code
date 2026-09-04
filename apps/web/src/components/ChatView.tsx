@@ -7639,6 +7639,13 @@ function ChatViewContent(props: ChatViewProps) {
           environmentId={activeThread.environmentId}
           cwd={activeWorkspaceRoot ?? ""}
           projectName={activeProject?.title ?? ""}
+          repositoryIdentity={activeProject?.repositoryIdentity ?? null}
+          repositoryRoot={
+            activeThreadWorktreePath === null
+              ? activeProject?.repositoryIdentity?.rootPath
+              : undefined
+          }
+          gitRef={gitStatusQuery.data?.refName ?? null}
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}
           keybindings={keybindings}
