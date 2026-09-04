@@ -20,11 +20,13 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as AcpErrors from "effect-acp/errors";
 
 import type { AcpSessionRuntime, AcpSessionRuntimeStartResult } from "./acp/AcpSessionRuntime.ts";
-import { parseAntigravityAuthorizationUrl } from "./antigravityAuthSupport.ts";
+import {
+  parseAntigravityAuthorizationUrl,
+  type AntigravityAuthorizationUrl,
+} from "./antigravityAuthSupport.ts";
 import {
   forwardAntigravityCallback,
   validateAntigravityCallbackUrl,
-  type AntigravityPendingCallback,
 } from "./antigravityCallback.ts";
 import type { ProviderAuthController } from "./Services/ProviderAuthService.ts";
 
@@ -43,7 +45,7 @@ interface AuthFlow {
   readonly ownerSessionId: string;
   readonly expiresAtMillis: number;
   state: ProviderAuthState;
-  pending: AntigravityPendingCallback | undefined;
+  pending: AntigravityAuthorizationUrl | undefined;
   callbackSent: boolean;
   fiber: Fiber.Fiber<void> | undefined;
   forwarding: Fiber.Fiber<void, ProviderSetupError> | undefined;
@@ -239,6 +241,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
           Effect.gen(function* () {
             if (activeFlow !== flow || operation !== "auth") return;
             if (flow.pending) {
+              if (flow.pending.authorizationUrl === authorization.authorizationUrl) return;
               return yield* new AcpErrors.AcpTransportError({
                 detail: "Antigravity started more than one Google sign-in request.",
                 cause: undefined,
@@ -477,7 +480,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
             }).pipe(
               Effect.scoped,
               Effect.timeoutOrElse({
-                duration: "30 seconds",
+                duration: "90 seconds",
                 orElse: () => Effect.fail(setupError("logout", "Antigravity sign-out timed out.")),
               }),
             ),

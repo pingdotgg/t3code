@@ -10,16 +10,20 @@
  * @module ProviderServiceLive
  */
 import {
+  EventId,
+  MessageId,
   ModelSelection,
   NonNegativeInt,
-  ThreadId,
   ProviderInterruptTurnInput,
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
+  RuntimeRequestId,
   ProviderSendTurnInput,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
   ProviderUploadFeedbackInput,
+  ThreadId,
+  TurnId,
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
@@ -28,6 +32,7 @@ import {
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -49,6 +54,7 @@ import {
   providerTurnMetricAttributes,
   withMetrics,
 } from "../../observability/Metrics.ts";
+import { ProviderAdapterRequestError } from "../Errors.ts";
 import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
@@ -61,6 +67,16 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 const isModelSelection = Schema.is(ModelSelection);
+
+interface PendingCompaction {
+  readonly completion: Deferred.Deferred<string>;
+  readonly native: boolean;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly requestId: MessageId | undefined;
+  readonly earlyEvents: ProviderRuntimeEvent[];
+  compactedEventObserved: boolean;
+  expectedTurnId: TurnId | undefined;
+}
 
 /**
  * Hook for tests that want to override the canonical event logger pulled
@@ -233,6 +249,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const revokeMcpCredential =
     options?.revokeMcpCredential ?? McpSessionRegistry.revokeActiveMcpThread;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+  const pendingCompactions = new Map<ThreadId, PendingCompaction>();
+  const timedOutNativeCompactions = new Set<ThreadId>();
+  const settleCompaction = (threadId: ThreadId, pending: PendingCompaction, terminal: string) =>
+    Effect.gen(function* () {
+      if (pendingCompactions.get(threadId) !== pending) return false;
+      pendingCompactions.delete(threadId);
+      yield* Deferred.succeed(pending.completion, terminal);
+      return true;
+    });
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   /**
    * Attach the `t3-code` MCP server to the session that is about to start.
@@ -295,6 +320,65 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       Effect.asVoid,
     );
 
+  const isCompactedEvent = (
+    event: ProviderRuntimeEvent,
+  ): event is Extract<ProviderRuntimeEvent, { readonly type: "thread.state.changed" }> =>
+    event.type === "thread.state.changed" && event.payload.state === "compacted";
+  const withCompactionRequestId = (
+    event: ProviderRuntimeEvent,
+    pending: PendingCompaction,
+  ): ProviderRuntimeEvent =>
+    pending.requestId === undefined
+      ? event
+      : {
+          ...event,
+          requestId: RuntimeRequestId.make(String(pending.requestId)),
+        };
+  const compactionTerminal = (event: ProviderRuntimeEvent): string | null =>
+    event.type === "turn.completed"
+      ? event.payload.state
+      : event.type === "runtime.error" || event.type === "turn.aborted"
+        ? event.type
+        : null;
+  const processFallbackCompactionEvent = (
+    pending: PendingCompaction,
+    event: ProviderRuntimeEvent,
+  ): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      if (pendingCompactions.get(event.threadId) !== pending) {
+        yield* publishRuntimeEvent(event);
+        return;
+      }
+      const matchesTurn = event.turnId !== undefined && event.turnId === pending.expectedTurnId;
+      if (matchesTurn && isCompactedEvent(event)) {
+        pending.compactedEventObserved = true;
+        yield* publishRuntimeEvent(withCompactionRequestId(event, pending));
+        return;
+      }
+      yield* publishRuntimeEvent(event);
+      const terminal = compactionTerminal(event);
+      if (!matchesTurn || terminal === null) return;
+      const settled = yield* settleCompaction(event.threadId, pending, terminal);
+      if (!settled || terminal !== "completed" || pending.compactedEventObserved) return;
+      const compactedEvent = {
+        ...event,
+        eventId: EventId.make(`${event.eventId}:context-compaction`),
+        type: "thread.state.changed",
+        payload: {
+          state: "compacted",
+          detail: { source: "provider-native-command" },
+        },
+        ...(pending.requestId !== undefined
+          ? { requestId: RuntimeRequestId.make(String(pending.requestId)) }
+          : {}),
+      } satisfies ProviderRuntimeEvent;
+      yield* increment(providerRuntimeEventsTotal, {
+        provider: compactedEvent.provider,
+        eventType: compactedEvent.type,
+      });
+      yield* publishRuntimeEvent(compactedEvent);
+    });
+
   const requireBindingInstanceId = (
     operation: string,
     payload: {
@@ -345,14 +429,50 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
     event: ProviderRuntimeEvent,
   ): Effect.Effect<void> =>
-    Effect.sync(() => correlateRuntimeEventWithInstance(source, event)).pipe(
-      Effect.flatMap((canonicalEvent) =>
-        increment(providerRuntimeEventsTotal, {
-          provider: canonicalEvent.provider,
-          eventType: canonicalEvent.type,
-        }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent))),
-      ),
-    );
+    Effect.gen(function* () {
+      const canonicalEvent = yield* Effect.sync(() =>
+        correlateRuntimeEventWithInstance(source, event),
+      );
+      yield* increment(providerRuntimeEventsTotal, {
+        provider: canonicalEvent.provider,
+        eventType: canonicalEvent.type,
+      });
+      if (
+        isCompactedEvent(canonicalEvent) &&
+        timedOutNativeCompactions.delete(canonicalEvent.threadId)
+      ) {
+        yield* publishRuntimeEvent(canonicalEvent);
+        return;
+      }
+      const pendingCompaction = pendingCompactions.get(canonicalEvent.threadId);
+      if (!pendingCompaction) {
+        yield* publishRuntimeEvent(canonicalEvent);
+        return;
+      }
+      if (pendingCompaction.providerInstanceId !== source.instanceId) {
+        yield* publishRuntimeEvent(canonicalEvent);
+        return;
+      }
+      if (pendingCompaction.native) {
+        const compacted = isCompactedEvent(canonicalEvent);
+        const terminal = compacted ? "completed" : compactionTerminal(canonicalEvent);
+        yield* publishRuntimeEvent(
+          compacted ? withCompactionRequestId(canonicalEvent, pendingCompaction) : canonicalEvent,
+        );
+        if (terminal !== null)
+          yield* settleCompaction(canonicalEvent.threadId, pendingCompaction, terminal);
+        return;
+      }
+      if (
+        pendingCompaction.expectedTurnId === undefined &&
+        canonicalEvent.turnId !== undefined &&
+        (isCompactedEvent(canonicalEvent) || compactionTerminal(canonicalEvent) !== null)
+      ) {
+        pendingCompaction.earlyEvents.push(canonicalEvent);
+        return;
+      }
+      yield* processFallbackCompactionEvent(pendingCompaction, canonicalEvent);
+    });
 
   // `subscribedAdapters` is our source-of-truth for "which instance adapters
   // are currently wired into the runtime event bus". It both tracks the set
@@ -708,6 +828,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             typeof input.modelSelection?.model === "string" &&
             input.modelSelection.model.trim().length > 0,
         });
+        timedOutNativeCompactions.delete(threadId);
 
         // Changing runtime mode restarts the session, so the transition is only
         // observable here, by diffing against the mode the previous session for
@@ -874,6 +995,128 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
+  const compactThread: ProviderServiceMethod<"compactThread"> = Effect.fn("compactThread")(
+    function* (threadId, modelSelection, requestId) {
+      const routed = yield* resolveRoutableSession({
+        threadId,
+        operation: "ProviderService.compactThread",
+        allowRecovery: true,
+      });
+      yield* Effect.annotateCurrentSpan({
+        "provider.operation": "compact-thread",
+        "provider.kind": routed.adapter.provider,
+        "provider.thread_id": threadId,
+      });
+      yield* McpSessionRegistry.touchActiveMcpThread(threadId);
+      const nativeCompaction = routed.adapter.compactThread;
+      const completion = yield* Deferred.make<string>();
+      const pending: PendingCompaction = {
+        completion,
+        native: nativeCompaction !== undefined,
+        providerInstanceId: routed.instanceId,
+        requestId,
+        earlyEvents: [],
+        compactedEventObserved: false,
+        expectedTurnId: undefined,
+      };
+      if (nativeCompaction !== undefined && timedOutNativeCompactions.has(threadId)) {
+        return yield* new ProviderAdapterRequestError({
+          provider: routed.adapter.provider,
+          method: "thread/compact",
+          detail:
+            "The previous context compaction may still be running. Restart the provider session before retrying.",
+        });
+      }
+      const claimed = yield* Effect.sync(() => {
+        if (pendingCompactions.has(threadId)) return false;
+        pendingCompactions.set(threadId, pending);
+        return true;
+      });
+      if (!claimed) {
+        return yield* new ProviderAdapterRequestError({
+          provider: routed.adapter.provider,
+          method: "thread/compact",
+          detail: "Context compaction is already in progress.",
+        });
+      }
+      const clearPending = Effect.sync(() => {
+        if (pendingCompactions.get(threadId) === pending) {
+          pendingCompactions.delete(threadId);
+        }
+      });
+      const nativeCompletionTimeout =
+        routed.adapter.provider === "codex" || routed.adapter.provider === "opencode"
+          ? "10 minutes"
+          : "30 seconds";
+      const awaitNativeCompaction = (start: Effect.Effect<void, ProviderAdapterError>) =>
+        start.pipe(
+          Effect.andThen(Deferred.await(completion)),
+          Effect.timeout(nativeCompletionTimeout),
+          Effect.catchTag("TimeoutError", (cause) =>
+            Effect.sync(() => {
+              timedOutNativeCompactions.add(threadId);
+            }).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ProviderAdapterRequestError({
+                    provider: routed.adapter.provider,
+                    method: "thread/compact",
+                    detail: `Provider did not report completed context compaction within ${nativeCompletionTimeout}.`,
+                    cause,
+                  }),
+                ),
+              ),
+            ),
+          ),
+        );
+      const awaitFallbackCompaction = Deferred.await(completion).pipe(
+        Effect.timeout("10 minutes"),
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterRequestError({
+              provider: routed.adapter.provider,
+              method: "turn/start",
+              detail: "Provider did not finish context compaction within 10 minutes.",
+              cause,
+            }),
+        ),
+      );
+      const terminal = yield* (
+        nativeCompaction
+          ? awaitNativeCompaction(nativeCompaction(routed.threadId, modelSelection))
+          : Effect.gen(function* () {
+              const turn = yield* sendTurn({
+                threadId,
+                input: routed.adapter.provider === "cursor" ? "/compress" : "/compact",
+                ...(modelSelection !== undefined ? { modelSelection } : {}),
+              }).pipe(
+                Effect.onError(() =>
+                  Effect.forEach(pending.earlyEvents.splice(0), publishRuntimeEvent, {
+                    discard: true,
+                  }),
+                ),
+              );
+              pending.expectedTurnId = turn.turnId;
+              const earlyEvents = pending.earlyEvents.splice(0);
+              for (const earlyEvent of earlyEvents) {
+                yield* processFallbackCompactionEvent(pending, earlyEvent);
+              }
+              return yield* awaitFallbackCompaction;
+            })
+      ).pipe(Effect.ensuring(clearPending));
+      if (terminal !== "completed") {
+        return yield* new ProviderAdapterRequestError({
+          provider: routed.adapter.provider,
+          method: nativeCompaction ? "thread/compact" : "turn/start",
+          detail: `Context compaction ended with ${terminal}.`,
+        });
+      }
+      yield* analytics.record("provider.thread.compacted", {
+        provider: routed.adapter.provider,
+      });
+    },
+  );
+
   const interruptTurn: ProviderServiceMethod<"interruptTurn"> = Effect.fn("interruptTurn")(
     function* (rawInput) {
       const input = yield* decodeInputOrValidationError({
@@ -1006,6 +1249,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         if (routed.isActive) {
           yield* routed.adapter.stopSession(routed.threadId);
         }
+        const pendingCompaction = pendingCompactions.get(input.threadId);
+        if (pendingCompaction !== undefined) {
+          yield* settleCompaction(input.threadId, pendingCompaction, "turn.aborted");
+        }
+        timedOutNativeCompactions.delete(input.threadId);
         yield* clearMcpSession(input.threadId);
         yield* directory.upsert({
           threadId: input.threadId,
@@ -1285,6 +1533,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   return {
     startSession,
     sendTurn,
+    compactThread,
     interruptTurn,
     respondToRequest,
     respondToUserInput,

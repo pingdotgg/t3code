@@ -88,6 +88,29 @@ const nativeQuestion = {
 } as const;
 
 describe("pending user input answers", () => {
+  it("accepts free-text answers to async questions without options", () => {
+    const question = {
+      id: "0",
+      header: "Question",
+      question: "What should it be named?",
+      options: [],
+      allowCustomAnswer: true,
+      multiSelect: false,
+    };
+    const requested = makeActivity({
+      id: EventId.make("async-question"),
+      kind: "user-input.requested",
+      summary: "User input requested",
+      createdAt: "2026-09-03T00:00:00.000Z",
+      payload: { requestId: "async-1", responseMode: "message", questions: [question] },
+    });
+    const questions = derivePendingUserInputs([requested])[0]?.questions;
+    expect(questions).toEqual([question]);
+    expect(buildPendingUserInputAnswers(questions!, { "0": { customAnswer: "Example" } })).toEqual({
+      "0": "Example",
+    });
+  });
+
   it("preserves native choice values and custom-answer rules from activities", () => {
     const requested = makeActivity({
       id: EventId.make("native-question"),
@@ -330,6 +353,33 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("keeps context compaction as a standalone timeline row", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-context-compaction"),
+      projectId: ProjectId.make("project-1"),
+      title: "Context compaction",
+      activities: [
+        makeActivity({
+          id: EventId.make("context-compaction"),
+          kind: "context-compaction",
+          tone: "info",
+          summary: "Compacted context 899K → 19K tokens",
+          createdAt: "2026-09-01T00:00:00.000Z",
+          turnId: TurnId.make("turn-context-compaction"),
+        }),
+      ],
+    });
+
+    const presented = deriveThreadFeedPresentation(buildThreadFeed(thread), null, new Set());
+    expect(presented).toMatchObject([
+      {
+        type: "activity-group",
+        id: "context-compaction",
+        activities: [{ summary: "Compacted context 899K → 19K tokens" }],
+      },
+    ]);
+  });
+
   it("keeps long Claude commands expandable without repeating them in full detail", () => {
     const command = `printf 'first line\nsecond line'\n&& printf done`;
     const thread = makeThread({
@@ -1940,6 +1990,49 @@ describe("buildThreadFeed", () => {
     },
   );
 
+  it("preserves serialized shell wrappers with non-matching boundary quotes", () => {
+    const turnId = TurnId.make("turn-serialized-shell-wrapper");
+    const command =
+      "/bin/zsh -lc 'git status\nsed -n '\"'1,20p' apps/web/src/components/DiffPanel.tsx\"";
+    const thread = makeThread({
+      id: ThreadId.make("thread-serialized-shell-wrapper"),
+      projectId: ProjectId.make("project-1"),
+      title: "Serialized shell wrapper",
+      latestTurn: {
+        turnId,
+        state: "running",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:00.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("serialized-shell-wrapper"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Ran command",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId,
+          payload: {
+            itemType: "command_execution",
+            status: "inProgress",
+            data: { item: { command } },
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(feed[0]).toMatchObject({
+      type: "activity-group",
+      activities: [{ workEntry: { command } }],
+    });
+    if (feed[0]?.type === "activity-group") {
+      expect(feed[0].activities[0]?.workEntry.rawCommand).toBeUndefined();
+    }
+  });
+
   it.each([
     ["inProgress", true],
     ["completed", false],
@@ -2121,6 +2214,104 @@ describe("buildThreadFeed", () => {
 });
 
 describe("quiet timeline: nested agents", () => {
+  it.each(["task.updated", "task.progress"] as const)(
+    "does not mark an ordinary task complete when it resumes through %s",
+    (resumeKind) => {
+      const thread = makeThread({
+        id: ThreadId.make("resumed-agent"),
+        projectId: ProjectId.make("project-1"),
+        title: "Resumed agent",
+        activities: (
+          [
+            ["task.progress", "running", "Review"],
+            ["task.updated", "idle", "Task idle"],
+            [resumeKind, "running", "Review resumed"],
+          ] as const
+        ).map(([kind, status, summary], index) =>
+          makeActivity({
+            id: EventId.make(`resumed-${index}`),
+            kind,
+            summary,
+            createdAt: `2026-04-01T00:00:0${index + 1}.000Z`,
+            payload: {
+              taskId: "agent-1",
+              agentKind: "agent",
+              title: "Reviewer",
+              status,
+              detail: summary,
+            },
+          }),
+        ),
+      });
+      const rows = buildThreadFeed(thread).flatMap((entry) =>
+        entry.type === "activity-group" ? entry.activities : [],
+      );
+      expect(rows).toMatchObject([
+        {
+          lifecycleStatus: "inProgress",
+          summary: "Reviewer",
+          workEntry: { label: resumeKind === "task.progress" ? "Review resumed" : "Review" },
+        },
+      ]);
+    },
+  );
+
+  it.each(["cancelled", "failed", "interrupted"] as const)(
+    "replaces Antigravity progress with %s without a timeline bypass flag",
+    (status) => {
+      const thread = makeThread({
+        id: ThreadId.make("antigravity-agents"),
+        projectId: ProjectId.make("project-1"),
+        title: "Antigravity subagents",
+        activities: [
+          ...["trajectory:4", "trajectory:5"].map((taskId, index) =>
+            makeActivity({
+              id: EventId.make(`progress-${index}`),
+              kind: "task.progress",
+              summary: "Antigravity subagent",
+              createdAt: `2026-04-01T00:00:0${index + 1}.000Z`,
+              payload: {
+                taskId,
+                taskType: "subagent",
+                agentKind: "agent",
+                title: "Antigravity subagent",
+                detail: "Antigravity subagent",
+                status: "running",
+              },
+            }),
+          ),
+          makeActivity({
+            id: EventId.make("agent-stopped"),
+            kind: "task.updated",
+            summary: `Task ${status}`,
+            createdAt: "2026-04-01T00:00:03.000Z",
+            payload: {
+              taskId: "trajectory:4",
+              taskType: "subagent",
+              agentKind: "agent",
+              title: "Antigravity subagent",
+              status,
+              error: "Antigravity process stopped.",
+            },
+          }),
+        ],
+      });
+      const rows = buildThreadFeed(thread).flatMap((entry) =>
+        entry.type === "activity-group" ? entry.activities : [],
+      );
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toMatchObject({
+        lifecycleStatus: status === "failed" ? "failed" : "stopped",
+        detail: "Antigravity process stopped.",
+        workEntry: { taskId: "trajectory:4", toolTitle: "Antigravity subagent" },
+      });
+      expect(rows[1]).toMatchObject({
+        lifecycleStatus: "inProgress",
+        workEntry: { taskId: "trajectory:5" },
+      });
+    },
+  );
+
   it("keeps a nested agent's terminal row but hides its background work", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-nested"),

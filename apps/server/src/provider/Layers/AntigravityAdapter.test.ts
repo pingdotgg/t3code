@@ -26,6 +26,11 @@ import { ServerConfig } from "../../config.ts";
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../antigravityAuthSupport.ts";
 import type { AcpSessionRuntimeEvent } from "../acp/AcpSessionRuntime.ts";
 import { makeAntigravityAcpRuntime } from "../acp/AntigravityAcpSupport.ts";
+import {
+  mergeToolCallState,
+  parseSessionUpdateEvent,
+  type AcpToolCallState,
+} from "../acp/AcpRuntimeModel.ts";
 import { makeAntigravityAdapter, type AntigravityAdapterOptions } from "./AntigravityAdapter.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-test");
@@ -48,6 +53,20 @@ interface NativePrompt {
 }
 
 type Runtime = Effect.Success<ReturnType<AntigravityAdapterOptions["makeRuntime"]>>;
+
+function nativeToolUpdate(
+  update: Extract<
+    AcpSchema.SessionNotification["update"],
+    { sessionUpdate: "tool_call" | "tool_call_update" }
+  >,
+  previous?: AcpToolCallState,
+) {
+  const event = parseSessionUpdateEvent({ sessionId: nativeSessionId, update }).events.find(
+    (event) => event._tag === "ToolCallUpdated",
+  );
+  if (!event) throw new Error("Expected a native tool update");
+  return { ...event, toolCall: mergeToolCallState(previous, event.toolCall) };
+}
 
 const makeHarness = Effect.fn("makeAntigravityAdapterHarness")(function* (options?: {
   readonly enabled?: boolean;
@@ -297,6 +316,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         );
         const requestLog = path.join(cwd, "requests.ndjson");
         const commands: string[] = [];
+        const modelSelections: string[] = [];
         const observed: ProviderRuntimeEvent[] = [];
         const completed = yield* Deferred.make<void>();
         const adapter = yield* makeAntigravityAdapter(decodeSettings({ enabled: true }), {
@@ -321,6 +341,11 @@ it.layer(layer)("AntigravityAdapter", (it) => {
           onAvailableCommands: (available) =>
             Effect.sync(() => {
               commands.push(...available.map((command) => command.name));
+            }),
+          onConfigOptionsUpdated: (configOptions) =>
+            Effect.sync(() => {
+              const model = configOptions.find((option) => option.category === "model");
+              if (model?.type === "select") modelSelections.push(model.currentValue);
             }),
         });
         yield* adapter.streamEvents.pipe(
@@ -350,6 +375,8 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         yield* adapter.sendTurn({ threadId, input: "Reply with one short line." });
         yield* Deferred.await(completed);
         expect(commands).toEqual(["plan", "logout", "plan", "logout"]);
+        expect(modelSelections.length).toBeGreaterThan(0);
+        expect(modelSelections.every((model) => model === nativeAlternative)).toBe(true);
         expect(
           observed
             .filter((event) => event.type === "content.delta")
@@ -733,6 +760,345 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       expect(ended.payload.status).toBe("completed");
     }),
   );
+
+  it.effect("keeps a launched batch active while child tools continue", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+      const sending = yield* h.adapter
+        .sendTurn({ threadId, input: "Run two readers in one batch" })
+        .pipe(Effect.forkChild);
+      const prompt = yield* h.nextPrompt;
+      // ACP 1.1.1 capture: one launch call covers both children and returns
+      // only its description before either child finishes.
+      const started = nativeToolUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId: `${nativeSessionId}:2`,
+        title: "Running start_subagent",
+        kind: "other",
+        status: "in_progress",
+        rawInput: {},
+      });
+      yield* h.emitNative(started);
+      yield* h.waitForEvent((event) => event.type === "task.progress");
+      yield* h.emitNative(
+        nativeToolUpdate(
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: started.toolCall.toolCallId,
+            status: "completed",
+            rawOutput: "Launch subagents",
+          },
+          started.toolCall,
+        ),
+      );
+      const launched = yield* h.waitForEvent((event) => event.type === "task.progress");
+      expect(launched.payload).toMatchObject({
+        taskId: started.toolCall.toolCallId,
+        title: "Antigravity subagent batch",
+        description: "Launch subagents",
+        status: "running",
+      });
+      for (const child of ["alpha", "beta"]) {
+        yield* h.emitNative(
+          nativeToolUpdate({
+            sessionUpdate: "tool_call",
+            toolCallId: `${child}:1`,
+            title: "Read file",
+            kind: "read",
+            status: "completed",
+            rawOutput: "File contents",
+          }),
+        );
+      }
+      yield* h.drainEvents;
+      expect(h.seen.filter((event) => event.type === "task.completed")).toHaveLength(0);
+      expect(h.seen.filter((event) => event.type === "task.updated")).toHaveLength(0);
+      yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
+      yield* Fiber.join(sending);
+      yield* h.waitForEvent((event) => event.type === "turn.completed");
+      expect(h.seen.filter((event) => event.type === "task.completed")).toHaveLength(0);
+      expect(h.seen.find((event) => event.type === "task.updated")?.payload).toMatchObject({
+        taskId: started.toolCall.toolCallId,
+        status: "idle",
+        description: "Turn ended. Individual agent status is unavailable.",
+        timelineBypass: true,
+      });
+    }),
+  );
+
+  it.effect("waits for a replayed subagent's final status and result", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      // ACP history announces a completed tool first, even when its result failed.
+      yield* h.emitNative(
+        nativeToolUpdate({
+          sessionUpdate: "tool_call",
+          toolCallId: "replayed:4",
+          title: "Running start_subagent",
+          kind: "other",
+          status: "completed",
+          rawInput: "{}",
+        }),
+      );
+      yield* h.emitNative(
+        nativeToolUpdate({
+          sessionUpdate: "tool_call_update",
+          toolCallId: "replayed:4",
+          status: "failed",
+          rawOutput: "Review failed.",
+        }),
+      );
+      const completed = yield* h.waitForEvent((event) => event.type === "task.completed");
+      expect(completed.payload).toEqual({
+        taskId: "replayed:4",
+        taskType: "subagent",
+        toolUseId: "replayed:4",
+        title: "Antigravity subagent batch",
+        status: "failed",
+        summary: "Review failed.",
+      });
+      expect(h.seen.filter((event) => event.type.startsWith("task."))).toHaveLength(1);
+    }),
+  );
+
+  it.effect("keeps one-message launches active and ignores late updates after settlement", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+      const first = yield* h.adapter
+        .sendTurn({ threadId, input: "Start readers" })
+        .pipe(Effect.forkChild);
+      const firstPrompt = yield* h.nextPrompt;
+      const launches = ["Launch readers", undefined].map((rawOutput, index) =>
+        nativeToolUpdate({
+          sessionUpdate: "tool_call",
+          toolCallId: `old:${index}`,
+          title: "Running start_subagent",
+          kind: "other",
+          status: "completed",
+          rawInput: {},
+          ...(rawOutput ? { rawOutput } : {}),
+        }),
+      );
+      for (const launch of launches) yield* h.emitNative(launch);
+      yield* h.drainEvents;
+      expect(h.seen.filter((event) => event.type === "task.progress")).toHaveLength(2);
+      expect(h.seen.filter((event) => event.type === "task.completed")).toHaveLength(0);
+      yield* Deferred.succeed(firstPrompt.result, { stopReason: "end_turn" });
+      yield* Fiber.join(first);
+      yield* h.waitForEvent((event) => event.type === "turn.completed");
+      const second = yield* h.adapter
+        .sendTurn({ threadId, input: "Next task" })
+        .pipe(Effect.forkChild);
+      const secondPrompt = yield* h.nextPrompt;
+      for (const launch of launches) {
+        for (const status of ["in_progress", "completed", "failed"] as const) {
+          yield* h.emitNative(
+            nativeToolUpdate(
+              {
+                sessionUpdate: "tool_call_update",
+                toolCallId: launch.toolCall.toolCallId,
+                status,
+                rawOutput: "Late update",
+              },
+              launch.toolCall,
+            ),
+          );
+        }
+      }
+      yield* h.drainEvents;
+      expect(h.seen.filter((event) => event.type === "task.progress")).toHaveLength(2);
+      expect(h.seen.filter((event) => event.type === "task.updated")).toHaveLength(2);
+      expect(h.seen.filter((event) => event.type === "task.completed")).toHaveLength(0);
+      yield* Deferred.succeed(secondPrompt.result, { stopReason: "end_turn" });
+      yield* Fiber.join(second);
+    }),
+  );
+
+  it.effect("does not report a historical launch as running or completed work", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+      const launch = nativeToolUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId: "history:2",
+        title: "Running start_subagent",
+        kind: "other",
+        status: "completed",
+        rawInput: {},
+      });
+      yield* h.emitNative(launch);
+      yield* h.emitNative(
+        nativeToolUpdate(
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: launch.toolCall.toolCallId,
+            status: "completed",
+            rawOutput: "Launch readers",
+          },
+          launch.toolCall,
+        ),
+      );
+      yield* h.drainEvents;
+      expect(h.seen.filter((event) => event.type.startsWith("task."))).toMatchObject([
+        {
+          type: "task.updated",
+          payload: { status: "idle", timelineBypass: true },
+        },
+      ]);
+    }),
+  );
+
+  it.effect("keeps MCP identity when later updates omit metadata", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const sending = yield* h.adapter
+        .sendTurn({ threadId, input: "Run an MCP tool" })
+        .pipe(Effect.forkChild);
+      const prompt = yield* h.nextPrompt;
+      const started = nativeToolUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId: "mcp-4",
+        title: "Running start_subagent",
+        kind: "other",
+        status: "in_progress",
+        rawInput: { arguments: {} },
+        _meta: { is_mcp_tool_call: true },
+      });
+      yield* h.emitNative(started);
+      for (const status of ["in_progress", "completed"] as const) {
+        yield* h.emitNative(
+          nativeToolUpdate(
+            {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "mcp-4",
+              status,
+              rawOutput: "MCP output.",
+            },
+            started.toolCall,
+          ),
+        );
+      }
+      yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
+      yield* Fiber.join(sending);
+      yield* h.waitForEvent((event) => event.type === "turn.completed");
+      expect(h.seen.filter((event) => event.type.startsWith("task."))).toHaveLength(0);
+      expect(h.seen.filter((event) => event.type === "item.updated")).toHaveLength(2);
+      expect(h.seen.filter((event) => event.type === "item.completed")).toHaveLength(1);
+    }),
+  );
+
+  it.effect("shows pending subagents and closes a denied invocation", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      yield* h.emitNative(
+        nativeToolUpdate({
+          sessionUpdate: "tool_call",
+          toolCallId: "permission-1",
+          title: "Run start_subagent?",
+          kind: "other",
+          status: "pending",
+          rawInput: {},
+        }),
+      );
+      const pending = yield* h.waitForEvent((event) => event.type === "task.progress");
+      expect(pending.payload.status).toBe("pending");
+      yield* h.emitNative(
+        nativeToolUpdate({
+          sessionUpdate: "tool_call_update",
+          toolCallId: "permission-1",
+          status: "failed",
+        }),
+      );
+      const completed = yield* h.waitForEvent((event) => event.type === "task.completed");
+      expect(completed.payload.status).toBe("failed");
+    }),
+  );
+
+  for (const stop of ["cancel", "steer", "disconnect", "end_turn"] as const) {
+    it.effect(`settles open subagent calls on ${stop}`, () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.adapter.startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+        });
+        const sending = yield* h.adapter
+          .sendTurn({ threadId, input: "Start a subagent" })
+          .pipe(Effect.forkChild);
+        const prompt = yield* h.nextPrompt;
+        yield* h.emitNative(
+          nativeToolUpdate({
+            sessionUpdate: "tool_call",
+            toolCallId: "trajectory:4",
+            title: "Running start_subagent",
+            kind: "other",
+            status: "in_progress",
+            rawInput: {},
+          }),
+        );
+        yield* h.waitForEvent((event) => event.type === "task.progress");
+        yield* h.emitNative(
+          nativeToolUpdate({
+            sessionUpdate: "tool_call_update",
+            toolCallId: "trajectory:4",
+            status: "completed",
+            rawOutput: "Launch subagents",
+          }),
+        );
+        yield* h.waitForEvent((event) => event.type === "task.progress");
+        if (stop === "disconnect") {
+          yield* h.emitNative({
+            _tag: "ConnectionTerminated",
+            error: new AcpErrors.AcpTransportError({ detail: "Process exited.", cause: undefined }),
+          });
+        } else if (stop === "cancel") {
+          yield* h.adapter.interruptTurn(threadId);
+        } else if (stop === "steer") {
+          const steering = yield* h.adapter
+            .sendTurn({ threadId, input: "Change direction" })
+            .pipe(Effect.forkChild);
+          const replacement = yield* h.nextPrompt;
+          yield* Deferred.succeed(replacement.result, { stopReason: "end_turn" });
+          yield* Fiber.join(steering);
+        } else {
+          yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
+        }
+        const settled = yield* h.waitForEvent((event) => event.type === "task.updated");
+        expect(settled.payload).toMatchObject({
+          taskId: "trajectory:4",
+          title: "Antigravity subagent batch",
+          taskType: "subagent",
+          status:
+            stop === "disconnect"
+              ? "failed"
+              : stop === "cancel" || stop === "steer"
+                ? "cancelled"
+                : "idle",
+        });
+        if (stop === "disconnect")
+          yield* h.waitForEvent((event) => event.type === "session.exited");
+        else yield* Fiber.join(sending);
+      }),
+    );
+  }
 
   it.effect("retires a prompt cancelled before native dispatch", () =>
     Effect.gen(function* () {

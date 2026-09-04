@@ -250,6 +250,26 @@ describe("derivePendingApprovals", () => {
 });
 
 describe("derivePendingUserInputs", () => {
+  it("keeps free-text questions without suggested answers", () => {
+    const question = {
+      id: "0",
+      header: "Question",
+      question: "What should it be named?",
+      options: [],
+      allowCustomAnswer: true,
+      multiSelect: false,
+    };
+    const activities = [
+      makeActivity({
+        id: "async-question",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        payload: { requestId: "async-1", responseMode: "message", questions: [question] },
+      }),
+    ];
+    expect(derivePendingUserInputs(activities)[0]?.questions).toEqual([question]);
+  });
+
   it("preserves native choice values and the custom-answer restriction", () => {
     const question = {
       id: "interaction-result",
@@ -1555,6 +1575,26 @@ describe("deriveWorkLogEntries", () => {
 
     const [entry] = deriveWorkLogEntries(activities);
     expect(entry?.command).toBe("bash script.sh");
+    expect(entry?.rawCommand).toBeUndefined();
+  });
+
+  it("preserves serialized shell wrappers with non-matching boundary quotes", () => {
+    const command =
+      "/bin/zsh -lc 'git status\nsed -n '\"'1,20p' apps/web/src/components/DiffPanel.tsx\"";
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-serialized-wrapper",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: { item: { command } },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.command).toBe(command);
     expect(entry?.rawCommand).toBeUndefined();
   });
 

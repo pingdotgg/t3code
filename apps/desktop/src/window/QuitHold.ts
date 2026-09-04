@@ -181,11 +181,9 @@ export function makeQuitShortcutHandler(
           quitNow();
           return;
         }
-        if (
-          resolvedMode === "double-click" &&
-          previousPressAt !== 0 &&
-          now - previousPressAt <= QUIT_DOUBLE_PRESS_MS
-        ) {
+        // Keep a second press as an escape hatch when macOS misses the events
+        // that would complete a hold.
+        if (previousPressAt !== 0 && now - previousPressAt <= QUIT_DOUBLE_PRESS_MS) {
           quitNow();
           return;
         }

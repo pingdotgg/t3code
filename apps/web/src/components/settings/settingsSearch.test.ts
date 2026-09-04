@@ -197,7 +197,7 @@ describe("searchSettings", () => {
     expect(searchSettings("environment identification")[0]).toMatchObject({
       id: "environment-identification",
       to: "/settings/appearance",
-      targetId: "appearance",
+      targetId: "appearance-interface",
     });
   });
 
@@ -216,5 +216,13 @@ describe("searchSettings", () => {
       to: "/settings/integrations",
     });
     expect(searchSettings("external links")[0]).toMatchObject({ id: "browser-link-target" });
+  });
+
+  it("finds the default browser profile action in the profiles list", () => {
+    expect(searchSettings("default profile")[0]).toMatchObject({
+      id: "browser-default-profile",
+      to: "/settings/integrations",
+      targetId: "browser-profiles",
+    });
   });
 });

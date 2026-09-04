@@ -489,6 +489,38 @@ describe("workEntryIsVisibleInGroup", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("keeps context compaction visible outside folded work", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "compaction-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:00Z",
+          entry: {
+            id: "compaction",
+            createdAt: "2026-01-01T00:00:00Z",
+            label: "Compacted context 899K → 19K tokens",
+            tone: "info",
+            sourceActivityKind: "context-compaction",
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows).toEqual([
+      {
+        kind: "context-compaction",
+        id: "compaction-entry",
+        createdAt: "2026-01-01T00:00:00Z",
+        label: "Compacted context 899K → 19K tokens",
+      },
+    ]);
+  });
+
   it("only enables assistant copy for the terminal assistant message in a turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
@@ -1292,6 +1324,111 @@ describe("deriveMessagesTimelineRows", () => {
       "assistant-thought-entry",
       "live-activity-row",
     ]);
+  });
+
+  it("keeps a promptless restart in one active visual response", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user",
+            text: "keep going",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "old-work-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:05Z",
+          entry: {
+            id: "old-work",
+            createdAt: "2026-01-01T00:00:05Z",
+            turnId: "turn-before-restart" as never,
+            label: "Searched files",
+            command: "rg restart",
+            tone: "tool" as const,
+            toolLifecycleStatus: "completed" as const,
+          },
+        },
+        {
+          id: "old-stale-work-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:06Z",
+          entry: {
+            id: "old-stale-work",
+            createdAt: "2026-01-01T00:00:06Z",
+            turnId: "turn-before-restart" as never,
+            label: "Running stale command",
+            command: "rg stale",
+            tone: "tool" as const,
+            toolLifecycleStatus: "inProgress" as const,
+          },
+        },
+        {
+          id: "old-commentary-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:08Z",
+          message: {
+            id: "old-commentary" as never,
+            role: "assistant",
+            text: "the server restarted, continuing here.",
+            turnId: "turn-before-restart" as never,
+            createdAt: "2026-01-01T00:00:08Z",
+            updatedAt: "2026-01-01T00:00:08Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "new-work-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:01:05Z",
+          entry: {
+            id: "new-work",
+            createdAt: "2026-01-01T00:01:05Z",
+            turnId: "turn-after-restart" as never,
+            label: "Running tests",
+            command: "vp test run",
+            tone: "tool" as const,
+            toolLifecycleStatus: "inProgress" as const,
+          },
+        },
+      ],
+      latestTurn: {
+        turnId: "turn-after-restart" as never,
+        state: "running",
+        startedAt: "2026-01-01T00:01:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:01:00Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
+    expect(rows.filter((row) => row.id === "working-indicator-row")).toHaveLength(1);
+    expect(rows.findIndex((row) => row.id === "working-indicator-row")).toBeLessThan(
+      rows.findIndex((row) => row.id === "old-work-entry"),
+    );
+    expect(rows.find((row) => row.id === "working-indicator-row")).toMatchObject({
+      createdAt: "2026-01-01T00:00:00Z",
+    });
+    expect(rows.find((row) => row.id === "old-commentary-entry")).toMatchObject({
+      showAssistantMeta: false,
+      showAssistantCopyButton: false,
+      assistantCopyStreaming: true,
+    });
+    expect(rows.filter((row) => row.kind === "work-live" && row.active)).toEqual([
+      expect.objectContaining({ entry: expect.objectContaining({ id: "new-work" }) }),
+    ]);
+    expect(rows.some((row) => row.kind === "thinking")).toBe(false);
   });
 
   it("keeps an actually running tool in the shared activity row", () => {

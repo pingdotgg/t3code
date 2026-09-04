@@ -72,6 +72,11 @@ export interface GitRunStackedActionOptions {
   readonly progressReporter?: GitActionProgressReporter;
 }
 
+export interface GitRemoteStatusOptions extends GitVcsDriver.GitRemoteStatusOptions {
+  /** Retry a cached missing PR without clearing known PRs or failed lookup backoff. */
+  readonly refreshMissingPullRequest?: boolean;
+}
+
 interface SourceControlTextGenerationSettings {
   readonly modelSelection: ModelSelection;
   readonly style: SourceControlWritingStyleSettings;
@@ -88,7 +93,7 @@ export class GitManager extends Context.Service<
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
     readonly remoteStatus: (
       input: VcsStatusInput,
-      options?: GitVcsDriver.GitRemoteStatusOptions,
+      options?: GitRemoteStatusOptions,
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
     /** Resolve the PR for a saved branch without changing the current checkout. */
     readonly branchPullRequest: (input: {
@@ -120,7 +125,13 @@ const SHORT_SHA_LENGTH = 7;
 const TOAST_DESCRIPTION_MAX = 72;
 const STATUS_RESULT_CACHE_TTL = Duration.seconds(1);
 const STATUS_RESULT_CACHE_CAPACITY = 2_048;
-const PR_LOOKUP_CACHE_TTL = Duration.minutes(2);
+// Matches the automatic settlement sweep cadence so every background sweep
+// reads fresh branch state: an external merge settles within about a minute
+// instead of waiting out a longer cache. Unpublished branches never reach the
+// host (a local probe answers first), and failed lookups still back off
+// exponentially via prLookupFailureTtl, so throttling pressure still drops
+// under 429s instead of amplifying it.
+const PR_LOOKUP_CACHE_TTL = Duration.seconds(60);
 const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
@@ -1003,20 +1014,8 @@ export const make = Effect.gen(function* () {
         ...(remoteName.length > 0 ? { remoteName } : {}),
       };
       return Effect.gen(function* () {
-        const headContext = yield* resolveBranchHeadContext(cwd, details);
-        const upstreamHeadIsDefault =
-          headContext.headBranch === details.defaultBranch ||
-          (details.defaultBranch === null &&
-            (headContext.headBranch === "main" || headContext.headBranch === "master"));
-        // `git worktree add -b feature origin/main` makes the new local branch
-        // track origin/main. That upstream is the branch's base, not its
-        // published PR head. Looking up PRs for it can attach an old reverse
-        // merge from main and auto-settle an unrelated feature thread.
-        if (
-          headContext.headBranch !== details.branch &&
-          upstreamHeadIsDefault &&
-          !headContext.isCrossRepository
-        ) {
+        const { headContext, lookup } = yield* resolveLookupHeadContext(cwd, details);
+        if (!lookup) {
           return { latest: null, headContext };
         }
         // Only skip when the branch is untracked as well: anything carrying an
@@ -1109,11 +1108,21 @@ export const make = Effect.gen(function* () {
       defaultBranch: string | null;
       isDefaultBranch: boolean;
     },
+    refreshMissingPullRequest = false,
   ) {
     // Keyed by (cwd, branch) only: the upstream ref changing (e.g. a first
     // `push -u`) must not orphan the fallback value for the same branch.
     const branchKey = `${cwd}\u0000${details.branch}`;
-    return yield* Cache.get(prLookupCache, prLookupCacheKey(cwd, details)).pipe(
+    const cacheKey = prLookupCacheKey(cwd, details);
+    if (refreshMissingPullRequest) {
+      const cached = yield* Cache.getOption(prLookupCache, cacheKey).pipe(
+        Effect.orElseSucceed(() => Option.none()),
+      );
+      if (Option.isSome(cached) && cached.value.latest === null) {
+        yield* Cache.invalidate(prLookupCache, cacheKey);
+      }
+    }
+    return yield* Cache.get(prLookupCache, cacheKey).pipe(
       Effect.map(({ latest, headContext }) => {
         if (!latest) return { pr: null, headContext };
         // On the default branch, only surface open PRs.
@@ -1153,8 +1162,8 @@ export const make = Effect.gen(function* () {
                 }
               : {}),
           }),
-          Effect.andThen(resolveBranchHeadContext(cwd, details)),
-          Effect.map((headContext) =>
+          Effect.andThen(resolveLookupHeadContext(cwd, details)),
+          Effect.map(({ headContext }) =>
             resolveLastKnownPr(branchKey, {
               upstreamRef: details.upstreamRef,
               headBranch: headContext.headBranch,
@@ -1168,7 +1177,7 @@ export const make = Effect.gen(function* () {
   });
   const readRemoteStatus = Effect.fn("readRemoteStatus")(function* (
     cwd: string,
-    options?: GitVcsDriver.GitRemoteStatusOptions,
+    options?: GitRemoteStatusOptions,
   ) {
     const details = yield* gitCore
       .statusDetailsRemote(cwd, options)
@@ -1179,12 +1188,16 @@ export const make = Effect.gen(function* () {
 
     const pr =
       details.branch !== null
-        ? yield* lookupStatusPr(cwd, {
-            branch: details.branch,
-            upstreamRef: details.upstreamRef,
-            defaultBranch: details.defaultBranch,
-            isDefaultBranch: details.isDefaultBranch,
-          })
+        ? yield* lookupStatusPr(
+            cwd,
+            {
+              branch: details.branch,
+              upstreamRef: details.upstreamRef,
+              defaultBranch: details.defaultBranch,
+              isDefaultBranch: details.isDefaultBranch,
+            },
+            options?.refreshMissingPullRequest,
+          )
         : null;
 
     return {
@@ -1338,6 +1351,96 @@ export const make = Effect.gen(function* () {
       headRepositoryOwnerLogin: remoteRepository.ownerLogin,
       isCrossRepository,
     } satisfies BranchHeadContext;
+  });
+
+  // The remote that holds a ref named after the local branch, or null when
+  // none does. Remote names may contain slashes, so refs are matched literally
+  // per remote instead of with a glob. When several remotes hold the name, the
+  // preferred remote wins, then origin, then the first configured remote.
+  const findRemoteTrackingRemote = Effect.fn("findRemoteTrackingRemote")(function* (
+    cwd: string,
+    branch: string,
+    preferredRemoteName: string | null,
+  ) {
+    if (branch.length === 0) return null;
+    return yield* Effect.gen(function* () {
+      const remoteNames = (yield* gitCore.execute({
+        operation: "GitManager.findRemoteTrackingRemote.remotes",
+        cwd,
+        args: ["remote"],
+        timeoutMs: 5_000,
+      })).stdout
+        .split("\n")
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
+      if (remoteNames.length === 0) return null;
+      const refs = new Set(
+        (yield* gitCore.execute({
+          operation: "GitManager.findRemoteTrackingRemote.refs",
+          cwd,
+          args: [
+            "for-each-ref",
+            "--format=%(refname)",
+            ...remoteNames.map((name) => `refs/remotes/${name}/${branch}`),
+          ],
+          timeoutMs: 5_000,
+        })).stdout
+          .split("\n")
+          .map((ref) => ref.trim())
+          .filter((ref) => ref.length > 0),
+      );
+      const matching = remoteNames.filter((name) => refs.has(`refs/remotes/${name}/${branch}`));
+      if (preferredRemoteName !== null && matching.includes(preferredRemoteName)) {
+        return preferredRemoteName;
+      }
+      if (matching.includes("origin")) return "origin";
+      return matching[0] ?? null;
+    }).pipe(Effect.orElseSucceed(() => null));
+  });
+
+  // `git worktree add -b feature origin/main` makes the new local branch track
+  // origin/main. That upstream is the branch's base, not its published PR
+  // head. Looking up PRs for it can attach an old reverse merge from main and
+  // auto-settle an unrelated feature thread.
+  //
+  // The branch may still have been pushed under its own name by a plain
+  // `git push <remote> feature` that never moved the upstream. When a remote
+  // holds a ref for the local name, look the PR up by that name on that
+  // remote. Without such a ref there is nothing to ask the host about, so
+  // `lookup` is false and no API call is spent. Both the cached lookup and the
+  // failure fallback resolve through here so the last-known PR compares
+  // against the same head branch.
+  const resolveLookupHeadContext = Effect.fn("resolveLookupHeadContext")(function* (
+    cwd: string,
+    details: {
+      branch: string;
+      upstreamRef: string | null;
+      defaultBranch: string | null;
+      remoteName?: string;
+    },
+  ) {
+    const headContext = yield* resolveBranchHeadContext(cwd, details);
+    const upstreamHeadIsDefault =
+      headContext.headBranch === details.defaultBranch ||
+      (details.defaultBranch === null &&
+        (headContext.headBranch === "main" || headContext.headBranch === "master"));
+    if (
+      headContext.headBranch === details.branch ||
+      !upstreamHeadIsDefault ||
+      headContext.isCrossRepository
+    ) {
+      return { headContext, lookup: true };
+    }
+    const remoteName = yield* findRemoteTrackingRemote(cwd, details.branch, headContext.remoteName);
+    if (remoteName === null) {
+      return { headContext, lookup: false };
+    }
+    const ownNameContext = yield* resolveBranchHeadContext(cwd, {
+      branch: details.branch,
+      upstreamRef: null,
+      remoteName,
+    });
+    return { headContext: ownNameContext, lookup: true };
   });
 
   /**
@@ -1905,7 +2008,7 @@ export const make = Effect.gen(function* () {
   const remoteStatus: GitManager["Service"]["remoteStatus"] = Effect.fn("remoteStatus")(
     function* (input, options) {
       const cacheKey = yield* normalizeStatusCacheKey(input.cwd);
-      if (options?.refreshUpstream === false) {
+      if (options?.refreshUpstream === false || options?.refreshMissingPullRequest) {
         return yield* readRemoteStatus(cacheKey, options);
       }
       return yield* Cache.get(remoteStatusResultCache, cacheKey);
@@ -2000,10 +2103,15 @@ export const make = Effect.gen(function* () {
       ...(localBranchExists ? {} : { remoteName }),
     });
     let cached = yield* Cache.get(prLookupCache, cacheKey);
+    // The cached head context may have resolved on a different remote than
+    // the saved upstream: a branch tracking origin/main but pushed to a fork
+    // is looked up on the fork. Verify against the remote the lookup used.
+    const identityRemoteName = (headContext: BranchHeadContext) =>
+      headContext.remoteName ?? remoteName ?? undefined;
     const currentIdentity = yield* resolvePrLookupRepositoryIdentity(
       cacheCwd,
       branch,
-      remoteName ?? undefined,
+      identityRemoteName(cached.headContext),
     );
     const canVerifyIdentity = (headContext: BranchHeadContext, identity: typeof currentIdentity) =>
       !(
@@ -2026,7 +2134,7 @@ export const make = Effect.gen(function* () {
       const refreshedIdentity = yield* resolvePrLookupRepositoryIdentity(
         cacheCwd,
         branch,
-        remoteName ?? undefined,
+        identityRemoteName(cached.headContext),
       );
       if (
         !canVerifyIdentity(cached.headContext, refreshedIdentity) ||

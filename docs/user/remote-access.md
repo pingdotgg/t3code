@@ -46,6 +46,11 @@ If you are already running the desktop app and want to make it reachable from ot
 3. The settings panel will show the default reachable endpoint, with a `+N` control when more endpoints are available. Expand it to inspect alternatives such as loopback, LAN, private-network, or HTTPS endpoints.
 4. Use **Create Link** to generate a pairing link you can share with another device.
 
+Pairing codes and share links are available only in the client that created them,
+while its Connections page remains open. After you leave the page or reload it,
+create a new link to share. Other clients can see the active link's name, scopes,
+and expiry, and can revoke it if they have access management permission.
+
 The default endpoint controls the QR code and primary copy action for pairing links. You can change it from the expanded endpoint list. The preference is stored by endpoint type, so choosing the local LAN endpoint survives normal IP address changes when you move between networks.
 
 When no user default is saved, the app uses the built-in LAN endpoint for pairing links when

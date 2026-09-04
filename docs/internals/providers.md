@@ -24,6 +24,27 @@ adapter in a child scope. Adapter implementations live beside them in
 [`ProviderAdapter.ts`][adapter]. Read the driver plus its adapter to see how a specific agent's
 transport, config, and event shapes are mapped.
 
+## Codex async questions
+
+Codex 0.153 exposes `request_user_input_async` through `item/started` and `item/completed`
+notifications. The item has `type: "agentMessage"`, `delivery: "async"`, and a `questions` array.
+Each question has a `title` and an optional `options` array of strings. The tool returns `{"accepted":true}`
+without waiting. This is separate from the `item/tool/requestUserInput` server request.
+See the [Codex tool handler](https://github.com/openai/codex/blob/d979df154cf60e13eafb5453e75b6d84f21c67bf/codex-rs/core/src/tools/handlers/request_user_input_async.rs).
+
+The Codex adapter maps completed question items to `user-input.requested` with
+`responseMode: "message"` and stable request and event IDs. Questions use the existing web,
+desktop, and mobile panels. They stay pending while the turn runs and after it finishes.
+
+The engine reads the request's latest stored activity before deciding a reply. This works after
+startup, when the command snapshot has no activities, and after a resolution leaves the recent
+activity window. The query returns one activity, not the full thread history.
+
+For these requests, the decider saves the resolution and a user message in one transaction.
+The standard turn path delivers the message, including session resume and active-turn input.
+It does not send a JSON-RPC response to Codex. Other providers and blocking Codex questions
+keep their existing response paths.
+
 ## Registry and routing
 
 Two registries separate configuration from live processes:
@@ -104,11 +125,13 @@ environment extension, sets `PYTHONUNBUFFERED=1`, and controls `BROWSER`. A test
 Electron-as-Node helper prevents the official agent from opening a browser on the environment.
 The same launch factory serves setup, health checks, chat, and text generation.
 
-The official agent prints one non-JSON OAuth line on stdout. Only the exact known prefix is
-filtered before ACP decoding. Fragmented lines are joined and bounded. Other malformed
-protocol output remains fatal. Authorization URLs are validated before use. Native stderr is
-drained without logging because it can contain OAuth data. Normal work rejects an interactive
-login request with a sign-in-required error instead of waiting for consent.
+The official agent prints a non-JSON OAuth line on stderr in version 1.1.1. Earlier versions
+print it on stdout. T3 accepts the exact native prefix on either stream and its browser-helper
+marker on stderr. Fragmented lines are joined and bounded. Other malformed protocol output
+remains fatal. Authorization URLs are validated before use. Other stderr is discarded because
+it can contain OAuth data. Normal work rejects an interactive login request with a
+sign-in-required error instead of waiting for consent. A rejected stderr callback fails pending
+ACP requests and closes the owned process.
 
 [`AntigravityAuth`][antigravity-auth] owns each sign-in process and deadline in the instance
 scope. Only the initiating T3 auth session receives its URL and flow ID or can complete or
@@ -168,6 +191,8 @@ Account access starts unknown and becomes authenticated after successful session
 including an explicit model refresh.
 The [provider snapshot][antigravity-provider] takes models and commands from setup and native
 updates. It preserves returned Gemini model IDs, labels, order, and thinking-level choices.
+ACP `config_option_update` notifications and `session/set_config_option` responses replace
+the instance's model catalog. Child session notifications do not change the root catalog.
 The registry treats a successful empty catalog as authoritative and clears cached metadata
 after sign-out. It must not retain a previous account's models. Cached models do not prove
 current access. The auth response does not supply an email, plan tier, or reliable quota.
@@ -213,6 +238,12 @@ Chat adapters keep their own server per thread. They register a thread-specific 
 connection, while OpenCode stores MCP connections by directory. Sharing these chat servers
 without changing MCP routing would let two threads in one directory replace each other's
 connection.
+
+Chat adapters send the runtime mode as a session ruleset, but upstream OpenCode evaluates
+doom-loop and subagent asks against the agent ruleset only. In full access the adapter answers
+those asks itself so the user never sees an approval they already granted. It replies `once`
+rather than `always` because OpenCode stores `always` grants per directory, and on a shared
+external server that would widen what a supervised thread in the same directory may do.
 
 OpenCode loads its catalog through the HTTP API when an enabled provider instance starts. The
 provider registry keeps the snapshot in memory and persists it in the existing per-instance cache.

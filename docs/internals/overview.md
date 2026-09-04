@@ -90,18 +90,26 @@ A turn is complete when its session leaves `running` status, projected by
 does not define turn end.
 
 Thread settlement is server-owned. Each server's own settings control PR and inactivity
-settlement. Those keys are user preferences, so clients write them to every connected environment
-(`SHARED_SERVER_SETTING_KEYS` in `packages/client-runtime/src/state/sharedSettings.ts`) and warn
-when a connected environment drifts.
+settlement. Those keys are user preferences, so clients write them to every shared-settings sync
+target (`SHARED_SERVER_SETTING_KEYS` in `packages/client-runtime/src/state/sharedSettings.ts`) and
+warn when another target drifts. A target must have an active connection and advertise the
+`threadAutoSettlement` capability, which signals that the server can hold every shared key.
 [`ThreadSettlementReactor`][settlement] checks threads at startup, when those settings change, and
 once per minute, including when no client is connected. It dispatches the guarded internal
 `thread.auto-settle` command, which uses the existing settlement event lifecycle. Automatic
 settlement excludes live background work and requires a comparable PR timestamp for immediate PR
 settlement. The command carries the latest activity timestamp and rejects any later event for its
-thread after the reactor's snapshot.
-Clients render the persisted settlement state and do not derive settlement from PR or inactivity
-state. A committed `thread.settled` event also lets `ProviderCommandReactor` stop an idle provider
-session.
+thread after the reactor's snapshot. The sweep looks a branch up from the thread's worktree when it
+still exists, so it shares the per-cwd PR cache the sidebar polls instead of spending a second host
+request. Clients render the persisted settlement state and do not derive settlement from PR or
+inactivity state. A committed `thread.settled` event also lets `ProviderCommandReactor` stop an idle
+provider session.
+
+At turn completion, `CheckpointReactor` refreshes PR discovery when the checkout matches the
+thread's non-default branch. `VcsStatusBroadcaster` requires loaded remote status and permission
+from background policy. `GitManager` retries only a successful "no PR" cache entry for the current
+branch, preserving known PRs and failure backoff without fetching remotes. Remote status reads
+that write the broadcaster cache share a lock per cwd, including the initial status load.
 
 ## Drainable workers
 

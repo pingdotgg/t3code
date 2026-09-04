@@ -4,6 +4,7 @@ import {
   type EnvironmentId,
   type PullRequestAction,
   type PullRequestMergeMethod,
+  type PullRequestListEntry,
   type PullRequestUpdateMethod,
   type PullRequestRef,
   type PullRequestState,
@@ -447,6 +448,7 @@ export function PullRequestDetailPanel({
   environmentId,
   threadRef = null,
   reference,
+  listEntry = null,
   refreshToken: forcedRefreshToken = 0,
   onActed,
   onClose,
@@ -463,6 +465,8 @@ export function PullRequestDetailPanel({
    */
   threadRef?: ScopedThreadRef | null;
   reference: PullRequestRef;
+  /** Row fields already loaded by the pull-request list, used while richer detail arrives. */
+  listEntry?: PullRequestListEntry | null;
   /**
    * Bumped by whatever holds the panel when a reader asks for everything on screen to be read
    * again. The panel owns its own reads, so the page cannot refresh them for it — it says when,
@@ -491,6 +495,12 @@ export function PullRequestDetailPanel({
   composerDraftTarget?: ScopedThreadRef | DraftId;
 }) {
   const pullRequestKey = `${reference.projectId}:${reference.repository}#${reference.number}`;
+  const matchingListEntry =
+    listEntry?.projectId === reference.projectId &&
+    listEntry.repository.toLowerCase() === reference.repository.toLowerCase() &&
+    listEntry.number === reference.number
+      ? listEntry
+      : null;
   const [tab, setTab] = useState<DetailTab>("summary");
   const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
   const [codeCommitScope, setCodeCommitScope] = useState<{
@@ -1296,10 +1306,10 @@ export function PullRequestDetailPanel({
         ).length
       : 0;
 
-  // A reopen already has last time's title, author, and counts. Keep them on screen
-  // and let the live read replace fields — especially the diff counts — in place.
+  // The list already has the pull request's identity and summary. Keep them on screen
+  // and let the richer detail read replace the remaining placeholders in place.
   if (detailQuery.isPending && !detail) {
-    return <PullRequestDetailGhost />;
+    return <PullRequestDetailGhost seed={matchingListEntry} />;
   }
 
   return (
@@ -1467,41 +1477,6 @@ export function PullRequestDetailPanel({
                     ) : null}
                   </MenuPopup>
                 </Menu>
-              ) : null}
-              {workflowApprovalsRequired > 0 && can("approve-workflows") ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span className="inline-flex shrink-0">
-                        <Button
-                          size="xs"
-                          variant="warning-outline"
-                          disabled={actionPending}
-                          onClick={() =>
-                            setConfirmation({ open: true, action: "approve-workflows" })
-                          }
-                          aria-label={
-                            pendingAction === "approve-workflows"
-                              ? "Approving..."
-                              : "Approve workflows to run"
-                          }
-                        >
-                          <PlayIcon aria-hidden className="size-3.5" />
-                          <span className="@max-[40rem]/pr-header:hidden">
-                            {pendingAction === "approve-workflows"
-                              ? "Approving..."
-                              : "Approve workflows to run"}
-                          </span>
-                        </Button>
-                      </span>
-                    }
-                  />
-                  <TooltipPopup side="top">
-                    {pendingAction === "approve-workflows"
-                      ? "Approving..."
-                      : "Approve workflows to run"}
-                  </TooltipPopup>
-                </Tooltip>
               ) : null}
               {/* Said where the Merge button is, because it is the answer to why nobody has
                   pressed it: the merge is already asked for, and the host is holding it. */}
@@ -2155,20 +2130,58 @@ export function PullRequestDetailPanel({
               ))}
             </ToggleGroup>
             {tab === "summary" ? (
-              <span
-                className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
-                aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
-              >
-                {checksState !== null ? (
-                  <PullRequestChecksPopover
-                    checks={detail.checks}
-                    checksState={checksState}
-                    threadRef={threadRef}
-                  />
+              <span className="ml-auto inline-flex shrink-0 items-center">
+                {workflowApprovalsRequired > 0 && can("approve-workflows") ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span className="inline-flex shrink-0">
+                          <Button
+                            size="xs"
+                            variant="warning-outline"
+                            disabled={actionPending}
+                            onClick={() =>
+                              setConfirmation({ open: true, action: "approve-workflows" })
+                            }
+                            aria-label={
+                              pendingAction === "approve-workflows"
+                                ? "Approving..."
+                                : "Approve workflows to run"
+                            }
+                          >
+                            <PlayIcon aria-hidden className="size-3.5" />
+                            <span>
+                              {pendingAction === "approve-workflows"
+                                ? "Approving..."
+                                : "Approve workflows to run"}
+                            </span>
+                          </Button>
+                        </span>
+                      }
+                    />
+                    <TooltipPopup side="top">
+                      {pendingAction === "approve-workflows"
+                        ? "Approving..."
+                        : "Approve workflows to run"}
+                    </TooltipPopup>
+                  </Tooltip>
                 ) : (
-                  <CircleDotIcon aria-hidden className="size-3.5" />
+                  <span
+                    className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
+                    aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
+                  >
+                    {checksState !== null ? (
+                      <PullRequestChecksPopover
+                        checks={detail.checks}
+                        checksState={checksState}
+                        threadRef={threadRef}
+                      />
+                    ) : (
+                      <CircleDotIcon aria-hidden className="size-3.5" />
+                    )}
+                    {checksSummary}
+                  </span>
                 )}
-                {checksSummary}
               </span>
             ) : tab === "timeline" ? (
               <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
