@@ -965,6 +965,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         const missingProject = yield* snapshotQuery.getActiveProjectByWorkspaceRoot("/tmp/missing");
         assert.equal(missingProject._tag, "None");
 
+        assert.equal(yield* snapshotQuery.hasActiveProjectAtWorkspaceRoot("/tmp/workspace"), true);
+        assert.equal(yield* snapshotQuery.hasActiveProjectAtWorkspaceRoot("/tmp/missing"), false);
+
         const firstThreadId = yield* snapshotQuery.getFirstActiveThreadIdByProjectId(
           asProjectId("project-active"),
         );

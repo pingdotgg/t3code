@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
@@ -35,6 +36,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
 
@@ -73,6 +75,16 @@ export const make = Effect.gen(function* () {
     ]);
 
     if (isWithinRoot(candidate, workspaceRoot) || isWithinRoot(candidate, worktreesRoot)) {
+      return;
+    }
+
+    // Desktop and WSL backends run with a cwd (the user's home or the T3 home)
+    // that does not contain checkout-mode projects, so a registered project's
+    // workspace root is also a valid review boundary.
+    const isProjectRoot = yield* projectionSnapshotQuery
+      .hasActiveProjectAtWorkspaceRoot(cwd)
+      .pipe(Effect.orElseSucceed(() => false));
+    if (isProjectRoot) {
       return;
     }
 

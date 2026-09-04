@@ -972,6 +972,7 @@ const buildAppUnderTest = (options?: {
               payloadBytes: 0,
             }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+          hasActiveProjectAtWorkspaceRoot: () => Effect.succeed(false),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
           ...options?.layers?.projectionSnapshotQuery,

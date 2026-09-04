@@ -2630,6 +2630,18 @@ pending_approval_requests AS (
         ),
       );
 
+  const hasActiveProjectAtWorkspaceRoot: ProjectionSnapshotQueryShape["hasActiveProjectAtWorkspaceRoot"] =
+    (workspaceRoot) =>
+      getActiveProjectRowByWorkspaceRoot({ workspaceRoot }).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.hasActiveProjectAtWorkspaceRoot:query",
+            "ProjectionSnapshotQuery.hasActiveProjectAtWorkspaceRoot:decodeRow",
+          ),
+        ),
+        Effect.map(Option.isSome),
+      );
+
   const getProjectShellById: ProjectionSnapshotQueryShape["getProjectShellById"] = (projectId) =>
     getActiveProjectRowById({ projectId }).pipe(
       Effect.mapError(
@@ -3251,6 +3263,7 @@ pending_approval_requests AS (
     getCounts,
     getEventReplayStats,
     getActiveProjectByWorkspaceRoot,
+    hasActiveProjectAtWorkspaceRoot,
     getProjectShellById,
     getFirstActiveThreadIdByProjectId,
     getThreadCheckpointContext,

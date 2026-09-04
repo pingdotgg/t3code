@@ -157,6 +157,14 @@ export interface ProjectionSnapshotQueryShape {
   ) => Effect.Effect<Option.Option<OrchestrationProject>, ProjectionRepositoryError>;
 
   /**
+   * Check whether an active project exists for an exact workspace root match,
+   * without resolving repository metadata.
+   */
+  readonly hasActiveProjectAtWorkspaceRoot: (
+    workspaceRoot: string,
+  ) => Effect.Effect<boolean, ProjectionRepositoryError>;
+
+  /**
    * Read a single active project shell row by id.
    */
   readonly getProjectShellById: (
