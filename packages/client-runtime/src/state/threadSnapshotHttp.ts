@@ -121,12 +121,10 @@ export const threadSnapshotLoaderLayer: Layer.Layer<
     return ThreadSnapshotLoader.of({
       load: (prepared: PreparedConnection, threadId: ThreadId) =>
         fetchEnvironmentThreadSnapshot({ prepared, threadId, signer }).pipe(
-          Effect.map(
-            (snapshot): ThreadSnapshotLoadResult => ({
-              _tag: "present",
-              snapshot,
-            }),
-          ),
+          Effect.map((snapshot): ThreadSnapshotLoadResult => ({
+            _tag: "present",
+            snapshot,
+          })),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           // A genuinely missing thread (404) is definitive: do not fall back to
           // the socket or retry. Callers mark the thread deleted and clear cache.

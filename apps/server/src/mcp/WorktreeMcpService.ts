@@ -366,12 +366,10 @@ const make = Effect.gen(function* () {
                     creationSource: "mcp",
                   })
                   .pipe(
-                    Effect.map(
-                      (sendResult): WorktreeMcpContinuationStatus => ({
-                        status: "scheduled",
-                        delivery: sendResult.delivery,
-                      }),
-                    ),
+                    Effect.map((sendResult): WorktreeMcpContinuationStatus => ({
+                      status: "scheduled",
+                      delivery: sendResult.delivery,
+                    })),
                     // catchCause via reportFailed: the binding is already recorded,
                     // so a failed continuation must be reported, not fail the handoff.
                     reportFailed("worktree handoff continuation failed to queue"),
@@ -398,15 +396,14 @@ const make = Effect.gen(function* () {
               },
             })
             .pipe(
-              Effect.map(
-                (result): WorktreeMcpSetupScriptStatus =>
-                  result.status === "started"
-                    ? {
-                        status: "started",
-                        scriptName: result.scriptName,
-                        terminalId: result.terminalId,
-                      }
-                    : { status: "no-script" },
+              Effect.map((result): WorktreeMcpSetupScriptStatus =>
+                result.status === "started"
+                  ? {
+                      status: "started",
+                      scriptName: result.scriptName,
+                      terminalId: result.terminalId,
+                    }
+                  : { status: "no-script" },
               ),
               // catchCause via reportFailed: the thread is already re-pointed at the
               // worktree, so even a defect in the setup runner must not fail the handoff.
