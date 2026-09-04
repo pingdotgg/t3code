@@ -121,7 +121,9 @@ describe("parseBinaryCookies", () => {
         url: "http://example.test/app",
         name: "plain",
         value: "v",
-        domain: "example.test",
+        // Host-only: no leading dot in the jar, so no `domain` for Electron,
+        // which would otherwise re-add the dot and widen it to subdomains.
+        domain: undefined,
         path: "/app",
         secure: false,
         httpOnly: false,
@@ -131,6 +133,18 @@ describe("parseBinaryCookies", () => {
     ]);
   });
 
+  it("keeps __Host- cookies host-only so Electron accepts them", () => {
+    const file = encodeBinaryCookies([
+      { domain: "example.test", name: "__Host-id", path: "/", value: "v", flags: 0x1, expiry: 0 },
+    ]);
+
+    expect(parseBinaryCookies(file)[0]).toMatchObject({
+      url: "https://example.test/",
+      name: "__Host-id",
+      domain: undefined,
+    });
+  });
+
   it("brackets IPv6 hosts in the cookie URL", () => {
     const file = encodeBinaryCookies([
       { domain: "::1", name: "local", path: "/", value: "v", flags: 0, expiry: 0 },
@@ -138,7 +152,7 @@ describe("parseBinaryCookies", () => {
 
     expect(parseBinaryCookies(file)[0]).toMatchObject({
       url: "http://[::1]/",
-      domain: "::1",
+      domain: undefined,
     });
   });
 

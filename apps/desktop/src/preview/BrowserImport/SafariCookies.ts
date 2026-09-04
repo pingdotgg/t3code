@@ -24,7 +24,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
-import type { ImportedCookie } from "./CookieDatabase.ts";
+import { cookieScope, type ImportedCookie } from "./CookieDatabase.ts";
 
 /** Safari's timestamps count seconds from 2001-01-01, not the UNIX epoch. */
 const APPLE_EPOCH_OFFSET_SECONDS = 978_307_200;
@@ -149,24 +149,24 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
       if (domain === "" || name === "") continue;
 
       const secure = (flags & FLAG_SECURE) !== 0;
-      const host = domain.startsWith(".") ? domain.slice(1) : domain;
       const expirationDate =
         expiry > 0 ? Math.floor(expiry) + APPLE_EPOCH_OFFSET_SECONDS : undefined;
 
       cookies.push({
-        // A bare IPv6 host is invalid in a URL authority, so bracket it the
-        // way the Chromium reader's cookieScope does.
-        url: `${secure ? "https" : "http"}://${host.includes(":") ? `[${host}]` : host}${path || "/"}`,
+        // Safari marks domain cookies with a leading dot like the other
+        // engines, so the shared scope rule applies: host-only cookies keep
+        // `domain` undefined, or Electron widens them to every subdomain.
+        ...cookieScope(domain, path || "/", secure),
         name,
         value,
-        domain,
         path: path || "/",
         secure,
         httpOnly: (flags & FLAG_HTTP_ONLY) !== 0,
         expirationDate,
-        // The format predates SameSite and carries no equivalent field. Lax is
-        // the modern browser default; claiming "none" would widen every
-        // imported cookie's scope.
+        // Bits 3–5 of the flags carry something SameSite-shaped, but no public
+        // description of them agrees and real jars do not match any of them
+        // cleanly. Lax is the modern browser default; claiming "none" would
+        // widen every imported cookie's scope.
         sameSite: "lax",
       });
     }
