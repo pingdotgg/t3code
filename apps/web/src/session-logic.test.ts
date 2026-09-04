@@ -15,7 +15,9 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
   deriveTimelineEntries,
+  deriveTimelineEntriesWithState,
   deriveWorkLogEntries,
+  deriveWorkLogEntriesWithState,
   findLatestProposedPlan,
   hasActionableProposedPlan,
   isLatestTurnSettled,
@@ -23,7 +25,6 @@ import {
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
 } from "./session-logic";
-
 let nextActivityId = 0;
 
 function makeActivity(overrides: {
@@ -1618,6 +1619,59 @@ describe("deriveWorkLogEntries", () => {
     ]);
   });
 
+  it("keeps changed file paths returned by MCP tools", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "mcp-file-tool",
+        kind: "tool.completed",
+        summary: "Edited file",
+        payload: {
+          itemType: "mcp_tool_call",
+          data: {
+            toolName: "editor",
+            files: [{ path: "apps/web/src/session-logic.ts" }],
+          },
+        },
+      }),
+    ]);
+
+    expect(entry?.changedFiles).toEqual(["apps/web/src/session-logic.ts"]);
+  });
+
+  it("does not treat a path read by a dynamic tool as a changed file", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "dynamic-read-tool",
+        kind: "tool.completed",
+        summary: "Read file",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "read",
+          data: { kind: "read", path: "apps/web/src/session-logic.ts" },
+        },
+      }),
+    ]);
+
+    expect(entry?.changedFiles).toBeUndefined();
+  });
+
+  it("keeps changed file paths from explicitly mutating dynamic tools", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "dynamic-write-tool",
+        kind: "tool.completed",
+        summary: "Wrote file",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "write",
+          data: { kind: "write", path: "apps/web/src/session-logic.ts" },
+        },
+      }),
+    ]);
+
+    expect(entry?.changedFiles).toEqual(["apps/web/src/session-logic.ts"]);
+  });
+
   it("drops duplicated tool detail when it only repeats the title", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -2047,6 +2101,60 @@ describe("deriveTimelineEntries", () => {
       },
     });
   });
+
+  it("reuses timeline rows across immutable appends and preserves stable tie ordering", () => {
+    const createdAt = "2026-02-23T00:00:01.000Z";
+    const firstMessage = {
+      id: MessageId.make("message-first"),
+      role: "assistant" as const,
+      text: "first",
+      createdAt,
+      turnId: null,
+      updatedAt: createdAt,
+      streaming: false,
+    };
+    const secondMessage = { ...firstMessage, id: MessageId.make("message-second"), text: "second" };
+    const plan = {
+      id: "plan:thread-1:turn:turn-1",
+      turnId: TurnId.make("turn-1"),
+      planMarkdown: "# Ship it",
+      implementedAt: null,
+      implementationThreadId: null,
+      createdAt,
+      updatedAt: createdAt,
+    };
+    const firstWork = { id: "work-1", createdAt, label: "Read", tone: "tool" as const };
+
+    const initial = deriveTimelineEntriesWithState([firstMessage], [plan], [firstWork]);
+    const updated = deriveTimelineEntriesWithState(
+      [firstMessage, secondMessage],
+      [plan],
+      [firstWork],
+      initial,
+    );
+
+    expect(updated.entries[0]).toBe(initial.entries[0]);
+    expect(updated.entries.map((entry) => entry.id)).toEqual([
+      "message-first",
+      "message-second",
+      "plan:thread-1:turn:turn-1",
+      "work-1",
+    ]);
+  });
+
+  it("takes the safe full path when an existing source item is replaced", () => {
+    const firstWork = {
+      id: "work-1",
+      createdAt: "2026-02-23T00:00:01Z",
+      label: "Read",
+      tone: "tool" as const,
+    };
+    const initial = deriveTimelineEntriesWithState([], [], [firstWork]);
+    const replacement = { ...firstWork, label: "Changed" };
+    const updated = deriveTimelineEntriesWithState([], [], [replacement], initial);
+
+    expect(updated.entries[0]).toMatchObject({ kind: "work", entry: replacement });
+  });
 });
 
 describe("deriveWorkLogEntries context window handling", () => {
@@ -2423,7 +2531,7 @@ describe("rerun workflows", () => {
   });
 });
 
-describe("session activity performance", () => {
+describe("session activity projection reuse", () => {
   it("reuses entries for unchanged activities", () => {
     const activities = ["status", "diff", "log"].map((command, index) =>
       makeActivity({
@@ -2487,5 +2595,54 @@ describe("session activity performance", () => {
       command: "git diff",
       toolLifecycleStatus: "completed",
     });
+  });
+
+  it("keeps an older stateful work-log snapshot safe as a branch point", () => {
+    const first = makeActivity({
+      id: "branch-tool-first",
+      kind: "tool.updated",
+      summary: "Running command",
+      sequence: 0,
+      payload: {
+        itemType: "command_execution",
+        title: "Running command",
+        data: { toolCallId: "branch-call-first", item: { command: ["git", "status"] } },
+      },
+    });
+    const completedBranch = makeActivity({
+      id: "branch-tool-completed",
+      kind: "tool.completed",
+      summary: "Ran command",
+      sequence: 1,
+      payload: {
+        itemType: "command_execution",
+        title: "Ran command",
+        data: { toolCallId: "branch-call-completed", item: { command: ["git", "diff"] } },
+      },
+    });
+    const updatedBranch = makeActivity({
+      id: "branch-tool-updated",
+      kind: "tool.updated",
+      summary: "Running command",
+      sequence: 1,
+      payload: {
+        itemType: "command_execution",
+        title: "Running command",
+        data: { toolCallId: "branch-call-completed", item: { command: ["git", "diff"] } },
+      },
+    });
+    const initial = deriveWorkLogEntriesWithState([first]);
+    const completed = deriveWorkLogEntriesWithState([first, completedBranch], initial);
+    const updated = deriveWorkLogEntriesWithState([first, updatedBranch], initial);
+
+    expect(initial.entries.map((entry) => entry.id)).toEqual(["branch-tool-first"]);
+    expect(completed.entries.map((entry) => entry.id)).toEqual([
+      "branch-tool-first",
+      "branch-tool-completed",
+    ]);
+    expect(updated.entries.map((entry) => entry.id)).toEqual([
+      "branch-tool-first",
+      "branch-tool-updated",
+    ]);
   });
 });

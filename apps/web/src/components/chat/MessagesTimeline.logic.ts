@@ -7,9 +7,13 @@ import {
   omitSupersededLifecycleMarkers,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
+  appendToolGroupSummaryEntry,
+  createToolGroupSummaryAccumulator,
+  summarizeToolGroupAccumulator,
+  toolGroupSummaryKindFromAccumulator,
   toolGroupAction,
-  toolGroupSummaryKind,
   workEntryViewedImagePath,
+  type ToolGroupSummaryAccumulator,
   type ToolGroupSummaryKind,
 } from "@t3tools/client-runtime/work-log/presentation";
 export {
@@ -417,6 +421,345 @@ function expandedWorkGroupRow(
   };
 }
 
+interface WorkGroupPresentationState {
+  rawEntries: ReadonlyArray<WorkLogEntry>;
+  activeTurnId: TurnId | null;
+  visibleEntries: WorkLogEntry[];
+  activeEntries: WorkLogEntry[];
+  summary: ToolGroupSummaryAccumulator;
+  latestToolEntry: WorkLogEntry | undefined;
+  hasStatuslessLifecycleMarker: boolean;
+}
+
+const workGroupPresentationByAnchor = new WeakMap<WorkLogEntry, WorkGroupPresentationState>();
+
+function isStatuslessLifecycleMarker(entry: WorkLogEntry): boolean {
+  return (
+    entry.toolCallId === undefined &&
+    entry.toolLifecycleStatus === undefined &&
+    (entry.sourceActivityKind === "tool.started" || entry.sourceActivityKind === "tool.updated")
+  );
+}
+
+function isTerminalLifecycleEntry(entry: WorkLogEntry): boolean {
+  return (
+    entry.sourceActivityKind === "tool.completed" ||
+    (entry.toolLifecycleStatus !== undefined && entry.toolLifecycleStatus !== "inProgress")
+  );
+}
+
+function workEntryIsInActiveRunForTurn(entry: WorkLogEntry, activeTurnId: TurnId | null): boolean {
+  return (
+    activeTurnId !== null &&
+    entry.toolLifecycleStatus === "inProgress" &&
+    entry.turnId === activeTurnId
+  );
+}
+
+function hasExactWorkGroupPrefix(
+  previous: ReadonlyArray<WorkLogEntry>,
+  next: ReadonlyArray<WorkLogEntry>,
+): boolean {
+  if (next.length < previous.length) return false;
+  for (let index = 0; index < previous.length; index += 1) {
+    if (previous[index] !== next[index]) return false;
+  }
+  return true;
+}
+
+function buildWorkGroupPresentation(
+  entries: ReadonlyArray<WorkLogEntry>,
+  activeTurnId: TurnId | null,
+): WorkGroupPresentationState {
+  const visibleEntries = omitSupersededLifecycleMarkers(
+    entries.filter((entry) =>
+      workEntryIsVisibleInGroup(entry, workEntryIsInActiveRunForTurn(entry, activeTurnId)),
+    ),
+    (entry) => entry,
+  );
+  const state: WorkGroupPresentationState = {
+    rawEntries: entries,
+    activeTurnId,
+    visibleEntries,
+    activeEntries: [],
+    summary: createToolGroupSummaryAccumulator(),
+    latestToolEntry: undefined,
+    hasStatuslessLifecycleMarker: entries.some(isStatuslessLifecycleMarker),
+  };
+  for (const entry of visibleEntries) {
+    appendToolGroupSummaryEntry(state.summary, entry);
+    if (workLogEntryIsToolLike(entry)) {
+      state.latestToolEntry = entry;
+    }
+    if (workEntryIsInActiveRunForTurn(entry, activeTurnId)) {
+      state.activeEntries.push(entry);
+    }
+  }
+  return state;
+}
+
+function appendToWorkGroupPresentation(
+  state: WorkGroupPresentationState,
+  entries: ReadonlyArray<WorkLogEntry>,
+): WorkGroupPresentationState | null {
+  const startIndex = state.rawEntries.length;
+  if (entries.length < startIndex) return null;
+  if (!hasExactWorkGroupPrefix(state.rawEntries, entries)) {
+    return null;
+  }
+  if (entries.length === startIndex) return state;
+
+  for (let index = startIndex; index < entries.length; index += 1) {
+    const entry = entries[index]!;
+    // A later terminal can hide an earlier id-less lifecycle marker. Rebuild
+    // only this uncommon transition; ordinary completed tool calls append in
+    // constant work after the initial group projection.
+    if (state.hasStatuslessLifecycleMarker && isTerminalLifecycleEntry(entry)) {
+      return null;
+    }
+    state.hasStatuslessLifecycleMarker ||= isStatuslessLifecycleMarker(entry);
+    const active = workEntryIsInActiveRunForTurn(entry, state.activeTurnId);
+    if (!workEntryIsVisibleInGroup(entry, active)) {
+      continue;
+    }
+    state.visibleEntries.push(entry);
+    appendToolGroupSummaryEntry(state.summary, entry);
+    if (workLogEntryIsToolLike(entry)) {
+      state.latestToolEntry = entry;
+    }
+    if (active) {
+      state.activeEntries.push(entry);
+    }
+  }
+  state.rawEntries = entries;
+  return state;
+}
+
+function deriveWorkGroupPresentation(
+  entries: ReadonlyArray<WorkLogEntry>,
+  activeTurnId: TurnId | null,
+): WorkGroupPresentationState {
+  const anchor = entries[0];
+  if (!anchor) {
+    return buildWorkGroupPresentation(entries, activeTurnId);
+  }
+  const previous = workGroupPresentationByAnchor.get(anchor);
+  if (previous?.activeTurnId === activeTurnId) {
+    const next = appendToWorkGroupPresentation(previous, entries);
+    if (next) return next;
+  }
+  const next = buildWorkGroupPresentation(entries, activeTurnId);
+  workGroupPresentationByAnchor.set(anchor, next);
+  return next;
+}
+
+type ActiveWorkTimelineEntry = Extract<TimelineEntry, { kind: "work" }>;
+
+interface ActiveWorkPresentationState {
+  rawEntries: ReadonlyArray<ActiveWorkTimelineEntry>;
+  activeTurnId: TurnId | null;
+  visibleEntries: ActiveWorkTimelineEntry[];
+  latestRunningEntry: ActiveWorkTimelineEntry | undefined;
+  hasStatuslessLifecycleMarker: boolean;
+}
+
+const activeWorkPresentationByAnchor = new WeakMap<WorkLogEntry, ActiveWorkPresentationState>();
+
+export interface ActiveTimelineScanState {
+  timelineEntries: ReadonlyArray<TimelineEntry>;
+  activeTurnId: TurnId | null;
+  activeTurnHeaderIndex: number;
+  activeToolEntries: ReadonlyArray<ActiveWorkTimelineEntry>;
+}
+
+export interface ActiveTimelineScanRef {
+  current: ActiveTimelineScanState | null;
+}
+
+function hasExactActiveWorkPrefix(
+  previous: ReadonlyArray<ActiveWorkTimelineEntry>,
+  next: ReadonlyArray<ActiveWorkTimelineEntry>,
+): boolean {
+  if (next.length < previous.length) return false;
+  for (let index = 0; index < previous.length; index += 1) {
+    if (previous[index] !== next[index]) return false;
+  }
+  return true;
+}
+
+function buildActiveWorkPresentation(
+  entries: ReadonlyArray<ActiveWorkTimelineEntry>,
+  activeTurnId: TurnId | null,
+): ActiveWorkPresentationState {
+  const visibleEntries = omitSupersededLifecycleMarkers(
+    entries.filter((entry) => workEntryIsVisibleInGroup(entry.entry, true)),
+    (entry) => entry.entry,
+  );
+  return {
+    rawEntries: entries,
+    activeTurnId,
+    visibleEntries,
+    latestRunningEntry: visibleEntries.findLast((entry) =>
+      workEntryIsActiveTurnActivity(entry.entry),
+    ),
+    hasStatuslessLifecycleMarker: entries.some((entry) => isStatuslessLifecycleMarker(entry.entry)),
+  };
+}
+
+function appendToActiveWorkPresentation(
+  state: ActiveWorkPresentationState,
+  entries: ReadonlyArray<ActiveWorkTimelineEntry>,
+): ActiveWorkPresentationState | null {
+  const startIndex = state.rawEntries.length;
+  if (entries.length < startIndex) return null;
+  if (!hasExactActiveWorkPrefix(state.rawEntries, entries)) return null;
+  if (entries.length === startIndex) return state;
+
+  for (let index = startIndex; index < entries.length; index += 1) {
+    const entry = entries[index]!;
+    if (state.hasStatuslessLifecycleMarker && isTerminalLifecycleEntry(entry.entry)) {
+      return null;
+    }
+    state.hasStatuslessLifecycleMarker ||= isStatuslessLifecycleMarker(entry.entry);
+    if (!workEntryIsVisibleInGroup(entry.entry, true)) continue;
+    state.visibleEntries.push(entry);
+    if (workEntryIsActiveTurnActivity(entry.entry)) {
+      state.latestRunningEntry = entry;
+    }
+  }
+  state.rawEntries = entries;
+  return state;
+}
+
+function deriveActiveWorkPresentation(
+  entries: ReadonlyArray<ActiveWorkTimelineEntry>,
+  activeTurnId: TurnId | null,
+): ActiveWorkPresentationState {
+  const anchor = entries[0]?.entry;
+  if (!anchor) return buildActiveWorkPresentation(entries, activeTurnId);
+  const previous = activeWorkPresentationByAnchor.get(anchor);
+  if (previous?.activeTurnId === activeTurnId) {
+    const next = appendToActiveWorkPresentation(previous, entries);
+    if (next) return next;
+  }
+  const next = buildActiveWorkPresentation(entries, activeTurnId);
+  activeWorkPresentationByAnchor.set(anchor, next);
+  return next;
+}
+
+function isActiveToolTimelineEntry(
+  entry: TimelineEntry,
+  index: number,
+  activeTurnHeaderIndex: number,
+  activeTurnId: TurnId | null,
+): entry is ActiveWorkTimelineEntry {
+  return (
+    index >= activeTurnHeaderIndex &&
+    (activeTurnId === null || timelineEntryTurnId(entry) === activeTurnId) &&
+    entry.kind === "work" &&
+    entry.entry.agentSpawn === undefined &&
+    entry.entry.tone !== "error" &&
+    !workEntryRendersImagePreview(entry.entry)
+  );
+}
+
+function hasExactTimelinePrefix(
+  previous: ReadonlyArray<TimelineEntry>,
+  next: ReadonlyArray<TimelineEntry>,
+): boolean {
+  if (next.length < previous.length) return false;
+  for (let index = 0; index < previous.length; index += 1) {
+    if (previous[index] !== next[index]) return false;
+  }
+  return true;
+}
+
+function deriveActiveToolTimelineEntries(
+  input: {
+    readonly timelineEntries: ReadonlyArray<TimelineEntry>;
+    readonly isWorking: boolean;
+  },
+  unsettledTurnId: TurnId | null,
+  activeTimelineScanRef: ActiveTimelineScanRef | undefined,
+): { activeTurnHeaderIndex: number; activeToolEntries: ReadonlyArray<ActiveWorkTimelineEntry> } {
+  if (!input.isWorking) {
+    if (activeTimelineScanRef) {
+      activeTimelineScanRef.current = null;
+    }
+    return { activeTurnHeaderIndex: input.timelineEntries.length, activeToolEntries: [] };
+  }
+
+  const previous = activeTimelineScanRef?.current;
+  if (
+    previous?.activeTurnId === unsettledTurnId &&
+    hasExactTimelinePrefix(previous.timelineEntries, input.timelineEntries)
+  ) {
+    const appendedEntries: ActiveWorkTimelineEntry[] = [];
+    let canAppend = true;
+    for (
+      let index = previous.timelineEntries.length;
+      index < input.timelineEntries.length;
+      index += 1
+    ) {
+      const entry = input.timelineEntries[index]!;
+      if (
+        !isActiveToolTimelineEntry(entry, index, previous.activeTurnHeaderIndex, unsettledTurnId)
+      ) {
+        canAppend = false;
+        break;
+      }
+      appendedEntries.push(entry);
+    }
+    if (canAppend) {
+      const activeToolEntries =
+        appendedEntries.length > 0
+          ? [...previous.activeToolEntries, ...appendedEntries]
+          : previous.activeToolEntries;
+      if (activeTimelineScanRef) {
+        activeTimelineScanRef.current = {
+          timelineEntries: input.timelineEntries,
+          activeTurnId: unsettledTurnId,
+          activeTurnHeaderIndex: previous.activeTurnHeaderIndex,
+          activeToolEntries,
+        };
+      }
+      return {
+        activeTurnHeaderIndex: previous.activeTurnHeaderIndex,
+        activeToolEntries,
+      };
+    }
+  }
+
+  const latestUserMessageIndex = lastUserMessageIndex(input.timelineEntries);
+  const firstOwnedAfterUser =
+    unsettledTurnId === null
+      ? -1
+      : input.timelineEntries.findIndex(
+          (entry, index) =>
+            index > latestUserMessageIndex && timelineEntryTurnId(entry) === unsettledTurnId,
+        );
+  const activeTurnHeaderIndex =
+    firstOwnedAfterUser >= 0 ? firstOwnedAfterUser : latestUserMessageIndex + 1;
+  const activeToolEntries: ActiveWorkTimelineEntry[] = [];
+  for (let index = input.timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
+    const entry = input.timelineEntries[index]!;
+    if (!isActiveToolTimelineEntry(entry, index, activeTurnHeaderIndex, unsettledTurnId)) {
+      break;
+    }
+    activeToolEntries.push(entry);
+  }
+  activeToolEntries.reverse();
+  if (activeTimelineScanRef) {
+    activeTimelineScanRef.current = {
+      timelineEntries: input.timelineEntries,
+      activeTurnId: unsettledTurnId,
+      activeTurnHeaderIndex,
+      activeToolEntries,
+    };
+  }
+  return { activeTurnHeaderIndex, activeToolEntries };
+}
+
 export function resolveAssistantMessageCopyState({
   text,
   showCopyButton,
@@ -552,6 +895,13 @@ function deriveTurnFolds(input: {
           ? (entry.entry.turnId ?? null)
           : null;
     if (!turnId) {
+      continue;
+    }
+    if (turnId === input.unsettledTurnId) {
+      // This group is never folded. Consume the pending user boundary just as
+      // the old group allocation did, so a second turn after the same user
+      // message still receives its own duration start.
+      pendingUserBoundary = null;
       continue;
     }
     let group = groupsByTurnId.get(turnId);
@@ -749,6 +1099,7 @@ export function deriveMessagesTimelineRows(input: {
   activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
+  activeTimelineScanRef?: ActiveTimelineScanRef;
 }): MessagesTimelineRow[] {
   const nextRows: MessagesTimelineRow[] = [];
   const durationStartByMessageId = computeMessageDurationStart(
@@ -759,6 +1110,7 @@ export function deriveMessagesTimelineRows(input: {
     input.latestTurn ?? null,
     input.runningTurnId ?? null,
   );
+  const activeRunTurnId = input.isWorking ? unsettledTurnId : null;
   const foldsByAnchorEntryId = deriveTurnFolds({
     timelineEntries: input.timelineEntries,
     terminalAssistantMessageIds,
@@ -773,52 +1125,16 @@ export function deriveMessagesTimelineRows(input: {
       }
     }
   }
-
-  let activeTurnHeaderIndex = input.timelineEntries.length;
-  if (input.isWorking) {
-    const latestUserMessageIndex = lastUserMessageIndex(input.timelineEntries);
-    const firstOwnedAfterUser =
-      unsettledTurnId === null
-        ? -1
-        : input.timelineEntries.findIndex(
-            (entry, index) =>
-              index > latestUserMessageIndex && timelineEntryTurnId(entry) === unsettledTurnId,
-          );
-    activeTurnHeaderIndex =
-      firstOwnedAfterUser >= 0 ? firstOwnedAfterUser : latestUserMessageIndex + 1;
-  }
-  const entryBelongsToActiveTurn = (entry: TimelineEntry, index: number) =>
-    input.isWorking &&
-    index >= activeTurnHeaderIndex &&
-    (unsettledTurnId === null || timelineEntryTurnId(entry) === unsettledTurnId);
-  const workEntryIsInActiveRun = (entry: WorkLogEntry) =>
-    input.isWorking &&
-    unsettledTurnId !== null &&
-    entry.toolLifecycleStatus === "inProgress" &&
-    entry.turnId === unsettledTurnId;
-  const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];
-  for (let index = input.timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
-    const entry = input.timelineEntries[index]!;
-    if (
-      !entryBelongsToActiveTurn(entry, index) ||
-      entry.kind !== "work" ||
-      entry.entry.agentSpawn !== undefined ||
-      entry.entry.tone === "error" ||
-      workEntryRendersImagePreview(entry.entry)
-    ) {
-      break;
-    }
-    activeToolEntries.unshift(entry);
-  }
-  const visibleActiveToolEntries = omitSupersededLifecycleMarkers(
-    activeToolEntries.filter((entry) => workEntryIsVisibleInGroup(entry.entry, true)),
-    (entry) => entry.entry,
+  const { activeTurnHeaderIndex, activeToolEntries } = deriveActiveToolTimelineEntries(
+    input,
+    unsettledTurnId,
+    input.activeTimelineScanRef,
   );
+  const activeWorkPresentation = deriveActiveWorkPresentation(activeToolEntries, unsettledTurnId);
+  const visibleActiveToolEntries = activeWorkPresentation.visibleEntries;
   const activeWorkAnchor = activeToolEntries[0];
   const latestVisibleToolEntry = visibleActiveToolEntries.at(-1);
-  const latestRunningToolEntry = visibleActiveToolEntries.findLast((entry) =>
-    workEntryIsActiveTurnActivity(entry.entry),
-  );
+  const latestRunningToolEntry = activeWorkPresentation.latestRunningEntry;
   const latestToolFailed =
     latestRunningToolEntry === undefined &&
     latestVisibleToolEntry !== undefined &&
@@ -940,24 +1256,21 @@ export function deriveMessagesTimelineRows(input: {
         groupedEntries.push(nextEntry.entry);
         cursor += 1;
       }
-      const visibleGroupedEntries = omitSupersededLifecycleMarkers(
-        groupedEntries.filter((entry) =>
-          workEntryIsVisibleInGroup(entry, workEntryIsInActiveRun(entry)),
-        ),
-        (entry) => entry,
-      );
+      const groupPresentation = deriveWorkGroupPresentation(groupedEntries, activeRunTurnId);
+      const visibleGroupedEntries = groupPresentation.visibleEntries;
       if (visibleGroupedEntries.length > 0) {
-        const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
+        const activeInProgressToolEntries = groupPresentation.activeEntries;
         if (activeInProgressToolEntries.length > 0) {
           const groupId = workGroupId(timelineEntry.id, timelineEntry.entry);
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
           const latestActiveToolEntry = activeInProgressToolEntries.at(-1)!;
+          const groupedEntriesSnapshot = visibleGroupedEntries.slice();
           nextRows.push({
             kind: "work-live",
             id: `work-live:${workGroupIdentity(timelineEntry.id, timelineEntry.entry)}`,
             createdAt: timelineEntry.createdAt,
             entry: latestActiveToolEntry,
-            groupedEntries: visibleGroupedEntries,
+            groupedEntries: groupedEntriesSnapshot,
             groupId,
             expanded,
             active: true,
@@ -965,7 +1278,7 @@ export function deriveMessagesTimelineRows(input: {
           hasActivityRow = true;
           if (expanded) {
             nextRows.push(
-              expandedWorkGroupRow(groupId, timelineEntry.createdAt, visibleGroupedEntries),
+              expandedWorkGroupRow(groupId, timelineEntry.createdAt, groupedEntriesSnapshot),
             );
           }
         } else if (
@@ -977,7 +1290,7 @@ export function deriveMessagesTimelineRows(input: {
             kind: "work",
             id: timelineEntry.id,
             createdAt: timelineEntry.createdAt,
-            groupedEntries: visibleGroupedEntries,
+            groupedEntries: visibleGroupedEntries.slice(),
             isExpandedToolGroup: false,
             displayLabel:
               toolGroupAction(singleEntry) === "edit"
@@ -987,7 +1300,7 @@ export function deriveMessagesTimelineRows(input: {
         } else {
           const groupId = workGroupId(timelineEntry.id, timelineEntry.entry);
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
-          const summaryKind = toolGroupSummaryKind(visibleGroupedEntries);
+          const summaryKind = toolGroupSummaryKindFromAccumulator(groupPresentation.summary);
           const primarySourceEntry = visibleGroupedEntries.find(
             (entry) => entry.toolSource !== undefined,
           );
@@ -1004,7 +1317,7 @@ export function deriveMessagesTimelineRows(input: {
           const groupToolIcon =
             primarySourceIcon ??
             visibleGroupedEntries.findLast((entry) => entry.toolIcon !== undefined)?.toolIcon;
-          const latestToolEntry = visibleGroupedEntries.findLast(workLogEntryIsToolLike);
+          const latestToolEntry = groupPresentation.latestToolEntry;
           const singleEntry =
             visibleGroupedEntries.length === 1 ? (visibleGroupedEntries[0] ?? null) : null;
           const usesSingleToolCallLabel =
@@ -1026,7 +1339,7 @@ export function deriveMessagesTimelineRows(input: {
               ? singleToolCallLabel(singleEntry)
               : singleEntry !== null && !workLogEntryIsToolLike(singleEntry)
                 ? singleEntry.label
-                : summarizeToolGroup(visibleGroupedEntries),
+                : summarizeToolGroupAccumulator(groupPresentation.summary),
             summaryKind,
             ...(groupToolSurface ? { toolSurface: groupToolSurface } : {}),
             ...(groupToolIcon ? { toolIcon: groupToolIcon } : {}),
@@ -1037,7 +1350,7 @@ export function deriveMessagesTimelineRows(input: {
           });
           if (expanded) {
             nextRows.push(
-              expandedWorkGroupRow(groupId, timelineEntry.createdAt, visibleGroupedEntries),
+              expandedWorkGroupRow(groupId, timelineEntry.createdAt, visibleGroupedEntries.slice()),
             );
           }
         }

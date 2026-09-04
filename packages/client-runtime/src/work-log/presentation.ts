@@ -387,24 +387,6 @@ export function resolveViewedImageAsset(
   return { resource: media.resource, alt: media.name, srcFragment: media.srcFragment };
 }
 
-function toolGroupActionCount(
-  action: ToolGroupAction,
-  entries: ReadonlyArray<WorkLogPresentationEntry>,
-): number {
-  if (action !== "edit") return entries.length;
-
-  const changedFiles = new Set<string>();
-  let editsWithoutFileDetails = 0;
-  for (const entry of entries) {
-    if (!entry.changedFiles || entry.changedFiles.length === 0) {
-      editsWithoutFileDetails += 1;
-      continue;
-    }
-    for (const file of entry.changedFiles) changedFiles.add(file);
-  }
-  return changedFiles.size + editsWithoutFileDetails;
-}
-
 function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
   switch (action) {
     case "read":
@@ -426,25 +408,77 @@ function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
   }
 }
 
-export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEntry>): string {
-  const summaryEntries = omitSupersededLifecycleMarkers(entries, (entry) => entry);
-  const sources = new Map<string, ToolActivitySource>();
-  const groupedEntries = new Map<ToolGroupAction, WorkLogPresentationEntry[]>();
-  for (const entry of summaryEntries) {
-    if (entry.toolSource) {
-      sources.set(entry.toolSource.key, entry.toolSource);
-      continue;
-    }
-    const action = toolGroupAction(entry);
-    const group = groupedEntries.get(action);
-    if (group) group.push(entry);
-    else groupedEntries.set(action, [entry]);
+export interface ToolGroupSummaryAccumulator {
+  readonly actionCounts: Map<ToolGroupAction, number>;
+  readonly changedFiles: Set<string>;
+  editsWithoutFileDetails: number;
+  readonly fallbackKinds: Set<
+    Extract<ToolGroupSummaryKind, "dynamic-tool" | "agent-tool" | "tone-tool" | "other">
+  >;
+  readonly allActions: Set<ToolGroupAction>;
+  readonly sources: Map<string, ToolActivitySource>;
+}
+
+export function createToolGroupSummaryAccumulator(
+  entries: ReadonlyArray<WorkLogPresentationEntry> = [],
+): ToolGroupSummaryAccumulator {
+  const state: ToolGroupSummaryAccumulator = {
+    actionCounts: new Map(),
+    changedFiles: new Set(),
+    editsWithoutFileDetails: 0,
+    fallbackKinds: new Set(),
+    allActions: new Set(),
+    sources: new Map(),
+  };
+  for (const entry of entries) {
+    appendToolGroupSummaryEntry(state, entry);
   }
-  const labels = [...groupedEntries].map(([action, actionEntries]) =>
-    toolGroupActionLabel(action, toolGroupActionCount(action, actionEntries)),
+  return state;
+}
+
+function toolGroupFallbackKind(
+  entry: WorkLogPresentationEntry,
+): Extract<ToolGroupSummaryKind, "dynamic-tool" | "agent-tool" | "tone-tool" | "other"> {
+  if (entry.itemType === "mcp_tool_call") return "other";
+  if (entry.itemType === "dynamic_tool_call") return "dynamic-tool";
+  if (entry.itemType === "collab_agent_tool_call" || entry.taskId) return "agent-tool";
+  if (entry.tone === "thinking") return "agent-tool";
+  if (entry.tone === "tool") return "tone-tool";
+  return "other";
+}
+
+export function appendToolGroupSummaryEntry(
+  state: ToolGroupSummaryAccumulator,
+  entry: WorkLogPresentationEntry,
+): void {
+  const action = toolGroupAction(entry);
+  state.allActions.add(action);
+  if (action === "other") {
+    state.fallbackKinds.add(toolGroupFallbackKind(entry));
+  }
+  if (entry.toolSource) {
+    state.sources.set(entry.toolSource.key, entry.toolSource);
+    return;
+  }
+  state.actionCounts.set(action, (state.actionCounts.get(action) ?? 0) + 1);
+  if (action === "edit") {
+    if (!entry.changedFiles || entry.changedFiles.length === 0) {
+      state.editsWithoutFileDetails += 1;
+    } else {
+      for (const file of entry.changedFiles) state.changedFiles.add(file);
+    }
+  }
+}
+
+export function summarizeToolGroupAccumulator(state: ToolGroupSummaryAccumulator): string {
+  const labels = [...state.actionCounts].map(([action, count]) =>
+    toolGroupActionLabel(
+      action,
+      action === "edit" ? state.changedFiles.size + state.editsWithoutFileDetails : count,
+    ),
   );
-  if (sources.size > 0) {
-    const sourceValues = [...sources.values()];
+  if (state.sources.size > 0) {
+    const sourceValues = [...state.sources.values()];
     const sourceNames = sourceValues.map((source) => source.name);
     const formattedNames =
       sourceNames.length < 2
@@ -454,7 +488,7 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
           : `${sourceNames.slice(0, -1).join(", ")}, and ${sourceNames.at(-1)}`;
     const allIntegrations = sourceValues.every((source) => source.kind === "integration");
     labels.unshift(
-      `Used ${formattedNames}${allIntegrations ? ` ${sources.size === 1 ? "integration" : "integrations"}` : ""}`,
+      `Used ${formattedNames}${allIntegrations ? ` ${state.sources.size === 1 ? "integration" : "integrations"}` : ""}`,
     );
   }
   const sentenceLabels = labels.map((label, index) =>
@@ -463,6 +497,26 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
   if (sentenceLabels.length < 2) return sentenceLabels[0] ?? "";
   if (sentenceLabels.length === 2) return sentenceLabels.join(" and ");
   return `${sentenceLabels.slice(0, -1).join(", ")}, and ${sentenceLabels.at(-1)}`;
+}
+
+export function toolGroupSummaryKindFromAccumulator(
+  state: ToolGroupSummaryAccumulator,
+): ToolGroupSummaryKind {
+  if (state.allActions.size !== 1) return "mixed";
+
+  const action = state.allActions.values().next().value!;
+  if (action !== "other") return action;
+  return state.fallbackKinds.size === 1 ? state.fallbackKinds.values().next().value! : "mixed";
+}
+
+export function summarizeVisibleToolGroup(
+  entries: ReadonlyArray<WorkLogPresentationEntry>,
+): string {
+  return summarizeToolGroupAccumulator(createToolGroupSummaryAccumulator(entries));
+}
+
+export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEntry>): string {
+  return summarizeVisibleToolGroup(omitSupersededLifecycleMarkers(entries, (entry) => entry));
 }
 
 export function omitSupersededLifecycleMarkers<T>(
@@ -504,21 +558,5 @@ export function omitSupersededLifecycleMarkers<T>(
 export function toolGroupSummaryKind(
   entries: ReadonlyArray<WorkLogPresentationEntry>,
 ): ToolGroupSummaryKind {
-  const actions = new Set(entries.map(toolGroupAction));
-  if (actions.size !== 1) return "mixed";
-
-  const action = actions.values().next().value!;
-  if (action !== "other") return action;
-
-  const fallbackKinds = new Set(
-    entries.map((entry): ToolGroupSummaryKind => {
-      if (entry.itemType === "mcp_tool_call") return "other";
-      if (entry.itemType === "dynamic_tool_call") return "dynamic-tool";
-      if (entry.itemType === "collab_agent_tool_call" || entry.taskId) return "agent-tool";
-      if (entry.tone === "thinking") return "agent-tool";
-      if (entry.tone === "tool") return "tone-tool";
-      return "other";
-    }),
-  );
-  return fallbackKinds.size === 1 ? fallbackKinds.values().next().value! : "mixed";
+  return toolGroupSummaryKindFromAccumulator(createToolGroupSummaryAccumulator(entries));
 }

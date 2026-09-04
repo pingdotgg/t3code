@@ -96,11 +96,13 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
   derivePhase,
-  deriveTimelineEntries,
+  deriveTimelineEntriesWithState,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
   findLatestProposedPlan,
-  deriveWorkLogEntries,
+  deriveWorkLogEntriesWithState,
+  type TimelineEntriesProjection,
+  type WorkLogEntriesProjection,
   hasActionableProposedPlan,
   isLatestTurnSettled,
 } from "../session-logic";
@@ -2497,7 +2499,16 @@ function ChatViewContent(props: ChatViewProps) {
     () => deriveLatestContextWindowSnapshot(threadActivities),
     [threadActivities],
   );
-  const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
+  const workLogProjectionRef = useRef<WorkLogEntriesProjection | null>(null);
+  const timelineProjectionRef = useRef<TimelineEntriesProjection | null>(null);
+  const workLogEntries = useMemo(() => {
+    const projection = deriveWorkLogEntriesWithState(
+      threadActivities,
+      workLogProjectionRef.current,
+    );
+    workLogProjectionRef.current = projection;
+    return projection.entries;
+  }, [threadActivities]);
   // Native subagent fold: memoized by activity-list identity, shared by the
   // Agents surface, live strip, and workflow cards. v2Projection is null
   // until orchestration-v2 lands (source precedence lives in the derive).
@@ -2889,11 +2900,16 @@ function ChatViewContent(props: ChatViewProps) {
     feedbackSubmissions,
     optimisticUserMessages,
   ]);
-  const timelineEntries = useMemo(
-    () =>
-      deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
-    [activeThread?.proposedPlans, timelineMessages, workLogEntries],
-  );
+  const timelineEntries = useMemo(() => {
+    const projection = deriveTimelineEntriesWithState(
+      timelineMessages,
+      activeThread?.proposedPlans ?? [],
+      workLogEntries,
+      timelineProjectionRef.current,
+    );
+    timelineProjectionRef.current = projection;
+    return projection.entries;
+  }, [activeThread?.proposedPlans, timelineMessages, workLogEntries]);
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;

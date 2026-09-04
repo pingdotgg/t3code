@@ -10,6 +10,7 @@ import {
   resolveWorkGroupScrollIndex,
   shouldFollowWorkGroupAppend,
   shouldPreserveAssistantLineBreaks,
+  type ActiveTimelineScanRef,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
   workEntryIsVisibleInGroup,
@@ -1294,6 +1295,92 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("keeps active scan state isolated to its timeline owner", () => {
+    const turnId = "turn-1" as never;
+    const startedAt = "2026-01-01T00:00:00Z";
+    const userEntry = {
+      id: "user-entry",
+      kind: "message" as const,
+      createdAt: startedAt,
+      message: {
+        id: "user-1" as never,
+        role: "user" as const,
+        text: "Run the tools",
+        turnId: null,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+        streaming: false,
+      },
+    };
+    const firstWorkEntry = {
+      id: "work-entry-1",
+      kind: "work" as const,
+      createdAt: "2026-01-01T00:00:01Z",
+      entry: {
+        id: "work-1",
+        createdAt: "2026-01-01T00:00:01Z",
+        turnId,
+        label: "Ran status",
+        command: "git status",
+        tone: "tool" as const,
+      },
+    };
+    const secondWorkEntry = {
+      id: "work-entry-2",
+      kind: "work" as const,
+      createdAt: "2026-01-01T00:00:02Z",
+      entry: {
+        ...firstWorkEntry.entry,
+        id: "work-2",
+        createdAt: "2026-01-01T00:00:02Z",
+        label: "Ran diff",
+        command: "git diff",
+      },
+    };
+    const firstRef: ActiveTimelineScanRef = { current: null };
+    const secondRef: ActiveTimelineScanRef = { current: null };
+    const baseInput = {
+      latestTurn: {
+        turnId,
+        state: "running" as const,
+        startedAt,
+        completedAt: null,
+      },
+      runningTurnId: turnId,
+      activeTurnStartedAt: startedAt,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    };
+    const firstTimeline = [userEntry, firstWorkEntry];
+
+    deriveMessagesTimelineRows({
+      ...baseInput,
+      timelineEntries: firstTimeline,
+      isWorking: true,
+      activeTimelineScanRef: firstRef,
+    });
+    deriveMessagesTimelineRows({
+      ...baseInput,
+      timelineEntries: firstTimeline,
+      isWorking: false,
+      activeTimelineScanRef: secondRef,
+    });
+
+    const appendedTimeline = [...firstTimeline, secondWorkEntry];
+    const rows = deriveMessagesTimelineRows({
+      ...baseInput,
+      timelineEntries: appendedTimeline,
+      isWorking: true,
+      activeTimelineScanRef: firstRef,
+    });
+
+    expect(firstRef.current?.timelineEntries).toBe(appendedTimeline);
+    expect(secondRef.current).toBeNull();
+    expect(rows.find((row) => row.kind === "work-live")).toMatchObject({
+      groupedEntries: [{ id: "work-1" }, { id: "work-2" }],
+    });
+  });
+
   it("keeps an actually running tool in the shared activity row", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
@@ -2446,5 +2533,61 @@ describe("computeStableMessagesTimelineRows", () => {
 
     expect(reordered).not.toBe(initial);
     expect(reordered.result).toEqual([initial.result[1], initial.result[0]]);
+  });
+
+  it("keeps expanded group snapshots immutable across appended work", () => {
+    const firstEntry = {
+      id: "work-append-1",
+      createdAt: "2026-01-01T00:00:01Z",
+      label: "Ran command",
+      command: "git status",
+      tone: "tool" as const,
+      toolLifecycleStatus: "completed" as const,
+    };
+    const secondEntry = {
+      ...firstEntry,
+      id: "work-append-2",
+      command: "git diff",
+    };
+    const baseInput = {
+      isWorking: false,
+      expandedWorkGroupIds: new Set(["work-group:work-append-1"]),
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    };
+    const initial = deriveMessagesTimelineRows({
+      ...baseInput,
+      timelineEntries: [
+        {
+          id: firstEntry.id,
+          kind: "work" as const,
+          createdAt: firstEntry.createdAt,
+          entry: firstEntry,
+        },
+      ],
+    });
+    const updated = deriveMessagesTimelineRows({
+      ...baseInput,
+      timelineEntries: [
+        {
+          id: firstEntry.id,
+          kind: "work" as const,
+          createdAt: firstEntry.createdAt,
+          entry: firstEntry,
+        },
+        {
+          id: secondEntry.id,
+          kind: "work" as const,
+          createdAt: secondEntry.createdAt,
+          entry: secondEntry,
+        },
+      ],
+    });
+    const initialDetails = initial.find((row) => row.kind === "work");
+    const updatedDetails = updated.find((row) => row.kind === "work");
+
+    expect(initialDetails?.groupedEntries).toHaveLength(1);
+    expect(updatedDetails?.groupedEntries).toHaveLength(2);
   });
 });

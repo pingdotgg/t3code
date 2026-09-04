@@ -139,6 +139,7 @@ import {
   workEntryIsVisibleInGroup,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
+  type ActiveTimelineScanState,
   TIMELINE_MINIMAP_MIN_ITEMS,
   type TimelineLatestTurn,
   type WorkGroupScrollAnchor,
@@ -384,6 +385,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     );
   }, []);
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
+  // Keep the incremental active scan with this timeline instance. The ref
+  // avoids a render per streamed activity and is released with the timeline.
+  const activeTimelineScanRef = useRef<ActiveTimelineScanState | null>(null);
+  const activeTimelineScanRouteKeyRef = useRef(routeThreadKey);
+  if (activeTimelineScanRouteKeyRef.current !== routeThreadKey) {
+    activeTimelineScanRouteKeyRef.current = routeThreadKey;
+    activeTimelineScanRef.current = null;
+  }
   // Scroll/disclosure state outlives virtualized rows, but never the current thread.
   const workGroupViewState = useMemo<WorkGroupViewState>(
     () => ({ scrollPositions: new Map(), expandedEntries: new Set() }),
@@ -510,6 +519,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
+        activeTimelineScanRef,
       }),
     [
       timelineEntries,

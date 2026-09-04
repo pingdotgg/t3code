@@ -133,6 +133,26 @@ const derivedWorkLogEntryByActivity = new WeakMap<
   DerivedWorkLogEntry
 >();
 
+/**
+ * The work-log fold is stateful across immutable activity appends. `entries`
+ * remains a fresh array for React, while the private fold indexes are carried
+ * forward so a live tick only has to process the new activity suffix.
+ */
+export interface WorkLogEntriesProjection {
+  readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
+  readonly entries: WorkLogEntry[];
+}
+
+interface WorkLogFoldState {
+  collapsed: DerivedWorkLogEntry[];
+  spawnRowIndex: Map<string, number>;
+  groupKeyByTaskId: Map<string, string>;
+  toolLifecycleRowIndex: Map<string, number>;
+  processedActivityCount: number;
+}
+
+const workLogFoldStateByProjection = new WeakMap<WorkLogEntriesProjection, WorkLogFoldState>();
+
 export interface PendingApproval {
   requestId: ApprovalRequestId;
   requestKind: ProviderRequestKind;
@@ -191,6 +211,13 @@ export type TimelineEntry =
       createdAt: string;
       entry: WorkLogEntry;
     };
+
+export interface TimelineEntriesProjection {
+  readonly messages: ReadonlyArray<ChatMessage>;
+  readonly proposedPlans: ReadonlyArray<ProposedPlan>;
+  readonly workEntries: ReadonlyArray<WorkLogEntry>;
+  readonly entries: TimelineEntry[];
+}
 
 export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
   if (entry.tone === "tool" || entry.tone === "thinking" || entry.tone === "error") {
@@ -441,9 +468,16 @@ export function derivePendingApprovals(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): PendingApproval[] {
   const openByRequestId = new Map<ApprovalRequestId, PendingApproval>();
-  const ordered = [...activities].toSorted(compareActivitiesByOrder);
+  const ordered = orderedActivities(activities);
 
   for (const activity of ordered) {
+    if (
+      activity.kind !== "approval.requested" &&
+      activity.kind !== "approval.resolved" &&
+      activity.kind !== "provider.approval.respond.failed"
+    ) {
+      continue;
+    }
     const payload =
       activity.payload && typeof activity.payload === "object"
         ? (activity.payload as Record<string, unknown>)
@@ -554,9 +588,16 @@ export function derivePendingUserInputs(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): PendingUserInput[] {
   const openByRequestId = new Map<ApprovalRequestId, PendingUserInput>();
-  const ordered = [...activities].toSorted(compareActivitiesByOrder);
+  const ordered = orderedActivities(activities);
 
   for (const activity of ordered) {
+    if (
+      activity.kind !== "user-input.requested" &&
+      activity.kind !== "user-input.resolved" &&
+      activity.kind !== "provider.user-input.respond.failed"
+    ) {
+      continue;
+    }
     const payload =
       activity.payload && typeof activity.payload === "object"
         ? (activity.payload as Record<string, unknown>)
@@ -702,7 +743,7 @@ export function deriveActivePlanState(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   latestTurnId: TurnId | undefined,
 ): ActivePlanState | null {
-  const ordered = [...activities].toSorted(compareActivitiesByOrder);
+  const ordered = orderedActivities(activities);
   const allPlanActivities = ordered.filter((activity) => activity.kind === "turn.plan.updated");
   // Prefer plan from the current turn; fall back to the most recent plan from any turn
   // so that TodoWrite tasks persist across follow-up messages.
@@ -823,30 +864,111 @@ function isAgentInternalActivity(activity: OrchestrationThreadActivity): boolean
   return typeof payload.agentId === "string" && payload.agentId.trim().length > 0;
 }
 
+function deriveWorkLogEntryOrNull(
+  activity: OrchestrationThreadActivity,
+): DerivedWorkLogEntry | null {
+  if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) return null;
+  if (activity.kind === "tool.started") return null;
+  // Agent task.started rows are CTA seeds: they carry the true spawn turn,
+  // which is the batch key (completions of background subagents arrive
+  // under later synthetic turns and must not start new batches). They
+  // collapse into the batch's single CTA row, never render standalone.
+  if (activity.kind === "task.started" && !isAgentTaskStartedActivity(activity)) return null;
+  if (activity.kind === "task.updated") return null;
+  if (activity.kind === "tool.progress") return null;
+  if (activity.kind === "context-window.updated") return null;
+  if (activity.kind === "turn.plan.updated") return null;
+  if (activity.summary === "Checkpoint captured") return null;
+  if (isNoContentRuntimeWarning(activity)) return null;
+  if (isPlanBoundaryToolActivity(activity)) return null;
+  if (isAgentInternalActivity(activity)) return null;
+  return toDerivedWorkLogEntry(activity);
+}
+
+function deriveWorkLogFoldState(
+  ordered: ReadonlyArray<OrchestrationThreadActivity>,
+): WorkLogFoldState {
+  const state: WorkLogFoldState = {
+    collapsed: [],
+    spawnRowIndex: new Map(),
+    groupKeyByTaskId: new Map(),
+    toolLifecycleRowIndex: new Map(),
+    processedActivityCount: ordered.length,
+  };
+  for (const activity of ordered) {
+    const entry = deriveWorkLogEntryOrNull(activity);
+    if (entry) {
+      appendDerivedWorkLogEntry(state, entry);
+    }
+  }
+  return state;
+}
+
+function hasExactActivityPrefix(
+  previous: ReadonlyArray<OrchestrationThreadActivity>,
+  next: ReadonlyArray<OrchestrationThreadActivity>,
+): boolean {
+  if (previous.length === 0 || next.length <= previous.length) {
+    return false;
+  }
+  for (let index = 0; index < previous.length; index += 1) {
+    if (previous[index] !== next[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Derive a work-log projection, reusing the fold state when the ordered
+ * activity list is an immutable append of the previous projection. The exact
+ * prefix check keeps snapshots, reorders, and reverts on the full-safe path.
+ */
+export function deriveWorkLogEntriesWithState(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  previous: WorkLogEntriesProjection | null = null,
+): WorkLogEntriesProjection {
+  const ordered = orderedActivities(activities);
+  const previousFold = previous ? workLogFoldStateByProjection.get(previous) : undefined;
+  const previousActivities = previous?.activities;
+  let fold: WorkLogFoldState;
+  if (
+    previousFold !== undefined &&
+    previousActivities !== undefined &&
+    previousFold.processedActivityCount === previousActivities.length &&
+    hasExactActivityPrefix(previousActivities, ordered)
+  ) {
+    // The fold indexes are mutable while building the next snapshot, but the
+    // previous projection must remain a valid branch point for a revert or a
+    // competing thread update. Clone the small indexes as well as the
+    // rendered array before applying the new suffix.
+    fold = {
+      collapsed: [...previousFold.collapsed],
+      spawnRowIndex: new Map(previousFold.spawnRowIndex),
+      groupKeyByTaskId: new Map(previousFold.groupKeyByTaskId),
+      toolLifecycleRowIndex: new Map(previousFold.toolLifecycleRowIndex),
+      processedActivityCount: previousFold.processedActivityCount,
+    };
+    for (let index = previousActivities.length; index < ordered.length; index += 1) {
+      const entry = deriveWorkLogEntryOrNull(ordered[index]!);
+      if (entry) {
+        appendDerivedWorkLogEntry(fold, entry);
+      }
+    }
+    fold.processedActivityCount = ordered.length;
+  } else {
+    fold = deriveWorkLogFoldState(ordered);
+  }
+
+  const projection: WorkLogEntriesProjection = { activities: ordered, entries: fold.collapsed };
+  workLogFoldStateByProjection.set(projection, fold);
+  return projection;
+}
+
 export function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): WorkLogEntry[] {
-  const ordered = [...activities].toSorted(compareActivitiesByOrder);
-  const entries: DerivedWorkLogEntry[] = [];
-  for (const activity of ordered) {
-    if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) continue;
-    if (activity.kind === "tool.started") continue;
-    // Agent task.started rows are CTA seeds: they carry the true spawn turn,
-    // which is the batch key (completions of background subagents arrive
-    // under later synthetic turns and must not start new batches). They
-    // collapse into the batch's single CTA row, never render standalone.
-    if (activity.kind === "task.started" && !isAgentTaskStartedActivity(activity)) continue;
-    if (activity.kind === "task.updated") continue;
-    if (activity.kind === "tool.progress") continue;
-    if (activity.kind === "context-window.updated") continue;
-    if (activity.kind === "turn.plan.updated") continue;
-    if (activity.summary === "Checkpoint captured") continue;
-    if (isNoContentRuntimeWarning(activity)) continue;
-    if (isPlanBoundaryToolActivity(activity)) continue;
-    if (isAgentInternalActivity(activity)) continue;
-    entries.push(toDerivedWorkLogEntry(activity));
-  }
-  return collapseDerivedWorkLogEntries(entries);
+  return deriveWorkLogEntriesWithState(activities).entries;
 }
 
 /** Adapters forward unknown wire-only SDK messages (background_tasks_changed,
@@ -900,8 +1022,23 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     activity.payload && typeof activity.payload === "object"
       ? (activity.payload as Record<string, unknown>)
       : null;
+  const itemType = extractWorkLogItemType(payload);
+  const requestKind = extractWorkLogRequestKind(payload);
   const commandPreview = extractToolCommand(payload);
-  const changedFiles = extractChangedFiles(payload);
+  const dataKind = asTrimmedString(asRecord(payload?.data)?.kind)?.toLowerCase();
+  // File-change events and mutating dynamic tools carry explicit edit
+  // metadata. MCP results can also return normalized `files`, while legacy
+  // payloads without an item type still need the recursive fallback.
+  const shouldExtractChangedFiles =
+    itemType === undefined ||
+    itemType === "file_change" ||
+    itemType === "mcp_tool_call" ||
+    requestKind === "file-change" ||
+    dataKind === "edit" ||
+    dataKind === "write" ||
+    dataKind === "move" ||
+    dataKind === "delete";
+  const changedFiles = shouldExtractChangedFiles ? extractChangedFiles(payload) : [];
   const title = extractToolTitle(payload);
   const toolPresentation = extractToolActivityPresentation(payload);
   const isTaskActivity =
@@ -927,7 +1064,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       payload.detail.length > 0
       ? stripTrailingExitCode(payload.detail).output
       : null
-    : extractToolDetail(payload, title ?? activity.summary);
+    : extractToolDetail(payload, title ?? activity.summary, commandPreview);
   const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
@@ -942,8 +1079,6 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
           : activity.tone,
     sourceActivityKind: activity.kind,
   };
-  const itemType = extractWorkLogItemType(payload);
-  const requestKind = extractWorkLogRequestKind(payload);
   const viewedImagePath = asTrimmedString(asRecord(payload?.data)?.imagePath);
   if (detail) {
     entry.detail = detail;
@@ -1052,102 +1187,99 @@ function toolLifecycleCollapseMapKey(entry: DerivedWorkLogEntry): string | undef
   ) {
     return undefined;
   }
-  return entry.toolCallId ? `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}` : undefined;
+  return entry.toolCallId ? entry[workLogCollapseKey] : undefined;
 }
 
-function collapseDerivedWorkLogEntries(
-  entries: ReadonlyArray<DerivedWorkLogEntry>,
-): DerivedWorkLogEntry[] {
-  const collapsed: DerivedWorkLogEntry[] = [];
+function appendDerivedWorkLogEntry(state: WorkLogFoldState, entry: DerivedWorkLogEntry): void {
+  const collapsed = state.collapsed;
   // Subagent rows collapse by spawn group, not adjacency: a workflow run (or
   // a turn's batch of direct spawns) is ONE narrative event in the chat — a
   // CTA row that opens the Agents panel — no matter how many agents it
   // contains or how their progress rows interleave (quiet-timeline
   // guarantee).
-  const spawnRowIndex = new Map<string, number>();
   // Batch membership is decided once, at the FIRST row seen for a taskId.
   // Claude background subagents settle between turns, so their completion
   // rows carry fresh synthetic turn ids (or none) — keying each row by its
   // own turn splintered one batch into a stream of "Kicked off N subagents"
   // rows (live-test finding, thread 7ac7ef05).
-  const groupKeyByTaskId = new Map<string, string>();
-  const toolLifecycleRowIndex = new Map<string, number>();
-  for (const entry of entries) {
-    const isTaskRow =
-      entry.taskId !== undefined &&
-      !entry.isBackgroundTask &&
-      (entry.sourceActivityKind === "task.started" ||
-        entry.sourceActivityKind === "task.progress" ||
-        entry.sourceActivityKind === "task.completed");
-    if (isTaskRow && entry.taskId !== undefined) {
-      const rememberedKey = groupKeyByTaskId.get(entry.taskId);
-      const groupKey = rememberedKey ?? agentSpawnGroupKey(entry);
-      if (rememberedKey === undefined) {
-        groupKeyByTaskId.set(entry.taskId, groupKey);
-      }
-      const workflowId = groupKey.startsWith("wf:") ? groupKey.slice(3) : null;
-      const existingIndex = spawnRowIndex.get(groupKey);
-      if (existingIndex !== undefined) {
-        const existing = collapsed[existingIndex]!;
-        const agentTaskIds = existing.agentSpawn?.agentTaskIds.includes(entry.taskId)
-          ? existing.agentSpawn.agentTaskIds
-          : [...(existing.agentSpawn?.agentTaskIds ?? []), entry.taskId];
-        collapsed[existingIndex] = {
-          ...mergeDerivedWorkLogEntries(existing, entry),
-          // The CTA row keeps the group's ANCHOR identity, not the last
-          // agent's: id/createdAt/turnId stay pinned to the spawn point so
-          // the row renders where the run launched instead of drifting to
-          // the newest progress tick (mid-run it drifted below the whole
-          // conversation, reading as "no visualization"), and the stable id
-          // keeps React state/virtualization sane.
-          id: existing.id,
-          createdAt: existing.createdAt,
-          turnId: existing.turnId ?? null,
-          ...(existing.taskId !== undefined ? { taskId: existing.taskId } : {}),
-          label: existing.label,
-          agentSpawn: { workflowId, agentTaskIds },
-        };
-        continue;
-      }
-      spawnRowIndex.set(groupKey, collapsed.length);
-      collapsed.push({
-        ...entry,
-        agentSpawn: { workflowId, agentTaskIds: [entry.taskId] },
-      });
-      continue;
+  const isTaskRow =
+    entry.taskId !== undefined &&
+    !entry.isBackgroundTask &&
+    (entry.sourceActivityKind === "task.started" ||
+      entry.sourceActivityKind === "task.progress" ||
+      entry.sourceActivityKind === "task.completed");
+  if (isTaskRow && entry.taskId !== undefined) {
+    const rememberedKey = state.groupKeyByTaskId.get(entry.taskId);
+    const groupKey = rememberedKey ?? agentSpawnGroupKey(entry);
+    if (rememberedKey === undefined) {
+      state.groupKeyByTaskId.set(entry.taskId, groupKey);
     }
-    const lifecycleKey = toolLifecycleCollapseMapKey(entry);
-    if (lifecycleKey !== undefined) {
-      const matchingLifecycleIndex = toolLifecycleRowIndex.get(lifecycleKey);
-      const matchingEntry =
-        matchingLifecycleIndex === undefined ? undefined : collapsed[matchingLifecycleIndex];
-      if (
-        matchingLifecycleIndex !== undefined &&
-        matchingEntry &&
-        shouldCollapseToolLifecycleEntries(matchingEntry, entry)
-      ) {
-        collapsed[matchingLifecycleIndex] = mergeDerivedWorkLogEntries(matchingEntry, entry);
-        continue;
-      }
-      toolLifecycleRowIndex.delete(lifecycleKey);
+    const workflowId = groupKey.startsWith("wf:") ? groupKey.slice(3) : null;
+    const existingIndex = state.spawnRowIndex.get(groupKey);
+    if (existingIndex !== undefined) {
+      const existing = collapsed[existingIndex]!;
+      const agentTaskIds = existing.agentSpawn?.agentTaskIds.includes(entry.taskId)
+        ? existing.agentSpawn.agentTaskIds
+        : [...(existing.agentSpawn?.agentTaskIds ?? []), entry.taskId];
+      collapsed[existingIndex] = {
+        ...mergeDerivedWorkLogEntries(existing, entry),
+        // The CTA row keeps the group's ANCHOR identity, not the last
+        // agent's: id/createdAt/turnId stay pinned to the spawn point so
+        // the row renders where the run launched instead of drifting to
+        // the newest progress tick (mid-run it drifted below the whole
+        // conversation, reading as "no visualization"), and the stable id
+        // keeps React state/virtualization sane.
+        id: existing.id,
+        createdAt: existing.createdAt,
+        turnId: existing.turnId ?? null,
+        ...(existing.taskId !== undefined ? { taskId: existing.taskId } : {}),
+        label: existing.label,
+        agentSpawn: { workflowId, agentTaskIds },
+      };
+      return;
     }
-    const previous = collapsed.at(-1);
-    if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
-      const previousIndex = collapsed.length - 1;
-      const previousKey = toolLifecycleCollapseMapKey(previous);
-      if (previousKey !== undefined) toolLifecycleRowIndex.delete(previousKey);
-      const merged = mergeDerivedWorkLogEntries(previous, entry);
-      collapsed[previousIndex] = merged;
-      const mergedKey = toolLifecycleCollapseMapKey(merged);
-      if (mergedKey !== undefined) toolLifecycleRowIndex.set(mergedKey, previousIndex);
-      continue;
-    }
-    collapsed.push(entry);
-    if (lifecycleKey !== undefined) {
-      toolLifecycleRowIndex.set(lifecycleKey, collapsed.length - 1);
-    }
+    state.spawnRowIndex.set(groupKey, collapsed.length);
+    collapsed.push({
+      ...entry,
+      agentSpawn: { workflowId, agentTaskIds: [entry.taskId] },
+    });
+    return;
   }
-  return collapsed;
+  const lifecycleKey = toolLifecycleCollapseMapKey(entry);
+  if (lifecycleKey !== undefined) {
+    const matchingLifecycleIndex = state.toolLifecycleRowIndex.get(lifecycleKey);
+    const matchingEntry =
+      matchingLifecycleIndex === undefined ? undefined : collapsed[matchingLifecycleIndex];
+    if (
+      matchingLifecycleIndex !== undefined &&
+      matchingEntry &&
+      shouldCollapseToolLifecycleEntries(matchingEntry, entry)
+    ) {
+      collapsed[matchingLifecycleIndex] = mergeDerivedWorkLogEntries(matchingEntry, entry);
+      if (entry.sourceActivityKind !== "tool.updated") {
+        state.toolLifecycleRowIndex.delete(lifecycleKey);
+      }
+      return;
+    }
+    state.toolLifecycleRowIndex.delete(lifecycleKey);
+  }
+  const previous = collapsed.at(-1);
+  if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
+    const previousIndex = collapsed.length - 1;
+    const previousKey = toolLifecycleCollapseMapKey(previous);
+    if (previousKey !== undefined) state.toolLifecycleRowIndex.delete(previousKey);
+    const merged = mergeDerivedWorkLogEntries(previous, entry);
+    collapsed[previousIndex] = merged;
+    const mergedKey = toolLifecycleCollapseMapKey(merged);
+    if (mergedKey !== undefined && merged.sourceActivityKind === "tool.updated") {
+      state.toolLifecycleRowIndex.set(mergedKey, previousIndex);
+    }
+    return;
+  }
+  collapsed.push(entry);
+  if (lifecycleKey !== undefined && entry.sourceActivityKind === "tool.updated") {
+    state.toolLifecycleRowIndex.set(lifecycleKey, collapsed.length - 1);
+  }
 }
 
 function shouldCollapseToolLifecycleEntries(
@@ -1311,9 +1443,8 @@ function executableBasename(value: string): string | null {
   if (trimmed.length === 0) {
     return null;
   }
-  const normalized = trimmed.replace(/\\/g, "/");
-  const segments = normalized.split("/");
-  const last = segments.at(-1)?.trim() ?? "";
+  const lastSeparator = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  const last = trimmed.slice(lastSeparator + 1).trim();
   return last.length > 0 ? last.toLowerCase() : null;
 }
 
@@ -1448,12 +1579,22 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
 } {
   const data = asRecord(payload?.data);
   const item = asRecord(data?.item);
-  const itemResult = asRecord(item?.result);
+  const itemCommand = item?.command;
+  if (itemCommand !== undefined) {
+    const command = normalizeCommandValue(itemCommand);
+    if (command) {
+      return {
+        command,
+        rawCommand: toRawToolCommand(itemCommand, command),
+      };
+    }
+  }
+
   const itemInput = asRecord(item?.input);
+  const itemResult = asRecord(item?.result);
   const itemType = asTrimmedString(payload?.itemType);
   const detail = asTrimmedString(payload?.detail);
   const candidates: unknown[] = [
-    item?.command,
     itemInput?.command,
     itemResult?.command,
     data?.command,
@@ -1569,29 +1710,27 @@ function isCommandToolDetail(payload: Record<string, unknown> | null, heading: s
 function extractToolDetail(
   payload: Record<string, unknown> | null,
   heading: string,
+  commandPreview: { command: string | null; rawCommand: string | null },
 ): string | null {
-  const rawDetail = asTrimmedString(payload?.detail);
-  const detail = rawDetail ? stripTrailingExitCode(rawDetail).output : null;
-  const normalizedHeading = normalizePreviewForComparison(heading);
-  const normalizedDetail = normalizePreviewForComparison(detail);
   const commandTool = isCommandToolDetail(payload, heading);
-  const commandPreview = commandTool
-    ? extractToolCommand(payload)
-    : { command: null, rawCommand: null };
-  const command = commandPreview.command;
+  const command = commandTool ? commandPreview.command : null;
 
   if (commandTool && command) {
     const output = extractToolOutput(payload);
     if (output) return output;
   }
 
+  const rawDetail = asTrimmedString(payload?.detail);
+  const detail = rawDetail ? stripTrailingExitCode(rawDetail).output : null;
+  const normalizedHeading = normalizePreviewForComparison(heading);
+  const normalizedDetail = normalizePreviewForComparison(detail);
   const data = asRecord(payload?.data);
   const repeatsCommand =
     detail !== null &&
     commandDetailRepeatsCommand({
       detail,
       command,
-      rawCommand: commandPreview.rawCommand,
+      rawCommand: commandTool ? commandPreview.rawCommand : null,
       toolName: data?.toolName,
       data,
     });
@@ -1620,6 +1759,13 @@ function stripTrailingExitCode(value: string): {
   exitCode?: number | undefined;
 } {
   const trimmed = value.trim();
+  // Most provider details do not carry an exit-code suffix. Avoid running the
+  // backtracking expression for those rows.
+  if (!trimmed.endsWith(">")) {
+    return {
+      output: trimmed.length > 0 ? trimmed : null,
+    };
+  }
   const match = /^(?<output>[\s\S]*?)(?:\s*<exited with exit code (?<code>\d+)>)\s*$/i.exec(
     trimmed,
   );
@@ -1763,32 +1909,179 @@ function compareActivityLifecycleRank(kind: string): number {
   return 1;
 }
 
+const orderedActivitiesCache = new WeakMap<
+  ReadonlyArray<OrchestrationThreadActivity>,
+  ReadonlyArray<OrchestrationThreadActivity>
+>();
+
+function orderedActivities(activities: ReadonlyArray<OrchestrationThreadActivity>) {
+  const cached = orderedActivitiesCache.get(activities);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  let isOrdered = true;
+  for (let index = 1; index < activities.length; index += 1) {
+    const previous = activities[index - 1];
+    const current = activities[index];
+    if (previous && current && compareActivitiesByOrder(previous, current) > 0) {
+      isOrdered = false;
+      break;
+    }
+  }
+
+  const ordered = isOrdered ? activities : [...activities].toSorted(compareActivitiesByOrder);
+  orderedActivitiesCache.set(activities, ordered);
+  return ordered;
+}
+
+function timelineEntryFromMessage(message: ChatMessage): TimelineEntry {
+  return {
+    id: message.id,
+    kind: "message",
+    createdAt: message.createdAt,
+    message,
+  };
+}
+
+function timelineEntryFromProposedPlan(proposedPlan: ProposedPlan): TimelineEntry {
+  return {
+    id: proposedPlan.id,
+    kind: "proposed-plan",
+    createdAt: proposedPlan.createdAt,
+    proposedPlan,
+  };
+}
+
+function timelineEntryFromWork(workEntry: WorkLogEntry): TimelineEntry {
+  return {
+    id: workEntry.id,
+    kind: "work",
+    createdAt: workEntry.createdAt,
+    entry: workEntry,
+  };
+}
+
+function compareTimelineEntriesByCreatedAt(left: TimelineEntry, right: TimelineEntry): number {
+  return left.createdAt.localeCompare(right.createdAt);
+}
+
+function timelineEntrySourceOrder(entry: TimelineEntry): number {
+  switch (entry.kind) {
+    case "message":
+      return 0;
+    case "proposed-plan":
+      return 1;
+    case "work":
+      return 2;
+  }
+}
+
+function shouldTakePreviousTimelineEntry(previous: TimelineEntry, suffix: TimelineEntry): boolean {
+  const createdAtComparison = compareTimelineEntriesByCreatedAt(previous, suffix);
+  if (createdAtComparison !== 0) return createdAtComparison < 0;
+  // The original full derivation sorts a source-ordered array with a stable
+  // comparator. On a tie, messages precede plans, plans precede work, and an
+  // older item in the same source array precedes a newly appended item.
+  return timelineEntrySourceOrder(previous) <= timelineEntrySourceOrder(suffix);
+}
+
+function hasExactArrayPrefix<T>(previous: ReadonlyArray<T>, next: ReadonlyArray<T>): boolean {
+  if (next.length < previous.length) return false;
+  for (let index = 0; index < previous.length; index += 1) {
+    if (previous[index] !== next[index]) return false;
+  }
+  return true;
+}
+
+function mergeTimelineEntrySuffix(
+  previous: ReadonlyArray<TimelineEntry>,
+  suffix: ReadonlyArray<TimelineEntry>,
+): TimelineEntry[] {
+  if (suffix.length === 0) return [...previous];
+  const previousLast = previous.at(-1);
+  let suffixIsOrdered = true;
+  for (let index = 1; index < suffix.length; index += 1) {
+    if (compareTimelineEntriesByCreatedAt(suffix[index - 1]!, suffix[index]!) > 0) {
+      suffixIsOrdered = false;
+      break;
+    }
+  }
+  if (
+    suffixIsOrdered &&
+    (previousLast === undefined || shouldTakePreviousTimelineEntry(previousLast, suffix[0]!))
+  ) {
+    return [...previous, ...suffix];
+  }
+
+  const merged: TimelineEntry[] = [];
+  let previousIndex = 0;
+  let suffixIndex = 0;
+  while (previousIndex < previous.length || suffixIndex < suffix.length) {
+    const previousEntry = previous[previousIndex];
+    const suffixEntry = suffix[suffixIndex];
+    if (
+      previousEntry !== undefined &&
+      (suffixEntry === undefined || shouldTakePreviousTimelineEntry(previousEntry, suffixEntry))
+    ) {
+      merged.push(previousEntry);
+      previousIndex += 1;
+    } else if (suffixEntry !== undefined) {
+      merged.push(suffixEntry);
+      suffixIndex += 1;
+    }
+  }
+  return merged;
+}
+
+export function deriveTimelineEntriesWithState(
+  messages: ReadonlyArray<ChatMessage>,
+  proposedPlans: ReadonlyArray<ProposedPlan>,
+  workEntries: ReadonlyArray<WorkLogEntry>,
+  previous: TimelineEntriesProjection | null = null,
+): TimelineEntriesProjection {
+  const canAppend =
+    previous !== null &&
+    hasExactArrayPrefix(previous.messages, messages) &&
+    hasExactArrayPrefix(previous.proposedPlans, proposedPlans) &&
+    hasExactArrayPrefix(previous.workEntries, workEntries);
+
+  if (canAppend) {
+    const messageRows = messages.slice(previous.messages.length).map(timelineEntryFromMessage);
+    const proposedPlanRows = proposedPlans
+      .slice(previous.proposedPlans.length)
+      .map(timelineEntryFromProposedPlan);
+    const workRows = workEntries.slice(previous.workEntries.length).map(timelineEntryFromWork);
+    const suffix = [...messageRows, ...proposedPlanRows, ...workRows].toSorted(
+      compareTimelineEntriesByCreatedAt,
+    );
+    return {
+      messages,
+      proposedPlans,
+      workEntries,
+      entries: mergeTimelineEntrySuffix(previous.entries, suffix),
+    };
+  }
+
+  const messageRows = messages.map(timelineEntryFromMessage);
+  const proposedPlanRows = proposedPlans.map(timelineEntryFromProposedPlan);
+  const workRows = workEntries.map(timelineEntryFromWork);
+  return {
+    messages,
+    proposedPlans,
+    workEntries,
+    entries: [...messageRows, ...proposedPlanRows, ...workRows].toSorted(
+      compareTimelineEntriesByCreatedAt,
+    ),
+  };
+}
+
 export function deriveTimelineEntries(
   messages: ReadonlyArray<ChatMessage>,
   proposedPlans: ReadonlyArray<ProposedPlan>,
   workEntries: ReadonlyArray<WorkLogEntry>,
 ): TimelineEntry[] {
-  const messageRows: TimelineEntry[] = messages.map((message) => ({
-    id: message.id,
-    kind: "message",
-    createdAt: message.createdAt,
-    message,
-  }));
-  const proposedPlanRows: TimelineEntry[] = proposedPlans.map((proposedPlan) => ({
-    id: proposedPlan.id,
-    kind: "proposed-plan",
-    createdAt: proposedPlan.createdAt,
-    proposedPlan,
-  }));
-  const workRows: TimelineEntry[] = workEntries.map((entry) => ({
-    id: entry.id,
-    kind: "work",
-    createdAt: entry.createdAt,
-    entry,
-  }));
-  return [...messageRows, ...proposedPlanRows, ...workRows].toSorted((a, b) =>
-    a.createdAt.localeCompare(b.createdAt),
-  );
+  return deriveTimelineEntriesWithState(messages, proposedPlans, workEntries).entries;
 }
 
 export function inferCheckpointTurnCountByTurnId(
