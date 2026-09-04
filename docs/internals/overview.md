@@ -102,8 +102,14 @@ settlement. The command carries the latest activity timestamp and rejects any la
 thread after the reactor's snapshot. The sweep looks a branch up from the thread's worktree when it
 still exists, so it shares the per-cwd PR cache the sidebar polls instead of spending a second host
 request. Clients render the persisted settlement state and do not derive settlement from PR or
-inactivity state. A committed `thread.settled` event also lets `ProviderCommandReactor` stop an idle provider
-session.
+inactivity state. A committed `thread.settled` event also lets `ProviderCommandReactor` stop an idle
+provider session.
+
+At turn completion, `CheckpointReactor` refreshes PR discovery when the checkout matches the
+thread's non-default branch. `VcsStatusBroadcaster` requires loaded remote status and permission
+from background policy. `GitManager` retries only a successful "no PR" cache entry for the current
+branch, preserving known PRs and failure backoff without fetching remotes. Remote status reads
+that write the broadcaster cache share a lock per cwd, including the initial status load.
 
 ## Drainable workers
 

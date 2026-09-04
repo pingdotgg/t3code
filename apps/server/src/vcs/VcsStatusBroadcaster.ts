@@ -186,10 +186,9 @@ export class VcsStatusBroadcaster extends Context.Service<
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
     readonly refreshStatus: (cwd: string) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
     /**
-     * Re-ask the host for the current branch's pull request, but only when a
-     * client has already loaded remote status for this cwd and no pull request
-     * is known. A known pull request keeps its slow cache; an unwatched cwd is
-     * left alone so this never adds host requests nobody is looking at.
+     * Refresh a loaded cwd after a turn if background policy allows it.
+     * GitManager retries missing PRs for the current branch and keeps known
+     * PRs and failed lookup backoff cached. This does not fetch Git remotes.
      */
     readonly refreshPullRequestStatus: (
       cwd: string,
@@ -373,14 +372,20 @@ export const make = Effect.gen(function* () {
     if (cached?.local && cached.remote) {
       return mergeGitStatusParts(cached.local.value, cached.remote.value);
     }
-    const [local, remote] = yield* Effect.all(
-      [
-        cached?.local ? Effect.succeed(cached.local.value) : workflow.localStatus({ cwd }),
-        cached?.remote ? Effect.succeed(cached.remote.value) : workflow.remoteStatus({ cwd }),
-      ],
-      { concurrency: "unbounded" },
+    return yield* withRemoteWriteLock(
+      cwd,
+      Effect.gen(function* () {
+        const latest = yield* getCachedStatus(cwd);
+        const [local, remote] = yield* Effect.all(
+          [
+            latest?.local ? Effect.succeed(latest.local.value) : workflow.localStatus({ cwd }),
+            latest?.remote ? Effect.succeed(latest.remote.value) : workflow.remoteStatus({ cwd }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        return yield* updateCachedStatus(cwd, local, remote);
+      }),
     );
-    return yield* updateCachedStatus(cwd, local, remote);
   });
 
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
@@ -485,13 +490,22 @@ export const make = Effect.gen(function* () {
         cwd,
         Effect.gen(function* () {
           const cached = yield* getCachedStatus(cwd);
-          if (cached?.remote === null || cached?.remote === undefined) return null;
-          if (cached.remote.value?.pr != null) return cached.remote.value;
-          // invalidateStatus bumps GitManager's PR lookup epoch, so the read
-          // below skips the negative "no PR yet" entry that a poll may have
-          // cached moments before the agent opened the pull request.
-          yield* workflow.invalidateStatus(cwd);
-          const remote = yield* workflow.remoteStatus({ cwd });
+          if (cached?.remote?.value == null) return null;
+          const poller = (yield* SynchronizedRef.get(pollersRef)).get(cwd);
+          const demandCwds = poller ? [...(yield* Ref.get(poller.demandCwds)).keys()] : [rawCwd];
+          const shouldRefresh = (yield* Effect.forEach(
+            demandCwds,
+            (demandCwd) =>
+              backgroundPolicy.shouldRunScopeWork({ type: "vcs-status", cwd: demandCwd }),
+            { concurrency: "unbounded" },
+          )).some(Boolean);
+          if (!shouldRefresh) return null;
+          // Resolve the checked-out branch again. A cached PR can belong to
+          // the previous branch after an agent checks out another branch.
+          const remote = yield* workflow.remoteStatus(
+            { cwd },
+            { refreshUpstream: false, refreshMissingPullRequest: true },
+          );
           return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
         }),
       );

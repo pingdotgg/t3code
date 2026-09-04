@@ -76,10 +76,11 @@ function makeTestLayer(state: {
   localInvalidationCalls: number;
   remoteInvalidationCalls: number;
   remoteStatusRefreshUpstreamValues?: Array<boolean | undefined>;
+  backgroundWorkEnabled?: boolean;
 }) {
   return VcsStatusBroadcaster.layer.pipe(
     Layer.provideMerge(NodeServices.layer),
-    Layer.provide(makeBackgroundPolicyLayer(() => true)),
+    Layer.provide(makeBackgroundPolicyLayer(() => state.backgroundWorkEnabled !== false)),
     Layer.provide(
       Layer.mock(GitWorkflowService.GitWorkflowService)({
         localStatus: () =>
@@ -229,7 +230,7 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
-  it.effect("re-asks for the pull request only for a loaded cwd without one", () => {
+  it.effect("refreshes a loaded cwd without reusing a previous branch's PR", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,
       currentRemoteStatus: baseRemoteStatus,
@@ -249,17 +250,20 @@ describe("VcsStatusBroadcaster", () => {
       yield* broadcaster.getStatus({ cwd: "/repo" });
       assert.equal(state.remoteStatusCalls, 1);
 
-      // Loaded and no PR known: bypass the PR cache and read again.
+      // Loaded and no PR known: ask GitManager to retry the missing PR.
       state.currentRemoteStatus = remoteStatusWithPr;
       const refreshed = yield* broadcaster.refreshPullRequestStatus("/repo");
       assert.deepStrictEqual(refreshed, remoteStatusWithPr);
       assert.equal(state.remoteStatusCalls, 2);
-      assert.equal(state.remoteInvalidationCalls, 1);
+      assert.equal(state.remoteInvalidationCalls, 0);
 
-      // A known PR keeps its slow cache.
-      const cached = yield* broadcaster.refreshPullRequestStatus("/repo");
-      assert.deepStrictEqual(cached, remoteStatusWithPr);
-      assert.equal(state.remoteStatusCalls, 2);
+      // The agent switches branches. The previous branch's PR must not block a read.
+      state.currentLocalStatus = { ...baseLocalStatus, refName: "feature/next" };
+      state.currentRemoteStatus = baseRemoteStatus;
+      yield* broadcaster.refreshLocalStatus("/repo");
+      const refreshedBranch = yield* broadcaster.refreshPullRequestStatus("/repo");
+      assert.deepStrictEqual(refreshedBranch, baseRemoteStatus);
+      assert.equal(state.remoteStatusCalls, 3);
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
@@ -277,8 +281,7 @@ describe("VcsStatusBroadcaster", () => {
             Effect.gen(function* () {
               remoteReads += 1;
               if (remoteReads === 2) {
-                // The periodic poll: it read "no PR" before the PR existed and
-                // only finishes after the turn-end refresh has written.
+                // Hold an older empty response while the turn-end refresh queues.
                 yield* Deferred.succeed(firstPollStarted, undefined);
                 yield* Deferred.await(releaseFirstPoll);
                 return baseRemoteStatus;
@@ -307,6 +310,67 @@ describe("VcsStatusBroadcaster", () => {
       const final = yield* broadcaster.getStatus({ cwd: "/repo" });
       assert.deepStrictEqual(final.pr, remoteStatusWithPr.pr);
     }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.effect("an initial status read cannot overwrite an explicit refresh", () => {
+    const firstReadStarted = Deferred.makeUnsafe<void>();
+    const releaseFirstRead = Deferred.makeUnsafe<void>();
+    let remoteReads = 0;
+    const layer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provide(FileSystem.layerNoop({ realPath: (path) => Effect.succeed(path) })),
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(makeBackgroundPolicyLayer(() => true)),
+      Layer.provide(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          localStatus: () => Effect.succeed(baseLocalStatus),
+          remoteStatus: () =>
+            Effect.gen(function* () {
+              remoteReads += 1;
+              if (remoteReads === 1) {
+                yield* Deferred.succeed(firstReadStarted, undefined);
+                yield* Deferred.await(releaseFirstRead);
+                return baseRemoteStatus;
+              }
+              return remoteStatusWithPr;
+            }),
+          invalidateStatus: () => Effect.void,
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const initial = yield* broadcaster.getStatus({ cwd: "/repo" }).pipe(Effect.forkScoped);
+      yield* Deferred.await(firstReadStarted);
+      const refresh = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkScoped);
+      // Run ready fibers before releasing the delayed first read.
+      yield* TestClock.adjust(Duration.zero);
+      yield* Deferred.succeed(releaseFirstRead, undefined);
+      yield* Fiber.join(initial);
+      yield* Fiber.join(refresh);
+      assert.deepStrictEqual(
+        (yield* broadcaster.getStatus({ cwd: "/repo" })).pr,
+        remoteStatusWithPr.pr,
+      );
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.effect("turn-end refresh skips a loaded cwd when background policy pauses it", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      backgroundWorkEnabled: false,
+    };
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+      yield* broadcaster.refreshPullRequestStatus("/repo");
+      assert.equal(state.remoteStatusCalls, 1);
+      assert.equal(state.remoteInvalidationCalls, 0);
+    }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
   it.effect("refreshes the cached snapshot after explicit invalidation", () => {

@@ -72,6 +72,11 @@ export interface GitRunStackedActionOptions {
   readonly progressReporter?: GitActionProgressReporter;
 }
 
+export interface GitRemoteStatusOptions extends GitVcsDriver.GitRemoteStatusOptions {
+  /** Retry a cached missing PR without clearing known PRs or failed lookup backoff. */
+  readonly refreshMissingPullRequest?: boolean;
+}
+
 interface SourceControlTextGenerationSettings {
   readonly modelSelection: ModelSelection;
   readonly style: SourceControlWritingStyleSettings;
@@ -88,7 +93,7 @@ export class GitManager extends Context.Service<
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
     readonly remoteStatus: (
       input: VcsStatusInput,
-      options?: GitVcsDriver.GitRemoteStatusOptions,
+      options?: GitRemoteStatusOptions,
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
     /** Resolve the PR for a saved branch without changing the current checkout. */
     readonly branchPullRequest: (input: {
@@ -1103,11 +1108,21 @@ export const make = Effect.gen(function* () {
       defaultBranch: string | null;
       isDefaultBranch: boolean;
     },
+    refreshMissingPullRequest = false,
   ) {
     // Keyed by (cwd, branch) only: the upstream ref changing (e.g. a first
     // `push -u`) must not orphan the fallback value for the same branch.
     const branchKey = `${cwd}\u0000${details.branch}`;
-    return yield* Cache.get(prLookupCache, prLookupCacheKey(cwd, details)).pipe(
+    const cacheKey = prLookupCacheKey(cwd, details);
+    if (refreshMissingPullRequest) {
+      const cached = yield* Cache.getOption(prLookupCache, cacheKey).pipe(
+        Effect.orElseSucceed(() => Option.none()),
+      );
+      if (Option.isSome(cached) && cached.value.latest === null) {
+        yield* Cache.invalidate(prLookupCache, cacheKey);
+      }
+    }
+    return yield* Cache.get(prLookupCache, cacheKey).pipe(
       Effect.map(({ latest, headContext }) => {
         if (!latest) return { pr: null, headContext };
         // On the default branch, only surface open PRs.
@@ -1162,7 +1177,7 @@ export const make = Effect.gen(function* () {
   });
   const readRemoteStatus = Effect.fn("readRemoteStatus")(function* (
     cwd: string,
-    options?: GitVcsDriver.GitRemoteStatusOptions,
+    options?: GitRemoteStatusOptions,
   ) {
     const details = yield* gitCore
       .statusDetailsRemote(cwd, options)
@@ -1173,12 +1188,16 @@ export const make = Effect.gen(function* () {
 
     const pr =
       details.branch !== null
-        ? yield* lookupStatusPr(cwd, {
-            branch: details.branch,
-            upstreamRef: details.upstreamRef,
-            defaultBranch: details.defaultBranch,
-            isDefaultBranch: details.isDefaultBranch,
-          })
+        ? yield* lookupStatusPr(
+            cwd,
+            {
+              branch: details.branch,
+              upstreamRef: details.upstreamRef,
+              defaultBranch: details.defaultBranch,
+              isDefaultBranch: details.isDefaultBranch,
+            },
+            options?.refreshMissingPullRequest,
+          )
         : null;
 
     return {
@@ -1989,7 +2008,7 @@ export const make = Effect.gen(function* () {
   const remoteStatus: GitManager["Service"]["remoteStatus"] = Effect.fn("remoteStatus")(
     function* (input, options) {
       const cacheKey = yield* normalizeStatusCacheKey(input.cwd);
-      if (options?.refreshUpstream === false) {
+      if (options?.refreshUpstream === false || options?.refreshMissingPullRequest) {
         return yield* readRemoteStatus(cacheKey, options);
       }
       return yield* Cache.get(remoteStatusResultCache, cacheKey);

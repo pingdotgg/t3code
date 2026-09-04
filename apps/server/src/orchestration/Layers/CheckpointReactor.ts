@@ -548,7 +548,7 @@ const make = Effect.gen(function* () {
       ),
     );
     if (local !== null) {
-      const adoptedBranch = yield* followWorktreeBranchDrift({
+      yield* followWorktreeBranchDrift({
         threadId: event.threadId,
         cwd: sessionRuntime.value.cwd,
         local,
@@ -557,39 +557,24 @@ const make = Effect.gen(function* () {
         threadId: event.threadId,
         cwd: sessionRuntime.value.cwd,
         local,
-        adoptedBranch,
       });
     }
   });
 
-  // Agents usually push and open the pull request inside one turn. The sidebar
-  // learns about it from the remote status poll, which caches "no PR" for the
-  // branch and often asks just before `gh pr create` finished. Re-ask once at
-  // turn end when the checked-out branch is the thread's own feature branch
-  // and no pull request is known yet. The broadcaster skips cwds nobody has
-  // loaded, so this replaces a poll lookup rather than adding one.
-  //
-  // `adoptedBranch` is the branch drift-follow just dispatched. Dispatch
-  // projects before it returns, but the compare-and-swap in the decider can
-  // drop the update, so the projected thread is re-read and the adopted branch
-  // is accepted alongside it rather than trusted alone.
+  // Retry a missing PR after the agent finishes its push and PR creation.
+  // Re-read the projected branch after drift adoption. A rejected metadata
+  // update must not let this thread refresh another thread's checkout.
   const refreshPullRequestAfterTurn = Effect.fn("refreshPullRequestAfterTurn")(function* (input: {
     readonly threadId: ThreadId;
     readonly cwd: string;
     readonly local: VcsStatusLocalResult;
-    readonly adoptedBranch: string | null;
   }) {
     const checkedOutBranch = input.local.refName;
     if (checkedOutBranch === null || input.local.isDefaultRef) return;
     const thread = yield* projectionSnapshotQuery
       .getThreadShellById(input.threadId)
       .pipe(Effect.map(Option.getOrUndefined));
-    if (
-      !thread ||
-      (thread.branch !== checkedOutBranch && input.adoptedBranch !== checkedOutBranch)
-    ) {
-      return;
-    }
+    if (!thread || thread.branch !== checkedOutBranch) return;
     yield* vcsStatusBroadcaster.refreshPullRequestStatus(input.cwd).pipe(
       Effect.catch((error) =>
         Effect.logWarning("failed to refresh pull request status after turn completion", {
@@ -617,10 +602,10 @@ const make = Effect.gen(function* () {
     // means the first-turn auto-rename is still in flight — don't race it.
     const checkedOutBranch = input.local.refName;
     if (checkedOutBranch === null || isTemporaryWorktreeBranch(checkedOutBranch)) {
-      return null;
+      return;
     }
 
-    return yield* Effect.gen(function* () {
+    yield* Effect.gen(function* () {
       const thread = yield* projectionSnapshotQuery
         .getThreadShellById(input.threadId)
         .pipe(Effect.map(Option.getOrUndefined));
@@ -632,7 +617,7 @@ const make = Effect.gen(function* () {
         thread.worktreePath !== input.cwd ||
         isTemporaryWorktreeBranch(thread.branch)
       ) {
-        return null;
+        return;
       }
 
       const shell = yield* projectionSnapshotQuery.getShellSnapshot();
@@ -640,7 +625,7 @@ const make = Effect.gen(function* () {
         (other) => other.id !== thread.id && other.worktreePath === thread.worktreePath,
       );
       if (worktreeIsShared) {
-        return null;
+        return;
       }
 
       // expectedBranch makes this a compare-and-swap in the decider: if the
@@ -658,7 +643,6 @@ const make = Effect.gen(function* () {
         previousBranch: thread.branch,
         branch: checkedOutBranch,
       });
-      return checkedOutBranch;
     }).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
@@ -667,7 +651,7 @@ const make = Effect.gen(function* () {
         return Effect.logWarning("failed to follow worktree branch drift", {
           threadId: input.threadId,
           cause: Cause.pretty(cause),
-        }).pipe(Effect.as(null));
+        });
       }),
     );
   });
