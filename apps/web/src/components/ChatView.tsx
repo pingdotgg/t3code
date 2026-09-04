@@ -5836,6 +5836,13 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "rightPanel.openTerminal") {
+        event.preventDefault();
+        event.stopPropagation();
+        addTerminalSurface();
+        return;
+      }
+
       if (command === "rightPanel.close") {
         // Nothing open: leave the event alone so the shortcut keeps its
         // native meaning (close window on desktop, close tab in a browser).
