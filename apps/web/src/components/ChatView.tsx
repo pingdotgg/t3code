@@ -28,6 +28,10 @@ import {
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
 import { type CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
+import {
+  getProviderSupportedRuntimeModes,
+  reconcileRuntimeMode,
+} from "@t3tools/client-runtime/runtime-mode-options";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import {
   codexFeedbackMessage,
@@ -1765,7 +1769,8 @@ function ChatViewContent(props: ChatViewProps) {
   // session.lastError. Bump a tick so the banner hides immediately. Mirrors
   // the branch mismatch banner.
   const [, setThreadErrorBannerDismissTick] = useState(0);
-  const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+  const configuredRuntimeMode =
+    composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
@@ -2493,6 +2498,36 @@ function ChatViewContent(props: ChatViewProps) {
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
+  const runtimeMode = reconcileRuntimeMode(
+    configuredRuntimeMode,
+    getProviderSupportedRuntimeModes(activeProviderStatus),
+  );
+  const resolveLatestRuntimeMode = useCallback(
+    (fallback: RuntimeMode, modelSelection: ModelSelection): RuntimeMode => {
+      const latestConfig = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId);
+      const latestProvider = latestConfig?.providers.find(
+        (provider) => provider.instanceId === modelSelection.instanceId,
+      );
+      return reconcileRuntimeMode(fallback, getProviderSupportedRuntimeModes(latestProvider));
+    },
+    [environmentId],
+  );
+  useEffect(() => {
+    if (runtimeMode === configuredRuntimeMode || !activeThread) return;
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    setComposerDraftRuntimeMode(threadRef, runtimeMode);
+    if (isLocalDraftThread) {
+      setDraftThreadContext(composerDraftTarget, { runtimeMode });
+    }
+  }, [
+    activeThread,
+    composerDraftTarget,
+    configuredRuntimeMode,
+    isLocalDraftThread,
+    runtimeMode,
+    setComposerDraftRuntimeMode,
+    setDraftThreadContext,
+  ]);
   const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
     provider: activeProviderStatus,
@@ -4380,13 +4415,24 @@ function ChatViewContent(props: ChatViewProps) {
         }
       }
 
-      if (input.runtimeMode !== serverThread.runtimeMode) {
+      // Metadata persistence above may await a command while provider status
+      // refreshes. Reconcile again at the runtime-mode command boundary.
+      const latestConfig = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId);
+      const latestModelSelection = input.modelSelection ?? serverThread.modelSelection;
+      const latestProvider = latestConfig?.providers.find(
+        (provider) => provider.instanceId === latestModelSelection.instanceId,
+      );
+      const resolvedRuntimeMode = reconcileRuntimeMode(
+        input.runtimeMode,
+        getProviderSupportedRuntimeModes(latestProvider),
+      );
+      if (resolvedRuntimeMode !== serverThread.runtimeMode) {
         result = mapAtomCommandResult(
           await setThreadRuntimeMode({
             environmentId,
             input: {
               threadId: input.threadId,
-              runtimeMode: input.runtimeMode,
+              runtimeMode: resolvedRuntimeMode,
               createdAt: input.createdAt,
             },
           }),
@@ -6606,6 +6652,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     if (failure === null && isServerThread) {
+      const settingsRuntimeMode = resolveLatestRuntimeMode(runtimeMode, ctxSelectedModelSelection);
       const settingsResult = await persistThreadSettingsForNextTurn({
         threadId: threadIdForSend,
         createdAt: messageCreatedAt,
@@ -6613,7 +6660,7 @@ function ChatViewContent(props: ChatViewProps) {
         ...(localCheckoutBranchMismatch
           ? { branch: localCheckoutBranchMismatch.currentBranch }
           : {}),
-        runtimeMode,
+        runtimeMode: settingsRuntimeMode,
         interactionMode: sendInteractionMode,
       });
       if (settingsResult._tag === "Failure") {
@@ -6635,6 +6682,9 @@ function ChatViewContent(props: ChatViewProps) {
 
     let turnStartSucceeded = false;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
+      // Uploads and settings persistence can outlive a provider snapshot;
+      // dispatch against the latest capability declaration.
+      const dispatchRuntimeMode = resolveLatestRuntimeMode(runtimeMode, ctxSelectedModelSelection);
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
           ? {
@@ -6644,7 +6694,7 @@ function ChatViewContent(props: ChatViewProps) {
                       projectId: activeProject.id,
                       title,
                       modelSelection: threadCreateModelSelection,
-                      runtimeMode,
+                      runtimeMode: dispatchRuntimeMode,
                       interactionMode: sendInteractionMode,
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
@@ -6684,7 +6734,7 @@ function ChatViewContent(props: ChatViewProps) {
           },
           modelSelection: ctxSelectedModelSelection,
           titleSeed: title,
-          runtimeMode,
+          runtimeMode: dispatchRuntimeMode,
           interactionMode: sendInteractionMode,
           ...(bootstrap ? { bootstrap } : {}),
           createdAt: messageCreatedAt,
@@ -7074,13 +7124,17 @@ function ChatViewContent(props: ChatViewProps) {
         ...(localCheckoutBranchMismatch
           ? { branch: localCheckoutBranchMismatch.currentBranch }
           : {}),
-        runtimeMode,
+        runtimeMode: resolveLatestRuntimeMode(runtimeMode, ctxSelectedModelSelection),
         interactionMode: nextInteractionMode,
       });
       let failure: AtomCommandResult<unknown, unknown> | null =
         settingsResult._tag === "Failure" ? settingsResult : null;
 
       if (failure === null) {
+        const dispatchRuntimeMode = resolveLatestRuntimeMode(
+          runtimeMode,
+          ctxSelectedModelSelection,
+        );
         // Keep the mode toggle and plan-follow-up banner in sync immediately
         // while the same-thread implementation turn is starting.
         setComposerDraftInteractionMode(
@@ -7100,7 +7154,7 @@ function ChatViewContent(props: ChatViewProps) {
             },
             modelSelection: ctxSelectedModelSelection,
             titleSeed: activeThread.title,
-            runtimeMode,
+            runtimeMode: dispatchRuntimeMode,
             interactionMode: nextInteractionMode,
             ...(nextInteractionMode === "default" && activeProposedPlan
               ? {
@@ -7145,6 +7199,7 @@ function ChatViewContent(props: ChatViewProps) {
       isServerThread,
       localCheckoutBranchMismatch,
       persistThreadSettingsForNextTurn,
+      resolveLatestRuntimeMode,
       resetLocalDispatch,
       runtimeMode,
       scrollToEnd,
@@ -7198,6 +7253,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
     const nextThreadModelSelection: ModelSelection = ctxSelectedModelSelection;
+    const createRuntimeMode = resolveLatestRuntimeMode(runtimeMode, nextThreadModelSelection);
 
     sendInFlightRef.current = true;
     beginLocalDispatch({ preparingWorktree: false });
@@ -7213,7 +7269,7 @@ function ChatViewContent(props: ChatViewProps) {
         projectId: activeProject.id,
         title: nextThreadTitle,
         modelSelection: nextThreadModelSelection,
-        runtimeMode,
+        runtimeMode: createRuntimeMode,
         interactionMode: "default",
         branch: activeThreadBranch,
         worktreePath: activeThread.worktreePath,
@@ -7224,6 +7280,10 @@ function ChatViewContent(props: ChatViewProps) {
       createResult._tag === "Failure" ? createResult : null;
 
     if (failure === null) {
+      const dispatchRuntimeMode = resolveLatestRuntimeMode(
+        createRuntimeMode,
+        nextThreadModelSelection,
+      );
       const startResult = await startThreadTurn({
         environmentId,
         input: {
@@ -7236,7 +7296,7 @@ function ChatViewContent(props: ChatViewProps) {
           },
           modelSelection: ctxSelectedModelSelection,
           titleSeed: nextThreadTitle,
-          runtimeMode,
+          runtimeMode: dispatchRuntimeMode,
           interactionMode: "default",
           sourceProposedPlan: {
             threadId: activeThread.id,
@@ -7309,6 +7369,7 @@ function ChatViewContent(props: ChatViewProps) {
     isSendBusy,
     isServerThread,
     navigate,
+    resolveLatestRuntimeMode,
     resetLocalDispatch,
     runtimeMode,
     startThreadTurn,
@@ -7376,6 +7437,10 @@ function ChatViewContent(props: ChatViewProps) {
         instanceId,
         model: resolvedModel,
       };
+      const nextRuntimeMode = reconcileRuntimeMode(
+        runtimeMode,
+        getProviderSupportedRuntimeModes(entry),
+      );
       const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
         hasStartedSession: activeThread.session !== null,
@@ -7397,14 +7462,28 @@ function ChatViewContent(props: ChatViewProps) {
         nextModelSelection,
         { explicit: true },
       );
+      if (nextRuntimeMode !== runtimeMode) {
+        setComposerDraftRuntimeMode(
+          scopeThreadRef(activeThread.environmentId, activeThread.id),
+          nextRuntimeMode,
+        );
+        if (isLocalDraftThread) {
+          setDraftThreadContext(composerDraftTarget, { runtimeMode: nextRuntimeMode });
+        }
+      }
       setStickyComposerModelSelection(nextModelSelection);
       scheduleComposerFocus();
     },
     [
       activeThread,
+      composerDraftTarget,
+      isLocalDraftThread,
       lockedProvider,
+      runtimeMode,
       scheduleComposerFocus,
       setComposerDraftModelSelection,
+      setComposerDraftRuntimeMode,
+      setDraftThreadContext,
       setStickyComposerModelSelection,
       providerStatuses,
       settings,

@@ -48,6 +48,22 @@ describe("ServerProvider", () => {
     expect(parsed.skills).toEqual([]);
     expect(parsed.versionAdvisory).toBeUndefined();
     expect(parsed.updateState).toBeUndefined();
+    expect(parsed.supportedRuntimeModes).toBeUndefined();
+  });
+
+  it("round-trips supported runtime modes while keeping the capability optional", () => {
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      supportedRuntimeModes: ["full-access"],
+    });
+
+    expect(parsed.supportedRuntimeModes).toEqual(["full-access"]);
+    expect(
+      decodeServerProvider({
+        ...baseProviderSnapshot,
+        supportedRuntimeModes: ["full-access", "future-mode"],
+      }).supportedRuntimeModes,
+    ).toEqual(["full-access"]);
   });
 
   it("defaults one-click update support when decoding older advisory snapshots", () => {

@@ -422,6 +422,26 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("does not choose Pi Agent as a text generation fallback", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      const next = yield* serverSettings.updateSettings({
+        providers: {
+          codex: { enabled: false },
+          claudeAgent: { enabled: false },
+          cursor: { enabled: false },
+          grok: { enabled: false },
+          opencode: { enabled: false },
+          antigravity: { enabled: false },
+          piAgent: { enabled: true },
+        },
+      });
+
+      assert.notEqual(next.textGenerationModelSelection.instanceId, "piAgent");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect(
     "preserves the source control writer selection when its provider instance is disabled",
     () =>
@@ -766,6 +786,33 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("persists the opt-in Pi Agent enabled state", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      assert.isFalse((yield* serverSettings.getSettings).providers.piAgent.enabled);
+      yield* serverSettings.updateSettings({ providers: { piAgent: { enabled: true } } });
+      yield* serverSettings.updateSettings({ addProjectBaseDirectory: "~/Development" });
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.isTrue(JSON.parse(raw).providers.piAgent.enabled);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("restores Pi Agent enabled state from provider history", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* recordProviderUsage("piAgent");
+
+      const settings = yield* serverSettings.getSettings;
+
+      assert.isTrue(settings.providers.piAgent.enabled);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("keeps optional providers disabled after a new installation writes settings", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
@@ -998,6 +1045,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             enabled: false,
             serverUrl: "http://127.0.0.1:4096",
             serverPassword: "secret-password",
+          },
+          piAgent: {
+            enabled: false,
           },
         },
         backgroundActivity: {

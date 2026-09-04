@@ -13,6 +13,57 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("carries provider runtime capabilities onto staged model options", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "piAgent",
+          driver: "piAgent",
+          displayName: "Pi Agent",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          supportedRuntimeModes: ["full-access"],
+          models: [
+            {
+              slug: "pi-model",
+              name: "Pi Model",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    expect(buildModelOptions(config, null)[0]?.supportedRuntimeModes).toEqual(["full-access"]);
+  });
+
+  it("preserves an explicitly empty provider capability list", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "empty-runtime-modes",
+          driver: "custom",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          supportedRuntimeModes: [],
+          models: [
+            {
+              slug: "model",
+              name: "Model",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    expect(buildModelOptions(config, null)[0]?.supportedRuntimeModes).toEqual([]);
+  });
+
   it("groups models by provider and flags legacy entries", () => {
     const config = {
       providers: [

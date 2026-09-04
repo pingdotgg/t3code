@@ -200,11 +200,27 @@ export function mapCodexModelCapabilities(
   });
 }
 
-const toDisplayName = (model: CodexSchema.V2ModelListResponse__Model): string => {
+/**
+ * Names a Codex-catalog model for the picker.
+ *
+ * Some backends bake the reasoning effort into the slug
+ * (`gemini-3.8-flash-high`) while advertising a bare display name
+ * (`Gemini 3.8 Flash`), so the picker reads "Flash" no matter which effort
+ * the turn actually runs at. The suffix is re-attached from the slug unless
+ * the display name already carries it, keeping the usage breakdown
+ * (`gemini-3.8-flash-high`) and the picker visibly the same model.
+ */
+export const toDisplayName = (
+  model: Pick<CodexSchema.V2ModelListResponse__Model, "displayName" | "model">,
+): string => {
   // Capitalize 'gpt' to 'GPT-' and capitalize any letter following a dash
-  return model.displayName
+  const base = model.displayName
     .replace(/^gpt/i, "GPT") // Handle start with 'gpt' or 'GPT'
     .replace(/-([a-z])/g, (_, c) => "-" + c.toUpperCase());
+  const effort = model.model.match(/-(high|medium|low)$/i)?.[1]?.toLowerCase();
+  if (effort === undefined) return base;
+  if (new RegExp(`\\(${effort}\\)\\s*$`, "i").test(base)) return base;
+  return `${base} (${effort[0]!.toUpperCase()}${effort.slice(1)})`;
 };
 
 function parseCodexModelListResponse(

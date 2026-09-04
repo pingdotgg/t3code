@@ -26,6 +26,7 @@ import {
   parseClaudeLine,
   parseCodexLine,
   parseGrokLine,
+  parsePiLine,
   type CodexScanState,
   type UsageRecord,
 } from "./usageTranscripts.ts";
@@ -233,6 +234,11 @@ export async function readTranscriptRecords(
       if (!mightCarryUsage(line, provider)) return;
       if (provider === "grok") {
         for (const grokRecord of parseGrokLine(line)) out.push(grokRecord);
+        return;
+      }
+      if (provider === "pi") {
+        const record = parsePiLine(line, NodePath.basename(filePath, ".jsonl"));
+        if (record !== null) out.push(record);
         return;
       }
       const record = parseClaudeLine(line);

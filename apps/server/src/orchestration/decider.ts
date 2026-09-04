@@ -910,6 +910,25 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      // A start command carries the mode that was reconciled at the client
+      // dispatch boundary. Persist it through the existing runtime-mode
+      // command path before deciding the turn, so the provider reactor does
+      // not fall back to a stale mode from the thread snapshot.
+      if (command.runtimeMode !== targetThread.runtimeMode) {
+        return yield* decideCommandSequence({
+          readModel,
+          commands: [
+            {
+              type: "thread.runtime-mode.set",
+              commandId: command.commandId,
+              threadId: command.threadId,
+              runtimeMode: command.runtimeMode,
+              createdAt: command.createdAt,
+            },
+            command,
+          ],
+        });
+      }
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({
@@ -970,7 +989,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { modelSelection: command.modelSelection }
             : {}),
           ...(command.titleSeed !== undefined ? { titleSeed: command.titleSeed } : {}),
-          runtimeMode: targetThread.runtimeMode,
+          runtimeMode: command.runtimeMode,
           interactionMode: targetThread.interactionMode,
           ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
           createdAt: command.createdAt,

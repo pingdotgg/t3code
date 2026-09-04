@@ -16,6 +16,7 @@ const CURRENCY = new Intl.NumberFormat("en-US", {
 const INTEGER = new Intl.NumberFormat("en-US");
 
 export function formatUsd(value: number): string {
+  if (value > 0 && value < 0.01) return "<$0.01";
   return CURRENCY.format(value);
 }
 

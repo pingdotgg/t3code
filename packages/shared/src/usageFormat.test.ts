@@ -6,8 +6,17 @@ import {
   formatDateTimeShort,
   formatHourShort,
   formatRelativeHourShort,
+  formatUsd,
   makeWindow,
 } from "./usageFormat.ts";
+
+describe("usage currency formatting", () => {
+  it("distinguishes a real sub-cent cost from zero", () => {
+    expect(formatUsd(0)).toBe("$0.00");
+    expect(formatUsd(0.00395484)).toBe("<$0.01");
+    expect(formatUsd(0.01)).toBe("$0.01");
+  });
+});
 
 describe("hourly usage formatting", () => {
   it("enumerates 24 fixed buckets across a rolling window", () => {

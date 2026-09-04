@@ -1,9 +1,10 @@
 /**
  * UsageService - scans provider transcripts and returns priced usage buckets.
  *
- * The scan reads the provider CLIs' own session files (Claude Code, Codex, and
- * Grok Build) rather than T3 Code's orchestration projections, so usage covers
- * turns driven outside T3 Code too. This is the approach `ccusage` takes.
+ * The scan reads the provider CLIs' own session files (Claude Code, Codex,
+ * Grok Build, and Pi Agent) rather than T3 Code's orchestration projections,
+ * so usage covers turns driven outside T3 Code too. This is the approach
+ * `ccusage` takes.
  *
  * Transcripts are append-only, so parsed records are memoised per file by
  * `(size, mtime)`. A cold 30-day scan of ~1.4 GB lands around 2-3 seconds; warm
@@ -16,6 +17,7 @@ import * as NodeOS from "node:os";
 
 import {
   USAGE_CONTRACT_VERSION,
+  PiAgentSettings,
   type UsageProviderKind,
   type UsageSource,
   type UsagePricing,
@@ -94,6 +96,7 @@ const encodeRatesCache = Schema.encodeEffect(
 const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>);
 const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
 const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
+const decodePiAgentSettings = Schema.decodeUnknownOption(PiAgentSettings);
 
 export class UsageService extends Context.Service<
   UsageService,
@@ -260,6 +263,38 @@ export const make = Effect.gen(function* () {
       grokHomeEnv.length > 0
         ? path.resolve(expandHomePath(grokHomeEnv))
         : path.join(NodeOS.homedir(), ".grok");
+    const resolvePiSessionDir = (
+      piSettings: PiAgentSettings,
+      environment: NodeJS.ProcessEnv,
+    ): string => {
+      const agentDirSetting = piSettings.agentDir.trim();
+      const agentDirEnv = environment["PI_CODING_AGENT_DIR"]?.trim() ?? "";
+      const agentDirOverride = agentDirSetting || agentDirEnv;
+      const agentDir =
+        agentDirOverride.length > 0
+          ? path.resolve(config.cwd, expandHomePath(agentDirOverride))
+          : path.join(NodeOS.homedir(), ".pi", "agent");
+      const sessionDirSetting = piSettings.sessionDir.trim();
+      const sessionDirEnv = environment["PI_CODING_AGENT_SESSION_DIR"]?.trim() ?? "";
+      const sessionDirOverride = sessionDirSetting || sessionDirEnv;
+      return sessionDirOverride.length > 0
+        ? path.resolve(config.cwd, expandHomePath(sessionDirOverride))
+        : path.join(agentDir, "sessions");
+    };
+
+    const piSessionDirs = new Set([
+      resolvePiSessionDir(settings.providers.piAgent, hostEnvironment),
+    ]);
+    for (const instance of Object.values(settings.providerInstances)) {
+      if (instance.driver !== "piAgent") continue;
+      const decoded = decodePiAgentSettings(instance.config ?? {});
+      if (Option.isNone(decoded)) continue;
+      const instanceEnvironment = { ...hostEnvironment };
+      for (const variable of instance.environment ?? []) {
+        instanceEnvironment[variable.name] = variable.value;
+      }
+      piSessionDirs.add(resolvePiSessionDir(decoded.value, instanceEnvironment));
+    }
 
     return [
       { provider: "claude" as const, dir: claudeDir },
@@ -269,6 +304,7 @@ export const make = Effect.gen(function* () {
         dir: path.join(grokHome, "sessions"),
         fileName: "updates.jsonl",
       },
+      ...[...piSessionDirs].map((dir) => ({ provider: "pi" as const, dir, fileName: undefined })),
     ];
   });
 

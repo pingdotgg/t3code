@@ -34,6 +34,10 @@ question the official agent sends in **Full access**. A remembered approval is a
 when the agent offers it for that action. Fixed-choice questions require one of the offered
 answers and do not accept custom text.
 
+Pi Agent is an Early Access exception: its RPC protocol currently supports Full Access only, so
+T3 Code only offers Full Access for Pi threads and rejects other modes. See
+[Pi Agent](./providers-pi-agent.md#permissions).
+
 ## Choosing a Mode
 
 Use **Full access** for work in a worktree or a sandbox you can throw away.

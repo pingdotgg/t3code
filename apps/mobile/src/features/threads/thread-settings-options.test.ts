@@ -1,7 +1,7 @@
 import type { ProviderOptionDescriptor } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { selectableChoices } from "./thread-settings-options";
+import { filterRuntimeModeChoices, selectableChoices } from "./thread-settings-options";
 
 const effortDescriptor: Extract<ProviderOptionDescriptor, { type: "select" }> = {
   id: "effort",
@@ -24,6 +24,29 @@ describe("selectableChoices", () => {
       "low",
       "medium",
       "high",
+    ]);
+  });
+});
+
+describe("filterRuntimeModeChoices", () => {
+  it("keeps every runtime mode for providers without the optional capability", () => {
+    expect(filterRuntimeModeChoices(undefined).map((choice) => choice.mode)).toEqual([
+      "approval-required",
+      "auto-accept-edits",
+      "auto",
+      "full-access",
+    ]);
+  });
+
+  it("filters to explicitly supported modes while preserving product order", () => {
+    expect(
+      filterRuntimeModeChoices(["full-access", "approval-required"]).map((choice) => choice.mode),
+    ).toEqual(["approval-required", "full-access"]);
+  });
+
+  it("keeps the defensive fallback visible for an explicitly empty capability list", () => {
+    expect(filterRuntimeModeChoices([]).map((choice) => choice.mode)).toEqual([
+      "approval-required",
     ]);
   });
 });

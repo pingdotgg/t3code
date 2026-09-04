@@ -1,0 +1,15 @@
+{"id":"prompt-1","type":"response","command":"prompt","success":true}
+{"type":"agent_start"}
+{"type":"message_update","usage":{"input":10,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":11},"assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"Inspecting"}}
+{"type":"message_update","usage":{"input":10,"output":2,"cacheRead":0,"cacheWrite":0,"totalTokens":12},"assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"Hello"}}
+{"type":"tool_execution_start","toolCallId":"call-1","toolName":"bash","args":{"command":"printf hello"}}
+{"type":"tool_execution_update","toolCallId":"call-1","toolName":"bash","args":{"command":"printf hello"},"partialResult":{"content":[{"type":"text","text":"hel"}],"details":{}}}
+{"type":"tool_execution_update","toolCallId":"call-1","toolName":"bash","args":{"command":"printf hello"},"partialResult":{"content":[{"type":"text","text":"hello"}],"details":{}}}
+{"type":"extension_ui_request","id":"dialog-1","method":"confirm","title":"Continue?","message":"Run the next step?"}
+{"type":"tool_execution_end","toolCallId":"call-1","toolName":"bash","result":{"content":[{"type":"text","text":"hello"}],"details":{}},"isError":false}
+{"type":"agent_end","messages":[],"willRetry":true}
+{"type":"compaction_start","reason":"overflow"}
+{"type":"compaction_end","reason":"overflow","result":null,"aborted":false,"willRetry":true}
+{"type":"agent_start"}
+{"type":"agent_end","messages":[],"willRetry":false}
+{"type":"agent_settled"}

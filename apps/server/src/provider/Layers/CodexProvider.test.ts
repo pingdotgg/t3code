@@ -1,6 +1,10 @@
 import { assert, it } from "@effect/vitest";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  mapCodexModelCapabilities,
+  toDisplayName,
+} from "./CodexProvider.ts";
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
@@ -143,4 +147,31 @@ it("ignores custom models that shadow a preferred slug", () => {
   ]);
 
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
+});
+
+it("re-attaches the effort suffix a backend strips from the display name", () => {
+  assert.strictEqual(
+    toDisplayName({ displayName: "Gemini 3.8 Flash", model: "gemini-3.8-flash-high" }),
+    "Gemini 3.8 Flash (High)",
+  );
+  assert.strictEqual(
+    toDisplayName({ displayName: "Gemini 3.8 Flash", model: "gemini-3.8-flash-medium" }),
+    "Gemini 3.8 Flash (Medium)",
+  );
+  assert.strictEqual(
+    toDisplayName({ displayName: "Gemini 3.8 Flash", model: "gemini-3.8-flash-low" }),
+    "Gemini 3.8 Flash (Low)",
+  );
+});
+
+it("leaves display names without an effort-baked slug alone", () => {
+  assert.strictEqual(
+    toDisplayName({ displayName: "GPT-5.6-Sol", model: "gpt-5.6-sol" }),
+    "GPT-5.6-Sol",
+  );
+  assert.strictEqual(toDisplayName({ displayName: "GPT Test", model: "gpt-test" }), "GPT Test");
+  assert.strictEqual(
+    toDisplayName({ displayName: "Gemini 3.8 Flash (High)", model: "gemini-3.8-flash-high" }),
+    "Gemini 3.8 Flash (High)",
+  );
 });

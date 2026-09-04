@@ -1,4 +1,5 @@
 import { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
+import { filterRuntimeModeOptions } from "@t3tools/client-runtime/runtime-mode-options";
 import { memo, type ReactNode } from "react";
 import { EllipsisIcon } from "lucide-react";
 import {
@@ -13,9 +14,17 @@ import { ComposerControl, ComposerControlIcon } from "./ComposerControl";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import { useComposerMenuState } from "./useComposerMenuState";
 
+const COMPACT_RUNTIME_MODE_CHOICES = [
+  { mode: "approval-required" as const, label: "Supervised" },
+  { mode: "auto-accept-edits" as const, label: "Auto-accept edits" },
+  { mode: "auto" as const, label: "Auto" },
+  { mode: "full-access" as const, label: "Full access" },
+];
+
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
+  supportedRuntimeModes?: ReadonlyArray<RuntimeMode> | undefined;
   showInteractionModeToggle: boolean;
   traitsMenuContent?: ReactNode;
   size?: "sm" | "xs";
@@ -30,6 +39,10 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
 }) {
   const size = props.size ?? "sm";
   const [open, setOpen] = useComposerMenuState(props.hidden);
+  const runtimeModeChoices = filterRuntimeModeOptions(
+    COMPACT_RUNTIME_MODE_CHOICES,
+    props.supportedRuntimeModes,
+  );
 
   return (
     <Menu open={open} onOpenChange={setOpen}>
@@ -76,10 +89,11 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             props.onRuntimeModeChange(value as RuntimeMode);
           }}
         >
-          <MenuRadioItem value="approval-required">Supervised</MenuRadioItem>
-          <MenuRadioItem value="auto-accept-edits">Auto-accept edits</MenuRadioItem>
-          <MenuRadioItem value="auto">Auto</MenuRadioItem>
-          <MenuRadioItem value="full-access">Full access</MenuRadioItem>
+          {runtimeModeChoices.map((choice) => (
+            <MenuRadioItem key={choice.mode} value={choice.mode}>
+              {choice.label}
+            </MenuRadioItem>
+          ))}
         </MenuRadioGroup>
       </MenuPopup>
     </Menu>

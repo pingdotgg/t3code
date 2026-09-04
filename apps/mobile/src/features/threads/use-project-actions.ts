@@ -1,6 +1,10 @@
 import { useCallback } from "react";
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  getProviderSupportedRuntimeModes,
+  reconcileRuntimeMode,
+} from "@t3tools/client-runtime/runtime-mode-options";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { mapAtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -127,6 +131,12 @@ export function useCreateProjectThread() {
       const provider = serverConfig?.providers.find(
         (candidate) => candidate.instanceId === input.modelSelection.instanceId,
       );
+      // Attachment preparation above can cross a provider snapshot refresh;
+      // resolve the mode from the live config immediately before dispatch.
+      const runtimeMode = reconcileRuntimeMode(
+        input.runtimeMode,
+        getProviderSupportedRuntimeModes(provider),
+      );
 
       const result = await startTurn({
         environmentId: input.project.environmentId,
@@ -141,7 +151,7 @@ export function useCreateProjectThread() {
           attachments: input.initialAttachments,
           uploadedAttachments: prepared.attachments,
           modelSelection: input.modelSelection,
-          runtimeMode: input.runtimeMode,
+          runtimeMode,
           interactionMode: resolveProviderInteractionMode(provider, input.interactionMode),
           workspaceMode: input.envMode,
           branch: input.branch,

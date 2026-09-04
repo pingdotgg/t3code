@@ -2887,12 +2887,18 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    await waitFor(() => harness.startSession.mock.calls.length === 3);
 
     expect(harness.stopSession.mock.calls.length).toBe(0);
     expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
       resumeCursor: { opaque: "resume-1" },
       runtimeMode: "approval-required",
+    });
+    expect(harness.startSession.mock.calls[2]?.[1]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      resumeCursor: { opaque: "resume-1" },
+      runtimeMode: "full-access",
     });
     expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
@@ -2901,7 +2907,7 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
-    expect(thread?.session?.runtimeMode).toBe("approval-required");
+    expect(thread?.session?.runtimeMode).toBe("full-access");
   });
 
   it("does not inject derived model options when restarting claude on runtime mode changes", async () => {

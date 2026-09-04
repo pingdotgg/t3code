@@ -130,6 +130,21 @@ function stripVariantSuffix(key: string): string {
 }
 
 /**
+ * Drops a trailing effort suffix such as `-high`, `-medium`, or `-low`.
+ *
+ * Some drivers bake the reasoning effort into the model slug
+ * (`gemini-3.8-flash-high`) while LiteLLM only publishes the base model
+ * (`gemini-3.8-flash`). Effort changes how many tokens a turn burns, not the
+ * per-token rate, so pricing the variant at the base rate matches the
+ * base-tier policy above instead of reporting the variant as unpriced.
+ */
+const EFFORT_SUFFIX = /-(high|medium|low)$/;
+
+function stripEffortSuffix(key: string): string {
+  return key.replace(EFFORT_SUFFIX, "");
+}
+
+/**
  * Models we never price, regardless of the table.
  *
  * `<synthetic>` marks locally generated messages that were never billed. Bare
@@ -149,7 +164,17 @@ export function lookupRate(table: RateTable, model: string): ModelRate | null {
   const key = stripVariantSuffix(normalizeRateKey(model));
   const bareName = bareModelName(key);
   if (bareName.length === 0 || UNPRICEABLE_MODELS.has(bareName)) return null;
-  return table.get(key) ?? null;
+  const direct = table.get(key);
+  if (direct !== undefined) return direct;
+  // Effort-baked slugs fall back to the base model's rate (see
+  // `stripEffortSuffix`). The bare-name alias of the base is covered too, for
+  // provider-qualified variants whose base only exists as an alias.
+  const baseKey = stripEffortSuffix(key);
+  if (baseKey !== key) {
+    const base = table.get(baseKey) ?? table.get(bareModelName(baseKey));
+    if (base !== undefined) return base;
+  }
+  return null;
 }
 
 export interface PricedUsage {
