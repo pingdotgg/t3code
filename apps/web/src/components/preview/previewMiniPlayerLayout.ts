@@ -1,6 +1,8 @@
 import type { PreviewMiniPlayerPosition, PreviewMiniPlayerSize } from "~/previewMiniPlayerStore";
 
 export const PREVIEW_MINI_PLAYER_EDGE_GAP = 12;
+// The mini-player shell straddles this webview at 47 and 49; dialogs begin at 50.
+export const PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX = 48;
 export const PREVIEW_MINI_PLAYER_DEFAULT_SIZE = { width: 320, height: 200 } as const;
 export const PREVIEW_MINI_PLAYER_MIN_SIZE = { width: 240, height: 150 } as const;
 

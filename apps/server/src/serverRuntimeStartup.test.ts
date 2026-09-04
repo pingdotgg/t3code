@@ -15,13 +15,53 @@ import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngi
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 
-it("uses the canonical Codex default for auto-bootstrapped model selection", () => {
-  assert.deepStrictEqual(ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(), {
+it("uses the canonical Codex default for the auto-bootstrapped welcome thread", () => {
+  assert.deepStrictEqual(ServerRuntimeStartup.getAutoBootstrapThreadModelSelection(), {
     instanceId: ProviderInstanceId.make("codex"),
     model: DEFAULT_MODEL,
   });
 });
+
+it.effect("automatic pull only updates enabled, behind, clean default-branch checkouts", () =>
+  Effect.gen(function* () {
+    const pulled: string[] = [];
+    const git = {
+      statusDetails: (cwd: string) =>
+        Effect.succeed({
+          isRepo: true,
+          isDefaultBranch: cwd !== "/feature",
+          hasUpstream: true,
+          hasWorkingTreeChanges: cwd === "/dirty",
+          aheadCount: cwd === "/ahead" ? 1 : 0,
+          behindCount: cwd === "/current" ? 0 : 1,
+        } as never),
+      pullCurrentBranch: (cwd: string) =>
+        Effect.sync(() => {
+          pulled.push(cwd);
+          return {
+            status: "pulled" as const,
+            refName: "main",
+            upstreamRef: "origin/main",
+          };
+        }),
+    } as unknown as GitVcsDriver.GitVcsDriver["Service"];
+    const project = (workspaceRoot: string, autoPull = true) =>
+      ({ workspaceRoot, autoPull }) as never;
+
+    yield* ServerRuntimeStartup.autoPullProjects([
+      project("/clean"),
+      project("/current"),
+      project("/dirty"),
+      project("/ahead"),
+      project("/feature"),
+      project("/disabled", false),
+    ]).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
+
+    assert.deepStrictEqual(pulled, ["/clean"]);
+  }),
+);
 
 it.effect("enqueueCommand waits for readiness and then drains queued work", () =>
   Effect.scoped(
@@ -78,6 +118,7 @@ it.effect("launchStartupHeartbeat does not block the caller while counts are loa
 
       yield* ServerRuntimeStartup.launchStartupHeartbeat.pipe(
         Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+          getUserInputActivity: () => Effect.die("unused"),
           getCommandReadModel: () => Effect.die("unused"),
           getSnapshot: () => Effect.die("unused"),
           getShellSnapshot: () => Effect.die("unused"),
@@ -97,6 +138,7 @@ it.effect("launchStartupHeartbeat does not block the caller while counts are loa
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
           getFullThreadDiffContext: () => Effect.succeed(Option.none()),
+          getThreadRuntimeContext: () => Effect.die("unused"),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
@@ -145,6 +187,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
         autoBootstrapProjectFromCwd: true,
       } as never),
       Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+        getUserInputActivity: () => Effect.die("unused"),
         getCommandReadModel: () => Effect.die("unused"),
         getSnapshot: () => Effect.die("unused"),
         getShellSnapshot: () => Effect.die("unused"),
@@ -158,7 +201,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
               id: bootstrapProjectId,
               title: "Startup Project",
               workspaceRoot: "/tmp/startup-project",
-              defaultModelSelection: ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(),
+              defaultModelSelection: ServerRuntimeStartup.getAutoBootstrapThreadModelSelection(),
               scripts: [],
               createdAt: "2026-01-01T00:00:00.000Z",
               updatedAt: "2026-01-01T00:00:00.000Z",
@@ -169,6 +212,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
         getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.some(bootstrapThreadId)),
         getThreadCheckpointContext: () => Effect.succeed(Option.none()),
         getFullThreadDiffContext: () => Effect.succeed(Option.none()),
+        getThreadRuntimeContext: () => Effect.die("unused"),
         getThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
         getThreadDetailSnapshot: () => Effect.die("unused"),
@@ -176,6 +220,8 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
       }),
       Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
         readEvents: () => Stream.empty,
+        readThreadEvents: () => Stream.empty,
+        getThreadReplayStats: () => Effect.die("unused thread replay stats"),
         dispatch: (command) =>
           Ref.update(dispatchCalls, (calls) => [...calls, command.type]).pipe(
             Effect.as({ sequence: 1 }),
@@ -197,13 +243,20 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
 
 it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when missing", () =>
   Effect.gen(function* () {
-    const dispatchCalls = yield* Ref.make<ReadonlyArray<string>>([]);
+    const dispatchCalls = yield* Ref.make<
+      ReadonlyArray<{
+        readonly type: string;
+        readonly defaultModelSelection?: unknown;
+        readonly modelSelection?: unknown;
+      }>
+    >([]);
     const targets = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
       Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/tmp/startup-project",
         autoBootstrapProjectFromCwd: true,
       } as never),
       Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+        getUserInputActivity: () => Effect.die("unused"),
         getCommandReadModel: () => Effect.die("unused"),
         getSnapshot: () => Effect.die("unused"),
         getShellSnapshot: () => Effect.die("unused"),
@@ -216,6 +269,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
         getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
         getThreadCheckpointContext: () => Effect.succeed(Option.none()),
         getFullThreadDiffContext: () => Effect.succeed(Option.none()),
+        getThreadRuntimeContext: () => Effect.die("unused"),
         getThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
         getThreadDetailSnapshot: () => Effect.die("unused"),
@@ -223,8 +277,10 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
       }),
       Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
         readEvents: () => Stream.empty,
+        readThreadEvents: () => Stream.empty,
+        getThreadReplayStats: () => Effect.die("unused thread replay stats"),
         dispatch: (command) =>
-          Ref.update(dispatchCalls, (calls) => [...calls, command.type]).pipe(
+          Ref.update(dispatchCalls, (calls) => [...calls, command]).pipe(
             Effect.as({ sequence: 1 }),
           ),
         streamDomainEvents: Stream.empty,
@@ -236,7 +292,16 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
 
     assert.equal(typeof targets.bootstrapProjectId, "string");
     assert.equal(typeof targets.bootstrapThreadId, "string");
-    assert.deepStrictEqual(yield* Ref.get(dispatchCalls), ["project.create", "thread.create"]);
+    const commands = yield* Ref.get(dispatchCalls);
+    assert.deepStrictEqual(
+      commands.map((command) => command.type),
+      ["project.create", "thread.create"],
+    );
+    assert.equal("defaultModelSelection" in commands[0]!, false);
+    assert.deepStrictEqual(
+      commands[1]?.modelSelection,
+      ServerRuntimeStartup.getAutoBootstrapThreadModelSelection(),
+    );
   }),
 );
 
@@ -257,6 +322,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
         autoBootstrapProjectFromCwd: true,
       } as never),
       Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+        getUserInputActivity: () => Effect.die("unused"),
         getCommandReadModel: () => Effect.die("unused"),
         getSnapshot: () => Effect.die("unused"),
         getShellSnapshot: () => Effect.die("unused"),
@@ -269,6 +335,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
         getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
         getThreadCheckpointContext: () => Effect.succeed(Option.none()),
         getFullThreadDiffContext: () => Effect.succeed(Option.none()),
+        getThreadRuntimeContext: () => Effect.die("unused"),
         getThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
         getThreadDetailSnapshot: () => Effect.die("unused"),
@@ -276,6 +343,8 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
       }),
       Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
         readEvents: () => Stream.empty,
+        readThreadEvents: () => Stream.empty,
+        getThreadReplayStats: () => Effect.die("unused thread replay stats"),
         dispatch: (command) =>
           Ref.update(dispatchCalls, (calls) => [...calls, command.type]).pipe(
             Effect.as({ sequence: 1 }),

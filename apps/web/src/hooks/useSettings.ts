@@ -29,6 +29,7 @@ import {
   findSharedSettingsMismatches,
   pickSharedServerSettings,
   splitSharedServerPatch,
+  supportsSharedSettingsSync,
 } from "@t3tools/client-runtime/state/shared-settings";
 import { ensureLocalApi } from "~/localApi";
 import {
@@ -42,11 +43,7 @@ import * as Struct from "effect/Struct";
 import { toastManager } from "~/components/ui/toast";
 import { isHostedStaticApp } from "~/hostedPairing";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
-import {
-  type EnvironmentPresentation,
-  useEnvironments,
-  usePrimaryEnvironment,
-} from "~/state/environments";
+import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useTheme } from "./useTheme";
 
@@ -60,6 +57,7 @@ let clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
 let clientSettingsHydrated = false;
 let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
+let clientSettingsPersistenceQueue: Promise<void> = Promise.resolve();
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -150,16 +148,54 @@ async function hydrateClientSettings(): Promise<void> {
   return clientSettingsHydrationPromise;
 }
 
-function persistClientSettings(settings: ClientSettings): void {
-  replaceClientSettingsSnapshot(settings);
-  void ensureLocalApi()
-    .persistence.setClientSettings(settings)
-    .catch((error) => {
+const defaultClientSettingsPersistence = (settings: ClientSettings): Promise<void> =>
+  ensureLocalApi().persistence.setClientSettings(settings);
+
+function enqueueClientSettingsPersistence<A>(work: () => Promise<A>): Promise<A> {
+  const result = clientSettingsPersistenceQueue.then(work);
+  clientSettingsPersistenceQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+export function persistClientSettingsPatch(
+  patch: ClientSettingsPatch,
+  persist: (settings: ClientSettings) => Promise<void> = defaultClientSettingsPersistence,
+): void {
+  replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
+  void enqueueClientSettingsPersistence(() => persist(getClientSettingsSnapshot())).catch(
+    (error) => {
       console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, {
         operation: "persist",
         ...safeErrorLogAttributes(error),
       });
-    });
+    },
+  );
+}
+
+/**
+ * Persists a client-settings update before publishing it to the in-memory
+ * snapshot. If another settings write lands while persistence is pending, the
+ * updater is reapplied to that newer snapshot and persisted again so neither
+ * change is lost.
+ */
+export async function persistClientSettingsUpdate(
+  update: (current: ClientSettings) => ClientSettings,
+  persist: (settings: ClientSettings) => Promise<void> = defaultClientSettingsPersistence,
+): Promise<ClientSettings> {
+  return enqueueClientSettingsPersistence(async () => {
+    for (;;) {
+      const current = getClientSettingsSnapshot();
+      const next = update(current);
+      await persist(next);
+      if (getClientSettingsSnapshot() === current) {
+        replaceClientSettingsSnapshot(next);
+        return next;
+      }
+    }
+  });
 }
 
 // ── Key sets for routing patches ─────────────────────────────────────
@@ -332,26 +368,14 @@ export function usePrimarySettingsAvailable(): boolean {
   return primaryEnvironment !== null || !isHostedStaticApp();
 }
 
-/**
- * Whether an environment can hold every shared key right now. Gated on the
- * auto-settlement capability because it is the newest of the shared keys: a
- * server that has it has all of them. Older servers drop unknown keys on
- * write, so a mismatch against them could never clear, and their decoded
- * defaults must not be treated as real values.
- */
-function supportsSharedSettings(environment: EnvironmentPresentation): boolean {
-  return (
-    environment.connection.phase === "connected" &&
-    environment.serverConfig?.environment.capabilities.threadAutoSettlement === true
-  );
-}
-
 /** Environments that can receive a shared settings write right now. */
-function useConnectedEnvironmentIds(): ReadonlyArray<EnvironmentId> {
+function useSharedSettingsSyncTargetIds(): ReadonlyArray<EnvironmentId> {
   const { environments } = useEnvironments();
   return useMemo(
     () =>
-      environments.filter(supportsSharedSettings).map((environment) => environment.environmentId),
+      environments
+        .filter(supportsSharedSettingsSync)
+        .map((environment) => environment.environmentId),
     [environments],
   );
 }
@@ -361,39 +385,46 @@ function useConnectedEnvironmentIds(): ReadonlyArray<EnvironmentId> {
  *
  * Server keys are optimistically patched in atom-backed server state, then
  * persisted via RPC. Shared server keys (see `SHARED_SERVER_SETTING_KEYS`)
- * are written to every connected environment, not only the target, so a user
- * preference does not silently drift between machines. Client keys go through
- * client persistence.
+ * are written to every eligible sync target, not only the selected target, so
+ * a user preference does not silently drift between machines. Client keys go
+ * through client persistence.
  */
 function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
   const persistServerSettings = useAtomCommand(
     serverEnvironment.updateSettings,
     "server settings update",
   );
-  const connectedEnvironmentIds = useConnectedEnvironmentIds();
+  const sharedSettingsSyncTargetIds = useSharedSettingsSyncTargetIds();
   const updateSettings = useCallback(
     (patch: UnifiedSettingsPatch) => {
       const { serverPatch, clientPatch } = splitPatch(patch);
 
       if (Object.keys(serverPatch).length > 0) {
         const { sharedPatch, localPatch } = splitSharedServerPatch(serverPatch);
-        if (environmentId && Object.keys(localPatch).length > 0) {
-          void persistServerSettings({
-            environmentId,
-            input: { patch: localPatch },
-          });
-        } else {
-          // Dropping the write silently leaves the control looking saved.
+        // Dropping the write silently leaves the control looking saved.
+        const warnUnsaved = () =>
           toastManager.add({
             type: "warning",
             title: "Setting not saved",
             description: PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
           });
+        if (Object.keys(localPatch).length > 0) {
+          if (environmentId) {
+            void persistServerSettings({
+              environmentId,
+              input: { patch: localPatch },
+            });
+          } else {
+            warnUnsaved();
+          }
         }
         if (Object.keys(sharedPatch).length > 0) {
-          const targets = new Set(connectedEnvironmentIds);
+          const targets = new Set(sharedSettingsSyncTargetIds);
           if (environmentId) {
             targets.add(environmentId);
+          }
+          if (targets.size === 0) {
+            warnUnsaved();
           }
           for (const targetId of targets) {
             void persistServerSettings({
@@ -404,20 +435,17 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
         }
       }
       if (Object.keys(clientPatch).length > 0) {
-        persistClientSettings({
-          ...getClientSettingsSnapshot(),
-          ...clientPatch,
-        });
+        persistClientSettingsPatch(clientPatch);
       }
     },
-    [connectedEnvironmentIds, environmentId, persistServerSettings],
+    [environmentId, persistServerSettings, sharedSettingsSyncTargetIds],
   );
 
   return updateSettings;
 }
 
 /**
- * Connected environments whose shared settings differ from the primary's,
+ * Shared-settings sync targets whose values differ from the primary's,
  * plus an action that writes the primary's values to all of them. Drift
  * happens when an environment was offline during an edit or was changed by
  * an older client.
@@ -430,7 +458,7 @@ export function useSharedSettingsSync() {
   // must never push defaults over real values. Same for a primary too old to
   // hold the shared keys: its decoded defaults are not a source of truth.
   const primarySettings =
-    primaryEnvironment !== null && supportsSharedSettings(primaryEnvironment)
+    primaryEnvironment !== null && supportsSharedSettingsSync(primaryEnvironment)
       ? (primaryEnvironment.serverConfig?.settings ?? null)
       : null;
   const { environments } = useEnvironments();
@@ -447,7 +475,7 @@ export function useSharedSettingsSync() {
         environments: environments.map((environment) => ({
           environmentId: environment.environmentId,
           label: environment.label,
-          connected: supportsSharedSettings(environment),
+          syncEligible: supportsSharedSettingsSync(environment),
           settings: environment.serverConfig?.settings ?? null,
         })),
       }),
@@ -480,9 +508,23 @@ export function useUpdatePrimarySettings() {
 
 export function useUpdateClientSettings() {
   return useCallback((patch: ClientSettingsPatch) => {
-    persistClientSettings({
-      ...getClientSettingsSnapshot(),
-      ...patch,
-    });
+    persistClientSettingsPatch(patch);
   }, []);
+}
+
+export function __resetClientSettingsPersistenceForTests(): void {
+  clientSettingsHydrationGeneration += 1;
+  clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+  clientSettingsHydrated = false;
+  clientSettingsHydrationPromise = null;
+  clientSettingsPersistenceQueue = Promise.resolve();
+  clientSettingsListeners.clear();
+  clientSettingsHydrationListeners.clear();
+}
+
+export function __setClientSettingsForTests(settings: ClientSettings): void {
+  clientSettingsHydrationGeneration += 1;
+  clientSettingsSnapshot = settings;
+  clientSettingsHydrated = true;
+  clientSettingsHydrationPromise = null;
 }

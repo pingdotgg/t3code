@@ -30,7 +30,10 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
-import type { PreparedHttpAuthorization } from "../connection/model.ts";
+import {
+  DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS,
+  type PreparedHttpAuthorization,
+} from "../connection/model.ts";
 
 export interface RelayEnvironmentAuthorization {
   readonly environmentId: EnvironmentId;
@@ -66,7 +69,6 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
   }
 >()("@t3tools/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
 
-const TOKEN_EXPIRY_SAFETY_MARGIN_MS = 60_000;
 const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
 const BEARER_DESCRIPTOR_CACHE_TTL_MS = 10_000;
 
@@ -216,7 +218,7 @@ export const make = Effect.gen(function* () {
         Option.isSome(cached) &&
         cached.value.environmentId === input.expectedEnvironmentId &&
         cached.value.dpopThumbprint === thumbprint &&
-        cached.value.expiresAtEpochMs > now + TOKEN_EXPIRY_SAFETY_MARGIN_MS
+        cached.value.expiresAtEpochMs > now + DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS
       ) {
         yield* Effect.annotateCurrentSpan({
           "connection.remote_token_cache": "hit",
@@ -234,6 +236,7 @@ export const make = Effect.gen(function* () {
             httpAuthorization: {
               _tag: "Dpop" as const,
               accessToken: cached.value.accessToken,
+              expiresAtEpochMs: cached.value.expiresAtEpochMs,
             },
           };
         }
@@ -305,6 +308,7 @@ export const make = Effect.gen(function* () {
         httpAuthorization: {
           _tag: "Dpop" as const,
           accessToken: token.accessToken,
+          expiresAtEpochMs: token.expiresAtEpochMs,
         },
       };
     },
