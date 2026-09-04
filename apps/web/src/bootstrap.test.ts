@@ -30,9 +30,6 @@ describe("app startup failures", () => {
 
   beforeEach(() => {
     vi.resetModules();
-    vi.doMock("./main", () => {
-      throw new Error("@vitejs/plugin-react can't detect preamble. Something is wrong.");
-    });
     bootShell = new BootElement("div");
     vi.stubGlobal("document", {
       getElementById: () => bootShell,
@@ -51,12 +48,16 @@ describe("app startup failures", () => {
   });
 
   afterEach(() => {
+    vi.doUnmock("./main");
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
   it("replaces the splash when an app import throws before main can run", async () => {
+    vi.doMock("./main", () => {
+      throw new Error("@vitejs/plugin-react can't detect preamble. Something is wrong.");
+    });
     const reload = vi.fn();
     vi.stubGlobal("window", { location: { reload } });
 

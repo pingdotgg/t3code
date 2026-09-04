@@ -147,7 +147,8 @@ it("hot updates Tailwind classes when a source file changes in bundled dev", asy
     );
     const logger = createLogger("silent");
     logger.error = (message) => events.emit("error", new Error(message));
-    const built = NodeEvents.EventEmitter.once(events, "built");
+    const connected = NodeEvents.EventEmitter.once(events, "connected");
+    const ready = NodeEvents.EventEmitter.once(events, "ready");
     server = await createServer({
       configFile: false,
       root,
@@ -168,19 +169,18 @@ it("hot updates Tailwind classes when a source file changes in bundled dev", asy
           transform(code, id) {
             if (id.endsWith("/style.css")) css = code;
           },
-          generateBundle() {
-            events.emit("built");
+          async generateBundle() {
+            // Keep the build pending until the socket can receive Vite's ready message.
+            await connected;
           },
         },
       ],
       server: { host: "127.0.0.1", port: 0 },
     });
     await server.listen();
-    await built;
     const address = server.httpServer?.address();
     if (!address || typeof address === "string") throw new Error("Vite did not bind a port");
 
-    const connected = NodeEvents.EventEmitter.once(events, "connected");
     server.ws.on("vite:client-connected", () => events.emit("connected"));
     socket = new WebSocket(
       `ws://127.0.0.1:${address.port}/?token=${server.config.webSocketToken}`,
@@ -197,16 +197,21 @@ it("hot updates Tailwind classes when a source file changes in bundled dev", asy
     });
     socket.addEventListener("message", ({ data }) => {
       const message: unknown = JSON.parse(String(data));
-      if (
-        message !== null &&
-        typeof message === "object" &&
-        "type" in message &&
-        message.type === "bundled-dev-update"
-      ) {
-        events.emit("updated");
+      if (message !== null && typeof message === "object" && "type" in message) {
+        // generateBundle runs before Vite stores the files for HTTP requests.
+        if (
+          message.type === "full-reload" &&
+          "ifFallback" in message &&
+          message.ifFallback === true
+        ) {
+          events.emit("ready");
+        } else if (message.type === "bundled-dev-update") {
+          events.emit("updated");
+        }
       }
     });
     await connected;
+    await ready;
     const entry = await fetch(`http://127.0.0.1:${address.port}/assets/index.js`);
     expect(entry.headers.get("content-type")).toContain("javascript");
     await entry.text();
