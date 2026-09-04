@@ -28,6 +28,13 @@ settings. Supported environments offer an icon picker in their connection prefer
 Use **Refresh prices** in Usage to fetch new model rates without waiting for the daily refresh.
 A failed environment does not remove the usage data from other environments.
 
+## Thread connection state
+
+Cached messages stay readable while a thread catches up. A status above the composer shows when
+the content is incomplete or the computer cannot be reached. Use **Retry** if an update fails.
+Working indicators return after the thread is current. File previews can finish loading after
+the text is ready.
+
 ## Attachments and sharing
 
 One message can contain up to eight photos, videos, or files. Images can be up to 10 MB. Other
