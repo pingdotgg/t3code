@@ -759,7 +759,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
                       iconIsDestructive
                         ? "accent-adaptive-rose-600-400"
                         : failed
-                          ? "accent-danger-foreground/70"
+                          ? "accent-danger-foreground/40"
                           : undefined
                     }
                   />
@@ -792,7 +792,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
                 <SymbolView
                   name="xmark"
                   size={11}
-                  tintColorClassName="accent-danger-foreground/70"
+                  tintColorClassName="accent-danger-foreground/40"
                   type="monochrome"
                 />
               </View>
