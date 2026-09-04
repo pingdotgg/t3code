@@ -997,7 +997,10 @@ export default function GitActionsControl({
     "thread branch metadata update",
   );
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
-  const canWriteSourceControl = useEnvironmentScope(activeEnvironmentId, AuthSourceControlWriteScope);
+  const canWriteSourceControl = useEnvironmentScope(
+    activeEnvironmentId,
+    AuthSourceControlWriteScope,
+  );
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(activeEnvironmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
     activeEnvironmentId,
@@ -2004,7 +2007,11 @@ export default function GitActionsControl({
             >
               Commit on new refName
             </Button>
-            <Button size="sm" disabled={!canWriteSourceControl || noneSelected} onClick={runDialogAction}>
+            <Button
+              size="sm"
+              disabled={!canWriteSourceControl || noneSelected}
+              onClick={runDialogAction}
+            >
               Commit
             </Button>
           </DialogFooter>

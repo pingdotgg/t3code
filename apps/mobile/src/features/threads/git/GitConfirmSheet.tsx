@@ -64,7 +64,15 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
       ...(params.commitMessage ? { commitMessage: params.commitMessage } : {}),
       ...(params.filePaths ? { filePaths: params.filePaths.split(",") } : {}),
     });
-  }, [canWriteSourceControl, confirmAction, environmentId, gitActions, params, navigation, threadId]);
+  }, [
+    canWriteSourceControl,
+    confirmAction,
+    environmentId,
+    gitActions,
+    params,
+    navigation,
+    threadId,
+  ]);
 
   const movePendingActionToFeatureBranch = useCallback(async () => {
     if (!canWriteSourceControl || !confirmAction) return;

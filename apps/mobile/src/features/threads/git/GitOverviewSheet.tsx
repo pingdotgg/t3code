@@ -185,7 +185,14 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         await runActionWithPrompt({ action: "create_pr" });
       }
     },
-    [canWriteSourceControl, environmentId, openExistingPr, navigation, runActionWithPrompt, threadId],
+    [
+      canWriteSourceControl,
+      environmentId,
+      openExistingPr,
+      navigation,
+      runActionWithPrompt,
+      threadId,
+    ],
   );
 
   // Status facts live on the relevant rows instead of crowding the header

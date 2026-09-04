@@ -138,7 +138,12 @@ export function useSelectedThreadGitActions() {
       }) => Promise<AtomCommandResult<T, E>>,
       options?: { readonly managedExternally?: boolean },
     ): Promise<T | null> => {
-      if (!canWriteSourceControl || !selectedThread || !selectedThreadProject || !selectedThreadCwd) {
+      if (
+        !canWriteSourceControl ||
+        !selectedThread ||
+        !selectedThreadProject ||
+        !selectedThreadCwd
+      ) {
         return null;
       }
 
