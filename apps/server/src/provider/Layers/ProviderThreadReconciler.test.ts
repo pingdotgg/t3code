@@ -324,6 +324,7 @@ it.effect("rebinds an imported thread without rereading its unchanged transcript
       | Parameters<NonNullable<ProviderInstance["adapter"]["discoverPersistedThreads"]>>[0]
       | undefined;
     const bindings: Array<Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]> = [];
+    const commands: OrchestrationCommand[] = [];
     const discoveryInstance = {
       ...instance,
       enabled: true,
@@ -372,11 +373,22 @@ it.effect("rebinds an imported thread without rereading its unchanged transcript
             projects: [{ id: projectId, workspaceRoot: persistedThread.cwd }],
             threads: [{ id: importedThreadId, projectId }],
           }),
-        getThreadShellById: () => Effect.succeed(Option.none()),
+        getThreadShellById: () =>
+          Effect.succeed(
+            Option.some({
+              id: importedThreadId,
+              projectId,
+              modelSelection: { instanceId: oldInstanceId, model: "gpt-5.6-sol" },
+            }),
+          ),
         getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.some({ id: projectId })),
       } as unknown as ProjectionSnapshotQueryShape["Service"]),
       Effect.provideService(OrchestrationEngineService, {
-        dispatch: () => Effect.succeed({ sequence: 1 }),
+        dispatch: (command: OrchestrationCommand) =>
+          Effect.sync(() => {
+            commands.push(command);
+            return { sequence: commands.length };
+          }),
       } as unknown as OrchestrationEngineServiceShape["Service"]),
       Effect.provide(
         Layer.mergeAll(
@@ -393,7 +405,19 @@ it.effect("rebinds an imported thread without rereading its unchanged transcript
     );
     expect(discoveryInput?.forceReadProviderThreadIds).toBeUndefined();
     expect(bindings).toHaveLength(1);
-    expect(bindings[0]).toMatchObject({ providerInstanceId: instance.instanceId });
+    expect(bindings[0]).toMatchObject({
+      providerInstanceId: instance.instanceId,
+      runtimePayload: {
+        modelSelection: { instanceId: instance.instanceId, model: "gpt-5.6-sol" },
+      },
+    });
+    expect(commands).toEqual([
+      expect.objectContaining({
+        type: "thread.meta.update",
+        threadId: importedThreadId,
+        modelSelection: { instanceId: instance.instanceId, model: "gpt-5.6-sol" },
+      }),
+    ]);
   }),
 );
 

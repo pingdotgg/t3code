@@ -327,9 +327,35 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
                 ) === continuationKey,
             ),
             (binding) =>
-              directory.upsert({
-                ...binding,
-                providerInstanceId: instance.instanceId,
+              Effect.gen(function* () {
+                const resumeCursor = binding.resumeCursor;
+                if (!isResumeCursor(resumeCursor)) return;
+                const runtimePayload = isImportedRuntimePayload(binding.runtimePayload)
+                  ? {
+                      ...binding.runtimePayload,
+                      modelSelection: { instanceId: instance.instanceId, model },
+                    }
+                  : binding.runtimePayload;
+                yield* directory.upsert({
+                  ...binding,
+                  providerInstanceId: instance.instanceId,
+                  runtimePayload,
+                });
+
+                const existingThread = yield* snapshots.getThreadShellById(binding.threadId);
+                if (Option.isNone(existingThread)) return;
+                yield* engine.dispatch({
+                  type: "thread.meta.update",
+                  commandId: importCommandId(
+                    continuationIdentityDigest(continuationKey),
+                    resumeCursor.threadId,
+                    "owner",
+                    String(instance.instanceId),
+                    model,
+                  ),
+                  threadId: binding.threadId,
+                  modelSelection: { instanceId: instance.instanceId, model },
+                });
               }),
             { concurrency: 1, discard: true },
           );
