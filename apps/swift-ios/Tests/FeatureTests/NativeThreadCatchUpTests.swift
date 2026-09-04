@@ -272,6 +272,66 @@ final class NativeThreadCatchUpTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testOldSocketSnapshotDoesNotCancelReadAfterCursorlessEvent() async throws {
+        let fixture = try await CatchUpFixture.make()
+        defer { fixture.cleanUp() }
+        var requests = fixture.requests.makeAsyncIterator()
+        var events = fixture.client.events().makeAsyncIterator()
+        var reads = fixture.http.heldRequests.makeAsyncIterator()
+        _ = try await fixture.client.loadThread(id: fixture.firstID)
+        let stream = try await nextThreadRequest(&requests)
+        try await stream.synchronize()
+        _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+        await fixture.http.holdThreadReads(true)
+        await fixture.http.setResponse(text: "Fresh after unknown event", sequence: 20)
+        try await stream.socket.chunk(id: stream.id, values: [.object(["kind": .string("unknown")])])
+        await nextCatchUp(&events, threadID: fixture.firstID)
+        let read = try await nextHeldRead(&reads)
+
+        try await stream.snapshot(texts: ["Requested before unknown event"], sequence: 3)
+        try await stream.synchronize()
+        // This next event is a receipt that the old snapshot was handled first.
+        try await stream.sendMessage(text: "After old snapshot", sequence: 19)
+        await nextCatchUp(&events, threadID: fixture.firstID)
+        read.succeed()
+        let cancelled = await read.finished.first { _ in true }
+        XCTAssertEqual(cancelled, false, "The required post-event read must still run.")
+        guard cancelled == false else {
+            await fixture.client.disconnect()
+            return
+        }
+        let messages = await messagesBeforeLive(&events, threadID: fixture.firstID)
+        XCTAssertEqual(messages, ["Fresh after unknown event"])
+        await fixture.client.disconnect()
+    }
+
+    func testNewSubscriptionSnapshotCanRecoverAfterCursorlessEvent() async throws {
+        let fixture = try await CatchUpFixture.make()
+        defer { fixture.cleanUp() }
+        var requests = fixture.requests.makeAsyncIterator()
+        var events = fixture.client.events().makeAsyncIterator()
+        var reads = fixture.http.heldRequests.makeAsyncIterator()
+        _ = try await fixture.client.loadThread(id: fixture.firstID)
+        let stream = try await nextThreadRequest(&requests)
+        try await stream.synchronize()
+        _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+        await fixture.http.holdThreadReads(true)
+        try await stream.socket.chunk(id: stream.id, values: [.object(["kind": .string("unknown")])])
+        await nextCatchUp(&events, threadID: fixture.firstID)
+        let read = try await nextHeldRead(&reads)
+
+        await stream.socket.close()
+        let resumed = try await nextThreadRequest(&requests)
+        try await resumed.snapshot(texts: ["New socket snapshot"], sequence: 20)
+        try await resumed.synchronize()
+        let messages = await messagesBeforeLive(&events, threadID: fixture.firstID)
+        XCTAssertEqual(messages, ["New socket snapshot"])
+        read.fail()
+        let cancelled = await read.finished.first { _ in true }
+        XCTAssertEqual(cancelled, true, "The new subscription can replace the required HTTP read.")
+        await fixture.client.disconnect()
+    }
+
     func testLeavingThreadCancelsHeldReplacementAndItsPendingFollowUp() async throws {
         for disconnect in [false, true] {
             let fixture = try await CatchUpFixture.make()

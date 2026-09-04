@@ -123,6 +123,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var activeThreadSequence: Int?
     private var activeThreadPage: FeatureThreadPage?
     private var threadHistoryEpoch = 0
+    private var detailSnapshotRequiredAfterEpoch: Int?
     private var pendingOlderThreadPage: PendingOlderThreadPage?
 
     init(
@@ -3595,6 +3596,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 let supportsPagination = self?.serverConfigsByEnvironmentID[
                     route.environmentID
                 ]?.threadSnapshotPagination == true
+                let subscriptionEpoch = self?.threadHistoryEpoch ?? 0
                 do {
                     for try await item in await route.client.threadEvents(
                         threadID: route.wireID,
@@ -3605,7 +3607,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                         guard !Task.isCancelled, let self,
                               self.isCurrentDetail(route, generation: streamGeneration),
                               self.environmentGeneration == sessionGeneration else { return }
-                        self.consumeDetailStreamItem(item, route: route)
+                        self.consumeDetailStreamItem(
+                            item, route: route, subscriptionEpoch: subscriptionEpoch
+                        )
                     }
                 } catch is CancellationError {
                     return
@@ -3683,7 +3687,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     private func consumeDetailStreamItem(
         _ item: ThreadStreamItem,
-        route: NativeThreadRoute
+        route: NativeThreadRoute,
+        subscriptionEpoch: Int
     ) {
         switch item {
         case .synchronized:
@@ -3692,9 +3697,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             markDetailSynchronized(route)
             return
         case let .snapshot(snapshot):
+            // A cursor-less event cannot prove that an already-requested
+            // snapshot includes it. Keep the post-event read until it does.
+            if let requiredEpoch = detailSnapshotRequiredAfterEpoch,
+               subscriptionEpoch < requiredEpoch { return }
             guard snapshot.snapshotSequence >= (activeThreadSequence ?? 0),
                   activeRawThread == nil || snapshot.snapshotSequence > (activeThreadSequence ?? 0) else { return }
             resetDetailRefresh()
+            detailSnapshotRequiredAfterEpoch = nil
             threadHistoryEpoch &+= 1
             pendingOlderThreadPage = nil
             activeThreadSequence = snapshot.snapshotSequence
@@ -3712,6 +3722,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 } else {
                     // An event without a cursor needs a read started after it.
                     threadHistoryEpoch &+= 1
+                    detailSnapshotRequiredAfterEpoch = threadHistoryEpoch
                     pendingOlderThreadPage = nil
                 }
                 scheduleDetailRefresh(threadID: route.uiID, client: route.client, force: true)
@@ -3720,6 +3731,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             let reduction = NativeThreadDetailReducer.apply(event, to: current)
             if reduction.sequence < 0 {
                 threadHistoryEpoch &+= 1
+                detailSnapshotRequiredAfterEpoch = threadHistoryEpoch
                 pendingOlderThreadPage = nil
                 activeRawThread = nil
                 discardPendingDetailPublish()
@@ -3827,6 +3839,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     private func resetDetailStream() {
         detailStreamGeneration &+= 1
+        detailSnapshotRequiredAfterEpoch = nil
         detailStreamTask?.cancel()
         detailStreamTask = nil
         detailCatchUpTask?.cancel()
@@ -4163,6 +4176,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             // This snapshot includes the skipped events, so their pending
             // request is satisfied without another HTTP read.
             detailRefreshPending = false
+            detailSnapshotRequiredAfterEpoch = nil
             threadHistoryEpoch &+= 1
             pendingOlderThreadPage = nil
             activeRawThread = snapshot.thread
