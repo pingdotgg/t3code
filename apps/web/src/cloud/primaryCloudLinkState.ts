@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { AuthRelayReadScope, type EnvironmentCloudLinkStateResult } from "@t3tools/contracts";
+import {
+  AuthRelayReadScope,
+  EnvironmentId,
+  type EnvironmentCloudLinkStateResult,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -44,13 +48,17 @@ function targetKey(target: CloudLinkTarget): string {
 }
 
 export function refreshPrimaryCloudLinkState(target: CloudLinkTarget | null): void {
-  if (target && readEnvironmentScope(target.environmentId, AuthRelayReadScope)) {
+  if (
+    target &&
+    readEnvironmentScope(EnvironmentId.make(target.environmentId), AuthRelayReadScope)
+  ) {
     appAtomRegistry.refresh(primaryCloudLinkStateAtom(targetKey(target)));
   }
 }
 
 export function readCachedPrimaryCloudLinkState(target: CloudLinkTarget) {
-  if (!readEnvironmentScope(target.environmentId, AuthRelayReadScope)) return null;
+  if (!readEnvironmentScope(EnvironmentId.make(target.environmentId), AuthRelayReadScope))
+    return null;
   const result = appAtomRegistry.get(primaryCloudLinkStateAtom(targetKey(target)));
   return result._tag === "Success" ? result.value : null;
 }
