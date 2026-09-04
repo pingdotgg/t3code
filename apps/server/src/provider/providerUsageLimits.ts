@@ -67,9 +67,13 @@ export function applyUsageLimitsUpdate(input: {
     return previous;
   }
   const merged = new Map(previous?.windows.map((window) => [window.id, window] as const));
+  // Codex sends this notification beside every token-usage tick, almost
+  // always with unchanged numbers. Decide "nothing changed" per window on
+  // the way through so the no-op case never allocates a new snapshot.
+  let changed = false;
   for (const window of update.windows) {
     const existing = merged.get(window.id);
-    merged.set(window.id, {
+    const next: ServerProviderUsageWindow = {
       ...window,
       usedPercent: clampPercent(window.usedPercent),
       ...(window.resetsAt === undefined && existing?.resetsAt !== undefined
@@ -78,9 +82,27 @@ export function applyUsageLimitsUpdate(input: {
       ...(window.windowDurationMins === undefined && existing?.windowDurationMins !== undefined
         ? { windowDurationMins: existing.windowDurationMins }
         : {}),
-    });
+    };
+    if (existing === undefined || !usageWindowEquals(existing, next)) {
+      merged.set(window.id, next);
+      changed = true;
+    }
+  }
+  if (!changed && previous !== undefined && previous.unavailable === undefined) {
+    return previous;
   }
   return makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() });
+}
+
+function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageWindow): boolean {
+  return (
+    a.id === b.id &&
+    a.kind === b.kind &&
+    a.label === b.label &&
+    a.usedPercent === b.usedPercent &&
+    a.resetsAt === b.resetsAt &&
+    a.windowDurationMins === b.windowDurationMins
+  );
 }
 
 /**
@@ -88,6 +110,14 @@ export function applyUsageLimitsUpdate(input: {
  * this time must not wipe bars a previous probe or a turn already
  * established, so the last good snapshot stays; `unsupported` is
  * authoritative and replaces them.
+ *
+ * A successful probe replaces the published windows outright, including any
+ * runtime update that landed while it was running. That is a deliberate
+ * trade-off: the Codex and Claude reads take a few seconds at most, the
+ * probe is the fresher full read in every case except that window, and the
+ * per-window epoch bookkeeping needed to reconcile the two was more code
+ * than the sub-second regression it prevented. The next runtime event
+ * corrects it.
  */
 export function resolveUsageLimitsAfterProbe(input: {
   readonly published: ServerProviderUsageLimits | undefined;

@@ -191,7 +191,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           update,
           checkedAt: update.checkedAt,
         });
-        if (Equal.equals(state.snapshot.usageLimits, usageLimits)) {
+        // `applyUsageLimitsUpdate` hands back the same object when nothing
+        // moved, which is the common case for Codex's per-tick notification.
+        if (usageLimits === state.snapshot.usageLimits) {
           return [null, state] as const;
         }
         const snapshot = withUsageLimits(state.snapshot, usageLimits);
