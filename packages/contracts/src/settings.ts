@@ -25,6 +25,7 @@ import {
   ProviderInstanceId,
   type ProviderDriverKind,
 } from "./providerInstance.ts";
+import type { SourceControlProviderKind } from "./sourceControl.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -771,6 +772,34 @@ export const SourceControlWritingStyleSettings = Schema.Struct({
 });
 export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyleSettings.Type;
 
+const makeSourceControlProviderSettings = (fallback: string) =>
+  Schema.Struct({
+    binaryPath: makeBinaryPathSetting(fallback),
+  }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+
+export const SourceControlProvidersSettings = Schema.Struct({
+  github: makeSourceControlProviderSettings("gh"),
+  gitlab: makeSourceControlProviderSettings("glab"),
+  azureDevOps: makeSourceControlProviderSettings("az"),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type SourceControlProvidersSettings = typeof SourceControlProvidersSettings.Type;
+
+export function sourceControlProviderBinaryPath(
+  settings: SourceControlProvidersSettings,
+  kind: SourceControlProviderKind,
+): string | undefined {
+  switch (kind) {
+    case "github":
+      return settings.github.binaryPath;
+    case "gitlab":
+      return settings.gitlab.binaryPath;
+    case "azure-devops":
+      return settings.azureDevOps.binaryPath;
+    default:
+      return undefined;
+  }
+}
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
 
@@ -898,6 +927,7 @@ export const ServerSettings = Schema.Struct({
   sourceControlWritingStyle: SourceControlWritingStyleSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  sourceControlProviders: SourceControlProvidersSettings,
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1111,6 +1141,15 @@ export const ServerSettingsPatch = Schema.Struct({
       mode: Schema.optionalKey(SourceControlWritingStyleMode),
       customInstructions: Schema.optionalKey(TrimmedString),
       followChangeRequestTemplates: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
+  sourceControlProviders: Schema.optionalKey(
+    Schema.Struct({
+      github: Schema.optionalKey(Schema.Struct({ binaryPath: Schema.optionalKey(TrimmedString) })),
+      gitlab: Schema.optionalKey(Schema.Struct({ binaryPath: Schema.optionalKey(TrimmedString) })),
+      azureDevOps: Schema.optionalKey(
+        Schema.Struct({ binaryPath: Schema.optionalKey(TrimmedString) }),
+      ),
     }),
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),

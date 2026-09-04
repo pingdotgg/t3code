@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   decodeGitLabMergeRequestJson,
   decodeGitLabMergeRequestListJson,
@@ -24,7 +25,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 
 const gitLabCliExecutionErrorContext = {
   operation: Schema.Literal("execute"),
-  command: Schema.Literal("glab"),
+  command: Schema.String,
   cwd: Schema.String,
   cause: Schema.Defect(),
 };
@@ -40,7 +41,7 @@ export class GitLabCliUnavailableError extends Schema.TaggedErrorClass<GitLabCli
   gitLabCliExecutionErrorContext,
 ) {
   get detail(): string {
-    return "GitLab CLI (`glab`) is required but not available on PATH.";
+    return `GitLab CLI executable \`${this.command}\` is required but not available.`;
   }
 
   override get message(): string {
@@ -92,7 +93,7 @@ export class GitLabMergeRequestNotFoundError extends Schema.TaggedErrorClass<Git
   static fromVcsError(
     context: {
       readonly operation: "execute";
-      readonly command: "glab";
+      readonly command: string;
       readonly cwd: string;
       readonly reference: string;
     },
@@ -128,7 +129,7 @@ export class GitLabCliCommandError extends Schema.TaggedErrorClass<GitLabCliComm
   static fromVcsError(
     context: {
       readonly operation: "execute";
-      readonly command: "glab";
+      readonly command: string;
       readonly cwd: string;
     },
     error: VcsError,
@@ -409,29 +410,33 @@ function parseRepositoryPath(repository: string): {
 
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
+  const settings = yield* ServerSettings.ServerSettingsService;
 
   const run = (
     input: Parameters<GitLabCli["Service"]["execute"]>[0],
-    mapError: (error: VcsError) => GitLabCliError,
+    mapError: (command: string, error: VcsError) => GitLabCliError,
   ) =>
-    process
-      .run({
-        operation: "GitLabCli.execute",
-        command: "glab",
-        args: input.args,
-        cwd: input.cwd,
-        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
-        ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
-      })
-      .pipe(Effect.mapError(mapError));
+    settings.getSettings.pipe(
+      Effect.map((current) => current.sourceControlProviders.gitlab.binaryPath),
+      Effect.orElseSucceed(() => "glab"),
+      Effect.flatMap((binaryPath) =>
+        process
+          .run({
+            operation: "GitLabCli.execute",
+            command: binaryPath,
+            args: input.args,
+            cwd: input.cwd,
+            timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+            ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
+            ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
+          })
+          .pipe(Effect.mapError((error) => mapError(binaryPath, error))),
+      ),
+    );
 
   const execute: GitLabCli["Service"]["execute"] = (input) =>
-    run(input, (error) =>
-      GitLabCliCommandError.fromVcsError(
-        { operation: "execute", command: "glab", cwd: input.cwd },
-        error,
-      ),
+    run(input, (command, error) =>
+      GitLabCliCommandError.fromVcsError({ operation: "execute", command, cwd: input.cwd }, error),
     );
 
   const executeMergeRequest = (input: {
@@ -439,11 +444,11 @@ export const make = Effect.gen(function* () {
     readonly reference: string;
     readonly args: ReadonlyArray<string>;
   }) =>
-    run(input, (error) =>
+    run(input, (command, error) =>
       GitLabMergeRequestNotFoundError.fromVcsError(
         {
           operation: "execute",
-          command: "glab",
+          command,
           cwd: input.cwd,
           reference: input.reference,
         },

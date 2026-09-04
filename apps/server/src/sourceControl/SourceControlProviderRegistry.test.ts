@@ -8,6 +8,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { VcsRepositoryDetectionError } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -40,6 +41,7 @@ function makeRegistry(input: {
   }>;
   readonly process?: Partial<VcsProcess.VcsProcess["Service"]>;
   readonly resolve?: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"];
+  readonly githubBinaryPath?: string;
 }) {
   const driver = {
     listRemotes: () =>
@@ -89,9 +91,25 @@ function makeRegistry(input: {
         registryLayer,
         processLayer,
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
-        Layer.mock(BitbucketApi.BitbucketApi)({}),
+        Layer.mock(BitbucketApi.BitbucketApi)({
+          probeAuth: Effect.succeed({
+            status: "unknown",
+            account: Option.none(),
+            host: Option.none(),
+            detail: Option.none(),
+          }),
+        }),
         Layer.mock(GitHubCli.GitHubCli)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),
+        ServerSettings.layerTest(
+          input.githubBinaryPath === undefined
+            ? {}
+            : {
+                sourceControlProviders: {
+                  github: { binaryPath: input.githubBinaryPath },
+                },
+              },
+        ),
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-source-control-registry-test-",
         }).pipe(Layer.provide(NodeServices.layer)),
@@ -99,6 +117,32 @@ function makeRegistry(input: {
     ),
   );
 }
+
+it.effect("discovers GitHub with the configured CLI path", () =>
+  Effect.gen(function* () {
+    const calls: Array<Parameters<VcsProcess.VcsProcess["Service"]["run"]>[0]> = [];
+    const registry = yield* makeRegistry({
+      remotes: [],
+      githubBinaryPath: "/opt/tools/gh",
+      process: {
+        run: (input) => {
+          calls.push(input);
+          return Effect.succeed(processOutput(""));
+        },
+      },
+    });
+
+    yield* registry.discover;
+
+    assert.equal(
+      calls.some(
+        (call) =>
+          call.operation === "source-control.discovery.probe" && call.command === "/opt/tools/gh",
+      ),
+      true,
+    );
+  }),
+);
 
 it.effect("routes GitHub remotes to the GitHub provider", () =>
   Effect.gen(function* () {

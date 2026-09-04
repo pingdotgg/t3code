@@ -2,14 +2,16 @@ import { ChevronDownIcon, GitPullRequestIcon, RefreshCwIcon } from "lucide-react
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import { useEffect, useState, type ReactNode } from "react";
-import type {
-  BackgroundActivitySettings,
-  SourceControlProviderKind,
-  SourceControlDiscoveryResult,
-  SourceControlProviderAuth,
-  SourceControlProviderDiscoveryItem,
-  VcsDriverKind,
-  VcsDiscoveryItem,
+import {
+  sourceControlProviderBinaryPath,
+  type BackgroundActivitySettings,
+  type ServerSettingsPatch,
+  type SourceControlProviderKind,
+  type SourceControlDiscoveryResult,
+  type SourceControlProviderAuth,
+  type SourceControlProviderDiscoveryItem,
+  type VcsDriverKind,
+  type VcsDiscoveryItem,
 } from "@t3tools/contracts";
 import {
   getBackgroundActivityBaseProfile,
@@ -35,6 +37,7 @@ import {
   EmptyTitle,
 } from "../ui/empty";
 import { Skeleton } from "../ui/skeleton";
+import { DraftInput } from "../ui/draft-input";
 import {
   NumberField,
   NumberFieldDecrement,
@@ -421,6 +424,52 @@ function GitFetchIntervalSettings() {
   );
 }
 
+function sourceControlProviderBinaryPathPatch(
+  kind: SourceControlProviderKind,
+  binaryPath: string,
+): ServerSettingsPatch {
+  switch (kind) {
+    case "github":
+      return { sourceControlProviders: { github: { binaryPath } } };
+    case "gitlab":
+      return { sourceControlProviders: { gitlab: { binaryPath } } };
+    case "azure-devops":
+      return { sourceControlProviders: { azureDevOps: { binaryPath } } };
+    default:
+      return {};
+  }
+}
+
+function SourceControlProviderBinaryPathSettings(props: {
+  readonly kind: SourceControlProviderKind;
+}) {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const binaryPath = sourceControlProviderBinaryPath(settings.sourceControlProviders, props.kind);
+
+  if (binaryPath === undefined) return null;
+
+  return (
+    <div className="grid gap-2">
+      <label className="text-xs font-medium text-foreground" htmlFor={`${props.kind}-binary-path`}>
+        CLI executable
+      </label>
+      <DraftInput
+        id={`${props.kind}-binary-path`}
+        value={binaryPath}
+        onCommit={(next) => updateSettings(sourceControlProviderBinaryPathPatch(props.kind, next))}
+        autoComplete="off"
+        spellCheck={false}
+        className="font-mono"
+      />
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        Command name or absolute path used for discovery and source control operations. Rescan after
+        changing it.
+      </p>
+    </div>
+  );
+}
+
 function SourceControlSectionSkeleton({
   title,
   headerAction,
@@ -573,7 +622,11 @@ export function SourceControlSettingsPanel() {
               headerAction={hasVersionControlSystems ? null : scanButton}
             >
               {result.sourceControlProviders.map((item) => (
-                <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />
+                <DiscoveryItemRow key={`provider:${item.kind}`} item={item}>
+                  {isPrimaryEnvironment && item.executable ? (
+                    <SourceControlProviderBinaryPathSettings kind={item.kind} />
+                  ) : undefined}
+                </DiscoveryItemRow>
               ))}
             </SettingsSection>
           ) : null}

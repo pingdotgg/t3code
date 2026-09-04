@@ -9,6 +9,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 
 const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
@@ -26,6 +27,7 @@ const supportLayer = Layer.mergeAll(
     run: mockRun,
   }),
   NodeServices.layer,
+  ServerSettings.layerTest(),
 );
 const layer = Layer.mergeAll(AzureDevOpsCli.layer.pipe(Layer.provide(supportLayer)), supportLayer);
 
@@ -34,6 +36,75 @@ afterEach(() => {
 });
 
 describe("AzureDevOpsCli.layer", () => {
+  it.effect("uses the configured Azure CLI path", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+
+      yield* az.execute({ cwd: "/repo", args: ["--version"] });
+
+      expect(mockRun).toHaveBeenCalledWith(
+        expect.objectContaining({ command: "/opt/tools/az", args: ["--version"] }),
+      );
+    }).pipe(
+      Effect.provide(
+        AzureDevOpsCli.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.mock(VcsProcess.VcsProcess)({ run: mockRun }),
+              ServerSettings.layerTest({
+                sourceControlProviders: { azureDevOps: { binaryPath: "/opt/tools/az" } },
+              }),
+              NodeServices.layer,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("reports the configured Azure CLI path when spawning fails", () =>
+    Effect.gen(function* () {
+      const binaryPath = "/opt/tools/az";
+      mockRun.mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessSpawnError({
+            operation: "AzureDevOpsCli.execute",
+            command: binaryPath,
+            cwd: "/repo",
+            argumentCount: 1,
+            cause: PlatformError.systemError({
+              _tag: "NotFound",
+              module: "ChildProcess",
+              method: "spawn",
+              pathOrDescriptor: binaryPath,
+            }),
+          }),
+        ),
+      );
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const error = yield* az.execute({ cwd: "/repo", args: ["--version"] }).pipe(Effect.flip);
+
+      assert.equal(error._tag, "AzureDevOpsCliUnavailableError");
+      assert.strictEqual(error.command, binaryPath);
+      assert.match(error.message, /`\/opt\/tools\/az`/);
+    }).pipe(
+      Effect.provide(
+        AzureDevOpsCli.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.mock(VcsProcess.VcsProcess)({ run: mockRun }),
+              ServerSettings.layerTest({
+                sourceControlProviders: { azureDevOps: { binaryPath: "/opt/tools/az" } },
+              }),
+              NodeServices.layer,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("parses pull request view output", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

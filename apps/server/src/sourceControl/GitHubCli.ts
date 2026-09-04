@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
@@ -23,7 +24,7 @@ import {
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 const gitHubCliFailureFields = {
-  command: Schema.Literal("gh"),
+  command: Schema.String,
   cwd: Schema.String,
   cause: Schema.Defect(),
 } as const;
@@ -33,7 +34,7 @@ export class GitHubCliUnavailableError extends Schema.TaggedErrorClass<GitHubCli
   gitHubCliFailureFields,
 ) {
   get detail(): string {
-    return "GitHub CLI (`gh`) is required but not available on PATH.";
+    return `GitHub CLI executable \`${this.command}\` is required but not available.`;
   }
 
   override get message(): string {
@@ -168,7 +169,7 @@ export const isGitHubCliError = Schema.is(GitHubCliError);
 
 export function fromVcsError(
   context: {
-    readonly command: "gh";
+    readonly command: string;
     readonly cwd: string;
   },
   error: VcsError,
@@ -338,19 +339,30 @@ function deriveRepositoryCloneUrlsFromCreateOutput(
 
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
+  const settings = yield* ServerSettings.ServerSettingsService;
 
   const execute: GitHubCli["Service"]["execute"] = (input) =>
-    process
-      .run({
-        operation: "GitHubCli.execute",
-        command: "gh",
-        args: input.args,
-        cwd: input.cwd,
-        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
-        ...(input.maxOutputBytes !== undefined ? { maxOutputBytes: input.maxOutputBytes } : {}),
-      })
-      .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
+    settings.getSettings.pipe(
+      Effect.map((current) => current.sourceControlProviders.github.binaryPath),
+      Effect.orElseSucceed(() => "gh"),
+      Effect.flatMap((binaryPath) =>
+        process
+          .run({
+            operation: "GitHubCli.execute",
+            command: binaryPath,
+            args: input.args,
+            cwd: input.cwd,
+            timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+            ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+            ...(input.maxOutputBytes !== undefined ? { maxOutputBytes: input.maxOutputBytes } : {}),
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              fromVcsError({ command: binaryPath, cwd: input.cwd }, error),
+            ),
+          ),
+      ),
+    );
 
   return GitHubCli.of({
     execute,

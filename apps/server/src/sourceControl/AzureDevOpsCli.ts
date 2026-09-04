@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   decodeAzureDevOpsPullRequestJson,
   decodeAzureDevOpsPullRequestListJson,
@@ -23,7 +24,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 
 const azureDevOpsCommandErrorFields = {
   operation: Schema.Literal("execute"),
-  command: Schema.Literal("az"),
+  command: Schema.String,
   cwd: Schema.String,
   argumentCount: NonNegativeInt,
   cause: Schema.Defect(),
@@ -34,7 +35,7 @@ export class AzureDevOpsCliUnavailableError extends Schema.TaggedErrorClass<Azur
   azureDevOpsCommandErrorFields,
 ) {
   get detail(): string {
-    return "Azure CLI (`az`) with the Azure DevOps extension is required but not available on PATH.";
+    return `Azure CLI executable \`${this.command}\` with the Azure DevOps extension is required but not available.`;
   }
 
   override get message(): string {
@@ -96,7 +97,7 @@ export class AzureDevOpsCommandFailedError extends Schema.TaggedErrorClass<Azure
   static fromVcsError(
     context: {
       readonly operation: "execute";
-      readonly command: "az";
+      readonly command: string;
       readonly cwd: string;
       readonly argumentCount: number;
     },
@@ -354,30 +355,37 @@ function decodeAzureDevOpsJson<S extends Schema.Top>(
 
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
+  const settings = yield* ServerSettings.ServerSettingsService;
 
   const execute: AzureDevOpsCli["Service"]["execute"] = (input) =>
-    process
-      .run({
-        operation: "AzureDevOpsCli.execute",
-        command: "az",
-        args: input.args,
-        cwd: input.cwd,
-        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
-      })
-      .pipe(
-        Effect.mapError((error) =>
-          AzureDevOpsCommandFailedError.fromVcsError(
-            {
-              operation: "execute",
-              command: "az",
-              cwd: input.cwd,
-              argumentCount: input.args.length,
-            },
-            error,
+    settings.getSettings.pipe(
+      Effect.map((current) => current.sourceControlProviders.azureDevOps.binaryPath),
+      Effect.orElseSucceed(() => "az"),
+      Effect.flatMap((binaryPath) =>
+        process
+          .run({
+            operation: "AzureDevOpsCli.execute",
+            command: binaryPath,
+            args: input.args,
+            cwd: input.cwd,
+            timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+            ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              AzureDevOpsCommandFailedError.fromVcsError(
+                {
+                  operation: "execute",
+                  command: binaryPath,
+                  cwd: input.cwd,
+                  argumentCount: input.args.length,
+                },
+                error,
+              ),
+            ),
           ),
-        ),
-      );
+      ),
+    );
 
   const executeJson = (input: Parameters<AzureDevOpsCli["Service"]["execute"]>[0]) =>
     execute({

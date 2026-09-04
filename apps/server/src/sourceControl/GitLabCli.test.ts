@@ -3,18 +3,22 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { VcsProcessExitError } from "@t3tools/contracts";
+import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 
 const mockedRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
 const layer = it.layer(
   GitLabCli.layer.pipe(
     Layer.provide(
-      Layer.mock(VcsProcess.VcsProcess)({
-        run: mockedRun,
-      }),
+      Layer.mergeAll(
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: mockedRun,
+        }),
+        ServerSettings.layerTest(),
+      ),
     ),
   ),
 );
@@ -32,6 +36,67 @@ function processOutput(stdout: string): VcsProcess.VcsProcessOutput {
 afterEach(() => {
   mockedRun.mockReset();
 });
+
+it.effect("uses the configured GitLab CLI path", () =>
+  Effect.gen(function* () {
+    mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+    const glab = yield* GitLabCli.GitLabCli;
+
+    yield* glab.execute({ cwd: "/repo", args: ["--version"] });
+
+    expect(mockedRun).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "/opt/tools/glab", args: ["--version"] }),
+    );
+  }).pipe(
+    Effect.provide(
+      GitLabCli.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(VcsProcess.VcsProcess)({ run: mockedRun }),
+            ServerSettings.layerTest({
+              sourceControlProviders: { gitlab: { binaryPath: "/opt/tools/glab" } },
+            }),
+          ),
+        ),
+      ),
+    ),
+  ),
+);
+
+it.effect("reports the configured GitLab CLI path when spawning fails", () =>
+  Effect.gen(function* () {
+    const binaryPath = "/opt/tools/glab";
+    mockedRun.mockReturnValueOnce(
+      Effect.fail(
+        new VcsProcessSpawnError({
+          operation: "GitLabCli.execute",
+          command: binaryPath,
+          cwd: "/repo",
+          cause: new Error("not found"),
+        }),
+      ),
+    );
+    const glab = yield* GitLabCli.GitLabCli;
+    const error = yield* glab.execute({ cwd: "/repo", args: ["--version"] }).pipe(Effect.flip);
+
+    assert.equal(error._tag, "GitLabCliUnavailableError");
+    assert.strictEqual(error.command, binaryPath);
+    assert.match(error.message, /`\/opt\/tools\/glab`/);
+  }).pipe(
+    Effect.provide(
+      GitLabCli.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(VcsProcess.VcsProcess)({ run: mockedRun }),
+            ServerSettings.layerTest({
+              sourceControlProviders: { gitlab: { binaryPath: "/opt/tools/glab" } },
+            }),
+          ),
+        ),
+      ),
+    ),
+  ),
+);
 
 layer("GitLabCli.layer", (it) => {
   it.effect("parses merge request view output", () =>
