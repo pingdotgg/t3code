@@ -286,6 +286,74 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(visitElements(panel, isAddProviderButton)).not.toBeNull();
   });
 
+  it("shows the live provider's usage limits and reset credits in the editor", () => {
+    const live: ServerProvider = {
+      ...provider(),
+      usageLimits: {
+        checkedAt: "2026-07-24T12:00:00.000Z",
+        windows: [
+          {
+            id: "primary",
+            kind: "session",
+            label: "5h",
+            usedPercent: 40,
+            resetsAt: "2026-07-24T15:00:00.000Z",
+          },
+        ],
+        resetCredits: { availableCount: 2, nextExpiresAt: "2026-08-01T00:00:00.000Z" },
+      },
+    };
+    atoms.providers = [live];
+
+    let panel = renderPanel();
+    let editor = visitElements(
+      panel,
+      (element) => element.props.instanceId === codexId && element.props.mode === "editor",
+    );
+    const block = editor?.props.usageLimits as ReactElement<Record<string, unknown>> | null;
+    expect(block).not.toBeNull();
+    expect(block?.props.provider).toBe(live);
+    expect(block?.props.environmentId).toBe(environmentId);
+    expect(block?.props.readOnly).toBe(false);
+
+    panel = renderPanel({ readOnly: true });
+    editor = visitElements(
+      panel,
+      (element) => element.props.instanceId === codexId && element.props.mode === "editor",
+    );
+    expect(
+      (editor?.props.usageLimits as ReactElement<Record<string, unknown>> | null)?.props.readOnly,
+    ).toBe(true);
+  });
+
+  it("omits the usage-limits block when the provider reports none or cannot have any", () => {
+    atoms.providers = [provider()];
+    let panel = renderPanel();
+    let editor = visitElements(
+      panel,
+      (element) => element.props.instanceId === codexId && element.props.mode === "editor",
+    );
+    expect(editor).not.toBeNull();
+    expect(editor?.props.usageLimits).toBeNull();
+
+    atoms.providers = [
+      {
+        ...provider(),
+        usageLimits: {
+          checkedAt: "2026-07-24T12:00:00.000Z",
+          windows: [],
+          unavailable: { reason: "unsupported" },
+        },
+      },
+    ];
+    panel = renderPanel();
+    editor = visitElements(
+      panel,
+      (element) => element.props.instanceId === codexId && element.props.mode === "editor",
+    );
+    expect(editor?.props.usageLimits).toBeNull();
+  });
+
   it("keeps Advanced visible when search targets the provider health interval", () => {
     let panel = renderPanel();
     expect(visitElements(panel, (element) => element.props.title === "Advanced")).not.toBeNull();

@@ -362,6 +362,12 @@ interface ProviderInstanceCardProps {
    */
   readonly headerAction?: ReactNode | undefined;
   readonly setup?: ReactNode;
+  /**
+   * Subscription quota windows and banked reset credits the live provider
+   * reports. Only editor mode renders it; omitted when the driver cannot
+   * report limits.
+   */
+  readonly usageLimits?: ReactNode;
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
@@ -404,6 +410,7 @@ export function ProviderInstanceCard({
   onDelete,
   headerAction,
   setup,
+  usageLimits,
   hiddenModels,
   favoriteModels,
   modelOrder,
@@ -802,6 +809,12 @@ export function ProviderInstanceCard({
       {setup ? (
         <SettingsSection title="Setup">
           <div className="px-3 py-3 sm:px-4">{setup}</div>
+        </SettingsSection>
+      ) : null}
+
+      {usageLimits ? (
+        <SettingsSection title="Usage limits">
+          <div className="flex flex-col gap-3 px-3 py-3 sm:px-4">{usageLimits}</div>
         </SettingsSection>
       ) : null}
 

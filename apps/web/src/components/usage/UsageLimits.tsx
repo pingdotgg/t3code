@@ -257,27 +257,27 @@ function AccountHeading({
   );
 }
 
-function ProviderLimits({
+/**
+ * The windows and banked reset credits one provider reports, without the
+ * account heading. Shared by the Usage → Limits page and the provider's
+ * editor in Settings → Providers so both surfaces read and act the same.
+ */
+export function ProviderUsageLimitsBlock({
   provider,
   environmentId,
   now,
+  readOnly = false,
 }: {
   readonly provider: ServerProvider;
   readonly environmentId: EnvironmentId;
   readonly now: number;
+  readonly readOnly?: boolean | undefined;
 }) {
   const limits = provider.usageLimits;
   if (!limits) return null;
   const notice = limitsNotice(limits);
   return (
-    <section className="flex flex-col gap-3">
-      <AccountHeading
-        driver={provider.driver}
-        label={providerLimitsLabel(provider, (driver) => getDriverOption(driver)?.label)}
-        plan={provider.auth.label}
-        email={provider.auth.email}
-        accentColor={provider.accentColor}
-      />
+    <>
       {notice ? (
         <span className="text-xs text-muted-foreground">{notice}</span>
       ) : (
@@ -289,8 +289,33 @@ function ProviderLimits({
           instanceId={provider.instanceId}
           credits={limits.resetCredits}
           now={now}
+          readOnly={readOnly}
         />
       ) : null}
+    </>
+  );
+}
+
+function ProviderLimits({
+  provider,
+  environmentId,
+  now,
+}: {
+  readonly provider: ServerProvider;
+  readonly environmentId: EnvironmentId;
+  readonly now: number;
+}) {
+  if (!provider.usageLimits) return null;
+  return (
+    <section className="flex flex-col gap-3">
+      <AccountHeading
+        driver={provider.driver}
+        label={providerLimitsLabel(provider, (driver) => getDriverOption(driver)?.label)}
+        plan={provider.auth.label}
+        email={provider.auth.email}
+        accentColor={provider.accentColor}
+      />
+      <ProviderUsageLimitsBlock provider={provider} environmentId={environmentId} now={now} />
     </section>
   );
 }
@@ -311,11 +336,13 @@ function ResetCredits({
   instanceId,
   credits,
   now,
+  readOnly = false,
 }: {
   readonly environmentId: EnvironmentId;
   readonly instanceId: ProviderInstanceId;
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
+  readonly readOnly?: boolean | undefined;
 }) {
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, { reportFailure: false });
   const [confirming, setConfirming] = useState(false);
@@ -354,7 +381,12 @@ function ResetCredits({
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
       <span className="tabular-nums">{summary}</span>
       {credits.availableCount > 0 ? (
-        <Button size="xs" variant="outline" disabled={busy} onClick={() => setConfirming(true)}>
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={busy || readOnly}
+          onClick={() => setConfirming(true)}
+        >
           {busy ? "Using credit…" : "Use a reset credit"}
         </Button>
       ) : null}

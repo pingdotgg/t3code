@@ -66,6 +66,7 @@ import {
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { ProviderUsageLimitsBlock } from "../usage/UsageLimits";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
@@ -847,6 +848,18 @@ export function EnvironmentProviderSettings({
               enabled={resolveProviderInstanceEnabled(row.instance)}
               readOnly={readOnly}
               onEnable={() => updateProviderInstance(row, { ...row.instance, enabled: true })}
+            />
+          ) : null
+        }
+        usageLimits={
+          mode === "editor" &&
+          liveProvider?.usageLimits &&
+          liveProvider.usageLimits.unavailable?.reason !== "unsupported" ? (
+            <ProviderUsageLimitsBlock
+              provider={liveProvider}
+              environmentId={environmentId}
+              now={Date.now()}
+              readOnly={readOnly}
             />
           ) : null
         }
