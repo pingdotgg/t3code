@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type {
   PullRequestAction,
+  PullRequestFileViewedStates,
   PullRequestActor,
   PullRequestBaseComparison,
   PullRequestCapabilities,
@@ -495,6 +496,18 @@ export interface PullRequestProviderApi {
       readonly number: number;
       readonly threadId: string;
       readonly body: string;
+    },
+  ) => Effect.Effect<void, PullRequestProviderError>;
+
+  readonly getFileViewedStates?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<PullRequestFileViewedStates, PullRequestProviderError>;
+
+  readonly setFileViewed?: (
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      readonly path: string;
+      readonly viewed: boolean;
     },
   ) => Effect.Effect<void, PullRequestProviderError>;
 

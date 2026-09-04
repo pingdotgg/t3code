@@ -2145,6 +2145,22 @@ const makeWsRpcLayer = (
             pullRequests.setThreadResolution(input),
             { "rpc.aggregate": "pull-requests" },
           ),
+        [WS_METHODS.pullRequestsFileViewedStates]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsFileViewedStates,
+            pullRequests.fileViewedStates(input),
+            {
+              "rpc.aggregate": "pull-requests",
+            },
+          ),
+        [WS_METHODS.pullRequestsSetFileViewed]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsSetFileViewed,
+            pullRequests.setFileViewed(input),
+            {
+              "rpc.aggregate": "pull-requests",
+            },
+          ),
         [WS_METHODS.pullRequestsSetReaction]: (input) =>
           observeRpcEffect(WS_METHODS.pullRequestsSetReaction, pullRequests.setReaction(input), {
             "rpc.aggregate": "pull-requests",

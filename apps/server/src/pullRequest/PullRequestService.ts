@@ -39,6 +39,8 @@ import {
   type PullRequestListStatsResult,
   type PullRequestProviderSummary,
   type PullRequestReactionInput,
+  type PullRequestFileViewedStates,
+  type PullRequestSetFileViewedInput,
   type PullRequestRef,
   type PullRequestReviewVerdict,
   type PullRequestReviewerCandidateList,
@@ -178,6 +180,12 @@ export class PullRequestService extends Context.Service<
     ) => Effect.Effect<void, PullRequestError>;
     readonly setThreadResolution: (
       input: PullRequestThreadResolutionInput,
+    ) => Effect.Effect<void, PullRequestError>;
+    readonly fileViewedStates: (
+      input: PullRequestRef,
+    ) => Effect.Effect<PullRequestFileViewedStates, PullRequestError>;
+    readonly setFileViewed: (
+      input: PullRequestSetFileViewedInput,
     ) => Effect.Effect<void, PullRequestError>;
     readonly setReaction: (
       input: PullRequestReactionInput,
@@ -503,6 +511,16 @@ function withRateLimitBackoff(
       : { listLabelCandidates: interactive("listLabelCandidates", api.listLabelCandidates) }),
     ...(api.setLabels === undefined ? {} : { setLabels: interactive("setLabels", api.setLabels) }),
     replyToThread: interactive("replyToThread", api.replyToThread),
+    ...(api.getFileViewedStates === undefined
+      ? {}
+      : {
+          getFileViewedStates: wrap("getFileViewedStates", api.getFileViewedStates),
+        }),
+    ...(api.setFileViewed === undefined
+      ? {}
+      : {
+          setFileViewed: interactive("setFileViewed", api.setFileViewed),
+        }),
     setReaction: interactive("setReaction", api.setReaction),
     setThreadResolution: interactive("setThreadResolution", api.setThreadResolution),
   };
@@ -1763,6 +1781,54 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const fileViewedStatesUncached = Effect.fn("PullRequestService.fileViewedStates")(function* (
+    input: PullRequestRef,
+  ) {
+    const project = yield* requireProject(input);
+    if (
+      project.api.capabilities.fileViewedState !== true ||
+      project.api.getFileViewedStates === undefined
+    ) {
+      return yield* new PullRequestOperationError({
+        operation: "fileViewedStates",
+        detail: "This host does not support viewed files.",
+      });
+    }
+    return yield* project.api
+      .getFileViewedStates({
+        cwd: project.project.workspaceRoot,
+        repository: project.repository,
+        host: project.host,
+        number: input.number,
+      })
+      .pipe(Effect.mapError(toPullRequestError("fileViewedStates")));
+  });
+
+  const setFileViewed: PullRequestService["Service"]["setFileViewed"] = Effect.fn(
+    "PullRequestService.setFileViewed",
+  )(function* (input) {
+    const project = yield* requireProject(input);
+    if (
+      project.api.capabilities.fileViewedState !== true ||
+      project.api.setFileViewed === undefined
+    ) {
+      return yield* new PullRequestOperationError({
+        operation: "setFileViewed",
+        detail: "This host does not support viewed files.",
+      });
+    }
+    yield* project.api
+      .setFileViewed({
+        cwd: project.project.workspaceRoot,
+        repository: project.repository,
+        host: project.host,
+        number: input.number,
+        path: input.path,
+        viewed: input.viewed,
+      })
+      .pipe(Effect.mapError(toPullRequestError("setFileViewed")));
+  });
+
   /**
    * Reacting is gated on the host alone. Every host with reactions takes one from whoever can read
    * the change request, so there is no access left to check that reading it has not already
@@ -2162,6 +2228,19 @@ export const make = Effect.gen(function* () {
     };
   };
 
+  const fileViewedStatesCache = yield* Cache.makeWith(
+    (key: string) => {
+      const [, projectId, repository, number] = JSON.parse(key) as [number, string, string, number];
+      return fileViewedStatesUncached({ projectId, repository, number } as PullRequestRef);
+    },
+    {
+      capacity: DETAIL_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? DETAIL_CACHE_TTL : Duration.zero),
+    },
+  );
+  const fileViewedStates: PullRequestService["Service"]["fileViewedStates"] = (input) =>
+    Cache.get(fileViewedStatesCache, refCacheKey(input));
+
   const summaryCache = yield* Cache.makeWith(
     (key: string) => {
       const [, projectId, repository, number] = JSON.parse(key) as [number, string, string, number];
@@ -2464,6 +2543,11 @@ export const make = Effect.gen(function* () {
     submitReview: invalidatedByMutation(submitReview),
     replyToThread: invalidatedByMutation(replyToThread),
     setThreadResolution: invalidatedByMutation(setThreadResolution),
+    fileViewedStates,
+    setFileViewed: (input) =>
+      setFileViewed(input).pipe(
+        Effect.tap(() => Cache.invalidate(fileViewedStatesCache, refCacheKey(input))),
+      ),
     setReaction: invalidatedByMutation(setReaction),
     // The candidate list is deliberately read fresh per menu-open, so it stays uncached.
     reviewerCandidates,

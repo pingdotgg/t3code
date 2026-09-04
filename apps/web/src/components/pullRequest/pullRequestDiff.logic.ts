@@ -25,19 +25,17 @@ export function isLineInFileDiff(
 export type DiffFoldOverride = "expanded" | "folded" | null;
 
 /**
- * Whether a file is drawn folded.
- *
- * A diff arrives a slice at a time, so the reader's own choices are kept as the difference from
- * what the toolbar last said rather than as the set of folded files: a file that has not loaded
- * yet cannot be in a set, and would otherwise land expanded moments after the reader folded
- * everything. Files start expanded so opening the Code tab immediately shows the change; the
- * reader can still fold individual files or the whole diff from the toolbar.
+ * Viewed files start folded. Toolbar and per-file choices override that default, including for
+ * files arriving in later slices. Keep per-file choices as explicit states so a viewed-state
+ * refresh cannot invert a file the reader already opened or closed.
  */
 export function isFileDiffCollapsed(
   fileKey: string,
   foldOverride: DiffFoldOverride,
-  toggledFileKeys: ReadonlySet<string>,
+  fileFoldOverrides: ReadonlyMap<string, boolean>,
+  viewed = false,
 ): boolean {
-  const foldedByDefault = foldOverride === "folded";
-  return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
+  return (
+    fileFoldOverrides.get(fileKey) ?? (foldOverride === null ? viewed : foldOverride === "folded")
+  );
 }

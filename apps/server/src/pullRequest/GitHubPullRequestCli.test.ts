@@ -1,6 +1,7 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -3089,6 +3090,149 @@ layer("GitHubPullRequestCli.layer", (it) => {
       expect(callAt(0).args).toContain("repos/acme/web/issues/7/labels/good%20first%20issue");
       expect(callAt(0).args).toContain("DELETE");
       expect(callAt(1).args).toContain("repos/acme/web/issues/7/labels/area%2Fweb");
+    }),
+  );
+});
+
+const decodeViewedMutation = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      query: Schema.String,
+      variables: Schema.Struct({ pullRequestId: Schema.String, path: Schema.String }),
+    }),
+  ),
+);
+
+layer("GitHub file viewed state", (it) => {
+  const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+  const reference = { cwd: "/w", repository: "acme/web", host: "github.acme.test", number: 7 };
+  const filePage = (
+    nodes: ReadonlyArray<{ path: string; viewerViewedState: string }>,
+    hasNextPage = false,
+    endCursor: string | null = null,
+  ) =>
+    output(
+      encodeJson({
+        data: {
+          repository: { pullRequest: { files: { nodes, pageInfo: { hasNextPage, endCursor } } } },
+        },
+      }),
+    );
+
+  it.effect("loads every page and treats dismissed files as unviewed", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          filePage(
+            [
+              { path: "src/renamed.ts", viewerViewedState: "VIEWED" },
+              { path: "src/deleted.ts", viewerViewedState: "UNVIEWED" },
+            ],
+            true,
+            "next-files",
+          ),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(filePage([{ path: " space ü.ts ", viewerViewedState: "DISMISSED" }])),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      assert.deepStrictEqual(yield* cli.getFileViewedStates(reference), {
+        files: [
+          { path: "src/renamed.ts", viewed: true },
+          { path: "src/deleted.ts", viewed: false },
+          { path: " space ü.ts ", viewed: false },
+        ],
+      });
+      expect(callAt(0).args).toContain("github.acme.test");
+      expect(callAt(0).args).toContain("owner=acme");
+      expect(callAt(0).args).toContain("name=web");
+      expect(callAt(0).args).toContain("number=7");
+      expect(callAt(0).args).not.toContain("cursor=next-files");
+      expect(callAt(1).args).toContain("cursor=next-files");
+    }),
+  );
+
+  for (const viewed of [true, false]) {
+    it.effect(`writes viewed=${viewed} to the resolved PR with the exact path`, () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson({
+                data: { repository: { pullRequest: { id: "PR_7" } } },
+              }),
+            ),
+          ),
+        );
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
+        const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+        const path = ' src/"renamed" ü.ts ';
+        yield* cli.setFileViewed({ ...reference, path, viewed });
+        expect(callAt(0).args).toContain("number=7");
+        const request = callAt(1);
+        assert.deepStrictEqual(request.args, [
+          "api",
+          "graphql",
+          "--hostname",
+          "github.acme.test",
+          "--input",
+          "-",
+        ]);
+        const body = yield* decodeViewedMutation(request.stdin ?? "{}");
+        assert.deepStrictEqual(body.variables, { pullRequestId: "PR_7", path });
+        expect(body.query).toContain(viewed ? "markFileAsViewed(" : "unmarkFileAsViewed(");
+      }),
+    );
+  }
+
+  it.effect("rejects a repeated pagination cursor", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(filePage([], true, "same")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const error = yield* Effect.flip(cli.getFileViewedStates(reference));
+      assert.strictEqual(error._tag, "GitHubPullRequestReadError");
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+    }),
+  );
+
+  it.effect("does not return partial viewed state after a later page fails", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(filePage([{ path: "a.ts", viewerViewedState: "VIEWED" }], true, "next")),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output('{"data":{"repository":null}}')));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const error = yield* Effect.flip(cli.getFileViewedStates(reference));
+      assert.strictEqual(error._tag, "GitHubPullRequestReadError");
+    }),
+  );
+
+  it.effect("propagates a rejected viewed mutation", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: { repository: { pullRequest: { id: "PR_7" } } },
+            }),
+          ),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new GitHubCli.GitHubCliAuthenticationError({
+            command: "gh",
+            cwd: "/w",
+            cause: "authentication expired",
+          }),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const error = yield* Effect.flip(
+        cli.setFileViewed({ ...reference, path: "a.ts", viewed: true }),
+      );
+      assert.strictEqual(error._tag, "GitHubCliAuthenticationError");
     }),
   );
 });

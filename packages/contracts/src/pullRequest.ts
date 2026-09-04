@@ -418,6 +418,8 @@ export const PullRequestCapabilities = Schema.Struct({
    * to change them, which is what every server before this field was.
    */
   labels: Schema.optional(Schema.Boolean),
+  /** The signed-in account can mark changed files as viewed on the host. */
+  fileViewedState: Schema.optional(Schema.Boolean),
 });
 export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
 
@@ -991,6 +993,20 @@ export const PullRequestThreadResolutionInput = Schema.Struct({
   resolved: Schema.Boolean,
 });
 export type PullRequestThreadResolutionInput = typeof PullRequestThreadResolutionInput.Type;
+
+/** Viewed state belongs to the account signed in on the environment's host CLI. */
+export const PullRequestFileViewedStates = Schema.Struct({
+  files: Schema.Array(Schema.Struct({ path: Schema.String, viewed: Schema.Boolean })),
+});
+export type PullRequestFileViewedStates = typeof PullRequestFileViewedStates.Type;
+
+export const PullRequestSetFileViewedInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  // Preserve spaces in Git paths, including leading and trailing spaces.
+  path: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(4096)),
+  viewed: Schema.Boolean,
+});
+export type PullRequestSetFileViewedInput = typeof PullRequestSetFileViewedInput.Type;
 
 /**
  * Reacting and taking the reaction back are one operation with `reacted` turned around, which is

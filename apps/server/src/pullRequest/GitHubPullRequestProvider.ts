@@ -39,6 +39,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   updateMethods: ["merge", "rebase"],
   search: true,
   reactions: true,
+  fileViewedState: true,
   review: {
     inlineComment: true,
     reply: true,
@@ -588,6 +589,10 @@ export const make = Effect.gen(function* () {
           body: input.body,
         })
         .pipe(Effect.mapError(fail("replyToThread"))),
+
+    getFileViewedStates: (input) =>
+      cli.getFileViewedStates(input).pipe(Effect.mapError(fail("getFileViewedStates"))),
+    setFileViewed: (input) => cli.setFileViewed(input).pipe(Effect.mapError(fail("setFileViewed"))),
 
     setReaction: (input) =>
       cli
