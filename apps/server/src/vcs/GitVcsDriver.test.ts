@@ -7,7 +7,7 @@ import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { assert, it } from "@effect/vitest";
 
-import { CheckpointRef, GitCommandError } from "@t3tools/contracts";
+import { GitCommandError } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
@@ -68,6 +68,7 @@ runVcsDriverContractSuite<GitVcsDriver.GitVcsDriver, GitContractError>({
 it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
   let observedEnv: NodeJS.ProcessEnv | undefined;
   let observedAppendTruncationMarker: boolean | undefined;
+  let observedOutputMode: VcsProcess.VcsProcessInput["outputMode"];
 
   return Effect.gen(function* () {
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
@@ -80,12 +81,14 @@ it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
         GIT_INDEX_FILE: "/tmp/t3-index",
       },
       appendTruncationMarker: true,
+      outputMode: "error",
     });
 
     assert.deepStrictEqual(observedEnv, {
       GIT_INDEX_FILE: "/tmp/t3-index",
     });
     assert.strictEqual(observedAppendTruncationMarker, true);
+    assert.strictEqual(observedOutputMode, "error");
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -95,6 +98,7 @@ it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
             Effect.sync(() => {
               observedEnv = input.env;
               observedAppendTruncationMarker = input.appendTruncationMarker;
+              observedOutputMode = input.outputMode;
               return {
                 exitCode: ChildProcessSpawner.ExitCode(0),
                 stdout: "",
@@ -108,37 +112,3 @@ it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
     ),
   );
 });
-
-it.effect("rejects truncated checkpoint numstat instead of returning a partial file list", () =>
-  Effect.gen(function* () {
-    const driver = yield* GitVcsDriver.makeVcsDriverShape();
-
-    const error = yield* Effect.flip(
-      driver.checkpoints.diffCheckpoints({
-        cwd: "/repo",
-        fromCheckpointRef: CheckpointRef.make("refs/t3/checkpoints/from"),
-        toCheckpointRef: CheckpointRef.make("refs/t3/checkpoints/to"),
-        ignoreWhitespace: false,
-        format: "numstat",
-      }),
-    );
-
-    assert.strictEqual(error._tag, "VcsProcessOutputReadError");
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        NodeServices.layer,
-        Layer.mock(VcsProcess.VcsProcess)({
-          run: () =>
-            Effect.succeed({
-              exitCode: ChildProcessSpawner.ExitCode(0),
-              stdout: ["1\t0\tfirst.txt", "2\t0\tlast"].join("\0"),
-              stderr: "",
-              stdoutTruncated: true,
-              stderrTruncated: false,
-            }),
-        }),
-      ),
-    ),
-  ),
-);
