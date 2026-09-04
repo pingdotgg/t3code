@@ -181,6 +181,8 @@ for five idle minutes. A warm mount renders that state and resumes the stream
 without another snapshot download. The cache holds completed state and cursor
 updates together. It retains pagination data but clears canceled loading state.
 An ownership token prevents an old scope from replacing its successor's cache.
+Closing a thread skips snapshots that were already saved. Changed snapshots and
+failed background writes still get a final save attempt.
 
 ## Verification
 

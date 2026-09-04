@@ -134,11 +134,28 @@ function shouldPersistThread(thread: OrchestrationThread): boolean {
 interface ThreadResumeSnapshot {
   readonly state: EnvironmentThreadState;
   readonly sequence: number;
+  readonly persisted: boolean;
 }
 
 interface ThreadResumeCache {
   snapshot: ThreadResumeSnapshot | undefined;
   owner: object | undefined;
+}
+
+function matchesThreadSnapshot(
+  current: ThreadResumeSnapshot,
+  thread: OrchestrationThread | null,
+  sequence: number,
+  page: Pick<EnvironmentThreadPageState, "beforeCursor" | "hasMore"> | undefined,
+): boolean {
+  if (current.sequence !== sequence || Option.getOrNull(current.state.data) !== thread)
+    return false;
+  const currentPage = Option.getOrUndefined(current.state.page);
+  return currentPage === undefined
+    ? page === undefined
+    : page !== undefined &&
+        currentPage.beforeCursor === page.beforeCursor &&
+        currentPage.hasMore === page.hasMore;
 }
 
 function cachedThreadState(value: EnvironmentThreadState): EnvironmentThreadState {
@@ -195,7 +212,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     retained?.sequence ??
     Option.match(cached, { onNone: () => 0, onSome: (snapshot) => snapshot.snapshotSequence });
   const lastSequence = yield* SubscriptionRef.make(initialSequence);
-  let committed: ThreadResumeSnapshot = { state: initialState, sequence: initialSequence };
+  let committed: ThreadResumeSnapshot = {
+    state: initialState,
+    sequence: initialSequence,
+    persisted: retained?.persisted ?? Option.isSome(cached),
+  };
   if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
   const awaitingCompletion = yield* Ref.make(false);
   // Bumped whenever loaded history may have been rewritten out from under an
@@ -209,9 +230,19 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   // Save only completed data/cursor updates. A canceled scope must not cache
   // a cursor whose event has not reached the data yet.
   const remember = Effect.gen(function* () {
+    const current = yield* SubscriptionRef.get(state);
+    const sequence = yield* SubscriptionRef.get(lastSequence);
     committed = {
-      state: yield* SubscriptionRef.get(state),
-      sequence: yield* SubscriptionRef.get(lastSequence),
+      state: current,
+      sequence,
+      persisted:
+        committed.persisted &&
+        matchesThreadSnapshot(
+          committed,
+          Option.getOrNull(current.data),
+          sequence,
+          Option.getOrUndefined(current.page),
+        ),
     };
     if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
   });
@@ -232,7 +263,27 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     snapshot: OrchestrationThreadDetailSnapshot,
   ) {
     if (resumeCache !== undefined && resumeCache.owner !== owner) return;
+    if (
+      committed.persisted &&
+      matchesThreadSnapshot(committed, snapshot.thread, snapshot.snapshotSequence, snapshot.page)
+    )
+      return;
     yield* cache.saveThread(environmentId, snapshot).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          if (
+            !matchesThreadSnapshot(
+              committed,
+              snapshot.thread,
+              snapshot.snapshotSequence,
+              snapshot.page,
+            )
+          )
+            return;
+          committed = { ...committed, persisted: true };
+          if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
+        }),
+      ),
       Effect.catch((error) =>
         Effect.logWarning("Could not persist the thread cache.").pipe(
           Effect.annotateLogs({
