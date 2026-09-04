@@ -1005,10 +1005,12 @@ it.effect("refuses an action the host never claimed it could run", () =>
   }),
 );
 
-it.effect("publishes a successful merge for immediate settlement", () =>
+it.effect("publishes a merge for immediate settlement only after host confirmation", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const mergedAt = "2026-09-03T02:00:00.000Z";
+      let state: "open" | "merged" = "open";
+      let confirmationFails = false;
       const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
       const service = yield* makeService({
         projects: [
@@ -1016,7 +1018,17 @@ it.effect("publishes a successful merge for immediate settlement", () =>
         ],
         providers: [
           fakeProvider("github", {
-            runAction: () => TestClock.setTime(Date.parse(mergedAt)),
+            getChangeRequestSummary: () =>
+              confirmationFails
+                ? Effect.fail(
+                    new PullRequestProviderError({
+                      provider: "github",
+                      operation: "getChangeRequestSummary",
+                      reason: "failed",
+                      detail: "HTTP 504",
+                    }),
+                  )
+                : Effect.succeed({ ...changeRequest(1, mergedAt), state }),
           }),
         ],
       });
@@ -1025,6 +1037,13 @@ it.effect("publishes a successful merge for immediate settlement", () =>
         Effect.forkChild({ startImmediately: true }),
       );
 
+      // Queueing succeeds while the host still reports an open PR.
+      yield* service.runAction({ ...reference, action: "merge" });
+      confirmationFails = true;
+      yield* service.runAction({ ...reference, action: "merge" });
+      confirmationFails = false;
+      state = "merged";
+      yield* TestClock.setTime(Date.parse(mergedAt));
       yield* service.runAction({
         ...reference,
         repository: " ACME/WEB ",
@@ -1965,6 +1984,7 @@ it.effect("refuses a merge strategy the host does not offer", () =>
             review: FULL_REVIEW,
             reviewers: FULL_REVIEWERS,
           },
+          getChangeRequestSummary: () => Effect.succeed(changeRequest(1, "2026-07-02T00:00:00Z")),
           runAction: (input) => {
             ranWith = input.mergeMethod ?? "merge";
             return Effect.void;
