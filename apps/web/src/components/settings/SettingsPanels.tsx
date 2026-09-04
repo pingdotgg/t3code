@@ -510,6 +510,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.appearanceContrast !== DEFAULT_UNIFIED_SETTINGS.appearanceContrast
         ? ["Contrast"]
         : []),
+      ...(settings.widerScrollbarsEnabled !== DEFAULT_UNIFIED_SETTINGS.widerScrollbarsEnabled
+        ? ["Wider scrollbars"]
+        : []),
       ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? ["Glass opacity"] : []),
       ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
         ? ["Panel animations"]
@@ -603,6 +606,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.browserLinkTarget,
       settings.browserAutoShowFloatingPreview,
       settings.appearanceContrast,
+      settings.widerScrollbarsEnabled,
       settings.enableAgentBrowserAccess,
       settings.confirmQuit,
       settings.confirmThreadArchive,
@@ -708,6 +712,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     }
     updateSettings({
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
+      widerScrollbarsEnabled: DEFAULT_UNIFIED_SETTINGS.widerScrollbarsEnabled,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
@@ -1305,6 +1310,34 @@ export function AppearanceSettingsPanel() {
       </SettingsSection>
 
       <TypographySection />
+
+      <SettingsSection title="Accessibility">
+        <SettingsRow
+          {...searchableSetting("wider-scrollbars")}
+          description="Make scrollbars wider across the app so they are easier to see and grab."
+          resetAction={
+            settings.widerScrollbarsEnabled !== DEFAULT_UNIFIED_SETTINGS.widerScrollbarsEnabled ? (
+              <SettingResetButton
+                label="wider scrollbars"
+                onClick={() =>
+                  updateSettings({
+                    widerScrollbarsEnabled: DEFAULT_UNIFIED_SETTINGS.widerScrollbarsEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.widerScrollbarsEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ widerScrollbarsEnabled: Boolean(checked) })
+              }
+              aria-label="Use wider scrollbars"
+            />
+          }
+        />
+      </SettingsSection>
     </SettingsPageContainer>
   );
 }

@@ -78,6 +78,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 :root {
   --app-scrollbar-width: 6px;
+  --app-scrollbar-firefox-width: thin;
+  --app-scrollbar-thumb-radius: 3px;
   --appearance-contrast-base: 100%;
   --appearance-contrast-boost: 0%;
   --appearance-contrast-border-boost: 0%;
@@ -120,6 +122,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --glass-blur: 16px;
     --glass-saturation: 1.08;
   }
+}
+
+:root[data-wider-scrollbars] {
+  --app-scrollbar-width: 12px;
+  --app-scrollbar-firefox-width: auto;
+  --app-scrollbar-thumb-radius: 6px;
 }
 
 .wco {
@@ -1569,13 +1577,18 @@ code {
   width: var(--app-scrollbar-width);
 }
 
+:root[data-wider-scrollbars]::-webkit-scrollbar,
+:root[data-wider-scrollbars] ::-webkit-scrollbar {
+  height: var(--app-scrollbar-width);
+}
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
   background: var(--app-scrollbar-thumb);
-  border-radius: 3px;
+  border-radius: var(--app-scrollbar-thumb-radius);
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -1769,7 +1782,7 @@ code {
   border-radius: 0.75rem;
   background: var(--muted);
   padding: 0.8rem 0.9rem;
-  scrollbar-width: thin;
+  scrollbar-width: var(--app-scrollbar-firefox-width);
   scrollbar-color: color-mix(in srgb, var(--contrast-border) 78%, transparent) transparent;
 }
 
@@ -1780,7 +1793,7 @@ code {
 }
 
 .chat-markdown pre::-webkit-scrollbar {
-  height: 7px;
+  height: calc(var(--app-scrollbar-width) + 1px);
 }
 
 .chat-markdown pre::-webkit-scrollbar-thumb {
