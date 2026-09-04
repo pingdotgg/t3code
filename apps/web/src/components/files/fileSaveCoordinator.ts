@@ -2,6 +2,7 @@ import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 
 export interface FileSaveCoordinatorOptions<A, E> {
   readonly debounceMs: number;
+  readonly canPersist?: () => boolean;
   readonly persist: (contents: string) => Promise<AtomCommandResult<A, E>>;
   readonly onPendingChange: (pending: boolean) => void;
   readonly onConfirmed: (contents: string) => void;
@@ -49,6 +50,9 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
 
   private async persistLatest(): Promise<void> {
     if (this.saving || this.latestRevision === this.confirmedRevision) return;
+    if (this.options.canPersist?.() === false) {
+      return;
+    }
 
     this.saving = true;
     const contents = this.latestContents;

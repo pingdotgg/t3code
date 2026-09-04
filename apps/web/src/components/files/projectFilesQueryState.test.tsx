@@ -7,6 +7,12 @@ import * as Effect from "effect/Effect";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+const authorizationMocks = vi.hoisted(() => ({ canReadFiles: true }));
+
+vi.mock("~/state/session", () => ({
+  useEnvironmentScope: () => authorizationMocks.canReadFiles,
+}));
+
 const projectMocks = vi.hoisted(() => ({
   listEntries: vi.fn(),
   optimisticFile: vi.fn(),
@@ -111,10 +117,30 @@ async function flushEffects(): Promise<void> {
 
 describe("project query refresh", () => {
   beforeEach(() => {
+    authorizationMocks.canReadFiles = true;
     projectMocks.listEntries.mockReset();
     projectMocks.optimisticFile.mockReset();
     projectMocks.readFile.mockReset();
     reactHooks.reset();
+  });
+
+  it("does not query or expose optimistic file contents without read permission", () => {
+    authorizationMocks.canReadFiles = false;
+    const registry = AtomRegistry.make();
+    atomHooks.registry = registry;
+    projectMocks.optimisticFile.mockReturnValue(Atom.make({ data: file("cached contents") }));
+    try {
+      const query = useProjectFileQuery(environmentId, "/repo", "src/preview.ts");
+      expect(projectMocks.readFile).not.toHaveBeenCalled();
+      expect(query.data).toBeNull();
+      expect(query.error).toBe("This connection cannot read host files.");
+      const entries = useProjectEntriesQuery(environmentId, "/repo");
+      expect(projectMocks.listEntries).not.toHaveBeenCalled();
+      expect(entries.data).toBeNull();
+    } finally {
+      registry.dispose();
+      atomHooks.registry = null;
+    }
   });
 
   it("replaces an in-flight initial read when a workspace mutation arrives", async () => {

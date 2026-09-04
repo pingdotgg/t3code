@@ -1,3 +1,5 @@
+import { AuthFilesystemReadScope } from "@t3tools/contracts";
+import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import {
   addProjectRemoteSourceLabel,
   addProjectRemoteSourcePathHint,
@@ -301,7 +303,7 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
       setIsBrowseNavigating(true);
       const committed = await browseNavigation.run(
         async () => {
-          if (environment && canPreloadBrowsePath(environmentRuntime?.connectionState)) {
+          if (environment && readEnvironmentScope(environment.environmentId, AuthFilesystemReadScope) && canPreloadBrowsePath(environmentRuntime?.connectionState)) {
             await loadBrowsePath({
               environmentId: environment.environmentId,
               input: { partialPath: selectedDirectoryPath },
@@ -785,8 +787,9 @@ function FolderBrowser(props: {
     () => (browsePath.directoryPath.length > 0 ? { partialPath: browsePath.directoryPath } : null),
     [browsePath.directoryPath],
   );
+  const canReadFiles = useEnvironmentScope(props.environment.environmentId, AuthFilesystemReadScope);
   const browseState = useEnvironmentQuery(
-    browseInput === null
+    !canReadFiles || browseInput === null
       ? null
       : filesystemEnvironment.browse({
           environmentId: props.environment.environmentId,
@@ -808,6 +811,7 @@ function FolderBrowser(props: {
   return (
     <>
       <SectionTitle>Browse folders</SectionTitle>
+      {!canReadFiles ? <ErrorBanner message="This connection cannot browse host folders." /> : null}
       {browseState.error ? <ErrorBanner message={browseState.error} /> : null}
       <ListSection>
         {browseState.isPending && browseState.data === null ? (

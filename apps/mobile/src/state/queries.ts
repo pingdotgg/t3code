@@ -1,3 +1,5 @@
+import { AuthFilesystemReadScope } from "@t3tools/contracts";
+import { useEnvironmentScope } from "./session";
 import type { VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
@@ -253,8 +255,9 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
     [target.cwd, target.environmentId, target.query],
   );
   const debouncedTarget = useDebouncedValue(normalizedTarget, COMPOSER_PATH_SEARCH_DEBOUNCE_MS);
+  const canReadFiles = useEnvironmentScope(debouncedTarget.environmentId, AuthFilesystemReadScope);
   const result = useEnvironmentQuery(
-    debouncedTarget.environmentId !== null &&
+    canReadFiles && debouncedTarget.environmentId !== null &&
       debouncedTarget.cwd !== null &&
       debouncedTarget.query.length > 0
       ? projectEnvironment.searchEntries({
@@ -270,7 +273,7 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
 
   return {
     entries: result.data?.entries ?? [],
-    error: result.error,
+    error: canReadFiles ? result.error : "This connection cannot search host files.",
     isPending: normalizedTarget.query !== debouncedTarget.query || result.isPending,
     refresh: result.refresh,
   };

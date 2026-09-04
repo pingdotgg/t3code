@@ -1,3 +1,5 @@
+import { AuthFilesystemReadScope } from "@t3tools/contracts";
+import { useEnvironmentScope } from "./session";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type CheckpointDiffTarget,
@@ -270,8 +272,9 @@ export function useProjectPathSearch(
     [target.cwd, target.environmentId, target.imageOnly, target.kind, target.query],
   );
   const debouncedTarget = useDebouncedValue(normalizedTarget, PROJECT_PATH_SEARCH_DEBOUNCE_MS);
+  const canReadFiles = useEnvironmentScope(debouncedTarget.environmentId, AuthFilesystemReadScope);
   const result = useEnvironmentQuery(
-    debouncedTarget.environmentId !== null &&
+    canReadFiles && debouncedTarget.environmentId !== null &&
       debouncedTarget.cwd !== null &&
       debouncedTarget.query !== null &&
       (allowEmptyQuery || debouncedTarget.query.length > 0)
@@ -290,7 +293,7 @@ export function useProjectPathSearch(
 
   return {
     entries: result.data?.entries ?? [],
-    error: result.error,
+    error: canReadFiles ? result.error : "This connection cannot search host files.",
     isPending:
       !areProjectPathSearchTargetsEqual(normalizedTarget, debouncedTarget) || result.isPending,
     searchedQuery: debouncedTarget.query ?? "",

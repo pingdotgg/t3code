@@ -2,6 +2,7 @@ import type {
   AuthBrowserSessionResult,
   AuthClientMetadata,
   AuthEnvironmentScope,
+  AuthGrantScope,
   AuthPairingCredentialResult,
   ServerAuthSessionMethod,
   AuthSessionId,
@@ -363,7 +364,7 @@ export async function submitServerAuthCredential(credential: string): Promise<vo
 
 export async function createServerPairingCredential(input?: {
   readonly label?: string;
-  readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+  readonly scopes?: ReadonlyArray<AuthGrantScope>;
 }): Promise<AuthPairingCredentialResult> {
   const trimmedLabel = input?.label?.trim();
   try {

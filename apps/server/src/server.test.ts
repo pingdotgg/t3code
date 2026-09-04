@@ -1344,6 +1344,16 @@ const exchangeAccessToken = (
     };
   });
 
+const getScopedWsUrl = Effect.fn("test.getScopedWsUrl")(function* (scope: string) {
+  const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, { scope });
+  assert.equal(token.response.status, 200);
+  const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+    headers: { authorization: `Bearer ${token.body.access_token ?? ""}` },
+  });
+  const ticket = (yield* ticketResponse.json) as { readonly ticket: string };
+  return `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket.ticket)}`;
+});
+
 const makeDpopProof = (input: {
   readonly method: string;
   readonly url: string;
@@ -2465,7 +2475,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         headers: {
           "user-agent": "undici",
         },
-        scope: "orchestration:read orchestration:operate terminal:operate review:write",
+        scope:
+          "orchestration:read orchestration:operate terminal:operate filesystem:read filesystem:write",
         clientMetadata: {
           label: "T3 Code Mobile",
           deviceType: "mobile",
@@ -2534,7 +2545,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             subject_token: credential.credential,
             subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
             requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
-            scope: "orchestration:read orchestration:operate terminal:operate review:write",
+            scope:
+              "orchestration:read orchestration:operate terminal:operate filesystem:read filesystem:write",
           }).toString(),
         });
         const token = yield* responseJsonEffect<{
@@ -2599,7 +2611,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       const exchange = yield* exchangeAccessToken(credential.credential, {
         headers: { dpop: dpop.proof },
-        scope: "orchestration:read orchestration:operate terminal:operate review:write",
+        scope:
+          "orchestration:read orchestration:operate terminal:operate filesystem:read filesystem:write",
       });
 
       assert.equal(exchange.response.status, 401);
@@ -2646,13 +2659,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         headers: {
           dpop: dpop.proof,
         },
-        scope: "orchestration:read orchestration:operate terminal:operate review:write",
+        scope:
+          "orchestration:read orchestration:operate terminal:operate filesystem:read filesystem:write",
       });
       const replayBootstrap = yield* exchangeAccessToken(secondCredential.credential, {
         headers: {
           dpop: dpop.proof,
         },
-        scope: "orchestration:read orchestration:operate terminal:operate review:write",
+        scope:
+          "orchestration:read orchestration:operate terminal:operate filesystem:read filesystem:write",
       });
 
       assert.equal(firstBootstrap.response.status, 200);
@@ -2692,7 +2707,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           dpop: dpop.proof,
           "x-forwarded-host": "environment.example.test",
         },
-        scope: "orchestration:read orchestration:operate terminal:operate review:write",
+        scope:
+          "orchestration:read orchestration:operate terminal:operate filesystem:read filesystem:write",
       });
 
       assert.equal(bootstrap.response.status, 200);
@@ -2729,7 +2745,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           dpop: dpop.proof,
           "x-forwarded-host": spoofedUrl.host,
         },
-        scope: "orchestration:read orchestration:operate terminal:operate review:write",
+        scope:
+          "orchestration:read orchestration:operate terminal:operate filesystem:read filesystem:write",
       });
 
       assert.equal(bootstrap.response.status, 401);
@@ -6875,6 +6892,149 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(second.payload.bootstrapThreadId, bootstrapThreadId);
       assert.equal(second.payload.bootstrapProjectCreated, true);
       assert.equal(second.payload.bootstrapThreadCreated, true);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("requires filesystem scopes for file reads and writes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-filesystem-scopes-" });
+      const filePath = path.join(cwd, "scope.txt");
+      yield* fs.writeFileString(filePath, "original");
+      yield* buildAppUnderTest();
+
+      const operatorUrl = yield* getScopedWsUrl("orchestration:read orchestration:operate");
+      yield* Effect.scoped(
+        withWsRpcClient(operatorUrl, (client) =>
+          Effect.gen(function* () {
+            const read = yield* client[WS_METHODS.projectsReadFile]({
+              cwd,
+              relativePath: "scope.txt",
+            }).pipe(Effect.flip);
+            const write = yield* client[WS_METHODS.projectsWriteFile]({
+              cwd,
+              relativePath: "scope.txt",
+              contents: "denied",
+            }).pipe(Effect.flip);
+            assert.equal(read._tag, "EnvironmentAuthorizationError");
+            assert.equal(write._tag, "EnvironmentAuthorizationError");
+          }),
+        ),
+      );
+      assert.equal(yield* fs.readFileString(filePath), "original");
+
+      const readerUrl = yield* getScopedWsUrl("filesystem:read");
+      yield* Effect.scoped(
+        withWsRpcClient(readerUrl, (client) =>
+          Effect.gen(function* () {
+            const read = yield* client[WS_METHODS.projectsReadFile]({
+              cwd,
+              relativePath: "scope.txt",
+            });
+            assert.equal(read.contents, "original");
+            const write = yield* client[WS_METHODS.projectsWriteFile]({
+              cwd,
+              relativePath: "scope.txt",
+              contents: "denied",
+            }).pipe(Effect.flip);
+            assert.equal(write._tag, "EnvironmentAuthorizationError");
+          }),
+        ),
+      );
+      assert.equal(yield* fs.readFileString(filePath), "original");
+
+      const writerUrl = yield* getScopedWsUrl("filesystem:write");
+      yield* Effect.scoped(
+        withWsRpcClient(writerUrl, (client) =>
+          client[WS_METHODS.projectsWriteFile]({
+            cwd,
+            relativePath: "scope.txt",
+            contents: "allowed",
+          }),
+        ),
+      );
+      assert.equal(yield* fs.readFileString(filePath), "allowed");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("requires filesystem read for host asset URLs while preserving attachment access", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-asset-scopes-" });
+      const filePath = path.join(cwd, "report.html");
+      yield* fs.writeFileString(filePath, "<p>host file</p>");
+      const project = { ...makeDefaultOrchestrationReadModel().projects[0]!, workspaceRoot: cwd };
+      const config = yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getThreadShellById: () =>
+              Effect.succeed(Option.some(makeDefaultOrchestrationThreadShell())),
+            getProjectShellById: () => Effect.succeed(Option.some(project)),
+          },
+        },
+      });
+      yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+      const attachmentId = "pending-00000000-0000-4000-8000-000000000001-pdf";
+      yield* fs.writeFileString(
+        path.join(config.attachmentsDir, `${attachmentId}.pdf`),
+        "attachment",
+      );
+
+      const readerUrl = yield* getScopedWsUrl("orchestration:read");
+      yield* Effect.scoped(
+        withWsRpcClient(readerUrl, (client) =>
+          Effect.gen(function* () {
+            for (const tag of ["workspace-file", "media-file"] as const) {
+              const denied = yield* client[WS_METHODS.assetsCreateUrl]({
+                resource: { _tag: tag, threadId: defaultThreadId, path: filePath },
+              }).pipe(Effect.flip);
+              assert.equal(denied._tag, "EnvironmentAuthorizationError");
+              if (denied._tag === "EnvironmentAuthorizationError")
+                assert.equal(denied.requiredScope, "filesystem:read");
+            }
+            const attachment = yield* client[WS_METHODS.assetsCreateUrl]({
+              resource: {
+                _tag: "attachment",
+                attachmentId,
+                fileName: "report.pdf",
+                mimeType: "application/pdf",
+              },
+            });
+            const response = yield* HttpClient.get(attachment.relativeUrl);
+            assert.equal(response.status, 200);
+            assert.equal(yield* response.text, "attachment");
+          }),
+        ),
+      );
+
+      const filesystemUrl = yield* getScopedWsUrl("filesystem:read");
+      yield* Effect.scoped(
+        withWsRpcClient(filesystemUrl, (client) =>
+          Effect.gen(function* () {
+            for (const tag of ["workspace-file", "media-file"] as const) {
+              const asset = yield* client[WS_METHODS.assetsCreateUrl]({
+                resource: { _tag: tag, threadId: defaultThreadId, path: filePath },
+              });
+              const response = yield* HttpClient.get(asset.relativeUrl);
+              assert.equal(response.status, 200);
+              assert.equal(yield* response.text, "<p>host file</p>");
+            }
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("does not issue the retired review scope", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const retired = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "review:write",
+      });
+      assert.equal(retired.response.status, 400);
+      assert.equal(retired.body.reason, "invalid_scope");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

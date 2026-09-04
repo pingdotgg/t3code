@@ -1,3 +1,5 @@
+import { AuthFilesystemReadScope } from "@t3tools/contracts";
+import { useEnvironmentScope } from "~/state/session";
 import { useAtomValue } from "@effect/atom-react";
 import type { FileDiffContentsLoader } from "@pierre/diffs";
 import { useParams } from "@tanstack/react-router";
@@ -138,6 +140,7 @@ export default function DiffPanel({
   });
   const activeThreadId = routeThreadRef?.threadId ?? null;
   const activeThread = useThread(routeThreadRef);
+  const canReadFiles = useEnvironmentScope(activeThread?.environmentId ?? null, AuthFilesystemReadScope);
   const activeProjectId = activeThread?.projectId ?? null;
   const activeProject = useProject(
     activeThread && activeProjectId
@@ -259,7 +262,7 @@ export default function DiffPanel({
     { enabled: isGitRepo && selectedTurn !== undefined },
   );
   const primaryBranchDiffPreview = useEnvironmentQuery(
-    selectedTurnId === null && activeThread && activeCwd
+    canReadFiles && selectedTurnId === null && activeThread && activeCwd
       ? reviewEnvironment.diffPreview({
           environmentId: activeThread.environmentId,
           input: {
@@ -276,7 +279,7 @@ export default function DiffPanel({
     serverConfig?.cwd !== undefined &&
     serverConfig.cwd !== activeCwd;
   const fallbackBranchDiffPreview = useEnvironmentQuery(
-    shouldRetryBranchDiffAtEnvironmentCwd && activeThread && serverConfig
+    canReadFiles && shouldRetryBranchDiffAtEnvironmentCwd && activeThread && serverConfig
       ? reviewEnvironment.diffPreview({
           environmentId: activeThread.environmentId,
           input: {
@@ -320,6 +323,7 @@ export default function DiffPanel({
       return undefined;
     }
 
+    if (!canReadFiles) return undefined;
     return createGitDiffFileContentsLoader(getDiffFileContents, {
       environmentId: activeThread.environmentId,
       cwd: preview.cwd,
@@ -332,6 +336,7 @@ export default function DiffPanel({
     activeThread,
     branchDiffPreview.data,
     getDiffFileContents,
+    canReadFiles,
     selectedGitSource,
     selectedTurnId,
   ]);
