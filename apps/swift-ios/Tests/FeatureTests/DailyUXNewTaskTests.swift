@@ -514,7 +514,7 @@ struct DailyUXNewTaskTests {
 
         #expect(
             DailyUXCreationContext.projects(in: snapshot).map(\.id)
-                == ["active-project", "passive-project", "offline-project"]
+                == ["active-project", "passive-project"]
         )
         let passiveProviders = DailyUXCreationContext.providers(
             for: passiveProject,
@@ -1171,6 +1171,24 @@ struct DailyUXNewTaskTests {
         #expect(
             DailyUXCreationContext.unreachableEnvironments(in: environments).map(\.id)
                 == ["disconnected"]
+        )
+
+        let projects = environments.map { environment in
+            rankedProject(
+                "\(environment.id)-project",
+                name: environment.name,
+                environmentID: environment.id
+            )
+        }
+        let snapshot = rankedSnapshot(
+            environments: environments,
+            projects: projects,
+            threads: []
+        )
+
+        #expect(
+            DailyUXCreationContext.projects(in: snapshot).map(\.environmentID)
+                == ["reconnecting", "connecting", "connected", "unknown"]
         )
     }
 
