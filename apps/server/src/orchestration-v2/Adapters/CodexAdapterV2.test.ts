@@ -62,6 +62,8 @@ import {
 } from "./CodexAdapterV2.ts";
 import { makeReplayServerConfig } from "./CodexAdapterV2.testkit.ts";
 
+const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+
 describe("CodexAdapterV2 context usage", () => {
   it("uses the current context rather than cumulative processed tokens", () => {
     const usage = codexProviderTurnTokenUsage(
@@ -647,7 +649,7 @@ describe("CodexAdapterV2 dynamic tool projection", () => {
 });
 
 describe("CodexAdapterV2 native protocol logging", () => {
-  it.effect("writes app-server protocol frames to the native provider log", () =>
+  it.effect("logs decoded app-server frames once with credentials redacted", () =>
     Effect.gen(function* () {
       const writes: Array<{
         readonly event: unknown;
@@ -693,7 +695,7 @@ describe("CodexAdapterV2 native protocol logging", () => {
           '{"method":"thread/event","params":{"http_headers":{"Authorization":"Bearer secret-codex-token"}}}\n',
       });
 
-      assert.equal(writes.length, 2);
+      assert.equal(writes.length, 1);
       assert.equal(writes[0]?.threadId, threadId);
       assert.deepEqual(writes[0]?.event, {
         provider: "codex",
@@ -713,19 +715,98 @@ describe("CodexAdapterV2 native protocol logging", () => {
           },
         },
       });
-      assert.equal(writes[1]?.threadId, threadId);
-      assert.deepEqual(writes[1]?.event, {
-        provider: "codex",
-        protocol: "codex.app-server",
-        kind: "protocol",
-        providerSessionId,
-        event: {
-          direction: "incoming",
-          stage: "raw",
-          payload:
-            '{"method":"thread/event","params":{"http_headers":{"Authorization":"[REDACTED]"}}}',
+    }),
+  );
+
+  it.effect("filters streaming frames before redaction without losing decode failures", () =>
+    Effect.gen(function* () {
+      const writes: Array<unknown> = [];
+      const protocolLogger = makeCodexAppServerProtocolLogger({
+        nativeEventLogger: {
+          filePath: "/tmp/events.log",
+          write: (event) =>
+            Effect.sync(() => {
+              writes.push(event);
+            }),
+          close: () => Effect.void,
+        },
+        threadId: ThreadId.make("thread-1"),
+        providerSessionId: ProviderSessionId.make("provider-session-1"),
+      });
+      assert.exists(protocolLogger);
+      if (protocolLogger === undefined) return;
+
+      yield* protocolLogger({
+        direction: "incoming",
+        stage: "decoded",
+        payload: {
+          method: "item/agentMessage/delta",
+          get params() {
+            throw new Error("delta must not be copied");
+          },
         },
       });
+      yield* protocolLogger({
+        direction: "incoming",
+        stage: "raw",
+        get payload() {
+          throw new Error("raw frame must not be parsed");
+        },
+      });
+      yield* protocolLogger({
+        direction: "incoming",
+        stage: "decode_failed",
+        payload: { operation: "decode", method: "turn/completed", issueCount: 1 },
+      });
+
+      assert.equal(writes.length, 1);
+      assert.nestedPropertyVal(writes[0], "event.stage", "decode_failed");
+      assert.nestedPropertyVal(writes[0], "event.payload.method", "turn/completed");
+    }),
+  );
+
+  it.effect("retains redacted failures when large payloads are summarized", () =>
+    Effect.gen(function* () {
+      const writes: Array<unknown> = [];
+      const protocolLogger = makeCodexAppServerProtocolLogger({
+        nativeEventLogger: {
+          filePath: "/tmp/events.log",
+          write: (event) =>
+            Effect.sync(() => {
+              writes.push(event);
+            }),
+          close: () => Effect.void,
+        },
+        threadId: ThreadId.make("thread-1"),
+        providerSessionId: ProviderSessionId.make("provider-session-1"),
+      });
+      assert.exists(protocolLogger);
+      if (protocolLogger === undefined) return;
+
+      yield* protocolLogger({
+        direction: "incoming",
+        stage: "decoded",
+        payload: {
+          method: "error",
+          params: {
+            threadId: "native-thread",
+            turnId: "native-turn",
+            error: {
+              code: "unauthorized",
+              message: '{"message":"Unauthorized","Authorization":"Bearer secret-token"}',
+            },
+            history: "x".repeat(128 * 1_024),
+          },
+        },
+      });
+
+      const serialized = encodeUnknownJson(writes);
+      assert.equal(writes.length, 1);
+      assert.isBelow(serialized.length, 2_048);
+      assert.notInclude(serialized, "secret-token");
+      assert.include(serialized, "[REDACTED]");
+      assert.nestedPropertyVal(writes[0], "event.payload.params.error.code", "unauthorized");
+      assert.nestedPropertyVal(writes[0], "event.payload.params.turnId", "native-turn");
     }),
   );
 
@@ -1163,6 +1244,50 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       (event): event is Extract<ProviderAdapterV2Event, { type: "message.updated" }> =>
         event.type === "message.updated" && event.message.role === "assistant",
     );
+
+  it.effect("resumes a provider thread without requesting or decoding its history", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-resume-metadata";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const preamble = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId: "unused-turn",
+          prompt: "unused-prompt",
+        }).slice(0, 5);
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...preamble,
+            {
+              type: "expect_outbound",
+              label: "thread/resume",
+              frame: {
+                id: 3,
+                method: "thread/resume",
+                params: { threadId: nativeThreadId, excludeTurns: true },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "thread/resume",
+              frame: { id: 3, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        const resumed = yield* harness.runtime.resumeThread({
+          providerThread: harness.providerThread,
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
+
+        assert.equal(resumed.nativeThreadRef?.nativeId, nativeThreadId);
+        assert.equal(resumed.status, "idle");
+        assert.equal(DateTime.toEpochMillis(resumed.updatedAt), 1782622450000);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
 
   it.effect("resolves retryable app-server errors on resumed provider activity", () =>
     Effect.scoped(

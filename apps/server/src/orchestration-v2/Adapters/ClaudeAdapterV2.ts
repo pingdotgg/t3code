@@ -83,7 +83,11 @@ import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   resolveClaudeCatalogContextWindow,
 } from "../../provider/ClaudeModelCatalog.ts";
-import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
+import {
+  boundProviderEventForLogging,
+  type EventNdjsonLogger,
+  shouldPersistProviderEvent,
+} from "../../provider/Layers/EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3OrchestrationInstructions.ts";
@@ -518,19 +522,21 @@ export function makeClaudeAgentSdkProtocolLogger(input: {
     return undefined;
   }
 
-  return (event) =>
-    nativeEventLogger
+  return (event) => {
+    if (!shouldPersistProviderEvent("native", event)) return Effect.void;
+    return nativeEventLogger
       .write(
         {
           provider: CLAUDE_PROVIDER,
           protocol: CLAUDE_AGENT_SDK_QUERY_PROTOCOL,
           kind: "protocol",
           providerSessionId: input.providerSessionId,
-          event,
+          event: boundProviderEventForLogging(event),
         },
         input.threadId,
       )
       .pipe(Effect.ignore);
+  };
 }
 
 export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<

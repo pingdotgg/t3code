@@ -676,6 +676,26 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       }
 
       yield* protocolLogger({
+        direction: "incoming",
+        stage: "decoded",
+        payload: {
+          type: "stream_event",
+          uuid: "00000000-0000-0000-0000-000000000001",
+          session_id: "native-thread",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_delta",
+            index: 0,
+            delta: {
+              type: "text_delta",
+              get text(): string {
+                throw new Error("streaming text must not be inspected");
+              },
+            },
+          },
+        },
+      });
+      yield* protocolLogger({
         direction: "outgoing",
         stage: "decoded",
         payload: {

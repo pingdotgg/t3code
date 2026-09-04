@@ -454,14 +454,25 @@ const makeEventStore = Effect.gen(function* () {
         causation_event_id,
         correlation_id
       FROM orchestration_events
+      ${
+        input.onlyAgentEvents === true
+          ? sql``
+          : sql`INDEXED BY idx_orchestration_events_application_high_water`
+      }
       WHERE sequence > ${input.afterSequence}
         AND sequence <= ${input.throughSequence ?? Number.MAX_SAFE_INTEGER}
         AND (
-          (${input.onlyAgentEvents === true ? 1 : 0} = 0 AND aggregate_kind = 'project')
-          OR (application_event_version = 2 AND aggregate_kind = 'thread')
+          ${
+            input.onlyAgentEvents === true
+              ? sql`application_event_version = 2 AND aggregate_kind = 'thread'`
+              : sql`aggregate_kind = 'project'
+                    OR (application_event_version = 2 AND aggregate_kind = 'thread')`
+          }
         )
-        AND (${input.threadId ?? null} IS NULL OR stream_id = ${input.threadId ?? null})
-        AND (${input.commandId ?? null} IS NULL OR command_id = ${input.commandId ?? null})
+        AND ${sql.and([
+          ...(input.threadId === undefined ? [] : [sql`stream_id = ${input.threadId}`]),
+          ...(input.commandId === undefined ? [] : [sql`command_id = ${input.commandId}`]),
+        ])}
       ORDER BY sequence ASC
       LIMIT ${input.limit}
     `;
@@ -555,17 +566,23 @@ const makeEventStore = Effect.gen(function* () {
     sql<{ readonly sequence: number | null }>`
       SELECT MAX(sequence) AS sequence
       FROM orchestration_events
+      ${
+        threadId === undefined
+          ? sql``
+          : sql`INDEXED BY idx_orchestration_events_agent_stream_sequence`
+      }
       WHERE application_event_version = 2
         AND aggregate_kind = 'thread'
-        AND (${threadId ?? null} IS NULL OR stream_id = ${threadId ?? null})
+        ${threadId === undefined ? sql`` : sql`AND stream_id = ${threadId}`}
     `.pipe(
       Effect.map((rows) => rows[0]?.sequence ?? 0),
       Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.latestAgentSequence:query")),
     );
 
+  // The OR planner otherwise scans every V2 event instead of seeking the final sequence.
   const latestApplicationSequence = sql<{ readonly sequence: number | null }>`
     SELECT MAX(sequence) AS sequence
-    FROM orchestration_events
+    FROM orchestration_events INDEXED BY idx_orchestration_events_application_high_water
     WHERE aggregate_kind = 'project'
       OR (application_event_version = 2 AND aggregate_kind = 'thread')
   `.pipe(
