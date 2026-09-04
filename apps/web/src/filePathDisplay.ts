@@ -4,18 +4,10 @@ import {
   splitFilePathPosition,
   stripSlashPrefixedWindowsDrive,
 } from "@t3tools/client-runtime/markdown-links";
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 function normalizePathSeparators(path: string): string {
   return path.replaceAll("\\", "/");
-}
-
-function canonicalizeWindowsDrivePath(path: string): string {
-  return /^\/[A-Za-z]:\//.test(path) ? path.slice(1) : path;
-}
-
-export function isWindowsFilesystemPath(path: string): boolean {
-  const normalizedPath = canonicalizeWindowsDrivePath(normalizePathSeparators(path));
-  return /^[A-Za-z]:(?:\/|$)/.test(normalizedPath) || path.startsWith("\\\\");
 }
 
 function trimTrailingPathSeparators(path: string): string {
@@ -39,7 +31,7 @@ export function formatWorkspaceRelativePath(
       normalizePathSeparators(trimTrailingPathSeparators(workspaceRoot)),
     );
     const workspaceLabel = fileBasename(normalizedWorkspaceRoot);
-    const caseInsensitive = isWindowsFilesystemPath(workspaceRoot);
+    const caseInsensitive = isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(workspaceRoot));
     const pathForCompare = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath;
     const workspaceForCompare = caseInsensitive
       ? normalizedWorkspaceRoot.toLowerCase()

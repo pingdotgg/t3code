@@ -294,6 +294,21 @@ describe("resolveMarkdownFileLinkTarget", () => {
     });
   });
 
+  it.each([
+    ["/tmp/repo/file.ts", "/", "tmp/repo/file.ts"],
+    ["C:/Users/MIKE/file.ts", "c:/", "Users/MIKE/file.ts"],
+    ["\\\\server\\SHARE\\file.ts", "\\\\Server\\Share\\", "file.ts"],
+    ["/tmp/repo/file.ts%20", "/tmp/repo", "file.ts "],
+  ])("preserves the preview target for %s in workspace %s", (href, cwd, workspaceRelativePath) => {
+    expect(resolveMarkdownFileLinkMeta(href, cwd)).toMatchObject({ workspaceRelativePath });
+  });
+
+  it("keeps an encoded final space in the absolute target", () => {
+    expect(resolveMarkdownFileLinkTarget("/tmp/repo/file.ts%20", "/tmp/repo")).toBe(
+      "/tmp/repo/file.ts ",
+    );
+  });
+
   it("normalizes slash-prefixed windows drive paths before resolving", () => {
     expect(
       resolveMarkdownFileLinkTarget(
