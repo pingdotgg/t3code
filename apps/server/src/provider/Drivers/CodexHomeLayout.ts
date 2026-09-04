@@ -29,9 +29,22 @@ const KNOWN_SHARED_DIRECTORIES = [
   "mcp-oauth-locks",
 ] as const;
 
-const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "models_cache.json"]);
+const ALWAYS_PRIVATE_ENTRY_NAMES = new Set(["models_cache.json"]);
 const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp"]);
 const REPLACEABLE_SHARED_RUNTIME_DIRECTORIES = new Set(["mcp-oauth-locks"]);
+
+export type CodexShadowHomeEntryDisposition =
+  | "credential-private"
+  | "private"
+  | "shadow-local"
+  | "shared";
+
+export function classifyCodexShadowHomeEntry(entryName: string): CodexShadowHomeEntryDisposition {
+  if (/^auth(?:$|[._-])/i.test(entryName)) return "credential-private";
+  if (ALWAYS_PRIVATE_ENTRY_NAMES.has(entryName)) return "private";
+  if (SHADOW_LOCAL_ENTRY_NAMES.has(entryName)) return "shadow-local";
+  return "shared";
+}
 
 function resolveHomePath(path: Path.Path, value: string | undefined): string {
   const expanded =
@@ -292,30 +305,29 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
   }
 });
 
-const ensureShadowAuthIsPrivate = Effect.fn("CodexHomeLayout.ensureShadowAuthIsPrivate")(
-  function* (input: {
-    readonly fileSystem: FileSystem.FileSystem;
-    readonly sharedHomePath: string;
-    readonly effectiveHomePath: string;
-  }): Effect.fn.Return<void, CodexShadowHomeError, Path.Path> {
-    const path = yield* Path.Path;
-    const entryName = "auth.json";
-    const authPath = path.join(input.effectiveHomePath, entryName);
-    const state = yield* readLinkState({
-      ...input,
-      entryName,
-      linkPath: authPath,
+const ensureShadowCredentialIsPrivate = Effect.fn(
+  "CodexHomeLayout.ensureShadowCredentialIsPrivate",
+)(function* (input: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly sharedHomePath: string;
+  readonly effectiveHomePath: string;
+  readonly entryName: string;
+}): Effect.fn.Return<void, CodexShadowHomeError, Path.Path> {
+  const path = yield* Path.Path;
+  const credentialPath = path.join(input.effectiveHomePath, input.entryName);
+  const state = yield* readLinkState({
+    ...input,
+    linkPath: credentialPath,
+  });
+  if (state._tag === "Symlink") {
+    return yield* new CodexShadowHomePrivateEntrySymlinkError({
+      sharedHomePath: input.sharedHomePath,
+      effectiveHomePath: input.effectiveHomePath,
+      entryName: input.entryName,
+      path: credentialPath,
     });
-    if (state._tag === "Symlink") {
-      return yield* new CodexShadowHomePrivateEntrySymlinkError({
-        sharedHomePath: input.sharedHomePath,
-        effectiveHomePath: input.effectiveHomePath,
-        entryName,
-        path: authPath,
-      });
-    }
-  },
-);
+  }
+});
 
 export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome")(function* (
   layout: CodexHomeLayout,
@@ -347,6 +359,20 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
       }),
     );
 
+  const readDirectory = (directoryPath: string) =>
+    fileSystem.readDirectory(directoryPath).pipe(
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          new CodexShadowHomeFileSystemError({
+            sharedHomePath: layout.sharedHomePath,
+            effectiveHomePath,
+            operation: "readDirectory",
+            path: directoryPath,
+            cause,
+          }),
+      }),
+    );
+
   yield* Effect.all(
     [
       makeDirectory(layout.sharedHomePath),
@@ -358,60 +384,61 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
     { concurrency: "unbounded" },
   );
 
-  const sharedEntryNames = yield* fileSystem.readDirectory(layout.sharedHomePath).pipe(
-    Effect.catchTags({
-      PlatformError: (cause) =>
-        new CodexShadowHomeFileSystemError({
-          sharedHomePath: layout.sharedHomePath,
-          effectiveHomePath,
-          operation: "readDirectory",
-          path: layout.sharedHomePath,
-          cause,
-        }),
-    }),
-  );
+  const sharedEntryNames = yield* readDirectory(layout.sharedHomePath);
   const entries = new Set<string>(KNOWN_SHARED_DIRECTORIES);
+  const credentialEntryNames = new Set<string>(["auth.json"]);
   for (const entryName of sharedEntryNames) {
-    if (!PRIVATE_ENTRY_NAMES.has(entryName) && !SHADOW_LOCAL_ENTRY_NAMES.has(entryName)) {
+    const disposition = classifyCodexShadowHomeEntry(entryName);
+    if (disposition === "credential-private") {
+      credentialEntryNames.add(entryName);
+    }
+    if (disposition === "shared") {
       entries.add(entryName);
     }
   }
 
+  const shadowEntryNames = yield* readDirectory(effectiveHomePath);
+  for (const entryName of shadowEntryNames) {
+    if (classifyCodexShadowHomeEntry(entryName) === "credential-private") {
+      credentialEntryNames.add(entryName);
+    }
+  }
+
   yield* Effect.forEach(
-    PRIVATE_ENTRY_NAMES,
+    ALWAYS_PRIVATE_ENTRY_NAMES,
     (entryName) =>
-      entryName === "auth.json"
-        ? Effect.void
-        : removePrivateSymlink({
-            fileSystem,
-            sharedHomePath: layout.sharedHomePath,
-            effectiveHomePath,
-            entryName,
-          }),
+      removePrivateSymlink({
+        fileSystem,
+        sharedHomePath: layout.sharedHomePath,
+        effectiveHomePath,
+        entryName,
+      }),
     { discard: true },
   );
 
   yield* Effect.forEach(
     entries,
-    (entryName) => {
-      if (PRIVATE_ENTRY_NAMES.has(entryName)) {
-        return Effect.void;
-      }
-      return ensureSymlink({
+    (entryName) =>
+      ensureSymlink({
         fileSystem,
         sharedHomePath: layout.sharedHomePath,
         effectiveHomePath,
         entryName,
-      });
-    },
+      }),
     { discard: true },
   );
 
-  yield* ensureShadowAuthIsPrivate({
-    fileSystem,
-    sharedHomePath: layout.sharedHomePath,
-    effectiveHomePath,
-  });
+  yield* Effect.forEach(
+    credentialEntryNames,
+    (entryName) =>
+      ensureShadowCredentialIsPrivate({
+        fileSystem,
+        sharedHomePath: layout.sharedHomePath,
+        effectiveHomePath,
+        entryName,
+      }),
+    { discard: true },
+  );
 });
 
 export function codexContinuationIdentity(layout: CodexHomeLayout) {
