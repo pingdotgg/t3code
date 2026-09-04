@@ -2432,6 +2432,15 @@ export const make = Effect.gen(function* () {
     bumpRefEpoch({ ...input, repository });
     listingsEpoch = ++epochCounter;
     if (input.action === "merge") {
+      // A successful merge action can merely enqueue the PR or enable auto-merge.
+      const confirmed = yield* summaryUncached({ ...input, repository }).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to confirm pull request merge", { error }).pipe(
+            Effect.as(null),
+          ),
+        ),
+      );
+      if (confirmed?.state !== "merged") return;
       yield* PubSub.publish(mergedPullRequests, {
         projectId: input.projectId,
         repository,
