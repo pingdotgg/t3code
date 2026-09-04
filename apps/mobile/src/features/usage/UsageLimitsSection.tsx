@@ -296,11 +296,12 @@ export function useRefreshLimits() {
   const [now, setNow] = useState(() => Date.now());
   const [refreshing, setRefreshing] = useState(false);
   const [failedLabels, setFailedLabels] = useState<readonly string[]>([]);
+  // Always toggles `refreshing`, even with nothing to probe: Android's
+  // RefreshControl keeps its spinner up until it sees true then false.
   const refresh = async () => {
     const connected = [...presentations].filter(
       ([, presentation]) => presentation.connection.phase === "connected",
     );
-    if (connected.length === 0) return;
     setRefreshing(true);
     try {
       const results = await Promise.all(
