@@ -746,6 +746,73 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("does not charge a late prior-turn update to the next Codex turn", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.completed"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit(codexTurnEvent("turn/started", "turn-first"));
+      yield* runtime.emit(
+        codexTokenUsageEvent({
+          id: "evt-late-1",
+          turnId: "turn-first",
+          inputTokens: 100,
+          cachedInputTokens: 40,
+          cacheCreationTokens: 10,
+          outputTokens: 20,
+          reasoningTokens: 8,
+        }),
+      );
+      yield* runtime.emit(codexTurnEvent("turn/completed", "turn-first"));
+      yield* runtime.emit(codexTurnEvent("turn/started", "turn-second"));
+      // A late update for the finished turn lands after the next turn starts.
+      yield* runtime.emit(
+        codexTokenUsageEvent({
+          id: "evt-late-2",
+          turnId: "turn-first",
+          inputTokens: 150,
+          cachedInputTokens: 60,
+          cacheCreationTokens: 15,
+          outputTokens: 30,
+          reasoningTokens: 12,
+        }),
+      );
+      yield* runtime.emit(
+        codexTokenUsageEvent({
+          id: "evt-late-3",
+          turnId: "turn-second",
+          inputTokens: 170,
+          cachedInputTokens: 65,
+          cacheCreationTokens: 16,
+          outputTokens: 35,
+          reasoningTokens: 14,
+        }),
+      );
+      yield* runtime.emit(codexTurnEvent("turn/completed", "turn-second"));
+
+      const completed = Array.from(yield* Fiber.join(completedFiber));
+      const second = completed[1];
+      NodeAssert.equal(second?.type, "turn.completed");
+      if (second?.type === "turn.completed") {
+        NodeAssert.deepStrictEqual(second.payload.tokenUsage, {
+          usageStatus: "complete",
+          usageScope: "main_agent",
+          inputTokens: 20,
+          cachedInputTokens: 5,
+          cacheCreationTokens: 1,
+          outputTokens: 5,
+          reasoningTokens: 2,
+          hasSubagents: false,
+        });
+      }
+    }),
+  );
+
   it.effect("clamps Codex cache and reasoning subsets to their totals", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

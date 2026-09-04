@@ -537,9 +537,9 @@ function accumulateCodexTurnTokenUsage(
 ): void {
   const current = codexTokenUsageBreakdown(usage.total);
   if (state.activeTurnId !== turnId) {
-    // Updates outside a live turn only move the baseline. Late updates for a
-    // finished turn while another turn is live are dropped.
-    if (state.activeTurnId === undefined) state.baseline = current;
+    // The total is thread-wide, so every update moves the baseline. A late
+    // update for a finished turn is not counted toward the live turn.
+    state.baseline = current;
     return;
   }
 
