@@ -1246,6 +1246,7 @@ export function buildThreadFeed(
   for (const row of visibleTurnItems) {
     const item = row.item;
     if (turnItemIsWorkspacePreparation(item)) continue;
+    if (item.type === "todo_list") continue;
     // Match the web timeline: only the terminal interrupt result is useful to
     // users; the preceding request is transient bookkeeping.
     if (item.type === "run_interrupt_request") {

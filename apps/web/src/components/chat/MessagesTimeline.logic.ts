@@ -27,7 +27,6 @@ import {
   workEntryIndicatesToolNeutralStatus,
   workLogEntryIsToolLike,
   type TimelineEntry,
-  type TurnPlanEntry,
   type WorkLogEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
@@ -410,12 +409,6 @@ export type MessagesTimelineRow =
       id: string;
       createdAt: string;
       proposedPlan: ProposedPlan;
-    }
-  | {
-      kind: "turn-plan";
-      id: string;
-      createdAt: string;
-      turnPlan: TurnPlanEntry;
     };
 
 export interface StableMessagesTimelineRowsState {
@@ -589,9 +582,6 @@ function timelineEntryFoldRunId(entry: TimelineEntry): RunId | null {
   }
   if (entry.kind === "work") {
     return entry.entry.runId ?? null;
-  }
-  if (entry.kind === "turn-plan") {
-    return entry.turnPlan.runId;
   }
   if (entry.kind === "event" && timelineEntryIsPersistentResourceCard(entry)) {
     return entry.projectedItem.item.runId;
@@ -1252,16 +1242,6 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
-    if (timelineEntry.kind === "turn-plan") {
-      nextRows.push({
-        kind: "turn-plan",
-        id: timelineEntry.id,
-        createdAt: timelineEntry.createdAt,
-        turnPlan: timelineEntry.turnPlan,
-      });
-      continue;
-    }
-
     if (timelineEntry.kind === "event") {
       nextRows.push({
         kind: "event",
@@ -1487,22 +1467,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
-
-    case "turn-plan": {
-      const bp = b as typeof a;
-      // Plans rewrite in place: compare step snapshots so an unchanged plan
-      // keeps its row reference (virtualization stability).
-      const aSteps = a.turnPlan.plan.steps;
-      const bSteps = bp.turnPlan.plan.steps;
-      return (
-        a.createdAt === bp.createdAt &&
-        aSteps.length === bSteps.length &&
-        aSteps.every(
-          (step, index) =>
-            step.step === bSteps[index]!.step && step.status === bSteps[index]!.status,
-        )
-      );
-    }
 
     case "event":
       return a.projectedItem === (b as typeof a).projectedItem;

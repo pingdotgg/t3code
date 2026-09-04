@@ -107,14 +107,6 @@ export interface ActivePlanState {
   }>;
 }
 
-export interface TurnPlanEntry {
-  /** Stable per-plan row id (plans rewrite in place; the row must not churn). */
-  readonly id: string;
-  readonly createdAt: string;
-  readonly runId: RunId | null;
-  readonly plan: ActivePlanState;
-}
-
 export interface LatestProposedPlanState {
   readonly id: PlanId;
   readonly createdAt: string;
@@ -154,12 +146,6 @@ export type TimelineEntry = (
       readonly kind: "event";
       readonly createdAt: string;
       readonly projectedItem: OrchestrationV2ProjectedTurnItem;
-    }
-  | {
-      readonly id: string;
-      readonly kind: "turn-plan";
-      readonly createdAt: string;
-      readonly turnPlan: TurnPlanEntry;
     }
 ) & {
   /** V2 identity resolved from the item's execution node, when locally available. */
@@ -697,6 +683,8 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
   for (const row of input.visibleTurnItems) {
     const { item } = row;
     if (turnItemIsWorkspacePreparation(item)) continue;
+    // Task progress belongs in the composer, not between conversation entries.
+    if (item.type === "todo_list") continue;
     const createdAt = projectedItemCreatedAt(row);
     const attempt = resolveAttempt(item);
     const attemptMetadata = attempt === undefined ? {} : { attempt };
@@ -749,38 +737,6 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         kind: "proposed-plan",
         createdAt,
         proposedPlan,
-        ...attemptMetadata,
-      });
-      continue;
-    }
-
-    if (item.type === "todo_list") {
-      // One inline plan chip per todo list; the item rewrites in place as
-      // steps progress, so the chip stays anchored where planning began. A
-      // snapshot with no steps means the plan was withdrawn — no chip.
-      const artifact = planById.get(item.planId);
-      const steps = artifact?.kind === "todo_list" ? artifact.steps : item.steps;
-      const explanation =
-        (artifact?.kind === "todo_list" ? artifact.explanation : undefined) ?? item.explanation;
-      if (steps.length === 0) continue;
-      entries.push({
-        id: item.id,
-        kind: "turn-plan",
-        createdAt,
-        turnPlan: {
-          id: `turn-plan:${item.planId}`,
-          createdAt,
-          runId: item.runId,
-          plan: {
-            createdAt,
-            runId: item.runId,
-            explanation: explanation ?? null,
-            steps: steps.map(({ text, status }) => ({
-              step: text,
-              status: status === "running" ? "inProgress" : status,
-            })),
-          },
-        },
         ...attemptMetadata,
       });
       continue;

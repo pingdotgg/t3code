@@ -1,6 +1,7 @@
 import {
   MessageId,
   NodeId,
+  PlanId,
   ProviderInstanceId,
   ProviderDriverKind,
   ProviderThreadId,
@@ -295,6 +296,25 @@ describe("buildThreadFeed", () => {
         : null,
     ).toBe("Provider retry failed");
   });
+
+  it.each(["pending", "running", "completed"] as const)(
+    "omits %s task progress without hiding adjacent conversation items",
+    (stepStatus) => {
+      const todoItem = {
+        ...base("item-tasks", "2026-06-20T00:00:02.500Z", 2),
+        type: "todo_list" as const,
+        planId: PlanId.make("plan-tasks"),
+        steps: [{ id: "step-1", text: "Verify the change", status: stepStatus }],
+      } satisfies OrchestrationV2TurnItem;
+      const user = projected(userMessage(), 0);
+      const tool = projected(command(), 1);
+      const assistant = projected(assistantMessage(), 3);
+
+      expect(buildThreadFeed([user, tool, projected(todoItem, 2), assistant])).toEqual(
+        buildThreadFeed([user, tool, assistant]),
+      );
+    },
+  );
 
   it("hides synthetic workspace preparation activity", () => {
     const workspacePreparation = projected(
