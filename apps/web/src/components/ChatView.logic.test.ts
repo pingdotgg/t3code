@@ -883,6 +883,21 @@ describe("resolveComposerProviderSelection", () => {
     expect(selection.unavailableProviderInstanceId).toBeUndefined();
   });
 
+  it("does not replace a preserved unavailable environment default", () => {
+    const unavailable = entry("codex", "codex_work", { enabled: false });
+    const available = entry("claudeAgent", "claude_work");
+    const selection = resolveComposerProviderSelection({
+      entries: [unavailable, available],
+      candidateInstanceIds: [unavailable.instanceId],
+      lockedProvider: null,
+      lockedInstanceId: unavailable.instanceId,
+      preserveRequestedInstance: true,
+    });
+
+    expect(selection.selectedProviderEntry).toBeUndefined();
+    expect(selection.unavailableProviderInstanceId).toBe(unavailable.instanceId);
+  });
+
   it("keeps the session's continuation group when another instance was selected", () => {
     const sessionEntry = entry("antigravity", "google_work", {
       enabled: false,

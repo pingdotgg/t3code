@@ -428,6 +428,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedEnvironmentServerConfig,
     selectedProject?.defaultModelSelection ?? null,
   );
+  const serverDefaultModelSelection =
+    selectedEnvironmentServerConfig?.settings.defaultThreadModelSelection ?? null;
   const storedStickyModelSelection = useStickyComposerModelSelection();
   const stickyModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
@@ -437,12 +439,19 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     () =>
       buildModelOptions(
         selectedEnvironmentServerConfig,
-        draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
+        draftModelSelection ??
+          projectDefaultModelSelection ??
+          serverDefaultModelSelection ??
+          stickyModelSelection,
+        draftModelSelection === null &&
+          projectDefaultModelSelection === null &&
+          serverDefaultModelSelection !== null,
       ),
     [
       selectedEnvironmentServerConfig,
       draftModelSelection,
       projectDefaultModelSelection,
+      serverDefaultModelSelection,
       stickyModelSelection,
     ],
   );
@@ -452,6 +461,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const selectedModel = resolveNewTaskModelSelection({
     draftSelection: draftModelSelection,
     projectDefaultSelection: projectDefaultModelSelection,
+    serverDefaultSelection: serverDefaultModelSelection,
     stickySelection: stickyModelSelection,
     modelOptions,
   });

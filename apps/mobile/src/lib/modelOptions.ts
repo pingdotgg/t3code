@@ -85,6 +85,24 @@ export function isModelSelectionUnavailable(
   );
 }
 
+function isConfiguredSelectionUnavailable(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection,
+): boolean {
+  if (!config) return false;
+  const provider = config.providers.find(
+    (candidate) => candidate.instanceId === selection.instanceId,
+  );
+  return (
+    !provider ||
+    !provider.enabled ||
+    !provider.installed ||
+    provider.auth.status === "unauthenticated" ||
+    provider.availability === "unavailable" ||
+    (provider.models.length > 0 && !provider.models.some((model) => model.slug === selection.model))
+  );
+}
+
 /**
  * Keep Antigravity selections when setup or catalog changes make them
  * unavailable. Other providers fall through to the server default when they
@@ -134,12 +152,14 @@ export function resolveDefaultableModelSelection(
 export function resolveNewTaskModelSelection(input: {
   readonly draftSelection: ModelSelection | null;
   readonly projectDefaultSelection: ModelSelection | null;
+  readonly serverDefaultSelection: ModelSelection | null;
   readonly stickySelection: ModelSelection | null;
   readonly modelOptions: ReadonlyArray<ModelOption>;
 }): ModelSelection | null {
   return (
     input.draftSelection ??
     input.projectDefaultSelection ??
+    input.serverDefaultSelection ??
     input.stickySelection ??
     input.modelOptions.find((option) => option.isDefault && !option.isUnavailable)?.selection ??
     input.modelOptions.find((option) => !option.isUnavailable)?.selection ??
@@ -150,6 +170,7 @@ export function resolveNewTaskModelSelection(input: {
 export function buildModelOptions(
   config: T3ServerConfig | null | undefined,
   fallbackModelSelection: ModelSelection | null,
+  preserveUnavailableFallback = false,
 ): ReadonlyArray<ModelOption> {
   const options = new Map<string, ModelOption>();
 
@@ -222,7 +243,9 @@ export function buildModelOptions(
         providerDriver,
         isDefault: false,
         isLegacy: model?.isLegacy === true,
-        ...(isModelSelectionUnavailable(config, fallbackModelSelection)
+        ...(isModelSelectionUnavailable(config, fallbackModelSelection) ||
+        (preserveUnavailableFallback &&
+          isConfiguredSelectionUnavailable(config, fallbackModelSelection))
           ? { isUnavailable: true }
           : {}),
         capabilities: model?.capabilities ?? null,

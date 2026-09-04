@@ -23,7 +23,13 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { resolveDefaultThreadEnvMode } from "@t3tools/shared/threadEnvMode";
-import { readProjects, readThreadShell, useProjects, useThread } from "../state/entities";
+import {
+  readProjects,
+  readThreadShell,
+  useProjects,
+  useServerConfigs,
+  useThread,
+} from "../state/entities";
 import {
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
@@ -61,6 +67,7 @@ export function useNewThreadHandler() {
   // the decoded defaults ("local" mode, current branch), since nothing can
   // set those values on a remote server.
   const primaryServerSettings = useAtomValue(primaryServerSettingsAtom);
+  const serverConfigs = useServerConfigs();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const router = useRouter();
   const getCurrentRouteTarget = useCallback(() => {
@@ -139,6 +146,9 @@ export function useNewThreadHandler() {
       const resolveModelSelectionOverride = (destinationDraftId: DraftId) =>
         resolveNewThreadModelSelectionOverride({
           projectDefaultSelection: project?.defaultModelSelection ?? null,
+          serverDefaultSelection:
+            serverConfigs.get(projectRef.environmentId)?.settings.defaultThreadModelSelection ??
+            null,
           carrySelection: carryModelSelection,
           carrySourceDraftId:
             currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
@@ -429,7 +439,7 @@ export function useNewThreadHandler() {
         return { draftId, threadId };
       })();
     },
-    [getCurrentRouteTarget, primaryServerSettings, projectGroupingSettings, router],
+    [getCurrentRouteTarget, primaryServerSettings, projectGroupingSettings, router, serverConfigs],
   );
 }
 

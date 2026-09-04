@@ -54,6 +54,50 @@ describe("mobile model options", () => {
     ]);
   });
 
+  it("keeps a configured environment default visible when its provider is disabled", () => {
+    const selection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.6-sol",
+    };
+    const config = {
+      providers: [
+        {
+          instanceId: "codex",
+          driver: "codex",
+          displayName: "Codex",
+          enabled: false,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: selection.model,
+              name: "GPT-5.6 Sol",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+    const options = buildModelOptions(config, selection, true);
+
+    expect(options).toMatchObject([
+      {
+        selection,
+        isUnavailable: true,
+      },
+    ]);
+    expect(
+      resolveNewTaskModelSelection({
+        draftSelection: null,
+        projectDefaultSelection: null,
+        serverDefaultSelection: selection,
+        stickySelection: null,
+        modelOptions: options,
+      }),
+    ).toBe(selection);
+  });
+
   it("distinguishes same-name OpenCode models without changing their routing", () => {
     const sources = [
       { id: "anthropic", label: "Anthropic" },
@@ -292,6 +336,7 @@ describe("mobile model options", () => {
         resolveNewTaskModelSelection({
           draftSelection: null,
           projectDefaultSelection: resolveDefaultableModelSelection(changedConfig, selection),
+          serverDefaultSelection: null,
           stickySelection: null,
           modelOptions: options,
         }),
@@ -384,25 +429,30 @@ describe("mobile model options", () => {
     const resolve = (
       draftSelection: ModelSelection | null,
       projectDefaultSelection: ModelSelection | null,
+      serverDefaultSelection: ModelSelection | null,
       stickySelection: ModelSelection | null,
     ) =>
       resolveNewTaskModelSelection({
         draftSelection,
         projectDefaultSelection,
+        serverDefaultSelection,
         stickySelection,
         modelOptions: [providerDefault],
       });
 
-    expect(resolve(draft, project, sticky)).toBe(draft);
-    expect(resolve(null, project, sticky)).toBe(project);
-    expect(resolve(null, null, sticky)).toBe(sticky);
-    expect(resolve(null, null, null)).toBe(providerDefault.selection);
+    const server = { instanceId: ProviderInstanceId.make("codex"), model: "server" };
+    expect(resolve(draft, project, server, sticky)).toBe(draft);
+    expect(resolve(null, project, server, sticky)).toBe(project);
+    expect(resolve(null, null, server, sticky)).toBe(server);
+    expect(resolve(null, null, null, sticky)).toBe(sticky);
+    expect(resolve(null, null, null, null)).toBe(providerDefault.selection);
 
     const unavailable = { ...providerDefault, isUnavailable: true };
     expect(
       resolveNewTaskModelSelection({
         draftSelection: null,
         projectDefaultSelection: null,
+        serverDefaultSelection: null,
         stickySelection: null,
         modelOptions: [unavailable],
       }),

@@ -58,6 +58,7 @@ describe("chatThreadActions", () => {
     expect(
       resolveNewThreadModelSelectionOverride({
         projectDefaultSelection: null,
+        serverDefaultSelection: null,
         carrySelection: CARRIED_SELECTION,
         carrySourceDraftId: "draft-a",
         destinationDraftId: "draft-a",
@@ -69,6 +70,7 @@ describe("chatThreadActions", () => {
     expect(
       resolveNewThreadModelSelectionOverride({
         projectDefaultSelection: null,
+        serverDefaultSelection: null,
         carrySelection: CARRIED_SELECTION,
         carrySourceDraftId: "draft-a",
         destinationDraftId: "draft-b",
@@ -80,11 +82,38 @@ describe("chatThreadActions", () => {
     expect(
       resolveNewThreadModelSelectionOverride({
         projectDefaultSelection: PROJECT_DEFAULT_SELECTION,
+        serverDefaultSelection: null,
         carrySelection: CARRIED_SELECTION,
         carrySourceDraftId: "draft-a",
         destinationDraftId: "draft-b",
       }),
     ).toEqual(PROJECT_DEFAULT_SELECTION);
+  });
+
+  it("keeps the project default above the server default and carried selection", () => {
+    expect(
+      resolveNewThreadModelSelectionOverride({
+        projectDefaultSelection: PROJECT_DEFAULT_SELECTION,
+        serverDefaultSelection: { ...CARRIED_SELECTION, model: "server-default" },
+        carrySelection: CARRIED_SELECTION,
+        carrySourceDraftId: "draft-a",
+        destinationDraftId: "draft-b",
+      }),
+    ).toEqual(PROJECT_DEFAULT_SELECTION);
+  });
+
+  it("uses the server default before a carried selection", () => {
+    const serverDefaultSelection = { ...CARRIED_SELECTION, model: "server-default" };
+
+    expect(
+      resolveNewThreadModelSelectionOverride({
+        projectDefaultSelection: null,
+        serverDefaultSelection,
+        carrySelection: CARRIED_SELECTION,
+        carrySourceDraftId: "draft-a",
+        destinationDraftId: "draft-b",
+      }),
+    ).toEqual(serverDefaultSelection);
   });
 
   it("only applies the start-from-origin default to new worktree drafts", () => {

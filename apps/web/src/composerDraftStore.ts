@@ -1142,7 +1142,10 @@ function legacyToModelSelectionByProvider(
 
 export function deriveEffectiveComposerModelState(input: {
   draft:
-    | Pick<ComposerThreadDraftState, "modelSelectionByProvider" | "activeProvider">
+    | Pick<
+        ComposerThreadDraftState,
+        "modelSelectionByProvider" | "activeProvider" | "modelSelectionExplicit"
+      >
     | null
     | undefined;
   providers: ReadonlyArray<ServerProvider>;
@@ -1158,6 +1161,7 @@ export function deriveEffectiveComposerModelState(input: {
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
   settings: UnifiedSettings;
+  preserveThreadModelSelection?: boolean;
 }): EffectiveComposerModelState {
   const baseModelCandidate =
     input.threadModelSelection?.model ?? input.projectModelSelection?.model ?? null;
@@ -1165,6 +1169,8 @@ export function deriveEffectiveComposerModelState(input: {
     input.selectedInstanceId !== null &&
     input.selectedInstanceId !== undefined &&
     input.threadModelSelection?.instanceId === input.selectedInstanceId;
+  const preserveConfiguredThreadModel =
+    input.preserveThreadModelSelection === true && input.draft?.modelSelectionExplicit !== true;
   const baseModel =
     (input.selectedInstanceId
       ? resolveAppModelSelectionForInstance(
@@ -1172,7 +1178,10 @@ export function deriveEffectiveComposerModelState(input: {
           input.settings,
           input.providers,
           baseModelCandidate,
-          { preserveUnavailableSelection: preserveThreadModel },
+          {
+            preserveUnavailableSelection: preserveThreadModel,
+            preserveAnyUnavailableSelection: preserveConfiguredThreadModel,
+          },
         )
       : null) ??
     // Antigravity has no static model or cross-account catalog fallback.
@@ -1198,7 +1207,9 @@ export function deriveEffectiveComposerModelState(input: {
     input.selectedInstanceId !== defaultInstanceIdForDriver(input.selectedProvider)
       ? undefined
       : input.draft?.modelSelectionByProvider?.[ProviderInstanceId.make(input.selectedProvider)];
-  const activeSelection = instanceSelection ?? legacySelection;
+  const activeSelection = preserveConfiguredThreadModel
+    ? undefined
+    : (instanceSelection ?? legacySelection);
   const activeSelectionInstanceId = instanceSelection
     ? (input.selectedInstanceId ?? ProviderInstanceId.make(input.selectedProvider))
     : ProviderInstanceId.make(input.selectedProvider);
@@ -4060,6 +4071,7 @@ export function useComposerDraftModelState(
         ? {
             activeProvider: draft.activeProvider,
             modelSelectionByProvider: draft.modelSelectionByProvider,
+            modelSelectionExplicit: draft.modelSelectionExplicit,
           }
         : EMPTY_COMPOSER_DRAFT_MODEL_STATE;
     }),
@@ -4080,6 +4092,7 @@ export function useEffectiveComposerModelState(input: {
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
   settings: UnifiedSettings;
+  preserveThreadModelSelection?: boolean;
 }): EffectiveComposerModelState {
   const draft = useComposerDraftModelState(input.threadRef ?? input.draftId ?? DraftId.make(""));
 
@@ -4093,12 +4106,16 @@ export function useEffectiveComposerModelState(input: {
         threadModelSelection: input.threadModelSelection,
         projectModelSelection: input.projectModelSelection,
         settings: input.settings,
+        ...(input.preserveThreadModelSelection !== undefined
+          ? { preserveThreadModelSelection: input.preserveThreadModelSelection }
+          : {}),
       }),
     [
       draft,
       input.providers,
       input.settings,
       input.projectModelSelection,
+      input.preserveThreadModelSelection,
       input.selectedInstanceId,
       input.selectedProvider,
       input.threadModelSelection,

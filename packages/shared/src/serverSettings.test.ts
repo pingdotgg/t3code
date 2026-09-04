@@ -167,6 +167,23 @@ describe("serverSettings helpers", () => {
     });
   });
 
+  it("replaces and clears the environment default thread model atomically", () => {
+    const selection = createModelSelection(
+      ProviderInstanceId.make("claude-work"),
+      "claude-sonnet-4-5",
+      [{ id: "effort", value: "high" }],
+    );
+    const configured = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      defaultThreadModelSelection: selection,
+    });
+
+    expect(configured.defaultThreadModelSelection).toEqual(selection);
+    expect(
+      applyServerSettingsPatch(configured, { defaultThreadModelSelection: null })
+        .defaultThreadModelSelection,
+    ).toBeNull();
+  });
+
   it("replaces source control writer selection without retaining stale options", () => {
     const current = {
       ...DEFAULT_SERVER_SETTINGS,

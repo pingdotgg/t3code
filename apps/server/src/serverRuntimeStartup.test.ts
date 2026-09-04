@@ -15,6 +15,7 @@ import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngi
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import * as ServerSettings from "./serverSettings.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 
 it("uses the canonical Codex default for the auto-bootstrapped welcome thread", () => {
@@ -182,6 +183,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
   return Effect.gen(function* () {
     const dispatchCalls = yield* Ref.make<ReadonlyArray<string>>([]);
     const targets = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
+      Effect.provide(ServerSettings.layerTest()),
       Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/tmp/startup-project",
         autoBootstrapProjectFromCwd: true,
@@ -241,6 +243,11 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
 
 it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when missing", () =>
   Effect.gen(function* () {
+    const configuredDefaultModelSelection = {
+      instanceId: ProviderInstanceId.make("claude-agent"),
+      model: "claude-sonnet-4-5",
+      options: [{ id: "effort", value: "high" }],
+    } as const;
     const dispatchCalls = yield* Ref.make<
       ReadonlyArray<{
         readonly type: string;
@@ -249,6 +256,11 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
       }>
     >([]);
     const targets = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
+      Effect.provide(
+        ServerSettings.layerTest({
+          defaultThreadModelSelection: configuredDefaultModelSelection,
+        }),
+      ),
       Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/tmp/startup-project",
         autoBootstrapProjectFromCwd: true,
@@ -294,10 +306,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
       ["project.create", "thread.create"],
     );
     assert.equal("defaultModelSelection" in commands[0]!, false);
-    assert.deepStrictEqual(
-      commands[1]?.modelSelection,
-      ServerRuntimeStartup.getAutoBootstrapThreadModelSelection(),
-    );
+    assert.deepStrictEqual(commands[1]?.modelSelection, configuredDefaultModelSelection);
   }),
 );
 
@@ -313,6 +322,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
     const dispatchCalls = yield* Ref.make<ReadonlyArray<string>>([]);
 
     const error = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
+      Effect.provide(ServerSettings.layerTest()),
       Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/tmp/startup-project",
         autoBootstrapProjectFromCwd: true,

@@ -8,6 +8,7 @@ import {
 import {
   defaultInstanceIdForDriver,
   type EnvironmentId,
+  type ModelSelection,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
   type ProviderInstanceConfig,
@@ -16,6 +17,7 @@ import {
   resolveProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { createModelSelection } from "@t3tools/shared/model";
 import {
   getBackgroundActivityPresetSettings,
   resolveServerBackgroundActivitySettings,
@@ -33,7 +35,16 @@ import { usePrimarySessionState } from "../../environments/primary";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { cn } from "../../lib/utils";
-import { resolveAppModelSelectionState } from "../../modelSelection";
+import {
+  getCustomModelOptionsByInstance,
+  resolveAppModelSelectionState,
+} from "../../modelSelection";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  resolveDefaultProviderModelSelection,
+  sortProviderInstanceEntries,
+} from "../../providerInstances";
 import {
   useEnvironments,
   usePrimaryEnvironmentId,
@@ -74,6 +85,8 @@ import {
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { TraitsPicker } from "../chat/TraitsPicker";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 import { ExpandableText } from "./ExpandableText";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
@@ -91,6 +104,7 @@ import {
 } from "./SettingsPanels.logic";
 import {
   PolicyTooltip,
+  SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
@@ -608,6 +622,36 @@ export function EnvironmentProviderSettings({
           serverProviders[0]!.checkedAt,
         )
       : null;
+  const storedDefaultModelSelection = settings.defaultThreadModelSelection;
+  const defaultModelSelection =
+    storedDefaultModelSelection ??
+    resolveDefaultProviderModelSelection(serverProviders, storedDefaultModelSelection);
+  const defaultModelInstanceEntries = useMemo(
+    () =>
+      sortProviderInstanceEntries(
+        applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
+      ),
+    [serverProviders, settings],
+  );
+  const defaultModelOptionsByInstance = useMemo(
+    () =>
+      getCustomModelOptionsByInstance(
+        settings,
+        serverProviders,
+        defaultModelSelection?.instanceId,
+        defaultModelSelection?.model,
+        { preserveAnyUnavailableSelection: storedDefaultModelSelection !== null },
+      ),
+    [defaultModelSelection, serverProviders, settings, storedDefaultModelSelection],
+  );
+  const defaultModelEntry = defaultModelInstanceEntries.find(
+    (entry) => entry.instanceId === defaultModelSelection?.instanceId,
+  );
+  const setDefaultModelSelection = useCallback(
+    (selection: ModelSelection | null) =>
+      updateSettings({ defaultThreadModelSelection: selection }),
+    [updateSettings],
+  );
 
   const refreshProviders = useCallback(() => {
     if (refreshingRef.current) return;
@@ -977,6 +1021,71 @@ export function EnvironmentProviderSettings({
 
   return (
     <>
+      <SettingsSection title="New thread defaults">
+        {deviceTabs}
+        <SettingsRow
+          title="Model"
+          description="Default model and effort for new threads on this environment. Project defaults take precedence."
+          resetAction={
+            storedDefaultModelSelection !== null ? (
+              <SettingResetButton
+                label="environment default model"
+                disabled={readOnly}
+                onClick={() => setDefaultModelSelection(null)}
+              />
+            ) : null
+          }
+          control={
+            defaultModelSelection && defaultModelEntry ? (
+              <div inert={readOnly} className={readOnly ? "opacity-50" : undefined}>
+                <div className="flex flex-wrap items-center justify-end gap-1.5">
+                  <ProviderModelPicker
+                    activeInstanceId={defaultModelSelection.instanceId}
+                    model={defaultModelSelection.model}
+                    lockedProvider={null}
+                    instanceEntries={defaultModelInstanceEntries}
+                    modelOptionsByInstance={defaultModelOptionsByInstance}
+                    triggerVariant="outline"
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    onInstanceModelChange={(instanceId, model) =>
+                      setDefaultModelSelection(createModelSelection(instanceId, model))
+                    }
+                  />
+                  <TraitsPicker
+                    provider={defaultModelEntry.driverKind}
+                    models={defaultModelEntry.models}
+                    model={defaultModelSelection.model}
+                    prompt=""
+                    onPromptChange={() => {}}
+                    modelOptions={defaultModelSelection.options ?? []}
+                    allowPromptInjectedEffort={false}
+                    planModeEnabled={settings.planModeEnabled}
+                    triggerVariant="outline"
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    onModelOptionsChange={(options) =>
+                      setDefaultModelSelection(
+                        createModelSelection(
+                          defaultModelSelection.instanceId,
+                          defaultModelSelection.model,
+                          options,
+                        ),
+                      )
+                    }
+                  />
+                </div>
+              </div>
+            ) : storedDefaultModelSelection ? (
+              <span className="text-sm text-muted-foreground">
+                {storedDefaultModelSelection.instanceId} / {storedDefaultModelSelection.model}
+                {" (Unavailable)"}
+              </span>
+            ) : (
+              <span className="text-sm text-muted-foreground">No providers available</span>
+            )
+          }
+        />
+      </SettingsSection>
+
       <SettingsSection
         {...searchableSetting("providers")}
         variant="plain"
@@ -1032,7 +1141,6 @@ export function EnvironmentProviderSettings({
           </div>
         }
       >
-        {deviceTabs}
         {readOnly ? (
           <div className={cn(providerCardClassName, "overflow-hidden")}>
             <SettingsRow

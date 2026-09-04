@@ -71,9 +71,13 @@ when starting a thread or changing an existing thread's model.
 
 ## Model defaults
 
-T3 Code remembers the last provider, model, and model options you selected and reuses that
-selection for new threads. A model configured in a project's settings overrides the remembered
-selection for that project; resetting the project setting returns it to the remembered selection.
+On web or desktop, **Settings → Providers → New thread defaults** can set the provider, model, and
+model options used for new threads on that environment. Each connected environment has its own
+default. A model configured in a project's settings takes precedence; resetting the project
+setting returns it to the environment default.
+
+When neither default is configured, T3 Code keeps the existing behavior: it remembers the last
+provider, model, and model options you selected and then falls back to the provider default.
 
 Model options shown as provider defaults remain display values until you choose them in T3 Code.
 T3 Code only sends options you selected explicitly, so an unset reasoning level or service tier can

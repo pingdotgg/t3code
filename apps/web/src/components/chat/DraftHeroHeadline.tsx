@@ -13,7 +13,7 @@ import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
 } from "~/sidebarProjectGrouping";
-import { useProjects, useThreadShells } from "~/state/entities";
+import { useProjects, useServerConfigs, useThreadShells } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
@@ -40,6 +40,7 @@ export function DraftHeroHeadline({
 }: DraftHeroHeadlineProps) {
   const projects = useProjects();
   const threads = useThreadShells();
+  const serverConfigs = useServerConfigs();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -149,8 +150,12 @@ export function DraftHeroHeadline({
             );
             if (!hasExplicitComposerModelSelection(currentDraft)) {
               applyStickyState(draftId);
-              if (project.defaultModelSelection) {
-                setModelSelection(draftId, project.defaultModelSelection, {
+              const defaultModelSelection =
+                project.defaultModelSelection ??
+                serverConfigs.get(project.environmentId)?.settings.defaultThreadModelSelection ??
+                null;
+              if (defaultModelSelection) {
+                setModelSelection(draftId, defaultModelSelection, {
                   replaceOptions: true,
                 });
               }
