@@ -17,11 +17,23 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./providerUsageLimits.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
   readonly enrichmentGeneration: number;
+}
+
+function withUsageLimits(
+  snapshot: ServerProvider,
+  usageLimits: ServerProvider["usageLimits"],
+): ServerProvider {
+  if (snapshot.usageLimits === usageLimits) {
+    return snapshot;
+  }
+  const { usageLimits: _previous, ...rest } = snapshot;
+  return usageLimits ? { ...rest, usageLimits } : rest;
 }
 
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
@@ -40,6 +52,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   }) => Effect.Effect<void>;
   readonly refreshInterval?: Duration.Input;
+  readonly refreshOnInterval?: boolean;
+  readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
 }): Effect.fn.Return<
   ServerProviderShape,
   ServerSettingsError,
@@ -67,16 +81,16 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     nextSnapshot: ServerProvider,
   ) {
     const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
-      if (state.enrichmentGeneration !== generation || Equal.equals(state.snapshot, nextSnapshot)) {
+      if (state.enrichmentGeneration !== generation) {
         return [null, state] as const;
       }
-      return [
-        nextSnapshot,
-        {
-          ...state,
-          snapshot: nextSnapshot,
-        },
-      ] as const;
+      // Enrichment derives from the snapshot it was handed; a runtime usage
+      // update that landed since must not be reverted by it.
+      const merged = withUsageLimits(nextSnapshot, state.snapshot.usageLimits);
+      if (Equal.equals(state.snapshot, merged)) {
+        return [null, state] as const;
+      }
+      return [merged, { ...state, snapshot: merged }] as const;
     });
     if (snapshotToPublish === null) {
       return;
@@ -121,19 +135,41 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return yield* Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot));
     }
 
-    const nextSnapshot = yield* input.checkProvider;
-    const nextGeneration = yield* Ref.modify(snapshotStateRef, (state) => {
-      const generation = input.enrichSnapshot
-        ? state.enrichmentGeneration + 1
-        : state.enrichmentGeneration;
-      return [
-        generation,
-        {
-          snapshot: nextSnapshot,
-          enrichmentGeneration: generation,
-        },
-      ] as const;
-    });
+    if (
+      !forceRefresh &&
+      input.checkProviderOnSettingsChange?.(previousSettings, nextSettings) === false
+    ) {
+      const state = yield* Ref.get(snapshotStateRef);
+      const nextGeneration = state.enrichmentGeneration + 1;
+      yield* Ref.set(snapshotStateRef, {
+        ...state,
+        enrichmentGeneration: nextGeneration,
+      });
+      yield* Ref.set(settingsRef, nextSettings);
+      yield* restartSnapshotEnrichment(nextSettings, state.snapshot, nextGeneration);
+      return state.snapshot;
+    }
+
+    const probedSnapshot = yield* input.checkProvider;
+    const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
+      snapshotStateRef,
+      (state) => {
+        const generation = input.enrichSnapshot
+          ? state.enrichmentGeneration + 1
+          : state.enrichmentGeneration;
+        const snapshot = withUsageLimits(
+          probedSnapshot,
+          resolveUsageLimitsAfterProbe({
+            published: state.snapshot.usageLimits,
+            probed: probedSnapshot.usageLimits,
+          }),
+        );
+        return [
+          { snapshot, generation },
+          { snapshot, enrichmentGeneration: generation },
+        ] as const;
+      },
+    );
     yield* Ref.set(settingsRef, nextSettings);
     yield* PubSub.publish(changesPubSub, nextSnapshot);
     yield* restartSnapshotEnrichment(nextSettings, nextSnapshot, nextGeneration);
@@ -141,6 +177,32 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   });
   const applySnapshot = (nextSettings: Settings, options?: { readonly forceRefresh?: boolean }) =>
     refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
+
+  /**
+   * Runtime usage updates arrive between probes. They patch only
+   * `usageLimits` on whatever snapshot is published and leave the enrichment
+   * generation alone, so an in-flight enrichment still lands.
+   */
+  const applyUsageLimits: ServerProviderShape["applyUsageLimits"] = (update) =>
+    Effect.gen(function* () {
+      const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
+        const usageLimits = applyUsageLimitsUpdate({
+          previous: state.snapshot.usageLimits,
+          update,
+          checkedAt: update.checkedAt,
+        });
+        // `applyUsageLimitsUpdate` hands back the same object when nothing
+        // moved, which is the common case for Codex's per-tick notification.
+        if (usageLimits === state.snapshot.usageLimits) {
+          return [null, state] as const;
+        }
+        const snapshot = withUsageLimits(state.snapshot, usageLimits);
+        return [snapshot, { ...state, snapshot }] as const;
+      });
+      if (snapshotToPublish !== null) {
+        yield* PubSub.publish(changesPubSub, snapshotToPublish);
+      }
+    });
 
   const refreshSnapshot = Effect.fn("refreshSnapshot")(function* () {
     const nextSettings = yield* input.getSettings;
@@ -199,7 +261,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           Queue.take(refreshIntervalChanges).pipe(Effect.as(false)),
         ).pipe(
           Effect.flatMap((intervalElapsed) =>
-            intervalElapsed && Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) > 0
+            input.refreshOnInterval !== false &&
+            intervalElapsed &&
+            Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) > 0
               ? hasProviderStatusDemand.pipe(
                   Effect.flatMap((shouldRefresh) =>
                     shouldRefresh ? refreshSnapshot().pipe(Effect.asVoid) : Effect.void,
@@ -222,6 +286,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     maintenanceCapabilities: input.maintenanceCapabilities,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
     refresh: refreshSnapshot().pipe(Effect.tapError(Effect.logError), Effect.orDie),
+    applyUsageLimits,
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },

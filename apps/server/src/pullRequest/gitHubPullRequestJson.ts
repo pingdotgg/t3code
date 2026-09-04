@@ -11,6 +11,7 @@ import type {
   PullRequestCommit,
   PullRequestLabel,
   PullRequestMergeCapabilities,
+  PullRequestMergeMethod,
   PullRequestOmittedFileStat,
   PullRequestMergeability,
   PullRequestReaction,
@@ -23,6 +24,8 @@ import type {
   PullRequestReviewerCandidate,
   PullRequestReviewerCandidateList,
   PullRequestReviewerKind,
+  PullRequestLabelCandidate,
+  PullRequestLabelCandidateList,
   PullRequestState,
   PullRequestThreadComment,
 } from "@t3tools/contracts";
@@ -359,17 +362,32 @@ const RawCommitSchema = Schema.Struct({
 
 const RawDetailSchema = Schema.Struct({
   ...RawListItemSchema.fields,
+  /** GitHub's explicit distinction between a fork head and a branch in the base repository. */
+  isCrossRepository: Schema.optional(Schema.Boolean),
   /** Names the fork a pull request came from, which is what qualifies its head ref. */
   headRepositoryOwner: Schema.optional(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
+  /** The exact head revision, used to find workflow runs that GitHub has not started yet. */
+  headRefOid: Schema.optional(Schema.NullOr(Schema.String)),
   body: Schema.optional(Schema.String),
   changedFiles: Schema.optional(Schema.Int),
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
-  /**
-   * The standing instruction to merge once GitHub's own requirements are met, which is an object
-   * describing who armed it and how, and a JSON null where nobody has. Nothing inside it is read:
-   * the question the page asks is whether one exists.
-   */
-  autoMergeRequest: Schema.optional(Schema.NullOr(Schema.Unknown)),
+  /** The standing instruction and strategy GitHub will use once its requirements are met. */
+  autoMergeRequest: Schema.optional(
+    Schema.NullOr(Schema.Struct({ mergeMethod: Schema.optional(Schema.NullOr(Schema.String)) })),
+  ),
+});
+
+const RawWorkflowRunApprovalSchema = Schema.Struct({
+  databaseId: Schema.Int,
+  workflowName: Schema.optional(Schema.NullOr(Schema.String)),
+  url: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+const RawPullRequestHeadSchema = Schema.Struct({
+  number: Schema.Int,
+  headRefOid: Schema.String,
+  isCrossRepository: Schema.optional(Schema.Boolean),
+  headRepositoryOwner: Schema.optional(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
 });
 
 const RawActivitySchema = Schema.Struct({
@@ -508,6 +526,9 @@ const RawReviewThreadsSchema = Schema.Struct({
                     committedDate: Schema.optional(Schema.NullOr(Schema.String)),
                     additions: Schema.optional(Schema.Int),
                     deletions: Schema.optional(Schema.Int),
+                    parents: Schema.optional(
+                      Schema.NullOr(Schema.Struct({ totalCount: Schema.optional(Schema.Int) })),
+                    ),
                     authors: Schema.optional(
                       Schema.NullOr(
                         Schema.Struct({
@@ -599,7 +620,7 @@ export function decodeActorAvatarsJson(
 export const PULL_REQUEST_LIST_JSON_FIELDS =
   "number,title,url,author,headRefName,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,labels,statusCheckRollup";
 
-export const PULL_REQUEST_DETAIL_JSON_FIELDS = `${PULL_REQUEST_LIST_JSON_FIELDS},body,changedFiles,closedAt,headRepositoryOwner,autoMergeRequest`;
+export const PULL_REQUEST_DETAIL_JSON_FIELDS = `${PULL_REQUEST_LIST_JSON_FIELDS},body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest`;
 export const PULL_REQUEST_ACTIVITY_JSON_FIELDS = "author,comments,reviews,commits";
 
 /** GitHub's own ceiling on a connection page, which is what both thread reads ask for. */
@@ -731,6 +752,7 @@ export const REVIEW_THREADS_GRAPHQL_QUERY = `query($owner: String!, $name: Strin
             committedDate
             additions
             deletions
+            parents(first: 1) { totalCount }
             authors(first: 3) { nodes { name avatarUrl user { login } } }
           }
         }
@@ -879,6 +901,13 @@ export const UPDATE_PULL_REQUEST_GRAPHQL_MUTATION = `mutation($pullRequestId: ID
   }
 }`;
 
+/** Creates a new pull request that reverses a merged pull request. */
+export const REVERT_PULL_REQUEST_GRAPHQL_MUTATION = `mutation($pullRequestId: ID!) {
+  revertPullRequest(input: { pullRequestId: $pullRequestId }) {
+    revertPullRequest { id }
+  }
+}`;
+
 /**
  * The two comment mutations name their comment differently. The variable is spelled the same in
  * both, so a rewrite sends one set of variables whichever kind of remark it is.
@@ -1016,8 +1045,11 @@ export interface GitHubPullRequestListItem {
 }
 
 export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
+  /** True only when GitHub says the head belongs to another repository. */
+  readonly isCrossRepository?: boolean;
   /** The owner of the head branch's repository; null where `gh` did not say. */
   readonly headRepositoryOwner: string | null;
+  readonly headSha?: string | null;
   readonly body: string;
   readonly changedFiles: number;
   readonly mergedAt: string | null;
@@ -1025,6 +1057,21 @@ export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
   readonly checks: ReadonlyArray<PullRequestCheck>;
   /** Absent where `gh` did not answer for auto-merge at all, which is not the same as off. */
   readonly autoMergeEnabled?: boolean;
+  /** Absent where auto-merge is off or GitHub did not report the stored strategy. */
+  readonly autoMergeMethod?: PullRequestMergeMethod;
+}
+
+export interface GitHubWorkflowRunApproval {
+  readonly id: number;
+  readonly name: string;
+  readonly url: string | null;
+}
+
+export interface GitHubPullRequestHead {
+  readonly number: number;
+  readonly headSha: string;
+  readonly isCrossRepository?: boolean;
+  readonly headRepositoryOwner: string | null;
 }
 
 export interface GitHubPullRequestActivity {
@@ -1114,6 +1161,19 @@ function toMergeability(value: string | null | undefined): PullRequestMergeabili
   }
 }
 
+function toMergeMethod(value: string | null | undefined): PullRequestMergeMethod | undefined {
+  switch (value?.trim().toUpperCase()) {
+    case "MERGE":
+      return "merge";
+    case "SQUASH":
+      return "squash";
+    case "REBASE":
+      return "rebase";
+    default:
+      return undefined;
+  }
+}
+
 function toReviewDecision(value: string | null | undefined): PullRequestReviewDecision | null {
   switch (value?.trim().toUpperCase()) {
     case "APPROVED":
@@ -1169,12 +1229,12 @@ function toCheckStatus(raw: Schema.Schema.Type<typeof RawCheckSchema>): PullRequ
   switch ((raw.conclusion ?? raw.state)?.trim().toUpperCase()) {
     case "SUCCESS":
       return "success";
+    case "ACTION_REQUIRED":
+      return "action-required";
     case "FAILURE":
     case "ERROR":
     case "TIMED_OUT":
     case "STARTUP_FAILURE":
-    // A completed check asking for manual intervention is blocking, not neutral.
-    case "ACTION_REQUIRED":
       return "failure";
     case "CANCELLED":
       return "cancelled";
@@ -1253,7 +1313,7 @@ function rollupChecksState(
   ];
   if (statuses.length === 0) return null;
   if (statuses.includes("failure")) return "failing";
-  if (statuses.includes("pending")) return "pending";
+  if (statuses.includes("pending") || statuses.includes("action-required")) return "pending";
   return statuses.includes("success") ? "passing" : null;
 }
 
@@ -1279,18 +1339,16 @@ function toComments(raw: {
   readonly comments?: ReadonlyArray<Schema.Schema.Type<typeof RawCommentSchema>> | undefined;
   readonly reviews?: ReadonlyArray<Schema.Schema.Type<typeof RawReviewSchema>> | undefined;
 }): ReadonlyArray<PullRequestComment> {
-  const issueComments = (raw.comments ?? []).map(
-    (comment): PullRequestComment => ({
-      id: comment.id,
-      kind: "issue-comment",
-      author: toActor(comment.author),
-      body: comment.body ?? "",
-      createdAt: comment.createdAt,
-      url: trimmed(comment.url),
-      path: null,
-      reviewState: null,
-    }),
-  );
+  const issueComments = (raw.comments ?? []).map((comment): PullRequestComment => ({
+    id: comment.id,
+    kind: "issue-comment",
+    author: toActor(comment.author),
+    body: comment.body ?? "",
+    createdAt: comment.createdAt,
+    url: trimmed(comment.url),
+    path: null,
+    reviewState: null,
+  }));
   // A review with no body is kept only when its state is the event itself — an approval, a
   // request for changes, a dismissal. GitHub also opens a bodiless `COMMENTED` review as the
   // container for line comments, and those comments are read from the review threads, so
@@ -1361,9 +1419,14 @@ function toListItem(raw: Schema.Schema.Type<typeof RawListItemSchema>): GitHubPu
 }
 
 function toDetail(raw: Schema.Schema.Type<typeof RawDetailSchema>): GitHubPullRequestDetail {
+  const autoMergeMethod = toMergeMethod(raw.autoMergeRequest?.mergeMethod);
   return {
     ...toListItem(raw),
+    ...(typeof raw.isCrossRepository === "boolean"
+      ? { isCrossRepository: raw.isCrossRepository }
+      : {}),
     headRepositoryOwner: trimmed(raw.headRepositoryOwner?.login),
+    headSha: trimmed(raw.headRefOid),
     body: raw.body ?? "",
     changedFiles: raw.changedFiles ?? 0,
     mergedAt: trimmed(raw.mergedAt),
@@ -1374,6 +1437,7 @@ function toDetail(raw: Schema.Schema.Type<typeof RawDetailSchema>): GitHubPullRe
     ...(raw.autoMergeRequest === undefined
       ? {}
       : { autoMergeEnabled: raw.autoMergeRequest !== null }),
+    ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),
   };
 }
 
@@ -1391,6 +1455,8 @@ const decodeSearch = decodeJsonResult(RawSearchSchema);
 const decodeSearchItem = Schema.decodeUnknownExit(RawSearchItemSchema);
 const decodeStats = decodeJsonResult(RawStatsSchema);
 const decodeDetail = decodeJsonResult(RawDetailSchema);
+const decodeWorkflowRunApprovals = decodeJsonResult(Schema.Array(RawWorkflowRunApprovalSchema));
+const decodePullRequestHeads = decodeJsonResult(Schema.Array(RawPullRequestHeadSchema));
 const decodeActivity = decodeJsonResult(RawActivitySchema);
 const decodeFileEntry = Schema.decodeUnknownExit(RawPullRequestFileSchema);
 const decodeRepositoryAccess = decodeJsonResult(RawRepositoryAccessSchema);
@@ -1551,6 +1617,37 @@ export function decodePullRequestDetailJson(
     : Result.fail(decoded.failure);
 }
 
+export function decodeWorkflowRunApprovalsJson(
+  raw: string,
+): Result.Result<ReadonlyArray<GitHubWorkflowRunApproval>, DecodeFailure> {
+  const decoded = decodeWorkflowRunApprovals(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  return Result.succeed(
+    decoded.success.map((run) => ({
+      id: run.databaseId,
+      name: trimmed(run.workflowName) ?? `Workflow run ${run.databaseId}`,
+      url: trimmed(run.url),
+    })),
+  );
+}
+
+export function decodePullRequestHeadsJson(
+  raw: string,
+): Result.Result<ReadonlyArray<GitHubPullRequestHead>, DecodeFailure> {
+  const decoded = decodePullRequestHeads(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  return Result.succeed(
+    decoded.success.map((pullRequest) => ({
+      number: pullRequest.number,
+      headSha: pullRequest.headRefOid,
+      ...(typeof pullRequest.isCrossRepository === "boolean"
+        ? { isCrossRepository: pullRequest.isCrossRepository }
+        : {}),
+      headRepositoryOwner: trimmed(pullRequest.headRepositoryOwner?.login),
+    })),
+  );
+}
+
 export function decodePullRequestActivityJson(
   raw: string,
 ): Result.Result<GitHubPullRequestActivity, DecodeFailure> {
@@ -1644,19 +1741,17 @@ export function reviewThreadConversation(
   threads: ReadonlyArray<PullRequestReviewThread>,
 ): ReadonlyArray<PullRequestComment> {
   return threads.flatMap((thread) =>
-    thread.comments.map(
-      (comment): PullRequestComment => ({
-        id: comment.id,
-        kind: "review-comment",
-        author: comment.author,
-        body: comment.body,
-        createdAt: comment.createdAt,
-        url: comment.url,
-        path: thread.path,
-        reviewState: null,
-        reactions: comment.reactions ?? [],
-      }),
-    ),
+    thread.comments.map((comment): PullRequestComment => ({
+      id: comment.id,
+      kind: "review-comment",
+      author: comment.author,
+      body: comment.body,
+      createdAt: comment.createdAt,
+      url: comment.url,
+      path: thread.path,
+      reviewState: null,
+      reactions: comment.reactions ?? [],
+    })),
   );
 }
 
@@ -1788,7 +1883,14 @@ export function decodeReviewThreadsJson(
     const commit = node.commit;
     const oid = trimmed(commit.oid);
     if (oid === null) continue;
-    if (commit.additions !== undefined && commit.deletions !== undefined) {
+    // GitHub measures a merge commit against its first parent, so merging the base into the head
+    // reports every upstream change as if it belonged to the pull request. There is no useful
+    // per-commit stat to show for that integration commit without another comparison request.
+    if (
+      (commit.parents?.totalCount ?? 1) <= 1 &&
+      commit.additions !== undefined &&
+      commit.deletions !== undefined
+    ) {
       commitStats.set(oid, {
         additions: Math.max(0, commit.additions),
         deletions: Math.max(0, commit.deletions),
@@ -1888,6 +1990,11 @@ function toCanWrite(viewerPermission: string | null | undefined): boolean {
     default:
       return false;
   }
+}
+
+/** Triage is the least role GitHub lets label a pull request; it is not a write. */
+function toCanTriage(viewerPermission: string | null | undefined): boolean {
+  return viewerPermission?.trim().toUpperCase() === "TRIAGE" || toCanWrite(viewerPermission);
 }
 
 export function decodeRepositoryAccessJson(
@@ -2118,6 +2225,99 @@ export function buildReviewerRequestJson(
   });
 }
 
+export const LABEL_CANDIDATES_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    labels(first: ${GRAPHQL_PAGE_SIZE}, orderBy: { field: NAME, direction: ASC }) {
+      pageInfo { hasNextPage }
+      nodes { name color description }
+    }
+    pullRequest(number: $number) {
+      labels(first: ${GRAPHQL_PAGE_SIZE}) { nodes { name } }
+    }
+  }
+}`;
+
+const RawLabelCandidatesSchema = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      labels: Schema.optional(
+        Schema.NullOr(
+          Schema.Struct({
+            pageInfo: Schema.optional(RawPageInfoSchema),
+            nodes: Schema.Array(
+              Schema.NullOr(
+                Schema.Struct({
+                  ...RawLabelSchema.fields,
+                  description: Schema.optional(Schema.NullOr(Schema.String)),
+                }),
+              ),
+            ),
+          }),
+        ),
+      ),
+      /** Null for a number that names no pull request the viewer can see. */
+      pullRequest: Schema.NullOr(
+        Schema.Struct({
+          labels: Schema.optional(
+            Schema.NullOr(Schema.Struct({ nodes: Schema.Array(Schema.NullOr(RawLabelSchema)) })),
+          ),
+        }),
+      ),
+    }),
+  }),
+});
+
+const decodeLabelCandidates = decodeJsonResult(RawLabelCandidatesSchema);
+
+/**
+ * The repository's labels, with the ones already on this pull request marked. A label the pull
+ * request wears that the repository no longer defines — deleted since, or past the page — leads
+ * the list anyway, because a label that cannot be seen cannot be taken off.
+ */
+export function decodeLabelCandidatesJson(
+  raw: string,
+): Result.Result<PullRequestLabelCandidateList, DecodeFailure> {
+  const decoded = decodeLabelCandidates(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const repository = decoded.success.data.repository;
+  const applied = new Set(
+    (repository.pullRequest?.labels?.nodes ?? []).flatMap((label) => {
+      const name = trimmed(label?.name);
+      return name === null ? [] : [name];
+    }),
+  );
+  const candidates = new Map<string, PullRequestLabelCandidate>();
+  for (const node of repository.labels?.nodes ?? []) {
+    const name = trimmed(node?.name);
+    if (name === null) continue;
+    candidates.set(name, {
+      name,
+      color: trimmed(node?.color),
+      description: trimmed(node?.description),
+      isApplied: applied.has(name),
+    });
+  }
+  const missing = [...applied].filter((name) => !candidates.has(name));
+  return Result.succeed({
+    candidates: [
+      ...missing.map((name) => ({ name, color: null, description: null, isApplied: true })),
+      ...candidates.values(),
+    ],
+    truncated: repository.labels?.pageInfo?.hasNextPage === true,
+  });
+}
+
+/** The body of `POST /repos/{owner}/{repo}/issues/{number}/labels`, which adds to what is there. */
+const LabelRequestSchema = Schema.Struct({ labels: Schema.Array(Schema.String) });
+
+const encodeLabelRequest = Schema.encodeSync(Schema.fromJsonString(LabelRequestSchema));
+
+export function buildLabelRequestJson(labels: ReadonlyArray<string>): string {
+  return encodeLabelRequest({ labels });
+}
+
 /**
  * Everything GitHub says about what the signed-in account may do here. `canWrite` is about the
  * repository, the other two about this pull request in particular — which is why an author with
@@ -2125,6 +2325,11 @@ export function buildReviewerRequestJson(
  */
 export interface GitHubViewerAccess {
   readonly canWrite: boolean;
+  /**
+   * The viewer's role reaches triage, which is the least that may label. Everyone who can write
+   * can triage; a triager is the one role that can label without being able to merge.
+   */
+  readonly canTriage: boolean;
   /** GitHub's own `viewerCanUpdate`, true for the author as well as for anyone with write. */
   readonly canUpdate: boolean;
   readonly didAuthor: boolean;
@@ -2171,6 +2376,7 @@ export function decodeViewerPermissionsJson(
   const repository = decoded.success.data.repository;
   return Result.succeed({
     canWrite: toCanWrite(repository.viewerPermission),
+    canTriage: toCanTriage(repository.viewerPermission),
     ...toPullRequestViewerFields(repository.pullRequest),
   });
 }

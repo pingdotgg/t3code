@@ -159,6 +159,34 @@ describe("decodePullRequestJson", () => {
     );
   });
 
+  it("keeps the strategy stored with auto-complete", () => {
+    const armed = expectSuccess(
+      decodePullRequestJson(
+        asJson(
+          pullRequest({
+            autoCompleteSetBy: { displayName: "Bilal Hassan" },
+            completionOptions: { mergeStrategy: "squash" },
+          }),
+        ),
+      ),
+    );
+
+    expect(armed).toMatchObject({ autoMergeEnabled: true, autoMergeMethod: "squash" });
+
+    const unspecified = expectSuccess(
+      decodePullRequestJson(
+        asJson(
+          pullRequest({
+            autoCompleteSetBy: { displayName: "Bilal Hassan" },
+            completionOptions: { squashMerge: false },
+          }),
+        ),
+      ),
+    );
+    expect(unspecified?.autoMergeEnabled).toBe(true);
+    expect(unspecified?.autoMergeMethod).toBeUndefined();
+  });
+
   it("works out where the conversation lives from what Azure returned", () => {
     const detail = expectSuccess(decodePullRequestJson(asJson(pullRequest())));
 

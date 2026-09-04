@@ -17,6 +17,7 @@ const script = JSON.parse(NodeFS.readFileSync(process.env.T3_CODEX_COLLAB_SCRIPT
 
 const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 let turnStartCount = 0;
+let activeTurn;
 
 const rl = NodeReadline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
@@ -27,6 +28,23 @@ rl.on("line", (line) => {
     return;
   }
   const { id, method } = message;
+  if (method === undefined && script.serverRequests?.some((request) => request.id === id)) {
+    NodeFS.appendFileSync(
+      `${process.env.T3_CODEX_COLLAB_SCRIPT}.responses`,
+      `${JSON.stringify({ id, result: message.result, error: message.error })}\n`,
+    );
+    if (script.completeTurnOnServerResponse && activeTurn) {
+      write({
+        jsonrpc: "2.0",
+        method: "turn/completed",
+        params: {
+          threadId: script.rootThreadId,
+          turn: { ...activeTurn, status: "completed" },
+        },
+      });
+    }
+    return;
+  }
   if (method === "initialize") {
     write({
       id,
@@ -39,7 +57,55 @@ rl.on("line", (line) => {
     });
     return;
   }
-  if (method === "thread/start" || method === "thread/resume") {
+  if (method === "thread/start") {
+    write({ id, result: fixture.responses.threadStart });
+    return;
+  }
+  if (method === "thread/resume") {
+    if (script.recordRequests) {
+      NodeFS.appendFileSync(
+        `${process.env.T3_CODEX_COLLAB_SCRIPT}.requests`,
+        `${JSON.stringify({ method, params: message.params })}\n`,
+      );
+    }
+    const threadId = message.params?.threadId;
+    const childSnapshot = script.childResumeSnapshots?.[threadId];
+    if (script.resumeRequestMarker) {
+      write({
+        jsonrpc: "2.0",
+        method: "serverRequest/resolved",
+        params: {
+          threadId: script.rootThreadId,
+          requestId: script.resumeRequestMarker,
+        },
+      });
+    }
+    if (childSnapshot?.hang) {
+      return;
+    }
+    if (childSnapshot?.error) {
+      write({ id, error: { code: -32000, message: childSnapshot.error } });
+      return;
+    }
+    if (childSnapshot) {
+      write({
+        id,
+        result: {
+          ...fixture.responses.threadStart,
+          model: childSnapshot.model,
+          reasoningEffort: childSnapshot.reasoningEffort,
+          thread: {
+            ...fixture.responses.threadStart.thread,
+            id: threadId,
+            sessionId: threadId,
+          },
+        },
+      });
+      for (const notification of childSnapshot.notifications ?? []) {
+        write({ jsonrpc: "2.0", method: notification.method, params: notification.params });
+      }
+      return;
+    }
     write({ id, result: fixture.responses.threadStart });
     return;
   }
@@ -48,6 +114,7 @@ rl.on("line", (line) => {
     const turn = turnId
       ? { ...fixture.responses.turnStart.turn, id: turnId }
       : fixture.responses.turnStart.turn;
+    activeTurn = turn;
     turnStartCount += 1;
     write({ id, result: { ...fixture.responses.turnStart, turn } });
     const rootThreadId = script.rootThreadId;
@@ -60,6 +127,9 @@ rl.on("line", (line) => {
     }
     for (const notification of script.notifications) {
       write({ jsonrpc: "2.0", method: notification.method, params: notification.params });
+    }
+    for (const request of script.serverRequests ?? []) {
+      write({ jsonrpc: "2.0", id: request.id, method: request.method, params: request.params });
     }
     if (script.holdTurnOpen !== true) {
       write({

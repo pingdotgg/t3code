@@ -2,6 +2,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
+  UsageLimitSourceId,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -296,6 +297,51 @@ describe("serverSettings helpers", () => {
       enabled: true,
       config: { homePath: "~/.codex" },
     });
+  });
+
+  it("upserts and removes usageLimitSources per entry so concurrent edits cannot clobber", () => {
+    const hubA = UsageLimitSourceId.make("cliproxy-a");
+    const hubB = UsageLimitSourceId.make("cliproxy-b");
+    const source = (url: string) => ({
+      kind: "cliproxy" as const,
+      url,
+      managementKey: "secret",
+      enabled: true,
+    });
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      usageLimitSources: { [hubA]: source("http://a:8318") },
+    };
+
+    const added = applyServerSettingsPatch(current, {
+      usageLimitSources: { [hubB]: source("http://b:8318") },
+    });
+    expect(Object.keys(added.usageLimitSources)).toEqual([hubA, hubB]);
+
+    const removed = applyServerSettingsPatch(added, { usageLimitSources: { [hubA]: null } });
+    expect(Object.keys(removed.usageLimitSources)).toEqual([hubB]);
+  });
+
+  it("replaces and removes individual usage prices without clobbering other models", () => {
+    const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      usagePriceOverrides: { "example-model": { ...prices, cacheReadCostPerMillionTokens: 0.5 } },
+    });
+    const added = applyServerSettingsPatch(current, {
+      usagePriceOverrides: { "other-model": prices },
+    });
+    const replaced = applyServerSettingsPatch(added, {
+      usagePriceOverrides: { "example-model": prices },
+    });
+    expect(replaced.usagePriceOverrides).toEqual({
+      "example-model": prices,
+      "other-model": prices,
+    });
+    const removed = applyServerSettingsPatch(replaced, {
+      usagePriceOverrides: { "example-model": null },
+    });
+    expect(removed.usagePriceOverrides).toEqual({ "other-model": prices });
+    expect(current.usagePriceOverrides["example-model"]?.cacheReadCostPerMillionTokens).toBe(0.5);
   });
 
   it("stores background activity profiles as a versioned object and syncs legacy aliases", () => {

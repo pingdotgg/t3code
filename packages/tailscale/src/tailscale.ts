@@ -228,11 +228,15 @@ export const readTailscaleStatus = Effect.gen(function* () {
     argumentCount: args.length,
   };
   return yield* Effect.gen(function* () {
-    const child = yield* spawner
-      .spawn(ChildProcess.make(executable, args))
-      .pipe(
-        Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
-      );
+    const child = yield* spawner.spawn(ChildProcess.make(executable, args)).pipe(
+      Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
+      // Spawning can also fail as a defect rather than a typed error - a
+      // non-directory entry on PATH makes node throw ENOTDIR synchronously.
+      // `mapError` never sees that, so it would escape as an uncaught error.
+      Effect.catchDefect((cause) =>
+        Effect.fail(new TailscaleCommandSpawnError({ ...commandContext, cause })),
+      ),
+    );
     const [stdout, stderr, exitCode] = yield* Effect.all(
       [
         collectStdout(child.stdout),
@@ -299,11 +303,12 @@ const runTailscaleCommand = (
     };
     const timeout = Duration.fromInputUnsafe(timeoutInput);
     return yield* Effect.gen(function* () {
-      const child = yield* spawner
-        .spawn(ChildProcess.make(executable, args))
-        .pipe(
-          Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
-        );
+      const child = yield* spawner.spawn(ChildProcess.make(executable, args)).pipe(
+        Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
+        Effect.catchDefect((cause) =>
+          Effect.fail(new TailscaleCommandSpawnError({ ...commandContext, cause })),
+        ),
+      );
       const [stderr, exitCode] = yield* Effect.all(
         [collectStderr(child.stderr), child.exitCode.pipe(Effect.map(Number))],
         { concurrency: "unbounded" },
@@ -377,23 +382,3 @@ export const probeTailscaleHttpsEndpoint = (input: {
       onSome: (httpResponse) => httpResponse.status >= 200 && httpResponse.status < 300,
     });
   }).pipe(Effect.orElseSucceed(() => false));
-
-export const resolveTailscaleHttpsBaseUrl = (
-  input: {
-    readonly servePort?: number;
-  } = {},
-): Effect.Effect<
-  string | null,
-  TailscaleCommandError | TailscaleStatusParseError,
-  ChildProcessSpawner.ChildProcessSpawner
-> =>
-  readTailscaleStatus.pipe(
-    Effect.map((status) =>
-      status.magicDnsName
-        ? buildTailscaleHttpsBaseUrl({
-            magicDnsName: status.magicDnsName,
-            ...(input.servePort === undefined ? {} : { servePort: input.servePort }),
-          })
-        : null,
-    ),
-  );

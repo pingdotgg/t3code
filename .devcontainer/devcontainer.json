@@ -1,5 +1,5 @@
 // Dev container for T3 Code. Mirrors CI (ubuntu-24.04, Node 24, Rust stable)
-// and the canonical setup in docs/internals/scripts.md: global `vp`, `vp i`.
+// and the canonical setup in docs/operations/development.md: global `vp`, `vp i`.
 // Contributor doc: docs/internals/devcontainer.md
 {
   "name": "T3 Code",

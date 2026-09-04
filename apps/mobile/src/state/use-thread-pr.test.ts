@@ -17,7 +17,7 @@ describe("presentThreadPr", () => {
     expect(presentThreadPr(pullRequest, undefined)).toMatchObject({
       label: "3774",
       accessibilityLabel: "#3774 pull request merged",
-      textClassName: "text-violet-600 dark:text-violet-400",
+      textClassName: "text-adaptive-violet-600-400",
     });
   });
 
@@ -31,6 +31,15 @@ describe("presentThreadPr", () => {
     ).toMatchObject({
       label: "3774",
       accessibilityLabel: "#3774 merge request merged",
+    });
+  });
+
+  it("uses gray for draft pull requests", () => {
+    expect(
+      presentThreadPr({ ...pullRequest, state: "open", isDraft: true }, undefined),
+    ).toMatchObject({
+      accessibilityLabel: "#3774 pull request draft",
+      textClassName: "text-adaptive-zinc-500-400",
     });
   });
 });
