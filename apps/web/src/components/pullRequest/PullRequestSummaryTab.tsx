@@ -551,7 +551,13 @@ export function PullRequestSummaryTab({
   const setThreadResolution = useAtomCommand(pullRequestEnvironment.setThreadResolution, {
     reportFailure: false,
   });
-  const [resolutionPending, setResolutionPending] = useState(false);
+  // Include the pull request because this component remains mounted when the panel changes PRs.
+  const [resolutionScope, setResolutionScope] = useState<{
+    readonly pullRequest: string;
+    readonly threadId: string;
+  } | null>(null);
+  const resolvingThreadId =
+    resolutionScope?.pullRequest === detail.url ? resolutionScope.threadId : null;
   // Keyed by the pull request, like the comment window above it, so an editor left open never
   // reappears over the next pull request's description.
   const [bodyScope, setBodyScope] = useState<string | null>(null);
@@ -608,22 +614,32 @@ export function PullRequestSummaryTab({
     },
   };
 
-  const resolutionButton = (thread: PullRequestReviewThread, className?: string) =>
-    detail.capabilities.review.resolve && detail.viewerPermissions.resolve ? (
+  const resolutionButton = (thread: PullRequestReviewThread, className?: string) => {
+    if (!detail.capabilities.review.resolve || !detail.viewerPermissions.resolve) return null;
+    const resolving = resolvingThreadId === thread.id;
+    const verb = thread.isResolved ? "Unresolve" : "Resolve";
+    const working = thread.isResolved ? "Unresolving..." : "Resolving...";
+    return (
       <Button
         size="xs"
         variant="ghost"
         className={cn("shrink-0", className)}
-        disabled={resolutionPending}
-        aria-label={`${thread.isResolved ? "Unresolve" : "Resolve"} review conversation on ${thread.path}${thread.line === null ? "" : ` line ${thread.line}`}`}
+        disabled={resolvingThreadId !== null}
+        aria-busy={resolving || undefined}
+        aria-label={`${verb} review conversation on ${thread.path}${thread.line === null ? "" : ` line ${thread.line}`}`}
         onClick={async () => {
-          if (resolutionPending) return;
-          setResolutionPending(true);
+          if (resolvingThreadId !== null) return;
+          const scope = { pullRequest: detail.url, threadId: thread.id };
+          setResolutionScope(scope);
           const result = await setThreadResolution({
             environmentId,
             input: { ...reference, threadId: thread.id, resolved: !thread.isResolved },
           });
-          setResolutionPending(false);
+          setResolutionScope((current) =>
+            current?.pullRequest === scope.pullRequest && current.threadId === scope.threadId
+              ? null
+              : current,
+          );
           if (result._tag === "Failure") {
             toastManager.add({
               type: "error",
@@ -638,9 +654,10 @@ export function PullRequestSummaryTab({
           onRefresh();
         }}
       >
-        {thread.isResolved ? "Unresolve" : "Resolve"}
+        {resolving ? working : verb}
       </Button>
-    ) : null;
+    );
+  };
 
   return (
     <div className="h-full overflow-y-auto" data-pull-request-summary-scroll>

@@ -114,7 +114,7 @@ export function mergePullRequestThreadComments<T extends { readonly id: string }
   ];
 }
 
-/** The first row currently shown for each review conversation owns its thread-level actions. */
+/** The first row shown for a conversation owns its thread actions, not every reply of it. */
 export function firstVisibleThreadCommentIds(
   comments: ReadonlyArray<{ readonly id: string }>,
   threadByCommentId: ReadonlyMap<string, { readonly id: string }>,
