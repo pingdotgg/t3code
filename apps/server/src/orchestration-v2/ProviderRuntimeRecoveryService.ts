@@ -469,8 +469,8 @@ export const make = Effect.gen(function* () {
 
   const reconcile = (trigger: "startup" | "shutdown") =>
     Effect.gen(function* () {
-      const shell = yield* projections
-        .getShellSnapshot()
+      const threadIds = yield* projections
+        .getRecoveryThreadIds("runtime")
         .pipe(
           Effect.mapError(
             (cause) => new ProviderRuntimeRecoveryError({ operation: "read-projections", cause }),
@@ -480,13 +480,13 @@ export const make = Effect.gen(function* () {
       let stoppedSessions = 0;
       let closedRequests = 0;
       let retiredEffects = 0;
-      for (const thread of [...shell.threads, ...shell.archivedThreads]) {
-        const projection = yield* projections.getThreadProjection(thread.id).pipe(
+      for (const threadId of threadIds) {
+        const projection = yield* projections.getThreadProjection(threadId).pipe(
           Effect.mapError(
             (cause) =>
               new ProviderRuntimeRecoveryError({
                 operation: "read-projections",
-                threadId: thread.id,
+                threadId,
                 cause,
               }),
           ),
