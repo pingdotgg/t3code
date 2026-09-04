@@ -43,6 +43,7 @@ export function ThreadFileNavigatorPane(props: {
   );
   const fileEnvironment = useEnvironmentPresentation(props.environmentId);
   const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
     connection: fileEnvironment.presentation?.connection ?? null,
     session: fileAccessSession.data,
     sessionError: fileAccessSession.error,

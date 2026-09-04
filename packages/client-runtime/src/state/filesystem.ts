@@ -22,6 +22,7 @@ import {
 import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
 export function resolveFilesystemReadAccess(input: {
+  readonly isCatalogReady: boolean;
   readonly connection: Pick<EnvironmentConnectionPresentation, "phase" | "error"> | null;
   readonly session: Pick<AuthSessionState, "authenticated" | "scopes"> | null;
   readonly sessionError: string | null;
@@ -30,8 +31,10 @@ export function resolveFilesystemReadAccess(input: {
     return { canReadFiles: false, isPending: false, error: input.sessionError };
   }
   if (input.session === null) {
-    // An offline, unprepared environment cannot finish its session check.
+    // Wait for the catalog before interpreting a missing presentation as offline.
+    // Once ready, an offline environment cannot finish its session check.
     const isPending =
+      !input.isCatalogReady ||
       input.connection?.phase === "connected" ||
       input.connection?.phase === "connecting" ||
       input.connection?.phase === "reconnecting";
