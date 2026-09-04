@@ -2,11 +2,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   extractPathFromShellOutput,
   CommandAvailability,
+  CommandResolutionCache,
   type CommandAvailabilityChecker,
   isCommandAvailable,
   listLoginShellCandidates,
@@ -373,6 +375,60 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       }).pipe(Effect.provideService(HostProcessPlatform, "win32"), Effect.result);
 
       expect(result._tag).toBe("Failure");
+    }),
+  );
+
+  // Records every path the scan stats, without ever reporting a match, so the
+  // walk runs to exhaustion and the probe set can be inspected. Assertions
+  // below count probes rather than naming paths: `Path` is the host's, so the
+  // separator differs between a Windows and a Linux CI runner.
+  const recordProbes = (env: NodeJS.ProcessEnv) =>
+    Effect.gen(function* () {
+      const probed: Array<string> = [];
+      const result = yield* resolveCommandPath("definitely-not-installed", { env }).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(CommandResolutionCache, new Map()),
+        Effect.provide(
+          FileSystem.layerNoop({
+            stat: (filePath) =>
+              Effect.sync(() => {
+                probed.push(filePath);
+                return { type: "Directory" } as FileSystem.File.Info;
+              }),
+          }),
+        ),
+        Effect.result,
+      );
+
+      expect(result._tag).toBe("Failure");
+      return probed;
+    });
+
+  it.effect("visits a repeated PATH directory only once", () =>
+    Effect.gen(function* () {
+      const probed = yield* recordProbes({
+        PATH: "C:\\bin;C:\\other;C:\\BIN;C:\\bin",
+        PATHEXT: ".COM;.EXE",
+      });
+
+      // Two distinct directories, two extensions. The repeats of C:\bin, one of
+      // them differing only in case, cost nothing.
+      expect(probed).toHaveLength(4);
+      expect(new Set(probed).size).toBe(probed.length);
+    }),
+  );
+
+  it.effect("probes one spelling per PATHEXT entry", () =>
+    Effect.gen(function* () {
+      const probed = yield* recordProbes({
+        PATH: "C:\\bin",
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      });
+
+      // Four extensions, not eight: Windows matches file names
+      // case-insensitively, so the lowercase spellings are the same question.
+      expect(probed).toHaveLength(4);
+      expect(probed.filter((filePath) => /\.(COM|EXE|BAT|CMD)$/.test(filePath))).toHaveLength(4);
     }),
   );
 });
