@@ -1,8 +1,11 @@
-import type {
+import {
+  EnvironmentId,
+  type ProviderConsumeResetCreditOutcome,
+  ProviderInstanceId,
   ServerProvider,
+  ServerProviderResetCredits,
   ServerProviderUsageWindow,
   UsageLimitSourceAccount,
-  UsageLimitSourceId,
   UsageLimitSourceSnapshot,
   UsageProviderKind,
 } from "@t3tools/contracts";
@@ -11,6 +14,7 @@ import {
   collectLimitSources,
   collectLimitsGroups,
   elapsedShare,
+  formatDuration,
   formatResetsIn,
   limitsNotice,
   type LimitPace,
@@ -20,16 +24,25 @@ import {
 import { GaugeIcon, PlusIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, useState } from "react";
 
+import { isElectron } from "../../env";
+import { usePrimarySessionState } from "../../environments/primary";
+import { usePrimarySettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import {
-  usePrimarySettings,
-  usePrimarySettingsAvailable,
-  useUpdatePrimarySettings,
-} from "../../hooks/useSettings";
-import { usePrimaryEnvironmentId } from "../../state/environments";
+  type EnvironmentPresentation,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "../../state/environments";
+import { useEnvironmentSessionState } from "../../state/session";
 import { environmentPresentations } from "../../state/presentation";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../settings/providerDriverMeta";
+import {
+  resolvePrimaryOperateAccess,
+  resolveRemoteOperateAccess,
+} from "../settings/ProviderSettingsPanel.logic";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import {
   AlertDialog,
@@ -42,6 +55,7 @@ import {
 } from "../ui/alert-dialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
@@ -245,9 +259,11 @@ function AccountHeading({
 
 function ProviderLimits({
   provider,
+  environmentId,
   now,
 }: {
   readonly provider: ServerProvider;
+  readonly environmentId: EnvironmentId;
   readonly now: number;
 }) {
   const limits = provider.usageLimits;
@@ -267,7 +283,98 @@ function ProviderLimits({
       ) : (
         <LimitWindows driver={provider.driver} windows={limits.windows} now={now} />
       )}
+      {limits.resetCredits ? (
+        <ResetCredits
+          environmentId={environmentId}
+          instanceId={provider.instanceId}
+          credits={limits.resetCredits}
+          now={now}
+        />
+      ) : null}
     </section>
+  );
+}
+
+const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
+  reset: "Reset applied. Your windows have cleared.",
+  nothingToReset: "Nothing to reset right now.",
+  noCredit: "No reset credit left.",
+  alreadyRedeemed: "That credit was already redeemed.",
+};
+
+/**
+ * Banked reset credits with a confirmed redeem action. Redeeming spends a
+ * credit the provider granted the user, so it never fires on a bare click.
+ */
+function ResetCredits({
+  environmentId,
+  instanceId,
+  credits,
+  now,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly instanceId: ProviderInstanceId;
+  readonly credits: ServerProviderResetCredits;
+  readonly now: number;
+}) {
+  const consume = useAtomCommand(serverEnvironment.consumeResetCredit, { reportFailure: false });
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  if (credits.availableCount === 0 && status === null) return null;
+
+  const expiresIn = credits.nextExpiresAt
+    ? formatDuration(Date.parse(credits.nextExpiresAt) - now)
+    : null;
+  const summary =
+    credits.availableCount === 0
+      ? "No reset credits banked"
+      : `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
+          expiresIn ? ` · next expires in ${expiresIn}` : ""
+        }`;
+
+  const redeem = async () => {
+    setConfirming(false);
+    setBusy(true);
+    setStatus(null);
+    const result = await consume({ environmentId, input: { instanceId } });
+    setBusy(false);
+    if (result._tag === "Success") {
+      setStatus(OUTCOME_TEXT[result.value.outcome]);
+      return;
+    }
+    setStatus(
+      "error" in result.cause && result.cause.error instanceof Error
+        ? result.cause.error.message
+        : "Could not use the reset credit.",
+    );
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+      <span className="tabular-nums">{summary}</span>
+      {credits.availableCount > 0 ? (
+        <Button size="xs" variant="outline" disabled={busy} onClick={() => setConfirming(true)}>
+          {busy ? "Using credit…" : "Use a reset credit"}
+        </Button>
+      ) : null}
+      {status ? <span className="text-foreground">{status}</span> : null}
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Use a reset credit?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This redeems one credit on your account and clears the current rate-limit windows. It
+              cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button onClick={() => void redeem()}>Use credit</Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
+    </div>
   );
 }
 
@@ -387,6 +494,58 @@ function SourceLimits({
 }
 
 /**
+ * Whether this client's credential may write settings on an environment,
+ * resolved the way Settings → Providers does: the desktop app owns its
+ * primary outright; a browser session checks the scopes it was granted;
+ * a remote environment reports scopes over its own session endpoint.
+ */
+function useCanOperateEnvironment(environment: EnvironmentPresentation | null): boolean {
+  const isPrimary = environment?.entry.target._tag === "PrimaryConnectionTarget";
+  const primarySession = usePrimarySessionState();
+  const remoteSession = useEnvironmentSessionState(
+    environment?.environmentId ?? EnvironmentId.make("none"),
+  );
+  if (environment === null || environment.connection.phase !== "connected") return false;
+  if (isPrimary && isElectron) return true;
+  const access = isPrimary
+    ? resolvePrimaryOperateAccess({
+        isPrimary: true,
+        hasDesktopBridge: false,
+        session: primarySession.data,
+        isPending: primarySession.isPending,
+        hasError: primarySession.error !== null,
+      })
+    : resolveRemoteOperateAccess({
+        session: remoteSession.data,
+        isPending: remoteSession.isPending,
+        hasError: remoteSession.hasError,
+      });
+  return access === "granted";
+}
+
+/** One source with a remove control bound to the environment it lives in. */
+function SourceLimitsRow({
+  source,
+  now,
+}: {
+  readonly source: UsageLimitSourceSnapshot & {
+    readonly key: string;
+    readonly environmentId: EnvironmentId;
+  };
+  readonly now: number;
+}) {
+  const updateSettings = useUpdateEnvironmentSettings(source.environmentId);
+  const { environments } = useEnvironments();
+  const environment =
+    environments.find((entry) => entry.environmentId === source.environmentId) ?? null;
+  const canOperate = useCanOperateEnvironment(environment);
+  // The patch names only this entry, so two edits in flight cannot clobber
+  // each other's map.
+  const remove = () => updateSettings({ usageLimitSources: { [source.id]: null } });
+  return <SourceLimits source={source} now={now} onRemove={canOperate ? remove : null} />;
+}
+
+/**
  * Subscription quota windows from every connected environment's providers.
  * Countdowns anchor to render time rather than ticking: a live clock would
  * repaint the page every minute for no decision-changing gain.
@@ -395,49 +554,108 @@ export function UsageLimitsSection() {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const groups = collectLimitsGroups(presentations);
   const sources = collectLimitSources(presentations);
-  const configuredSources = usePrimarySettings((settings) => settings.usageLimitSources);
-  const canEditSources = usePrimarySettingsAvailable();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const updateSettings = useUpdatePrimarySettings();
+  const { environments } = useEnvironments();
   const [adding, setAdding] = useState(false);
   // Anchored once per mount on purpose: countdowns must not tick (see below).
   const [now] = useState(() => Date.now());
 
-  // The patch names only this entry, so two edits in flight cannot clobber
-  // each other's map.
-  const removeSource = (id: UsageLimitSourceId) => {
-    updateSettings({ usageLimitSources: { [id]: null } });
-  };
-
-  const addHubButton = canEditSources ? (
-    <Button size="xs" variant="outline" onClick={() => setAdding(true)}>
-      <PlusIcon className="size-3" aria-hidden />
-      Add CLIProxyAPI hub
-    </Button>
-  ) : null;
+  // Sources live in one environment's settings. Writing them needs only the
+  // operate scope, like any provider control, so a T3 Connect client can add
+  // a hub to whichever environment it is connected to: the primary when there
+  // is one, else the first connected environment, with a picker for more.
+  const connected = environments.filter(
+    (environment) => environment.connection.phase === "connected",
+  );
+  const [pickedEnvironmentId, setPickedEnvironmentId] = useState<EnvironmentId | null>(null);
+  const targetEnvironment =
+    (pickedEnvironmentId !== null
+      ? connected.find((environment) => environment.environmentId === pickedEnvironmentId)
+      : undefined) ??
+    (primaryEnvironmentId !== null
+      ? connected.find((environment) => environment.environmentId === primaryEnvironmentId)
+      : undefined) ??
+    connected[0] ??
+    null;
+  const canOperateTarget = useCanOperateEnvironment(targetEnvironment);
 
   return (
     <div className="flex flex-col gap-8">
+      {/* Sources first: they are the thing a user configures here, so the
+          control to add one sits at the top rather than after every row. */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-sm font-medium text-foreground">Usage sources</h2>
+          <p className="text-xs text-muted-foreground">
+            Quota from a CLIProxyAPI hub shows beside the providers signed in on this machine.
+          </p>
+        </div>
+        {/* The picker stays whenever several environments are connected, so
+            a read-only default target does not hide the way to an operable
+            one; only the button follows the picked target's access. */}
+        {targetEnvironment ? (
+          <div className="flex items-center gap-2">
+            {connected.length > 1 ? (
+              <Select
+                value={targetEnvironment.environmentId}
+                onValueChange={(value) => {
+                  if (value !== null) setPickedEnvironmentId(EnvironmentId.make(value));
+                }}
+              >
+                <SelectTrigger
+                  aria-label="Environment to add the hub to"
+                  size="compact"
+                  variant="ghost"
+                  className="w-auto min-w-0"
+                >
+                  <SelectValue>{targetEnvironment.label}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {connected.map((environment) => (
+                    <SelectItem key={environment.environmentId} value={environment.environmentId}>
+                      {environment.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            ) : null}
+            {canOperateTarget ? (
+              <Button size="xs" variant="outline" onClick={() => setAdding(true)}>
+                <PlusIcon className="size-3" aria-hidden />
+                Add hub
+              </Button>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      tabIndex={0}
+                      className="rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                  }
+                >
+                  <span className="inline-flex" inert>
+                    <Button size="xs" variant="outline" disabled>
+                      <PlusIcon className="size-3" aria-hidden />
+                      Add hub
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipPopup side="top" className="max-w-72">
+                  Your session cannot change settings on {targetEnvironment.label}.
+                </TooltipPopup>
+              </Tooltip>
+            )}
+          </div>
+        ) : null}
+      </div>
       {groups.length === 0 && sources.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           No provider on a connected environment reports subscription limits.
         </p>
       ) : null}
       {sources.map((source) => (
-        <SourceLimits
-          key={source.key}
-          source={source}
-          now={now}
-          // Only the primary environment's own sources can be edited from
-          // here; a remote environment's row with the same id is read-only.
-          onRemove={
-            canEditSources &&
-            source.environmentId === primaryEnvironmentId &&
-            source.id in configuredSources
-              ? () => removeSource(source.id)
-              : null
-          }
-        />
+        <SourceLimitsRow key={source.key} source={source} now={now} />
       ))}
       {groups.map((group) => (
         <div key={group.environmentId} className="flex flex-col gap-6">
@@ -447,12 +665,27 @@ export function UsageLimitsSection() {
             </h2>
           ) : null}
           {group.providers.map((provider) => (
-            <ProviderLimits key={provider.instanceId} provider={provider} now={now} />
+            <ProviderLimits
+              key={provider.instanceId}
+              provider={provider}
+              environmentId={group.environmentId}
+              now={now}
+            />
           ))}
         </div>
       ))}
-      {addHubButton ? <div>{addHubButton}</div> : null}
-      <AddUsageLimitSourceDialog open={adding} onOpenChange={setAdding} />
+      {targetEnvironment && canOperateTarget ? (
+        // Keyed on the target: if it disconnects or the primary changes while
+        // the dialog is open, a fresh dialog mounts empty rather than carrying
+        // a typed key over to a different environment.
+        <AddUsageLimitSourceDialog
+          key={targetEnvironment.environmentId}
+          open={adding}
+          onOpenChange={setAdding}
+          environmentId={targetEnvironment.environmentId}
+          environmentLabel={targetEnvironment.label}
+        />
+      ) : null}
     </div>
   );
 }

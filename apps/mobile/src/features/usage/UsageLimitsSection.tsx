@@ -1,6 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import type {
+  EnvironmentId,
+  ProviderConsumeResetCreditOutcome,
+  ProviderInstanceId,
   ServerProvider,
+  ServerProviderResetCredits,
   ServerProviderUsageWindow,
   UsageLimitSourceAccount,
 } from "@t3tools/contracts";
@@ -8,16 +12,19 @@ import {
   collectLimitSources,
   collectLimitsGroups,
   elapsedShare,
+  formatDuration,
   formatResetsIn,
   limitsNotice,
   paceOf,
   providerLimitsLabel,
 } from "@t3tools/shared/usageLimits";
-import { useState } from "react";
-import { View } from "react-native";
+import { type ReactNode, useState } from "react";
+import { Alert, Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { environmentPresentations } from "../../state/presentation";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
 
 const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
@@ -71,6 +78,7 @@ function AccountLimits(props: {
   readonly limits: ServerProvider["usageLimits"];
   readonly now: number;
   readonly first: boolean;
+  readonly footer?: ReactNode;
 }) {
   const { limits, now } = props;
   if (!limits) return null;
@@ -88,23 +96,120 @@ function AccountLimits(props: {
       ) : (
         limits.windows.map((window) => <WindowBar key={window.id} window={window} now={now} />)
       )}
+      {props.footer}
+    </View>
+  );
+}
+
+const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
+  reset: "Reset applied. Your windows have cleared.",
+  nothingToReset: "Nothing to reset right now.",
+  noCredit: "No reset credit left.",
+  alreadyRedeemed: "That credit was already redeemed.",
+};
+
+/**
+ * Banked reset credits with a confirmed redeem action. Redeeming spends a
+ * credit the provider granted the user, so it goes through the native
+ * confirm alert rather than firing on a bare tap.
+ */
+function ResetCredits(props: {
+  readonly environmentId: EnvironmentId;
+  readonly instanceId: ProviderInstanceId;
+  readonly credits: ServerProviderResetCredits;
+  readonly now: number;
+}) {
+  const { environmentId, instanceId, credits, now } = props;
+  const consume = useAtomCommand(serverEnvironment.consumeResetCredit, {
+    reportFailure: false,
+  });
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  if (credits.availableCount === 0 && status === null) return null;
+
+  const expiresIn = credits.nextExpiresAt
+    ? formatDuration(Date.parse(credits.nextExpiresAt) - now)
+    : null;
+  const summary =
+    credits.availableCount === 0
+      ? "No reset credits banked"
+      : `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
+          expiresIn ? ` · next expires in ${expiresIn}` : ""
+        }`;
+
+  const redeem = async () => {
+    setBusy(true);
+    setStatus(null);
+    const result = await consume({ environmentId, input: { instanceId } });
+    setBusy(false);
+    if (result._tag === "Success") {
+      setStatus(OUTCOME_TEXT[result.value.outcome]);
+      return;
+    }
+    setStatus(
+      "error" in result.cause && result.cause.error instanceof Error
+        ? result.cause.error.message
+        : "Could not use the reset credit.",
+    );
+  };
+
+  const confirm = () => {
+    Alert.alert(
+      "Use a reset credit?",
+      "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Use credit", onPress: () => void redeem() },
+      ],
+    );
+  };
+
+  return (
+    <View className="gap-2">
+      <Text className="text-xs tabular-nums text-foreground-tertiary">{summary}</Text>
+      {credits.availableCount > 0 ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ disabled: busy }}
+          disabled={busy}
+          onPress={confirm}
+          className="self-start rounded-full bg-subtle-strong px-3 py-1.5"
+        >
+          <Text className="text-sm font-t3-medium text-foreground">
+            {busy ? "Using credit…" : "Use a reset credit"}
+          </Text>
+        </Pressable>
+      ) : null}
+      {status ? <Text className="text-sm text-foreground">{status}</Text> : null}
     </View>
   );
 }
 
 function ProviderLimits(props: {
   readonly provider: ServerProvider;
+  readonly environmentId: EnvironmentId;
   readonly now: number;
   readonly first: boolean;
 }) {
-  const { provider } = props;
+  const { provider, environmentId, now } = props;
+  const credits = provider.usageLimits?.resetCredits;
   return (
     <AccountLimits
       label={providerLimitsLabel(provider, () => undefined)}
       detail={provider.auth.label}
       limits={provider.usageLimits}
-      now={props.now}
+      now={now}
       first={props.first}
+      footer={
+        credits ? (
+          <ResetCredits
+            environmentId={environmentId}
+            instanceId={provider.instanceId}
+            credits={credits}
+            now={now}
+          />
+        ) : undefined
+      }
     />
   );
 }
@@ -172,6 +277,7 @@ export function UsageLimitsSection() {
             <ProviderLimits
               key={provider.instanceId}
               provider={provider}
+              environmentId={group.environmentId}
               now={now}
               first={index === 0}
             />

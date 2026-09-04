@@ -1746,6 +1746,41 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.providerConsumeResetCredit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerConsumeResetCredit,
+            Effect.gen(function* () {
+              const instance = yield* providerInstances.getInstance(input.instanceId);
+              // A disabled instance must not spend anything on its account.
+              if (instance === undefined || !instance.enabled) {
+                return yield* new ProviderSetupError({
+                  instanceId: input.instanceId,
+                  operation: "consume-reset-credit",
+                  detail: instance ? "This provider is disabled." : "Provider instance not found.",
+                });
+              }
+              if (instance.consumeResetCredit === undefined) {
+                return yield* new ProviderSetupError({
+                  instanceId: input.instanceId,
+                  operation: "consume-reset-credit",
+                  detail: "This provider does not bank reset credits.",
+                });
+              }
+              const outcome = yield* instance.consumeResetCredit().pipe(
+                Effect.mapError(
+                  (error) =>
+                    new ProviderSetupError({
+                      instanceId: input.instanceId,
+                      operation: "consume-reset-credit",
+                      detail: error.detail,
+                      cause: error,
+                    }),
+                ),
+              );
+              return { outcome };
+            }),
+            { "rpc.aggregate": "provider" },
+          ),
         [WS_METHODS.providerAuthStart]: (input) =>
           observeRpcEffect(
             WS_METHODS.providerAuthStart,
