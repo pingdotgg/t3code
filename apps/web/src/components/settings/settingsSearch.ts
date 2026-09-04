@@ -325,6 +325,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "usage-providers",
+    title: "Usage providers",
+    to: "/settings/providers",
+    searchTerms: [
+      "usage sources CLIProxyAPI CLI proxy hub quota subscription limits management key add remove",
+    ],
+    providerSettingsOnly: true,
+  },
+  {
     id: "provider-health-check-interval",
     title: "Health check interval",
     to: "/settings/providers",
