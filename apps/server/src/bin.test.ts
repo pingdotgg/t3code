@@ -709,11 +709,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
     );
   }
 
-  for (const command of [
-    ["pair"],
-    ["auth", "pairing", "create"],
-    ["auth", "session", "issue"],
-  ]) {
+  for (const command of [["pair"], ["auth", "pairing", "create"], ["auth", "session", "issue"]]) {
     it.effect(`rejects invalid scopes before running ${command.join(" ")}`, () =>
       Effect.gen(function* () {
         const error = yield* runCliWithRuntime([
