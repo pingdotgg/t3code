@@ -1236,9 +1236,11 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
                     disabled={isCreatingPairingLink}
                     onClick={() =>
                       setPairingScopes(
-                        [AuthOrchestrationReadScope, AuthFilesystemReadScope].filter((scope) =>
-                          delegatableScopes.includes(scope),
-                        ),
+                        [
+                          AuthOrchestrationReadScope,
+                          AuthFilesystemReadScope,
+                          AuthDiagnosticsReadScope,
+                        ].filter((scope) => delegatableScopes.includes(scope)),
                       )
                     }
                   >
