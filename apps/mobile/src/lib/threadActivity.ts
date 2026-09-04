@@ -720,10 +720,14 @@ function deriveThreadFeedRunFolds(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestRun: ThreadFeedLatestRun | null,
 ): ReadonlyMap<string, ThreadFeedRunFold> {
+  const firstAssistantMessageIdByRun = new Map<RunId, string>();
   const terminalAssistantMessageIdByRun = new Map<RunId, string>();
   const interruptedRunIds = new Set<RunId>();
   for (const entry of feed) {
     if (entry.type === "message" && entry.message.role === "assistant" && entry.message.runId) {
+      if (!firstAssistantMessageIdByRun.has(entry.message.runId)) {
+        firstAssistantMessageIdByRun.set(entry.message.runId, entry.id);
+      }
       terminalAssistantMessageIdByRun.set(entry.message.runId, entry.id);
     }
     if (
@@ -773,11 +777,13 @@ function deriveThreadFeedRunFolds(
     ) {
       continue;
     }
+    const firstAssistantId = firstAssistantMessageIdByRun.get(runId);
     const terminalAssistantId = terminalAssistantMessageIdByRun.get(runId);
     const hiddenEntryIds = new Set(
       group.entries
         .filter(
           (entry) =>
+            entry.id !== firstAssistantId &&
             entry.id !== terminalAssistantId &&
             !(
               entry.type === "activity-group" &&
@@ -787,8 +793,9 @@ function deriveThreadFeedRunFolds(
         .map((entry) => entry.id),
     );
     const firstEntry = group.entries[0];
+    const firstHiddenEntry = group.entries.find((entry) => hiddenEntryIds.has(entry.id));
     const lastEntry = group.entries.at(-1);
-    if (hiddenEntryIds.size === 0 || !firstEntry || !lastEntry) continue;
+    if (!firstHiddenEntry || !firstEntry || !lastEntry) continue;
     const hidesNonCompactionWork = group.entries.some(
       (entry) =>
         hiddenEntryIds.has(entry.id) &&
@@ -814,9 +821,9 @@ function deriveThreadFeedRunFolds(
     const duration = elapsedMs === null ? null : formatDuration(elapsedMs);
     const interrupted =
       latestRunMatches && (latestRun.status === "interrupted" || latestRun.status === "cancelled");
-    foldsByAnchorId.set(firstEntry.id, {
+    foldsByAnchorId.set(firstHiddenEntry.id, {
       runId,
-      createdAt: firstEntry.createdAt,
+      createdAt: firstHiddenEntry.createdAt,
       hiddenEntryIds,
       label: interrupted
         ? duration
