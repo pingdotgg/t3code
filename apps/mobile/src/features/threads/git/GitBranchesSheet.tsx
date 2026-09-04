@@ -27,7 +27,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
-  const { canWriteSourceControl } = gitActions;
+  const { canChangeThreadBranch } = gitActions;
 
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
@@ -69,9 +69,9 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
         contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
         contentContainerClassName="gap-4 px-5 pt-2"
       >
-        {!canWriteSourceControl ? (
+        {!canChangeThreadBranch ? (
           <Text className="text-sm text-foreground-muted">
-            This connection cannot change source control.
+            This connection cannot change this thread's branch or worktree.
           </Text>
         ) : null}
         <View className="gap-2 rounded-[18px] border border-border bg-card px-4 py-4">
@@ -88,9 +88,9 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
             icon="plus"
             label="Create & checkout"
             tone="primary"
-            disabled={!canWriteSourceControl || busy || newBranchName.trim().length === 0}
+            disabled={!canChangeThreadBranch || busy || newBranchName.trim().length === 0}
             onPress={() => {
-              if (!canWriteSourceControl) return;
+              if (!canChangeThreadBranch) return;
               const branch = sanitizeFeatureBranchName(newBranchName.trim());
               if (branch.length === 0) return;
               void gitActions.onCreateSelectedThreadBranch(branch).then(() => {
@@ -122,13 +122,13 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
             label="Create worktree"
             tone="primary"
             disabled={
-              !canWriteSourceControl ||
+              !canChangeThreadBranch ||
               busy ||
               worktreeBaseBranch.trim().length === 0 ||
               worktreeBranchName.trim().length === 0
             }
             onPress={() => {
-              if (!canWriteSourceControl) return;
+              if (!canChangeThreadBranch) return;
               const baseBranch = worktreeBaseBranch.trim();
               const newBranch = worktreeBranchName.trim();
               if (baseBranch.length === 0 || newBranch.length === 0) return;
@@ -171,9 +171,9 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
                   "gap-1 rounded-[18px] border px-4 py-3 disabled:opacity-[0.45]",
                   branch.current ? "border-subtle-strong" : "border-border",
                 )}
-                disabled={!canWriteSourceControl || busy || disabled}
+                disabled={!canChangeThreadBranch || busy || disabled}
                 onPress={() => {
-                  if (!canWriteSourceControl) return;
+                  if (!canChangeThreadBranch) return;
                   void gitActions.onCheckoutSelectedThreadBranch(branch.name).then(() => {
                     navigation.goBack();
                   });
