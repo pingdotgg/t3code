@@ -48,6 +48,16 @@ describe("ServerProvider", () => {
     expect(parsed.skills).toEqual([]);
     expect(parsed.versionAdvisory).toBeUndefined();
     expect(parsed.updateState).toBeUndefined();
+    expect(parsed.sessionFork).toBeUndefined();
+  });
+
+  it("decodes provider session fork capabilities", () => {
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      sessionFork: "any-turn",
+    });
+
+    expect(parsed.sessionFork).toBe("any-turn");
   });
 
   it("defaults one-click update support when decoding older advisory snapshots", () => {

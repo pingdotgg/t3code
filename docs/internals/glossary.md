@@ -35,6 +35,14 @@ A Git worktree used as an isolated workspace for a thread. If a thread has a `wo
 
 The main durable unit of conversation and workspace history. In [the orchestration contracts][1], a thread holds messages, activities, checkpoints, and session-related state. See [projector.ts][4].
 
+#### Fork
+
+A durable thread whose provider context branches from another thread at a completed turn boundary. The fork stores immutable source thread, turn, and message IDs, but starts with an empty T3 transcript; the provider session carrying inherited context is created lazily on the fork's first turn. Native fork startup never resumes the parent session. Codex fork failures fail startup rather than silently creating an empty conversation. Latest-turn providers fork only at the source head, and clients use `sessionFork` to disable older-message fork actions for them.
+
+#### Side chat
+
+A presentation of a normal durable fork with `sideChat: true`. Side chats are omitted from navigation lists while their parent exists and grouped beside that parent; once the parent is removed, they reappear in lists as ordinary threads. Promoting one clears the flag through `thread.meta.update`; closing is client-local, while deletion uses the normal `thread.delete` command.
+
 #### Turn
 
 A single user-to-assistant work cycle inside a thread. It starts with user input and ends when the session leaves `running` status, which [projector.ts][4] treats as the authoritative completion signal (`settledTurnStateForSessionStatus`). Checkpoint and diff work may settle afterward without changing when the turn ended. See [the contracts][1] and [ProviderRuntimeIngestion.ts][5].

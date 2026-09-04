@@ -354,10 +354,24 @@ export function showContextMenuFallback<T extends string>(
           }
         }
 
+        const labelContainer = document.createElement("span");
+        labelContainer.className = "min-w-0 flex-1";
         const label = document.createElement("span");
-        label.className = "min-w-0 flex-1 truncate";
+        label.className = "block truncate";
         label.textContent = item.label;
-        button.appendChild(label);
+        labelContainer.appendChild(label);
+        if (
+          isDisabled &&
+          typeof item.disabledReason === "string" &&
+          item.disabledReason.trim().length > 0
+        ) {
+          const disabledReason = document.createElement("span");
+          disabledReason.className = "block truncate text-muted-foreground text-xs";
+          disabledReason.textContent = item.disabledReason;
+          labelContainer.appendChild(disabledReason);
+          button.setAttribute("title", item.disabledReason);
+        }
+        button.appendChild(labelContainer);
 
         if (hasChildren) {
           button.setAttribute("aria-haspopup", "menu");

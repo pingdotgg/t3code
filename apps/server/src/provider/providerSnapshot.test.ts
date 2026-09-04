@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import type { ModelCapabilities } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
@@ -10,10 +10,40 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  buildServerProvider,
   isCommandMissingCause,
   providerModelsFromSettings,
   spawnAndCollect,
 } from "./providerSnapshot.ts";
+import { withInstanceIdentity } from "./Drivers/instanceIdentity.ts";
+
+it("surfaces session fork capability on provider snapshots", () => {
+  const driverKind = ProviderDriverKind.make("codex");
+  const snapshot = withInstanceIdentity({
+    instanceId: ProviderInstanceId.make("codex"),
+    driverKind,
+    displayName: undefined,
+    accentColor: undefined,
+    continuationGroupKey: "codex:test",
+    adapterCapabilities: { sessionModelSwitch: "in-session", sessionFork: "any-turn" },
+  })(
+    buildServerProvider({
+      driver: driverKind,
+      presentation: { displayName: "Codex" },
+      enabled: true,
+      checkedAt: "2026-09-03T12:00:00.000Z",
+      models: [],
+      probe: {
+        installed: true,
+        version: "1.0.0",
+        status: "ready",
+        auth: { status: "authenticated" },
+      },
+    }),
+  );
+
+  expect(snapshot.sessionFork).toBe("any-turn");
+});
 
 const OPENCODE_CUSTOM_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [

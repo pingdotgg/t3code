@@ -110,13 +110,6 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         driverKind: DRIVER_KIND,
         instanceId,
       });
-      const stampIdentity = withInstanceIdentity({
-        instanceId,
-        driverKind: DRIVER_KIND,
-        displayName,
-        accentColor,
-        continuationGroupKey: continuationIdentity.continuationKey,
-      });
       const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
@@ -127,6 +120,14 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         instanceId,
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+      });
+      const stampIdentity = withInstanceIdentity({
+        instanceId,
+        driverKind: DRIVER_KIND,
+        displayName,
+        accentColor,
+        continuationGroupKey: continuationIdentity.continuationKey,
+        adapterCapabilities: adapter.capabilities,
       });
       const serverOwner = yield* OpenCodeServerOwner.make({
         binaryPath: effectiveConfig.binaryPath,

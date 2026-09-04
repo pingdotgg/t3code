@@ -3877,8 +3877,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
       const startedAt = yield* nowIso;
       const resumeState = readClaudeResumeState(input.resumeCursor);
+      const forkResumeState = readClaudeResumeState(input.forkFrom?.resumeCursor);
+      if (input.forkFrom !== undefined && forkResumeState?.resume === undefined) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "startSession",
+          issue: "Claude fork source is missing a valid session cursor.",
+        });
+      }
       const threadId = input.threadId;
       const existingResumeSessionId = resumeState?.resume;
+      const forkSourceSessionId = forkResumeState?.resume;
       const newSessionId = existingResumeSessionId === undefined ? yield* randomUUIDv4 : undefined;
       const sessionId = existingResumeSessionId ?? newSessionId;
 
@@ -4369,7 +4378,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? { allowDangerouslySkipPermissions: true }
           : {}),
         ...(Object.keys(settings).length > 0 ? { settings } : {}),
-        ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
+        ...(forkSourceSessionId
+          ? { resume: forkSourceSessionId, forkSession: true }
+          : existingResumeSessionId
+            ? { resume: existingResumeSessionId }
+            : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
         canUseTool,
@@ -4398,7 +4411,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "provider.thread_id": threadId,
         "provider.runtime_mode": input.runtimeMode,
         "claude.resume.source":
-          existingResumeSessionId !== undefined ? "resume-session" : "generated-session",
+          forkSourceSessionId !== undefined
+            ? "fork-session"
+            : existingResumeSessionId !== undefined
+              ? "resume-session"
+              : "generated-session",
         "claude.resume.thread_id": resumeState?.threadId ?? "",
         "claude.resume.session_id": existingResumeSessionId ?? "",
         "claude.resume.session_at": resumeState?.resumeSessionAt ?? "",
@@ -4408,7 +4425,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.effort": effectiveEffort ?? "",
         "claude.query.permission_mode": permissionMode ?? "",
         "claude.query.allow_dangerously_skip_permissions": permissionMode === "bypassPermissions",
-        "claude.query.resume": existingResumeSessionId ?? "",
+        "claude.query.resume": forkSourceSessionId ?? existingResumeSessionId ?? "",
         "claude.query.session_id": newSessionId ?? "",
         "claude.query.include_partial_messages": true,
         "claude.query.additional_directories": additionalDirectories,
@@ -4803,6 +4820,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      sessionFork: "latest-turn",
     },
     startSession,
     sendTurn,

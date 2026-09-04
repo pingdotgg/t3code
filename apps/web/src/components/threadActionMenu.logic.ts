@@ -8,6 +8,10 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
  */
 export type ThreadActionMenuId =
   | "new-thread-on-branch"
+  | "open-side-chat"
+  | "fork-thread"
+  | "side-chats"
+  | `open-existing-side-chat:${string}`
   | "project-settings"
   | "pin"
   | "unpin"
@@ -41,6 +45,11 @@ export interface ThreadActionMenuState {
     readonly pinning: boolean;
     readonly titleRegeneration: boolean;
   };
+  readonly forking?: {
+    readonly enabled: boolean;
+    readonly disabledReason: string | null;
+    readonly sideChats: ReadonlyArray<{ readonly id: string; readonly title: string }>;
+  };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
 }
 
@@ -60,6 +69,38 @@ export function buildThreadActionMenuItems(
             label: `New thread on ${state.branch}`,
             icon: "message-square-plus",
           },
+        ]
+      : []),
+    ...(state.forking
+      ? [
+          {
+            id: "open-side-chat" as const,
+            label: "Open side chat",
+            icon: "message-square-plus",
+            disabled: !state.forking.enabled,
+            disabledReason: state.forking.disabledReason,
+          },
+          {
+            id: "fork-thread" as const,
+            label: "Fork thread",
+            icon: "git-fork",
+            disabled: !state.forking.enabled,
+            disabledReason: state.forking.disabledReason,
+          },
+          ...(state.forking.sideChats.length > 0
+            ? [
+                {
+                  id: "side-chats" as const,
+                  label: "Side chats",
+                  icon: "messages-square",
+                  children: state.forking.sideChats.map((sideChat) => ({
+                    id: `open-existing-side-chat:${sideChat.id}` as const,
+                    label: sideChat.title,
+                    icon: "message-square",
+                  })),
+                },
+              ]
+            : []),
         ]
       : []),
     ...(state.supports.pinning

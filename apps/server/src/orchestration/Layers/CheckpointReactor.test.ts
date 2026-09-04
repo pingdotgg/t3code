@@ -118,6 +118,8 @@ function createProviderServiceHarness(
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions,
+    getSessionBinding: () => Effect.succeed(null),
+    clearSessionResumeCursor: () => unsupported(),
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
     assertConversationRollbackSupported,
     getInstanceInfo: (instanceId) =>

@@ -18,7 +18,9 @@ import type {
   ProviderInteractionMode,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
+  ServerProviderSessionFork,
   ThreadId,
+  TurnId,
   UserInputQuestion,
 } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
@@ -149,6 +151,14 @@ export interface ThreadDetailScreenProps {
   ) => void;
   readonly onSubmitUserInput: () => Promise<unknown>;
   readonly showContent?: boolean;
+  readonly forkCapability?: ServerProviderSessionFork;
+  readonly completedForkTurnIds: ReadonlySet<TurnId>;
+  readonly onForkAssistantMessage?: (input: {
+    readonly messageId: MessageId;
+    readonly turnId: TurnId;
+    readonly sideChat: boolean;
+  }) => void;
+  readonly forkOrigin?: { readonly title: string; readonly onPress: () => void };
 }
 
 function latestStreamingAssistantMessage(
@@ -729,6 +739,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             skills={selectedProviderSkills}
             onUseArtifactTemplate={handleUseArtifactTemplate}
             loadEarlier={props.loadEarlier ?? null}
+            forkCapability={props.forkCapability}
+            completedTurnIds={props.completedForkTurnIds}
+            onForkAssistantMessage={props.onForkAssistantMessage}
+            forkOrigin={props.forkOrigin}
           />
         </View>
       ) : (

@@ -10,6 +10,7 @@ import {
 import {
   type ArchiveThreadInput,
   type CreateThreadInput,
+  type ForkThreadInput,
   type DeleteThreadInput,
   type InterruptThreadTurnInput,
   type RespondToThreadApprovalInput,
@@ -30,6 +31,7 @@ import {
   type UpdateThreadMetadataInput,
   archiveThread,
   createThread,
+  forkThread,
   deleteThread,
   interruptThreadTurn,
   respondToThreadApproval,
@@ -54,6 +56,7 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 export type {
   ArchiveThreadInput,
   CreateThreadInput,
+  ForkThreadInput,
   DeleteThreadInput,
   InterruptThreadTurnInput,
   RespondToThreadApprovalInput,
@@ -87,6 +90,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
       execute: (input: CreateThreadInput) => createThread(input),
+      scheduler,
+      concurrency,
+    }),
+    fork: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:fork",
+      execute: (input: ForkThreadInput) => forkThread(input),
       scheduler,
       concurrency,
     }),

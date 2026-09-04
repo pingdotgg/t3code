@@ -90,6 +90,18 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedLocal.command, "chat.newLocal");
 
+    const parsedSideChat = yield* decode(KeybindingRule, {
+      key: "mod+shift+b",
+      command: "chat.sideChat",
+    });
+    assert.strictEqual(parsedSideChat.command, "chat.sideChat");
+
+    const parsedFork = yield* decode(KeybindingRule, {
+      key: "mod+alt+f",
+      command: "chat.forkThread",
+    });
+    assert.strictEqual(parsedFork.command, "chat.forkThread");
+
     const parsedModelPickerToggle = yield* decode(KeybindingRule, {
       key: "mod+shift+m",
       command: "modelPicker.toggle",

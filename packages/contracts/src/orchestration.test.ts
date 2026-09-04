@@ -460,6 +460,35 @@ it.effect("decodes thread.created runtime mode for historical events", () =>
 
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
     assert.strictEqual(parsed.modelSelection.instanceId, "codex");
+    assert.strictEqual(parsed.fork, undefined);
+    assert.strictEqual(parsed.sideChat, undefined);
+  }),
+);
+
+it.effect("decodes thread fork commands and side-chat metadata", () =>
+  Effect.gen(function* () {
+    const command = yield* decodeOrchestrationCommand({
+      type: "thread.fork",
+      commandId: "cmd-fork-1",
+      threadId: "thread-fork",
+      sourceThreadId: "thread-source",
+      sourceTurnId: "turn-1",
+      sourceMessageId: "message-1",
+      sideChat: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(command.type, "thread.fork");
+    if (command.type === "thread.fork") {
+      assert.strictEqual(command.sourceThreadId, "thread-source");
+      assert.strictEqual(command.sideChat, true);
+    }
+
+    const updated = yield* decodeThreadMetaUpdatedPayload({
+      threadId: "thread-fork",
+      sideChat: false,
+      updatedAt: "2026-01-01T00:00:01.000Z",
+    });
+    assert.strictEqual(updated.sideChat, false);
   }),
 );
 
@@ -567,8 +596,12 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
 
     assert.strictEqual(thread.settledOverride, null);
     assert.strictEqual(thread.settledAt, null);
+    assert.strictEqual(thread.fork, undefined);
+    assert.strictEqual(thread.sideChat, undefined);
     assert.strictEqual(shell.settledOverride, null);
     assert.strictEqual(shell.settledAt, null);
+    assert.strictEqual(shell.fork, undefined);
+    assert.strictEqual(shell.sideChat, undefined);
   }),
 );
 

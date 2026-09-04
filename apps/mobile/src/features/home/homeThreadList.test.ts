@@ -72,6 +72,59 @@ function buildGroups(
 }
 
 describe("buildHomeThreadGroups", () => {
+  it("hides attached side chats and keeps orphaned side chats in the home list", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-1"),
+      title: "Project",
+    });
+    const main = makeThread({
+      environmentId,
+      id: ThreadId.make("thread-main"),
+      projectId: project.id,
+      title: "Main",
+    });
+    const sideChat = makeThread({
+      environmentId,
+      id: ThreadId.make("thread-side"),
+      projectId: project.id,
+      title: "Side chat",
+      sideChat: true,
+      fork: {
+        sourceThreadId: main.id,
+        sourceTurnId: null,
+        sourceMessageId: null,
+        forkedAt: "2026-06-01T00:01:00.000Z",
+      },
+    });
+    const orphanedSideChat = makeThread({
+      environmentId,
+      id: ThreadId.make("thread-orphan"),
+      projectId: project.id,
+      title: "Orphaned side chat",
+      sideChat: true,
+      fork: {
+        sourceThreadId: ThreadId.make("thread-missing-parent"),
+        sourceTurnId: null,
+        sourceMessageId: null,
+        forkedAt: "2026-06-01T00:01:00.000Z",
+      },
+      updatedAt: "2026-06-02T00:00:00.000Z",
+    });
+
+    expect(
+      buildGroups([project], [main, sideChat, orphanedSideChat])[0]?.threads.map(
+        (thread) => thread.id,
+      ),
+    ).toEqual([orphanedSideChat.id, main.id]);
+    expect(
+      buildGroups([project], [main, sideChat, orphanedSideChat], {
+        searchQuery: "orphaned",
+      })[0]?.threads.map((thread) => thread.id),
+    ).toEqual([orphanedSideChat.id]);
+  });
+
   it("builds one v2 scope for the same repository across environments", () => {
     const localEnvironmentId = EnvironmentId.make("environment-local");
     const remoteEnvironmentId = EnvironmentId.make("environment-remote");

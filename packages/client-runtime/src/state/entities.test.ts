@@ -26,12 +26,14 @@ import { createEnvironmentSnapshotAtom } from "./snapshots.ts";
 import { createEnvironmentThreadDetailAtoms } from "./threadDetail.ts";
 import { mergeEnvironmentThread } from "./threadDetail.ts";
 import { createEnvironmentThreadShellAtoms } from "./threadShell.ts";
+import { forkOrigin, isSideChat } from "./threadShell.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const PROJECT_ID = ProjectId.make("project-1");
 const OTHER_PROJECT_ID = ProjectId.make("project-2");
 const THREAD_ID = ThreadId.make("thread-1");
 const OTHER_THREAD_ID = ThreadId.make("thread-2");
+const SIDE_CHAT_ID = ThreadId.make("thread-side-chat");
 
 describe("scoped entity keys", () => {
   it("preserves an invalid project key as structured error data", () => {
@@ -197,6 +199,151 @@ function makeHarness() {
 }
 
 describe("environment entity projections", () => {
+  it("keeps side chats addressable while hiding and grouping them outside thread lists", () => {
+    const harness = makeHarness();
+    const sideChat = {
+      ...THREAD_SHELL,
+      id: SIDE_CHAT_ID,
+      title: "Side chat: Thread",
+      fork: {
+        sourceThreadId: THREAD_ID,
+        sourceTurnId: null,
+        sourceMessageId: null,
+        forkedAt: "2026-06-01T00:01:00.000Z",
+      },
+      sideChat: true,
+    } as const;
+
+    harness.registry.set(
+      harness.shellStateAtom,
+      AsyncResult.success(
+        shellState({
+          ...SNAPSHOT,
+          snapshotSequence: 2,
+          threads: [...SNAPSHOT.threads, sideChat],
+        }),
+      ),
+    );
+
+    const refs = harness.registry.get(
+      harness.threadShells.environmentThreadRefsAtom(ENVIRONMENT_ID),
+    );
+    expect(refs.some((ref) => ref.threadId === SIDE_CHAT_ID)).toBe(false);
+    const allRefs = harness.registry.get(
+      harness.threadShells.environmentAllThreadRefsAtom(ENVIRONMENT_ID),
+    );
+    expect(allRefs.some((ref) => ref.threadId === SIDE_CHAT_ID)).toBe(true);
+    const refsByProject = harness.registry.get(
+      harness.threadShells.environmentThreadRefsByProjectAtom(ENVIRONMENT_ID),
+    );
+    expect(refsByProject.get(PROJECT_ID)?.some((ref) => ref.threadId === SIDE_CHAT_ID)).toBe(false);
+    const byId = harness.registry.get(
+      harness.threadShells.threadShellAtom({
+        environmentId: ENVIRONMENT_ID,
+        threadId: SIDE_CHAT_ID,
+      }),
+    );
+    expect(byId?.id).toBe(SIDE_CHAT_ID);
+    expect(byId && isSideChat(byId)).toBe(true);
+    expect(byId && forkOrigin(byId)?.sourceThreadId).toBe(THREAD_ID);
+    const grouped = harness.registry.get(
+      harness.threadShells.sideChatsByParentAtom({
+        environmentId: ENVIRONMENT_ID,
+        threadId: THREAD_ID,
+      }),
+    );
+    expect(grouped.map((thread) => thread.id)).toEqual([SIDE_CHAT_ID]);
+  });
+
+  it("shows orphaned side chats in thread lists after their parent is removed", () => {
+    const harness = makeHarness();
+    const sideChat = {
+      ...THREAD_SHELL,
+      id: SIDE_CHAT_ID,
+      title: "Side chat: Thread",
+      fork: {
+        sourceThreadId: THREAD_ID,
+        sourceTurnId: null,
+        sourceMessageId: null,
+        forkedAt: "2026-06-01T00:01:00.000Z",
+      },
+      sideChat: true,
+    } as const;
+
+    harness.registry.set(
+      harness.shellStateAtom,
+      AsyncResult.success(
+        shellState({
+          ...SNAPSHOT,
+          snapshotSequence: 2,
+          threads: [SNAPSHOT.threads[1]!, sideChat],
+        }),
+      ),
+    );
+
+    const refs = harness.registry.get(
+      harness.threadShells.environmentThreadRefsAtom(ENVIRONMENT_ID),
+    );
+    expect(refs.some((ref) => ref.threadId === SIDE_CHAT_ID)).toBe(true);
+    const refsByProject = harness.registry.get(
+      harness.threadShells.environmentThreadRefsByProjectAtom(ENVIRONMENT_ID),
+    );
+    expect(refsByProject.get(PROJECT_ID)?.some((ref) => ref.threadId === SIDE_CHAT_ID)).toBe(true);
+    const grouped = harness.registry.get(
+      harness.threadShells.sideChatsByParentAtom({
+        environmentId: ENVIRONMENT_ID,
+        threadId: THREAD_ID,
+      }),
+    );
+    expect(grouped).toEqual([]);
+  });
+
+  it("preserves side-chat group identities across unrelated thread updates", () => {
+    const harness = makeHarness();
+    const sideChat = {
+      ...THREAD_SHELL,
+      id: SIDE_CHAT_ID,
+      fork: {
+        sourceThreadId: THREAD_ID,
+        sourceTurnId: null,
+        sourceMessageId: null,
+        forkedAt: "2026-06-01T00:01:00.000Z",
+      },
+      sideChat: true,
+    } as const;
+
+    harness.registry.set(
+      harness.shellStateAtom,
+      AsyncResult.success(
+        shellState({
+          ...SNAPSHOT,
+          snapshotSequence: 2,
+          threads: [...SNAPSHOT.threads, sideChat],
+        }),
+      ),
+    );
+
+    const groupedAtom = harness.threadShells.environmentSideChatsByParentAtom(ENVIRONMENT_ID);
+    const grouped = harness.registry.get(groupedAtom);
+    const sideChats = grouped.get(THREAD_ID);
+
+    harness.registry.set(
+      harness.shellStateAtom,
+      AsyncResult.success(
+        shellState({
+          ...SNAPSHOT,
+          snapshotSequence: 3,
+          threads: [...SNAPSHOT.threads, sideChat].map((thread) =>
+            thread.id === OTHER_THREAD_ID ? { ...thread, title: "Updated elsewhere" } : thread,
+          ),
+        }),
+      ),
+    );
+
+    expect(harness.registry.get(groupedAtom)).toBe(grouped);
+    expect(harness.registry.get(groupedAtom).get(THREAD_ID)).toBe(sideChats);
+  });
+
   it("composes detail collections with authoritative shell workspace metadata", () => {
     const messages: OrchestrationThread["messages"] = [];
     const detail = {

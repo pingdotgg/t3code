@@ -59,10 +59,22 @@ export const ProviderSessionStartInput = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   modelSelection: Schema.optional(ModelSelection),
   resumeCursor: Schema.optional(Schema.Unknown),
+  forkFrom: Schema.optional(
+    Schema.Struct({
+      threadId: ThreadId,
+      turnId: Schema.optional(TurnId),
+    }),
+  ),
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
   runtimeMode: RuntimeMode,
-});
+}).check(
+  Schema.makeFilter(
+    (input) =>
+      !(input.resumeCursor !== undefined && input.forkFrom !== undefined) ||
+      "resumeCursor and forkFrom cannot be specified together",
+  ),
+);
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
 export const ProviderSendTurnInput = Schema.Struct({

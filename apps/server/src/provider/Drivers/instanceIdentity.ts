@@ -2,13 +2,11 @@ import type { ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
 
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
+import type { ProviderAdapterCapabilities } from "../Services/ProviderAdapter.ts";
 
 /**
- * Stamp instance identity onto a `ServerProvider` snapshot produced by the
- * driver-kind-only snapshot helpers. Every driver builds its snapshot without
- * knowing its own instance, so it pipes the draft through this stamper before
- * publishing. Once `buildServerProvider` in `providerSnapshot.ts` is widened to
- * accept `instanceId`/`driver`, this wrapper disappears.
+ * Stamp instance identity and adapter-owned capabilities onto a provider draft
+ * before the driver publishes it.
  */
 export const withInstanceIdentity =
   (input: {
@@ -17,6 +15,7 @@ export const withInstanceIdentity =
     readonly displayName: string | undefined;
     readonly accentColor: string | undefined;
     readonly continuationGroupKey: string;
+    readonly adapterCapabilities: ProviderAdapterCapabilities;
   }) =>
   (snapshot: ServerProviderDraft): ServerProvider => ({
     ...snapshot,
@@ -24,5 +23,6 @@ export const withInstanceIdentity =
     driver: input.driverKind,
     ...(input.displayName ? { displayName: input.displayName } : {}),
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
+    sessionFork: input.adapterCapabilities.sessionFork ?? "unsupported",
     continuation: { groupKey: input.continuationGroupKey },
   });

@@ -39,6 +39,7 @@ import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngi
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
+import * as ProviderService from "./provider/Services/ProviderService.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import {
   makePersistedServerRuntimeState,
@@ -156,6 +157,11 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
         ),
       ),
       Layer.provideMerge(makeProjectPersistenceLayer(config)),
+      Layer.provideMerge(
+        Layer.mock(ProviderService.ProviderService)({
+          getCapabilities: () => Effect.die("unused"),
+        }),
+      ),
       Layer.provideMerge(
         NodeHttpServer.layer(NodeHttp.createServer, {
           host: "127.0.0.1",

@@ -11,6 +11,7 @@ import type {
 } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
+import { appAtomRegistry } from "./atom-registry";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 import { environmentThreadShells } from "./threads";
@@ -20,6 +21,9 @@ const EMPTY_PROJECT_ATOM = Atom.make<EnvironmentProject | null>(null).pipe(
 );
 const EMPTY_THREAD_SHELL_ATOM = Atom.make<EnvironmentThreadShell | null>(null).pipe(
   Atom.withLabel("mobile-thread-shell:empty"),
+);
+const EMPTY_THREAD_SHELLS_ATOM = Atom.make<ReadonlyArray<EnvironmentThreadShell>>([]).pipe(
+  Atom.withLabel("mobile-thread-shells:empty"),
 );
 const EMPTY_SERVER_CONFIG_ATOM = Atom.make<ServerConfig | null>(null).pipe(
   Atom.withLabel("mobile-server-config:empty"),
@@ -40,6 +44,40 @@ export function useProject(ref: ScopedProjectRef | null): EnvironmentProject | n
 export function useThreadShell(ref: ScopedThreadRef | null): EnvironmentThreadShell | null {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_SHELL_ATOM : environmentThreadShells.threadShellAtom(ref),
+  );
+}
+
+/** Resolves after a newly-created thread reaches the shell projection. */
+export function waitForThreadShell(
+  ref: ScopedThreadRef,
+  timeoutMs = 10_000,
+): Promise<EnvironmentThreadShell> {
+  const atom = environmentThreadShells.threadShellAtom(ref);
+  const current = appAtomRegistry.get(atom);
+  if (current !== null) return Promise.resolve(current);
+
+  return new Promise((resolve, reject) => {
+    let unsubscribe: (() => void) | null = null;
+    const timeout = setTimeout(() => {
+      unsubscribe?.();
+      reject(new Error("The forked thread did not finish syncing."));
+    }, timeoutMs);
+    const finish = (thread: EnvironmentThreadShell | null) => {
+      if (thread === null) return;
+      clearTimeout(timeout);
+      unsubscribe?.();
+      resolve(thread);
+    };
+    unsubscribe = appAtomRegistry.subscribe(atom, finish);
+    finish(appAtomRegistry.get(atom));
+  });
+}
+
+export function useSideChatsByParent(
+  ref: ScopedThreadRef | null,
+): ReadonlyArray<EnvironmentThreadShell> {
+  return useAtomValue(
+    ref === null ? EMPTY_THREAD_SHELLS_ATOM : environmentThreadShells.sideChatsByParentAtom(ref),
   );
 }
 

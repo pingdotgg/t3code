@@ -27,6 +27,7 @@ import {
   readEnvironmentSupportsPinReorder,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
+  readEnvironmentAllThreadRefs,
   readEnvironmentThreadRefs,
   readProject,
   readThreadShell,
@@ -298,6 +299,10 @@ export function useThreadActions() {
         const shell = readThreadShell(ref);
         return shell === null ? [] : [shell];
       });
+      const allThreads = readEnvironmentAllThreadRefs(threadRef.environmentId).flatMap((ref) => {
+        const shell = readThreadShell(ref);
+        return shell === null ? [] : [shell];
+      });
       const threadProject = readProject({
         environmentId: threadRef.environmentId,
         projectId: thread.projectId,
@@ -311,12 +316,14 @@ export function useThreadActions() {
               }),
             )
           : undefined;
-      const survivingThreads =
+      const survivingThreadsForWorktreeCheck =
         deletedIds && deletedIds.size > 0
-          ? threads.filter((entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id))
-          : threads;
+          ? allThreads.filter(
+              (entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id),
+            )
+          : allThreads;
       const orphanedWorktreePath = getOrphanedWorktreePathForThread(
-        survivingThreads,
+        survivingThreadsForWorktreeCheck,
         threadRef.threadId,
       );
       const displayWorktreePath = orphanedWorktreePath

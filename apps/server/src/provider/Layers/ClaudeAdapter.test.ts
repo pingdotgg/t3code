@@ -4366,6 +4366,36 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("forks Claude sessions at the latest boundary into a new durable cursor", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const sourceSessionId = "550e8400-e29b-41d4-a716-446655440000";
+
+      const session = yield* adapter.startSession({
+        threadId: ThreadId.make("thread-claude-fork"),
+        provider: ProviderDriverKind.make("claudeAgent"),
+        forkFrom: {
+          resumeCursor: { resume: sourceSessionId, resumeSessionAt: "assistant-99" },
+        },
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.resume, sourceSessionId);
+      assert.equal(createInput?.options.forkSession, true);
+      assert.equal(createInput?.options.resumeSessionAt, undefined);
+      assert.equal(
+        createInput?.options.sessionId,
+        (session.resumeCursor as { resume?: string }).resume,
+      );
+      assert.notEqual((session.resumeCursor as { resume?: string }).resume, sourceSessionId);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("preserves durable resume ids across Claude resume hooks", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

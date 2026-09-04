@@ -1,6 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import {
   type ClientOrchestrationCommand,
@@ -19,7 +20,10 @@ import {
 } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
+import { ProviderService } from "../provider/Services/ProviderService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { OrchestrationCommandInvariantError } from "./Errors.ts";
+import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 
 export const canonicalizeClientCommandTimestamps = (
   command: ClientOrchestrationCommand,
@@ -127,6 +131,66 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         ...canonicalCommand,
         workspaceRoot: yield* normalizeProjectWorkspaceRoot(canonicalCommand.workspaceRoot),
       } satisfies OrchestrationCommand;
+    }
+
+    if (canonicalCommand.type === "thread.fork" && canonicalCommand.sourceTurnId !== undefined) {
+      const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+      const sourceTurn = yield* projectionSnapshotQuery.getThreadTurnState(
+        canonicalCommand.sourceThreadId,
+        canonicalCommand.sourceTurnId,
+      );
+      if (Option.isNone(sourceTurn)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: canonicalCommand.type,
+          detail: `Turn '${canonicalCommand.sourceTurnId}' does not exist on source thread '${canonicalCommand.sourceThreadId}'.`,
+        });
+      }
+      if (sourceTurn.value.state !== "completed") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: canonicalCommand.type,
+          detail: `Turn '${canonicalCommand.sourceTurnId}' is not a completed turn of source thread '${canonicalCommand.sourceThreadId}'.`,
+        });
+      }
+      if (
+        canonicalCommand.sourceMessageId !== undefined &&
+        sourceTurn.value.assistantMessageId !== canonicalCommand.sourceMessageId
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: canonicalCommand.type,
+          detail: `Message '${canonicalCommand.sourceMessageId}' is not the assistant message for turn '${canonicalCommand.sourceTurnId}' on source thread '${canonicalCommand.sourceThreadId}'.`,
+        });
+      }
+
+      const activeSourceThread = yield* projectionSnapshotQuery.getThreadShellById(
+        canonicalCommand.sourceThreadId,
+      );
+      const sourceThread = Option.isSome(activeSourceThread)
+        ? activeSourceThread
+        : Option.fromNullishOr(
+            (yield* projectionSnapshotQuery.getArchivedShellSnapshot()).threads.find(
+              (thread) => thread.id === canonicalCommand.sourceThreadId,
+            ),
+          );
+      if (Option.isSome(sourceThread)) {
+        const providerService = yield* ProviderService;
+        // The live session's instance wins over the stored selection, matching
+        // the reactor and the clients after a provider switch.
+        const sourceInstanceId =
+          sourceThread.value.session?.providerInstanceId ??
+          sourceThread.value.modelSelection.instanceId;
+        const capabilities = yield* providerService.getCapabilities(sourceInstanceId);
+        const latestTurn = sourceThread.value.latestTurn;
+        if (
+          capabilities.sessionFork === "latest-turn" &&
+          (latestTurn?.turnId !== canonicalCommand.sourceTurnId ||
+            latestTurn?.state !== "completed")
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: canonicalCommand.type,
+            detail: `Turn '${canonicalCommand.sourceTurnId}' is not the latest completed turn of source thread '${canonicalCommand.sourceThreadId}'. Provider instance '${sourceInstanceId}' can only fork from the source's current completed head.`,
+          });
+        }
+      }
     }
 
     if (canonicalCommand.type !== "thread.turn.start") {

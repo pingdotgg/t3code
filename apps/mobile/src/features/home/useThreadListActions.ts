@@ -569,3 +569,16 @@ export function useArchivedThreadListActions(
 
   return { unarchiveThread, confirmDeleteThread };
 }
+
+export function useThreadDeleteAction(
+  onDeleted: (thread: EnvironmentThreadShell) => void,
+): (thread: EnvironmentThreadShell) => void {
+  const handleCompleted = useCallback(
+    (action: ThreadListAction, thread: EnvironmentThreadShell) => {
+      if (action === "delete") onDeleted(thread);
+    },
+    [onDeleted],
+  );
+  const executeAction = useThreadActionExecutor(handleCompleted);
+  return useConfirmDeleteThread(executeAction);
+}

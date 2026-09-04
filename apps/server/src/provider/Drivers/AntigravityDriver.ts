@@ -105,6 +105,9 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
+        // The ACP adapter is built after the identity stamp; it does not fork
+        // sessions, so the capability is declared here rather than read back.
+        adapterCapabilities: { sessionModelSwitch: "in-session", sessionFork: "unsupported" },
       });
       // Google returns every model the account can use, including older
       // Gemini generations. The manifest names the current ones so the picker

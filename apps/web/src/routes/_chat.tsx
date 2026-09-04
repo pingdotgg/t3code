@@ -5,19 +5,24 @@ import { useEffect, useMemo } from "react";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
-import { useProjects } from "../state/entities";
+import { useProjects, useThread } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useThreadForkActions } from "../hooks/useThreadFork";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
-import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+import {
+  selectActiveRightPanel,
+  selectActiveRightPanelSurface,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
@@ -27,6 +32,25 @@ function ChatRouteGlobalShortcuts() {
   const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
     useHandleNewThread();
+  const activeConversationSurface = useRightPanelStore((state) =>
+    selectActiveRightPanelSurface(state.byThreadKey, routeThreadRef),
+  );
+  const activeSideChatRef = useMemo(
+    () =>
+      routeThreadRef && activeConversationSurface?.kind === "side-chat"
+        ? {
+            environmentId: routeThreadRef.environmentId,
+            threadId: activeConversationSurface.threadId,
+          }
+        : null,
+    [activeConversationSurface, routeThreadRef],
+  );
+  const activeSideChat = useThread(activeSideChatRef);
+  const forkSourceThread =
+    activeConversationSurface?.kind === "side-chat" ? activeSideChat : activeThread;
+  const threadFork = useThreadForkActions(forkSourceThread, {
+    panelHostThreadId: routeThreadRef?.threadId ?? null,
+  });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const legacySidebarEnabled = useLegacySidebarEnabled();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -108,6 +132,24 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
+      if (command === "chat.sideChat" || command === "chat.forkThread") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) {
+          if (!threadFork.latest.enabled) {
+            toastManager.add({
+              type: "info",
+              title: command === "chat.sideChat" ? "Side chat unavailable" : "Fork unavailable",
+              description:
+                threadFork.latest.disabledReason ?? "Complete a turn before forking this thread.",
+            });
+            return;
+          }
+          void threadFork.forkLatest(command === "chat.sideChat");
+        }
+        return;
+      }
+
       if (command === "preview.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -169,6 +211,9 @@ function ChatRouteGlobalShortcuts() {
     selectedThreadKeysSize,
     legacySidebarEnabled,
     terminalOpen,
+    threadFork.forkLatest,
+    threadFork.latest.disabledReason,
+    threadFork.latest.enabled,
   ]);
 
   return null;

@@ -27,6 +27,26 @@ function getOptionValue(
 }
 
 describe("ProviderSessionStartInput", () => {
+  it("accepts fork sources and rejects combining them with resume cursors", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-fork",
+      provider: "codex",
+      forkFrom: { threadId: "thread-source", turnId: "turn-1" },
+      runtimeMode: "full-access",
+    });
+    expect(parsed.forkFrom).toEqual({ threadId: "thread-source", turnId: "turn-1" });
+
+    expect(() =>
+      decodeProviderSessionStartInput({
+        threadId: "thread-fork",
+        provider: "codex",
+        resumeCursor: { threadId: "provider-thread" },
+        forkFrom: { threadId: "thread-source" },
+        runtimeMode: "full-access",
+      }),
+    ).toThrow();
+  });
+
   it("accepts codex-compatible payloads", () => {
     const parsed = decodeProviderSessionStartInput({
       threadId: "thread-1",

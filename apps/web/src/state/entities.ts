@@ -8,7 +8,7 @@ import {
   type EnvironmentThreadStatus,
   mergeEnvironmentThread,
 } from "@t3tools/client-runtime/state/threads";
-import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
+import type { ScopedProjectRef, ScopedThreadRef, ServerConfig, ThreadId } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
@@ -19,12 +19,23 @@ import { allEnvironmentShellsBootstrappedAtom } from "./shell";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
 
 const EMPTY_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
+const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = Object.freeze([]);
+const EMPTY_SIDE_CHATS_BY_PARENT: ReadonlyMap<
+  ThreadId,
+  ReadonlyArray<EnvironmentThreadShell>
+> = new Map();
 
 const EMPTY_PROJECT_ATOM = Atom.make<EnvironmentProject | null>(null).pipe(
   Atom.withLabel("web-project:empty"),
 );
 const EMPTY_THREAD_REFS_ATOM = Atom.make(EMPTY_THREAD_REFS).pipe(
   Atom.withLabel("web-thread-refs:empty"),
+);
+const EMPTY_THREAD_SHELLS_ATOM = Atom.make(EMPTY_THREAD_SHELLS).pipe(
+  Atom.withLabel("web-thread-shells:empty"),
+);
+const EMPTY_SIDE_CHATS_BY_PARENT_ATOM = Atom.make(EMPTY_SIDE_CHATS_BY_PARENT).pipe(
+  Atom.withLabel("web-side-chats-by-parent:empty"),
 );
 const EMPTY_THREAD_SHELL_ATOM = Atom.make<EnvironmentThreadShell | null>(null).pipe(
   Atom.withLabel("web-thread-shell:empty"),
@@ -63,6 +74,16 @@ export function useEnvironmentThreadRefs(
   );
 }
 
+export function useEnvironmentSideChatsByParent(
+  environmentId: EnvironmentId | null,
+): ReadonlyMap<ThreadId, ReadonlyArray<EnvironmentThreadShell>> {
+  return useAtomValue(
+    environmentId === null
+      ? EMPTY_SIDE_CHATS_BY_PARENT_ATOM
+      : environmentThreadShells.environmentSideChatsByParentAtom(environmentId),
+  );
+}
+
 export function useProjects(): ReadonlyArray<EnvironmentProject> {
   return useAtomValue(environmentProjects.projectsAtom);
 }
@@ -73,6 +94,14 @@ export function useServerConfigs(): ReadonlyMap<EnvironmentId, ServerConfig> {
 
 export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.threadShellsAtom);
+}
+
+export function useSideChatsByParent(
+  ref: ScopedThreadRef | null,
+): ReadonlyArray<EnvironmentThreadShell> {
+  return useAtomValue(
+    ref === null ? EMPTY_THREAD_SHELLS_ATOM : environmentThreadShells.sideChatsByParentAtom(ref),
+  );
 }
 
 export function useAllEnvironmentShellsBootstrapped(): boolean {
@@ -176,6 +205,36 @@ export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | 
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
 }
 
+export function readThreadDetail(ref: ScopedThreadRef): EnvironmentThread | null {
+  return appAtomRegistry.get(environmentThreadDetails.detailAtom(ref));
+}
+
+/** Resolves after a newly-created thread reaches the shell projection. */
+export function waitForThreadShell(
+  ref: ScopedThreadRef,
+  timeoutMs = 10_000,
+): Promise<EnvironmentThreadShell> {
+  const atom = environmentThreadShells.threadShellAtom(ref);
+  const current = appAtomRegistry.get(atom);
+  if (current !== null) return Promise.resolve(current);
+
+  return new Promise((resolve, reject) => {
+    let unsubscribe: (() => void) | null = null;
+    const timeout = setTimeout(() => {
+      unsubscribe?.();
+      reject(new Error("The forked thread did not finish syncing."));
+    }, timeoutMs);
+    const finish = (thread: EnvironmentThreadShell | null) => {
+      if (thread === null) return;
+      clearTimeout(timeout);
+      unsubscribe?.();
+      resolve(thread);
+    };
+    unsubscribe = appAtomRegistry.subscribe(atom, finish);
+    finish(appAtomRegistry.get(atom));
+  });
+}
+
 /** Whether the environment's server understands thread.settle/unsettle.
     False for pre-settlement servers (capability defaults false on decode),
     so clients under version skew fall back instead of erroring. */
@@ -228,6 +287,16 @@ export function readEnvironmentThreadRefs(
   return appAtomRegistry.get(environmentThreadShells.environmentThreadRefsAtom(environmentId));
 }
 
+export function readEnvironmentAllThreadRefs(
+  environmentId: EnvironmentId,
+): ReadonlyArray<ScopedThreadRef> {
+  return appAtomRegistry.get(environmentThreadShells.environmentAllThreadRefsAtom(environmentId));
+}
+
 export function readThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
+}
+
+export function readSideChatsByParent(ref: ScopedThreadRef): ReadonlyArray<EnvironmentThreadShell> {
+  return appAtomRegistry.get(environmentThreadShells.sideChatsByParentAtom(ref));
 }

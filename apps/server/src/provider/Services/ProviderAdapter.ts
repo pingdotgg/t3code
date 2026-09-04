@@ -26,12 +26,23 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
+export type ProviderSessionForkMode = "any-turn" | "latest-turn" | "unsupported";
+
+export interface ProviderAdapterSessionForkInput {
+  readonly resumeCursor: unknown;
+  readonly turnId?: TurnId;
+}
+
+export type ProviderAdapterSessionStartInput = Omit<ProviderSessionStartInput, "forkFrom"> & {
+  readonly forkFrom?: ProviderAdapterSessionForkInput;
+};
 
 export interface ProviderAdapterCapabilities {
   /**
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  readonly sessionFork?: ProviderSessionForkMode;
   /** Starts a resumed turn with no synthetic user prompt. Omitted means the
       adapter needs an explicit continuation instruction. */
   readonly promptlessTurnContinuation?: boolean;
@@ -60,7 +71,7 @@ export interface ProviderAdapterShape<TError> {
    * Start a provider-backed session.
    */
   readonly startSession: (
-    input: ProviderSessionStartInput,
+    input: ProviderAdapterSessionStartInput,
   ) => Effect.Effect<ProviderSession, TError>;
 
   /**
