@@ -28,6 +28,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
 
 const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
+const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
 
 /**
  * One window as a bar spanning its whole duration: the fill is quota spent,
@@ -74,6 +75,7 @@ function WindowBar(props: { readonly window: ServerProviderUsageWindow; readonly
 
 function AccountLimits(props: {
   readonly label: string;
+  readonly instanceLabel: string;
   readonly detail: string | undefined;
   readonly limits: ServerProvider["usageLimits"];
   readonly now: number;
@@ -85,10 +87,13 @@ function AccountLimits(props: {
   const notice = limitsNotice(limits);
   return (
     <View className={props.first ? "gap-3 p-4" : "gap-3 border-t border-border-subtle p-4"}>
-      <View className="flex-row items-baseline gap-2">
+      <View className="flex-row flex-wrap items-baseline gap-x-2 gap-y-1">
         <Text className="text-lg text-foreground">{props.label}</Text>
+        {props.instanceLabel !== props.label ? (
+          <Text className="shrink text-xs text-foreground-tertiary">· {props.instanceLabel}</Text>
+        ) : null}
         {props.detail ? (
-          <Text className="text-sm text-foreground-muted">{props.detail}</Text>
+          <Text className="shrink text-sm text-foreground-muted">· {props.detail}</Text>
         ) : null}
       </View>
       {notice ? (
@@ -195,7 +200,8 @@ function ProviderLimits(props: {
   const credits = provider.usageLimits?.resetCredits;
   return (
     <AccountLimits
-      label={providerLimitsLabel(provider, () => undefined)}
+      label={DRIVER_LABEL[provider.driver] ?? String(provider.driver)}
+      instanceLabel={providerLimitsLabel(provider, (driver) => DRIVER_LABEL[driver])}
       detail={provider.auth.label}
       limits={provider.usageLimits}
       now={now}
@@ -214,8 +220,6 @@ function ProviderLimits(props: {
   );
 }
 
-const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
-
 /** Emails stay off the phone screen; the plan and driver identify the row. */
 function SourceAccountLimits(props: {
   readonly account: UsageLimitSourceAccount;
@@ -226,6 +230,7 @@ function SourceAccountLimits(props: {
   return (
     <AccountLimits
       label={DRIVER_LABEL[account.driver] ?? String(account.driver)}
+      instanceLabel="CLI Proxy"
       detail={account.plan}
       limits={account.usageLimits}
       now={props.now}
@@ -250,11 +255,15 @@ export function UsageLimitsSection() {
   return (
     <>
       {sources.map((source) => (
-        <SettingsSection key={source.key} title={`${source.label} · CLIProxyAPI`} card>
+        <SettingsSection key={source.key} title={source.label} card>
           {source.error ? (
             <Text className="p-4 text-sm text-foreground-muted">{source.error}</Text>
           ) : source.accounts.length === 0 ? (
-            <Text className="p-4 text-sm text-foreground-muted">No accounts reported.</Text>
+            <Text className="p-4 text-sm text-foreground-muted">
+              {source.hiddenAccountCount > 0
+                ? "All accounts are shown by connected providers."
+                : "No accounts reported."}
+            </Text>
           ) : (
             source.accounts.map((account, index) => (
               <SourceAccountLimits
