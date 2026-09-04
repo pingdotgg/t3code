@@ -1,6 +1,8 @@
 ---
 import { Image } from "astro:assets";
 import appIcon from "../assets/icon.webp";
+import dmSansLatinUrl from "../assets/fonts/dm-sans-latin.woff2?url";
+import "../styles/fonts.css";
 import {
   ANDROID_PLAY_STORE_URL,
   GITHUB_REPOSITORY_URL,
@@ -26,11 +28,12 @@ const {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content={description} />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
+      rel="preload"
+      href={dmSansLatinUrl}
+      as="font"
+      type="font/woff2"
+      crossorigin="anonymous"
     />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="icon" type="image/png" href="/favicon-32x32.png" sizes="32x32" />
