@@ -76,17 +76,20 @@ const mobileEndorsementRows = [
         </p>
       </div>
 
-      <div class="hero-preview" data-rise style="--d:520ms">
-        <figure class="hero-screenshot-frame">
-          <img
-            src="/app-desktop.webp"
-            alt="T3 Code with a settled thread beside its pull request diff"
-            width="2880"
-            height="1800"
-            loading="eager"
-            decoding="async"
-          />
-        </figure>
+      <!-- The rise wrapper is separate so its animated transform does not override the preview tilt. -->
+      <div data-rise style="--d:520ms">
+        <div class="hero-preview">
+          <figure class="hero-screenshot-frame">
+            <img
+              src="/app-desktop.webp"
+              alt="T3 Code with a settled thread beside its pull request diff"
+              width="2880"
+              height="1800"
+              loading="eager"
+              decoding="async"
+            />
+          </figure>
+        </div>
       </div>
     </div>
   </section>
@@ -567,6 +570,8 @@ const mobileEndorsementRows = [
     max-width: 20ch;
     text-wrap: balance;
   }
+  /* Inline boxes ignore transforms, so each rising line needs its own block. */
+  .hero-title span { display: inline-block; }
 
   .hero-sub {
     color: var(--fg-muted);
