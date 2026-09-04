@@ -36,6 +36,7 @@ import {
 } from "../antigravityAuthSupport.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
+import { layer as idAllocatorLayer } from "../../orchestration-v2/IdAllocator.ts";
 import { AntigravityDriver } from "./AntigravityDriver.ts";
 
 const hostPlatform = HostProcessPlatform.defaultValue();
@@ -258,6 +259,7 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
   ),
   Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
   Layer.provideMerge(ModelManifest.layerTest),
+  Layer.provideMerge(idAllocatorLayer),
 );
 
 it.layer(testLayer)("AntigravityDriver", (it) => {

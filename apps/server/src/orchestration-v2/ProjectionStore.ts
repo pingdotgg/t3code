@@ -106,6 +106,33 @@ export type ProjectionRecoveryKind =
   | "subagent-results"
   | "delegated-completions";
 
+const ProjectionCheckpointContext = Schema.Struct({
+  runs: Schema.Array(
+    OrchestrationV2RunJsonSchema.mapFields(({ id, ordinal, status }) => ({ id, ordinal, status })),
+  ),
+  checkpointScopes: Schema.Array(
+    OrchestrationV2CheckpointScopeJsonSchema.mapFields(({ id, runId, kind, cwd }) => ({
+      id,
+      runId,
+      kind,
+      cwd,
+    })),
+  ),
+  checkpoints: Schema.Array(
+    OrchestrationV2CheckpointJsonSchema.mapFields(
+      ({ scopeId, runId, appRunOrdinal, status, ref }) => ({
+        scopeId,
+        runId,
+        appRunOrdinal,
+        status,
+        ref,
+      }),
+    ),
+  ),
+});
+export type ProjectionCheckpointContext = typeof ProjectionCheckpointContext.Type;
+const decodeCheckpointContext = Schema.decodeUnknownEffect(ProjectionCheckpointContext);
+
 export interface ProjectionStoreV2Shape {
   readonly apply: (
     event: OrchestrationV2DomainEvent,
@@ -119,6 +146,9 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error>;
+  readonly getCheckpointContext: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ProjectionCheckpointContext, ProjectionStoreV2Error>;
   readonly getRecoveryThreadIds: (
     kind: ProjectionRecoveryKind,
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
@@ -2924,6 +2954,53 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const getThreadProjection: ProjectionStoreV2Shape["getThreadProjection"] = (threadId) =>
       readProjection(threadId, new Set());
 
+    const getCheckpointContext: ProjectionStoreV2Shape["getCheckpointContext"] = (threadId) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const threads = yield* sql<{ readonly thread_id: string }>`
+            SELECT thread_id FROM orchestration_v2_projection_threads
+            WHERE thread_id = ${threadId} LIMIT 1
+          `;
+            if (threads.length === 0) {
+              return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+            }
+            // Checkpoint diffs need no transcript or fork ancestry. Select just the
+            // metadata columns so large run/checkpoint JSON payloads stay in SQLite.
+            const [runs, checkpointScopes, checkpoints] = yield* Effect.all([
+              sql`
+              SELECT run_id AS id, ordinal, status
+              FROM orchestration_v2_projection_runs
+              WHERE thread_id = ${threadId}
+              ORDER BY ordinal ASC
+            `,
+              sql`
+              SELECT scope_id AS id, run_id AS "runId", kind,
+                json_extract(payload_json, '$.cwd') AS cwd
+              FROM orchestration_v2_projection_checkpoint_scopes
+              WHERE thread_id = ${threadId}
+              ORDER BY ordinal_within_parent ASC, scope_id ASC
+            `,
+              sql`
+              SELECT scope_id AS "scopeId", run_id AS "runId",
+                app_run_ordinal AS "appRunOrdinal", status,
+                json_extract(payload_json, '$.ref') AS ref
+              FROM orchestration_v2_projection_checkpoints
+              WHERE thread_id = ${threadId}
+              ORDER BY scope_id ASC, ordinal_within_scope ASC
+            `,
+            ]);
+            return yield* decodeCheckpointContext({ runs, checkpointScopes, checkpoints });
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            isProjectionStoreThreadNotFoundError(cause)
+              ? cause
+              : new ProjectionStoreReadError({ threadId, cause }),
+          ),
+        );
+
     const getThreadSnapshot: ProjectionStoreV2Shape["getThreadSnapshot"] = (threadId) =>
       sql
         .withTransaction(
@@ -3490,6 +3567,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getShellSnapshot,
       getThreadShell,
       getThreadProjection,
+      getCheckpointContext,
       getRecoveryThreadIds,
       getUnreadableThreadIds,
       getThreadSnapshot,
@@ -3574,6 +3652,31 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             .map((projection) => projection.thread.id);
         }),
       getUnreadableThreadIds: () => Effect.succeed([]),
+      getCheckpointContext: (threadId) =>
+        Effect.gen(function* () {
+          const projection = (yield* Ref.get(replayState)).projections.get(threadId);
+          if (projection === undefined) {
+            return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+          }
+          return {
+            runs: projection.runs.map(({ id, ordinal, status }) => ({ id, ordinal, status })),
+            checkpointScopes: projection.checkpointScopes.map(({ id, runId, kind, cwd }) => ({
+              id,
+              runId,
+              kind,
+              cwd,
+            })),
+            checkpoints: projection.checkpoints.map(
+              ({ scopeId, runId, appRunOrdinal, status, ref }) => ({
+                scopeId,
+                runId,
+                appRunOrdinal,
+                status,
+                ref,
+              }),
+            ),
+          };
+        }),
       getThreadProjection: (threadId) =>
         Effect.gen(function* () {
           const existing = (yield* Ref.get(replayState)).projections;

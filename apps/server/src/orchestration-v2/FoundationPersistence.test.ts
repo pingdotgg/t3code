@@ -29,11 +29,14 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as Statement from "effect/unstable/sql/Statement";
 
+import { LIVE_STREAM_MAX_ITEMS, LiveStreamBufferError } from "../orchestration/LiveStreamBudget.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { CommandReceiptStoreV2, layer as commandReceiptStoreLayer } from "./CommandReceiptStore.ts";
@@ -54,6 +57,8 @@ import {
 } from "./ProjectionMaintenance.ts";
 import { ProjectionStoreV2, layer as projectionStoreLayer } from "./ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
+
+const isLiveStreamBufferError = Schema.is(LiveStreamBufferError);
 
 const databaseLayer = SqlitePersistenceMemory;
 const eventStoreProvided = eventStoreLayer.pipe(Layer.provideMerge(databaseLayer));
@@ -250,6 +255,114 @@ it.effect("verifies thread membership using only the thread-created partial inde
 );
 
 it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
+  for (const phase of ["high-water", "replay"] as const) {
+    it.effect(`bounds live events while the V2 ${phase} query is blocked`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const sink = yield* EventSinkV2;
+          const now = yield* DateTime.now;
+          const thread = makeThread(ThreadId.make(`thread:blocked-${phase}`), now);
+          const [created] = yield* sink.write({
+            events: [threadCreatedEvent({ id: `event:blocked-${phase}:created`, thread, now })],
+          });
+          const readStarted = yield* Deferred.make<void>();
+          const readClosed = yield* Deferred.make<void>();
+          const blockRead: Statement.Transformer = (statement) => {
+            const [query] = statement.compile();
+            if (
+              query.includes("FROM orchestration_events") &&
+              query.includes("MAX(sequence)") === (phase === "high-water")
+            ) {
+              return Deferred.succeed(readStarted, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.ensuring(Deferred.succeed(readClosed, undefined)),
+                Effect.as(statement),
+              );
+            }
+            return Effect.succeed(statement);
+          };
+          const reader = yield* sink
+            .stream({ threadId: thread.id, afterSequence: created!.sequence, bounded: true })
+            .pipe(
+              Stream.provideService(Statement.CurrentTransformer, blockRead),
+              Stream.runDrain,
+              Effect.result,
+              Effect.forkScoped,
+            );
+          yield* Deferred.await(readStarted);
+          yield* sink.write({
+            events: Array.from({ length: LIVE_STREAM_MAX_ITEMS + 1 }, (_, index) => ({
+              id: EventId.make(`event:blocked-${phase}:${index}`),
+              type: "thread.metadata-updated" as const,
+              threadId: thread.id,
+              occurredAt: now,
+              payload: { ...thread, title: `Updated ${index}` },
+            })),
+          });
+          yield* Deferred.await(readClosed);
+          const result = yield* Fiber.join(reader);
+          assert.equal(result._tag, "Failure");
+          if (result._tag === "Failure") {
+            assert.equal(result.failure._tag, "EventSinkStreamError");
+            assert.isTrue(isLiveStreamBufferError(result.failure.cause));
+          }
+        }),
+      ),
+    );
+  }
+
+  it.effect(
+    "keeps internal streams subscribed while replay is blocked beyond the RPC buffer cap",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const sink = yield* EventSinkV2;
+          const now = yield* DateTime.now;
+          const thread = makeThread(ThreadId.make("thread:internal-stream-burst"), now);
+          const [created] = yield* sink.write({
+            events: [
+              threadCreatedEvent({ id: "event:internal-stream-burst:created", thread, now }),
+            ],
+          });
+          const readStarted = yield* Deferred.make<void>();
+          const releaseRead = yield* Deferred.make<void>();
+          const blockHighWater: Statement.Transformer = (statement) => {
+            const [query] = statement.compile();
+            return query.includes("MAX(sequence)") && query.includes("FROM orchestration_events")
+              ? Deferred.succeed(readStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseRead)),
+                  Effect.as(statement),
+                )
+              : Effect.succeed(statement);
+          };
+          const eventCount = LIVE_STREAM_MAX_ITEMS + 1;
+          const reader = yield* sink
+            .stream({ threadId: thread.id, afterSequence: created!.sequence })
+            .pipe(
+              Stream.provideService(Statement.CurrentTransformer, blockHighWater),
+              Stream.take(eventCount),
+              Stream.runCollect,
+              Effect.forkScoped,
+            );
+          yield* Deferred.await(readStarted);
+          const written = yield* sink.write({
+            events: Array.from({ length: eventCount }, (_, index) => ({
+              id: EventId.make(`event:internal-stream-burst:${index}`),
+              type: "thread.metadata-updated" as const,
+              threadId: thread.id,
+              occurredAt: now,
+              payload: { ...thread, title: `Updated ${index}` },
+            })),
+          });
+          yield* Deferred.succeed(releaseRead, undefined);
+          assert.deepEqual(
+            (yield* Fiber.join(reader)).map((event) => event.sequence),
+            written.map((event) => event.sequence),
+          );
+        }),
+      ),
+  );
+
   it.effect("paginates catch-up beyond the event-store read limit", () =>
     Effect.gen(function* () {
       const eventSink = yield* EventSinkV2;

@@ -147,6 +147,7 @@ function makeHarness(options: HarnessOptions = {}) {
               workspaceRoot: project.workspaceRoot,
               defaultModelSelection: project.defaultModelSelection,
               defaultThreadEnvMode: null,
+              autoPull: false,
               scripts: project.scripts,
               createdAt: project.createdAt,
               updatedAt: project.updatedAt,
@@ -445,6 +446,141 @@ it.effect(
         );
       }).pipe(Effect.provide(harness.layer));
     }),
+);
+
+for (const nativeCommand of [" /COMPACT ", "/logout"]) {
+  it.effect(`uses the first conversation message for a title after ${nativeCommand}`, () =>
+    Effect.gen(function* () {
+      const harness = makeHarness();
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const launched = yield* launches.launch({
+          ...launchInput({
+            command: "compact-title",
+            thread: "compact-title-thread",
+            message: nativeCommand,
+          }),
+          generateTitle: true,
+        });
+        assert.isUndefined(
+          (yield* threads.getThreadProjection(launched.threadId)).thread.titleRegeneration,
+        );
+        assert.isFalse(
+          (yield* outbox.listByCommandId(CommandId.make("compact-title:initial-message"))).some(
+            (effect) => effect.request.type === "thread-title.generate",
+          ),
+        );
+        const commandId = CommandId.make("compact-title-conversation");
+        const messageId = MessageId.make("compact-title-conversation-message");
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId,
+          threadId: launched.threadId,
+          messageId,
+          createdBy: "user",
+          creationSource: "web",
+          text: "Fix the failing parser",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+        });
+        assert.equal(
+          (yield* threads.getThreadProjection(launched.threadId)).thread.titleRegeneration
+            ?.requestId,
+          commandId,
+        );
+        assert.deepEqual(
+          (yield* outbox.listByCommandId(commandId))
+            .filter((effect) => effect.request.type === "thread-title.generate")
+            .map((effect) => effect.request),
+          [{ type: "thread-title.generate", kind: { type: "initial", messageId } }],
+        );
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+}
+
+it.effect("keeps native maintenance commands out of steering and restart messages", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      for (const scenario of [
+        {
+          name: "compact-steer",
+          first: "Fix the parser",
+          next: " /COMPACT ",
+          mode: "steer_active",
+        },
+        {
+          name: "compact-restart",
+          first: "Fix the parser",
+          next: "/compact",
+          mode: "restart_active",
+        },
+        {
+          name: "logout-steer",
+          first: "Fix the parser",
+          next: "/logout",
+          mode: "steer_active",
+        },
+        {
+          name: "logout-restart",
+          first: "Fix the parser",
+          next: "/logout",
+          mode: "restart_active",
+        },
+        {
+          name: "steer-logout",
+          first: "/logout",
+          next: "Continue with the parser",
+          mode: "steer_active",
+        },
+        {
+          name: "steer-compaction",
+          first: "/compact",
+          next: "Continue with the parser",
+          mode: "steer_active",
+        },
+      ] as const) {
+        const launched = yield* launches.launch(
+          launchInput({
+            command: `${scenario.name}:launch`,
+            thread: scenario.name,
+            message: scenario.first,
+          }),
+        );
+        const before = yield* threads.getThreadProjection(launched.threadId);
+        const targetRun = before.runs[0];
+        if (targetRun === undefined) return yield* Effect.die("Launch must create a run");
+        const commandId = CommandId.make(`${scenario.name}:message`);
+        const failure = yield* threads
+          .dispatch({
+            type: "message.dispatch",
+            commandId,
+            threadId: launched.threadId,
+            messageId: MessageId.make(`${scenario.name}:message`),
+            createdBy: "user",
+            creationSource: "web",
+            text: scenario.next,
+            attachments: [],
+            dispatchMode: { type: scenario.mode, targetRunId: targetRun.id },
+          })
+          .pipe(Effect.flip);
+        assert.include(
+          String(failure.cause).toLowerCase(),
+          scenario.name.includes("logout") ? "sign" : "context compaction",
+        );
+        const after = yield* threads.getThreadProjection(launched.threadId);
+        assert.deepEqual(after.messages, before.messages);
+        assert.deepEqual(after.thread.titleRegeneration, before.thread.titleRegeneration);
+        assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+      }
+    }).pipe(Effect.provide(harness.layer));
+  }),
 );
 
 it.effect("arms durable title generation after accepting the first message", () =>

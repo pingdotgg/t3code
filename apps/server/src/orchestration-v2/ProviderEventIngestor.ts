@@ -4,6 +4,10 @@ import {
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
   type OrchestrationV2Run,
+  type OrchestrationV2ProviderTurn,
+  type ModelSelection,
+  type RuntimeMode,
+  type ProviderInteractionMode,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
@@ -18,6 +22,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { AnalyticsService } from "../telemetry/AnalyticsService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import { ProviderAdapterV2Event } from "./ProviderAdapter.ts";
@@ -56,6 +62,71 @@ export const ProviderEventIngestorV2Error = Schema.Union([
 ]);
 export type ProviderEventIngestorV2Error = typeof ProviderEventIngestorV2Error.Type;
 
+export interface ProviderTurnAnalyticsContext {
+  readonly modelSelection: ModelSelection;
+  readonly runtimeMode?: RuntimeMode;
+  readonly interactionMode?: ProviderInteractionMode;
+}
+
+export class ProviderTurnAnalytics extends Context.Reference<{
+  readonly record: (properties: Readonly<Record<string, unknown>>) => Effect.Effect<void>;
+}>("t3/orchestration-v2/ProviderTurnAnalytics", {
+  defaultValue: () => ({ record: () => Effect.void }),
+}) {}
+
+export const analyticsLive = Layer.effect(
+  ProviderTurnAnalytics,
+  Effect.gen(function* () {
+    const analytics = yield* AnalyticsService;
+    return {
+      record: (properties: Readonly<Record<string, unknown>>) =>
+        analytics.record("provider.turn.completed", properties),
+    };
+  }),
+);
+
+export function providerTurnAnalyticsProperties(input: {
+  readonly driver: ProviderAdapterV2Event["driver"];
+  readonly providerTurn: OrchestrationV2ProviderTurn;
+  readonly context?: ProviderTurnAnalyticsContext;
+}): Readonly<Record<string, unknown>> {
+  const usage = input.providerTurn.turnTokenUsage;
+  const modelSelection = input.context?.modelSelection;
+  const effort = modelSelection
+    ? (getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
+      getModelSelectionStringOptionValue(modelSelection, "effort"))
+    : undefined;
+  return {
+    provider: input.driver,
+    terminalStatus: input.providerTurn.status,
+    usageStatus: usage?.usageStatus ?? "unavailable",
+    usageScope: usage?.usageScope ?? "main_agent",
+    ...(usage ? { hasSubagents: usage.hasSubagents } : {}),
+    ...(usage?.inputTokens === undefined ? {} : { inputTokens: usage.inputTokens }),
+    ...(usage?.cachedInputTokens === undefined
+      ? {}
+      : { cachedInputTokens: usage.cachedInputTokens }),
+    ...(usage?.cacheCreationTokens === undefined
+      ? {}
+      : { cacheCreationTokens: usage.cacheCreationTokens }),
+    ...(usage?.outputTokens === undefined ? {} : { outputTokens: usage.outputTokens }),
+    ...(usage?.reasoningTokens === undefined ? {} : { reasoningTokens: usage.reasoningTokens }),
+    ...(modelSelection ? { model: modelSelection.model, mixedModels: false } : {}),
+    ...(effort ? { effort } : {}),
+    ...(input.context?.runtimeMode ? { runtimeMode: input.context.runtimeMode } : {}),
+    ...(input.context?.interactionMode ? { interactionMode: input.context.interactionMode } : {}),
+    ...(input.providerTurn.startedAt && input.providerTurn.completedAt
+      ? {
+          durationMs: Math.max(
+            0,
+            DateTime.toEpochMillis(input.providerTurn.completedAt) -
+              DateTime.toEpochMillis(input.providerTurn.startedAt),
+          ),
+        }
+      : {}),
+  };
+}
+
 export interface ProviderEventIngestInput {
   readonly providerSessionId: ProviderSessionId;
   readonly providerInstanceId: ProviderInstanceId;
@@ -65,6 +136,7 @@ export interface ProviderEventIngestInput {
   readonly nodeId?: NodeId;
   readonly rawEventId?: RawEventId;
   readonly event: ProviderAdapterV2Event;
+  readonly analyticsContext?: ProviderTurnAnalyticsContext;
 }
 
 export interface ProviderEventIngestorV2Shape {
@@ -113,6 +185,8 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
     Effect.gen(function* () {
       const eventSink = yield* EventSinkV2;
       const idAllocator = yield* IdAllocatorV2;
+      const analytics = yield* ProviderTurnAnalytics;
+      const completedTurnAnalytics = new Set<string>();
 
       const makeDomainEvent = (
         input: ProviderEventIngestInput,
@@ -321,7 +395,38 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
               })
               .pipe(Effect.mapError(mapWriteError));
             return result.storedEvents;
-          }),
+          }).pipe(
+            Effect.tap((storedEvents) =>
+              Effect.gen(function* () {
+                if (storedEvents.length === 0 || input.event.type !== "provider_turn.updated")
+                  return;
+                const providerTurn = input.event.providerTurn;
+                if (
+                  providerTurn.status !== "completed" &&
+                  providerTurn.status !== "failed" &&
+                  providerTurn.status !== "interrupted" &&
+                  providerTurn.status !== "cancelled"
+                )
+                  return;
+                const key = `${input.providerInstanceId}:${providerTurn.id}`;
+                if (completedTurnAnalytics.has(key)) return;
+                completedTurnAnalytics.add(key);
+                if (completedTurnAnalytics.size > 4096) {
+                  const oldest = completedTurnAnalytics.values().next().value;
+                  if (oldest !== undefined) completedTurnAnalytics.delete(oldest);
+                }
+                yield* analytics.record(
+                  providerTurnAnalyticsProperties({
+                    driver: input.event.driver,
+                    providerTurn,
+                    ...(input.analyticsContext === undefined
+                      ? {}
+                      : { context: input.analyticsContext }),
+                  }),
+                );
+              }),
+            ),
+          ),
       });
     }),
   );

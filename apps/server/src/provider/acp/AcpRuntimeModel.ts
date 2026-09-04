@@ -476,6 +476,7 @@ function makeToolCallState(
     readonly rawOutput?: unknown;
     readonly content?: ReadonlyArray<EffectAcpSchema.ToolCallContent> | null | undefined;
     readonly locations?: ReadonlyArray<EffectAcpSchema.ToolCallLocation> | null | undefined;
+    readonly meta?: unknown;
   },
   options?: {
     readonly fallbackStatus?: "pending" | "inProgress" | "completed" | "failed";
@@ -512,6 +513,9 @@ function makeToolCallState(
   }
   if (input.locations !== undefined) {
     data.locations = input.locations;
+  }
+  if (isRecord(input.meta)) {
+    data.meta = input.meta;
   }
   const fallbackDetail = command ?? normalizedTitle ?? textContent;
   const hasPresentationSeed =
@@ -557,6 +561,7 @@ function parseTypedToolCallState(
       rawOutput: event.rawOutput,
       content: event.content,
       locations: event.locations,
+      meta: event._meta,
     },
     options,
   );
