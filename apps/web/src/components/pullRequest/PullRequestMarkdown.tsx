@@ -1,10 +1,5 @@
 import { ExternalLinkIcon, PaperclipIcon, PlayIcon } from "lucide-react";
-import {
-  isGitHubUserAttachmentUrl,
-  type AssetResource,
-  type EnvironmentId,
-  type ScopedThreadRef,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { createContext, useContext, useMemo } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
 
@@ -14,12 +9,6 @@ import ChatMarkdown from "../ChatMarkdown";
 import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
 
 export const PullRequestMarkdownContext = createContext<string | null>(null);
-
-function resolveGitHubUserAttachmentAsset(
-  url: string,
-): Extract<AssetResource, { readonly _tag: "github-user-attachment" }> | null {
-  return isGitHubUserAttachmentUrl(url) ? { _tag: "github-user-attachment", url } : null;
-}
 
 /**
  * A pull request body, rendered with the app's markdown renderer plus a card for each upload
@@ -60,7 +49,7 @@ export function PullRequestMarkdown({
               threadRef={threadRef ?? undefined}
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
-              resolveDirectImageAsset={resolveGitHubUserAttachmentAsset}
+              normalizeGitHubImages
             />
           );
         }

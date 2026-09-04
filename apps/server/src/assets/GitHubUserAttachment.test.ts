@@ -117,6 +117,16 @@ describe("GitHub user attachments", () => {
     }),
   );
 
+  it.effect("leaves truncated and duplicate-profile PNGs untouched", () =>
+    Effect.gen(function* () {
+      const source = pngWithCicp([1, 1, 0, 1]);
+      const duplicate = concatBytes([source, pngChunk("cICP", [1, 1, 0, 1])]);
+      for (const bytes of [source.subarray(0, source.length - 1), duplicate]) {
+        expect((yield* loadDirectImage(bytes)).bytes).toEqual(bytes);
+      }
+    }),
+  );
+
   it.effect("follows only GitHub's attachment host and normalizes PNG responses", () =>
     Effect.gen(function* () {
       const sourceUrl =

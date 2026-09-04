@@ -64,13 +64,9 @@ function stripConflictingBt709Cicp(bytes: Uint8Array): Uint8Array {
   if (bytes.length < PNG_SIGNATURE.length || !bytesEqualAt(bytes, 0, PNG_SIGNATURE)) return bytes;
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const chunks: Array<{
-    readonly start: number;
-    readonly end: number;
-    readonly type: string;
-    readonly dataOffset: number;
-    readonly dataLength: number;
-  }> = [];
+  let cicpOffset = -1;
+  let hasSrgbGamma = false;
+  let hasSrgbChromaticities = false;
   let offset: number = PNG_SIGNATURE.length;
   while (offset + 12 <= bytes.length) {
     const dataLength = view.getUint32(offset, false);
@@ -78,49 +74,32 @@ function stripConflictingBt709Cicp(bytes: Uint8Array): Uint8Array {
     const chunkEnd = dataOffset + dataLength + 4;
     if (chunkEnd > bytes.length) return bytes;
 
-    chunks.push({
-      start: offset,
-      end: chunkEnd,
-      type: String.fromCharCode(...bytes.subarray(offset + 4, offset + 8)),
-      dataOffset,
-      dataLength,
-    });
+    const type = String.fromCharCode(...bytes.subarray(offset + 4, offset + 8));
+    if (type === "cICP") {
+      // PNG permits one cICP chunk. Leave duplicate or other profiles untouched.
+      if (
+        cicpOffset !== -1 ||
+        dataLength !== BT709_FULL_RANGE_CICP.length ||
+        !bytesEqualAt(bytes, dataOffset, BT709_FULL_RANGE_CICP)
+      )
+        return bytes;
+      cicpOffset = offset;
+    } else if (type === "gAMA") {
+      hasSrgbGamma ||=
+        dataLength === SRGB_GAMMA.length && bytesEqualAt(bytes, dataOffset, SRGB_GAMMA);
+    } else if (type === "cHRM") {
+      hasSrgbChromaticities ||=
+        dataLength === SRGB_CHROMATICITIES.length &&
+        bytesEqualAt(bytes, dataOffset, SRGB_CHROMATICITIES);
+    }
     offset = chunkEnd;
   }
 
-  if (offset !== bytes.length) return bytes;
-  const hasBt709Cicp = chunks.some(
-    (chunk) =>
-      chunk.type === "cICP" &&
-      chunk.dataLength === BT709_FULL_RANGE_CICP.length &&
-      bytesEqualAt(bytes, chunk.dataOffset, BT709_FULL_RANGE_CICP),
-  );
-  const hasSrgbGamma = chunks.some(
-    (chunk) =>
-      chunk.type === "gAMA" &&
-      chunk.dataLength === SRGB_GAMMA.length &&
-      bytesEqualAt(bytes, chunk.dataOffset, SRGB_GAMMA),
-  );
-  const hasSrgbChromaticities = chunks.some(
-    (chunk) =>
-      chunk.type === "cHRM" &&
-      chunk.dataLength === SRGB_CHROMATICITIES.length &&
-      bytesEqualAt(bytes, chunk.dataOffset, SRGB_CHROMATICITIES),
-  );
-  if (!hasBt709Cicp || !hasSrgbGamma || !hasSrgbChromaticities) return bytes;
-
-  const removedChunks = chunks.filter((chunk) => chunk.type === "cICP");
-  const removedByteCount = removedChunks.reduce((sum, chunk) => sum + chunk.end - chunk.start, 0);
-  const normalizedLength = bytes.length - removedByteCount;
-  let sourceOffset = 0;
-  let destinationOffset = 0;
-  for (const chunk of removedChunks) {
-    bytes.copyWithin(destinationOffset, sourceOffset, chunk.start);
-    destinationOffset += chunk.start - sourceOffset;
-    sourceOffset = chunk.end;
-  }
-  bytes.copyWithin(destinationOffset, sourceOffset);
-  return bytes.subarray(0, normalizedLength);
+  if (offset !== bytes.length || cicpOffset === -1 || !hasSrgbGamma || !hasSrgbChromaticities)
+    return bytes;
+  const chunkLength = 12 + BT709_FULL_RANGE_CICP.length;
+  bytes.copyWithin(cicpOffset, cicpOffset + chunkLength);
+  return bytes.subarray(0, bytes.length - chunkLength);
 }
 
 function trustedRedirectUrl(location: string, sourceUrl: string): string | null {
