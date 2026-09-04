@@ -238,14 +238,14 @@ export interface TerminalStartInput extends TerminalOpenInput {
   rows: number;
 }
 
-export interface TerminalSessionState {
+interface TerminalSessionState {
   threadId: string;
   terminalId: string;
   cwd: string;
   worktreePath: string | null;
   status: TerminalSessionStatus;
   pid: number | null;
-  history: string;
+  history: BoundedTerminalHistory;
   pendingHistoryControlSequence: string;
   pendingProcessEvents: Array<PendingProcessEvent>;
   pendingProcessEventIndex: number;
@@ -266,7 +266,7 @@ export interface TerminalSessionState {
 }
 
 interface PersistHistoryRequest {
-  history: string;
+  history: BoundedTerminalHistory;
   immediate: boolean;
 }
 
@@ -281,7 +281,7 @@ type DrainProcessEventAction =
       threadId: string;
       terminalId: string;
       sequence: number;
-      history: string | null;
+      history: BoundedTerminalHistory | null;
       data: string;
     }
   | {
@@ -340,7 +340,7 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     worktreePath: session.worktreePath,
     status: session.status,
     pid: session.pid,
-    history: session.history,
+    history: session.history.value(),
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
     label: terminalWireLabel(session),
@@ -794,6 +794,66 @@ function capHistory(history: string, maxLines: number): string {
   if (lines.length <= maxLines) return history;
   const capped = lines.slice(lines.length - maxLines).join("\n");
   return hasTrailingNewline ? `${capped}\n` : capped;
+}
+
+export class BoundedTerminalHistory {
+  private readonly maxLines: number;
+  private lines: Array<string>;
+  private start = 0;
+  private trailingNewline: boolean;
+  private cachedValue: string | null = null;
+
+  constructor(maxLines: number, initial: string) {
+    this.maxLines = maxLines;
+    const capped = capHistory(initial, maxLines);
+    this.trailingNewline = capped.endsWith("\n");
+    this.lines = capped.length === 0 ? [] : capped.split("\n");
+    if (this.trailingNewline) this.lines.pop();
+  }
+
+  append(text: string): void {
+    if (text.length === 0) return;
+
+    const trailingNewline = text.endsWith("\n");
+    const appendedLines = text.split("\n");
+    if (trailingNewline) appendedLines.pop();
+
+    const activeLines = this.lines.length - this.start;
+    if (activeLines === 0 || this.trailingNewline) {
+      for (const line of appendedLines) this.lines.push(line);
+    } else {
+      this.lines[this.lines.length - 1] += appendedLines[0] ?? "";
+      for (let index = 1; index < appendedLines.length; index += 1) {
+        this.lines.push(appendedLines[index] ?? "");
+      }
+    }
+    this.trailingNewline = trailingNewline;
+
+    const overflow = this.lines.length - this.start - this.maxLines;
+    if (overflow > 0) {
+      this.lines.fill("", this.start, this.start + overflow);
+      this.start += overflow;
+    }
+    if (this.start > 2_048 && this.start * 2 >= this.lines.length) {
+      this.lines = this.lines.slice(this.start);
+      this.start = 0;
+    }
+    this.cachedValue = null;
+  }
+
+  clear(): void {
+    this.lines = [];
+    this.start = 0;
+    this.trailingNewline = false;
+    this.cachedValue = "";
+  }
+
+  value(): string {
+    if (this.cachedValue !== null) return this.cachedValue;
+    const joined = this.lines.slice(this.start).join("\n");
+    this.cachedValue = this.trailingNewline ? `${joined}\n` : joined;
+    return this.cachedValue;
+  }
 }
 
 function isCsiFinalByte(codePoint: number): boolean {
@@ -1372,22 +1432,24 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         return;
       }
 
-      yield* fileSystem.writeFileString(historyPath(threadId, terminalId), request.history).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("failed to persist terminal history", {
-            threadId,
-            terminalId,
-            error,
-          }),
-        ),
-      );
+      yield* fileSystem
+        .writeFileString(historyPath(threadId, terminalId), request.history.value())
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("failed to persist terminal history", {
+              threadId,
+              terminalId,
+              error,
+            }),
+          ),
+        );
     }),
   });
 
   const queuePersist = Effect.fn("terminal.queuePersist")(function* (
     threadId: string,
     terminalId: string,
-    history: string,
+    history: BoundedTerminalHistory,
   ) {
     yield* persistWorker.enqueue(toSessionKey(threadId, terminalId), {
       history,
@@ -1405,7 +1467,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const persistHistory = Effect.fn("terminal.persistHistory")(function* (
     threadId: string,
     terminalId: string,
-    history: string,
+    history: BoundedTerminalHistory,
   ) {
     yield* persistWorker.enqueue(toSessionKey(threadId, terminalId), {
       history,
@@ -1661,10 +1723,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           );
           session.pendingHistoryControlSequence = sanitized.pendingControlSequence;
           if (sanitized.visibleText.length > 0) {
-            session.history = capHistory(
-              `${session.history}${sanitized.visibleText}`,
-              historyLineLimit,
-            );
+            session.history.append(sanitized.visibleText);
           }
           const eventStamp = advanceEventSequence(session);
 
@@ -2160,7 +2219,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         worktreePath: input.worktreePath ?? null,
         status: "starting",
         pid: null,
-        history,
+        history: new BoundedTerminalHistory(historyLineLimit, history),
         pendingHistoryControlSequence: "",
         pendingProcessEvents: [],
         pendingProcessEventIndex: 0,
@@ -2221,7 +2280,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.cwd = input.cwd;
       liveSession.worktreePath = nextWorktreePath;
       liveSession.runtimeEnv = nextRuntimeEnv;
-      liveSession.history = "";
+      liveSession.history.clear();
       liveSession.pendingHistoryControlSequence = "";
       liveSession.pendingProcessEvents = [];
       liveSession.pendingProcessEventIndex = 0;
@@ -2230,7 +2289,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     } else if (liveSession.status === "exited" || liveSession.status === "error") {
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.worktreePath = nextWorktreePath;
-      liveSession.history = "";
+      liveSession.history.clear();
       liveSession.pendingHistoryControlSequence = "";
       liveSession.pendingProcessEvents = [];
       liveSession.pendingProcessEventIndex = 0;
@@ -2535,7 +2594,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Effect.gen(function* () {
         const terminalId = input.terminalId;
         const session = yield* requireSession(input.threadId, terminalId);
-        session.history = "";
+        session.history.clear();
         session.pendingHistoryControlSequence = "";
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
@@ -2572,7 +2631,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             worktreePath: input.worktreePath ?? null,
             status: "starting",
             pid: null,
-            history: "",
+            history: new BoundedTerminalHistory(historyLineLimit, ""),
             pendingHistoryControlSequence: "",
             pendingProcessEvents: [],
             pendingProcessEventIndex: 0,
@@ -2608,7 +2667,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const cols = input.cols ?? session.cols;
         const rows = input.rows ?? session.rows;
 
-        session.history = "";
+        session.history.clear();
         session.pendingHistoryControlSequence = "";
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;

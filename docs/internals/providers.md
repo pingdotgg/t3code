@@ -230,6 +230,10 @@ sandbox.
 
 ## OpenCode server ownership and catalog
 
+Native OpenCode event logs skip text deltas and running tool snapshots. Pending, completed,
+and failed tool states remain, including final output and errors. This filter does not change
+events sent to clients or orchestration storage.
+
 Each OpenCode provider instance owns one lazy local server for catalog discovery and
 text-generation helpers through [`OpenCodeServerOwner.ts`][opencode-server-owner]. Concurrent
 borrowers share startup. The server closes 30 seconds after the last borrower releases it, or
