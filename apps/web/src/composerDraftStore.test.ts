@@ -1583,6 +1583,7 @@ describe("composerDraftStore project draft thread mapping", () => {
       worktreePath: "/tmp/local-worktree",
       envMode: "worktree",
       startFromOrigin: true,
+      runtimeMode: "auto",
     });
 
     store.setLogicalProjectDraftThreadId(scopedProjectKey(projectRef), remoteProjectRef, draftId, {
@@ -1596,7 +1597,23 @@ describe("composerDraftStore project draft thread mapping", () => {
       worktreePath: null,
       envMode: "worktree",
       startFromOrigin: true,
+      runtimeMode: "full-access",
     });
+  });
+
+  it("keeps an explicit runtime mode when remapping a draft to another environment", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      runtimeMode: "auto",
+    });
+    store.setRuntimeMode(draftId, "approval-required");
+
+    store.setLogicalProjectDraftThreadId(scopedProjectKey(projectRef), remoteProjectRef, draftId, {
+      threadId,
+    });
+
+    expect(store.getDraftThread(draftId)?.runtimeMode).toBe("approval-required");
   });
 
   it("clears stale upload metadata when retargeting a draft to another environment", () => {
@@ -2365,11 +2382,13 @@ describe("composerDraftStore model seed migration", () => {
         modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
         activeProvider: CODEX_INSTANCE,
       });
+      expect(draftByKey(typedDraftId)?.runtimeMode).toBeNull();
       expect(draftByKey(explicitDraftId)).toMatchObject({
         modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
         activeProvider: CODEX_INSTANCE,
         modelSelectionExplicit: true,
       });
+      expect(draftByKey(explicitDraftId)?.runtimeMode).toBeNull();
       expect(draftByKey(serverThreadKey)).toMatchObject({
         modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
         activeProvider: CODEX_INSTANCE,

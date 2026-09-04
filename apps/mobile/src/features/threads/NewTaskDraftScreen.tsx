@@ -874,7 +874,7 @@ export function NewTaskDraftScreen(props: {
     if (voiceInput.blocksSubmission) return;
     const selectedProject = flow.selectedProject;
     const draftKey = flow.draftKey;
-    if (!selectedProject || !draftKey) {
+    if (!selectedProject || !draftKey || !selectedEnvironmentServerConfig) {
       return;
     }
     const draft = getComposerDraftSnapshot(draftKey);
@@ -980,6 +980,7 @@ export function NewTaskDraftScreen(props: {
         // next task re-resolves project defaults before sticky app defaults.
         clearComposerDraftContent(draftKey, {
           clearModelSelection: true,
+          clearRuntimeMode: true,
           clearWorkspaceSelection: true,
         });
       }
@@ -1051,6 +1052,7 @@ export function NewTaskDraftScreen(props: {
     } else {
       clearComposerDraftContent(draftKey, {
         clearModelSelection: true,
+        clearRuntimeMode: true,
         clearWorkspaceSelection: true,
       });
     }
@@ -1081,6 +1083,7 @@ export function NewTaskDraftScreen(props: {
   const canStart =
     attachmentBlockReason === null &&
     !modelUnavailable &&
+    selectedEnvironmentServerConfig !== null &&
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
     flow.prompt.trim().length > 0 &&

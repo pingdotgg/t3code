@@ -1535,6 +1535,7 @@ function createDraftThreadState(
   threadId: ThreadId,
   logicalProjectKey: string,
   existingThread: DraftThreadState | undefined,
+  explicitRuntimeMode: RuntimeMode | null,
   options?: {
     threadId?: ThreadId;
     branch?: string | null;
@@ -1590,7 +1591,12 @@ function createDraftThreadState(
           }
         : {}),
     createdAt: options?.createdAt ?? existingThread?.createdAt ?? new Date().toISOString(),
-    runtimeMode: options?.runtimeMode ?? existingThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+    runtimeMode:
+      options?.runtimeMode ??
+      explicitRuntimeMode ??
+      (projectChanged
+        ? DEFAULT_RUNTIME_MODE
+        : (existingThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE)),
     interactionMode:
       options?.interactionMode ?? existingThread?.interactionMode ?? DEFAULT_INTERACTION_MODE,
     branch: nextBranch,
@@ -2617,6 +2623,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               options?.threadId ?? existingThread?.threadId ?? ThreadId.make(draftId),
               normalizedLogicalProjectKey,
               existingThread,
+              state.draftsByThreadKey[draftId]?.runtimeMode ?? null,
               options,
             );
             const hasSameLogicalMapping = previousThreadKeyForLogicalProject === draftId;

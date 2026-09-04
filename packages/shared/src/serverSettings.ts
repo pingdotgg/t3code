@@ -1,10 +1,12 @@
 import {
+  DEFAULT_RUNTIME_MODE,
   isProviderDriverKind,
   isProviderAvailable,
   resolveProviderInstanceEnabled,
   type ModelSelection,
   type ProjectId,
   type ProviderDriverKind,
+  type ProviderInstanceId,
   type ServerProvider,
   ServerSettings,
   type ServerSettingsPatch,
@@ -160,6 +162,41 @@ function mergeSettingsEntries<Value>(
   return Object.fromEntries(next);
 }
 
+function mergeProviderRuntimeModeDefaults(
+  current: ServerSettings["providerRuntimeModeDefaults"],
+  patch: NonNullable<ServerSettingsPatch["providerRuntimeModeDefaults"]>,
+): ServerSettings["providerRuntimeModeDefaults"] {
+  const next = new Map(Object.entries(current));
+  for (const [instanceId, runtimeMode] of Object.entries(patch)) {
+    if (runtimeMode === null) {
+      next.delete(instanceId);
+    } else {
+      next.set(instanceId, runtimeMode);
+    }
+  }
+  return Object.fromEntries(next) as ServerSettings["providerRuntimeModeDefaults"];
+}
+
+export function resolveNewThreadRuntimeMode(
+  settings:
+    | Pick<ServerSettings, "defaultThreadRuntimeMode" | "providerRuntimeModeDefaults">
+    | null
+    | undefined,
+  instanceId: ProviderInstanceId | null | undefined,
+  explicitRuntimeMode?: ServerSettings["defaultThreadRuntimeMode"] | null,
+): ServerSettings["defaultThreadRuntimeMode"] {
+  const providerDefault =
+    instanceId && settings && Object.hasOwn(settings.providerRuntimeModeDefaults, instanceId)
+      ? settings.providerRuntimeModeDefaults[instanceId]
+      : undefined;
+  return (
+    explicitRuntimeMode ??
+    providerDefault ??
+    settings?.defaultThreadRuntimeMode ??
+    DEFAULT_RUNTIME_MODE
+  );
+}
+
 export function applyServerSettingsPatch(
   current: ServerSettings,
   patch: ServerSettingsPatch,
@@ -175,6 +212,7 @@ export function applyServerSettingsPatch(
     usagePriceOverrides: usagePriceOverridesPatch,
     projectAgentBrowserAccessOverrides: projectAgentBrowserAccessOverridesPatch,
     projectAutoPullOverrides: projectAutoPullOverridesPatch,
+    providerRuntimeModeDefaults: providerRuntimeModeDefaultsPatch,
     ...patchForMerge
   } = patch;
   const currentBackgroundActivity = normalizeServerBackgroundActivitySettings(current);
@@ -274,6 +312,14 @@ export function applyServerSettingsPatch(
           usagePriceOverrides: mergeSettingsEntries(
             current.usagePriceOverrides,
             usagePriceOverridesPatch,
+          ),
+        }
+      : {}),
+    ...(providerRuntimeModeDefaultsPatch !== undefined
+      ? {
+          providerRuntimeModeDefaults: mergeProviderRuntimeModeDefaults(
+            current.providerRuntimeModeDefaults,
+            providerRuntimeModeDefaultsPatch,
           ),
         }
       : {}),
