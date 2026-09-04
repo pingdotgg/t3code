@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -23,7 +24,6 @@ import {
   launchOrReuseRemoteServer,
   REMOTE_PICK_PORT_SCRIPT,
   SshEnvironmentManager,
-  SSH_TUNNEL_READY_PROBE_TIMEOUT_MS,
   waitForHttpReady,
 } from "./tunnel.ts";
 
@@ -316,35 +316,74 @@ describe("ssh tunnel scripts", () => {
     ),
   );
 
-  const slowHttpClient = HttpClient.make((request) =>
-    Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 200 }))).pipe(
-      Effect.delay(Duration.millis(1_500)),
-    ),
-  );
-
-  it.effect(
-    "succeeds on a single response slower than 1s using the tunnel probe bound, so a high-RTT link only makes readiness slower, not impossible",
-    () =>
-      Effect.gen(function* () {
-        const fiber = yield* Effect.forkChild(
-          Effect.result(
-            waitForHttpReady({
-              baseUrl: "http://127.0.0.1:41773/",
-              timeoutMs: 5_000,
-              probeTimeoutMs: SSH_TUNNEL_READY_PROBE_TIMEOUT_MS,
-            }),
-          ),
+  it.effect.each([1_500, 6_000])(
+    "connects and reuses an SSH tunnel with %ims responses",
+    (responseDelayMs) => {
+      let tunnelStarts = 0;
+      let tunnelStops = 0;
+      let remoteStops = 0;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = commandArgs(command);
+          if (args.includes("-N")) {
+            tunnelStarts += 1;
+            return makeRunningProcess(() => {
+              tunnelStops += 1;
+            });
+          }
+          if (args.includes("sh") && args.includes("--")) {
+            return makeSuccessfulProcess('{"remotePort":3773,"serverKind":"managed"}\n');
+          }
+          if (args.includes("sh")) {
+            remoteStops += 1;
+            return makeSuccessfulProcess('{"stopped":true}\n');
+          }
+          return makeSuccessfulProcess("\n");
+        }),
+      );
+      return Effect.gen(function* () {
+        const firstProbe = yield* Deferred.make<void>();
+        const secondProbe = yield* Deferred.make<void>();
+        let probeCount = 0;
+        const slowClient = HttpClient.make((request) =>
+          Effect.gen(function* () {
+            probeCount += 1;
+            yield* Deferred.succeed(probeCount === 1 ? firstProbe : secondProbe, undefined);
+            yield* Effect.sleep(Duration.millis(responseDelayMs));
+            return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+          }),
         );
-        yield* Effect.yieldNow;
-        yield* TestClock.adjust(Duration.millis(5_000));
-
-        const result = yield* Fiber.join(fiber);
-        assert.isTrue(Result.isSuccess(result));
-      }).pipe(
-        Effect.provide(
-          Layer.merge(TestClock.layer(), Layer.succeed(HttpClient.HttpClient, slowHttpClient)),
-        ),
-      ),
+        const layer = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Layer.succeed(HttpClient.HttpClient, slowClient),
+          Layer.succeed(NetService.NetService, testNetService),
+          SshPasswordPrompt.disabledLayer,
+          SshEnvironmentManager.layer(),
+        );
+        return yield* Effect.gen(function* () {
+          const manager = yield* SshEnvironmentManager;
+          const target = {
+            alias: "slow-link",
+            hostname: "slow-link.example.com",
+            username: "tester",
+            port: 22,
+          } as const;
+          const firstFiber = yield* Effect.forkChild(manager.ensureEnvironment(target));
+          yield* Deferred.await(firstProbe);
+          yield* TestClock.adjust(Duration.millis(20_000));
+          const first = yield* Fiber.join(firstFiber);
+          const secondFiber = yield* Effect.forkChild(manager.ensureEnvironment(target));
+          yield* Deferred.await(secondProbe);
+          yield* TestClock.adjust(Duration.millis(20_000));
+          const second = yield* Fiber.join(secondFiber);
+          assert.equal(first.httpBaseUrl, second.httpBaseUrl);
+          assert.equal(tunnelStarts, 1);
+          assert.equal(tunnelStops, 0);
+          assert.equal(remoteStops, 0);
+        }).pipe(Effect.provide(layer), Effect.scoped);
+      });
+    },
   );
 
   it("preserves primitive readiness reason values in diagnostic output", () => {

@@ -52,24 +52,10 @@ import {
 export const DEFAULT_REMOTE_PORT = 3773;
 const REMOTE_PORT_SCAN_WINDOW = 200;
 const SSH_READY_TIMEOUT_MS = 20_000;
-// Default probe bound for waitForHttpReady, and the value fed to the
-// remote-side scripts' own loopback probe (T3_READY_PROBE_TIMEOUT_MS). That
-// remote probe's deadline loop (REMOTE_WAIT_READY_SCRIPT) only checks its
-// overall deadline *between* attempts — a single in-flight probe isn't
-// interrupted when the deadline passes — so this must stay comfortably under
-// REMOTE_REUSE_READY_TIMEOUT_MS (2s) or one slow attempt can blow through the
-// whole reuse-check budget. It never needs to be larger: this probe is always
-// loopback on the remote host, with no RTT to account for.
+// Remote loopback probes must fit within the shell's 2s reuse window.
 const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
-// Bound for the desktop-side probe that crosses the real SSH link (desktop ->
-// tunnel -> remote), used only at the initial-connect readiness check below.
-// On a high-RTT connection (satellite/in-flight wifi) a single request can
-// legitimately take longer than a typical LAN round trip. Safe to set well
-// above any of the timeouts above: unlike the remote script's loop, Effect's
-// own timeoutOption (in the shared waitForHttpReady) genuinely interrupts an
-// in-flight request once its outer deadline elapses, so this can't make a
-// short outer timeoutMs elsewhere overshoot.
-export const SSH_TUNNEL_READY_PROBE_TIMEOUT_MS = 8_000;
+// Probes through SSH cross the network, both when connecting and reusing a tunnel.
+const SSH_TUNNEL_READY_PROBE_TIMEOUT_MS = 8_000;
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const REMOTE_READY_TIMEOUT_MS = 60_000;
 const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
@@ -1475,7 +1461,11 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         remotePort: entry.remotePort,
       });
       const readinessExit = yield* Effect.exit(
-        waitForHttpReady({ baseUrl: entry.httpBaseUrl, timeoutMs: 2_000 }),
+        waitForHttpReady({
+          baseUrl: entry.httpBaseUrl,
+          timeoutMs: SSH_READY_TIMEOUT_MS,
+          probeTimeoutMs: SSH_TUNNEL_READY_PROBE_TIMEOUT_MS,
+        }),
       );
       if (Exit.isSuccess(readinessExit)) {
         yield* Effect.logDebug("ssh.environment.tunnel.reused", {
