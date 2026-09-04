@@ -114,6 +114,22 @@ export function mergePullRequestThreadComments<T extends { readonly id: string }
   ];
 }
 
+/** The first row currently shown for each review conversation owns its thread-level actions. */
+export function firstVisibleThreadCommentIds(
+  comments: ReadonlyArray<{ readonly id: string }>,
+  threadByCommentId: ReadonlyMap<string, { readonly id: string }>,
+): ReadonlySet<string> {
+  const threadIds = new Set<string>();
+  return new Set(
+    comments.flatMap((comment) => {
+      const thread = threadByCommentId.get(comment.id);
+      if (!thread || threadIds.has(thread.id)) return [];
+      threadIds.add(thread.id);
+      return [comment.id];
+    }),
+  );
+}
+
 export function editPullRequestThreadComment<
   T extends { readonly id: string; readonly body: string },
 >(comments: ReadonlyArray<T>, commentId: string, body: string): ReadonlyArray<T> {

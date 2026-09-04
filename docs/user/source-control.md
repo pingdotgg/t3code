@@ -78,7 +78,9 @@ T3 Code works with the platforms your team already uses:
 - Rewrite a pull request's title and description from the review itself, in Markdown, with a
   preview before you save
 - Rewrite your own comments the same way, wherever they are shown
-- Works on GitHub, GitLab, and Bitbucket. Azure DevOps takes a new title and description; its
+- Resolve or unresolve review conversations from the **Summary** or **Code** tab on GitHub, GitLab,
+  and Bitbucket
+- Editing works on GitHub, GitLab, and Bitbucket. Azure DevOps takes a new title and description; its
   comments stay read-only here, as they already were
 - On GitHub, put a label on a pull request or take one off from the **Labels** row of the review.
   Changing labels needs triage access or better on the repository
