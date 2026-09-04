@@ -46,6 +46,7 @@ import {
   showContextMenu,
 } from "./methods/window.ts";
 import * as PreviewIpc from "./methods/preview.ts";
+import * as TailcatIpc from "./methods/tailcatEnvironment.ts";
 import * as AppActivationIpc from "./methods/appActivation.ts";
 import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./methods/wsl.ts";
 
@@ -77,6 +78,10 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(fetchSshSessionState);
   yield* ipc.handle(issueSshWebSocketTicket);
   yield* ipc.handle(resolveSshPasswordPrompt);
+
+  for (const tailcatMethod of TailcatIpc.methods) {
+    yield* ipc.handle(tailcatMethod);
+  }
 
   yield* ipc.handle(getServerExposureState);
   yield* ipc.handle(setServerExposureMode);

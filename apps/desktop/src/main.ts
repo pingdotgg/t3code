@@ -54,6 +54,9 @@ import * as DesktopAppSettings from "./settings/DesktopAppSettings.ts";
 import * as DesktopPreReadyPlatform from "./app/DesktopPreReadyPlatform.ts";
 import * as DesktopShellEnvironment from "./shell/DesktopShellEnvironment.ts";
 import * as DesktopSshEnvironment from "./ssh/DesktopSshEnvironment.ts";
+import * as DesktopTailcatEnvironment from "./tailcat/DesktopTailcatEnvironment.ts";
+import * as DesktopTailcatIdentity from "./tailcat/DesktopTailcatIdentity.ts";
+import * as DesktopTailcatRuntime from "./tailcat/DesktopTailcatRuntime.ts";
 import * as DesktopSshPasswordPrompts from "./ssh/DesktopSshPasswordPrompts.ts";
 import * as DesktopState from "./app/DesktopState.ts";
 import * as DesktopTelemetryPublisher from "./telemetry/DesktopTelemetryPublisher.ts";
@@ -145,6 +148,14 @@ const desktopSshLayer = desktopSshEnvironmentLayer.pipe(
   Layer.provideMerge(DesktopSshPasswordPrompts.layer()),
 );
 
+// Tailcat forwards for saved Tailcat environments, plus this device's client
+// identity (encrypted with safeStorage). Rides on the foundation for paths.
+const desktopTailcatLayer = DesktopTailcatEnvironment.layer.pipe(
+  Layer.provideMerge(DesktopTailcatIdentity.layer),
+  Layer.provideMerge(DesktopTailcatRuntime.layer),
+  Layer.provide(desktopFoundationLayer),
+);
+
 const desktopServerExposureLayer = DesktopServerExposure.layer.pipe(
   Layer.provideMerge(DesktopNetworkInterfaces.layer),
   Layer.provideMerge(desktopFoundationLayer),
@@ -199,6 +210,7 @@ const desktopApplicationLayer = Layer.mergeAll(
   DesktopLinuxUrlHandler.layer,
   DesktopShellEnvironment.layer,
   desktopSshLayer,
+  desktopTailcatLayer,
 ).pipe(
   Layer.provideMerge(DesktopUpdates.layer),
   Layer.provideMerge(desktopWslBackendLayer),
