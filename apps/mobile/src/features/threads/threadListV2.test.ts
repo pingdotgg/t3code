@@ -156,6 +156,32 @@ describe("resolveThreadListV2Status", () => {
       "ready",
     );
   });
+
+  it("resolves failed for a latest turn that ended in error after the session exited", () => {
+    const thread = makeThread({
+      id: ThreadId.make("t"),
+      title: "t",
+      latestTurn: {
+        turnId: TurnId.make("turn-1"),
+        state: "error",
+        requestedAt: NOW,
+        startedAt: NOW,
+        completedAt: NOW,
+        assistantMessageId: null,
+      },
+      session: {
+        threadId: ThreadId.make("t"),
+        status: "stopped",
+        providerName: "Claude",
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: "Claude stalled",
+        updatedAt: NOW,
+      },
+    });
+    expect(resolveThreadListV2Status(thread)).toBe("failed");
+  });
 });
 
 describe("resolveThreadListV2SwipeActions", () => {

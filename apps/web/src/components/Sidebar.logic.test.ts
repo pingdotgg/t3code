@@ -668,7 +668,7 @@ describe("resolveSidebarThreadStatus", () => {
     updatedAt: "2026-03-09T10:00:00.000Z",
   };
 
-  const idle = { hasPendingApprovals: false, hasPendingUserInput: false };
+  const idle = { hasPendingApprovals: false, hasPendingUserInput: false, latestTurn: null };
 
   it("prioritizes approval over a running session", () => {
     expect(resolveSidebarThreadStatus({ ...idle, hasPendingApprovals: true, session })).toBe(
@@ -717,6 +717,31 @@ describe("resolveSidebarThreadStatus", () => {
       resolveSidebarThreadStatus({
         ...idle,
         session: { ...session, status: "ready" as const, lastError: "persisted" },
+      }),
+    ).toBe("ready");
+  });
+
+  it("reports failed for a latest turn that ended in error after the session exited", () => {
+    const failedTurn = {
+      turnId: "turn-1" as never,
+      state: "error" as const,
+      requestedAt: "2026-03-09T10:00:00.000Z",
+      startedAt: "2026-03-09T10:00:00.000Z",
+      completedAt: "2026-03-09T10:10:00.000Z",
+      assistantMessageId: null,
+    };
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        latestTurn: failedTurn,
+        session: { ...session, status: "stopped" as const, lastError: "Claude stalled" },
+      }),
+    ).toBe("failed");
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        latestTurn: { ...failedTurn, state: "completed" as const },
+        session: { ...session, status: "stopped" as const, lastError: null },
       }),
     ).toBe("ready");
   });

@@ -121,6 +121,20 @@ This is different from the recommended Codex setup. Claude Code keeps account an
 multiple files under its config directory, so T3 Code keeps separate config directories isolated
 instead of trying to share part of the state.
 
+## A Thread Says Working But Nothing Arrives
+
+If the Claude process behind a thread loses its login while a turn is in flight, for example after
+you sign in to a different Claude account on the same machine, it can go quiet without reporting
+anything.
+
+T3 Code watches for this. When Claude produces no output for ten minutes, or thirty minutes while a
+tool or subagent is running, the turn fails with a message that says so and the Claude process is
+closed. A Claude process that quits in the middle of a turn is reported the same way instead of the
+thread showing as done with no answer.
+
+Send your message again to continue. The thread starts a fresh Claude process, which uses whatever
+login is active at that moment.
+
 ## I Want To Use OpenRouter
 
 Use this when you want Claude Code to talk to OpenRouter directly, without running a local router.

@@ -522,7 +522,7 @@ export type SidebarThreadStatus =
 
 type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
-  "hasPendingApprovals" | "hasPendingUserInput" | "session" | "backgroundLiveness"
+  "hasPendingApprovals" | "hasPendingUserInput" | "session" | "backgroundLiveness" | "latestTurn"
 >;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
@@ -536,8 +536,11 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
     return "working";
   }
   // A failed session outranks lingering background liveness: the user must
-  // see the failure, not a stale Working (review finding).
-  if (thread.session?.status === "error") {
+  // see the failure, not a stale Working (review finding). The latest turn
+  // ending in error counts too: providers close the session right after a
+  // failed stream, so its status alone would read as a Done thread with no
+  // answer (mobile's thread status already reads the turn this way).
+  if (thread.session?.status === "error" || thread.latestTurn?.state === "error") {
     return "failed";
   }
   // Background work outlives the turn: fleets read as working; monitoring
