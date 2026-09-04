@@ -192,6 +192,36 @@ describe("thread outbox", () => {
     ).toBe("plan");
   });
 
+  it("reconciles a queued runtime mode against the provider snapshot at drain time", () => {
+    const modelSelection = {
+      instanceId: ProviderInstanceId.make("piAgent"),
+      model: "pi-model",
+    };
+    const message = {
+      ...queuedMessage({ messageId: "queued-runtime", createdAt: "2026-09-04T10:00:00.000Z" }),
+      modelSelection,
+      runtimeMode: "approval-required" as const,
+    } satisfies QueuedThreadMessage;
+
+    expect(
+      resolveQueuedThreadSettings(
+        message,
+        {
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        },
+        [
+          {
+            instanceId: modelSelection.instanceId,
+            showInteractionModeToggle: true,
+            supportedRuntimeModes: ["full-access"],
+          },
+        ],
+      ),
+    ).toMatchObject({ runtimeMode: "full-access" });
+  });
+
   it("normalizes a legacy queued message that inherits unsupported plan mode", () => {
     const modelSelection = {
       instanceId: ProviderInstanceId.make("google-personal"),

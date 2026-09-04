@@ -78,6 +78,10 @@ import {
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
 import {
+  getProviderSupportedRuntimeModes,
+  reconcileRuntimeMode,
+} from "@t3tools/client-runtime/runtime-mode-options";
+import {
   buildHomeProjectScopes,
   sortHomeProjectScopes,
   type HomeProjectScope,
@@ -415,7 +419,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     draftStartFromOrigin ??
     selectedEnvironmentServerConfig?.settings.newWorktreesStartFromOrigin ??
     true;
-  const runtimeMode = selectedProjectDraft.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+  const configuredRuntimeMode = selectedProjectDraft.runtimeMode ?? DEFAULT_RUNTIME_MODE;
 
   // Antigravity keeps unavailable selections so sign-out or a catalog change
   // cannot switch the user's model. Other providers retain their fallback
@@ -473,6 +477,16 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       ) ?? null,
     [selectedEnvironmentServerConfig, selectedModel?.instanceId],
   );
+  const runtimeMode = reconcileRuntimeMode(
+    configuredRuntimeMode,
+    getProviderSupportedRuntimeModes(selectedProviderStatus),
+  );
+  useEffect(() => {
+    if (selectedProjectDraftKey === null || runtimeMode === configuredRuntimeMode) {
+      return;
+    }
+    updateComposerDraftSettings(selectedProjectDraftKey, { runtimeMode });
+  }, [configuredRuntimeMode, runtimeMode, selectedProjectDraftKey]);
   const planModeEnabled =
     legacyPlanModeEnabled && selectedProviderStatus?.showInteractionModeToggle !== false;
   const interactionMode = planModeEnabled
@@ -493,15 +507,20 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       const provider = selectedEnvironmentServerConfig?.providers.find(
         (candidate) => candidate.instanceId === selection.instanceId,
       );
+      const runtimeMode = reconcileRuntimeMode(
+        configuredRuntimeMode,
+        getProviderSupportedRuntimeModes(provider),
+      );
       updateComposerDraftSettings(selectedProjectDraftKey, {
         modelSelection: selection,
+        ...(runtimeMode !== configuredRuntimeMode ? { runtimeMode } : {}),
         ...(provider?.showInteractionModeToggle === false
           ? { interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE }
           : {}),
       });
       setStickyComposerModelSelection(selection);
     },
-    [modelOptions, selectedEnvironmentServerConfig, selectedProjectDraftKey],
+    [configuredRuntimeMode, modelOptions, selectedEnvironmentServerConfig, selectedProjectDraftKey],
   );
   const setSelectedModelOptions = useCallback(
     (options: ReadonlyArray<ProviderOptionSelection> | undefined) => {
@@ -906,7 +925,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         text,
         attachments: draft.attachments,
         modelSelection: draftModelSelection,
-        runtimeMode: draft.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+        runtimeMode,
         interactionMode: resolvePendingTaskInteractionMode({
           preferenceLoaded: planModePreferenceLoaded,
           planModeEnabled: legacyPlanModeEnabled,
@@ -946,6 +965,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedProjectDraftKey,
       legacyPlanModeEnabled,
       planModePreferenceLoaded,
+      runtimeMode,
       startFromOrigin,
       workspaceMode,
     ],

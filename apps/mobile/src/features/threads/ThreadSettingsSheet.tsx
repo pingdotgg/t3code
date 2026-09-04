@@ -7,7 +7,10 @@ import type {
   RuntimeMode,
   ServerProvider,
 } from "@t3tools/contracts";
-import { getProviderSupportedRuntimeModes } from "@t3tools/client-runtime/runtime-mode-options";
+import {
+  getProviderSupportedRuntimeModes,
+  reconcileRuntimeMode,
+} from "@t3tools/client-runtime/runtime-mode-options";
 import { useAtomValue } from "@effect/atom-react";
 import type { LegendListRenderItemProps } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
@@ -417,9 +420,27 @@ function ThreadSettingsSessionProvider(
     () => new Set(),
   );
   const [pendingModel, setPendingModel] = useState<ModelOption | null>(null);
+  // Model selection is staged in this sheet. Resolve runtime capabilities from
+  // that staged option so switching to a narrower provider immediately
+  // updates the Runtime submenu before Save applies the model.
+  // Always read the staged option back from the current provider snapshot:
+  // status refreshes can change capabilities while this sheet is open.
+  const latestPendingModel = useMemo(
+    () =>
+      pendingModel
+        ? props.providerGroups
+            .flatMap((group) => group.models)
+            .find((option) => option.key === pendingModel.key)
+        : undefined,
+    [pendingModel, props.providerGroups],
+  );
+  const stagedSupportedRuntimeModes = pendingModel
+    ? latestPendingModel?.supportedRuntimeModes
+    : props.supportedRuntimeModes;
+  const runtimeMode = reconcileRuntimeMode(props.runtimeMode, stagedSupportedRuntimeModes);
   const runtimeModeChoices = useMemo(
-    () => filterRuntimeModeChoices(props.supportedRuntimeModes),
-    [props.supportedRuntimeModes],
+    () => filterRuntimeModeChoices(stagedSupportedRuntimeModes),
+    [stagedSupportedRuntimeModes],
   );
 
   const isApplied = useCallback(
@@ -513,7 +534,7 @@ function ThreadSettingsSessionProvider(
       environmentId: props.environmentId,
       providerInstanceId: props.providerInstanceId,
       providerGroups: props.providerGroups,
-      runtimeMode: props.runtimeMode,
+      runtimeMode,
       runtimeModeChoices,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
       displayedDescriptors,
@@ -548,7 +569,7 @@ function ThreadSettingsSessionProvider(
       providerFilter,
       props.onUpdateRuntimeMode,
       props.providerGroups,
-      props.runtimeMode,
+      runtimeMode,
       runtimeModeChoices,
       searchQuery,
       showLegacyToggle,

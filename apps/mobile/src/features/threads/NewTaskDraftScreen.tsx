@@ -880,7 +880,10 @@ export function NewTaskDraftScreen(props: {
     const selectedWorktreePath =
       draft.workspaceSelection?.worktreePath ?? flow.selectedWorktreePath;
     const startFromOrigin = draft.workspaceSelection?.startFromOrigin ?? flow.startFromOrigin;
-    const runtimeMode = draft.runtimeMode ?? flow.runtimeMode;
+    // The flow reconciles the draft mode against the selected provider's
+    // current capabilities. Dispatch that value even when the draft still
+    // contains the pre-switch mode.
+    const runtimeMode = flow.runtimeMode;
     const interactionMode = resolveProviderInteractionMode(
       selectedEnvironmentServerConfig?.providers.find(
         (provider) => provider.instanceId === modelSelection?.instanceId,

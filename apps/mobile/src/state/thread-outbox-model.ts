@@ -1,5 +1,9 @@
 import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/errors";
 import {
+  getProviderSupportedRuntimeModes,
+  reconcileRuntimeMode,
+} from "@t3tools/client-runtime/runtime-mode-options";
+import {
   clampFileAttachmentUploadBytes,
   fileAttachmentTooLargeMessage,
 } from "@t3tools/client-runtime/state/attachments";
@@ -95,7 +99,9 @@ export interface ThreadSettingsSnapshot {
 export function resolveQueuedThreadSettings(
   message: QueuedThreadMessage,
   thread: ThreadSettingsSnapshot,
-  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "showInteractionModeToggle">> = [],
+  providers: ReadonlyArray<
+    Pick<ServerProvider, "instanceId" | "showInteractionModeToggle" | "supportedRuntimeModes">
+  > = [],
 ): ThreadSettingsSnapshot {
   const modelSelection = message.modelSelection ?? thread.modelSelection;
   const provider = providers.find(
@@ -103,7 +109,10 @@ export function resolveQueuedThreadSettings(
   );
   return {
     modelSelection,
-    runtimeMode: message.runtimeMode ?? thread.runtimeMode,
+    runtimeMode: reconcileRuntimeMode(
+      message.runtimeMode ?? thread.runtimeMode,
+      getProviderSupportedRuntimeModes(provider),
+    ),
     interactionMode: resolveProviderInteractionMode(
       provider,
       message.interactionMode ?? thread.interactionMode,

@@ -1,6 +1,22 @@
 /** Turn a T3 `$skill` mention into Pi's native `/skill:name` command. */
 
-const SKILL_MENTION_PATTERN = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
+// Keep word-like text and a second `$` from being treated as mention boundaries,
+// while allowing punctuation around a valid skill token. Dots are part of skill
+// names, but a terminal dot is also common sentence punctuation; the matcher
+// trims that punctuation below when it is not itself a discovered skill name.
+const SKILL_MENTION_PATTERN =
+  /(^|[^\p{L}\p{M}\p{N}\p{Pc}$])\$([\p{L}\p{N}][\p{L}\p{M}\p{N}\p{Pc}:.-]*)(?=$|[^\p{L}\p{M}\p{N}\p{Pc}$])/gu;
+
+function rewritePiSkillMention(
+  text: string,
+  mention: { readonly name: string; readonly start: number; readonly end: number },
+): string {
+  const trailing = text.slice(mention.end);
+  // A punctuation delimiter must stay prose, but a space keeps Pi from parsing
+  // it as part of the earlier inline `/skill:name` command.
+  const separator = trailing.length > 0 && !/^\s/u.test(trailing) ? " " : "";
+  return `${text.slice(0, mention.start)}/skill:${mention.name}${separator}${trailing}`;
+}
 
 export interface PiSkillDispatch {
   readonly commandText: string;
@@ -12,7 +28,11 @@ export function planPiSkillDispatch(
   skillNames: ReadonlySet<string>,
 ): PiSkillDispatch | undefined {
   const mentions = [...prompt.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => {
-    const name = match[2] ?? "";
+    const rawName = match[2] ?? "";
+    let name = rawName;
+    while (/[.:_-]$/u.test(name) && !skillNames.has(name)) {
+      name = name.slice(0, -1);
+    }
     if (!skillNames.has(name)) return [];
     const start = (match.index ?? 0) + (match[1]?.length ?? 0);
     return [{ name, start, end: start + name.length + 1 }];
@@ -23,7 +43,7 @@ export function planPiSkillDispatch(
   const leading = mentions
     .slice(0, -1)
     .reduceRight(
-      (text, mention) => `${text.slice(0, mention.start)}/skill:${text.slice(mention.start + 1)}`,
+      (text, mention) => rewritePiSkillMention(text, mention),
       prompt.slice(0, selected.start),
     )
     .trimEnd();

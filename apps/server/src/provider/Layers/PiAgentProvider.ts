@@ -353,11 +353,9 @@ function rpcEnvironment(
 }
 
 const requestOptional = (client: PiRpcClient, command: PiRpcRequestCommand) =>
-  client.request(command).pipe(
-    Effect.timeoutOption(PI_RPC_TIMEOUT),
-    Effect.map(Option.getOrUndefined),
-    Effect.orElseSucceed(() => undefined),
-  );
+  client
+    .request(command)
+    .pipe(Effect.timeoutOption(PI_RPC_TIMEOUT), Effect.map(Option.getOrUndefined));
 
 /**
  * Probe one Pi profile's dynamic catalog. `factory` is injectable so the

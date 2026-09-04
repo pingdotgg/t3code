@@ -15,6 +15,7 @@ import {
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -116,6 +117,12 @@ interface PendingTurnOutcome {
   readonly errorMessage?: string;
 }
 
+interface ThreadLock {
+  readonly semaphore: Semaphore.Semaphore;
+  users: number;
+  reclaimable: boolean;
+}
+
 interface SessionContext {
   readonly threadId: ThreadId;
   readonly scope: Scope.Closeable;
@@ -129,9 +136,11 @@ interface SessionContext {
   session: ProviderSession;
   activeTurnId: TurnId | undefined;
   abortingTurnId: TurnId | undefined;
+  abortSettlement: Deferred.Deferred<void> | undefined;
   compactionItemId: RuntimeItemId | undefined;
   lastUsage: unknown;
   pendingTurnOutcome: PendingTurnOutcome | undefined;
+  startupFinished: boolean;
   stopped: boolean;
 }
 
@@ -250,7 +259,7 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
   const serverConfig = yield* ServerConfig;
   const ownerScope = yield* Effect.scope;
   const sessions = new Map<ThreadId, SessionContext>();
-  const threadLocks = yield* SynchronizedRef.make(new Map<ThreadId, Semaphore.Semaphore>());
+  const threadLocks = yield* SynchronizedRef.make(new Map<ThreadId, ThreadLock>());
   const events = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const randomId = crypto.randomUUIDv4.pipe(
@@ -278,11 +287,47 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
   const withThreadLock = <A, E, R>(threadId: ThreadId, task: Effect.Effect<A, E, R>) =>
     SynchronizedRef.modifyEffect(threadLocks, (current) => {
       const existing = current.get(threadId);
-      if (existing) return Effect.succeed([existing, current] as const);
+      if (existing) {
+        existing.users += 1;
+        return Effect.succeed([existing, current] as const);
+      }
       return Semaphore.make(1).pipe(
-        Effect.map((lock) => [lock, new Map(current).set(threadId, lock)] as const),
+        Effect.map((semaphore) => {
+          const lock: ThreadLock = { semaphore, users: 1, reclaimable: false };
+          return [lock, new Map(current).set(threadId, lock)] as const;
+        }),
       );
-    }).pipe(Effect.flatMap((lock) => lock.withPermit(task)));
+    }).pipe(
+      Effect.flatMap((lock) =>
+        lock.semaphore.withPermit(task).pipe(
+          Effect.ensuring(
+            SynchronizedRef.update(threadLocks, (current) => {
+              if (current.get(threadId) !== lock) return current;
+              lock.users -= 1;
+              if (lock.reclaimable && lock.users === 0) {
+                const next = new Map(current);
+                next.delete(threadId);
+                return next;
+              }
+              return current;
+            }),
+          ),
+        ),
+      ),
+    );
+
+  const retireThreadLock = (threadId: ThreadId) =>
+    SynchronizedRef.update(threadLocks, (current) => {
+      const lock = current.get(threadId);
+      if (!lock) return current;
+      lock.reclaimable = true;
+      if (lock.users === 0) {
+        const next = new Map(current);
+        next.delete(threadId);
+        return next;
+      }
+      return current;
+    });
 
   const isProviderAdapterError = (cause: unknown): cause is ProviderAdapterError =>
     typeof cause === "object" &&
@@ -309,9 +354,48 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
       : Effect.fail(new ProviderAdapterSessionNotFoundError({ provider: PROVIDER, threadId }));
   };
 
-  const finishTurn = (context: SessionContext, outcome: PendingTurnOutcome) =>
+  const ensureCurrentContext = (context: SessionContext) =>
+    context.stopped || sessions.get(context.threadId) !== context
+      ? Effect.fail(
+          new ProviderAdapterSessionNotFoundError({
+            provider: PROVIDER,
+            threadId: context.threadId,
+          }),
+        )
+      : Effect.void;
+
+  const ensureReadyContext = (context: SessionContext) =>
     Effect.gen(function* () {
+      yield* ensureCurrentContext(context);
+      if (!context.startupFinished || context.session.status === "connecting") {
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "prompt",
+          detail: "Pi Agent session is still starting.",
+        });
+      }
+    });
+
+  const takeAbortSettlement = (context: SessionContext) => {
+    const settlement = context.abortSettlement;
+    context.abortSettlement = undefined;
+    return settlement;
+  };
+
+  const settleAbort = (context: SessionContext, settlement: Deferred.Deferred<void> | undefined) =>
+    settlement === undefined
+      ? Effect.void
+      : Effect.uninterruptible(
+          Effect.sync(() => {
+            if (context.abortSettlement === settlement) context.abortSettlement = undefined;
+          }).pipe(Effect.andThen(Deferred.succeed(settlement, undefined))),
+        ).pipe(Effect.asVoid);
+
+  const finishTurn = (context: SessionContext, outcome: PendingTurnOutcome) => {
+    let abortSettlement: Deferred.Deferred<void> | undefined;
+    return Effect.gen(function* () {
       const turnId = context.activeTurnId;
+      abortSettlement = context.abortSettlement;
       if (turnId === undefined || context.stopped) return;
       const { state } = outcome;
       context.activeTurnId = undefined;
@@ -344,10 +428,13 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
         },
       });
       context.lastUsage = undefined;
-    });
+    }).pipe(Effect.ensuring(Effect.suspend(() => settleAbort(context, abortSettlement))));
+  };
 
-  const abortTurn = (context: SessionContext, turnId: TurnId) =>
-    Effect.gen(function* () {
+  const abortTurn = (context: SessionContext, turnId: TurnId) => {
+    let abortSettlement: Deferred.Deferred<void> | undefined;
+    return Effect.gen(function* () {
+      abortSettlement = context.abortSettlement;
       if (context.activeTurnId !== turnId || context.stopped) return;
       context.activeTurnId = undefined;
       context.abortingTurnId = undefined;
@@ -371,7 +458,8 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
         turnId,
         payload: { reason: "Pi Agent turn interrupted" },
       });
-    });
+    }).pipe(Effect.ensuring(Effect.suspend(() => settleAbort(context, abortSettlement))));
+  };
 
   const emitToolOutput = (context: SessionContext, tool: ToolState, output: string) =>
     Effect.gen(function* () {
@@ -707,8 +795,13 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
 
   const stopContext = (context: SessionContext) =>
     Effect.gen(function* () {
-      if (context.stopped) return;
+      if (context.stopped) {
+        yield* settleAbort(context, takeAbortSettlement(context));
+        return;
+      }
       context.stopped = true;
+      yield* retireThreadLock(context.threadId);
+      yield* settleAbort(context, takeAbortSettlement(context));
       for (const [requestId] of context.dialogs) {
         yield* Effect.ignore(
           context.client.send({
@@ -733,8 +826,10 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
       });
     }).pipe(Effect.uninterruptible);
 
-  const startSession: Adapter["startSession"] = (input) =>
-    withThreadLock(
+  const startSession: Adapter["startSession"] = (input) => {
+    let startedContext: SessionContext | undefined;
+    let startedScope: Scope.Closeable | undefined;
+    return withThreadLock(
       input.threadId,
       Effect.gen(function* () {
         if (!settings.enabled) {
@@ -782,6 +877,7 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
         if (previous) yield* stopContext(previous);
         const cwd = path.resolve(input.cwd.trim());
         const sessionScope = yield* Scope.make("sequential");
+        startedScope = sessionScope;
         const env = {
           ...options?.environment,
           ...(settings.agentDir.trim()
@@ -840,52 +936,68 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
           },
           activeTurnId: undefined,
           abortingTurnId: undefined,
+          abortSettlement: undefined,
           compactionItemId: undefined,
           lastUsage: undefined,
           pendingTurnOutcome: undefined,
+          startupFinished: false,
           stopped: false,
         };
+        startedContext = context;
         sessions.set(input.threadId, context);
         context.eventFiber = yield* client.events.pipe(
           Stream.runForEach((event) => handleEvent(context, event)),
-          Effect.catch((cause) =>
-            Effect.gen(function* () {
-              if (context.stopped) return;
+          Effect.catch((cause) => {
+            const handleTransportFailure = Effect.gen(function* () {
+              if (context.stopped) {
+                yield* settleAbort(context, takeAbortSettlement(context));
+                return;
+              }
+              const shouldReportTransportFailure = sessions.get(context.threadId) === context;
               context.stopped = true;
-              if (sessions.get(context.threadId) === context) sessions.delete(context.threadId);
-              context.session = {
-                ...context.session,
-                status: "error",
-                lastError: cause.message,
-                updatedAt: yield* nowIso,
-              };
-              yield* emit({
-                type: "runtime.error",
-                ...(yield* stamp),
-                provider: PROVIDER,
-                providerInstanceId: instanceId,
-                threadId: input.threadId,
-                turnId: context.activeTurnId,
-                payload: { message: cause.message, class: "transport_error" },
-              });
-              yield* emit({
-                type: "session.exited",
-                ...(yield* stamp),
-                provider: PROVIDER,
-                providerInstanceId: instanceId,
-                threadId: input.threadId,
-                payload: {
-                  exitKind: "error",
-                  recoverable: true,
-                  reason: cause.message,
-                },
-              });
+              yield* retireThreadLock(context.threadId);
+              yield* settleAbort(context, takeAbortSettlement(context));
+              if (shouldReportTransportFailure) {
+                if (sessions.get(context.threadId) === context) sessions.delete(context.threadId);
+                context.session = {
+                  ...context.session,
+                  status: "error",
+                  lastError: cause.message,
+                  updatedAt: yield* nowIso,
+                };
+                yield* emit({
+                  type: "runtime.error",
+                  ...(yield* stamp),
+                  provider: PROVIDER,
+                  providerInstanceId: instanceId,
+                  threadId: input.threadId,
+                  turnId: context.activeTurnId,
+                  payload: { message: cause.message, class: "transport_error" },
+                });
+                yield* emit({
+                  type: "session.exited",
+                  ...(yield* stamp),
+                  provider: PROVIDER,
+                  providerInstanceId: instanceId,
+                  threadId: input.threadId,
+                  payload: {
+                    exitKind: "error",
+                    recoverable: true,
+                    reason: cause.message,
+                  },
+                });
+              }
               yield* Scope.close(context.scope, Exit.fail(cause)).pipe(
                 Effect.ignore,
                 Effect.forkIn(ownerScope),
               );
-            }),
-          ),
+            });
+            return (
+              context.startupFinished
+                ? withThreadLock(context.threadId, handleTransportFailure)
+                : handleTransportFailure
+            ).pipe(Effect.forkIn(ownerScope), Effect.asVoid);
+          }),
           Effect.forkIn(sessionScope),
         );
         return yield* Effect.gen(function* () {
@@ -929,6 +1041,7 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
           if (input.title?.trim()) {
             yield* client.request({ type: "set_session_name", name: input.title.trim() });
           }
+          yield* ensureCurrentContext(context);
           const session: ProviderSession = {
             ...context.session,
             status: "ready",
@@ -938,6 +1051,7 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
           };
           context.session = session;
           yield* applyModelSelection(context, input.modelSelection);
+          yield* ensureCurrentContext(context);
           yield* emit({
             type: "session.started",
             ...(yield* stamp),
@@ -946,6 +1060,7 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
             threadId: input.threadId,
             payload: { resume: cursor },
           });
+          yield* ensureCurrentContext(context);
           yield* emit({
             type: "session.state.changed",
             ...(yield* stamp),
@@ -954,6 +1069,7 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
             threadId: input.threadId,
             payload: { state: "ready", reason: "Pi Agent RPC session ready" },
           });
+          yield* ensureCurrentContext(context);
           yield* emit({
             type: "thread.started",
             ...(yield* stamp),
@@ -962,6 +1078,7 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
             threadId: input.threadId,
             payload: { providerThreadId: state.sessionId },
           });
+          context.startupFinished = true;
           return context.session;
         }).pipe(
           Effect.mapError((cause) =>
@@ -969,16 +1086,32 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
               ? cause
               : mapClientError(input.threadId, "session/start", cause),
           ),
-          Effect.tapError(() => stopContext(context)),
         );
       }),
+    ).pipe(
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit)
+          ? Effect.void
+          : Effect.uninterruptible(
+              Effect.gen(function* () {
+                yield* retireThreadLock(input.threadId);
+                if (startedContext) {
+                  yield* stopContext(startedContext);
+                } else if (startedScope) {
+                  yield* Scope.close(startedScope, Exit.void).pipe(Effect.ignore);
+                }
+              }),
+            ),
+      ),
     );
+  };
 
   const applyModelSelection = (
     context: SessionContext,
     selection: Parameters<Adapter["sendTurn"]>[0]["modelSelection"],
   ) =>
     Effect.gen(function* () {
+      yield* ensureCurrentContext(context);
       if (!selection) return;
       if (selection.instanceId !== instanceId) {
         return yield* new ProviderAdapterValidationError({
@@ -997,11 +1130,13 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
           });
         }
         yield* context.client.request({ type: "set_model", ...parsed });
+        yield* ensureCurrentContext(context);
         context.session = { ...context.session, model: selection.model };
       }
       const thinking = getModelSelectionStringOptionValue(selection, "reasoningEffort");
       if (thinking) {
         yield* context.client.request({ type: "set_thinking_level", level: thinking });
+        yield* ensureCurrentContext(context);
       }
     }).pipe(
       Effect.mapError((cause) =>
@@ -1049,6 +1184,16 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
   const sendTurn: Adapter["sendTurn"] = (input) =>
     Effect.gen(function* () {
       const context = yield* requireSession(input.threadId);
+      yield* ensureReadyContext(context);
+      if (context.abortingTurnId !== undefined && context.abortSettlement) {
+        yield* Deferred.await(context.abortSettlement);
+        if (context.stopped) {
+          return yield* new ProviderAdapterSessionNotFoundError({
+            provider: PROVIDER,
+            threadId: input.threadId,
+          });
+        }
+      }
       const message = input.input?.trim();
       if (!message) {
         return yield* new ProviderAdapterValidationError({
@@ -1060,6 +1205,11 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
       const images = yield* readImages(input);
       return yield* context.commandLock.withPermit(
         Effect.gen(function* () {
+          const abortSettlement = context.abortSettlement;
+          if (context.abortingTurnId !== undefined && abortSettlement) {
+            yield* Deferred.await(abortSettlement);
+          }
+          yield* ensureReadyContext(context);
           yield* applyModelSelection(context, input.modelSelection);
           const promptMessage = message.includes("$")
             ? yield* context.client.request({ type: "get_commands" }).pipe(
@@ -1071,6 +1221,7 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
                 }),
               )
             : message;
+          yield* ensureReadyContext(context);
           const steering = context.activeTurnId !== undefined;
           const turnId = context.activeTurnId ?? TurnId.make(yield* randomId);
           if (!steering) {
@@ -1122,6 +1273,7 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
                     }),
               ),
             );
+          yield* ensureReadyContext(context);
           return {
             threadId: input.threadId,
             turnId,
@@ -1138,21 +1290,38 @@ export const makePiAgentAdapter = Effect.fn("makePiAgentAdapter")(function* (
   const interruptTurn: Adapter["interruptTurn"] = (threadId, turnId) =>
     Effect.gen(function* () {
       const context = yield* requireSession(threadId);
-      const activeTurnId = context.activeTurnId;
-      if (activeTurnId === undefined || (turnId !== undefined && activeTurnId !== turnId)) return;
-      context.abortingTurnId = activeTurnId;
       yield* context.commandLock.withPermit(
-        context.client.request({ type: "clear_queue" }).pipe(
-          Effect.andThen(context.client.request({ type: "abort" })),
-          Effect.mapError((cause) => mapClientError(threadId, "abort", cause)),
-          Effect.tapError(() =>
-            Effect.sync(() => {
-              if (context.abortingTurnId === activeTurnId) context.abortingTurnId = undefined;
-            }),
-          ),
-        ),
+        Effect.gen(function* () {
+          yield* ensureCurrentContext(context);
+          const activeTurnId = context.activeTurnId;
+          if (activeTurnId === undefined || (turnId !== undefined && activeTurnId !== turnId))
+            return;
+          if (context.abortingTurnId === activeTurnId && context.abortSettlement) return;
+
+          const abortSettlement = yield* Deferred.make<void>();
+          context.abortingTurnId = activeTurnId;
+          context.abortSettlement = abortSettlement;
+          yield* context.client.request({ type: "clear_queue" }).pipe(
+            Effect.andThen(context.client.request({ type: "abort" })),
+            Effect.mapError((cause) => mapClientError(threadId, "abort", cause)),
+            Effect.onExit((exit) =>
+              Exit.isSuccess(exit)
+                ? Effect.void
+                : Effect.uninterruptible(
+                    Effect.sync(() => {
+                      if (
+                        context.abortingTurnId === activeTurnId &&
+                        context.abortSettlement === abortSettlement
+                      ) {
+                        context.abortingTurnId = undefined;
+                        context.abortSettlement = undefined;
+                      }
+                    }).pipe(Effect.andThen(Deferred.succeed(abortSettlement, undefined))),
+                  ),
+            ),
+          );
+        }),
       );
-      yield* abortTurn(context, activeTurnId);
     });
 
   const respondToRequest: Adapter["respondToRequest"] = (threadId, requestId, decision) =>

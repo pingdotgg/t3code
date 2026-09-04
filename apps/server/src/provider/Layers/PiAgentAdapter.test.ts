@@ -533,6 +533,239 @@ it.effect("round-trips Pi extension dialogs and interrupts an active turn", () =
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
+it.effect("keeps an interrupted turn active until Pi settles it", () =>
+  Effect.gen(function* () {
+    const fake = yield* makeFakeClient;
+    const adapter = yield* makePiAgentAdapter(
+      { enabled: true, binaryPath: "pi", agentDir: "", sessionDir: "" },
+      { instanceId, makeClient: () => Effect.succeed(fake.client) },
+    );
+    const collected = yield* startEventCollector(adapter);
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("piAgent"),
+      providerInstanceId: instanceId,
+      cwd: process.cwd(),
+      runtimeMode: "full-access",
+    });
+
+    const interrupted = yield* adapter.sendTurn({ threadId, input: "Stop this" });
+    yield* adapter.interruptTurn(threadId, interrupted.turnId);
+
+    const replacementFiber = yield* adapter
+      .sendTurn({ threadId, input: "Retry this" })
+      .pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    assert.deepEqual((yield* Ref.get(fake.commands)).slice(-2), [
+      { type: "clear_queue" },
+      { type: "abort" },
+    ]);
+
+    yield* fake.emit({ type: "agent_settled" });
+    const replacement = yield* Fiber.join(replacementFiber);
+    assert.notEqual(replacement.turnId, interrupted.turnId);
+    assert.deepEqual((yield* Ref.get(fake.commands)).at(-1), {
+      type: "prompt",
+      message: "Retry this",
+    });
+
+    const beforeReplacementSettled = yield* Ref.get(collected.events);
+    assert.isFalse(
+      beforeReplacementSettled.some(
+        (event) => event.type === "turn.completed" && event.turnId === replacement.turnId,
+      ),
+    );
+
+    yield* fake.emit({ type: "agent_start" });
+    yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+    yield* fake.emit({ type: "agent_settled" });
+    yield* Effect.yieldNow;
+
+    const events = yield* Ref.get(collected.events);
+    assert.isTrue(
+      events.some((event) => event.type === "turn.aborted" && event.turnId === interrupted.turnId),
+    );
+    assert.isTrue(
+      events.some(
+        (event) => event.type === "turn.completed" && event.turnId === replacement.turnId,
+      ),
+    );
+    yield* Fiber.interrupt(collected.fiber);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("does not resume a send after its context is stopped before Pi settles", () =>
+  Effect.gen(function* () {
+    const fake = yield* makeFakeClient;
+    const adapter = yield* makePiAgentAdapter(
+      { enabled: true, binaryPath: "pi", agentDir: "", sessionDir: "" },
+      { instanceId, makeClient: () => Effect.succeed(fake.client) },
+    );
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("piAgent"),
+      providerInstanceId: instanceId,
+      cwd: process.cwd(),
+      runtimeMode: "full-access",
+    });
+    const turn = yield* adapter.sendTurn({ threadId, input: "Stop and replace" });
+    yield* adapter.interruptTurn(threadId, turn.turnId);
+    const replacementFiber = yield* adapter
+      .sendTurn({ threadId, input: "Do not send this to the stopped context" })
+      .pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+
+    yield* adapter.stopSession(threadId);
+    const replacementExit = yield* Fiber.await(replacementFiber);
+    assert.isTrue(replacementExit._tag === "Failure");
+    assert.deepEqual((yield* Ref.get(fake.commands)).slice(-2), [
+      { type: "clear_queue" },
+      { type: "abort" },
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("cleans up a cancelled interrupt so later sends do not wait forever", () =>
+  Effect.gen(function* () {
+    const fake = yield* makeFakeClient;
+    const clearQueueEntered = yield* Deferred.make<void>();
+    const releaseClearQueue = yield* Deferred.make<void>();
+    const blockingClient: PiRpcClient = {
+      ...fake.client,
+      request: (command) =>
+        command.type === "clear_queue"
+          ? Deferred.succeed(clearQueueEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseClearQueue)),
+              Effect.andThen(fake.client.request(command)),
+            )
+          : fake.client.request(command),
+    };
+    const adapter = yield* makePiAgentAdapter(
+      { enabled: true, binaryPath: "pi", agentDir: "", sessionDir: "" },
+      { instanceId, makeClient: () => Effect.succeed(blockingClient) },
+    );
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("piAgent"),
+      providerInstanceId: instanceId,
+      cwd: process.cwd(),
+      runtimeMode: "full-access",
+    });
+    const turn = yield* adapter.sendTurn({ threadId, input: "Interrupt me" });
+    const interruptFiber = yield* adapter
+      .interruptTurn(threadId, turn.turnId)
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(clearQueueEntered);
+    yield* Fiber.interrupt(interruptFiber);
+
+    const resumed = yield* adapter.sendTurn({ threadId, input: "Continue" });
+    assert.equal(resumed.turnId, turn.turnId);
+    assert.deepEqual((yield* Ref.get(fake.commands)).at(-1), {
+      type: "prompt",
+      message: "Continue",
+      streamingBehavior: "steer",
+    });
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("does not publish ready after the Pi startup watcher has failed", () =>
+  Effect.gen(function* () {
+    const fake = yield* makeFakeClient;
+    const stateRequestEntered = yield* Deferred.make<void>();
+    const releaseStateRequest = yield* Deferred.make<void>();
+    const client: PiRpcClient = {
+      ...fake.client,
+      request: (command) =>
+        command.type === "get_state"
+          ? Deferred.succeed(stateRequestEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseStateRequest)),
+              Effect.andThen(fake.client.request(command)),
+            )
+          : fake.client.request(command),
+    };
+    const adapter = yield* makePiAgentAdapter(
+      { enabled: true, binaryPath: "pi", agentDir: "", sessionDir: "" },
+      { instanceId, makeClient: () => Effect.succeed(client) },
+    );
+    const collected = yield* startEventCollector(adapter);
+    const exited = yield* Deferred.make<void>();
+    const watcher = yield* adapter.streamEvents.pipe(
+      Stream.filter(
+        (event) => event.type === "session.exited" && event.payload.exitKind === "error",
+      ),
+      Stream.take(1),
+      Stream.runDrain,
+      Effect.tap(() => Deferred.succeed(exited, undefined)),
+      Effect.forkChild,
+    );
+
+    const startFiber = yield* adapter
+      .startSession({
+        threadId,
+        provider: ProviderDriverKind.make("piAgent"),
+        providerInstanceId: instanceId,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(stateRequestEntered);
+    yield* fake.fail(
+      new PiRpcClientError({ operation: "process-exit", detail: "Pi exited during startup" }),
+    );
+    yield* Deferred.await(exited);
+    yield* Deferred.succeed(releaseStateRequest, undefined);
+
+    const startExit = yield* Fiber.await(startFiber);
+    assert.isTrue(startExit._tag === "Failure");
+    assert.isFalse(yield* adapter.hasSession(threadId));
+    const events = yield* Ref.get(collected.events);
+    assert.isFalse(events.some((event) => event.type === "session.started"));
+    assert.isFalse(
+      events.some(
+        (event) => event.type === "session.state.changed" && event.payload.state === "ready",
+      ),
+    );
+    yield* Fiber.interrupt(watcher);
+    yield* Fiber.interrupt(collected.fiber);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("coalesces concurrent interrupts for one active Pi turn", () =>
+  Effect.gen(function* () {
+    const fake = yield* makeFakeClient;
+    const adapter = yield* makePiAgentAdapter(
+      { enabled: true, binaryPath: "pi", agentDir: "", sessionDir: "" },
+      { instanceId, makeClient: () => Effect.succeed(fake.client) },
+    );
+    const collected = yield* startEventCollector(adapter);
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("piAgent"),
+      providerInstanceId: instanceId,
+      cwd: process.cwd(),
+      runtimeMode: "full-access",
+    });
+    const turn = yield* adapter.sendTurn({ threadId, input: "Interrupt once" });
+    yield* Effect.all(
+      [adapter.interruptTurn(threadId, turn.turnId), adapter.interruptTurn(threadId, turn.turnId)],
+      { concurrency: "unbounded" },
+    );
+    assert.deepEqual((yield* Ref.get(fake.commands)).slice(-2), [
+      { type: "clear_queue" },
+      { type: "abort" },
+    ]);
+
+    yield* fake.emit({ type: "agent_settled" });
+    yield* Effect.yieldNow;
+    const events = yield* Ref.get(collected.events);
+    assert.lengthOf(
+      events.filter((event) => event.type === "turn.aborted" && event.turnId === turn.turnId),
+      1,
+    );
+    yield* Fiber.interrupt(collected.fiber);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
 it.effect("rejects Pi modes that RPC cannot enforce without a policy bridge", () =>
   Effect.gen(function* () {
     const fake = yield* makeFakeClient;
@@ -637,5 +870,241 @@ it.effect("serializes concurrent starts for the same thread", () =>
     assert.equal(yield* Ref.get(factoryCalls), 2);
     assert.isTrue(yield* adapter.hasSession(threadId));
     assert.lengthOf(yield* adapter.listSessions(), 1);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("reclaims stopped-session locks without splitting concurrent starts", () =>
+  Effect.gen(function* () {
+    const first = yield* makeFakeClient;
+    const second = yield* makeFakeClient;
+    const third = yield* makeFakeClient;
+    const secondFactoryEntered = yield* Deferred.make<void>();
+    const releaseSecondFactory = yield* Deferred.make<void>();
+    const factoryCalls = yield* Ref.make(0);
+    const adapter = yield* makePiAgentAdapter(
+      { enabled: true, binaryPath: "pi", agentDir: "", sessionDir: "" },
+      {
+        instanceId,
+        makeClient: () =>
+          Ref.updateAndGet(factoryCalls, (count) => count + 1).pipe(
+            Effect.flatMap((call) =>
+              call === 1
+                ? Effect.succeed(first.client)
+                : call === 2
+                  ? Deferred.succeed(secondFactoryEntered, undefined).pipe(
+                      Effect.andThen(Deferred.await(releaseSecondFactory)),
+                      Effect.as(second.client),
+                    )
+                  : Effect.succeed(third.client),
+            ),
+          ),
+      },
+    );
+    const start = () =>
+      adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("piAgent"),
+        providerInstanceId: instanceId,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+    yield* start();
+    const replacement = yield* start().pipe(Effect.forkChild);
+    yield* Deferred.await(secondFactoryEntered);
+    const concurrent = yield* start().pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    assert.equal(yield* Ref.get(factoryCalls), 2);
+
+    yield* Deferred.succeed(releaseSecondFactory, undefined);
+    yield* Fiber.join(replacement);
+    yield* Fiber.join(concurrent);
+    assert.equal(yield* Ref.get(factoryCalls), 3);
+    assert.isTrue(yield* adapter.hasSession(threadId));
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("cleans up an interrupted startup scope and reclaims its thread lock", () =>
+  Effect.gen(function* () {
+    const first = yield* makeFakeClient;
+    const second = yield* makeFakeClient;
+    const stateRequestEntered = yield* Deferred.make<void>();
+    const closeCalls = yield* Ref.make(0);
+    const factoryCalls = yield* Ref.make(0);
+    const firstClient: PiRpcClient = {
+      ...first.client,
+      request: (command) =>
+        command.type === "get_state"
+          ? Deferred.succeed(stateRequestEntered, undefined).pipe(Effect.andThen(Effect.never))
+          : first.client.request(command),
+      close: Ref.update(closeCalls, (count) => count + 1).pipe(Effect.andThen(first.client.close)),
+    };
+    const adapter = yield* makePiAgentAdapter(
+      { enabled: true, binaryPath: "pi", agentDir: "", sessionDir: "" },
+      {
+        instanceId,
+        makeClient: () =>
+          Ref.updateAndGet(factoryCalls, (count) => count + 1).pipe(
+            Effect.map((call) => (call === 1 ? firstClient : second.client)),
+          ),
+      },
+    );
+    const input = {
+      threadId,
+      provider: ProviderDriverKind.make("piAgent"),
+      providerInstanceId: instanceId,
+      cwd: process.cwd(),
+      runtimeMode: "full-access" as const,
+    };
+
+    const interrupted = yield* adapter.startSession(input).pipe(Effect.forkChild);
+    yield* Deferred.await(stateRequestEntered);
+    yield* Fiber.interrupt(interrupted);
+
+    assert.equal(yield* Ref.get(closeCalls), 1);
+    assert.equal(yield* Ref.get(factoryCalls), 1);
+    assert.isFalse(yield* adapter.hasSession(threadId));
+
+    yield* adapter.startSession(input);
+    assert.equal(yield* Ref.get(factoryCalls), 2);
+    assert.isTrue(yield* adapter.hasSession(threadId));
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("rejects sends while a Pi session is still connecting", () =>
+  Effect.gen(function* () {
+    const fake = yield* makeFakeClient;
+    const stateRequestEntered = yield* Deferred.make<void>();
+    const releaseStateRequest = yield* Deferred.make<void>();
+    const client: PiRpcClient = {
+      ...fake.client,
+      request: (command) =>
+        command.type === "get_state"
+          ? Deferred.succeed(stateRequestEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseStateRequest)),
+              Effect.andThen(fake.client.request(command)),
+            )
+          : fake.client.request(command),
+    };
+    const adapter = yield* makePiAgentAdapter(
+      { enabled: true, binaryPath: "pi", agentDir: "", sessionDir: "" },
+      { instanceId, makeClient: () => Effect.succeed(client) },
+    );
+    const input = {
+      threadId,
+      provider: ProviderDriverKind.make("piAgent"),
+      providerInstanceId: instanceId,
+      cwd: process.cwd(),
+      runtimeMode: "full-access" as const,
+    };
+    const startup = yield* adapter.startSession(input).pipe(Effect.forkChild);
+    yield* Deferred.await(stateRequestEntered);
+
+    const error = yield* adapter.sendTurn({ threadId, input: "Do not send yet" }).pipe(Effect.flip);
+    assert.equal(error._tag, "ProviderAdapterRequestError");
+    assert.isFalse((yield* Ref.get(fake.commands)).some((command) => command.type === "prompt"));
+
+    yield* Deferred.succeed(releaseStateRequest, undefined);
+    yield* Fiber.join(startup);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("rejects sends until startup finishes configuring the model", () =>
+  Effect.gen(function* () {
+    const fake = yield* makeFakeClient;
+    const setModelEntered = yield* Deferred.make<void>();
+    const releaseSetModel = yield* Deferred.make<void>();
+    const client: PiRpcClient = {
+      ...fake.client,
+      request: (command) =>
+        command.type === "set_model"
+          ? Deferred.succeed(setModelEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseSetModel)),
+              Effect.andThen(fake.client.request(command)),
+            )
+          : fake.client.request(command),
+    };
+    const adapter = yield* makePiAgentAdapter(
+      { enabled: true, binaryPath: "pi", agentDir: "", sessionDir: "" },
+      { instanceId, makeClient: () => Effect.succeed(client) },
+    );
+    const startup = yield* adapter
+      .startSession({
+        threadId,
+        provider: ProviderDriverKind.make("piAgent"),
+        providerInstanceId: instanceId,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId, model: "anthropic/claude-opus" },
+      })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(setModelEntered);
+
+    const error = yield* adapter
+      .sendTurn({ threadId, input: "Do not send during startup" })
+      .pipe(Effect.flip);
+    assert.equal(error._tag, "ProviderAdapterRequestError");
+    assert.isFalse((yield* Ref.get(fake.commands)).some((command) => command.type === "prompt"));
+
+    yield* Deferred.succeed(releaseSetModel, undefined);
+    yield* Fiber.join(startup);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("does not report a stale transport failure after a replacement starts", () =>
+  Effect.gen(function* () {
+    const first = yield* makeFakeClient;
+    const second = yield* makeFakeClient;
+    const factoryCalls = yield* Ref.make(0);
+    const secondFactoryEntered = yield* Deferred.make<void>();
+    const adapter = yield* makePiAgentAdapter(
+      { enabled: true, binaryPath: "pi", agentDir: "", sessionDir: "" },
+      {
+        instanceId,
+        makeClient: () =>
+          Ref.updateAndGet(factoryCalls, (count) => count + 1).pipe(
+            Effect.flatMap((call) =>
+              call === 1
+                ? Effect.succeed(first.client)
+                : Deferred.succeed(secondFactoryEntered, undefined).pipe(
+                    Effect.andThen(Effect.succeed(second.client)),
+                  ),
+            ),
+          ),
+      },
+    );
+    const collected = yield* startEventCollector(adapter);
+    const input = {
+      threadId,
+      provider: ProviderDriverKind.make("piAgent"),
+      providerInstanceId: instanceId,
+      cwd: process.cwd(),
+      runtimeMode: "full-access" as const,
+    };
+    yield* adapter.startSession(input);
+    const replacement = yield* adapter.startSession(input).pipe(Effect.forkChild);
+    yield* Deferred.await(secondFactoryEntered);
+    yield* Fiber.join(replacement);
+    yield* first.fail(
+      new PiRpcClientError({ operation: "process-exit", detail: "Old Pi session exited" }),
+    );
+    yield* Effect.yieldNow;
+
+    const events = yield* Ref.get(collected.events);
+    assert.isFalse(
+      events.some(
+        (event) =>
+          event.type === "runtime.error" && event.payload.message === "Old Pi session exited",
+      ),
+    );
+    assert.isFalse(
+      events.some(
+        (event) =>
+          event.type === "session.exited" &&
+          event.payload.exitKind === "error" &&
+          event.payload.reason === "Old Pi session exited",
+      ),
+    );
+    yield* Fiber.interrupt(collected.fiber);
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );

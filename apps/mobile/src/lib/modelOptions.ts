@@ -2,6 +2,7 @@ import type {
   ModelCapabilities,
   ModelSelection,
   ServerConfig as T3ServerConfig,
+  RuntimeMode,
 } from "@t3tools/contracts";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
@@ -19,6 +20,8 @@ export type ModelOption = {
   readonly isLegacy: boolean;
   readonly isUnavailable?: boolean;
   readonly capabilities: ModelCapabilities | null;
+  /** Provider-level runtime policies, carried for staged settings picks. */
+  readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly selection: ModelSelection;
 };
 
@@ -176,6 +179,9 @@ export function buildModelOptions(
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
         capabilities: model.capabilities,
+        ...(provider.supportedRuntimeModes
+          ? { supportedRuntimeModes: provider.supportedRuntimeModes }
+          : {}),
         selection: normalizeSelectionOptions(
           {
             instanceId: provider.instanceId,
@@ -226,6 +232,9 @@ export function buildModelOptions(
           ? { isUnavailable: true }
           : {}),
         capabilities: model?.capabilities ?? null,
+        ...(provider?.supportedRuntimeModes
+          ? { supportedRuntimeModes: provider.supportedRuntimeModes }
+          : {}),
         selection: fallbackModelSelection,
       });
     }

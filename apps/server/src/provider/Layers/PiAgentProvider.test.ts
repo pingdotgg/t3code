@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
-import type { PiRpcClient } from "../pi/PiRpcClient.ts";
+import { PiRpcClientError, type PiRpcClient } from "../pi/PiRpcClient.ts";
 import type { PiRpcCommand, PiRpcResponse } from "../pi/PiRpcProtocol.ts";
 import {
   buildPiAgentModels,
@@ -238,6 +238,35 @@ describe("Pi Agent provider", () => {
         },
       ]);
       expect(commands).toHaveLength(4);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("fails catalog discovery when an RPC request fails", () =>
+    Effect.gen(function* () {
+      const requestError = new PiRpcClientError({
+        operation: "process-exit",
+        detail: "Pi exited during catalog discovery.",
+      });
+      const client: PiRpcClient = {
+        request: () => Effect.fail(requestError),
+        send: () => Effect.void,
+        events: Stream.empty,
+        awaitFailure: Effect.never,
+        close: Effect.void,
+      };
+
+      const result = yield* Effect.exit(
+        discoverPiAgentCatalog(
+          settings,
+          "/tmp/project",
+          {},
+          {
+            makeClient: () => Effect.succeed(client),
+          },
+        ),
+      );
+
+      expect(result._tag).toBe("Failure");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

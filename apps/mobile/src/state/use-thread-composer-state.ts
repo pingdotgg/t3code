@@ -6,6 +6,7 @@ import * as Cause from "effect/Cause";
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
   MessageId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type EnvironmentId,
@@ -15,6 +16,10 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import {
+  getProviderSupportedRuntimeModes,
+  reconcileRuntimeMode,
+} from "@t3tools/client-runtime/runtime-mode-options";
 import {
   codexFeedbackMessage,
   parseCodexFeedbackCommand,
@@ -148,10 +153,27 @@ export function useThreadComposerState() {
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadDetail ?? selectedThreadShell;
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
-  const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   const selectedProvider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
     (provider) => provider.instanceId === modelSelection?.instanceId,
   );
+  const configuredRuntimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
+  const runtimeMode =
+    configuredRuntimeMode === null
+      ? null
+      : reconcileRuntimeMode(
+          configuredRuntimeMode,
+          getProviderSupportedRuntimeModes(selectedProvider),
+        );
+  useEffect(() => {
+    if (
+      selectedThreadKey === null ||
+      runtimeMode === null ||
+      runtimeMode === configuredRuntimeMode
+    ) {
+      return;
+    }
+    updateComposerDraftSettings(selectedThreadKey, { runtimeMode });
+  }, [configuredRuntimeMode, runtimeMode, selectedThreadKey]);
   const interactionMode = selectedThread
     ? resolveProviderInteractionMode(
         selectedProvider,
@@ -352,7 +374,7 @@ export function useThreadComposerState() {
       text,
       attachments,
       modelSelection,
-      runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
+      runtimeMode: runtimeMode ?? thread.runtimeMode,
       interactionMode: resolveProviderInteractionMode(
         provider,
         draft.interactionMode ?? thread.interactionMode,
@@ -385,6 +407,7 @@ export function useThreadComposerState() {
     selectedEnvironmentRuntime?.serverConfig,
     selectedThreadDetail,
     selectedThreadShell,
+    runtimeMode,
     uploadThreadFeedback,
   ]);
 
@@ -527,14 +550,21 @@ export function useThreadComposerState() {
       const provider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
         (candidate) => candidate.instanceId === value.instanceId,
       );
+      const nextRuntimeMode = reconcileRuntimeMode(
+        configuredRuntimeMode ?? DEFAULT_RUNTIME_MODE,
+        getProviderSupportedRuntimeModes(provider),
+      );
       updateComposerDraftSettings(selectedThreadKey, {
         modelSelection: value,
+        ...(nextRuntimeMode !== (configuredRuntimeMode ?? DEFAULT_RUNTIME_MODE)
+          ? { runtimeMode: nextRuntimeMode }
+          : {}),
         ...(provider?.showInteractionModeToggle === false
           ? { interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE }
           : {}),
       });
     },
-    [selectedEnvironmentRuntime?.serverConfig, selectedThreadKey],
+    [configuredRuntimeMode, selectedEnvironmentRuntime?.serverConfig, selectedThreadKey],
   );
 
   const onUpdateRuntimeMode = useCallback(

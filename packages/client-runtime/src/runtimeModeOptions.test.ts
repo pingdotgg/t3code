@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   filterRuntimeModeOptions,
   getProviderSupportedRuntimeModes,
+  reconcileRuntimeMode,
 } from "./runtimeModeOptions.ts";
 
 const options = [
@@ -25,5 +26,21 @@ describe("runtime mode options", () => {
         ["full-access", "approval-required"],
       ),
     ).toEqual(["approval-required", "full-access"]);
+  });
+
+  it("reconciles an unsupported mode to the least permissive supported choice", () => {
+    expect(reconcileRuntimeMode("approval-required", ["full-access"])).toBe("full-access");
+    expect(reconcileRuntimeMode("full-access", ["auto", "approval-required"])).toBe(
+      "approval-required",
+    );
+  });
+
+  it("preserves modes for legacy and already-compatible capabilities", () => {
+    expect(reconcileRuntimeMode("approval-required", undefined)).toBe("approval-required");
+    expect(reconcileRuntimeMode("full-access", ["full-access"])).toBe("full-access");
+  });
+
+  it("does not retain a wider mode when capabilities are explicitly empty", () => {
+    expect(reconcileRuntimeMode("full-access", [])).toBe("approval-required");
   });
 });
