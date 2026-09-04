@@ -964,7 +964,9 @@ export function EnvironmentProviderSettings({
               }
             : undefined
         }
-        isUpdating={mode === "editor" && showInlineUpdateButton ? isInstanceUpdateRunning : undefined}
+        isUpdating={
+          mode === "editor" && showInlineUpdateButton ? isInstanceUpdateRunning : undefined
+        }
       />
     );
   };
