@@ -36,6 +36,7 @@ public struct NewThreadView: View {
     @State private var immediateDraftSaveTasks: [String: Task<Void, Never>] = [:]
     @State private var submittedSuccessfully = false
     @State private var restoresPromptAfterPickerDismissal = false
+    @State private var unreachableRetry = NewTaskRetryState()
     // Plain state, not `FocusState`; see the note on `composerFocused` in
     // ThreadDetailView.
     @State private var promptFocused = false
@@ -64,7 +65,6 @@ public struct NewThreadView: View {
                 topBar
                 if creationProjects.isEmpty {
                     noProjects
-                        .padding(.top, 82)
                 } else if !usesCompactProjectContext {
                     hero
                         .padding(.top, 82)
@@ -390,28 +390,77 @@ public struct NewThreadView: View {
     }
 
     private var noProjects: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "folder.badge.plus")
-                .font(.system(size: 28, weight: .regular))
-                .foregroundStyle(T3Colors.textSecondary)
-            Text("No projects")
-                .font(T3Typography.threadHeading1.weight(.regular))
-                .foregroundStyle(T3Colors.textPrimary)
-            Button("Add project") {
-                dismiss()
-                Task { @MainActor in
-                    await Task.yield()
-                    onCreateProject()
+        ScrollView {
+            VStack(spacing: 14) {
+                Image(systemName: "folder.badge.plus")
+                    .font(.system(size: 28, weight: .regular))
+                    .foregroundStyle(T3Colors.textSecondary)
+                Text("No projects")
+                    .font(T3Typography.threadHeading1.weight(.regular))
+                    .foregroundStyle(T3Colors.textPrimary)
+                if !unreachableEnvironments.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(unreachableEnvironments) { environment in
+                            Label(
+                                "\(environment.name) is unreachable",
+                                systemImage: "network.slash"
+                            )
+                            .accessibilityLabel("\(environment.name) is unreachable")
+                            .accessibilityIdentifier(
+                                "new-task-unreachable-environment-\(environment.id)"
+                            )
+                        }
+                    }
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.warning)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+
+                    Button(action: retryUnreachableEnvironments) {
+                        HStack(spacing: 8) {
+                            if unreachableRetry.isInProgress {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Text(unreachableRetry.buttonTitle)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .disabled(unreachableRetry.isInProgress)
+                    .accessibilityLabel(unreachableRetry.buttonTitle)
+                    .accessibilityHint("Refresh environment status")
+                    .accessibilityIdentifier("new-task-unreachable-retry")
                 }
+                Button("Add project") {
+                    dismiss()
+                    Task { @MainActor in
+                        await Task.yield()
+                        onCreateProject()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .tint(T3Colors.primaryAction)
+                .foregroundStyle(T3Colors.primaryActionForeground)
+                .padding(.top, 6)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .tint(T3Colors.primaryAction)
-            .foregroundStyle(T3Colors.primaryActionForeground)
-            .padding(.top, 6)
+            .padding(.top, 82)
+            .padding(.bottom, 28)
+            .padding(.horizontal, 28)
+            .frame(maxWidth: .infinity)
         }
-        .padding(.horizontal, 28)
-        .frame(maxWidth: .infinity)
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @MainActor
+    private func retryUnreachableEnvironments() {
+        guard unreachableRetry.begin() else { return }
+        Task { @MainActor in
+            defer { unreachableRetry.finish() }
+            await model.reload()
+        }
     }
 
     private var selectedProject: FeatureProject? {
@@ -534,6 +583,10 @@ public struct NewThreadView: View {
 
     private var creationProjects: [FeatureProject] {
         DailyUXCreationContext.projects(in: model.snapshot)
+    }
+
+    private var unreachableEnvironments: [FeatureEnvironment] {
+        DailyUXCreationContext.unreachableEnvironments(in: model.snapshot)
     }
 
     private var creationProjectIDs: [String] {
@@ -665,10 +718,13 @@ public struct NewThreadView: View {
     }
 
     private var submissionValidationMessage: String? {
-        guard selectedProject != nil else { return "Choose a project." }
-        if let selectedEnvironment {
-            guard selectedEnvironment.isEnabled else { return "Environment is off." }
+        if let environmentMessage = DailyUXCreationContext.projectEnvironmentValidationMessage(
+            projectID: projectID,
+            in: model.snapshot
+        ) {
+            return environmentMessage
         }
+        guard selectedProject != nil else { return "Choose a project." }
         guard restoredDraftProjectID == projectID else { return "Project is loading." }
         guard concreteSelection != nil else {
             guard !creationProviders.isEmpty else { return "No providers available." }
@@ -1276,48 +1332,76 @@ private struct NewTaskProjectPicker: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if groups.isEmpty {
-                    ContentUnavailableView(
-                        "No projects",
-                        systemImage: "folder"
-                    )
-                } else if filteredGroups.isEmpty {
-                    ContentUnavailableView(
+            let presentation = NewTaskProjectPickerPresentation(
+                groups: groups,
+                filteredGroups: filteredGroups,
+                unavailableEnvironments: unreachableEnvironments
+            )
+            List {
+                switch presentation.projectContent {
+                case .noProjects:
+                    projectUnavailableRow("No projects", systemImage: "folder")
+                case .noMatches:
+                    projectUnavailableRow(
                         "No matching projects",
                         systemImage: "magnifyingglass"
                     )
-                } else {
+                case .projects:
                     let sections = DailyUXProjectPickerSections(
                         groups: filteredGroups,
                         recentGroupIDs: recentGroupIDs
                     )
-                    List {
-                        if sections.recents.isEmpty {
-                            ForEach(sections.others) { group in
+                    if sections.recents.isEmpty {
+                        ForEach(sections.others) { group in
+                            projectRow(group)
+                        }
+                    } else {
+                        Section("Recent") {
+                            ForEach(sections.recents) { group in
                                 projectRow(group)
                             }
-                        } else {
-                            Section("Recent") {
-                                ForEach(sections.recents) { group in
-                                    projectRow(group)
-                                }
-                            }
+                        }
 
-                            if !sections.others.isEmpty {
-                                Section("Other projects") {
-                                    ForEach(sections.others) { group in
-                                        projectRow(group)
-                                    }
+                        if !sections.others.isEmpty {
+                            Section("Other projects") {
+                                ForEach(sections.others) { group in
+                                    projectRow(group)
                                 }
                             }
                         }
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .scrollDismissesKeyboard(.interactively)
+                }
+
+                if !presentation.unavailableEnvironments.isEmpty {
+                    Section("Unavailable environments") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(presentation.visibleUnavailableEnvironments) { environment in
+                                Label(
+                                    "\(environment.name) is unreachable",
+                                    systemImage: "network.slash"
+                                )
+                            }
+
+                            if presentation.additionalUnavailableEnvironmentCount > 0 {
+                                Text(
+                                    "And \(presentation.additionalUnavailableEnvironmentCount) more"
+                                )
+                                .foregroundStyle(T3Colors.textTertiary)
+                            }
+                        }
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(T3Colors.warning)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(presentation.unavailableAccessibilityLabel)
+                        .accessibilityIdentifier(
+                            "new-task-unreachable-environments-notice"
+                        )
+                    }
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .scrollDismissesKeyboard(.interactively)
             .background(T3Colors.background)
             .navigationTitle("Project")
             .navigationBarTitleDisplayMode(.inline)
@@ -1330,6 +1414,21 @@ private struct NewTaskProjectPicker: View {
         }
         .presentationDetents([.medium, .large])
         .presentationBackground(T3Colors.background)
+    }
+
+    private func projectUnavailableRow(_ title: String, systemImage: String) -> some View {
+        ContentUnavailableView {
+            Label {
+                Text(title)
+            } icon: {
+                Image(systemName: systemImage)
+            }
+        } description: {
+            EmptyView()
+        }
+            .frame(maxWidth: .infinity, minHeight: 220)
+            .listRowSeparator(.hidden)
+            .listRowBackground(T3Colors.background)
     }
 
     private func projectRow(_ group: DailyUXProjectGroup) -> some View {
@@ -1374,6 +1473,10 @@ private struct NewTaskProjectPicker: View {
             query: query,
             environments: environments
         )
+    }
+
+    private var unreachableEnvironments: [FeatureEnvironment] {
+        DailyUXCreationContext.unreachableEnvironments(in: environments)
     }
 
     private func projectLocation(_ group: DailyUXProjectGroup) -> String {

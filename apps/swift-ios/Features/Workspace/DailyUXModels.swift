@@ -183,15 +183,120 @@ enum DailyUXSnoozePresets {
     }
 }
 
+enum DailyUXCreationDestination: Equatable {
+    case newTask
+    case addProject
+}
+
+struct NewTaskRetryState: Equatable {
+    private(set) var isInProgress = false
+
+    var buttonTitle: String {
+        isInProgress ? "Trying again…" : "Try again"
+    }
+
+    mutating func begin() -> Bool {
+        guard !isInProgress else { return false }
+        isInProgress = true
+        return true
+    }
+
+    mutating func finish() {
+        isInProgress = false
+    }
+}
+
+struct NewTaskProjectPickerPresentation: Equatable {
+    enum ProjectContent: Equatable {
+        case projects
+        case noProjects
+        case noMatches
+    }
+
+    static let visibleEnvironmentLimit = 3
+
+    let projectContent: ProjectContent
+    let unavailableEnvironments: [FeatureEnvironment]
+
+    init(
+        groups: [DailyUXProjectGroup],
+        filteredGroups: [DailyUXProjectGroup],
+        unavailableEnvironments: [FeatureEnvironment]
+    ) {
+        if groups.isEmpty {
+            projectContent = .noProjects
+        } else if filteredGroups.isEmpty {
+            projectContent = .noMatches
+        } else {
+            projectContent = .projects
+        }
+        self.unavailableEnvironments = unavailableEnvironments
+    }
+
+    var visibleUnavailableEnvironments: [FeatureEnvironment] {
+        Array(unavailableEnvironments.prefix(Self.visibleEnvironmentLimit))
+    }
+
+    var additionalUnavailableEnvironmentCount: Int {
+        max(0, unavailableEnvironments.count - Self.visibleEnvironmentLimit)
+    }
+
+    var unavailableAccessibilityLabel: String {
+        (["Unavailable environments"] + unavailableEnvironments.map {
+            "\($0.name) is unreachable"
+        }).joined(separator: ". ")
+    }
+}
+
 enum DailyUXCreationContext {
     static func projects(in snapshot: FeatureSnapshot) -> [FeatureProject] {
         guard !snapshot.environments.isEmpty else { return snapshot.projects }
         let availableEnvironmentIDs = Set(
-            snapshot.environments.filter(\.isEnabled).map(\.id)
+            snapshot.environments.filter { canCreateTask(in: $0) }.map(\.id)
         )
         return snapshot.projects.filter {
             availableEnvironmentIDs.contains($0.environmentID)
         }
+    }
+
+    static func canCreateTask(in environment: FeatureEnvironment) -> Bool {
+        environment.isEnabled && environment.connectionState != .disconnected
+    }
+
+    static func projectEnvironmentValidationMessage(
+        projectID: String,
+        in snapshot: FeatureSnapshot
+    ) -> String? {
+        guard let project = snapshot.projects.first(where: { $0.id == projectID }),
+              let environment = snapshot.environments.first(where: {
+                  $0.id == project.environmentID
+              }) else { return nil }
+        guard environment.isEnabled else { return "Environment is off." }
+        return canCreateTask(in: environment) ? nil : "Environment is unreachable."
+    }
+
+    static func unreachableEnvironments(in snapshot: FeatureSnapshot) -> [FeatureEnvironment] {
+        unreachableEnvironments(in: snapshot.environments)
+    }
+
+    /// Enabled environments a new task cannot reach. `.reconnecting` is a
+    /// transient state whose HTTP fallback still serves work, so the sidebar
+    /// and connection hub present it separately; only `.disconnected` is
+    /// unreachable here.
+    static func unreachableEnvironments(
+        in environments: [FeatureEnvironment]
+    ) -> [FeatureEnvironment] {
+        environments.filter { environment in
+            guard environment.isEnabled else { return false }
+            return environment.connectionState == .disconnected
+        }
+    }
+
+    static func newTaskDestination(in snapshot: FeatureSnapshot) -> DailyUXCreationDestination {
+        if !projects(in: snapshot).isEmpty || !unreachableEnvironments(in: snapshot).isEmpty {
+            return .newTask
+        }
+        return .addProject
     }
 
     static func projectGroups(in snapshot: FeatureSnapshot) -> [DailyUXProjectGroup] {

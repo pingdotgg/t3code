@@ -514,7 +514,7 @@ struct DailyUXNewTaskTests {
 
         #expect(
             DailyUXCreationContext.projects(in: snapshot).map(\.id)
-                == ["active-project", "passive-project", "offline-project"]
+                == ["active-project", "passive-project"]
         )
         let passiveProviders = DailyUXCreationContext.providers(
             for: passiveProject,
@@ -1122,6 +1122,288 @@ struct DailyUXNewTaskTests {
         #expect(filtered.map(\.id) == [sharedGroup.id])
         #expect(sections.recents.map(\.id) == [sharedGroup.id])
         #expect(sections.others.isEmpty)
+    }
+
+    @Test
+    func newTaskAvailabilityOnlyTreatsEnabledDisconnectedEnvironmentsAsUnreachable() throws {
+        let environments = [
+            FeatureEnvironment(
+                id: "disconnected",
+                name: "Studio Mac",
+                endpoint: "http://studio",
+                connectionState: .disconnected
+            ),
+            FeatureEnvironment(
+                id: "reconnecting",
+                name: "Travel Mac",
+                endpoint: "http://travel",
+                connectionState: .reconnecting
+            ),
+            FeatureEnvironment(
+                id: "connecting",
+                name: "New Mac",
+                endpoint: "http://new",
+                connectionState: .connecting
+            ),
+            FeatureEnvironment(
+                id: "connected",
+                name: "Desk Mac",
+                endpoint: "http://desk",
+                connectionState: .connected
+            ),
+            FeatureEnvironment(
+                id: "unknown",
+                name: "Unknown Mac",
+                endpoint: "http://unknown"
+            ),
+            FeatureEnvironment(
+                id: "disabled",
+                name: "Disabled Mac",
+                endpoint: "http://disabled",
+                isEnabled: false,
+                connectionState: .disconnected
+            ),
+        ]
+
+        // Reconnecting stays excluded: HTTP fallback still serves work while
+        // the socket re-establishes, matching the sidebar's reconnecting
+        // treatment.
+        #expect(
+            DailyUXCreationContext.unreachableEnvironments(in: environments).map(\.id)
+                == ["disconnected"]
+        )
+
+        let projects = environments.map { environment in
+            rankedProject(
+                "\(environment.id)-project",
+                name: environment.name,
+                environmentID: environment.id
+            )
+        }
+        let snapshot = rankedSnapshot(
+            environments: environments,
+            projects: projects,
+            threads: []
+        )
+
+        #expect(
+            DailyUXCreationContext.projects(in: snapshot).map(\.environmentID)
+                == ["reconnecting", "connecting", "connected", "unknown"]
+        )
+        #expect(
+            DailyUXCreationContext.projectEnvironmentValidationMessage(
+                projectID: "disconnected-project",
+                in: snapshot
+            ) == "Environment is unreachable."
+        )
+        #expect(
+            DailyUXCreationContext.projectEnvironmentValidationMessage(
+                projectID: "reconnecting-project",
+                in: snapshot
+            ) == nil
+        )
+        #expect(
+            DailyUXCreationContext.projectEnvironmentValidationMessage(
+                projectID: "connected-project",
+                in: snapshot
+            ) == nil
+        )
+        #expect(
+            DailyUXCreationContext.projectEnvironmentValidationMessage(
+                projectID: "disabled-project",
+                in: snapshot
+            ) == "Environment is off."
+        )
+
+        let disconnectedProject = try #require(
+            projects.first { $0.environmentID == "disconnected" }
+        )
+        let recoveredSnapshot = rankedSnapshot(
+            environments: [
+                FeatureEnvironment(
+                    id: "disconnected",
+                    name: "Studio Mac",
+                    endpoint: "http://studio",
+                    connectionState: .reconnecting
+                ),
+            ],
+            projects: [disconnectedProject],
+            threads: []
+        )
+
+        #expect(
+            DailyUXCreationContext.projects(in: recoveredSnapshot).map(\.id)
+                == [disconnectedProject.id]
+        )
+        #expect(
+            DailyUXCreationContext.projectEnvironmentValidationMessage(
+                projectID: disconnectedProject.id,
+                in: recoveredSnapshot
+            ) == nil
+        )
+
+        let legacySnapshot = rankedSnapshot(
+            environments: [],
+            projects: [disconnectedProject],
+            threads: []
+        )
+        #expect(
+            DailyUXCreationContext.projectEnvironmentValidationMessage(
+                projectID: disconnectedProject.id,
+                in: legacySnapshot
+            ) == nil
+        )
+    }
+
+    @Test
+    func newTaskRouteOpensForUnreachableEnvironmentsWithoutProjects() {
+        let snapshot = rankedSnapshot(
+            environments: [
+                FeatureEnvironment(
+                    id: "studio",
+                    name: "Studio Mac",
+                    endpoint: "http://studio",
+                    connectionState: .disconnected
+                ),
+            ],
+            projects: [],
+            threads: []
+        )
+
+        #expect(DailyUXCreationContext.newTaskDestination(in: snapshot) == .newTask)
+    }
+
+    @Test
+    func newTaskRouteStillUsesProjectCreationWhenNothingIsReachableOrKnownUnreachable() {
+        let snapshot = rankedSnapshot(
+            environments: [
+                FeatureEnvironment(
+                    id: "connecting",
+                    name: "New Mac",
+                    endpoint: "http://new",
+                    connectionState: .connecting
+                ),
+                FeatureEnvironment(
+                    id: "disabled",
+                    name: "Disabled Mac",
+                    endpoint: "http://disabled",
+                    isEnabled: false,
+                    connectionState: .disconnected
+                ),
+            ],
+            projects: [],
+            threads: []
+        )
+
+        #expect(DailyUXCreationContext.newTaskDestination(in: snapshot) == .addProject)
+    }
+
+    @Test
+    func newTaskRouteKeepsReachableProjectsWhenUnreachableEnvironmentsCoexist() {
+        let project = rankedProject(
+            "reachable-project",
+            name: "Reachable",
+            environmentID: "connected"
+        )
+        let snapshot = rankedSnapshot(
+            environments: [
+                FeatureEnvironment(
+                    id: "connected",
+                    name: "Desk Mac",
+                    endpoint: "http://desk",
+                    connectionState: .connected
+                ),
+                FeatureEnvironment(
+                    id: "unreachable",
+                    name: "Studio Mac",
+                    endpoint: "http://studio",
+                    connectionState: .disconnected
+                ),
+            ],
+            projects: [project],
+            threads: []
+        )
+
+        #expect(DailyUXCreationContext.projects(in: snapshot).map(\.id) == [project.id])
+        #expect(DailyUXCreationContext.newTaskDestination(in: snapshot) == .newTask)
+        #expect(
+            DailyUXCreationContext.unreachableEnvironments(in: snapshot).map(\.name)
+                == ["Studio Mac"]
+        )
+    }
+
+    @Test
+    func unreachableRetryIsSingleFlightAndPresentsProgress() {
+        var retry = NewTaskRetryState()
+
+        #expect(!retry.isInProgress)
+        #expect(retry.buttonTitle == "Try again")
+        let didBegin = retry.begin()
+        #expect(didBegin)
+        #expect(retry.isInProgress)
+        #expect(retry.buttonTitle == "Trying again…")
+        let duplicateBegin = retry.begin()
+        #expect(!duplicateBegin)
+
+        retry.finish()
+
+        #expect(!retry.isInProgress)
+        let didRestart = retry.begin()
+        #expect(didRestart)
+    }
+
+    @Test
+    func zeroSearchMatchesKeepTheUnavailableEnvironmentNotice() {
+        let project = rankedProject("reachable", name: "Reachable")
+        let groups = DailyUXProjectGrouping.groups(projects: [project])
+        let unavailable = [
+            FeatureEnvironment(
+                id: "studio",
+                name: "Studio Mac",
+                endpoint: "http://studio",
+                connectionState: .disconnected
+            ),
+        ]
+        let filtered = NewTaskProjectPickerSearch.matching(
+            groups,
+            query: "no result",
+            environments: unavailable
+        )
+
+        let presentation = NewTaskProjectPickerPresentation(
+            groups: groups,
+            filteredGroups: filtered,
+            unavailableEnvironments: unavailable
+        )
+
+        #expect(presentation.projectContent == .noMatches)
+        #expect(presentation.unavailableEnvironments.map(\.name) == ["Studio Mac"])
+    }
+
+    @Test
+    func boundedUnavailableNoticeExposesEveryEnvironmentNameToAccessibility() {
+        let unavailable = (1 ... 5).map { index in
+            FeatureEnvironment(
+                id: "environment-\(index)",
+                name: "Environment \(index)",
+                endpoint: "http://environment-\(index)",
+                connectionState: .disconnected
+            )
+        }
+        let presentation = NewTaskProjectPickerPresentation(
+            groups: [],
+            filteredGroups: [],
+            unavailableEnvironments: unavailable
+        )
+
+        #expect(
+            presentation.visibleUnavailableEnvironments.map(\.name)
+                == ["Environment 1", "Environment 2", "Environment 3"]
+        )
+        #expect(presentation.additionalUnavailableEnvironmentCount == 2)
+        for environment in unavailable {
+            #expect(presentation.unavailableAccessibilityLabel.contains(environment.name))
+        }
     }
 
     private func rankedProject(

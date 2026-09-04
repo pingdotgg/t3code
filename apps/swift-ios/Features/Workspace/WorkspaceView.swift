@@ -507,12 +507,18 @@ public struct WorkspaceView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("New task")
-        .accessibilityHint(
-            creationProjects.isEmpty
-                ? "Create a project to start a task"
-                : "Compose a message and start a thread"
-        )
+        .accessibilityHint(newTaskAccessibilityHint)
         .accessibilityIdentifier("sidebar-new-task-button")
+    }
+
+    private var newTaskAccessibilityHint: String {
+        if !creationProjects.isEmpty {
+            return "Compose a message and start a thread"
+        }
+        if !DailyUXCreationContext.unreachableEnvironments(in: model.snapshot).isEmpty {
+            return "Review unreachable environments and try again"
+        }
+        return "Create a project to start a task"
     }
 
     private var projectFilter: some View {
@@ -643,11 +649,12 @@ public struct WorkspaceView: View {
     }
 
     private func openNewTaskOrProjectCreation(initialProjectID: String?) {
-        if creationProjects.isEmpty {
-            showingAddProject = true
-        } else {
+        switch DailyUXCreationContext.newTaskDestination(in: model.snapshot) {
+        case .newTask:
             newTaskInitialProjectID = initialProjectID
             showingNewTask = true
+        case .addProject:
+            showingAddProject = true
         }
     }
 
