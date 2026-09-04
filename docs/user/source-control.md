@@ -33,10 +33,11 @@ folder's root:
 }
 ```
 
-The Diff panel then lets you choose which repository to inspect. Repository paths must stay inside
-the project folder. This selection is for Git status and diffs; commits, pushes, pull requests,
-worktrees, and checkpoints continue to use the project root. Use local threads for this setup:
-Git worktrees do not automatically include nested repositories.
+The Diff panel then lets you choose which repository to inspect, even when the shared parent folder
+is not itself a Git repository. Repository paths must stay inside the project folder. This selection
+is for Git status and diffs; commits, pushes, pull requests, worktrees, and checkpoints continue to
+use the project root. Use local threads for this setup: Git worktrees do not automatically include
+nested repositories.
 
 ### GitLab
 

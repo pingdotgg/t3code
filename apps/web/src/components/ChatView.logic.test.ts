@@ -34,6 +34,7 @@ import {
   getStartedThreadModelChangeBlockReason,
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
+  isDiffSurfaceAvailable,
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
@@ -1248,6 +1249,28 @@ describe("resolveSendEnvMode", () => {
   it("keeps worktree mode only for git repositories", () => {
     expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: true })).toBe("worktree");
     expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: false })).toBe("local");
+  });
+});
+
+describe("isDiffSurfaceAvailable", () => {
+  it("allows a configured nested repository in a local non-Git workspace", () => {
+    expect(
+      isDiffSurfaceAvailable({
+        isServerThread: true,
+        isGitRepo: false,
+        hasConfiguredRepositories: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps non-Git workspaces without configured repositories unavailable", () => {
+    expect(
+      isDiffSurfaceAvailable({
+        isServerThread: true,
+        isGitRepo: false,
+        hasConfiguredRepositories: false,
+      }),
+    ).toBe(false);
   });
 });
 

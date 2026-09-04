@@ -640,6 +640,14 @@ export function resolveSendEnvMode(input: {
   return input.isGitRepo ? input.requestedEnvMode : "local";
 }
 
+export function isDiffSurfaceAvailable(input: {
+  isServerThread: boolean;
+  isGitRepo: boolean;
+  hasConfiguredRepositories: boolean;
+}): boolean {
+  return input.isServerThread && (input.isGitRepo || input.hasConfiguredRepositories);
+}
+
 export function resolveBackgroundDraftWorkspaceOptions(input: {
   envMode: DraftThreadEnvMode;
   branch: string | null;
