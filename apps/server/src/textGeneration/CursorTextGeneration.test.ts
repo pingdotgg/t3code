@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
@@ -19,39 +20,26 @@ import { CursorSettings, ProviderInstanceId } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import { makeCursorTextGeneration } from "./CursorTextGeneration.ts";
+import { execScriptSource, writeFakeCli } from "../testUtils/fakeCli.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../scripts/acp-mock-agent.ts");
-
-function shellSingleQuote(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
-}
 
 const CursorTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-cursor-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
 function makeAcpAgentWrapper(dir: string, env: Record<string, string>): string {
-  const binDir = NodePath.join(dir, "bin");
-  const agentPath = NodePath.join(binDir, "agent");
-  NodeFS.mkdirSync(binDir, { recursive: true });
-  NodeFS.writeFileSync(
-    agentPath,
-    [
-      "#!/bin/sh",
-      ...Object.entries(env).map(([key, value]) => `export ${key}=${shellSingleQuote(value)}`),
-      'if [ "$1" != "acp" ]; then',
-      '  printf "%s\\n" "unexpected args: $*" >&2',
-      "  exit 11",
-      "fi",
-      `exec node ${JSON.stringify(mockAgentPath)}`,
-      "",
-    ].join("\n"),
-    "utf8",
-  );
-  NodeFS.chmodSync(agentPath, 0o755);
-  return agentPath;
+  return writeFakeCli({
+    directory: NodePath.join(dir, "bin"),
+    name: "agent",
+    env,
+    source: execScriptSource({
+      scriptPath: mockAgentPath,
+      expectedArgs: ["acp"],
+    }),
+  });
 }
 
 function withFakeAcpAgent<A, E, R>(
@@ -236,41 +224,46 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
     ),
   );
 
-  it.effect("closes the ACP child process after text generation completes", () => {
-    const exitLogDir = NodeFS.mkdtempSync(
-      NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-exit-log-"),
-    );
-    const exitLogPath = NodePath.join(exitLogDir, "exit.log");
+  // Closing the runtime on Windows is taskkill /F, which never lets the mock
+  // agent reach its exit handler, so there is no exit log to assert on.
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "closes the ACP child process after text generation completes",
+    () => {
+      const exitLogDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-exit-log-"),
+      );
+      const exitLogPath = NodePath.join(exitLogDir, "exit.log");
 
-    return withFakeAcpAgent(
-      {
-        T3_ACP_EXIT_LOG_PATH: exitLogPath,
-        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
-          subject: "Close runtime after generation",
-          body: "",
-        }),
-      },
-      (textGeneration) =>
-        Effect.gen(function* () {
-          const generated = yield* textGeneration.generateCommitMessage({
-            cwd: process.cwd(),
-            branch: "feature/cursor-runtime-close",
-            stagedSummary: "M apps/server/src/textGeneration/CursorTextGeneration.ts",
-            stagedPatch:
-              "diff --git a/apps/server/src/textGeneration/CursorTextGeneration.ts b/apps/server/src/textGeneration/CursorTextGeneration.ts",
-            modelSelection: {
-              instanceId: ProviderInstanceId.make("cursor"),
-              model: "composer-2",
-            },
-          });
+      return withFakeAcpAgent(
+        {
+          T3_ACP_EXIT_LOG_PATH: exitLogPath,
+          T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+            subject: "Close runtime after generation",
+            body: "",
+          }),
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const generated = yield* textGeneration.generateCommitMessage({
+              cwd: process.cwd(),
+              branch: "feature/cursor-runtime-close",
+              stagedSummary: "M apps/server/src/textGeneration/CursorTextGeneration.ts",
+              stagedPatch:
+                "diff --git a/apps/server/src/textGeneration/CursorTextGeneration.ts b/apps/server/src/textGeneration/CursorTextGeneration.ts",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("cursor"),
+                model: "composer-2",
+              },
+            });
 
-          expect(generated.subject).toBe("Close runtime after generation");
+            expect(generated.subject).toBe("Close runtime after generation");
 
-          const exitLog = yield* waitForFileContent(exitLogPath);
-          expect(exitLog).toContain("exit:0");
+            const exitLog = yield* waitForFileContent(exitLogPath);
+            expect(exitLog).toContain("exit:0");
 
-          NodeFS.rmSync(exitLogDir, { recursive: true, force: true });
-        }),
-    );
-  });
+            NodeFS.rmSync(exitLogDir, { recursive: true, force: true });
+          }),
+      );
+    },
+  );
 });

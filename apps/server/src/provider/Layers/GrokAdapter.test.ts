@@ -33,25 +33,24 @@ import {
   nextGrokPlanModeActive,
   selectGrokPermissionOptionId,
 } from "./GrokAdapter.ts";
+import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
-const mockAgentCommand = process.execPath;
+// Stopping a session kills the agent with SIGTERM; Windows terminates the
+// process instead, so the mock never sees a signal to log.
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 
 async function makeMockGrokWrapper(extraEnv?: Record<string, string>) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-mock-"));
-  const wrapperPath = NodePath.join(dir, "fake-grok.sh");
-  const envExports = Object.entries(extraEnv ?? {})
-    .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
-    .join("\n");
-  const script = `#!/bin/sh
-${envExports}
-exec ${JSON.stringify(mockAgentCommand)} ${JSON.stringify(mockAgentPath)} "$@"
-`;
-  await NodeFSP.writeFile(wrapperPath, script, "utf8");
-  await NodeFSP.chmod(wrapperPath, 0o755);
-  return wrapperPath;
+  return writeFakeCli({
+    directory: dir,
+    name: "fake-grok",
+    env: extraEnv ?? {},
+    source: execScriptSource({ scriptPath: mockAgentPath }),
+  });
 }
 
 function waitForFileContent(
@@ -340,7 +339,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
-  it.effect("closes the ACP child process when a session stops", () =>
+  it.effect.skipIf(windowsHost)("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-stop-session-close");
       const tempDir = yield* Effect.promise(() =>

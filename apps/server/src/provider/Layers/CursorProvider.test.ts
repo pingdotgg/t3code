@@ -30,6 +30,8 @@ import {
   probeCursorSkills,
   rewriteCursorSkillMentions,
 } from "../Drivers/CursorSkills.ts";
+import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 const runNode = <A, E>(
   effect: Effect.Effect<
@@ -38,6 +40,10 @@ const runNode = <A, E>(
     ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
   >,
 ): Promise<A> => Effect.runPromise(effect.pipe(Effect.provide(NodeServices.layer)));
+
+// Closing the probe kills the agent with SIGTERM; Windows terminates the
+// process instead, so the mock never sees a signal to log.
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 
 const resolveMockAgentPath = Effect.fn("resolveMockAgentPath")(function* () {
   const path = yield* Path.Path;
@@ -73,47 +79,38 @@ const makeMockAgentWrapper = Effect.fn("makeMockAgentWrapper")(function* (
   extraEnv?: Record<string, string>,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const mockAgentPath = yield* resolveMockAgentPath();
   const dir = yield* fileSystem.makeTempDirectory({
     directory: NodeOS.tmpdir(),
     prefix: "cursor-provider-mock-",
   });
-  const wrapperPath = path.join(dir, "fake-agent.sh");
-  const mockAgentCommand = ["node", mockAgentPath].map((arg) => JSON.stringify(arg)).join(" ");
-  const envExports = Object.entries(extraEnv ?? {})
-    .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
-    .join("\n");
-  const script = `#!/bin/sh
-${envExports}
-exec ${mockAgentCommand} "$@"
-`;
-  yield* fileSystem.writeFileString(wrapperPath, script);
-  yield* fileSystem.chmod(wrapperPath, 0o755);
-  return wrapperPath;
+  return writeFakeCli({
+    directory: dir,
+    name: "fake-agent",
+    env: extraEnv ?? {},
+    source: execScriptSource({ scriptPath: mockAgentPath }),
+  });
 });
 
 const makeMockAgentWithAboutWrapper = Effect.fn("makeMockAgentWithAboutWrapper")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const mockAgentPath = yield* resolveMockAgentPath();
   const dir = yield* fileSystem.makeTempDirectory({
     directory: NodeOS.tmpdir(),
     prefix: "cursor-provider-about-mock-",
   });
-  const wrapperPath = path.join(dir, "fake-agent.sh");
-  const mockAgentCommand = ["node", mockAgentPath].map((arg) => JSON.stringify(arg)).join(" ");
-  const script = `#!/bin/sh
-if [ "$1" = "about" ]; then
-  printf 'CLI Version         2026.04.09-f2b0fcd\\n'
-  printf 'User Email          cursor@example.com\\n'
-  exit 0
-fi
-exec ${mockAgentCommand} "$@"
-`;
-  yield* fileSystem.writeFileString(wrapperPath, script);
-  yield* fileSystem.chmod(wrapperPath, 0o755);
-  return wrapperPath;
+  return writeFakeCli({
+    directory: dir,
+    name: "fake-agent",
+    source: [
+      'if (process.argv[2] === "about") {',
+      '  process.stdout.write("CLI Version         2026.04.09-f2b0fcd\\n");',
+      '  process.stdout.write("User Email          cursor@example.com\\n");',
+      "  process.exit(0);",
+      "}",
+      execScriptSource({ scriptPath: mockAgentPath }),
+    ].join("\n"),
+  });
 });
 
 const waitForFileContent = Effect.fn("waitForFileContent")(function* (
@@ -593,7 +590,7 @@ describe("discoverCursorModelsViaAcp", () => {
     ]);
   });
 
-  it("closes the ACP probe runtime after discovery completes", async () => {
+  it.skipIf(windowsHost)("closes the ACP probe runtime after discovery completes", async () => {
     const { exitLogPath, wrapperPath } = await runNode(
       makeExitLogFixture("cursor-provider-exit-log-"),
     );

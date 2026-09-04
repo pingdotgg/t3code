@@ -23,6 +23,7 @@ import { assert, describe } from "vite-plus/test";
 
 import wireFixture from "../testFixtures/codexMultiAgentWire.json" with { type: "json" };
 import { makeCodexSessionRuntime } from "./CodexSessionRuntime.ts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
@@ -157,7 +158,11 @@ function readRecordedRequests() {
 }
 
 const scriptPath = NodePath.join(import.meta.dirname, "../testFixtures/.collab-script.json");
-const peerPath = NodePath.join(import.meta.dirname, "../testFixtures/codexCollabMockPeer.sh");
+// Windows cannot run the shebang wrapper; the .cmd sibling does the same job.
+const peerPath = NodePath.join(
+  import.meta.dirname,
+  `../testFixtures/codexCollabMockPeer.${HostProcessPlatform.defaultValue() === "win32" ? "cmd" : "sh"}`,
+);
 
 describe("CodexSessionRuntime collab integration", () => {
   it.effect("looks up child model metadata once after activity registration", () =>
