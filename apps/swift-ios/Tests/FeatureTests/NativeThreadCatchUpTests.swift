@@ -388,6 +388,51 @@ final class NativeThreadCatchUpTests: XCTestCase {
         }
     }
 
+    func testRequiredReadReplacesColdFallbackWithoutHidingItsOwnFailure() async throws {
+        let fixture = try await CatchUpFixture.make()
+        defer { fixture.cleanUp() }
+        var requests = fixture.requests.makeAsyncIterator()
+        var events = fixture.client.events().makeAsyncIterator()
+        var reads = fixture.http.heldRequests.makeAsyncIterator()
+        await fixture.http.holdThreadReads(true)
+
+        // Fail the cold open so catch-up starts without a base snapshot.
+        let opening = Task { try await fixture.client.loadThread(id: fixture.firstID) }
+        let initial = try await nextHeldRead(&reads)
+        initial.fail()
+        do {
+            _ = try await opening.value
+            XCTFail("The initial snapshot should fail.")
+        } catch {}
+        let stream = try await nextThreadRequest(&requests)
+        while let event = await events.next(isolation: #isolation) {
+            if case .threadSync(fixture.firstID, .failed) = event { break }
+        }
+        await nextCatchUp(&events, threadID: fixture.firstID)
+        await fixture.delay.release()
+        let fallback = try await nextHeldRead(&reads)
+
+        // The event needs a newer snapshot than the fallback captured.
+        await fixture.http.setResponse(text: "New message", sequence: 3)
+        try await stream.sendMessage(text: "New message", sequence: 3)
+        await nextCatchUp(&events, threadID: fixture.firstID)
+        let replacement = try await nextHeldRead(&reads)
+        fallback.succeed()
+        let wasCancelled = await fallback.finished.first { _ in true }
+        XCTAssertEqual(wasCancelled, true, "The older fallback must stop when the required read takes over.")
+
+        replacement.fail()
+        var failure: String?
+        while let event = await events.next(isolation: #isolation) {
+            guard case let .threadSync(id, .failed(message)) = event,
+                  id == fixture.firstID else { continue }
+            failure = message
+            break
+        }
+        XCTAssertEqual(failure, URLError(.notConnectedToInternet).localizedDescription)
+        await fixture.client.disconnect()
+    }
+
     private func nextHeldRead(
         _ iterator: inout AsyncStream<CatchUpHTTPRead>.Iterator
     ) async throws -> CatchUpHTTPRead {

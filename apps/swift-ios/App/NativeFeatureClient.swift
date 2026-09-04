@@ -3525,6 +3525,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
               activeThreadEnvironmentID == client.environment.id else { return }
         guard force || detailStreamTask == nil else { return }
         if force {
+            // This required read owns recovery now. An older fallback must not
+            // replace its loading state with an error from a stale snapshot.
+            detailCatchUpTask?.cancel()
+            detailCatchUpTask = nil
+            detailCatchUpID = nil
             continuation.yield(.threadSync(id: threadID, state: .catchingUp))
         }
         guard detailRefreshTask == nil else {
@@ -3625,7 +3630,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     private func ensureDetailCatchUpFallback(_ route: NativeThreadRoute, generation: Int) {
-        guard detailCatchUpTask == nil else { return }
+        guard detailCatchUpTask == nil, detailRefreshTask == nil else { return }
         let id = UUID()
         detailCatchUpID = id
         let delay = catchUpDelay
