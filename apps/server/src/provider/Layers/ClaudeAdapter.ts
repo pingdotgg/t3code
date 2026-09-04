@@ -288,6 +288,11 @@ interface ClaudeSessionContext {
   readonly startedAt: string;
   readonly basePermissionMode: PermissionMode | undefined;
   currentApiModelId: string | undefined;
+  /** The model the SDK reports is actually serving this session, which is not
+   * always the selected one: a refusal retry swaps it for the rest of the
+   * session. Kept apart from `currentApiModelId`, which tracks the last id
+   * passed to `setModel` and must keep matching the user's selection. */
+  observedApiModelId: string | undefined;
   /** Effective effort for the session's turns; subagents without an explicit
    * effort override inherit this. */
   currentEffort: string | undefined;
@@ -468,10 +473,19 @@ function asRuntimeItemId(value: string): RuntimeItemId {
   return RuntimeItemId.make(value);
 }
 
-function maxClaudeContextWindowFromModelUsage(
+// `modelUsage` is keyed by every model that ran during the turn, subagents
+// included, so the maximum could be a child's window rather than this
+// session's. Fall back to it only when the session model has no entry.
+function claudeContextWindowFromModelUsage(
   modelUsage: Record<string, ModelUsage> | undefined,
+  sessionModel: string | undefined,
 ): number | undefined {
   if (!modelUsage) return undefined;
+
+  const sessionEntry = sessionModel ? modelUsage[sessionModel] : undefined;
+  if (sessionEntry) {
+    return sessionEntry.contextWindow;
+  }
 
   let maxContextWindow: number | undefined;
   for (const value of Object.values(modelUsage)) {
@@ -637,6 +651,8 @@ function compactBoundaryTokenUsageSnapshot(
   return snapshotWithoutBeforeTokens;
 }
 
+// A subagent's tokens are spent in its own context window, so they advance the
+// thread's running total but never the parent's used count (#5942).
 function normalizeClaudeTaskProgressTokenUsage(
   value: unknown,
   context: ClaudeSessionContext,
@@ -646,32 +662,33 @@ function normalizeClaudeTaskProgressTokenUsage(
     return undefined;
   }
 
-  const lastUsedTokens = context.lastKnownTokenUsage?.usedTokens;
-  const activeTokens =
-    lastUsedTokens !== undefined ? Math.max(totalTokens, lastUsedTokens) : totalTokens;
-  if (lastUsedTokens !== undefined && activeTokens === lastUsedTokens) {
+  const lastKnown = context.lastKnownTokenUsage;
+  if (!lastKnown) {
+    return undefined;
+  }
+
+  // The running total floors at the largest single contributor rather than
+  // summing per-task totals: the SDK does not document whether result usage
+  // already aggregates children, and a floor can only understate.
+  const totalProcessedTokens = Math.max(
+    totalTokens,
+    context.lastKnownTotalProcessedTokens ?? totalTokens,
+  );
+  if (totalProcessedTokens === context.lastKnownTotalProcessedTokens) {
+    return undefined;
+  }
+  // Match makeClaudeTokenUsageSnapshot's invariant: a running total is only
+  // meaningful once it exceeds the parent's own used count.
+  if (totalProcessedTokens <= lastKnown.usedTokens) {
     return undefined;
   }
 
   const usage = value as Record<string, unknown>;
-  const snapshot = makeClaudeTokenUsageSnapshot({
-    activeTokens,
-    ...(context.lastKnownContextWindow !== undefined
-      ? { contextWindow: context.lastKnownContextWindow }
-      : {}),
-    totalProcessedTokens: Math.max(
-      totalTokens,
-      context.lastKnownTotalProcessedTokens ?? totalTokens,
-    ),
-  });
-  if (!snapshot) {
-    return undefined;
-  }
-
   const toolUses = finiteNonNegativeInteger(usage.tool_uses);
   const durationMs = finiteNonNegativeInteger(usage.duration_ms);
   return {
-    ...snapshot,
+    ...lastKnown,
+    totalProcessedTokens,
     ...(toolUses !== undefined ? { toolUses } : {}),
     ...(durationMs !== undefined ? { durationMs } : {}),
   };
@@ -2259,13 +2276,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     errorMessage?: string,
     result?: SDKResultMessage,
   ) {
-    const resultContextWindow = maxClaudeContextWindowFromModelUsage(result?.modelUsage);
+    const resultContextWindow = claudeContextWindowFromModelUsage(
+      result?.modelUsage,
+      context.observedApiModelId ?? context.currentApiModelId,
+    );
     if (resultContextWindow !== undefined) {
       context.lastKnownContextWindow = resultContextWindow;
     }
 
     const maxTokens = resultContextWindow ?? context.lastKnownContextWindow;
-    const accumulatedTotalProcessedTokens = claudeTotalProcessedTokens(result?.usage);
+    // The result carries only the parent's own usage, which can be smaller
+    // than a running total a subagent already raised; the thread total only
+    // ever grows.
+    const resultTotalProcessedTokens = claudeTotalProcessedTokens(result?.usage);
+    const accumulatedTotalProcessedTokens =
+      resultTotalProcessedTokens !== undefined
+        ? Math.max(resultTotalProcessedTokens, context.lastKnownTotalProcessedTokens ?? 0)
+        : undefined;
     if (accumulatedTotalProcessedTokens !== undefined) {
       context.lastKnownTotalProcessedTokens = accumulatedTotalProcessedTokens;
     }
@@ -2285,13 +2312,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       resultUsageRecord !== undefined &&
       !resultHasActiveUsage &&
       claudeTotalProcessedTokens(resultUsageRecord) !== undefined;
-    const resultIterationSnapshot = resultUsageRecord
-      ? normalizeClaudeActiveTokenUsage(
-          resultUsageRecord,
-          maxTokens,
-          accumulatedTotalProcessedTokens ?? context.lastKnownTotalProcessedTokens,
-        )
-      : undefined;
+    // A result carrying only cumulative total_tokens is not an active-context
+    // reading; without this gate it would render as a full meter (#6586).
+    const resultIterationSnapshot =
+      resultUsageRecord && resultHasActiveUsage
+        ? normalizeClaudeActiveTokenUsage(
+            resultUsageRecord,
+            maxTokens,
+            accumulatedTotalProcessedTokens ?? context.lastKnownTotalProcessedTokens,
+          )
+        : undefined;
     const latestAssistantSnapshot = normalizeClaudeActiveTokenUsage(
       context.turnState?.latestAssistantUsage,
       maxTokens,
@@ -3188,7 +3218,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     switch (message.subtype) {
-      case "init":
+      case "init": {
+        // init is the first place the SDK names the model actually serving the
+        // session, which is the id `modelUsage` is keyed by.
+        const initModel = trimmedString(message.model);
+        if (initModel) {
+          context.observedApiModelId = initModel;
+        }
         yield* offerRuntimeEvent({
           ...base,
           type: "session.configured",
@@ -3197,6 +3233,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           },
         });
         return;
+      }
       case "status":
         yield* offerRuntimeEvent({
           ...base,
@@ -3494,9 +3531,21 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           yield* emitRuntimeWarning(context, message.text, message);
         }
         return;
+      case "model_refusal_fallback": {
+        // A refusal retry swaps the model for the rest of the session, so the
+        // window lookup has to follow it. `currentApiModelId` deliberately
+        // does not: it mirrors the user's selection for `setModel`, and moving
+        // it here would make the next turn re-send the refused model.
+        if (message.direction === "retry") {
+          const fallbackModel = trimmedString(message.fallback_model);
+          if (fallbackModel) {
+            context.observedApiModelId = fallbackModel;
+          }
+        }
+        return;
+      }
       // Inner protocol/UX details with no T3 surface today — consumed
       // deliberately so they don't masquerade as unknown-subtype warnings.
-      case "model_refusal_fallback":
       case "local_command_output":
       case "plugin_install":
       case "commands_changed":
@@ -4475,6 +4524,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         startedAt,
         basePermissionMode: permissionMode,
         currentApiModelId: apiModelId,
+        observedApiModelId: undefined,
         currentEffort: effectiveEffort ?? undefined,
         resumeSessionId: sessionId,
         pendingApprovals,
@@ -4601,6 +4651,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           catch: (cause) => toRequestError(input.threadId, "turn/setModel", cause),
         });
         context.currentApiModelId = apiModelId;
+        // A deliberate switch supersedes whatever init or a refusal observed;
+        // leaving it stale would measure the meter against the old model.
+        context.observedApiModelId = apiModelId;
       }
       context.session = {
         ...context.session,
