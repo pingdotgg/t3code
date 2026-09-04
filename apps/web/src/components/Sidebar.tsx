@@ -274,25 +274,26 @@ function terminalProcessLabel(count: number): string {
 }
 
 const TITLE_SHIMMER_STAGGER_MS = 90;
+const titleSegmenter = new Intl.Segmenter();
 
 // Splits the title into glyphs so a bright crest can travel through them
 // while it regenerates — the shadcn.io "Shimmering Text" effect. Every
 // character runs the same dim → bright(+3D lift) → dim timeline, offset one
 // stagger step from its neighbor, which produces a smooth traveling wave.
-// Splitting is by code point, not grapheme cluster: ZWJ emoji sequences
-// would shimmer as partial glyphs, which titles are too short and too
-// rarely emoji-laden to justify Segmenter machinery for. Idle titles are a
-// plain string.
+// Whitespace is normalized and text segmented by grapheme cluster, so the
+// shimmering title lays out exactly like the idle one and accents or joined
+// scripts stay whole. Idle titles are a plain string.
 function ShimmeringTitleText(props: { text: string }) {
+  const normalized = props.text.replace(/\s+/g, " ");
   return (
     <>
-      {Array.from(props.text).map((char, index) => (
+      {[...titleSegmenter.segment(normalized)].map((segment, index) => (
         <span
           key={index}
-          className="title-shimmer-char whitespace-pre"
+          className="title-shimmer-char"
           style={{ animationDelay: `${index * TITLE_SHIMMER_STAGGER_MS}ms` }}
         >
-          {char}
+          {segment.segment}
         </span>
       ))}
     </>

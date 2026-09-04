@@ -2022,6 +2022,11 @@ code {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* The inert chars inherit the container color, so hand the variant color
+     back — the wrapper's opacity dim is the whole reduced-motion treatment. */
+  .title-shimmering {
+    color: inherit;
+  }
   .title-shimmer-char {
     animation: none;
   }
