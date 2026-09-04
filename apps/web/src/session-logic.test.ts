@@ -17,6 +17,7 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  deriveActivePlanState,
   deriveTimelineEntriesFromVisibleTurnItems,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   deriveRevertTurnCountByUserMessageId,
@@ -334,7 +335,6 @@ describe("V2 session presentation", () => {
       ["event", requestItem.id],
       ["work", commandItem.id],
       ["event", resultItem.id],
-      ["turn-plan", todoItem.id],
       ["work", errorItem.id],
       ["event", threadCreatedItem.id],
     ]);
@@ -352,17 +352,7 @@ describe("V2 session presentation", () => {
       expect(commandEntry.entry.projectedItem).toBe(visibleTurnItems[2]);
       expect(commandEntry.entry.structuredPayload).toBe(commandItem);
     }
-    const todoEntry = entries[4];
-    expect(todoEntry?.kind).toBe("turn-plan");
-    if (todoEntry?.kind === "turn-plan") {
-      expect(todoEntry.turnPlan.id).toBe("turn-plan:plan-visible");
-      expect(todoEntry.turnPlan.plan.explanation).toBe("Keep task detail in the Tasks panel");
-      expect(todoEntry.turnPlan.plan.steps).toEqual([
-        { step: "First", status: "completed" },
-        { step: "Second", status: "pending" },
-      ]);
-    }
-    const errorEntry = entries[5];
+    const errorEntry = entries[4];
     expect(errorEntry?.kind).toBe("work");
     if (errorEntry?.kind === "work") {
       expect(errorEntry.entry.projectedItem).toBe(visibleTurnItems[5]);
@@ -371,12 +361,81 @@ describe("V2 session presentation", () => {
       expect(errorEntry.entry.tone).toBe("info");
       expect(errorEntry.entry.toolLifecycleStatus).toBe("failed");
     }
-    const threadCreatedEntry = entries[6];
+    const threadCreatedEntry = entries[5];
     expect(threadCreatedEntry?.kind).toBe("event");
     if (threadCreatedEntry?.kind === "event") {
       expect(threadCreatedEntry.projectedItem.item.type).toBe("thread_created");
     }
   });
+
+  it.each(["pending", "running", "completed"] as const)(
+    "keeps %s task progress available to the composer and out of the timeline",
+    (stepStatus) => {
+      const projection = makeThreadProjectionFixture();
+      const now = DateTime.makeUnsafe("2026-09-04T00:00:00.000Z");
+      const runId = RunId.make("run-tasks");
+      const nodeId = NodeId.make("node-tasks");
+      const planId = PlanId.make("plan-tasks");
+      const steps = [{ id: "step-1", text: "Verify the change", status: stepStatus }];
+      const item = {
+        id: TurnItemId.make("item-tasks"),
+        threadId: projection.thread.id,
+        runId,
+        nodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 0,
+        status: "completed" as const,
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "todo_list" as const,
+        planId,
+        steps,
+      } satisfies OrchestrationV2TurnItem;
+      const plans = [
+        {
+          id: planId,
+          threadId: projection.thread.id,
+          runId,
+          nodeId,
+          kind: "todo_list" as const,
+          status: "active" as const,
+          steps,
+        },
+      ];
+
+      expect(
+        deriveTimelineEntriesFromVisibleTurnItems({
+          visibleTurnItems: [
+            {
+              position: 0,
+              visibility: "local",
+              sourceThreadId: projection.thread.id,
+              sourceItemId: item.id,
+              item,
+            },
+          ],
+          optimisticMessages: [],
+          plans,
+        }),
+      ).toEqual([]);
+      expect(
+        deriveActivePlanState({ ...projection, plans, turnItems: [item] }, runId),
+      ).toMatchObject({
+        runId,
+        steps: [
+          {
+            step: "Verify the change",
+            status: stepStatus === "running" ? "inProgress" : stepStatus,
+          },
+        ],
+      });
+    },
+  );
 
   it("keeps failed tool items tool-toned so groups still summarize", () => {
     const failedCommand = {
