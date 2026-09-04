@@ -1125,7 +1125,7 @@ struct DailyUXNewTaskTests {
     }
 
     @Test
-    func newTaskAvailabilityOnlyTreatsEnabledDisconnectedEnvironmentsAsUnreachable() {
+    func newTaskAvailabilityOnlyTreatsEnabledDisconnectedEnvironmentsAsUnreachable() throws {
         let environments = [
             FeatureEnvironment(
                 id: "disconnected",
@@ -1189,6 +1189,69 @@ struct DailyUXNewTaskTests {
         #expect(
             DailyUXCreationContext.projects(in: snapshot).map(\.environmentID)
                 == ["reconnecting", "connecting", "connected", "unknown"]
+        )
+        #expect(
+            DailyUXCreationContext.projectEnvironmentValidationMessage(
+                projectID: "disconnected-project",
+                in: snapshot
+            ) == "Environment is unreachable."
+        )
+        #expect(
+            DailyUXCreationContext.projectEnvironmentValidationMessage(
+                projectID: "reconnecting-project",
+                in: snapshot
+            ) == nil
+        )
+        #expect(
+            DailyUXCreationContext.projectEnvironmentValidationMessage(
+                projectID: "connected-project",
+                in: snapshot
+            ) == nil
+        )
+        #expect(
+            DailyUXCreationContext.projectEnvironmentValidationMessage(
+                projectID: "disabled-project",
+                in: snapshot
+            ) == "Environment is off."
+        )
+
+        let disconnectedProject = try #require(
+            projects.first { $0.environmentID == "disconnected" }
+        )
+        let recoveredSnapshot = rankedSnapshot(
+            environments: [
+                FeatureEnvironment(
+                    id: "disconnected",
+                    name: "Studio Mac",
+                    endpoint: "http://studio",
+                    connectionState: .reconnecting
+                ),
+            ],
+            projects: [disconnectedProject],
+            threads: []
+        )
+
+        #expect(
+            DailyUXCreationContext.projects(in: recoveredSnapshot).map(\.id)
+                == [disconnectedProject.id]
+        )
+        #expect(
+            DailyUXCreationContext.projectEnvironmentValidationMessage(
+                projectID: disconnectedProject.id,
+                in: recoveredSnapshot
+            ) == nil
+        )
+
+        let legacySnapshot = rankedSnapshot(
+            environments: [],
+            projects: [disconnectedProject],
+            threads: []
+        )
+        #expect(
+            DailyUXCreationContext.projectEnvironmentValidationMessage(
+                projectID: disconnectedProject.id,
+                in: legacySnapshot
+            ) == nil
         )
     }
 
