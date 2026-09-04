@@ -34,7 +34,7 @@ import {
   type EnvironmentId,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
-import { connectionStatusText } from "@t3tools/client-runtime/connection";
+import { connectionStatusText, connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -1523,18 +1523,21 @@ function SavedBackendListRow({
             </Tooltip>
           ) : null}
           {environment.connection.error && !resumingServerUpdate ? (
-            <p className="flex min-w-0 items-center gap-2 text-destructive text-xs">
-              <span className="truncate">{connectionStatusText(environment.connection)}</span>
-              {errorTraceId ? (
-                <button
-                  type="button"
-                  className="shrink-0 underline underline-offset-2"
-                  onClick={() => copyTraceId(errorTraceId)}
-                >
-                  Copy trace ID
-                </button>
-              ) : null}
-            </p>
+            <div className="min-w-0 text-destructive text-xs">
+              <p className="truncate">{connectionStatusTitle(environment.connection)}</p>
+              <p className="flex min-w-0 items-center gap-2">
+                <span className="truncate">Reason: {environment.connection.error}</span>
+                {errorTraceId ? (
+                  <button
+                    type="button"
+                    className="shrink-0 underline underline-offset-2"
+                    onClick={() => copyTraceId(errorTraceId)}
+                  >
+                    Copy trace ID
+                  </button>
+                ) : null}
+              </p>
+            </div>
           ) : null}
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
