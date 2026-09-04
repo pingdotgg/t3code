@@ -32,7 +32,8 @@ import { MaterialIconButton } from "../../components/MaterialIconButton";
 import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { terminalEnvironment } from "../../state/terminal";
-import { useEnvironmentScope } from "../../state/session";
+import { environmentSession } from "../../state/session";
+import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useServerConfigs } from "../../state/entities";
 import { useConnectionsReady } from "../../state/workspace";
@@ -261,8 +262,15 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     ? EnvironmentId.make(routeEnvironmentIdRaw)
     : null;
   const routeThreadId = routeThreadIdRaw ? ThreadId.make(routeThreadIdRaw) : null;
-  const canOperateTerminal = useEnvironmentScope(routeEnvironmentId, AuthTerminalOperateScope);
-  const canReadTerminal = useEnvironmentScope(routeEnvironmentId, AuthTerminalReadScope);
+  const terminalSession = useEnvironmentQuery(
+    routeEnvironmentId === null ? null : environmentSession.sessionStateAtom(routeEnvironmentId),
+  );
+  const isAuthenticated =
+    terminalSession.error === null && terminalSession.data?.authenticated === true;
+  const canOperateTerminal =
+    isAuthenticated && terminalSession.data?.scopes?.includes(AuthTerminalOperateScope) === true;
+  const canReadTerminal =
+    isAuthenticated && terminalSession.data?.scopes?.includes(AuthTerminalReadScope) === true;
   const environment = useEnvironmentPresentation(routeEnvironmentId);
   const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
   const requestedTerminalId = firstRouteParam(params.terminalId);
@@ -1243,12 +1251,29 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
               resourceName="terminal"
               onRetry={handleRetryEnvironment}
             />
-          ) : !canReadTerminal && !canOperateTerminal ? (
-            <EmptyState title="Terminal access unavailable" detail="This connection does not have permission to view terminals." />
-          ) : !canOperateTerminal && activeKnownSession === null ? (
-            <EmptyState title="No terminal sessions" detail="Existing terminals will appear here when another client opens one." />
-          ) : (
-            <>
+        ) : terminalSession.data === null && terminalSession.error === null ? (
+          <EmptyState
+            title="Checking terminal access"
+            detail="Waiting for this connection's permissions."
+          />
+        ) : !canReadTerminal && !canOperateTerminal ? (
+          <EmptyState
+            title={
+              terminalSession.error
+                ? "Could not check terminal access"
+                : "Terminal access unavailable"
+            }
+            detail={
+              terminalSession.error ?? "This connection does not have permission to view terminals."
+            }
+          />
+        ) : !canOperateTerminal && activeKnownSession === null ? (
+          <EmptyState
+            title="No terminal sessions"
+            detail="Existing terminals will appear here when another client opens one."
+          />
+        ) : (
+          <>
               <View
                 style={{
                   flex: 1,
