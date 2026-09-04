@@ -555,6 +555,7 @@ const make = Effect.gen(function* () {
       });
       yield* refreshPullRequestAfterTurn({
         threadId: event.threadId,
+        turnId: toTurnId(event.turnId),
         cwd: sessionRuntime.value.cwd,
         local,
       });
@@ -566,6 +567,7 @@ const make = Effect.gen(function* () {
   // update must not let this thread refresh another thread's checkout.
   const refreshPullRequestAfterTurn = Effect.fn("refreshPullRequestAfterTurn")(function* (input: {
     readonly threadId: ThreadId;
+    readonly turnId: TurnId | null;
     readonly cwd: string;
     readonly local: VcsStatusLocalResult;
   }) {
@@ -575,6 +577,7 @@ const make = Effect.gen(function* () {
       .getThreadShellById(input.threadId)
       .pipe(Effect.map(Option.getOrUndefined));
     if (!thread || thread.branch !== checkedOutBranch) return;
+    if (thread.session?.activeTurnId && !sameId(thread.session.activeTurnId, input.turnId)) return;
     yield* vcsStatusBroadcaster.refreshPullRequestStatus(input.cwd).pipe(
       Effect.catch((error) =>
         Effect.logWarning("failed to refresh pull request status after turn completion", {
