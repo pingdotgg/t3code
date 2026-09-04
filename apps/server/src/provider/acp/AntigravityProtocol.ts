@@ -376,7 +376,7 @@ export function isAntigravitySubagentReplayStart(rawPayload: unknown): boolean {
   );
 }
 
-export function antigravitySubagentResult(toolCall: AcpToolCallState): string | undefined {
+export function antigravitySubagentOutput(toolCall: AcpToolCallState): string | undefined {
   const output = toolCall.data.rawOutput;
   return typeof output === "string" && output.trim() ? boundText(output.trim()) : undefined;
 }
