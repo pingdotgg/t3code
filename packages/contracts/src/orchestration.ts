@@ -284,6 +284,18 @@ export const ProjectFaviconPath = TrimmedNonEmptyString.check(
 );
 export type ProjectFaviconPath = typeof ProjectFaviconPath.Type;
 
+/**
+ * Directory a project's new worktrees are created under, as `<root>/<branch>`.
+ * Absolute only — POSIX, Windows drive or UNC, or `~`-relative and expanded on
+ * the server that owns the project, since a relative root would resolve against
+ * whatever cwd that server happens to have.
+ */
+export const ProjectWorktreeRoot = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(1024),
+  Schema.isPattern(/^(?:~(?:$|[/\\])|\/|\\\\|[A-Za-z]:[/\\])/),
+);
+export type ProjectWorktreeRoot = typeof ProjectWorktreeRoot.Type;
+
 export const ProjectIconColor = Schema.Literals([
   "gray",
   "red",
@@ -338,6 +350,7 @@ export const OrchestrationProject = Schema.Struct({
   // Opt-in because background sync performs network I/O and may move the checkout.
   // Optional on the wire so cached snapshots from older servers still decode.
   autoPull: Schema.optional(Schema.Boolean),
+  worktreeRoot: Schema.optional(Schema.NullOr(ProjectWorktreeRoot)),
   // Optional on the wire so cached snapshots from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
@@ -551,6 +564,7 @@ export const OrchestrationProjectShell = Schema.Struct({
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   autoPull: Schema.optional(Schema.Boolean),
+  worktreeRoot: Schema.optional(Schema.NullOr(ProjectWorktreeRoot)),
   // Optional on the wire so cached snapshots from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
@@ -774,6 +788,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   // Absent = leave unchanged; null = clear the override.
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   autoPull: Schema.optional(Schema.Boolean),
+  worktreeRoot: Schema.optional(Schema.NullOr(ProjectWorktreeRoot)),
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
@@ -1246,6 +1261,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   autoPull: Schema.optional(Schema.Boolean),
+  worktreeRoot: Schema.optional(Schema.NullOr(ProjectWorktreeRoot)),
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),

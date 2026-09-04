@@ -1489,6 +1489,53 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("creates the worktree under rootDir as <rootDir>/<branch>", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const rootDir = yield* makeTmpDir("git-custom-worktree-root-");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const created = yield* driver.createWorktree({
+          cwd,
+          path: null,
+          rootDir,
+          refName: initialBranch,
+          newRefName: "feature/custom-root",
+        });
+
+        assert.equal(created.worktree.path, pathService.join(rootDir, "feature-custom-root"));
+        assert.equal(yield* fileSystem.exists(created.worktree.path), true);
+        assert.equal(
+          yield* git(created.worktree.path, ["branch", "--show-current"]),
+          "feature/custom-root",
+        );
+      }),
+    );
+
+    it.effect("prefers an explicit path over rootDir", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const rootDir = yield* makeTmpDir("git-ignored-worktree-root-");
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "explicit");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const created = yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          rootDir,
+          refName: initialBranch,
+          newRefName: "feature/explicit-path",
+        });
+
+        assert.equal(created.worktree.path, worktreePath);
+      }),
+    );
+
     it.effect("creates and removes a worktree for a new refName", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

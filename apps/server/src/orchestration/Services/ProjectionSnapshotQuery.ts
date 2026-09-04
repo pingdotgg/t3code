@@ -157,6 +157,15 @@ export interface ProjectionSnapshotQueryShape {
   ) => Effect.Effect<Option.Option<OrchestrationProject>, ProjectionRepositoryError>;
 
   /**
+   * Every configured worktree root across active projects, for callers that
+   * hold only a directory and must tell a managed worktree from any other path.
+   */
+  readonly listActiveProjectWorktreeRoots: () => Effect.Effect<
+    ReadonlyArray<string>,
+    ProjectionRepositoryError
+  >;
+
+  /**
    * Read a single active project shell row by id.
    */
   readonly getProjectShellById: (

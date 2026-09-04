@@ -16,6 +16,8 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { expandHomePathWith } from "../pathExpansion.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
@@ -37,6 +39,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
 
   const canonicalizePath = (value: string) => {
     const resolvedPath = path.resolve(value);
@@ -74,6 +77,21 @@ export const make = Effect.gen(function* () {
 
     if (isWithinRoot(candidate, workspaceRoot) || isWithinRoot(candidate, worktreesRoot)) {
       return;
+    }
+
+    // Any configured root counts, matching the shared default worktrees
+    // directory this already accepts. A failed read honors only the defaults,
+    // denying rather than over-permitting.
+    const configuredRoots = yield* projectionSnapshotQuery
+      .listActiveProjectWorktreeRoots()
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    for (const configuredRoot of configuredRoots) {
+      const resolvedRoot = yield* canonicalizePath(expandHomePathWith(configuredRoot, path)).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      if (resolvedRoot !== null && isWithinRoot(candidate, resolvedRoot)) {
+        return;
+      }
     }
 
     return yield* new VcsRepositoryDetectionError({
