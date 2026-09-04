@@ -229,7 +229,15 @@ function shouldPersist(stream: EventNdjsonStream, event: unknown): boolean {
       const part = Reflect.get(properties, "part");
       if (typeof part !== "object" || part === null) return true;
       const partType = Reflect.get(part, "type");
-      return partType !== "text" && partType !== "reasoning";
+      if (partType === "text" || partType === "reasoning") return false;
+      if (partType === "tool") {
+        // Running snapshots repeat growing output. Pending and terminal states stay in the log.
+        const state = Reflect.get(part, "state");
+        if (typeof state === "object" && state !== null) {
+          return Reflect.get(state, "status") !== "running";
+        }
+      }
+      return true;
     }
 
     return true;
