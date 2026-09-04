@@ -170,6 +170,20 @@ Application code must not construct RPC clients, retry loops, or raw
 orchestration commands. Persistence paths belong to the platform registration
 and cache stores, with explicit migration or invalidation policy.
 
+### Thread detail ownership
+
+Mounted detail consumers share one live thread subscription. The subscription
+ends when the last consumer leaves. Hidden routes that remain mounted still
+count as consumers.
+
+A separate registry-local atom retains the last thread state and replay cursor
+for five idle minutes. A warm mount renders that state and resumes the stream
+without another snapshot download. The cache holds completed state and cursor
+updates together. It retains pagination data but clears canceled loading state.
+An ownership token prevents an old scope from replacing its successor's cache.
+Closing a thread skips snapshots that were already saved. Changed snapshots and
+failed background writes still get a final save attempt.
+
 ## Verification
 
 Core state-machine tests use `@effect/vitest` and deterministic service layers.
@@ -184,6 +198,7 @@ Required coverage includes:
 - relay token reuse and refresh;
 - progressive relay discovery;
 - shell and thread cache hydration;
+- thread stream shutdown, warm resume, and snapshot expiry;
 - durable subscriptions switching sessions;
 - command metadata and idempotent queued-command metadata.
 
