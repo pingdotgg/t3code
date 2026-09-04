@@ -46,6 +46,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private let fallbackPollingInitialDelay: Duration
     private let fallbackPollingInterval: Duration
     private let aggregateRefreshInterval: Duration
+    private let aggregateIdleRefreshInterval: Duration
+    private let aggregateFailureRefreshInterval: Duration
+    private let aggregateRefreshSleep: @Sendable (Duration) async throws -> Void
     private let environmentShellTimeoutInterval: TimeInterval
     private let threadSnapshotTimeoutInterval: TimeInterval
     private let catchUpDelay: @Sendable () async throws -> Void
@@ -125,6 +128,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var threadHistoryEpoch = 0
     private var pendingOlderThreadPage: PendingOlderThreadPage?
 
+    nonisolated static let defaultAggregateRefreshInterval: Duration = .seconds(5)
+    nonisolated static let defaultAggregateIdleRefreshInterval: Duration = .seconds(10)
+    nonisolated static let defaultAggregateFailureRefreshInterval: Duration = .seconds(20)
+
     init(
         runtime: EnvironmentRuntime? = nil,
         t3ConnectController: T3ConnectController? = nil,
@@ -133,7 +140,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         projectFaviconStore: FeatureProjectFaviconStore = FeatureProjectFaviconStore(),
         fallbackPollingInitialDelay: Duration = .seconds(3),
         fallbackPollingInterval: Duration = .seconds(2),
-        aggregateRefreshInterval: Duration = .seconds(20),
+        aggregateRefreshInterval: Duration = NativeFeatureClient.defaultAggregateRefreshInterval,
+        aggregateIdleRefreshInterval: Duration = NativeFeatureClient.defaultAggregateIdleRefreshInterval,
+        aggregateFailureRefreshInterval: Duration = NativeFeatureClient.defaultAggregateFailureRefreshInterval,
+        aggregateRefreshSleep: @escaping @Sendable (Duration) async throws -> Void = {
+            try await Task.sleep(for: $0)
+        },
         environmentShellTimeoutInterval: TimeInterval = 6,
         threadSnapshotTimeoutInterval: TimeInterval = 8,
         catchUpDelay: @escaping @Sendable () async throws -> Void = {
@@ -168,6 +180,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         self.fallbackPollingInitialDelay = fallbackPollingInitialDelay
         self.fallbackPollingInterval = fallbackPollingInterval
         self.aggregateRefreshInterval = aggregateRefreshInterval
+        self.aggregateIdleRefreshInterval = aggregateIdleRefreshInterval
+        self.aggregateFailureRefreshInterval = aggregateFailureRefreshInterval
+        self.aggregateRefreshSleep = aggregateRefreshSleep
         self.environmentShellTimeoutInterval = environmentShellTimeoutInterval
         self.threadSnapshotTimeoutInterval = threadSnapshotTimeoutInterval
         self.catchUpDelay = catchUpDelay
@@ -3283,13 +3298,19 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         aggregateRefreshTask?.cancel()
         let generation = environmentGeneration
         let refreshID = UUID()
-        let interval = aggregateRefreshInterval
+        let fastInterval = aggregateRefreshInterval
+        let idleInterval = aggregateIdleRefreshInterval
+        let failureInterval = aggregateFailureRefreshInterval
+        let sleep = aggregateRefreshSleep
         let loadEnvironments = aggregateEnvironmentLoader
         aggregateRefreshID = refreshID
         aggregateRefreshTask = Task { [weak self] in
+            var nextInterval = fastInterval
+            var failureBackoffs: [String: Duration] = [:]
             while !Task.isCancelled {
+                let elapsedInterval = nextInterval
                 do {
-                    try await Task.sleep(for: interval)
+                    try await sleep(nextInterval)
                 } catch {
                     return
                 }
@@ -3310,7 +3331,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 } catch {
                     // Persistence can be briefly unavailable while another
                     // actor atomically replaces the environment document.
-                    // Keep the low-frequency loop alive for the next cadence.
+                    // Back off while keeping the loop alive for recovery.
+                    nextInterval = failureInterval
                     continue
                 }
                 guard !Task.isCancelled,
@@ -3324,8 +3346,23 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 let passiveEnvironments = environments.filter {
                     $0.isEnabled && $0.id != activeEnvironment.id
                 }
-                guard !passiveEnvironments.isEmpty else { continue }
-                let loads = await self.loadEnvironmentShells(passiveEnvironments)
+                guard !passiveEnvironments.isEmpty else {
+                    nextInterval = idleInterval
+                    continue
+                }
+                let passiveIDs = Set(passiveEnvironments.map(\.id))
+                failureBackoffs = failureBackoffs.reduce(into: [:]) { result, entry in
+                    guard passiveIDs.contains(entry.key) else { return }
+                    result[entry.key] = max(.zero, entry.value - elapsedInterval)
+                }
+                let refreshableEnvironments = passiveEnvironments.filter {
+                    failureBackoffs[$0.id, default: .zero] <= .zero
+                }
+                guard !refreshableEnvironments.isEmpty else {
+                    nextInterval = fastInterval
+                    continue
+                }
+                let loads = await self.loadEnvironmentShells(refreshableEnvironments)
                 guard !Task.isCancelled,
                       self.aggregateRefreshID == refreshID,
                       self.isCurrentSession(
@@ -3333,6 +3370,20 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                           generation: generation
                       ) else {
                     return
+                }
+                let shellsChanged = loads.contains { load in
+                    guard let shell = load.shell else { return false }
+                    return shell != self.shellsByEnvironmentID[load.environment.id]
+                }
+                let hasActiveWork = loads.contains { load in
+                    load.shell.map(Self.shellNeedsFrequentAggregateRefresh) == true
+                }
+                for load in loads {
+                    if load.shell == nil {
+                        failureBackoffs[load.environment.id] = failureInterval
+                    } else {
+                        failureBackoffs[load.environment.id] = nil
+                    }
                 }
                 self.reconcileEnvironmentLoads(loads, savedEnvironments: environments)
                 let currentConnection = self.latestSnapshot?.connection
@@ -3348,7 +3399,26 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     connectionDetail: currentConnection.detail
                 )
                 self.publish(snapshot)
+                if shellsChanged || hasActiveWork {
+                    nextInterval = fastInterval
+                } else {
+                    nextInterval = idleInterval
+                }
             }
+        }
+    }
+
+    nonisolated private static func shellNeedsFrequentAggregateRefresh(
+        _ shell: OrchestrationShellSnapshot
+    ) -> Bool {
+        shell.threads.contains { thread in
+            thread.session?.status == "starting"
+                || thread.session?.status == "running"
+                || thread.latestTurn?.state == "running"
+                || thread.hasPendingApprovals
+                || thread.hasPendingUserInput
+                || thread.backgroundLiveness == .working
+                || thread.backgroundLiveness == .monitoring
         }
     }
 
