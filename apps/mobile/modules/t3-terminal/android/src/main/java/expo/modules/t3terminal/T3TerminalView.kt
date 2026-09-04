@@ -12,6 +12,8 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
@@ -380,12 +382,16 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
 
   private fun requestKeyboardFocus() {
     // requestFocus on an already-focused EditText fires no focus callback, so
-    // emit it here: an explicit show request means the keyboard stream is live
-    // again, and the JS recovery quarantine must lift even when the IME was
-    // retained across an Android resume.
+    // emit it here when the window insets prove the IME is genuinely visible:
+    // the keyboard stream is live, and the JS recovery quarantine must lift
+    // even without a keyboardWillShow. Gating on the insets (not the touch
+    // that reached this call) keeps a post-resume scroll with a stale
+    // snapshot from clearing the quarantine.
     val retainedFocus = inputView.hasFocus()
     inputView.requestFocus()
-    if (retainedFocus) {
+    val imeVisible =
+      ViewCompat.getRootWindowInsets(this)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+    if (retainedFocus && imeVisible) {
       onTerminalFocus(emptyMap<String, Any>())
     }
     val inputMethodManager = context.getSystemService(
