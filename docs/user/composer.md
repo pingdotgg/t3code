@@ -32,16 +32,9 @@ device until you sign back into the same account.
 
 ## Custom models
 
-On web and desktop, open Settings → Providers → **Models** to add a model slug the provider does
-not list, such as a preview build. Antigravity only uses models from its account catalog and does
-not support adding custom models.
-
-A custom model shows up in the picker under its slug until you edit it. The pencil next to it opens
-an editor for a display name and the options the composer should offer, such as reasoning choices
-or an on/off toggle. Presets suggest option ids, and **Copy from…** starts from a built-in model's
-options. You can edit the ids, labels, and values freely, but only options supported by the provider
-integration affect a turn. Clearing the name and options returns the model to a plain slug with the
-provider's default options.
+On web and desktop, use Settings → Providers → **Models** to add an unlisted model with a custom
+name and options. Only options supported by the provider integration affect turns. Antigravity
+uses its account catalog and does not support custom models.
 
 ## Model defaults
 
