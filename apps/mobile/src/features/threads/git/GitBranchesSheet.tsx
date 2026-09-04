@@ -30,7 +30,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
-  const { canWriteSourceControl } = gitActions;
+  const { canChangeThreadBranch } = gitActions;
 
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
@@ -151,7 +151,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
               label="Create worktree"
               tone="primary"
               disabled={
-              !canWriteSourceControl ||                 busy ||
+              !canChangeThreadBranch ||                 busy ||
                 worktreeBaseBranch.trim().length === 0 ||
                 worktreeBranchName.trim().length === 0
               }

@@ -30,7 +30,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
-  const { canWriteSourceControl } = gitActions;
+  const { canWriteSourceControl, canChangeThreadBranch } = gitActions;
 
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
@@ -58,7 +58,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
 
   const runCommitAction = useCallback(
     async (featureBranch: boolean) => {
-      if (!canWriteSourceControl) return;
+      if (!canWriteSourceControl || (featureBranch && !canChangeThreadBranch)) return;
       const commitMessage = dialogCommitMessage.trim();
       navigation.goBack();
       await gitActions.onRunSelectedThreadGitAction({
@@ -71,6 +71,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
     [
       allSelected,
       canWriteSourceControl,
+      canChangeThreadBranch,
       dialogCommitMessage,
       gitActions,
       navigation,
@@ -283,6 +284,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
               <SheetActionButton
                 icon="arrow.branch"
                 label="Commit on new branch"
+              disabled={!canChangeThreadBranch || noneSelected || busy}
                 disabled={noneSelected || busy}
                 onPress={() => void runCommitAction(true)}
               />

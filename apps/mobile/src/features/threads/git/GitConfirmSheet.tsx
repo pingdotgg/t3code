@@ -32,7 +32,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
   const { height: windowHeight } = useWindowDimensions();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
-  const { canWriteSourceControl } = gitActions;
+  const { canWriteSourceControl, canChangeThreadBranch } = gitActions;
 
   const params = props.route.params;
 
@@ -78,7 +78,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
   ]);
 
   const movePendingActionToFeatureBranch = useCallback(async () => {
-    if (!canWriteSourceControl || !confirmAction) return;
+    if (!canChangeThreadBranch || !confirmAction) return;
     navigation.dispatch(StackActions.replace("Thread", { environmentId, threadId }));
 
     if (includesCommit) {
@@ -100,10 +100,11 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
         branch.isRemote ? Result.failVoid : Result.succeed(branch.name),
       ),
     );
-    await gitActions.onCreateSelectedThreadBranch(newBranchName);
+    const created = await gitActions.onCreateSelectedThreadBranch(newBranchName);
+    if (created === null) return;
     await gitActions.onRunSelectedThreadGitAction({ action: confirmAction });
   }, [
-    canWriteSourceControl,
+    canChangeThreadBranch,
     confirmAction,
     gitActions,
     gitState.selectedThreadBranches,
@@ -179,6 +180,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
             <SheetActionButton
               icon="arrow.branch"
               label="Feature branch & continue"
+          disabled={!canChangeThreadBranch}
               tone="primary"
               onPress={() => void movePendingActionToFeatureBranch()}
             />
