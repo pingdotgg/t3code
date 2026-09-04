@@ -1578,6 +1578,26 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.rawCommand).toBeUndefined();
   });
 
+  it("preserves serialized shell wrappers with non-matching boundary quotes", () => {
+    const command =
+      "/bin/zsh -lc 'git status\nsed -n '\"'1,20p' apps/web/src/components/DiffPanel.tsx\"";
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-serialized-wrapper",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: { item: { command } },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.command).toBe(command);
+    expect(entry?.rawCommand).toBeUndefined();
+  });
+
   it("keeps compact Codex tool metadata used for icons and labels", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

@@ -1990,6 +1990,49 @@ describe("buildThreadFeed", () => {
     },
   );
 
+  it("preserves serialized shell wrappers with non-matching boundary quotes", () => {
+    const turnId = TurnId.make("turn-serialized-shell-wrapper");
+    const command =
+      "/bin/zsh -lc 'git status\nsed -n '\"'1,20p' apps/web/src/components/DiffPanel.tsx\"";
+    const thread = makeThread({
+      id: ThreadId.make("thread-serialized-shell-wrapper"),
+      projectId: ProjectId.make("project-1"),
+      title: "Serialized shell wrapper",
+      latestTurn: {
+        turnId,
+        state: "running",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:00.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("serialized-shell-wrapper"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Ran command",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId,
+          payload: {
+            itemType: "command_execution",
+            status: "inProgress",
+            data: { item: { command } },
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(feed[0]).toMatchObject({
+      type: "activity-group",
+      activities: [{ workEntry: { command } }],
+    });
+    if (feed[0]?.type === "activity-group") {
+      expect(feed[0].activities[0]?.workEntry.rawCommand).toBeUndefined();
+    }
+  });
+
   it.each([
     ["inProgress", true],
     ["completed", false],
