@@ -1,10 +1,15 @@
-import type { ResourceTelemetryHistoryInput, ResourceTelemetrySnapshot } from "@t3tools/contracts";
+import {
+  AuthEnvironmentMaintainScope,
+  type ResourceTelemetryHistoryInput,
+  type ResourceTelemetrySnapshot,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { useCallback } from "react";
 
 import { usePrimaryEnvironment } from "../state/environments";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
+import { readEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 
 export interface ResourceTelemetryState {
@@ -29,6 +34,9 @@ export function useResourceTelemetry(): ResourceTelemetryState {
   const retry = useCallback(async () => {
     if (environmentId === null) {
       throw new Error("No environment is selected.");
+    }
+    if (!readEnvironmentScope(environmentId, AuthEnvironmentMaintainScope)) {
+      throw new Error("This connection cannot restart the resource monitor.");
     }
     const result = await retryCommand({ environmentId, input: {} });
     if (result._tag === "Failure") {

@@ -1,4 +1,5 @@
 import {
+  AuthProvidersManageScope,
   type EnvironmentId,
   type ProviderConsumeResetCreditOutcome,
   ProviderInstanceId,
@@ -26,6 +27,7 @@ import { Fragment, useState } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
+import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
@@ -303,6 +305,7 @@ function ResetCredits({
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
 }) {
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, { reportFailure: false });
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -321,6 +324,7 @@ function ResetCredits({
 
   const redeem = async () => {
     setConfirming(false);
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     setBusy(true);
     setStatus(null);
     const result = await consume({ environmentId, input: { instanceId } });
@@ -340,7 +344,14 @@ function ResetCredits({
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
       <span className="tabular-nums">{summary}</span>
       {credits.availableCount > 0 ? (
-        <Button size="xs" variant="outline" disabled={busy} onClick={() => setConfirming(true)}>
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={busy || !canManageProviders}
+          onClick={() => {
+            if (readEnvironmentScope(environmentId, AuthProvidersManageScope)) setConfirming(true);
+          }}
+        >
           {busy ? "Using credit…" : "Use a reset credit"}
         </Button>
       ) : null}
@@ -356,7 +367,9 @@ function ResetCredits({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-            <Button onClick={() => void redeem()}>Use credit</Button>
+            <Button disabled={!canManageProviders} onClick={() => void redeem()}>
+              Use credit
+            </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>

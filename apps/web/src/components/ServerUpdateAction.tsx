@@ -1,3 +1,5 @@
+import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
+import { useEnvironmentScope, readEnvironmentScope } from "~/state/session";
 import type { EnvironmentId, ServerSelfUpdateCapability } from "@t3tools/contracts";
 import type { ServerUpdateStage, ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import {
@@ -99,6 +101,7 @@ export function ServerUpdateAction({
   readonly size?: ComponentProps<typeof Button>["size"];
 }) {
   const isDesktopAppUpdate = selfUpdate === "desktop-managed";
+  const canMaintain = useEnvironmentScope(environmentId, AuthEnvironmentMaintainScope);
   const continueThreadsAfterServerUpdate = useEnvironmentSettings(
     environmentId,
     (settings) => settings.continueThreadsAfterServerUpdate,
@@ -125,7 +128,10 @@ export function ServerUpdateAction({
   });
 
   const handleUpdate = async () => {
-    if (pendingUpdateEnvironmentIds.has(environmentId)) {
+    if (
+      !readEnvironmentScope(environmentId, AuthEnvironmentMaintainScope) ||
+      pendingUpdateEnvironmentIds.has(environmentId)
+    ) {
       return;
     }
     if (isDesktopAppUpdate) {
@@ -140,7 +146,10 @@ export function ServerUpdateAction({
         return;
       }
     }
-    if (pendingUpdateEnvironmentIds.has(environmentId)) {
+    if (
+      !readEnvironmentScope(environmentId, AuthEnvironmentMaintainScope) ||
+      pendingUpdateEnvironmentIds.has(environmentId)
+    ) {
       return;
     }
     pendingUpdateEnvironmentIds.add(environmentId);
@@ -195,7 +204,12 @@ export function ServerUpdateAction({
   }
 
   return (
-    <Button size={size} variant={variant} onClick={() => void handleUpdate()}>
+    <Button
+      size={size}
+      variant={variant}
+      disabled={!canMaintain}
+      onClick={() => void handleUpdate()}
+    >
       {label}
     </Button>
   );

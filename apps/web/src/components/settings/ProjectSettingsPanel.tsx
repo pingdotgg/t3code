@@ -12,14 +12,15 @@ import {
   deriveProjectGroupingOverrideKey,
   selectProjectGroupingSettings,
 } from "../../logicalProject";
-import type {
-  ContextMenuItem,
-  ModelSelection,
-  ProjectIconOverride,
-  ProviderDriverKind,
-  SidebarProjectGroupingMode,
-  T3ProjectFileScript,
-  ThreadEnvMode,
+import {
+  AuthSettingsWriteScope,
+  type ContextMenuItem,
+  type ModelSelection,
+  type ProjectIconOverride,
+  type ProviderDriverKind,
+  type SidebarProjectGroupingMode,
+  type T3ProjectFileScript,
+  type ThreadEnvMode,
 } from "@t3tools/contracts";
 import { resolveEnvModeLabel } from "../BranchToolbar.logic";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -74,6 +75,7 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environmen
 import { useProjects, useThreadShells } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
+import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
@@ -558,6 +560,28 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         // Captured before the write so a cleared or deleted binding can be
         // removed from the keybindings config afterwards.
         const previousKeybinding = keybindingValueForCommand(keybindings, keybindingCommand);
+        const isDeletingScript = !nextScripts.some(
+          (script) => commandForProjectScript(script.id) === keybindingCommand,
+        );
+        const changesKeybinding =
+          isElectron &&
+          keybinding !== undefined &&
+          (keybinding?.trim() || null) !== previousKeybinding &&
+          (!isDeletingScript ||
+            readEnvironmentScope(selectedCheckout.environmentId, AuthSettingsWriteScope));
+        if (
+          changesKeybinding &&
+          !readEnvironmentScope(selectedCheckout.environmentId, AuthSettingsWriteScope)
+        ) {
+          const result = AsyncResult.failure<void, Error>(
+            Cause.fail(new Error("This connection cannot change keyboard shortcuts.")),
+          );
+          reportFailure("Failed to save scripts", result);
+          return result;
+        }
+        const keybindingRule = changesKeybinding
+          ? decodeProjectScriptKeybindingRule({ keybinding, command: keybindingCommand })
+          : null;
         const updateResult = mapAtomCommandResult(
           await updateProject({
             environmentId: selectedCheckout.environmentId,
@@ -570,11 +594,19 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
           return updateResult;
         }
 
-        const keybindingRule = decodeProjectScriptKeybindingRule({
-          keybinding,
-          command: keybindingCommand,
-        });
-        if (!isElectron) return updateResult;
+        if (!changesKeybinding) return updateResult;
+        if (!readEnvironmentScope(selectedCheckout.environmentId, AuthSettingsWriteScope)) {
+          if (isDeletingScript) return updateResult;
+          const result = AsyncResult.failure<void, Error>(
+            Cause.fail(
+              new Error(
+                "The script was saved, but this connection can no longer change keyboard shortcuts.",
+              ),
+            ),
+          );
+          reportFailure("Failed to save keybinding", result);
+          return result;
+        }
         const environmentIds = [selectedCheckout.environmentId];
         const previousTarget = previousKeybinding
           ? decodeProjectScriptKeybindingRule({
@@ -1266,6 +1298,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       </SettingsPageContainer>
 
       <ProjectScriptEditorDialog
+        environmentId={selectedCheckout.environmentId}
         request={editorRequest}
         scripts={scripts}
         onSubmit={submitScript}

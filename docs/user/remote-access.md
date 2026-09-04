@@ -154,6 +154,12 @@ in web or desktop, use **Add Environment** with the fresh link or code; pairing
 the same environment replaces its saved grant. Reconnecting alone does not change
 permissions.
 
+Settings changes, provider management, and environment maintenance can be granted
+separately from access administration. New standard pairings include these
+permissions. Existing clients keep their original grants after an update; to
+receive newly separated permissions, pair the client again with the scopes it
+needs. Reconnecting or refreshing a session does not expand its grant.
+
 To remove an environment from T3 Connect, open your account menu's **T3 Connect**
 page, or **Settings → T3 Connect** on mobile, and choose **Deregister**. This
 revokes its cloud access and frees its host space even when the environment is

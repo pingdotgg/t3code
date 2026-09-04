@@ -1,7 +1,9 @@
-import type {
-  ProjectScript,
-  ProjectScriptIcon,
-  ResolvedKeybindingsConfig,
+import {
+  AuthSettingsWriteScope,
+  type EnvironmentId,
+  type ProjectScript,
+  type ProjectScriptIcon,
+  type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -24,6 +26,7 @@ import {
 } from "~/lib/projectScriptKeybindings";
 import { keybindingFromKeyboardEvent } from "~/components/settings/KeybindingsSettings.logic";
 import { commandForProjectScript, nextProjectScriptId } from "~/projectScripts";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -129,12 +132,14 @@ export function editorRequestForScript(
  * being edited via `request`; the dialog owns the form state and validation.
  */
 export function ProjectScriptEditorDialog({
+  environmentId,
   request,
   scripts,
   onSubmit,
   onDelete,
   onClose,
 }: {
+  environmentId: EnvironmentId;
   request: ProjectScriptEditorRequest | null;
   /** Existing scripts, used to derive a unique id for new scripts. */
   scripts: ReadonlyArray<ProjectScript>;
@@ -145,6 +150,7 @@ export function ProjectScriptEditorDialog({
   onDelete: (scriptId: string) => void;
   onClose: () => void;
 }) {
+  const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const formId = React.useId();
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
@@ -175,6 +181,7 @@ export function ProjectScriptEditorDialog({
   }, [request]);
 
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) return;
     if (event.key === "Tab") return;
     event.preventDefault();
     if (event.key === "Backspace" || event.key === "Delete") {
@@ -189,6 +196,13 @@ export function ProjectScriptEditorDialog({
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!request) return;
+    if (
+      (keybinding.trim() || null) !== request.initial.keybinding &&
+      !readEnvironmentScope(environmentId, AuthSettingsWriteScope)
+    ) {
+      setValidationError("This connection cannot change keyboard shortcuts.");
+      return;
+    }
     const trimmedName = name.trim();
     const trimmedCommand = command.trim();
     if (trimmedName.length === 0) {
@@ -317,11 +331,18 @@ export function ProjectScriptEditorDialog({
                   id="script-keybinding"
                   placeholder="Press shortcut"
                   value={keybinding}
+                  disabled={!canWriteSettings}
                   readOnly
                   onKeyDown={captureKeybinding}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Press a shortcut. Use <code>Backspace</code> to clear.
+                  {canWriteSettings ? (
+                    <>
+                      Press a shortcut. Use <code>Backspace</code> to clear.
+                    </>
+                  ) : (
+                    "This connection cannot change keyboard shortcuts."
+                  )}
                 </p>
               </div>
               <div className="space-y-1.5">

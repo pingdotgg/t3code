@@ -1,5 +1,7 @@
 import { useAuth } from "@clerk/react";
-import { AuthAdministrativeScopes, AuthRelayWriteScope } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { AuthRelayWriteScope, type AuthSessionState } from "@t3tools/contracts";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { CheckIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -10,10 +12,14 @@ import {
 } from "~/cloud/connectOnboarding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
-import { usePrimarySessionState } from "~/environments/primary";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { cn } from "~/lib/utils";
-import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
+import {
+  useEnvironments,
+  usePrimaryEnvironment,
+  usePrimaryEnvironmentId,
+} from "~/state/environments";
+import { environmentSession, readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { CloudEnvironmentConnectRows } from "./CloudEnvironmentConnectList";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -46,6 +52,8 @@ export function ConnectOnboardingDialog() {
 
 type OnboardingStep = "publish" | "devices";
 
+const EMPTY_SESSION_STATE_ATOM = Atom.make(AsyncResult.initial<AuthSessionState>());
+
 function ConfiguredConnectOnboardingDialog() {
   // Mirrors ManagedRelayAuthProvider: a pending Clerk session must not read as
   // signed-out, or its later activation would look like a fresh sign-in.
@@ -56,22 +64,20 @@ function ConfiguredConnectOnboardingDialog() {
     ConnectOnboardingOptOutSchema,
   );
 
-  const desktopBridge = window.desktopBridge;
-  const primarySessionState = usePrimarySessionState();
-  const currentSessionScopes = desktopBridge
-    ? AuthAdministrativeScopes
-    : primarySessionState.data?.authenticated
-      ? (primarySessionState.data.scopes ?? null)
-      : null;
-  const canManageRelay = currentSessionScopes?.includes(AuthRelayWriteScope) ?? false;
+  const { isReady: environmentsReady } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const primarySessionState = useAtomValue(
+    primaryEnvironmentId === null
+      ? EMPTY_SESSION_STATE_ATOM
+      : environmentSession.sessionStateAtom(primaryEnvironmentId),
+  );
+  const canManageRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope);
   // The publish step is only offered when we know the answer; opening the
   // wizard before the session state resolves would let the step set change
   // mid-flight. A failed session read still opens the wizard — it just means
   // no publish step.
   const sessionScopesKnown =
-    Boolean(desktopBridge) ||
-    primarySessionState.data !== null ||
-    primarySessionState.error !== null;
+    primaryEnvironmentId === null ? environmentsReady : primarySessionState._tag !== "Initial";
 
   const controller = useCloudLinkController();
   const showPublishStep = canManageRelay && controller.linkState.target !== null;
@@ -88,6 +94,12 @@ function ConfiguredConnectOnboardingDialog() {
   const [isApplying, setIsApplying] = useState(false);
   const prefilledFromLinkStateRef = useRef(false);
   const observedAccountRef = useRef<string | null | undefined>(undefined);
+
+  useEffect(() => {
+    if (step === "publish" && sessionScopesKnown && !showPublishStep && !isApplying) {
+      setStep("devices");
+    }
+  }, [isApplying, sessionScopesKnown, showPublishStep, step]);
 
   const optOutAccounts = optOutState.optOutAccounts;
 
@@ -185,6 +197,14 @@ function ConfiguredConnectOnboardingDialog() {
   };
 
   const applyPublishSelection = async () => {
+    if (isApplying) return;
+    if (
+      primaryEnvironmentId === null ||
+      !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
+    ) {
+      setStep("devices");
+      return;
+    }
     // The wizard only ever enables — with both toggles off there is nothing to
     // apply, and an existing link must not be torn down from onboarding.
     if (!exposeEnvironment && !publishAgentActivity) {
@@ -229,7 +249,15 @@ function ConfiguredConnectOnboardingDialog() {
               steps={steps}
               currentStep={step}
               disabled={isApplying}
-              onStepSelect={setStep}
+              onStepSelect={(nextStep) => {
+                if (
+                  nextStep === "publish" &&
+                  (primaryEnvironmentId === null ||
+                    !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope))
+                )
+                  return;
+                setStep(nextStep);
+              }}
             />
           ) : null}
         </DialogHeader>
@@ -238,10 +266,22 @@ function ConfiguredConnectOnboardingDialog() {
             <PublishStep
               exposeEnvironment={exposeEnvironment}
               publishAgentActivity={publishAgentActivity}
-              disabled={isApplying}
+              disabled={isApplying || !canManageRelay}
               operationError={controller.operationError}
-              onExposeEnvironmentChange={setExposeEnvironment}
-              onPublishAgentActivityChange={setPublishAgentActivity}
+              onExposeEnvironmentChange={(enabled) => {
+                if (
+                  primaryEnvironmentId !== null &&
+                  readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
+                )
+                  setExposeEnvironment(enabled);
+              }}
+              onPublishAgentActivityChange={(enabled) => {
+                if (
+                  primaryEnvironmentId !== null &&
+                  readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
+                )
+                  setPublishAgentActivity(enabled);
+              }}
             />
           ) : (
             <DevicesStep />
@@ -263,7 +303,9 @@ function ConfiguredConnectOnboardingDialog() {
                 </Button>
                 <Button
                   disabled={
-                    isApplying || (controller.linkState.isPending && linkStateData === null)
+                    isApplying ||
+                    !canManageRelay ||
+                    (controller.linkState.isPending && linkStateData === null)
                   }
                   onClick={() => void applyPublishSelection()}
                 >
