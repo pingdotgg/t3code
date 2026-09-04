@@ -8,10 +8,17 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 
-export function visibleTopLevelThreads<T extends { readonly sideChat?: boolean }>(
-  threads: ReadonlyArray<T>,
-): T[] {
-  return threads.filter((thread) => thread.sideChat !== true);
+export function visibleTopLevelThreads<
+  T extends Pick<EnvironmentThreadShell, "fork" | "id" | "sideChat">,
+>(threads: ReadonlyArray<T>, knownThreadIds: ReadonlySet<ThreadId>): T[] {
+  return threads.filter((thread) => {
+    const sourceThreadId = thread.fork?.sourceThreadId;
+    return (
+      thread.sideChat !== true ||
+      sourceThreadId === undefined ||
+      !knownThreadIds.has(sourceThreadId)
+    );
+  });
 }
 
 export function resolveMobileThreadForkCapability(

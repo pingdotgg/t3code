@@ -80,6 +80,7 @@ export function sortHomeProjectScopes(input: {
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   readonly projectSortOrder: HomeProjectSortOrder;
 }): ReadonlyArray<HomeProjectScope> {
+  const knownThreadIds = new Set(input.threads.map((thread) => thread.id));
   const scopeKeyByProjectRef = new Map(
     input.scopes.flatMap((scope) =>
       scope.projectRefs.map(
@@ -97,7 +98,7 @@ export function sortHomeProjectScopes(input: {
     );
   };
 
-  for (const thread of visibleTopLevelThreads(input.threads)) {
+  for (const thread of visibleTopLevelThreads(input.threads, knownThreadIds)) {
     if (thread.archivedAt !== null) continue;
     recordActivity(
       scopeKeyByProjectRef.get(scopedProjectKey(thread.environmentId, thread.projectId)),
@@ -215,6 +216,7 @@ export function buildHomeThreadGroups(input: {
   readonly now?: number;
 }): ReadonlyArray<HomeThreadGroup> {
   const now = input.now ?? Date.now();
+  const knownThreadIds = new Set(input.threads.map((thread) => thread.id));
   const groups = new Map<string, MutableHomeThreadGroup>();
   const groupTitleByKey = new Map<string, string>();
   const groupKeyByProjectKey = new Map<string, string>();
@@ -274,7 +276,7 @@ export function buildHomeThreadGroups(input: {
     groups.get(groupKey)?.pendingTasks.push(pendingTask);
   }
 
-  for (const thread of visibleTopLevelThreads(input.threads)) {
+  for (const thread of visibleTopLevelThreads(input.threads, knownThreadIds)) {
     if (thread.archivedAt !== null) {
       continue;
     }

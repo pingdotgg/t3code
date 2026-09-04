@@ -282,21 +282,47 @@ describe("sortThreadsForListV2", () => {
 });
 
 describe("buildThreadListV2Items", () => {
-  it("does not place side chats in the v2 list", () => {
+  it("hides attached side chats and keeps orphaned side chats in the v2 list", () => {
     const main = makeThread({ id: ThreadId.make("main"), title: "Main" });
     const sideChat = makeThread({
       id: ThreadId.make("side"),
       title: "Side chat",
       sideChat: true,
+      fork: {
+        sourceThreadId: main.id,
+        sourceTurnId: null,
+        sourceMessageId: null,
+        forkedAt: "2026-06-01T00:01:00.000Z",
+      },
+    });
+    const orphanedSideChat = makeThread({
+      id: ThreadId.make("orphan"),
+      title: "Orphaned side chat",
+      sideChat: true,
+      fork: {
+        sourceThreadId: ThreadId.make("missing-parent"),
+        sourceTurnId: null,
+        sourceMessageId: null,
+        forkedAt: "2026-06-01T00:01:00.000Z",
+      },
+      createdAt: "2026-06-02T00:00:00.000Z",
     });
     const layout = buildThreadListV2Items({
-      threads: [main, sideChat],
+      threads: [main, sideChat, orphanedSideChat],
       environmentId: null,
       searchQuery: "",
       now: NOW,
     });
 
-    expect(layout.items.map((item) => item.thread.id)).toEqual([main.id]);
+    expect(layout.items.map((item) => item.thread.id)).toEqual([orphanedSideChat.id, main.id]);
+
+    const searchLayout = buildThreadListV2Items({
+      threads: [main, sideChat, orphanedSideChat],
+      environmentId: null,
+      searchQuery: "orphaned",
+      now: NOW,
+    });
+    expect(searchLayout.items.map((item) => item.thread.id)).toEqual([orphanedSideChat.id]);
   });
 
   it("places a persisted settled thread in the settled shelf", () => {

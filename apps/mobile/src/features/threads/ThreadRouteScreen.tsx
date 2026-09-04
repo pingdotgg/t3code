@@ -858,6 +858,7 @@ function ThreadRouteContent(
       label: "",
       accessibilityLabel: "Thread actions",
       icon: { type: "sfSymbol", name: "ellipsis" },
+      identifier: "thread-right-actions",
       menu: { title: "Thread", items },
     });
   }, [
