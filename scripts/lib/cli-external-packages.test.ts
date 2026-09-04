@@ -153,21 +153,26 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
   const isRuntimeExternal = (name: string) =>
     CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => name.startsWith(prefix));
 
-  it.effect("finds the runtime-external packages on disk", () =>
-    Effect.gen(function* () {
-      const installed = yield* readInstalledPackages;
-      const found = [...installed.keys()].filter(isRuntimeExternal);
+  // A cold walk of the pnpm store can exceed the root timeout when the Windows
+  // lane runs four filesystem-heavy workspace suites at once.
+  it.effect(
+    "finds the runtime-external packages on disk",
+    () =>
+      Effect.gen(function* () {
+        const installed = yield* readInstalledPackages;
+        const found = [...installed.keys()].filter(isRuntimeExternal);
 
-      // Without this the closure check below can pass vacuously: if nothing is
-      // read, nothing is checked. These are the packages whose closure actually
-      // broke WSL, so require them by name.
-      for (const required of ["node-pty", "node-gyp-build-optional-packages", "detect-libc"]) {
-        assert.ok(
-          found.includes(required),
-          `expected ${required} in the pnpm store; the closure check is only meaningful if it can read these (found ${found.length})`,
-        );
-      }
-    }),
+        // Without this the closure check below can pass vacuously: if nothing is
+        // read, nothing is checked. These are the packages whose closure actually
+        // broke WSL, so require them by name.
+        for (const required of ["node-pty", "node-gyp-build-optional-packages", "detect-libc"]) {
+          assert.ok(
+            found.includes(required),
+            `expected ${required} in the pnpm store; the closure check is only meaningful if it can read these (found ${found.length})`,
+          );
+        }
+      }),
+    120_000,
   );
 
   it.effect("keeps every runtime dependency of an external package external too", () =>

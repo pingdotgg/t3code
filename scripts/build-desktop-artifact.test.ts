@@ -1040,6 +1040,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  // The fixture's t3code.exe is a text placeholder, not an executable. These
+  // cases reach the native-load probe, so pin only that host-platform check to
+  // Linux. Host-native paths and the real Windows tar/archive checks still run.
   it.effect("validates every ASAR-unpacked native in the packaged Windows payload", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1068,7 +1071,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.isBelow(result.fileCount, WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT);
         assert.deepStrictEqual(secondAsar, firstAsar);
       }),
-    ),
+    ).pipe(Effect.provideService(HostProcessPlatform, "linux")),
   );
 
   it.effect("validates the emitted WSL archive and its SHA-256 sidecar", () =>
@@ -1087,7 +1090,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
         assert.equal(result.packagedAppDir, fixture.packagedAppDir);
       }),
-    ),
+    ).pipe(Effect.provideService(HostProcessPlatform, "linux")),
   );
 
   it.effect("rejects a Windows package missing its expected WSL runtime", () =>
@@ -1235,11 +1238,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         command.args.some((arg) => arg.endsWith("build-browser-secret.mjs")),
       );
       assert.isDefined(helper);
+      const path = yield* Path.Path;
       assert.deepStrictEqual(helper.args.slice(-4), [
         "--arch",
         "x64",
         "--output",
-        "/stage/resources/browser-secret/t3-browser-secret",
+        path.join("/stage/resources", "browser-secret", "t3-browser-secret"),
       ]);
     }).pipe(
       Effect.provide(
@@ -1461,7 +1465,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.instanceOf(error, BundleNotSelfContainedError);
         assert.include(error.output, "t3code-deliberately-missing-package");
       }),
-    ),
+    ).pipe(Effect.provideService(HostProcessPlatform, "linux")),
   );
 
   it.effect("preserves both Linux icon resize failures with structural context", () => {
@@ -1701,7 +1705,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(config.appId, "com.t3tools.t3code");
       assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
       assert.equal(mac.provisioningProfile, "/tmp/t3code.provisionprofile");
-      assert.match(String(mac.sign), /\/scripts\/sign-macos\.ts$/);
+      assert.match(String(mac.sign), /[\\/]scripts[\\/]sign-macos\.ts$/);
       assert.deepStrictEqual(mac.protocols, [
         { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
       ]);
