@@ -1,5 +1,5 @@
 import { AuthFilesystemReadScope } from "@t3tools/contracts";
-import { useEnvironmentScope } from "../../state/session";
+import { environmentSession } from "../../state/session";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { SymbolView } from "../../components/AppSymbol";
 import { MaterialScreenContent } from "../../components/MaterialScreenContent";
@@ -38,7 +38,14 @@ export function ThreadFileNavigatorPane(props: {
   const foregroundColor = theme["--color-foreground"];
   const sheetColor = theme["--color-sheet"];
   const headerScrollEdgeEffects = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
-  const canReadFiles = useEnvironmentScope(props.environmentId, AuthFilesystemReadScope);
+  const fileAccessSession = useEnvironmentQuery(
+    environmentSession.sessionStateAtom(props.environmentId),
+  );
+  const fileAccessPending = fileAccessSession.data === null && fileAccessSession.error === null;
+  const canReadFiles =
+    fileAccessSession.error === null &&
+    fileAccessSession.data?.authenticated === true &&
+    fileAccessSession.data.scopes?.includes(AuthFilesystemReadScope) === true;
   const entriesQuery = useFileTreeEntries({
     environmentId: props.environmentId,
     cwd: canReadFiles ? props.cwd : null,
@@ -78,8 +85,14 @@ export function ThreadFileNavigatorPane(props: {
       entries={entriesQuery.entries}
       loadedDirectories={entriesQuery.loadedDirectories}
       onLoadDirectory={entriesQuery.loadDirectory}
-      error={canReadFiles ? entriesQuery.error : "This connection cannot read host files."}
-      isPending={entriesQuery.isPending}
+      error={
+        canReadFiles
+          ? entriesQuery.error
+          : fileAccessPending
+            ? null
+            : (fileAccessSession.error ?? "This connection cannot read host files.")
+      }
+      isPending={fileAccessPending || entriesQuery.isPending}
       searchQuery={searchQuery}
       searchTruncated={entriesQuery.searchTruncated}
       selectedPath={props.selectedPath}
