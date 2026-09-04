@@ -211,7 +211,9 @@ describe("customModelEditor.logic", () => {
   it.each(Object.entries(DESCRIPTOR_PRESETS_BY_KIND))(
     "offers saveable presets for %s",
     (_driver, presets) => {
-      expect(validateDraft(draft({ descriptors: presets.map(descriptorFromPreset) }))).toBeNull();
+      expect(
+        validateDraft(draft({ descriptors: (presets ?? []).map(descriptorFromPreset) })),
+      ).toBeNull();
     },
   );
 
