@@ -1,5 +1,3 @@
-import { AuthFilesystemReadScope } from "@t3tools/contracts";
-import { useEnvironmentScope, readEnvironmentScope } from "~/state/session";
 "use client";
 
 import {
@@ -32,6 +30,7 @@ import {
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
+  AuthFilesystemReadScope,
   type DesktopWslState,
   type EnvironmentId,
   type EnvironmentMachineKind,
@@ -995,7 +994,8 @@ function OpenCommandPaletteDialog(props: {
     isExplicitRelativeProjectPath(query.trim()) && currentProjectCwdForBrowse === null;
   const canBrowseFiles = useEnvironmentScope(browseEnvironmentId, AuthFilesystemReadScope);
   const browseQuery = useEnvironmentQuery(
-    canBrowseFiles && isBrowsing &&
+    canBrowseFiles &&
+      isBrowsing &&
       browsePath.directoryPath.length > 0 &&
       browseEnvironmentId !== null &&
       !relativePathNeedsActiveProject
@@ -1036,7 +1036,10 @@ function OpenCommandPaletteDialog(props: {
       const environment = environments.find(
         (candidate) => candidate.environmentId === environmentId,
       );
-      if (!readEnvironmentScope(environmentId, AuthFilesystemReadScope) || !canPreloadBrowsePath(environment?.connection.phase)) {
+      if (
+        !readEnvironmentScope(environmentId, AuthFilesystemReadScope) ||
+        !canPreloadBrowsePath(environment?.connection.phase)
+      ) {
         return;
       }
 

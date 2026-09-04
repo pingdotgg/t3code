@@ -1,5 +1,3 @@
-import { AuthFilesystemReadScope } from "@t3tools/contracts";
-import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import {
   addProjectRemoteSourceLabel,
   addProjectRemoteSourcePathHint,
@@ -36,6 +34,7 @@ import {
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
+  AuthFilesystemReadScope,
   CommandId,
   type EnvironmentId,
   type EnvironmentMachineKind,
@@ -303,7 +302,11 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
       setIsBrowseNavigating(true);
       const committed = await browseNavigation.run(
         async () => {
-          if (environment && readEnvironmentScope(environment.environmentId, AuthFilesystemReadScope) && canPreloadBrowsePath(environmentRuntime?.connectionState)) {
+          if (
+            environment &&
+            readEnvironmentScope(environment.environmentId, AuthFilesystemReadScope) &&
+            canPreloadBrowsePath(environmentRuntime?.connectionState)
+          ) {
             await loadBrowsePath({
               environmentId: environment.environmentId,
               input: { partialPath: selectedDirectoryPath },
@@ -787,7 +790,10 @@ function FolderBrowser(props: {
     () => (browsePath.directoryPath.length > 0 ? { partialPath: browsePath.directoryPath } : null),
     [browsePath.directoryPath],
   );
-  const canReadFiles = useEnvironmentScope(props.environment.environmentId, AuthFilesystemReadScope);
+  const canReadFiles = useEnvironmentScope(
+    props.environment.environmentId,
+    AuthFilesystemReadScope,
+  );
   const browseState = useEnvironmentQuery(
     !canReadFiles || browseInput === null
       ? null
