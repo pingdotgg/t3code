@@ -1517,6 +1517,51 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("allows worktree removal to run longer than the default command timeout", () =>
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const removalStarted = yield* Deferred.make<void>();
+        const delayedRemovalSpawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (
+              ChildProcess.isStandardCommand(command) &&
+              command.args[0] === "worktree" &&
+              command.args[1] === "remove"
+            ) {
+              yield* Deferred.succeed(removalStarted, undefined);
+              yield* Effect.sleep("31 seconds");
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, delayedRemovalSpawner),
+          Effect.provide(ServerConfigLayer),
+        );
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "slow-removal");
+
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/slow-removal",
+        });
+
+        const removal = yield* driver
+          .removeWorktree({ cwd, path: worktreePath, force: true })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(removalStarted);
+        yield* TestClock.adjust("31 seconds");
+        yield* Fiber.join(removal);
+
+        assert.equal(yield* fileSystem.exists(worktreePath), false);
+      }),
+    );
+
     it.effect("removes the same worktree path twice without failing", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
