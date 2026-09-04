@@ -112,7 +112,7 @@ import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import {
-  useAllEnvironmentShellsBootstrapped,
+  useAllEnvironmentProjectSnapshotsReady,
   useProjects,
   useThreadShells,
 } from "../state/entities";
@@ -2171,15 +2171,14 @@ export default function Sidebar() {
     [scopedProjectGroup],
   );
   // A persisted scope whose project is gone falls back to all projects, but
-  // only after every catalog environment has delivered its project snapshot:
-  // environments populate independently, so a partial list must not clear a
-  // scope whose project lives in an environment that is still loading.
-  const allShellsBootstrapped = useAllEnvironmentShellsBootstrapped();
+  // only after every catalog environment has a live project snapshot. Cached
+  // or disconnected environments cannot establish that the project is gone.
+  const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
   useEffect(() => {
-    if (projectScopeKey !== null && allShellsBootstrapped && scopedProjectGroup === null) {
+    if (projectScopeKey !== null && allProjectSnapshotsReady && scopedProjectGroup === null) {
       setProjectScopeKey(null);
     }
-  }, [allShellsBootstrapped, projectScopeKey, scopedProjectGroup, setProjectScopeKey]);
+  }, [allProjectSnapshotsReady, projectScopeKey, scopedProjectGroup, setProjectScopeKey]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from

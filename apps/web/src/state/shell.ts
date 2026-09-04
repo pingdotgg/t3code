@@ -7,7 +7,10 @@ import {
   createEnvironmentShellSummaryAtom,
   createEnvironmentSnapshotAtom,
   createShellEnvironmentAtoms,
+  type EnvironmentShellState,
 } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentCatalogState } from "@t3tools/client-runtime/state/connections";
+import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -46,3 +49,25 @@ export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
   }
   return true;
 }).pipe(Atom.withLabel("web-all-environment-shells-bootstrapped"));
+
+/** Cached or missing snapshots cannot establish that a saved project no longer exists. */
+export function createAllEnvironmentProjectSnapshotsReadyAtom(input: {
+  readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
+  readonly shellStateValueAtom: (environmentId: EnvironmentId) => Atom.Atom<EnvironmentShellState>;
+}) {
+  return Atom.make((get) => {
+    const catalog = get(input.catalogValueAtom);
+    if (!catalog.isReady) return false;
+    for (const environmentId of catalog.entries.keys()) {
+      const shell = get(input.shellStateValueAtom(environmentId));
+      if (shell.status !== "live" || Option.isNone(shell.snapshot)) return false;
+    }
+    return true;
+  }).pipe(Atom.withLabel("web-all-environment-project-snapshots-ready"));
+}
+
+export const allEnvironmentProjectSnapshotsReadyAtom =
+  createAllEnvironmentProjectSnapshotsReadyAtom({
+    catalogValueAtom: environmentCatalog.catalogValueAtom,
+    shellStateValueAtom: environmentShell.stateValueAtom,
+  });
