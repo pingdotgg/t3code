@@ -34,6 +34,33 @@ const decodeAutomationError = Schema.decodeUnknownSync(PreviewAutomationError);
 const decodeAutomationStatus = Schema.decodeUnknownSync(PreviewAutomationStatus);
 
 describe("PreviewAutomationOpenInput", () => {
+  it.each(["default", "incognito", "profile-feature-a"])(
+    "accepts profile %s for a new tab",
+    (profileId) => {
+      expect(decodeOpenInput({ profileId })).toEqual({ profileId });
+      expect(decodeOpenInput({ profileId, reuseExistingTab: false })).toEqual({
+        profileId,
+        reuseExistingTab: false,
+      });
+    },
+  );
+
+  it("rejects profile selection when reusing a tab", () => {
+    expect(() => decodeOpenInput({ profileId: "incognito", tabId: "tab-app" })).toThrow(
+      "profileId opens a new tab",
+    );
+    expect(() => decodeOpenInput({ profileId: "incognito", reuseExistingTab: true })).toThrow(
+      "profileId opens a new tab",
+    );
+  });
+
+  it.each(["", "profile\u0000other", "x".repeat(65)])(
+    "rejects invalid profile ID %j",
+    (profileId) => {
+      expect(() => decodeOpenInput({ profileId })).toThrow();
+    },
+  );
+
   it("accepts the inline preview visibility flag", () => {
     expect(decodeOpenInput({ open: false })).toEqual({ open: false });
   });

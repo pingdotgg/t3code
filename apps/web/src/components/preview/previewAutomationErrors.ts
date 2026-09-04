@@ -1,4 +1,5 @@
 import {
+  BrowserProfileId,
   EnvironmentId,
   type PreviewAutomationHost,
   PreviewAutomationOperation,
@@ -113,6 +114,19 @@ export class PreviewAutomationRecordingNotActiveError extends Schema.TaggedError
   }
 }
 
+export class PreviewAutomationProfileNotFoundError extends Schema.TaggedErrorClass<PreviewAutomationProfileNotFoundError>()(
+  "PreviewAutomationProfileNotFoundError",
+  { profileId: BrowserProfileId },
+) {
+  get responseTag() {
+    return "PreviewAutomationExecutionError" as const;
+  }
+
+  override get message(): string {
+    return `Browser profile ${this.profileId} does not exist on this desktop. Choose an existing profile from Settings → Integrations → Browser profiles.`;
+  }
+}
+
 export class PreviewAutomationTargetNotEditableHostError extends Schema.TaggedErrorClass<PreviewAutomationTargetNotEditableHostError>()(
   "PreviewAutomationTargetNotEditableHostError",
   {
@@ -206,6 +220,7 @@ export class PreviewAutomationOperationError extends Schema.TaggedErrorClass<Pre
 }
 
 export const PreviewAutomationHostError = Schema.Union([
+  PreviewAutomationProfileNotFoundError,
   PreviewAutomationOverlayTimeoutError,
   PreviewAutomationNavigationTimeoutError,
   PreviewAutomationViewportTimeoutError,

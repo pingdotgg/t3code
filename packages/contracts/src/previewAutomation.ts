@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 
 import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { BrowserProfileId } from "./browserProfile.ts";
 import {
   PREVIEW_VIEWPORT_MAX_AREA,
   PreviewRenderedViewportSize,
@@ -70,6 +71,7 @@ export const PreviewAutomationStatus = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   title: Schema.NullOr(Schema.String),
   loading: Schema.Boolean,
+  profileId: Schema.optional(BrowserProfileId),
   /** Optional for compatibility with desktop hosts predating viewport sizing. */
   viewportSetting: Schema.optional(PreviewViewportSetting),
   /** Measured guest-page viewport in CSS pixels when a webview is ready. */
@@ -79,6 +81,10 @@ export type PreviewAutomationStatus = typeof PreviewAutomationStatus.Type;
 
 export const PreviewAutomationOpenInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
+  profileId: Schema.optional(BrowserProfileId).annotate({
+    description:
+      "Existing browser profile ID, including default or incognito. Opens a new tab in that profile; cannot be combined with tabId or reuseExistingTab=true. Profiles belong to the desktop running the preview. A new tab does not clear the profile's cookies.",
+  }),
   url: Schema.optional(BoundedUrl).annotate({
     description: `Optional initial page URL. ${URL_GUIDANCE} Omit to open a blank tab.`,
   }),
@@ -97,7 +103,7 @@ export const PreviewAutomationOpenInput = Schema.Struct({
   reuseExistingTab: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "Reuse tabId when supplied, otherwise this agent session's current tab. Defaults to true; set false to create a new tab.",
+        "Reuse tabId when supplied, otherwise this agent session's current tab. Defaults to true unless profileId is supplied; set false to create a new tab.",
     }),
   ),
 })
@@ -106,6 +112,12 @@ export const PreviewAutomationOpenInput = Schema.Struct({
       (input) =>
         !(input.tabId !== undefined && input.reuseExistingTab === false) ||
         "tabId cannot be combined with reuseExistingTab=false.",
+    ),
+    Schema.makeFilter(
+      (input) =>
+        input.profileId === undefined ||
+        (input.tabId === undefined && input.reuseExistingTab !== true) ||
+        "profileId opens a new tab and cannot be combined with tabId or reuseExistingTab=true.",
     ),
   )
   .annotate({
@@ -581,6 +593,7 @@ export const PreviewAutomationHost = Schema.Struct({
    * a newer server safely coexist with an older desktop during rollout.
    */
   supportedOperations: Schema.optional(Schema.Array(PreviewAutomationOperation)),
+  supportsOpenProfile: Schema.optional(Schema.Boolean),
 });
 export type PreviewAutomationHost = typeof PreviewAutomationHost.Type;
 
