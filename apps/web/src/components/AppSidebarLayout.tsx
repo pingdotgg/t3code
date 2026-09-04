@@ -216,7 +216,6 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     <SidebarProvider
       className="h-dvh! min-h-0!"
       data-panel-animations={panelAnimationsActive ? "true" : "false"}
-      defaultOpen
       style={sidebarProviderStyle}
     >
       <ProjectProjectionRetention />
