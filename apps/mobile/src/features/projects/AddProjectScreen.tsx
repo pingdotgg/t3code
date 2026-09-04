@@ -936,7 +936,13 @@ export function AddProjectDestinationScreen(props: {
   const [error, setError] = useState<string | null>(null);
 
   const submitPath = useCallback(async () => {
-    if (!canWriteSourceControl || !environment || !remoteUrl || isBrowseNavigating || isSubmitting) {
+    if (
+      !canWriteSourceControl ||
+      !environment ||
+      !remoteUrl ||
+      isBrowseNavigating ||
+      isSubmitting
+    ) {
       return;
     }
     setError(null);
