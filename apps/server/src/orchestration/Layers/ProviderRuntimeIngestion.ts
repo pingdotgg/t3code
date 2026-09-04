@@ -1656,6 +1656,8 @@ const make = Effect.gen(function* () {
         event.type === "turn.started" ||
         event.type === "turn.completed"
       ) {
+        const unexpectedSessionExit =
+          event.type === "session.exited" && event.payload.exitKind === "error";
         const status = (() => {
           switch (event.type) {
             case "session.state.changed": {
@@ -1677,6 +1679,7 @@ const make = Effect.gen(function* () {
               return activeTurnId !== null ? "running" : hasPendingTurnStart ? "starting" : "ready";
           }
         })();
+        const lifecycleStatus = unexpectedSessionExit ? "error" : status;
         const nextActiveTurnId =
           event.type === "turn.started"
             ? (eventTurnId ?? null)
@@ -1689,14 +1692,18 @@ const make = Effect.gen(function* () {
                 ? null
                 : activeTurnId;
         const lastError =
-          event.type === "session.state.changed" && event.payload.state === "error"
-            ? (event.payload.reason ?? thread.session?.lastError ?? "Provider session error")
-            : event.type === "turn.completed" &&
-                normalizeRuntimeTurnState(event.payload.state) === "failed"
-              ? (event.payload.errorMessage ?? thread.session?.lastError ?? "Turn failed")
-              : status === "ready"
-                ? null
-                : (thread.session?.lastError ?? null);
+          unexpectedSessionExit
+            ? (event.payload.reason ??
+              thread.session?.lastError ??
+              "Provider session exited unexpectedly")
+            : event.type === "session.state.changed" && event.payload.state === "error"
+              ? (event.payload.reason ?? thread.session?.lastError ?? "Provider session error")
+              : event.type === "turn.completed" &&
+                  normalizeRuntimeTurnState(event.payload.state) === "failed"
+                ? (event.payload.errorMessage ?? thread.session?.lastError ?? "Turn failed")
+                : lifecycleStatus === "ready"
+                  ? null
+                  : (thread.session?.lastError ?? null);
 
         if (shouldApplyThreadLifecycle) {
           if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
@@ -1725,7 +1732,7 @@ const make = Effect.gen(function* () {
             threadId: thread.id,
             session: {
               threadId: thread.id,
-              status,
+              status: lifecycleStatus,
               providerName: event.provider,
               ...(event.providerInstanceId !== undefined
                 ? { providerInstanceId: event.providerInstanceId }
