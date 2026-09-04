@@ -23,6 +23,8 @@ import {
   type TerminalClearInput,
   type TerminalCloseInput,
   type TerminalEvent,
+  type TerminalInspectSubprocessesInput,
+  type TerminalInspectSubprocessesResult,
   type TerminalMetadataStreamEvent,
   type TerminalOpenInput,
   type TerminalResizeInput,
@@ -169,6 +171,16 @@ export class TerminalManager extends Context.Service<
     readonly restart: (
       input: TerminalRestartInput,
     ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
+
+    /**
+     * Read subprocess activity from a fresh host process snapshot.
+     *
+     * A `null` activity result is intentionally fail-safe: callers must not
+     * treat an inspection failure as proof that a terminal is idle.
+     */
+    readonly inspectSubprocesses: (
+      input: TerminalInspectSubprocessesInput,
+    ) => Effect.Effect<TerminalInspectSubprocessesResult, TerminalError>;
 
     /**
      * Close an active terminal session.
@@ -2546,6 +2558,70 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
   };
 
+  const inspectSubprocesses: TerminalManager["Service"]["inspectSubprocesses"] = (input) =>
+    withThreadLock(
+      input.threadId,
+      Effect.gen(function* () {
+        const sessions = yield* Effect.forEach(input.terminalIds, (terminalId) =>
+          requireSession(input.threadId, terminalId),
+        );
+        const hasRunningSession = sessions.some(
+          (session) => session.status === "running" && session.pid !== null,
+        );
+        const inspectorOption = hasRunningSession
+          ? yield* acquireSubprocessInspector.pipe(
+              Effect.map(Option.some),
+              Effect.catch((reason) =>
+                Effect.logWarning(
+                  "failed to snapshot processes for on-demand terminal subprocess inspection",
+                  { reason },
+                ).pipe(Effect.as(Option.none<TerminalSubprocessInspector>())),
+              ),
+            )
+          : Option.none<TerminalSubprocessInspector>();
+        const terminals: Array<TerminalInspectSubprocessesResult["terminals"][number]> = [];
+
+        for (const session of sessions) {
+          if (session.status !== "running" || session.pid === null) {
+            terminals.push({
+              terminalId: session.terminalId,
+              hasRunningSubprocess: false,
+            });
+            continue;
+          }
+          if (Option.isNone(inspectorOption)) {
+            terminals.push({
+              terminalId: session.terminalId,
+              hasRunningSubprocess: null,
+            });
+            continue;
+          }
+
+          const terminalPid = session.pid;
+          const inspected = yield* inspectorOption.value(terminalPid).pipe(
+            Effect.map(Option.some),
+            Effect.catch((reason) =>
+              Effect.logWarning("failed to inspect terminal subprocess activity on demand", {
+                threadId: session.threadId,
+                terminalId: session.terminalId,
+                terminalPid,
+                reason,
+              }).pipe(Effect.as(Option.none<TerminalSubprocessInspectResult>())),
+            ),
+          );
+          terminals.push({
+            terminalId: session.terminalId,
+            hasRunningSubprocess: Option.match(inspected, {
+              onNone: () => null,
+              onSome: (activity) => activity.hasRunningSubprocess,
+            }),
+          });
+        }
+
+        return { terminals };
+      }),
+    );
+
   const write: TerminalManager["Service"]["write"] = Effect.fn("terminal.write")(function* (input) {
     const terminalId = input.terminalId;
     const session = yield* requireSession(input.threadId, terminalId);
@@ -2719,6 +2795,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     resize,
     clear,
     restart,
+    inspectSubprocesses,
     close,
     subscribe,
     subscribeMetadata,

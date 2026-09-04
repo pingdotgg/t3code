@@ -72,7 +72,7 @@ import {
   type ThreadTerminalGroup,
 } from "../types";
 import { readLocalApi } from "~/localApi";
-import { confirmTerminalClose } from "~/lib/terminalCloseConfirm";
+import { confirmInspectedTerminalClose } from "~/lib/terminalCloseConfirm";
 import { useClientSettings } from "../hooks/useSettings";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useAttachedTerminalSession } from "../state/terminalSessions";
@@ -977,8 +977,6 @@ interface ThreadTerminalDrawerProps {
   keybindings: ResolvedKeybindingsConfig;
   /** Prefer server-provided tab titles when present (e.g. active subprocess name). */
   terminalLabelsById?: ReadonlyMap<string, string>;
-  /** Server-reported subprocess activity used to avoid prompting for idle terminals. */
-  terminalHasRunningSubprocessById?: ReadonlyMap<string, boolean>;
   /** Prefer per-session launch locations when the server already knows a terminal. */
   terminalLaunchLocationsById?: ReadonlyMap<string, TerminalLaunchLocation>;
 }
@@ -1039,10 +1037,13 @@ export default function ThreadTerminalDrawer({
   onAddTerminalContext,
   keybindings,
   terminalLabelsById,
-  terminalHasRunningSubprocessById,
   terminalLaunchLocationsById,
 }: ThreadTerminalDrawerProps) {
   const isPanel = mode === "panel";
+  const environmentId = threadRef.environmentId;
+  const inspectTerminalSubprocesses = useAtomCommand(terminalEnvironment.inspectSubprocesses, {
+    reportFailure: false,
+  });
   const [advancedTypography] = useLocalStorage(
     TYPOGRAPHY_ADVANCED_STORAGE_KEY,
     false,
@@ -1245,14 +1246,21 @@ export default function ThreadTerminalDrawer({
   }, [onNewTerminal]);
   const confirmCloseTerminal = useCallback(
     (terminalId: string) => {
-      const label = terminalLabelById.get(terminalId) ?? getTerminalLabel(terminalId);
-      void confirmTerminalClose([
-        { label, hasRunningSubprocess: terminalHasRunningSubprocessById?.get(terminalId) },
-      ]).then((confirmed) => {
+      void confirmInspectedTerminalClose({
+        terminalIds: [terminalId],
+        labelFor: (id) => terminalLabelById.get(id) ?? getTerminalLabel(id),
+        inspect: async (terminalIds) => {
+          const inspection = await inspectTerminalSubprocesses({
+            environmentId,
+            input: { threadId, terminalIds },
+          });
+          return inspection._tag === "Success" ? inspection.value.terminals : undefined;
+        },
+      }).then((confirmed) => {
         if (confirmed) onCloseTerminal(terminalId);
       });
     },
-    [onCloseTerminal, terminalHasRunningSubprocessById, terminalLabelById],
+    [environmentId, inspectTerminalSubprocesses, onCloseTerminal, terminalLabelById, threadId],
   );
 
   useEffect(() => {

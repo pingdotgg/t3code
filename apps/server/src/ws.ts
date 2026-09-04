@@ -2511,6 +2511,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.terminalRestart, terminalManager.restart(input), {
             "rpc.aggregate": "terminal",
           }),
+        [WS_METHODS.terminalInspectSubprocesses]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.terminalInspectSubprocesses,
+            terminalManager.inspectSubprocesses(input),
+            { "rpc.aggregate": "terminal" },
+          ),
         [WS_METHODS.terminalClose]: (input) =>
           observeRpcEffect(WS_METHODS.terminalClose, terminalManager.close(input), {
             "rpc.aggregate": "terminal",

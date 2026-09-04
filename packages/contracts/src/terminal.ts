@@ -90,6 +90,24 @@ export const TerminalCloseInput = Schema.Struct({
 });
 export type TerminalCloseInput = typeof TerminalCloseInput.Type;
 
+export const TerminalInspectSubprocessesInput = Schema.Struct({
+  ...TerminalThreadInput.fields,
+  terminalIds: Schema.Array(TerminalIdSchema).check(Schema.isNonEmpty()),
+});
+export type TerminalInspectSubprocessesInput = typeof TerminalInspectSubprocessesInput.Type;
+
+export const TerminalSubprocessActivity = Schema.Struct({
+  terminalId: TerminalIdSchema,
+  /** `null` means the server could not obtain a fresh process snapshot. */
+  hasRunningSubprocess: Schema.NullOr(Schema.Boolean),
+});
+export type TerminalSubprocessActivity = typeof TerminalSubprocessActivity.Type;
+
+export const TerminalInspectSubprocessesResult = Schema.Struct({
+  terminals: Schema.Array(TerminalSubprocessActivity),
+});
+export type TerminalInspectSubprocessesResult = typeof TerminalInspectSubprocessesResult.Type;
+
 export const TerminalSessionStatus = Schema.Literals(["starting", "running", "exited", "error"]);
 export type TerminalSessionStatus = typeof TerminalSessionStatus.Type;
 
