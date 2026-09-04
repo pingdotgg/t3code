@@ -427,7 +427,7 @@ describe("ProviderRuntimeIngestion", () => {
   it.each([
     { source: "the previous turn", turnId: asTurnId("opencode-stopped-turn") },
     { source: "an unspecified turn", turnId: undefined },
-  ])("keeps a new OpenCode turn running after an abort for $source", async (lateAbort) => {
+  ])("ignores late OpenCode aborts for $source across newer turns", async (lateAbort) => {
     const harness = await createHarness({
       serverSettings: { enableLegacyTokenStreaming: true },
     });
@@ -487,6 +487,78 @@ describe("ProviderRuntimeIngestion", () => {
         streaming: true,
       }),
     ]);
+
+    harness.emit({
+      ...base,
+      type: "turn.completed",
+      eventId: asEventId("opencode-next-completed"),
+      turnId: nextTurnId,
+      createdAt: "2026-01-01T00:00:02.000Z",
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    const pendingAt = "2026-01-01T00:00:03.000Z";
+    for (const hasPendingStart of [false, true]) {
+      if (hasPendingStart) {
+        await harness.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("opencode-pending-start"),
+          threadId,
+          message: {
+            messageId: asMessageId("opencode-pending-message"),
+            role: "user",
+            text: "Start another turn.",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: pendingAt,
+        });
+        harness.emit({
+          ...base,
+          type: "session.state.changed",
+          eventId: asEventId("opencode-pending-starting"),
+          createdAt: pendingAt,
+          payload: { state: "starting" },
+        });
+      }
+      harness.emit({
+        ...base,
+        type: "turn.aborted",
+        eventId: asEventId(`opencode-late-abort-after-completion-${hasPendingStart}`),
+        ...(lateAbort.turnId ? { turnId: lateAbort.turnId } : {}),
+        createdAt: "2026-01-01T00:00:04.000Z",
+        payload: { reason: "Interrupted by user." },
+      });
+      await harness.drain();
+
+      const completedThread = (await harness.readModel()).threads.find(
+        (entry) => entry.id === threadId,
+      );
+      expect(completedThread?.session).toMatchObject({
+        status: hasPendingStart ? "starting" : "ready",
+        activeTurnId: null,
+      });
+      expect(completedThread?.latestTurn).toMatchObject({ turnId: nextTurnId, state: "completed" });
+    }
+
+    harness.emit({
+      ...base,
+      type: "turn.started",
+      eventId: asEventId("opencode-pending-started"),
+      turnId: asTurnId("opencode-pending-turn"),
+      createdAt: "2026-01-01T00:00:05.000Z",
+    });
+    await harness.drain();
+    const startedThread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === threadId,
+    );
+    expect(startedThread?.latestTurn).toMatchObject({
+      turnId: asTurnId("opencode-pending-turn"),
+      state: "running",
+      requestedAt: pendingAt,
+    });
   });
 
   it("applies provider session.state.changed transitions directly", async () => {
