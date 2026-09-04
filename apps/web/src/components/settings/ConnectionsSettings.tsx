@@ -3,7 +3,6 @@ import {
   ChevronsLeftRightEllipsisIcon,
   PlusIcon,
   QrCodeIcon,
-  RefreshCwIcon,
   TerminalIcon,
   XIcon,
 } from "lucide-react";
@@ -2322,7 +2321,21 @@ export function ConnectionsSettings() {
     async (target: DesktopSshEnvironmentTarget) => {
       setIsAddingSavedBackend(true);
       setSavedBackendError(null);
-      const result = await connectSshEnvironment({ target, label: "" });
+      let targetWithEnvironment: DesktopSshEnvironmentTarget;
+      try {
+        const environmentVariables = parseSshEnvironmentVariables(
+          savedBackendSshEnvironmentVariables,
+        );
+        targetWithEnvironment = {
+          ...target,
+          ...(environmentVariables === undefined ? {} : { environmentVariables }),
+        };
+      } catch (error) {
+        setSavedBackendError(formatDesktopSshConnectionError(error));
+        setIsAddingSavedBackend(false);
+        return;
+      }
+      const result = await connectSshEnvironment({ target: targetWithEnvironment, label: "" });
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           setSavedBackendError(formatDesktopSshConnectionError(squashAtomCommandFailure(result)));
@@ -2346,7 +2359,7 @@ export function ConnectionsSettings() {
       });
       setIsAddingSavedBackend(false);
     },
-    [connectSshEnvironment],
+    [connectSshEnvironment, savedBackendSshEnvironmentVariables],
   );
 
   const handleAddSavedBackend = useCallback(async () => {
@@ -2615,68 +2628,6 @@ export function ConnectionsSettings() {
       description: `${editingSshEnvironment.label} is reconnecting with the updated local environment.`,
     });
   }, [editingSshEnvironment, editingSshEnvironmentVariables, updateSshEnvironmentVariables]);
-
-  const handleConnectSshHost = useCallback(
-    async (target: DesktopSshEnvironmentTarget, label?: string) => {
-      let targetWithEnvironment = target;
-      if (savedBackendMode === "ssh") {
-        try {
-          const environmentVariables = parseSshEnvironmentVariables(
-            savedBackendSshEnvironmentVariables,
-          );
-          targetWithEnvironment = {
-            ...target,
-            ...(environmentVariables === undefined ? {} : { environmentVariables }),
-          };
-        } catch (error) {
-          setSavedBackendError(formatDesktopSshConnectionError(error));
-          return;
-        }
-      }
-      setConnectingSshHostAlias(target.alias);
-      if (savedBackendMode === "ssh") {
-        setSavedBackendError(null);
-      } else {
-        setSshConnectionError(null);
-      }
-      const result = await connectSshEnvironment({
-        target: targetWithEnvironment,
-        ...(label === undefined ? {} : { label }),
-      });
-      setConnectingSshHostAlias(null);
-      if (result._tag === "Success") {
-        setSavedBackendSshHost("");
-        setSavedBackendSshUsername("");
-        setSavedBackendSshPort("");
-        setSavedBackendSshEnvironmentOpen(false);
-        setSavedBackendSshEnvironmentVariables([]);
-        setAddBackendDialogOpen(false);
-        toastManager.add({
-          type: "success",
-          title: savedDesktopSshEnvironmentsByAlias[target.alias]
-            ? "Environment reconnected"
-            : "Environment connected",
-          description: `${label?.trim() || target.alias} is ready over an SSH-managed tunnel.`,
-        });
-        return;
-      }
-      if (!isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        const message = formatDesktopSshConnectionError(error);
-        if (savedBackendMode === "ssh") {
-          setSavedBackendError(message);
-        } else {
-          setSshConnectionError(message);
-        }
-      }
-    },
-    [
-      connectSshEnvironment,
-      savedBackendMode,
-      savedBackendSshEnvironmentVariables,
-      savedDesktopSshEnvironmentsByAlias,
-    ],
-  );
 
   const visibleDesktopPairingLinks = desktopPairingLinks;
   const tailscaleHttpsEndpoint = useMemo(
