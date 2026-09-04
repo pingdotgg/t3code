@@ -22,6 +22,7 @@ export interface EditorDescriptor {
   readonly label: string;
   readonly choices: ReadonlyArray<EditorChoice>;
   readonly currentBooleanValue?: boolean | undefined;
+  readonly description?: string | undefined;
 }
 
 export interface CustomModelDraft {
@@ -156,6 +157,7 @@ export function descriptorToEditor(descriptor: ProviderOptionDescriptor): Editor
     type: descriptor.type,
     id: descriptor.id,
     label: descriptor.label,
+    ...(descriptor.description !== undefined ? { description: descriptor.description } : {}),
     ...(descriptor.type === "boolean" && descriptor.currentValue !== undefined
       ? { currentBooleanValue: descriptor.currentValue }
       : {}),
@@ -225,6 +227,7 @@ export function definitionFromDraft(draft: CustomModelDraft): CustomModelDefinit
         id,
         label,
         type: "boolean",
+        ...(descriptor.description !== undefined ? { description: descriptor.description } : {}),
         ...(descriptor.currentBooleanValue !== undefined
           ? { currentValue: descriptor.currentBooleanValue }
           : {}),
@@ -241,6 +244,7 @@ export function definitionFromDraft(draft: CustomModelDraft): CustomModelDefinit
       id,
       label,
       type: "select",
+      ...(descriptor.description !== undefined ? { description: descriptor.description } : {}),
       options,
       ...(currentValue ? { currentValue } : {}),
     };

@@ -181,6 +181,7 @@ describe("customModelEditor.logic", () => {
         {
           id: "effort",
           label: "Reasoning",
+          description: "Choose a reasoning level.",
           type: "select",
           options: [
             { id: "high", label: "High", isDefault: true },

@@ -120,6 +120,7 @@ export function CustomModelEditor({
       type: preset.type,
       choices: (preset.choices ?? []).map(choiceFromPreset),
       currentBooleanValue: undefined,
+      description: undefined,
     });
   };
 
