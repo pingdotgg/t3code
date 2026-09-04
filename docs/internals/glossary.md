@@ -147,7 +147,7 @@ The starting checkpoint for diffing a thread timeline. This flow is surfaced thr
 
 #### Checkpoint diff
 
-The patch difference between two checkpoints. Query logic lives in [CheckpointDiffQuery.ts][20], diff parsing lives in [Diffs.ts][23], and finalization is coordinated by [CheckpointReactor.ts][6].
+The difference between two checkpoints. [CheckpointDiffQuery.ts][20] reads full patches on demand. [CheckpointReactor.ts][6] uses NUL-delimited Git numstat output for automatic file summaries, parsed by [Diffs.ts][23].
 
 #### Turn diff
 

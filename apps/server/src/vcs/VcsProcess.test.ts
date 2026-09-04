@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
+import { HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -356,6 +357,24 @@ describe("VcsProcess.run", () => {
 
       expect(result.stdoutTruncated).toBe(true);
       expect(result.stdout).not.toContain("[truncated]");
+    }).pipe(provideLive),
+  );
+
+  it.effect("fails with measured byte counts when output must not be truncated", () =>
+    Effect.gen(function* () {
+      const error = yield* run({
+        operation: "test.output-limit",
+        command: "node",
+        args: ["-e", "process.stdout.write('x'.repeat(2048))"],
+        cwd: yield* HostProcessWorkingDirectory,
+        maxOutputBytes: 128,
+        outputMode: "error",
+      }).pipe(Effect.flip);
+
+      assert(error._tag === "VcsProcessOutputLimitError");
+      expect(error.stream).toBe("stdout");
+      expect(error.maxBytes).toBe(128);
+      expect(error.observedBytes).toBeGreaterThan(error.maxBytes);
     }).pipe(provideLive),
   );
 
