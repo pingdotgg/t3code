@@ -81,7 +81,8 @@ export interface NewProjectScriptInput {
   command: string;
   icon: ProjectScriptIcon;
   runOnWorktreeCreate: boolean;
-  keybinding: string | null;
+  /** Omit to preserve the current shortcut when the form did not edit it. */
+  keybinding?: string | null;
   /** Optional URL to open in the in-app preview when this script runs. */
   previewUrl: string | null;
   /** When true, automatically open the preview panel pointed at `previewUrl`. */
@@ -196,10 +197,9 @@ export function ProjectScriptEditorDialog({
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!request) return;
-    if (
-      (keybinding.trim() || null) !== request.initial.keybinding &&
-      !readEnvironmentScope(environmentId, AuthSettingsWriteScope)
-    ) {
+    const changesKeybinding =
+      (keybinding.trim() || null) !== (request.initial.keybinding?.trim() || null);
+    if (changesKeybinding && !readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
       setValidationError("This connection cannot change keyboard shortcuts.");
       return;
     }
@@ -233,7 +233,7 @@ export function ProjectScriptEditorDialog({
         command: trimmedCommand,
         icon,
         runOnWorktreeCreate,
-        keybinding: keybindingRule?.key ?? null,
+        ...(changesKeybinding ? { keybinding: keybindingRule?.key ?? null } : {}),
         previewUrl: trimmedPreviewUrl.length > 0 ? trimmedPreviewUrl : null,
         autoOpenPreview: trimmedPreviewUrl.length > 0 ? autoOpenPreview : false,
       } satisfies NewProjectScriptInput;
