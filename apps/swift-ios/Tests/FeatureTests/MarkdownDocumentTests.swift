@@ -6,6 +6,74 @@ import UIKit
 @Suite("Chat Markdown")
 struct MarkdownDocumentTests {
     @Test
+    func ordinaryMarkdownKeepsItsTextAndLineEndingsWithoutCitations() {
+        let source = """
+        # A long response
+
+        \(String(repeating: "[unfinished `code **text** café 日本語 👩🏽‍💻 ", count: 300))
+
+        [docs](https://t3.gg) and :codex-file-citation
+        """.replacingOccurrences(of: "\n", with: "\r\n")
+
+        #expect(CodexMarkdownDirectives.replacingFileCitations(in: source) == source)
+    }
+
+    @Test
+    func sparseCitationsKeepFenceStateAndUnrelatedLines() {
+        let directive = #":codex-file-citation{path="src/main.swift" line_range_start="12"}"#
+        let unfinishedLinks = String(repeating: "[unfinished ", count: 1_000)
+        let source = """
+        \(unfinishedLinks)
+
+        ```text
+        This fence opens on a line without a citation.
+        \(directive)
+        ```
+
+        See \(directive).
+        """
+
+        #expect(
+            CodexMarkdownDirectives.replacingFileCitations(in: source) == """
+            \(unfinishedLinks)
+
+            ```text
+            This fence opens on a line without a citation.
+            \(directive)
+            ```
+
+            See [main.swift](<src/main.swift#L12>).
+            """
+        )
+    }
+
+    @Test
+    func blockPrefixChecksKeepThreeSpaceIndentationAndRejectFourSpaces() {
+        for indent in ["", " ", "  ", "   "] {
+            #expect(
+                MarkdownDocument(parsing: "\(indent)# Heading").blocks
+                    == [.heading(level: 1, text: "Heading")]
+            )
+            #expect(
+                MarkdownDocument(parsing: "\(indent)> Body").blocks
+                    == [.blockquote(MarkdownDocument(parsing: "Body"))]
+            )
+            #expect(
+                MarkdownDocument(parsing: "\(indent)- Item").blocks
+                    == [.unorderedList([MarkdownListItem(task: nil, blocks: [.paragraph("Item")])])]
+            )
+            #expect(
+                MarkdownDocument(parsing: "\(indent)```swift\nlet value = 1\n\(indent)```").blocks
+                    == [.codeBlock(language: "swift", code: "let value = 1")]
+            )
+        }
+
+        for source in ["    # Heading", "    > Body", "    - Item", "    ```swift"] {
+            #expect(MarkdownDocument(parsing: source).blocks == [.paragraph(source)])
+        }
+    }
+
+    @Test
     func codexFileCitationsBecomeWorkspaceLinks() {
         let document = MarkdownDocument(
             parsing: #"See :codex-file-citation{path="docs/My file%#?.md" line_range_start="12"}."#

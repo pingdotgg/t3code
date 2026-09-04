@@ -60,6 +60,8 @@ struct CodexArtifactTemplate: Equatable, Sendable {
 
 enum CodexMarkdownDirectives {
     private static let artifactPrefix = "::artifact-template{"
+    private static let fileCitationPrefix = ":codex-file-citation{"
+    private static let fileCitationCharacters = Array(fileCitationPrefix)
 
     static func artifactTemplate(from line: String) -> CodexArtifactTemplate? {
         guard line.prefix(while: { $0 == " " }).count < 4, line.first != "\t" else {
@@ -93,6 +95,9 @@ enum CodexMarkdownDirectives {
     }
 
     static func replacingFileCitations(in source: String) -> String {
+        // Most messages have no citations. Keep them out of the character-by-character
+        // link and code scanner, including incomplete Markdown arriving in a stream.
+        guard source.contains(fileCitationPrefix) else { return source }
         let lines = source.components(separatedBy: "\n")
         var fence: Character?
         var fenceCount = 0
@@ -107,7 +112,8 @@ enum CodexMarkdownDirectives {
                 }
             }
             let leadingSpaces = line.prefix(while: { $0 == " " }).count
-            guard fence == nil, leadingSpaces < 4, line.first != "\t" else {
+            guard fence == nil, leadingSpaces < 4, line.first != "\t",
+                  line.contains(fileCitationPrefix) else {
                 return line
             }
             return replacingCitationsInInlineMarkdown(line)
@@ -139,8 +145,8 @@ enum CodexMarkdownDirectives {
                     continue
                 }
             }
-            if !isEscaped(at: cursor, in: characters),
-               characters[cursor...].starts(with: Array(":codex-file-citation{")),
+            if characters[cursor] == ":", !isEscaped(at: cursor, in: characters),
+               characters[cursor...].starts(with: fileCitationCharacters),
                let closing = directiveEnd(in: characters, from: cursor) {
                 let directive = String(characters[cursor...closing])
                 if let replacement = fileCitation(from: directive) {
@@ -155,7 +161,7 @@ enum CodexMarkdownDirectives {
     }
 
     static func fileCitation(from directive: String) -> String? {
-        let prefix = ":codex-file-citation{"
+        let prefix = fileCitationPrefix
         guard directive.hasPrefix(prefix), directive.hasSuffix("}"),
               let values = attributes(in: String(directive.dropFirst(prefix.count).dropLast())),
               let rawPath = values["path"] else { return nil }
@@ -281,7 +287,7 @@ enum CodexMarkdownDirectives {
     }
 
     private static func directiveEnd(in chars: [Character], from start: Int) -> Int? {
-        var cursor = start + ":codex-file-citation{".count
+        var cursor = start + fileCitationCharacters.count
         var quote: Character?
         while cursor < chars.count {
             let character = chars[cursor]

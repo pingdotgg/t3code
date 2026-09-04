@@ -489,6 +489,7 @@ private struct MarkdownBlockParser {
     /// Splits a GFM table row while preserving escapes for Foundation's inline parser.
     /// Pipes inside code spans or escaped with a backslash remain cell content.
     private func tableCells(in line: String) -> [String]? {
+        guard line.contains("|") else { return nil }
         let source = line.markdownTrimmed
         guard !source.isEmpty else { return nil }
 
@@ -586,11 +587,11 @@ private struct MarkdownBlockParser {
     }
 
     private func atxHeading(in line: String) -> (level: Int, text: String)? {
-        let characters = Array(line)
-        let indent = min(line.markdownLeadingSpaces, characters.count)
-        guard indent <= 3, indent < characters.count, characters[indent] == "#" else {
+        let indent = line.markdownLeadingSpaces
+        guard indent <= 3, line.dropFirst(indent).first == "#" else {
             return nil
         }
+        let characters = Array(line)
 
         var cursor = indent
         while cursor < characters.count, characters[cursor] == "#" {
@@ -632,11 +633,11 @@ private struct MarkdownBlockParser {
     }
 
     private func blockquoteContent(in line: String) -> String? {
-        let characters = Array(line)
-        let indent = min(line.markdownLeadingSpaces, characters.count)
-        guard indent <= 3, indent < characters.count, characters[indent] == ">" else {
+        let indent = line.markdownLeadingSpaces
+        guard indent <= 3, line.dropFirst(indent).first == ">" else {
             return nil
         }
+        let characters = Array(line)
         var cursor = indent + 1
         if cursor < characters.count, characters[cursor].isMarkdownWhitespace {
             cursor += 1
@@ -645,9 +646,12 @@ private struct MarkdownBlockParser {
     }
 
     private func listMarker(in line: String) -> ListMarker? {
+        let indent = line.markdownLeadingSpaces
+        guard indent <= 3, let marker = line.dropFirst(indent).first,
+              marker == "-" || marker == "+" || marker == "*" || marker.isNumber else {
+            return nil
+        }
         let characters = Array(line)
-        let indent = min(line.markdownLeadingSpaces, characters.count)
-        guard indent <= 3, indent < characters.count else { return nil }
 
         var cursor = indent
         var number: Int?
@@ -689,6 +693,7 @@ private struct MarkdownBlockParser {
     }
 
     private func taskState(in line: String) -> MarkdownTaskState? {
+        guard line.first == "[" else { return nil }
         let characters = Array(line)
         guard characters.count >= 3,
               characters[0] == "[",
@@ -719,13 +724,12 @@ private struct MarkdownBlockParser {
     }
 
     private func fenceMarker(in line: String) -> FenceMarker? {
-        let characters = Array(line)
-        let indent = min(line.markdownLeadingSpaces, characters.count)
-        guard indent <= 3,
-              indent < characters.count,
-              characters[indent] == "`" || characters[indent] == "~" else {
+        let indent = line.markdownLeadingSpaces
+        guard indent <= 3, let marker = line.dropFirst(indent).first,
+              marker == "`" || marker == "~" else {
             return nil
         }
+        let characters = Array(line)
 
         let character = characters[indent]
         var cursor = indent
@@ -747,13 +751,11 @@ private struct MarkdownBlockParser {
     }
 
     private func isClosingFence(_ line: String, matching opening: FenceMarker) -> Bool {
-        let characters = Array(line)
-        let indent = min(line.markdownLeadingSpaces, characters.count)
-        guard indent <= 3,
-              indent < characters.count,
-              characters[indent] == opening.character else {
+        let indent = line.markdownLeadingSpaces
+        guard indent <= 3, line.dropFirst(indent).first == opening.character else {
             return false
         }
+        let characters = Array(line)
 
         var cursor = indent
         while cursor < characters.count, characters[cursor] == opening.character {
