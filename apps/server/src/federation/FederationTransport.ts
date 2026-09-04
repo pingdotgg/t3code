@@ -85,13 +85,13 @@ export const make = Effect.gen(function* () {
   const forwards = yield* Ref.make<ReadonlyMap<EnvironmentId, ActiveForward>>(new Map());
   // One lock per peer: a slow or unreachable peer must not stall the others.
   const locks = yield* Ref.make<ReadonlyMap<EnvironmentId, Semaphore.Semaphore>>(new Map());
+  // Created and published in one modify, so concurrent first callers share a lock.
   const lockFor = (peerId: EnvironmentId) =>
-    Effect.gen(function* () {
-      const existing = (yield* Ref.get(locks)).get(peerId);
-      if (existing !== undefined) return existing;
-      const created = yield* Semaphore.make(1);
-      yield* Ref.update(locks, (current) => new Map(current).set(peerId, created));
-      return created;
+    Ref.modify(locks, (current) => {
+      const existing = current.get(peerId);
+      if (existing !== undefined) return [existing, current] as const;
+      const created = Semaphore.makeUnsafe(1);
+      return [created, new Map(current).set(peerId, created)] as const;
     });
   const withPeerLock = <A, E>(peerId: EnvironmentId, effect: Effect.Effect<A, E>) =>
     lockFor(peerId).pipe(Effect.flatMap((lock) => lock.withPermits(1)(effect)));
@@ -206,18 +206,23 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const drop: FederationTransport["Service"]["drop"] = (peerId) =>
+  // Closes the peer's forward under its lock only while `shouldClose` still holds,
+  // so a caller that reused the forward in the meantime keeps it.
+  const dropWhen = (peerId: EnvironmentId, shouldClose: (forward: ActiveForward) => boolean) =>
     withPeerLock(
       peerId,
       Effect.gen(function* () {
         const existing = (yield* Ref.get(forwards)).get(peerId);
-        if (existing === undefined) {
-          return;
+        if (existing === undefined || !shouldClose(existing)) {
+          return false;
         }
         yield* Ref.update(forwards, (current) => withoutKey(current, peerId));
         yield* closeForward(existing);
+        return true;
       }),
     );
+  const drop: FederationTransport["Service"]["drop"] = (peerId) =>
+    dropWhen(peerId, () => true).pipe(Effect.asVoid);
 
   const isActive: FederationTransport["Service"]["isActive"] = (peerId) =>
     Ref.get(forwards).pipe(
@@ -234,8 +239,10 @@ export const make = Effect.gen(function* () {
     const current = yield* Ref.get(forwards);
     for (const [peerId, forward] of current) {
       if (forward.lastUsedAtMs < cutoff) {
-        yield* drop(peerId);
-        yield* Effect.logInfo("Federation transport closed after idling.", { peerId });
+        const closed = yield* dropWhen(peerId, (latest) => latest.lastUsedAtMs < cutoff);
+        if (closed) {
+          yield* Effect.logInfo("Federation transport closed after idling.", { peerId });
+        }
       }
     }
   });

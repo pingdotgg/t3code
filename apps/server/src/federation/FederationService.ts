@@ -277,12 +277,6 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const serviceScope = yield* Scope.Scope;
 
-  const pendingPeerCodes = yield* Ref.make<
-    ReadonlyMap<
-      string,
-      { readonly scopes: ReadonlyArray<FederationScope>; readonly expiresAtMs: number }
-    >
-  >(new Map());
   const remoteRunSync = yield* Ref.make<ReadonlyMap<string, RemoteRunSync>>(new Map());
   const peerClients = new Map<string, PeerClient>();
   const challenges = yield* Ref.make<ReadonlyMap<string, PendingChallenge>>(new Map());
@@ -388,6 +382,18 @@ export const make = Effect.gen(function* () {
 
   // ── Peer-facing protocol ────────────────────────────────────────────
 
+  // Offered scopes are persisted next to the peers, so a code minted before a
+  // restart still pairs. Every settle also drops codes that have expired.
+  const settlePendingPeerCodes = (redeemedLinkId?: string) =>
+    nowMs.pipe(
+      Effect.flatMap((current) =>
+        peers.settlePendingPeerCodes(
+          redeemedLinkId === undefined ? { nowMs: current } : { redeemedLinkId, nowMs: current },
+        ),
+      ),
+      Effect.mapError(storeError),
+    );
+
   const acceptPair: FederationService["Service"]["acceptPair"] = Effect.fn(
     "FederationService.acceptPair",
   )(function* (request) {
@@ -423,18 +429,20 @@ export const make = Effect.gen(function* () {
         message: "This code is a device pairing code, not a federation peer code.",
       });
     }
-    yield* prunePendingPeerCodes;
+    yield* settlePendingPeerCodes();
+    const linkId = grant.id;
     const pendingCode =
-      grant.id === undefined ? undefined : (yield* Ref.get(pendingPeerCodes)).get(grant.id);
-    if (pendingCode === undefined || grant.id === undefined) {
+      linkId === undefined
+        ? undefined
+        : (yield* peers.pendingPeerCodes).find((code) => code.linkId === linkId);
+    if (pendingCode === undefined) {
       return yield* new FederationError({
         code: "code-expired",
         message: "This peer code is no longer offered by this environment. Create a new one.",
       });
     }
     const offered = pendingCode.scopes;
-    const consumedLinkId = grant.id;
-    yield* Ref.update(pendingPeerCodes, (current) => withoutKey(current, consumedLinkId));
+    yield* settlePendingPeerCodes(pendingCode.linkId);
     const at = yield* nowIso;
     const existing = yield* peers.getPeer(request.environmentId);
     yield* peers
@@ -473,18 +481,6 @@ export const make = Effect.gen(function* () {
     yield* publishPeers;
     return { ...(yield* describeSelf), grantedScopes: offered } satisfies FederationPairResponse;
   });
-
-  const prunePendingPeerCodes = nowMs.pipe(
-    Effect.flatMap((current) =>
-      Ref.update(pendingPeerCodes, (pending) => {
-        const next = new Map(pending);
-        for (const [id, entry] of pending) {
-          if (entry.expiresAtMs <= current) next.delete(id);
-        }
-        return next;
-      }),
-    ),
-  );
 
   const pruneChallenges = nowMs.pipe(
     Effect.flatMap((current) =>
@@ -1038,13 +1034,14 @@ export const make = Effect.gen(function* () {
         ttl: Duration.seconds(ttlSeconds),
       })
       .pipe(Effect.mapError((error) => internalError(error.message)));
-    yield* prunePendingPeerCodes;
-    yield* Ref.update(pendingPeerCodes, (current) =>
-      new Map(current).set(issued.id, {
+    yield* settlePendingPeerCodes();
+    yield* peers
+      .addPendingPeerCode({
+        linkId: issued.id,
         scopes: input.scopes,
-        expiresAtMs: DateTime.toEpochMillis(issued.expiresAt),
-      }),
-    );
+        expiresAt: DateTime.formatIso(issued.expiresAt),
+      })
+      .pipe(Effect.mapError(storeError));
     const descriptor = yield* serverEnvironment.getDescriptor;
     const expiresAt = DateTime.formatIso(issued.expiresAt);
     const payload = {

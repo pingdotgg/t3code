@@ -128,15 +128,15 @@ export const make = Effect.gen(function* () {
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
+  // Created and published in one modify, so concurrent first callers share a lock.
   const lockFor = (connectionId: string) =>
-    Effect.gen(function* () {
-      const current = (yield* Ref.get(locks)).get(connectionId);
+    Ref.modify(locks, (map) => {
+      const current = map.get(connectionId);
       if (current !== undefined) {
-        return current;
+        return [current, map] as const;
       }
-      const created = yield* Semaphore.make(1);
-      yield* Ref.update(locks, (map) => new Map(map).set(connectionId, created));
-      return created;
+      const created = Semaphore.makeUnsafe(1);
+      return [created, new Map(map).set(connectionId, created)] as const;
     });
 
   const withLock = <A, E>(connectionId: string, effect: Effect.Effect<A, E>) =>

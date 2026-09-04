@@ -94,7 +94,7 @@ the same owner operations over a WS RPC session minted against the running serve
 how `t3 pair` discovers it. `t3 remote tailcat …` (`apps/server/src/cli/remote.ts`) covers the
 Tailcat remote-access side over the HTTP `tailcat` group.
 
-`federation.json` in the state directory holds peers, inbound runs, and tracked remote runs (their identity and latest
+`federation.json` in the state directory holds peers, inbound runs, offered peer codes (so a restart cannot orphan a live code), and tracked remote runs (their identity and latest
 projection; run events stay in memory and are re-fetched from the peer)
 (with a bounded event tail). The owner's clients subscribe to `federation.subscribePeers` and
 `federation.subscribeRemoteRuns`; a poller syncs active remote runs every two seconds and goes

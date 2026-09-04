@@ -9,8 +9,10 @@ import {
   IsoDateTime,
   ThreadId,
   TrimmedNonEmptyString,
+  FederationScope,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -69,11 +71,25 @@ export const PersistedRemoteRun = Schema.Struct({
 });
 export type PersistedRemoteRun = typeof PersistedRemoteRun.Type;
 
+/**
+ * A peer code this environment offered and has not yet seen redeemed. The
+ * pairing token itself lives in the pairing-link store; this records which
+ * federation scopes the code promises, so a restart cannot orphan a live code.
+ */
+export const PersistedPendingPeerCode = Schema.Struct({
+  linkId: Schema.String,
+  scopes: Schema.Array(FederationScope),
+  expiresAt: Schema.String,
+});
+export type PersistedPendingPeerCode = typeof PersistedPendingPeerCode.Type;
+
 const PersistedFederationState = Schema.Struct({
   version: Schema.Literal(1),
   peers: Schema.Array(PersistedFederationPeer),
   remoteRuns: Schema.Array(PersistedRemoteRun),
   inboundRuns: Schema.Array(PersistedInboundRun),
+  // Absent in files written before pending codes were persisted.
+  pendingPeerCodes: Schema.optionalKey(Schema.Array(PersistedPendingPeerCode)),
 });
 type PersistedFederationState = typeof PersistedFederationState.Type;
 
@@ -86,6 +102,7 @@ const EMPTY_STATE: PersistedFederationState = {
   peers: [],
   remoteRuns: [],
   inboundRuns: [],
+  pendingPeerCodes: [],
 };
 
 export interface PeerRuntimeStatus {
@@ -126,6 +143,15 @@ export class FederationPeerStore extends Context.Service<
       run: PersistedInboundRun,
     ) => Effect.Effect<void, FederationPeerStoreError>;
     /** Present-tense view for clients, merging pinned facts with runtime status. */
+    readonly pendingPeerCodes: Effect.Effect<ReadonlyArray<PersistedPendingPeerCode>>;
+    readonly addPendingPeerCode: (
+      code: PersistedPendingPeerCode,
+    ) => Effect.Effect<void, FederationPeerStoreError>;
+    /** Drops the redeemed code, if given, and every code that expired before `nowMs`. */
+    readonly settlePendingPeerCodes: (input: {
+      readonly redeemedLinkId?: string;
+      readonly nowMs: number;
+    }) => Effect.Effect<void, FederationPeerStoreError>;
     readonly presentPeer: (peer: PersistedFederationPeer) => Effect.Effect<FederationPeer>;
   }
 >()("t3/federation/FederationPeerStore") {}
@@ -247,6 +273,24 @@ export const make = Effect.gen(function* () {
           ...current.inboundRuns.filter((existing) => existing.threadId !== run.threadId),
           run,
         ],
+      })),
+    pendingPeerCodes: Ref.get(state).pipe(Effect.map((current) => current.pendingPeerCodes ?? [])),
+    addPendingPeerCode: (code) =>
+      update((current) => ({
+        ...current,
+        pendingPeerCodes: [
+          ...(current.pendingPeerCodes ?? []).filter((existing) => existing.linkId !== code.linkId),
+          code,
+        ],
+      })),
+    settlePendingPeerCodes: ({ redeemedLinkId, nowMs }) =>
+      update((current) => ({
+        ...current,
+        pendingPeerCodes: (current.pendingPeerCodes ?? []).filter(
+          (code) =>
+            code.linkId !== redeemedLinkId &&
+            DateTime.toEpochMillis(DateTime.makeUnsafe(code.expiresAt)) > nowMs,
+        ),
       })),
     presentPeer,
   });
