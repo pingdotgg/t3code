@@ -2,10 +2,13 @@
 
 A permission mode controls how much the agent does on its own and when it stops to ask you.
 
-The mode is set per thread, from the mode control in the message composer. Changing it in one
-thread does not change any other thread. A thread created from inside another thread keeps that
-thread's mode; otherwise new threads start in **Full access** unless you pick something else
-before sending.
+The mode is set per thread from the mode control in the message composer. Changing it in an
+existing thread does not change any other thread.
+
+On web or desktop, **Settings → Providers → New thread defaults** sets the fallback for new
+threads on that environment. Each provider instance can override that fallback from its
+**Runtime** settings. A new draft follows the selected provider instance until you explicitly pick
+a mode in the composer; that explicit choice then remains fixed when you switch providers.
 
 ## The Modes
 

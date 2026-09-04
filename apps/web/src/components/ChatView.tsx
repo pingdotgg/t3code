@@ -46,6 +46,7 @@ import {
   createModelSelection,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
+import { resolveNewThreadRuntimeMode } from "@t3tools/shared/serverSettings";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
@@ -209,6 +210,7 @@ import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
   NO_PROVIDER_MODEL_SELECTION,
+  resolveDefaultProviderModelSelection,
   sortProviderInstanceEntries,
 } from "../providerInstances";
 import {
@@ -1767,8 +1769,8 @@ export default function ChatView(props: ChatViewProps) {
   // session.lastError. Bump a tick so the banner hides immediately. Mirrors
   // the branch mismatch banner.
   const [, setThreadErrorBannerDismissTick] = useState(0);
-  const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
+  const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
   const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
@@ -2200,10 +2202,16 @@ export default function ChatView(props: ChatViewProps) {
 
       const nextDraftId = newDraftId();
       const nextThreadId = newThreadId();
+      const targetServerConfig = environmentById.get(activeProject.environmentId)?.serverConfig;
       setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, nextDraftId, {
         threadId: nextThreadId,
         createdAt: new Date().toISOString(),
-        runtimeMode: DEFAULT_RUNTIME_MODE,
+        runtimeMode: resolveNewThreadRuntimeMode(
+          targetServerConfig?.settings,
+          activeProject.defaultModelSelection?.instanceId ??
+            resolveDefaultProviderModelSelection(targetServerConfig?.providers ?? [], null)
+              ?.instanceId,
+        ),
         interactionMode: DEFAULT_INTERACTION_MODE,
         ...input,
       });
@@ -2216,6 +2224,7 @@ export default function ChatView(props: ChatViewProps) {
     [
       activeProject,
       draftId,
+      environmentById,
       getDraftSession,
       getDraftSessionByLogicalProjectKey,
       isServerThread,
@@ -3143,11 +3152,36 @@ export default function ChatView(props: ChatViewProps) {
         (env) => env.environmentId === nextEnvironmentId,
       );
       if (!target) return;
+      const targetProject = allProjects.find(
+        (project) =>
+          project.environmentId === target.environmentId && project.id === target.projectId,
+      );
+      const targetServerConfig = environmentById.get(target.environmentId)?.serverConfig;
       setDraftThreadContext(draftId, {
         projectRef: scopeProjectRef(target.environmentId, target.projectId),
+        ...(composerRuntimeMode === null
+          ? {
+              runtimeMode: resolveNewThreadRuntimeMode(
+                targetServerConfig?.settings,
+                composerActiveProvider ??
+                  targetProject?.defaultModelSelection?.instanceId ??
+                  resolveDefaultProviderModelSelection(targetServerConfig?.providers ?? [], null)
+                    ?.instanceId,
+              ),
+            }
+          : {}),
       });
     },
-    [draftId, envLocked, logicalProjectEnvironments, setDraftThreadContext],
+    [
+      allProjects,
+      composerActiveProvider,
+      composerRuntimeMode,
+      draftId,
+      envLocked,
+      environmentById,
+      logicalProjectEnvironments,
+      setDraftThreadContext,
+    ],
   );
 
   const activeTerminalGroup =
@@ -3655,7 +3689,7 @@ export default function ChatView(props: ChatViewProps) {
 
   const handleRuntimeModeChange = useCallback(
     (mode: RuntimeMode) => {
-      if (mode === runtimeMode) return;
+      if (mode === composerRuntimeMode) return;
       setComposerDraftRuntimeMode(composerDraftTarget, mode);
       if (isLocalDraftThread) {
         setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
@@ -3664,7 +3698,7 @@ export default function ChatView(props: ChatViewProps) {
     },
     [
       isLocalDraftThread,
-      runtimeMode,
+      composerRuntimeMode,
       scheduleComposerFocus,
       composerDraftTarget,
       setComposerDraftRuntimeMode,
@@ -7400,13 +7434,22 @@ export default function ChatView(props: ChatViewProps) {
         { explicit: true },
       );
       setStickyComposerModelSelection(nextModelSelection);
+      if (isLocalDraftThread && composerRuntimeMode === null) {
+        setDraftThreadContext(composerDraftTarget, {
+          runtimeMode: resolveNewThreadRuntimeMode(settings, instanceId),
+        });
+      }
       scheduleComposerFocus();
     },
     [
       activeThread,
+      composerDraftTarget,
+      composerRuntimeMode,
+      isLocalDraftThread,
       lockedProvider,
       scheduleComposerFocus,
       setComposerDraftModelSelection,
+      setDraftThreadContext,
       setStickyComposerModelSelection,
       providerStatuses,
       settings,

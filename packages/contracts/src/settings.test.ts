@@ -336,6 +336,33 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   });
 });
 
+describe("ServerSettings permission defaults", () => {
+  it("defaults new threads to full access without provider overrides", () => {
+    const settings = decodeServerSettings({});
+
+    expect(settings.defaultThreadRuntimeMode).toBe("full-access");
+    expect(settings.providerRuntimeModeDefaults).toEqual({});
+  });
+
+  it("accepts per-instance overrides and null removals in patches", () => {
+    expect(
+      decodeServerSettingsPatch({
+        defaultThreadRuntimeMode: "approval-required",
+        providerRuntimeModeDefaults: {
+          codex_work: "auto",
+          claude_work: null,
+        },
+      }),
+    ).toMatchObject({
+      defaultThreadRuntimeMode: "approval-required",
+      providerRuntimeModeDefaults: {
+        codex_work: "auto",
+        claude_work: null,
+      },
+    });
+  });
+});
+
 describe("provider enabled defaults", () => {
   it("enables only the stable bindings by default", () => {
     const decoded = decodeServerSettings({});

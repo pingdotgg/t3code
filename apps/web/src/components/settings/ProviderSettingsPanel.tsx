@@ -12,6 +12,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
+  type RuntimeMode,
   resolveEnvironmentMachineKind,
   resolveProviderInstanceEnabled,
 } from "@t3tools/contracts";
@@ -72,6 +73,7 @@ import {
   NumberFieldInput,
 } from "../ui/number-field";
 import { ScrollArea } from "../ui/scroll-area";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
@@ -128,6 +130,20 @@ function withoutProviderInstanceFavorites(
 const PROVIDER_SETTINGS = DRIVER_OPTIONS.map((definition) => ({
   provider: definition.value,
 }));
+
+const RUNTIME_MODE_OPTIONS: ReadonlyArray<{
+  readonly value: RuntimeMode;
+  readonly label: string;
+}> = [
+  { value: "approval-required", label: "Supervised" },
+  { value: "auto-accept-edits", label: "Auto-accept edits" },
+  { value: "auto", label: "Auto" },
+  { value: "full-access", label: "Full access" },
+];
+
+function runtimeModeLabel(mode: RuntimeMode): string {
+  return RUNTIME_MODE_OPTIONS.find((option) => option.value === mode)?.label ?? mode;
+}
 
 function configuredBinaryPath(config: unknown): string {
   if (config === null || typeof config !== "object" || !("binaryPath" in config)) return "";
@@ -797,6 +813,7 @@ export function EnvironmentProviderSettings({
   const deleteProviderInstance = (id: ProviderInstanceId) => {
     updateSettings({
       providerInstances: withoutProviderInstanceKey(settings.providerInstances, id),
+      providerRuntimeModeDefaults: { [id]: null },
     });
   };
 
@@ -892,6 +909,7 @@ export function EnvironmentProviderSettings({
       favorite.provider === row.instanceId ? Result.succeed(favorite.model) : Result.failVoid,
     );
     const resetLabel = driverOption?.label ?? String(row.driver);
+    const providerRuntimeModeDefault = settings.providerRuntimeModeDefaults[row.instanceId];
 
     return (
       <ProviderInstanceCard
@@ -916,6 +934,49 @@ export function EnvironmentProviderSettings({
               enabled={resolveProviderInstanceEnabled(row.instance)}
               readOnly={readOnly}
               onEnable={() => updateProviderInstance(row, { ...row.instance, enabled: true })}
+            />
+          ) : null
+        }
+        newThreadDefaults={
+          mode === "editor" ? (
+            <SettingsRow
+              title="New thread permissions"
+              description="Permission mode used when this provider instance is selected."
+              control={
+                <Select
+                  value={providerRuntimeModeDefault ?? "inherit"}
+                  onValueChange={(value) => {
+                    if (value === "inherit") {
+                      updateSettings({ providerRuntimeModeDefaults: { [row.instanceId]: null } });
+                    } else if (
+                      value === "approval-required" ||
+                      value === "auto-accept-edits" ||
+                      value === "auto" ||
+                      value === "full-access"
+                    ) {
+                      updateSettings({ providerRuntimeModeDefaults: { [row.instanceId]: value } });
+                    }
+                  }}
+                >
+                  <SelectTrigger size="sm" aria-label={`${resetLabel} new thread permissions`}>
+                    <SelectValue>
+                      {providerRuntimeModeDefault
+                        ? runtimeModeLabel(providerRuntimeModeDefault)
+                        : `Default (${runtimeModeLabel(settings.defaultThreadRuntimeMode)})`}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem value="inherit">
+                      Default ({runtimeModeLabel(settings.defaultThreadRuntimeMode)})
+                    </SelectItem>
+                    {RUNTIME_MODE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              }
             />
           ) : null
         }
@@ -977,6 +1038,41 @@ export function EnvironmentProviderSettings({
 
   return (
     <>
+      <SettingsSection title="New thread defaults">
+        {deviceTabs}
+        <SettingsRow
+          title="Permissions"
+          description="Fallback permission mode for provider instances without an override."
+          control={
+            <Select
+              value={settings.defaultThreadRuntimeMode}
+              onValueChange={(value) => {
+                if (
+                  value === "approval-required" ||
+                  value === "auto-accept-edits" ||
+                  value === "auto" ||
+                  value === "full-access"
+                ) {
+                  updateSettings({ defaultThreadRuntimeMode: value });
+                }
+              }}
+              disabled={readOnly}
+            >
+              <SelectTrigger size="sm" aria-label="Default new thread permissions">
+                <SelectValue>{runtimeModeLabel(settings.defaultThreadRuntimeMode)}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {RUNTIME_MODE_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+      </SettingsSection>
+
       <SettingsSection
         {...searchableSetting("providers")}
         variant="plain"
@@ -1032,7 +1128,6 @@ export function EnvironmentProviderSettings({
           </div>
         }
       >
-        {deviceTabs}
         {readOnly ? (
           <div className={cn(providerCardClassName, "overflow-hidden")}>
             <SettingsRow

@@ -63,6 +63,9 @@ vi.mock("@t3tools/shared/threadEnvMode", () => ({
     readonly globalDefault: "local" | "worktree";
   }) => input.projectFile ?? input.globalDefault,
 }));
+vi.mock("@t3tools/shared/serverSettings", () => ({
+  resolveNewThreadRuntimeMode: () => "full-access",
+}));
 vi.mock("@tanstack/react-router", () => ({
   useParams: () => null,
   useRouter: () => testState.router,
@@ -111,8 +114,10 @@ vi.mock("../state/entities", () => ({
   ],
   readThreadShell: () => null,
   useProjects: () => [],
+  useServerConfigs: () => new Map(),
   useThread: () => null,
 }));
+vi.mock("../providerInstances", () => ({ resolveDefaultProviderModelSelection: () => null }));
 vi.mock("../state/server", () => ({ primaryServerSettingsAtom: {} }));
 vi.mock("../threadRoutes", () => ({ resolveThreadRouteTarget: () => null }));
 vi.mock("../uiStateStore", () => ({

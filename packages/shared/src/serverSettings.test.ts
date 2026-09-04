@@ -15,6 +15,7 @@ import {
   isModelSelectionProviderEnabled,
   normalizePersistedServerSettingString,
   parsePersistedServerObservabilitySettings,
+  resolveNewThreadRuntimeMode,
   resolveSourceControlWriterModelSelection,
 } from "./serverSettings.ts";
 
@@ -320,6 +321,27 @@ describe("serverSettings helpers", () => {
 
     const removed = applyServerSettingsPatch(added, { usageLimitSources: { [hubA]: null } });
     expect(Object.keys(removed.usageLimitSources)).toEqual([hubB]);
+  });
+
+  it("resolves and updates permission defaults per provider instance", () => {
+    const codexWork = ProviderInstanceId.make("codex-work");
+    const configured = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      defaultThreadRuntimeMode: "approval-required",
+      providerRuntimeModeDefaults: {
+        [codexWork]: "auto",
+      },
+    });
+
+    expect(resolveNewThreadRuntimeMode(configured, codexWork)).toBe("auto");
+    expect(resolveNewThreadRuntimeMode(configured, ProviderInstanceId.make("claude"))).toBe(
+      "approval-required",
+    );
+    expect(resolveNewThreadRuntimeMode(configured, codexWork, "full-access")).toBe("full-access");
+
+    const cleared = applyServerSettingsPatch(configured, {
+      providerRuntimeModeDefaults: { [codexWork]: null },
+    });
+    expect(resolveNewThreadRuntimeMode(cleared, codexWork)).toBe("approval-required");
   });
 
   it("stores background activity profiles as a versioned object and syncs legacy aliases", () => {

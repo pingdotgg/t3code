@@ -15,6 +15,7 @@ import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngi
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import * as ServerSettings from "./serverSettings.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 
 it("uses the canonical Codex default for the auto-bootstrapped welcome thread", () => {
@@ -182,6 +183,13 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
   return Effect.gen(function* () {
     const dispatchCalls = yield* Ref.make<ReadonlyArray<string>>([]);
     const targets = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
+      Effect.provide(
+        ServerSettings.layerTest({
+          providerRuntimeModeDefaults: {
+            [ProviderInstanceId.make("codex")]: "auto",
+          },
+        }),
+      ),
       Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/tmp/startup-project",
         autoBootstrapProjectFromCwd: true,
@@ -246,9 +254,17 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
         readonly type: string;
         readonly defaultModelSelection?: unknown;
         readonly modelSelection?: unknown;
+        readonly runtimeMode?: unknown;
       }>
     >([]);
     const targets = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
+      Effect.provide(
+        ServerSettings.layerTest({
+          providerRuntimeModeDefaults: {
+            [ProviderInstanceId.make("codex")]: "auto",
+          },
+        }),
+      ),
       Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/tmp/startup-project",
         autoBootstrapProjectFromCwd: true,
@@ -298,6 +314,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
       commands[1]?.modelSelection,
       ServerRuntimeStartup.getAutoBootstrapThreadModelSelection(),
     );
+    assert.equal(commands[1]?.runtimeMode, "auto");
   }),
 );
 
@@ -313,6 +330,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
     const dispatchCalls = yield* Ref.make<ReadonlyArray<string>>([]);
 
     const error = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
+      Effect.provide(ServerSettings.layerTest()),
       Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/tmp/startup-project",
         autoBootstrapProjectFromCwd: true,
