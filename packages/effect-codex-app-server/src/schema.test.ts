@@ -4,6 +4,9 @@ import * as Schema from "effect/Schema";
 import * as CodexSchema from "./schema.ts";
 
 const isGetAccountResponse = Schema.is(CodexSchema.V2GetAccountResponse);
+const isThreadReadResponse = Schema.is(CodexSchema.V2ThreadReadResponse);
+const isThreadResumeResponse = Schema.is(CodexSchema.V2ThreadResumeResponse);
+const isThreadRollbackResponse = Schema.is(CodexSchema.V2ThreadRollbackResponse);
 
 it("keeps async questions in live notifications and thread history", () => {
   const item = {
@@ -95,6 +98,47 @@ it("accepts Codex 0.150 multi-agent values", () => {
   };
 
   assert.equal(Schema.is(CodexSchema.V2ThreadResumeResponse)(resumeResponse), true);
+});
+
+it("accepts Codex rate limit errors for thread responses", () => {
+  const failedThread = {
+    cliVersion: "0.150.0",
+    createdAt: 0,
+    cwd: "/tmp/project",
+    ephemeral: false,
+    id: "thread-1",
+    modelProvider: "openai",
+    preview: "",
+    sessionId: "session-1",
+    source: "cli",
+    status: { type: "idle" },
+    turns: [
+      {
+        error: {
+          codexErrorInfo: "rateLimitExceeded",
+          message: "Rate limit exceeded",
+        },
+        id: "turn-1",
+        items: [],
+        status: "failed",
+      },
+    ],
+    updatedAt: 0,
+  };
+  assert.equal(isThreadReadResponse({ thread: failedThread }), true);
+  assert.equal(
+    isThreadResumeResponse({
+      approvalPolicy: "never",
+      approvalsReviewer: "user",
+      cwd: "/tmp/project",
+      model: "gpt-5.6-sol",
+      modelProvider: "openai",
+      sandbox: { type: "dangerFullAccess" },
+      thread: failedThread,
+    }),
+    true,
+  );
+  assert.equal(isThreadRollbackResponse({ thread: failedThread }), true);
 });
 
 it("accepts Codex 0.150 account plan values", () => {
