@@ -54,8 +54,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
     for (const [environmentId, presentation] of presentations) {
       const sessionResult = get(environmentSession.sessionStateAtom(environmentId));
       const session = Option.getOrNull(AsyncResult.value(sessionResult));
-      const isCheckingAccess =
-        sessionResult.waiting || (session === null && sessionResult._tag !== "Failure");
+      const isCheckingAccess = session === null && sessionResult._tag !== "Failure";
       const canReadDiagnostics =
         sessionResult._tag === "Success" &&
         !isCheckingAccess &&
