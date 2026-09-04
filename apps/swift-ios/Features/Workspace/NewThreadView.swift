@@ -718,10 +718,16 @@ public struct NewThreadView: View {
     }
 
     private var submissionValidationMessage: String? {
-        guard selectedProject != nil else { return "Choose a project." }
-        if let selectedEnvironment {
-            guard selectedEnvironment.isEnabled else { return "Environment is off." }
+        if let project = model.snapshot.projects.first(where: { $0.id == projectID }),
+           let environment = model.snapshot.environments.first(where: {
+               $0.id == project.environmentID
+           }) {
+            guard environment.isEnabled else { return "Environment is off." }
+            guard DailyUXCreationContext.canCreateTask(in: environment) else {
+                return "Environment is unreachable."
+            }
         }
+        guard selectedProject != nil else { return "Choose a project." }
         guard restoredDraftProjectID == projectID else { return "Project is loading." }
         guard concreteSelection != nil else {
             guard !creationProviders.isEmpty else { return "No providers available." }

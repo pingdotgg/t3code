@@ -252,11 +252,15 @@ enum DailyUXCreationContext {
     static func projects(in snapshot: FeatureSnapshot) -> [FeatureProject] {
         guard !snapshot.environments.isEmpty else { return snapshot.projects }
         let availableEnvironmentIDs = Set(
-            snapshot.environments.filter(\.isEnabled).map(\.id)
+            snapshot.environments.filter { canCreateTask(in: $0) }.map(\.id)
         )
         return snapshot.projects.filter {
             availableEnvironmentIDs.contains($0.environmentID)
         }
+    }
+
+    static func canCreateTask(in environment: FeatureEnvironment) -> Bool {
+        environment.isEnabled && environment.connectionState != .disconnected
     }
 
     static func unreachableEnvironments(in snapshot: FeatureSnapshot) -> [FeatureEnvironment] {
