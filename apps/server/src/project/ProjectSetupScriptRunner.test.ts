@@ -26,6 +26,7 @@ const makeProject = (scripts: OrchestrationProject["scripts"]): OrchestrationPro
 
 const makeProjectionSnapshotQueryLayer = (project: OrchestrationProject) =>
   Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+    getUserInputActivity: () => Effect.die("unused"),
     getCommandReadModel: () => Effect.die("unused"),
     getSnapshot: () => Effect.die("unused"),
     getShellSnapshot: () => Effect.die("unused"),
@@ -42,6 +43,7 @@ const makeProjectionSnapshotQueryLayer = (project: OrchestrationProject) =>
     getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
     getThreadCheckpointContext: () => Effect.die("unused"),
     getFullThreadDiffContext: () => Effect.die("unused"),
+    getThreadRuntimeContext: () => Effect.die("unused"),
     getThreadShellById: () => Effect.die("unused"),
     getThreadDetailById: () => Effect.die("unused"),
     getThreadDetailSnapshot: () => Effect.die("unused"),

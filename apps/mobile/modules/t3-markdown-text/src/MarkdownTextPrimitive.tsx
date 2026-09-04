@@ -1,4 +1,4 @@
-import React from "react";
+import React, { type Ref } from "react";
 import { Platform, StyleSheet, Text as RNText, type TextProps, type ViewStyle } from "react-native";
 import T3MarkdownTextRunNativeComponent from "./T3MarkdownTextRunNativeComponent";
 import T3MarkdownTextNativeComponent from "./T3MarkdownTextNativeComponent";
@@ -33,6 +33,7 @@ export type ContextMenuActionEvent = {
  * while the React Native Text fallback reports measured `TextLayoutLine`s.
  */
 export type MarkdownTextPrimitiveProps = Omit<TextProps, "onTextLayout"> & {
+  nativeTextRef?: Ref<RNText>;
   uiTextView?: boolean;
   contextMenuConfig?: string;
   onContextMenuAction?: (event: ContextMenuActionEvent) => void;
@@ -45,7 +46,12 @@ export type MarkdownTextPrimitiveProps = Omit<TextProps, "onTextLayout"> & {
   onSelectionChange?: (event: SelectionChangeEvent) => void;
 };
 
-function MarkdownTextPrimitiveChild({ style, children, ...rest }: MarkdownTextPrimitiveProps) {
+function MarkdownTextPrimitiveChild({
+  style,
+  children,
+  nativeTextRef: _nativeTextRef,
+  ...rest
+}: MarkdownTextPrimitiveProps) {
   const [isAncestor, rootStyle] = useTextAncestorContext();
 
   // Flatten the styles, and apply the root styles when needed
@@ -97,21 +103,22 @@ function MarkdownTextPrimitiveChild({ style, children, ...rest }: MarkdownTextPr
   return <>{nativeChildren}</>;
 }
 
-function MarkdownTextPrimitiveInner(props: MarkdownTextPrimitiveProps) {
+function MarkdownTextPrimitiveInner({ nativeTextRef, ...props }: MarkdownTextPrimitiveProps) {
   const [isAncestor] = useTextAncestorContext();
 
   // Even if the uiTextView prop is set, we can still default to using
   // normal selection (i.e. base RN text) if the text doesn't need to be
   // selectable
   if ((!props.selectable || !props.uiTextView) && !isAncestor) {
-    return <RNText {...props} />;
+    return <RNText ref={nativeTextRef} {...props} />;
   }
   return <MarkdownTextPrimitiveChild {...props} />;
 }
 
 export function MarkdownTextPrimitive(props: MarkdownTextPrimitiveProps) {
   if (Platform.OS !== "ios") {
-    return <RNText {...props} />;
+    const { nativeTextRef, ...textProps } = props;
+    return <RNText ref={nativeTextRef} {...textProps} />;
   }
   return <MarkdownTextPrimitiveInner {...props} />;
 }

@@ -134,6 +134,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
       scope: "user",
     },
     { directory: path.resolve(input.cwd, ".agents", "skills"), scope: "project" },
+    { directory: path.resolve(input.cwd, ".agent", "skills"), scope: "project" },
   ];
   const budget: ScanBudget = {
     remainingBytes: MAX_SCAN_BYTES,

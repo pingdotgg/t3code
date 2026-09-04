@@ -66,7 +66,8 @@ const defaultSessionLoadTimeout = Duration.seconds(90);
 const defaultSessionLoadReplayIdleGap = Duration.seconds(2);
 const defaultCancelTimeout = Duration.seconds(15);
 const maxStartupMetadataUpdates = 32;
-const maxStderrChunkLength = 8_192;
+// Antigravity can emit an accepted 16 KiB Google authorization URL on stderr.
+const maxStderrChunkLength = 32_768;
 
 export interface AcpSpawnInput {
   readonly command: string;
@@ -101,8 +102,8 @@ export interface AcpSessionRuntimeOptions {
   readonly transformSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
-  /** Receives bounded stderr chunks. The provider must redact any secrets before logging. */
-  readonly onStderr?: (text: string) => Effect.Effect<void, never>;
+  /** Receives bounded stderr chunks. Redact secrets before logging. A failure closes the runtime. */
+  readonly onStderr?: (text: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
@@ -352,6 +353,7 @@ export const make = (
       Option.none(),
     );
     const stoppingRef = yield* Ref.make(false);
+    const stderrFailure = yield* Deferred.make<never, EffectAcpErrors.AcpError>();
     const runtimeClosed = yield* Deferred.make<void>();
     const promptSerializationSemaphore = yield* Semaphore.make(1);
     const promptDispatchSemaphore = yield* Semaphore.make(1);
@@ -399,7 +401,10 @@ export const make = (
     ): Effect.Effect<A, EffectAcpErrors.AcpError> =>
       logRequest({ method, payload, status: "started" }).pipe(
         Effect.flatMap(() =>
-          effect.pipe(
+          (options.onStderr
+            ? Effect.raceFirst(effect, Deferred.await(stderrFailure))
+            : effect
+          ).pipe(
             Effect.tap((result) =>
               logRequest({
                 method,
@@ -447,7 +452,18 @@ export const make = (
     yield* child.stderr.pipe(
       Stream.decodeText(),
       Stream.runForEach((chunk) =>
-        options.onStderr ? options.onStderr(chunk.slice(-maxStderrChunkLength)) : Effect.void,
+        (options.onStderr
+          ? options.onStderr(chunk.slice(-maxStderrChunkLength))
+          : Effect.void
+        ).pipe(
+          Effect.catch((error) =>
+            Effect.gen(function* () {
+              yield* Deferred.fail(stderrFailure, error);
+              yield* recordTermination(error);
+              yield* child.kill({ forceKillAfter: "1 second" }).pipe(Effect.ignore);
+            }),
+          ),
+        ),
       ),
       Effect.ignore,
       Effect.forkIn(runtimeScope),
@@ -614,13 +630,17 @@ export const make = (
         });
       });
 
-    const updateConfigOptions = (
-      response:
-        | EffectAcpSchema.SetSessionConfigOptionResponse
-        | EffectAcpSchema.LoadSessionResponse
-        | EffectAcpSchema.NewSessionResponse
-        | EffectAcpSchema.ResumeSessionResponse,
-    ): Effect.Effect<void> => Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(response));
+    const updateConfigOptions = Effect.fn("AcpSessionRuntime.updateConfigOptions")(function* (
+      response: EffectAcpSchema.SetSessionConfigOptionResponse,
+    ) {
+      const configOptions = sessionConfigOptionsFromSetup(response);
+      yield* Ref.set(configOptionsRef, configOptions);
+      yield* Queue.offer(eventQueue, {
+        _tag: "ConfigOptionsUpdated",
+        configOptions,
+        rawPayload: response,
+      });
+    });
 
     const updateCurrentModeId = (modeId: string): Effect.Effect<void> =>
       Ref.update(modeStateRef, (current) =>
