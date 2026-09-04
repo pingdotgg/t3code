@@ -18,6 +18,7 @@ export interface ShortcutEventLike {
   ctrlKey: boolean;
   shiftKey: boolean;
   altKey: boolean;
+  getModifierState?(keyArg: string): boolean;
 }
 
 export interface ShortcutModifierStateLike {
@@ -52,6 +53,7 @@ const TERMINAL_DELETE_TO_LINE_START = "\u0015";
 const EVENT_CODE_KEY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   BracketLeft: ["["],
   BracketRight: ["]"],
+  Comma: [","],
   Digit0: ["0"],
   Digit1: ["1"],
   Digit2: ["2"],
@@ -62,6 +64,7 @@ const EVENT_CODE_KEY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   Digit7: ["7"],
   Digit8: ["8"],
   Digit9: ["9"],
+  Period: ["."],
 };
 
 function normalizeEventKey(key: string): string {
@@ -70,9 +73,20 @@ function normalizeEventKey(key: string): string {
   return normalized;
 }
 
-function resolveEventKeys(event: ShortcutEventLike): Set<string> {
+function isAltGraphShortcutEvent(
+  event: Pick<ShortcutEventLike, "getModifierState">,
+  platform: string,
+): boolean {
+  // Firefox reports ordinary Option presses as AltGraph on macOS.
+  return !isMacPlatform(platform) && event.getModifierState?.("AltGraph") === true;
+}
+
+function resolveEventKeys(event: ShortcutEventLike, platform: string): Set<string> {
   const layoutKey = normalizeEventKey(event.key);
   const keys = new Set([layoutKey]);
+  // AltGraph can surface as Ctrl+Alt, so retain its layout key while avoiding
+  // physical aliases that would turn typed punctuation into a shortcut.
+  if (isAltGraphShortcutEvent(event, platform)) return keys;
   // The physical-position fallback exists for layouts that type non-Latin
   // letters (Cyrillic, Greek) and for Option-modified symbols on macOS.
   // When the layout already produces a Latin letter, match on it alone;
@@ -113,7 +127,7 @@ function matchesShortcut(
   platform = navigator.platform,
 ): boolean {
   if (!matchesShortcutModifiers(event, shortcut, platform)) return false;
-  return resolveEventKeys(event).has(shortcut.key);
+  return resolveEventKeys(event, platform).has(shortcut.key);
 }
 
 function resolvePlatform(options: ShortcutMatchOptions | undefined): string {
@@ -285,6 +299,14 @@ export function threadTraversalDirectionFromCommand(
 ): "previous" | "next" | null {
   if (command === "thread.previous") return "previous";
   if (command === "thread.next") return "next";
+  return null;
+}
+
+export function reasoningCycleDirectionFromCommand(
+  command: string | null,
+): "decrease" | "increase" | null {
+  if (command === "reasoning.decrease") return "decrease";
+  if (command === "reasoning.increase") return "increase";
   return null;
 }
 

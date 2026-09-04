@@ -222,6 +222,218 @@ export function isClaudeUltrathinkPrompt(text: string | null | undefined): boole
   return typeof text === "string" && /\bultrathink\b/i.test(text);
 }
 
+export function stripClaudeUltrathinkPrefix(text: string): string {
+  return text.startsWith("Ultrathink:\n") ? text.slice("Ultrathink:\n".length) : text;
+}
+
+export type ReasoningTransitionAction =
+  | { type: "cycle"; direction: "increase" | "decrease" }
+  | { type: "select"; descriptorId: string; value: string };
+
+export type ReasoningTransitionResult =
+  | {
+      status: "changed";
+      prompt: string;
+      modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
+      value: string;
+      label: string;
+    }
+  | { status: "unchanged" }
+  | { status: "blocked"; reason: "ultrathink-in-prompt-body" }
+  | {
+      status: "unsupported";
+      reason: "missing-reasoning-option" | "missing-choices" | "unsupported-prompt-injected-value";
+    }
+  | { status: "not-applicable" }
+  | { status: "invalid"; reason: "unknown-value" };
+
+const REASONING_DESCRIPTOR_IDS = new Set(["reasoningEffort", "effort", "reasoning"]);
+const ULTRATHINK_VALUE = "ultrathink";
+const ULTRATHINK_PREFIX = "Ultrathink:\n";
+const CLAUDE_SLASH_COMMAND = /^\/[^\s/]+(?:\s|$)/u;
+
+function isClaudeSlashCommandPrompt(prompt: string): boolean {
+  return CLAUDE_SLASH_COMMAND.test(prompt.trim());
+}
+
+function findReasoningDescriptor(
+  capabilities: ModelCapabilities,
+): Extract<ProviderOptionDescriptor, { type: "select" }> | undefined {
+  return (capabilities.optionDescriptors ?? []).find(
+    (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
+      descriptor.type === "select" && REASONING_DESCRIPTOR_IDS.has(descriptor.id),
+  );
+}
+
+function providerSelectionsEqual(
+  left: ReadonlyArray<ProviderOptionSelection> | undefined,
+  right: ReadonlyArray<ProviderOptionSelection> | undefined,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right || left.length !== right.length) return false;
+  return left.every(
+    (selection, index) =>
+      selection.id === right[index]?.id && selection.value === right[index]?.value,
+  );
+}
+
+function resolvePersistedReasoningValue(
+  descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
+  modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): string | undefined {
+  const selected = getProviderOptionStringSelectionValue(modelOptions, descriptor.id);
+  const candidates = [
+    selected,
+    descriptor.currentValue,
+    descriptor.options.find((option) => option.isDefault)?.id,
+  ];
+  return candidates.find(
+    (candidate) =>
+      candidate !== undefined &&
+      descriptor.options.some((option) => option.id === candidate) &&
+      !descriptor.promptInjectedValues?.includes(candidate),
+  );
+}
+
+function updateReasoningSelection(
+  modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  descriptorId: string,
+  value: string,
+): ReadonlyArray<ProviderOptionSelection> {
+  const current = modelOptions ?? [];
+  const index = current.findIndex((selection) => selection.id === descriptorId);
+  if (index === -1) {
+    return [...current, { id: descriptorId, value }];
+  }
+  if (current[index]?.value === value) {
+    return current;
+  }
+  return current.map((selection, selectionIndex) =>
+    selectionIndex === index ? { ...selection, value } : selection,
+  );
+}
+
+function removePromptInjectedReasoningSelection(
+  modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
+): ReadonlyArray<ProviderOptionSelection> | undefined {
+  if (!modelOptions) return undefined;
+  const selection = modelOptions.find((candidate) => candidate.id === descriptor.id);
+  if (
+    typeof selection?.value !== "string" ||
+    !descriptor.promptInjectedValues?.includes(selection.value)
+  ) {
+    return modelOptions;
+  }
+  const next = modelOptions.filter((candidate) => candidate !== selection);
+  return next.length > 0 ? next : undefined;
+}
+
+export function resolveReasoningTransition(input: {
+  capabilities: ModelCapabilities;
+  modelOptions?: ReadonlyArray<ProviderOptionSelection> | null | undefined;
+  prompt: string;
+  action: ReasoningTransitionAction;
+}): ReasoningTransitionResult {
+  const { capabilities, modelOptions, prompt, action } = input;
+  if (action.type === "select" && !REASONING_DESCRIPTOR_IDS.has(action.descriptorId)) {
+    return { status: "not-applicable" };
+  }
+
+  const descriptor = findReasoningDescriptor(capabilities);
+  if (!descriptor || (action.type === "select" && action.descriptorId !== descriptor.id)) {
+    return { status: "unsupported", reason: "missing-reasoning-option" };
+  }
+  if (descriptor.options.length === 0) {
+    return { status: "unsupported", reason: "missing-choices" };
+  }
+
+  const promptInjectedUltrathink =
+    descriptor.promptInjectedValues?.includes(ULTRATHINK_VALUE) ?? false;
+  const promptBody = promptInjectedUltrathink ? stripClaudeUltrathinkPrefix(prompt) : prompt;
+  const hasLeadingPrefix = promptBody !== prompt;
+  const ultrathinkInBody = promptInjectedUltrathink && isClaudeUltrathinkPrompt(promptBody);
+  const promptControlsUltrathink =
+    promptInjectedUltrathink && (hasLeadingPrefix || ultrathinkInBody);
+  const persistedValue = resolvePersistedReasoningValue(descriptor, modelOptions);
+  const rawPersistedValue = getProviderOptionStringSelectionValue(modelOptions, descriptor.id);
+  const persistedPromptInjectedValue =
+    rawPersistedValue !== undefined &&
+    (descriptor.promptInjectedValues?.includes(rawPersistedValue) ?? false);
+  const currentValue = promptControlsUltrathink ? ULTRATHINK_VALUE : persistedValue;
+  const cycleOptions = isClaudeSlashCommandPrompt(prompt)
+    ? descriptor.options.filter((option) => !descriptor.promptInjectedValues?.includes(option.id))
+    : descriptor.options;
+
+  let targetValue: string;
+  if (action.type === "select") {
+    if (!descriptor.options.some((option) => option.id === action.value)) {
+      return { status: "invalid", reason: "unknown-value" };
+    }
+    targetValue = action.value;
+  } else if (currentValue === undefined) {
+    if (cycleOptions.length === 0) {
+      return { status: "unchanged" };
+    }
+    const fallbackIndex = action.direction === "increase" ? 0 : cycleOptions.length - 1;
+    targetValue = cycleOptions[fallbackIndex]?.id ?? "";
+  } else {
+    if (cycleOptions.length === 0) {
+      return { status: "unchanged" };
+    }
+    const currentIndex = cycleOptions.findIndex((option) => option.id === currentValue);
+    const offset = action.direction === "increase" ? 1 : -1;
+    const targetIndex =
+      currentIndex === -1
+        ? action.direction === "increase"
+          ? 0
+          : cycleOptions.length - 1
+        : (currentIndex + offset + cycleOptions.length) % cycleOptions.length;
+    targetValue = cycleOptions[targetIndex]?.id ?? "";
+  }
+
+  if (ultrathinkInBody && targetValue !== ULTRATHINK_VALUE) {
+    return { status: "blocked", reason: "ultrathink-in-prompt-body" };
+  }
+
+  const targetOption = descriptor.options.find((option) => option.id === targetValue);
+  if (!targetOption) {
+    return { status: "invalid", reason: "unknown-value" };
+  }
+
+  const targetIsPromptInjected = descriptor.promptInjectedValues?.includes(targetValue) ?? false;
+  if (targetIsPromptInjected && targetValue !== ULTRATHINK_VALUE) {
+    return { status: "unsupported", reason: "unsupported-prompt-injected-value" };
+  }
+  const nextPrompt = targetIsPromptInjected
+    ? hasLeadingPrefix || ultrathinkInBody || isClaudeSlashCommandPrompt(prompt)
+      ? prompt
+      : `${ULTRATHINK_PREFIX}${prompt}`
+    : hasLeadingPrefix
+      ? promptBody
+      : prompt;
+  const nextModelOptions = targetIsPromptInjected
+    ? removePromptInjectedReasoningSelection(modelOptions, descriptor)
+    : targetValue === persistedValue && !persistedPromptInjectedValue
+      ? rawPersistedValue === undefined || rawPersistedValue === persistedValue
+        ? (modelOptions ?? undefined)
+        : updateReasoningSelection(modelOptions, descriptor.id, targetValue)
+      : updateReasoningSelection(modelOptions, descriptor.id, targetValue);
+  const normalizedInputOptions = modelOptions ?? undefined;
+
+  if (nextPrompt === prompt && providerSelectionsEqual(nextModelOptions, normalizedInputOptions)) {
+    return { status: "unchanged" };
+  }
+
+  return {
+    status: "changed",
+    prompt: nextPrompt,
+    modelOptions: nextModelOptions,
+    value: targetValue,
+    label: targetOption.label,
+  };
+}
+
 export function normalizeModelSlug(
   model: string | null | undefined,
   provider: ProviderDriverKind = DEFAULT_PROVIDER_DRIVER_KIND,
@@ -348,7 +560,7 @@ export function applyClaudePromptEffortPrefix(
   // runs it. Command names come from arbitrary file names ("/deploy.prod",
   // "/plugin:skill"), so accept any first token without a second slash;
   // absolute paths like "/home/theo/app.ts" keep the prefix.
-  if (effort !== "ultrathink" || /^\/[^\s/]+(?:\s|$)/u.test(trimmed)) {
+  if (effort !== "ultrathink" || isClaudeSlashCommandPrompt(trimmed)) {
     return trimmed;
   }
   if (trimmed.startsWith("Ultrathink:")) {

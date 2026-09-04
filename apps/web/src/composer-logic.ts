@@ -43,6 +43,22 @@ function clampCursor(text: string, cursor: number): number {
   return Math.max(0, Math.min(text.length, Math.floor(cursor)));
 }
 
+export function mapComposerCursorAcrossLeadingPromptChange(
+  currentPrompt: string,
+  nextPrompt: string,
+  cursorInput: number,
+): number {
+  const currentCursor = clampCursor(currentPrompt, cursorInput);
+  const lengthDelta = nextPrompt.length - currentPrompt.length;
+  if (lengthDelta > 0 && nextPrompt.slice(lengthDelta) === currentPrompt) {
+    return currentCursor + lengthDelta;
+  }
+  if (lengthDelta < 0 && currentPrompt.slice(-lengthDelta) === nextPrompt) {
+    return Math.max(0, currentCursor + lengthDelta);
+  }
+  return clampCursor(nextPrompt, currentCursor);
+}
+
 function isWhitespace(char: string): boolean {
   return (
     char === " " ||
