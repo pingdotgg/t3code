@@ -69,6 +69,7 @@ struct FeatureComposerView: View {
     private let powerFeatures: FeatureComposerPowerFeatures
     private let onSend: () -> Void
     private let onStop: () -> Void
+    private let showsKeyboardDismissControl: Bool
     private let onDismissKeyboard: (() -> Void)?
     private let onApprovalDecision: ((String, FeatureApprovalDecision) -> Void)?
     private let onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)?
@@ -97,6 +98,7 @@ struct FeatureComposerView: View {
         pendingUserInputs: [FeatureUserInput] = [],
         isResolvingRequest: Bool = false,
         powerFeatures: FeatureComposerPowerFeatures = .disabled,
+        showsKeyboardDismissControl: Bool = false,
         onDismissKeyboard: (() -> Void)? = nil,
         onApprovalDecision: ((String, FeatureApprovalDecision) -> Void)? = nil,
         onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)? = nil,
@@ -130,6 +132,7 @@ struct FeatureComposerView: View {
         self.pendingUserInputs = pendingUserInputs
         self.isResolvingRequest = isResolvingRequest
         self.powerFeatures = powerFeatures
+        self.showsKeyboardDismissControl = showsKeyboardDismissControl
         self.onDismissKeyboard = onDismissKeyboard
         self.onApprovalDecision = onApprovalDecision
         self.onUserInputSubmit = onUserInputSubmit
@@ -408,6 +411,14 @@ struct FeatureComposerView: View {
 
     private var standardComposerFooter: some View {
         HStack(spacing: 2) {
+            if FeatureComposerKeyboardDismissPolicy.showsDismissControl(
+                isFocused: focused,
+                isEnabled: showsKeyboardDismissControl,
+                canDismiss: onDismissKeyboard != nil
+            ) {
+                dismissKeyboardButton
+            }
+
             FeatureImageAttachmentPicker(
                 attachments: $attachments,
                 preparationState: $attachmentPreparation,
@@ -446,6 +457,22 @@ struct FeatureComposerView: View {
         .padding(.horizontal, 7)
         .padding(.top, 2)
         .padding(.bottom, 8)
+    }
+
+    private var dismissKeyboardButton: some View {
+        Button("Hide keyboard", systemImage: "keyboard.chevron.compact.down", action: dismissKeyboard)
+            .labelStyle(.iconOnly)
+            .font(.system(size: 15, weight: .medium))
+            .foregroundStyle(T3Colors.textSecondary)
+            .frame(width: T3Metrics.minimumTapTarget, height: T3Metrics.minimumTapTarget)
+            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .accessibilityHint("Keeps your draft and shows the thread")
+            .accessibilityIdentifier("composer-dismiss-keyboard")
+    }
+
+    private func dismissKeyboard() {
+        onDismissKeyboard?()
     }
 
     private var voiceInputButton: some View {
@@ -919,6 +946,12 @@ struct FeatureComposerView: View {
         guard imagesAllowed, !providers.isEmpty else { return false }
         attachImageProviders(providers)
         return true
+    }
+}
+
+enum FeatureComposerKeyboardDismissPolicy {
+    static func showsDismissControl(isFocused: Bool, isEnabled: Bool, canDismiss: Bool) -> Bool {
+        isFocused && isEnabled && canDismiss
     }
 }
 
