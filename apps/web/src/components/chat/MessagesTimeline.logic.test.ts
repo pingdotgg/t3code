@@ -489,6 +489,38 @@ describe("workEntryIsVisibleInGroup", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("keeps context compaction visible outside folded work", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "compaction-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:00Z",
+          entry: {
+            id: "compaction",
+            createdAt: "2026-01-01T00:00:00Z",
+            label: "Compacted context 899K → 19K tokens",
+            tone: "info",
+            sourceActivityKind: "context-compaction",
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows).toEqual([
+      {
+        kind: "context-compaction",
+        id: "compaction-entry",
+        createdAt: "2026-01-01T00:00:00Z",
+        label: "Compacted context 899K → 19K tokens",
+      },
+    ]);
+  });
+
   it("only enables assistant copy for the terminal assistant message in a turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

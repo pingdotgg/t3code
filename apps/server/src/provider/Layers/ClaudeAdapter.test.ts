@@ -2370,7 +2370,7 @@ describe("ClaudeAdapterLive", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 9).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 11).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -2411,6 +2411,13 @@ describe("ClaudeAdapterLive", () => {
         uuid: "compact-boundary-usage",
       } as unknown as SDKMessage);
       harness.query.emit({
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: { post_tokens: 40 },
+        session_id: "sdk-session-compacted-usage",
+        uuid: "compact-boundary-post-usage",
+      } as unknown as SDKMessage);
+      harness.query.emit({
         type: "result",
         subtype: "success",
         is_error: false,
@@ -2433,6 +2440,14 @@ describe("ClaudeAdapterLive", () => {
       } as unknown as SDKMessage);
 
       const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const compactionEvents = runtimeEvents.filter(
+        (event): event is Extract<ProviderRuntimeEvent, { type: "thread.state.changed" }> =>
+          event.type === "thread.state.changed" && event.payload.state === "compacted",
+      );
+      assert.equal(compactionEvents[0]?.payload.beforeTokens, 200);
+      assert.equal(compactionEvents[0]?.payload.afterTokens, 40);
+      assert.equal(compactionEvents[1]?.payload.beforeTokens, undefined);
+      assert.equal(compactionEvents[1]?.payload.afterTokens, 40);
       const finalUsageEvent = runtimeEvents.findLast(
         (event) => event.type === "thread.token-usage.updated",
       );
@@ -2440,7 +2455,6 @@ describe("ClaudeAdapterLive", () => {
       if (finalUsageEvent?.type === "thread.token-usage.updated") {
         assert.deepEqual(finalUsageEvent.payload.usage, {
           usedTokens: 40,
-          lastUsedTokens: 200,
           totalProcessedTokens: 450,
           maxTokens: 200000,
         });

@@ -333,6 +333,12 @@ export type MessagesTimelineRow =
       expanded: boolean;
     }
   | {
+      kind: "context-compaction";
+      id: string;
+      createdAt: string;
+      label: string;
+    }
+  | {
       kind: "message";
       id: string;
       createdAt: string;
@@ -601,7 +607,11 @@ function deriveTurnFolds(input: {
       // Agent-spawn CTA rows never fold: workflows outlive their launching
       // turn (dynamic spawns, background execution), and folding the CTA
       // when the turn settles makes a still-running fleet invisible.
-      if (entry.kind === "work" && entry.entry.agentSpawn !== undefined) {
+      if (
+        entry.kind === "work" &&
+        (entry.entry.agentSpawn !== undefined ||
+          entry.entry.sourceActivityKind === "context-compaction")
+      ) {
         continue;
       }
       if (entry.kind === "work" && workEntryRendersImagePreview(entry.entry)) {
@@ -803,6 +813,7 @@ export function deriveMessagesTimelineRows(input: {
       !entryBelongsToActiveTurn(entry, index) ||
       entry.kind !== "work" ||
       entry.entry.agentSpawn !== undefined ||
+      entry.entry.sourceActivityKind === "context-compaction" ||
       entry.entry.tone === "error" ||
       workEntryRendersImagePreview(entry.entry)
     ) {
@@ -906,6 +917,19 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    if (
+      timelineEntry.kind === "work" &&
+      timelineEntry.entry.sourceActivityKind === "context-compaction"
+    ) {
+      nextRows.push({
+        kind: "context-compaction",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        label: timelineEntry.entry.label,
+      });
+      continue;
+    }
+
     if (timelineEntry.kind === "work") {
       if (
         timelineEntry.entry.agentSpawn !== undefined ||
@@ -929,6 +953,7 @@ export function deriveMessagesTimelineRows(input: {
           !nextEntry ||
           nextEntry.kind !== "work" ||
           nextEntry.entry.agentSpawn !== undefined ||
+          nextEntry.entry.sourceActivityKind === "context-compaction" ||
           nextEntry.entry.tone === "error" ||
           workEntryRendersImagePreview(nextEntry.entry) ||
           activeWorkEntryIds.has(nextEntry.id) ||
@@ -1148,6 +1173,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     case "turn-fold": {
       const bf = b as typeof a;
       return a.createdAt === bf.createdAt && a.label === bf.label && a.expanded === bf.expanded;
+    }
+
+    case "context-compaction": {
+      const bc = b as typeof a;
+      return a.createdAt === bc.createdAt && a.label === bc.label;
     }
 
     case "proposed-plan":
