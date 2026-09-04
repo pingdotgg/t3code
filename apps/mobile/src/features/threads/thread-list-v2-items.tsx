@@ -18,6 +18,7 @@ import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSym
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
+import { ThreadDevServerIndicator } from "./thread-dev-server-indicator";
 import { relativeTime } from "../../lib/time";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -794,6 +795,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : (
           <View className="flex-1" />
         )}
+        <ThreadDevServerIndicator environmentId={thread.environmentId} threadId={thread.id} />
         {pr ? (
           <Text
             accessibilityLabel={pr.accessibilityLabel}
