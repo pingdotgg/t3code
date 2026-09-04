@@ -1,0 +1,8 @@
+[
+  "apps/server/src/orchestration-v2/ProjectionSettlement.test.ts",
+  "apps/server/src/relay/AgentAwarenessRelay.test.ts",
+  "apps/server/src/relay/AgentAwarenessRelay.ts",
+  "docs/internals/mobile-development.md",
+  "docs/internals/performance-regressions.md",
+  "docs/internals/providers.md"
+]

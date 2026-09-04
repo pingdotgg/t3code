@@ -1,0 +1,21 @@
+d2f1f511f4 fix: reconcile main's round-20 features after the rebase
+0550e0a34d fix(web): realign the composer and timeline with main
+e6da41e5c6 fix(web): right-align the stash shoulder tab again
+f0174c4577 fix: reconcile main's round-19 features after the rebase
+2191297898 feat(server): evaluate automatic thread settlement in the v2 orchestrator
+7697286069 fix: reconcile main's round-18 features after the rebase
+99e940dc2b feat(web): port working and thinking timeline rows to orchestration v2
+acdbe292f0 fix: reconcile main's round-17 features after the rebase
+4b35166d02 fix(mobile): keep scroll bounds current after animations
+fa54f54607 fix(chat): remove added tool summary status counts
+b27f50b65a feat(mobile): port chat summaries and transitions to orchestration v2
+60bc3cff93 feat(web): summarize T3 orchestration actions
+72e0c434be fix(web): keep composer shortcut tooltip stable on Mod
+6bcc0e39da fix(web): match composer actions to draft and modifier state
+6ce4cb0a15 fix(web): keep queued messages in place while editing
+e16d934d8a fix(web): keep queued message editing inside the queue panel
+b2afc4cb45 refactor(web): use shared banner rows for queued messages
+85a3c12568 fix(web): keep stash separate from the composer activity column
+e82c717855 fix(web): share the outline for joined composer tabs
+b1533813ce fix(web): align queue headers and prevent stash overlap
+ed6aafa93f fix(web): port composer activity and grouping to orchestration v2

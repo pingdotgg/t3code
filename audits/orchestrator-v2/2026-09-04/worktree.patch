@@ -1,0 +1,1808 @@
+diff --git a/apps/server/src/git/GitManager.ts b/apps/server/src/git/GitManager.ts
+index 2d8af0c9e8b..47534dc6d39 100644
+--- a/apps/server/src/git/GitManager.ts
++++ b/apps/server/src/git/GitManager.ts
+@@ -923,7 +923,7 @@ export const make = Effect.gen(function* () {
+   } satisfies GitVcsDriver.GitStatusDetails;
+   const readLocalStatus = Effect.fn("readLocalStatus")(function* (cwd: string) {
+     const details = yield* gitCore
+-      .statusDetailsLocal(cwd)
++      .statusDetailsLocal(cwd, { includeDivergence: false })
+       .pipe(
+         Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(nonRepositoryStatusDetails)),
+       );
+diff --git a/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts b/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts
+index aef835341e9..e23b495c326 100644
+--- a/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts
++++ b/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts
+@@ -1083,7 +1083,10 @@ function codexReplayPreamble(input: {
+         method: "initialize",
+         params: {
+           clientInfo: { name: "t3code_desktop", title: "T3 Code Desktop", version: "0.1.0" },
+-          capabilities: { experimentalApi: true },
++          capabilities: {
++            experimentalApi: true,
++            optOutNotificationMethods: ["turn/diff/updated"],
++          },
+         },
+       },
+     },
+diff --git a/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts b/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
+index b8ead7248e9..b561b0afcae 100644
+--- a/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
++++ b/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
+@@ -173,6 +173,7 @@ const CODEX_CLIENT_INFO = {
+ } as const;
+ const CODEX_CLIENT_CAPABILITIES = {
+   experimentalApi: true,
++  optOutNotificationMethods: ["turn/diff/updated"],
+ } as const;
+ 
+ export const CodexProviderCapabilitiesV2 = {
+diff --git a/apps/server/src/orchestration-v2/Orchestrator.ts b/apps/server/src/orchestration-v2/Orchestrator.ts
+index 7c48a612a14..195db6f4c8a 100644
+--- a/apps/server/src/orchestration-v2/Orchestrator.ts
++++ b/apps/server/src/orchestration-v2/Orchestrator.ts
+@@ -1386,6 +1386,49 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
+     });
+   });
+ 
++  const dispatchThreadVisit = Effect.fn("orchestrationV2.dispatch.threadVisit")(function* (
++    command: Extract<OrchestrationV2Command, { readonly type: "thread.visit" }>,
++    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
++  ) {
++    const thread = yield* projectionStore
++      .getThread(command.threadId)
++      .pipe(
++        Effect.mapError(
++          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
++        ),
++      );
++    if (thread.deletedAt !== null) {
++      return yield* new OrchestratorDispatchError({
++        commandId: command.commandId,
++        commandType: command.type,
++        cause: `Thread ${command.threadId} is deleted.`,
++      });
++    }
++    const visitedAt = DateTime.make(command.visitedAt);
++    if (Option.isNone(visitedAt)) {
++      return yield* new OrchestratorDispatchError({
++        commandId: command.commandId,
++        commandType: command.type,
++        cause: `Thread ${command.threadId} visit time ${command.visitedAt} is not a valid timestamp.`,
++      });
++    }
++    const movesForward =
++      thread.lastVisitedAt === null ||
++      DateTime.toEpochMillis(visitedAt.value) > DateTime.toEpochMillis(thread.lastVisitedAt);
++    // Viewing a thread changes read state only. Loading its transcript (or
++    // bumping updatedAt) makes a routine read receipt scale with its history.
++    yield* emit(
++      events,
++      command,
++    )({
++      type: "thread.visited",
++      threadId: command.threadId,
++      providerInstanceId: thread.providerInstanceId,
++      occurredAt: yield* DateTime.now,
++      payload: movesForward ? { ...thread, lastVisitedAt: visitedAt.value } : thread,
++    });
++  });
++
+   const dispatchThreadMutation = Effect.fn("orchestrationV2.dispatch.threadMutation")(function* (
+     command: Extract<
+       OrchestrationV2Command,
+@@ -1401,7 +1444,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
+           | "thread.pin"
+           | "thread.unpin"
+           | "thread.pin.reorder"
+-          | "thread.visit"
+           | "thread.mark-unread"
+           | "thread.metadata.update"
+           | "thread.title.regeneration.complete"
+@@ -1548,18 +1590,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
+       }
+       snoozedUntil = parsedSnoozedUntil.value;
+     }
+-    let visitedAt: DateTime.Utc | null = null;
+-    if (command.type === "thread.visit") {
+-      const parsedVisitedAt = DateTime.make(command.visitedAt);
+-      if (Option.isNone(parsedVisitedAt)) {
+-        return yield* new OrchestratorDispatchError({
+-          commandId: command.commandId,
+-          commandType: command.type,
+-          cause: `Thread ${command.threadId} visit time ${command.visitedAt} is not a valid timestamp.`,
+-        });
+-      }
+-      visitedAt = parsedVisitedAt.value;
+-    }
+     let markUnreadVisitedAt: DateTime.Utc | null = null;
+     if (command.type === "thread.mark-unread") {
+       const latestRunCompletedAt = projection.runs.at(-1)?.completedAt ?? null;
+@@ -1678,17 +1708,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
+             updatedAt: keyUnchanged ? thread.updatedAt : now,
+           };
+         }
+-        // Visited tracking records read state only; it must not bump updatedAt,
+-        // otherwise viewing a thread would count as activity (and re-trigger the
+-        // clients that dispatch thread.visit whenever updatedAt advances).
+-        case "thread.visit": {
+-          const previousVisitedAt = thread.lastVisitedAt;
+-          const movesForward =
+-            visitedAt !== null &&
+-            (previousVisitedAt === null ||
+-              DateTime.toEpochMillis(visitedAt) > DateTime.toEpochMillis(previousVisitedAt));
+-          return movesForward ? { ...thread, lastVisitedAt: visitedAt } : thread;
+-        }
+         case "thread.mark-unread":
+           return { ...thread, lastVisitedAt: markUnreadVisitedAt };
+         case "thread.metadata.update":
+@@ -1751,8 +1770,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
+           return "thread.unpinned" as const;
+         case "thread.pin.reorder":
+           return "thread.pin-reordered" as const;
+-        case "thread.visit":
+-          return "thread.visited" as const;
+         case "thread.mark-unread":
+           return "thread.marked-unread" as const;
+         case "thread.metadata.update":
+@@ -6921,16 +6938,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
+       case "thread.create":
+         yield* dispatchThreadCreate(command, events);
+         break;
++      case "thread.visit":
++        yield* dispatchThreadVisit(command, events);
++        break;
+       case "thread.auto-settle": {
+         // Automatic settlement (#8600): the sweep evaluated a shell snapshot,
+         // so re-check against the live thread before settling. Any change
+         // after the snapshot — or any explicit override, including the
+         // un-settle button's "active" — wins over the sweep.
+-        const projection = yield* loadProjectionForCommand(command);
++        const thread = yield* projectionStore
++          .getThread(command.threadId)
++          .pipe(
++            Effect.mapError(
++              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
++            ),
++          );
+         if (
+-          projection.thread.settledOverride !== null ||
+-          DateTime.toEpochMillis(projection.thread.updatedAt) >
+-            DateTime.toEpochMillis(command.snapshotAt)
++          thread.settledOverride !== null ||
++          DateTime.toEpochMillis(thread.updatedAt) > DateTime.toEpochMillis(command.snapshotAt)
+         ) {
+           return yield* new OrchestratorDispatchError({
+             commandId: command.commandId,
+@@ -6960,7 +6985,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
+       case "thread.pin":
+       case "thread.unpin":
+       case "thread.pin.reorder":
+-      case "thread.visit":
+       case "thread.mark-unread":
+       case "thread.metadata.update":
+       case "thread.title.regeneration.complete":
+diff --git a/apps/server/src/orchestration-v2/ProjectionStore.ts b/apps/server/src/orchestration-v2/ProjectionStore.ts
+index 084cdace1ac..fa34211f339 100644
+--- a/apps/server/src/orchestration-v2/ProjectionStore.ts
++++ b/apps/server/src/orchestration-v2/ProjectionStore.ts
+@@ -1,4 +1,5 @@
+ import type {
++  OrchestrationV2AppThread,
+   OrchestrationV2ConversationMessage,
+   OrchestrationV2DomainEvent,
+   OrchestrationV2ProjectedTurnItem,
+@@ -106,6 +107,32 @@ export type ProjectionRecoveryKind =
+   | "subagent-results"
+   | "delegated-completions";
+ 
++/** Thread activity needed by settlement, without transcript or fork history. */
++export type ProjectionSettlementCandidate = Pick<
++  OrchestrationV2ThreadShell,
++  | "id"
++  | "projectId"
++  | "branch"
++  | "worktreePath"
++  | "linkedPullRequest"
++  | "createdAt"
++  | "updatedAt"
++  | "archivedAt"
++  | "settledOverride"
++  | "pinnedAt"
++  | "snoozedUntil"
++  | "snoozedAt"
++  | "latestRunId"
++  | "latestRunRequestedAt"
++  | "latestRunStartedAt"
++  | "latestRunCompletedAt"
++  | "latestUserMessageAt"
++  | "status"
++  | "activityRunStatus"
++  | "pendingRuntimeRequest"
++  | "pendingBackgroundTasks"
++>;
++
+ const ProjectionCheckpointContext = Schema.Struct({
+   runs: Schema.Array(
+     OrchestrationV2RunJsonSchema.mapFields(({ id, ordinal, status }) => ({ id, ordinal, status })),
+@@ -143,6 +170,13 @@ export interface ProjectionStoreV2Shape {
+   readonly getThreadShell: (
+     threadId: ThreadId,
+   ) => Effect.Effect<OrchestrationV2ThreadShell | null, ProjectionStoreV2Error>;
++  readonly getThread: (
++    threadId: ThreadId,
++  ) => Effect.Effect<OrchestrationV2AppThread, ProjectionStoreV2Error>;
++  readonly getSettlementCandidates: () => Effect.Effect<
++    ReadonlyArray<ProjectionSettlementCandidate>,
++    ProjectionStoreV2Error
++  >;
+   readonly getThreadProjection: (
+     threadId: ThreadId,
+   ) => Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error>;
+@@ -585,6 +619,18 @@ type ShellRunRow = {
+   readonly ordinal: number;
+ };
+ 
++type SettlementThreadRow = Pick<
++  ShellThreadRow,
++  | "thread_id"
++  | "payload_json"
++  | "latest_run_id"
++  | "latest_run_status"
++  | "latest_run_requested_at"
++  | "latest_run_started_at"
++  | "latest_run_completed_at"
++  | "latest_user_message_at"
++>;
++
+ type ShellRunItemCountRow = {
+   readonly thread_id: string;
+   readonly run_id: string;
+@@ -2954,6 +3000,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
+     const getThreadProjection: ProjectionStoreV2Shape["getThreadProjection"] = (threadId) =>
+       readProjection(threadId, new Set());
+ 
++    const getThread: ProjectionStoreV2Shape["getThread"] = (threadId) =>
++      Effect.gen(function* () {
++        const rows = yield* sql<PayloadRow>`
++          SELECT payload_json FROM orchestration_v2_projection_threads
++          WHERE thread_id = ${threadId}
++        `;
++        if (rows[0] === undefined) {
++          return yield* new ProjectionStoreThreadNotFoundError({ threadId });
++        }
++        return yield* decodeThreadPayload(rows[0].payload_json);
++      }).pipe(
++        Effect.mapError((cause) =>
++          isProjectionStoreThreadNotFoundError(cause)
++            ? cause
++            : new ProjectionStoreReadError({ threadId, cause }),
++        ),
++      );
++
+     const getCheckpointContext: ProjectionStoreV2Shape["getCheckpointContext"] = (threadId) =>
+       sql
+         .withTransaction(
+@@ -3320,6 +3384,104 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
+         return { providerThreadsByThreadId, pendingTurnItemsByThreadId };
+       });
+ 
++    const getSettlementCandidates: ProjectionStoreV2Shape["getSettlementCandidates"] = () =>
++      sql
++        .withTransaction(
++          Effect.gen(function* () {
++            // Settlement needs activity timestamps, not item counts, run history,
++            // provider sessions or inherited fork rows. Reject parked and busy
++            // threads before loading the remaining candidates' background work.
++            const rows = yield* sql<SettlementThreadRow>`
++            SELECT t.thread_id, t.payload_json,
++              r.run_id AS latest_run_id,
++              r.status AS latest_run_status,
++              r.requested_at AS latest_run_requested_at,
++              json_extract(r.payload_json, '$.startedAt') AS latest_run_started_at,
++              r.completed_at AS latest_run_completed_at,
++              (
++                SELECT message.updated_at
++                FROM orchestration_v2_projection_messages message
++                WHERE message.thread_id = t.thread_id AND message.role = 'user'
++                ORDER BY message.updated_at DESC, message.message_id DESC
++                LIMIT 1
++              ) AS latest_user_message_at
++            FROM orchestration_v2_projection_threads t
++            LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = (
++              SELECT latest.run_id FROM orchestration_v2_projection_runs latest
++              WHERE latest.thread_id = t.thread_id
++              ORDER BY latest.ordinal DESC, latest.run_id DESC
++              LIMIT 1
++            )
++            WHERE t.deleted_at IS NULL
++              AND json_extract(t.payload_json, '$.archivedAt') IS NULL
++              AND json_extract(t.payload_json, '$.settledOverride') IS NULL
++              AND json_extract(t.payload_json, '$.pinnedAt') IS NULL
++              AND NOT EXISTS (
++                SELECT 1 FROM orchestration_v2_projection_runs active
++                WHERE active.thread_id = t.thread_id
++                  AND active.status IN ('preparing', 'starting', 'running', 'waiting')
++              )
++              AND NOT EXISTS (
++                SELECT 1 FROM orchestration_v2_projection_runtime_requests request
++                WHERE request.thread_id = t.thread_id AND request.status = 'pending'
++              )
++            ORDER BY t.updated_at ASC, t.thread_id ASC
++          `;
++            if (rows.length === 0) return [];
++            const threadIds = rows.map((row) => ThreadId.make(row.thread_id));
++            const { providerThreadsByThreadId, pendingTurnItemsByThreadId } =
++              yield* pendingBackgroundDataByThreadId({
++                providerThreadRows: yield* selectShellProviderThreadRows(threadIds),
++                pendingTurnItemRows: yield* selectShellPendingTurnItemRows(threadIds),
++              });
++            return yield* Effect.forEach(rows, (row) =>
++              Effect.gen(function* () {
++                const thread = yield* decodeThreadPayload(row.payload_json);
++                const status = shellStatusFromStoredRunStatus(row.latest_run_status);
++                const latestRunId =
++                  row.latest_run_id === null ? null : RunId.make(row.latest_run_id);
++                return {
++                  ...thread,
++                  pinnedAt: thread.pinnedAt ?? null,
++                  snoozedUntil: thread.snoozedUntil ?? null,
++                  snoozedAt: thread.snoozedAt ?? null,
++                  status,
++                  latestRunId,
++                  latestRunRequestedAt:
++                    row.latest_run_requested_at === null
++                      ? null
++                      : DateTime.makeUnsafe(row.latest_run_requested_at),
++                  latestRunStartedAt:
++                    row.latest_run_started_at === null
++                      ? null
++                      : DateTime.makeUnsafe(row.latest_run_started_at),
++                  latestRunCompletedAt:
++                    row.latest_run_completed_at === null
++                      ? null
++                      : DateTime.makeUnsafe(row.latest_run_completed_at),
++                  latestUserMessageAt:
++                    row.latest_user_message_at === null
++                      ? null
++                      : DateTime.makeUnsafe(row.latest_user_message_at),
++                  activityRunStatus: null,
++                  pendingRuntimeRequest: null,
++                  pendingBackgroundTasks: derivePendingBackgroundWork({
++                    latestRun:
++                      latestRunId === null || status === "idle"
++                        ? null
++                        : { id: latestRunId, ordinal: 0, status },
++                    providerThreads: providerThreadsByThreadId.get(thread.id) ?? [],
++                    turnItems: pendingTurnItemsByThreadId.get(thread.id) ?? [],
++                    activeProviderThreadId: thread.activeProviderThreadId,
++                    hasActiveRun: false,
++                  }),
++                } satisfies ProjectionSettlementCandidate;
++              }),
++            );
++          }),
++        )
++        .pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
++
+     const shellThreadStateFromRow = (input: {
+       readonly row: ShellThreadRow;
+       readonly runOrdinalsByThreadId: ReadonlyMap<ThreadId, Map<RunId, number>>;
+@@ -3566,6 +3728,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
+       apply,
+       getShellSnapshot,
+       getThreadShell,
++      getThread,
++      getSettlementCandidates,
+       getThreadProjection,
+       getCheckpointContext,
+       getRecoveryThreadIds,
+@@ -3638,6 +3802,34 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
+             .pipe(Effect.map(threadShellFromProjection));
+           return shell.deletedAt === null ? shell : null;
+         }),
++      getThread: (threadId) =>
++        Effect.gen(function* () {
++          const projection = (yield* Ref.get(replayState)).projections.get(threadId);
++          if (projection === undefined) {
++            return yield* new ProjectionStoreThreadNotFoundError({ threadId });
++          }
++          return projection.thread;
++        }),
++      getSettlementCandidates: () =>
++        Effect.gen(function* () {
++          const projections = (yield* Ref.get(replayState)).projections;
++          return [...projections.values()]
++            .filter(
++              ({ thread, runs, runtimeRequests }) =>
++                thread.deletedAt === null &&
++                thread.archivedAt === null &&
++                thread.settledOverride === null &&
++                thread.pinnedAt == null &&
++                !runs.some(isActivityRunForShell) &&
++                !runtimeRequests.some((request) => request.status === "pending"),
++            )
++            .map(threadShellFromProjection)
++            .toSorted(
++              (left, right) =>
++                DateTime.toEpochMillis(left.updatedAt) - DateTime.toEpochMillis(right.updatedAt) ||
++                left.id.localeCompare(right.id),
++            );
++        }),
+       getRecoveryThreadIds: (kind) =>
+         Effect.gen(function* () {
+           const projections = (yield* Ref.get(replayState)).projections;
+diff --git a/apps/server/src/orchestration-v2/ProviderTurnControlService.test.ts b/apps/server/src/orchestration-v2/ProviderTurnControlService.test.ts
+index 94c4e0ed2a3..2991c697420 100644
+--- a/apps/server/src/orchestration-v2/ProviderTurnControlService.test.ts
++++ b/apps/server/src/orchestration-v2/ProviderTurnControlService.test.ts
+@@ -216,6 +216,8 @@ it.effect(
+           apply: () => Effect.void,
+           getShellSnapshot: () => Effect.die("unused getShellSnapshot"),
+           getThreadShell: () => Effect.die("unused getThreadShell"),
++          getThread: () => Ref.get(projection).pipe(Effect.map((state) => state.thread)),
++          getSettlementCandidates: () => Effect.die("unused getSettlementCandidates"),
+           getThreadProjection: () => Ref.get(projection),
+           getCheckpointContext: () => Effect.die("not used"),
+           getRecoveryThreadIds: () => Effect.die("unused getRecoveryThreadIds"),
+diff --git a/apps/server/src/orchestration-v2/ThreadSettlementService.test.ts b/apps/server/src/orchestration-v2/ThreadSettlementService.test.ts
+index e81350daab7..cbca5b3066d 100644
+--- a/apps/server/src/orchestration-v2/ThreadSettlementService.test.ts
++++ b/apps/server/src/orchestration-v2/ThreadSettlementService.test.ts
+@@ -34,6 +34,7 @@ import { ServerActivation } from "../serverActivation.ts";
+ import { ServerSettingsService } from "../serverSettings.ts";
+ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+ import { OrchestratorV2, type OrchestratorV2Shape } from "./Orchestrator.ts";
++import { ProjectionStoreV2 } from "./ProjectionStore.ts";
+ import * as ThreadSettlementService from "./ThreadSettlementService.ts";
+ 
+ import {
+@@ -417,12 +418,15 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
+       getProjectShellsWithoutEnrichment: () =>
+         Ref.get(snapshots).pipe(Effect.map((snapshot) => snapshot.projects)),
+     }),
+-    Layer.mock(OrchestratorV2)({
+-      getShellSnapshot: () =>
++    Layer.mock(ProjectionStoreV2)({
++      getSettlementCandidates: () =>
+         Ref.updateAndGet(snapshotReadCount, (count) => count + 1).pipe(
+           Effect.tap((count) => Queue.offer(snapshotReads, count)),
+           Effect.andThen(Ref.get(snapshots)),
++          Effect.map((snapshot) => snapshot.threads),
+         ),
++    }),
++    Layer.mock(OrchestratorV2)({
+       dispatch,
+     }),
+     Layer.mock(GitManager)({
+diff --git a/apps/server/src/orchestration-v2/ThreadSettlementService.ts b/apps/server/src/orchestration-v2/ThreadSettlementService.ts
+index 250b20117ae..ebe13f0d2b5 100644
+--- a/apps/server/src/orchestration-v2/ThreadSettlementService.ts
++++ b/apps/server/src/orchestration-v2/ThreadSettlementService.ts
+@@ -17,6 +17,7 @@ import * as ServerSettings from "../serverSettings.ts";
+ import { forkParked } from "../serverActivation.ts";
+ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+ import { OrchestratorV2 } from "./Orchestrator.ts";
++import { ProjectionStoreV2, type ProjectionSettlementCandidate } from "./ProjectionStore.ts";
+ 
+ export interface SettlementPullRequest {
+   readonly state: "open" | "closed" | "merged";
+@@ -94,7 +95,7 @@ function pullRequestSettles(
+ 
+ /** Cheap checks that run before any source control lookup. */
+ export function isAutoSettlementCandidate(
+-  thread: OrchestrationV2ThreadShell,
++  thread: ProjectionSettlementCandidate,
+   nowMs: number,
+ ): boolean {
+   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
+@@ -118,7 +119,7 @@ export function isAutoSettlementCandidate(
+ }
+ 
+ export function resolveAutoSettlementAt(input: {
+-  readonly thread: OrchestrationV2ThreadShell;
++  readonly thread: ProjectionSettlementCandidate;
+   readonly pullRequest: SettlementPullRequest | null;
+   readonly nowMs: number;
+   readonly autoSettleAfterDays: number | null;
+@@ -151,6 +152,7 @@ export class ThreadSettlementServiceV2 extends Context.Service<
+ 
+ export const make = Effect.gen(function* () {
+   const orchestrator = yield* OrchestratorV2;
++  const projections = yield* ProjectionStoreV2;
+   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+   const settingsService = yield* ServerSettings.ServerSettingsService;
+   const git = yield* GitManager.GitManager;
+@@ -161,7 +163,7 @@ export const make = Effect.gen(function* () {
+   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
+     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
+   ) {
+-    const snapshot = yield* orchestrator.getShellSnapshot();
++    const threads = yield* projections.getSettlementCandidates();
+     const projectShells = yield* snapshots.getProjectShellsWithoutEnrichment();
+     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+     const projects = new Map(projectShells.map((project) => [project.id, project]));
+@@ -169,9 +171,7 @@ export const make = Effect.gen(function* () {
+     // the merged pull request: most threads carry no link and settle from
+     // their branch lookup, which would otherwise wait for the next minute's
+     // sweep on a possibly stale cached answer.
+-    const candidates = snapshot.threads.filter((thread) =>
+-      isAutoSettlementCandidate(thread, nowMs),
+-    );
++    const candidates = threads.filter((thread) => isAutoSettlementCandidate(thread, nowMs));
+     // Use the same cwd as the sidebar so both paths share GitManager's PR cache.
+     const lookupCwdByThreadId = new Map<string, string>();
+     yield* Effect.forEach(
+diff --git a/apps/server/src/orchestration-v2/runtimeLayer.test.ts b/apps/server/src/orchestration-v2/runtimeLayer.test.ts
+index 251f56c9eb7..e8de0dbd3e3 100644
+--- a/apps/server/src/orchestration-v2/runtimeLayer.test.ts
++++ b/apps/server/src/orchestration-v2/runtimeLayer.test.ts
+@@ -1634,6 +1634,38 @@ it.layer(SharedApplicationDataPlaneTestLayer)("visited projection", (it) => {
+         })
+         .pipe(Effect.flip);
+       assert.instanceOf(markUnread, OrchestratorDispatchError);
++
++      // A read receipt must not decode any transcript, including inherited or
++      // unreadable historical rows. It only advances the thread's watermark.
++      const sql = yield* SqlClient.SqlClient;
++      yield* sql`INSERT INTO orchestration_v2_projection_turn_items (
++        turn_item_id, thread_id, ordinal, type, status, updated_at, payload_json
++      ) VALUES (
++        'item:visited:unreadable-history', ${threadId}, 1, 'dynamic_tool', 'completed',
++        ${visitedAt}, '{broken'
++      )`;
++      const nextVisitedAt = "2026-07-24T02:00:00.000Z";
++      yield* orchestrator.dispatch({
++        type: "thread.visit",
++        commandId: CommandId.make("runtime-layer-visited-without-history"),
++        threadId,
++        visitedAt: nextVisitedAt,
++      });
++      const [watermark] = yield* sql<{ readonly visited_at: string; readonly updated_at: string }>`
++        SELECT json_extract(payload_json, '$.lastVisitedAt') AS visited_at, updated_at
++        FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}
++      `;
++      assert.equal(watermark!.visited_at, nextVisitedAt);
++      assert.equal(watermark!.updated_at, DateTime.formatIso(createdUpdatedAt));
++      const invalidVisit = yield* orchestrator
++        .dispatch({
++          type: "thread.visit",
++          commandId: CommandId.make("runtime-layer-visited-invalid-timestamp"),
++          threadId,
++          visitedAt: "invalid-timestamp",
++        })
++        .pipe(Effect.flip);
++      assert.instanceOf(invalidVisit, OrchestratorDispatchError);
+     }),
+   );
+ });
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/message_steering/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/message_steering/codex_transcript.ndjson
+index 5ec0fa5313b..81805f6e2fc 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/message_steering/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/message_steering/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.128.0","scenario":"message_steering","metadata":{"source":"record-codex-app-server-replay-fixture","fileName":"message_steering.ndjson","description":"One active turn receives an immediate turn/steer request."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.128.0 (Mac OS 26.4.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex_p","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/multi_turn/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/multi_turn/codex_transcript.ndjson
+index 7501e0b07e8..6059ff58b8f 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/multi_turn/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/multi_turn/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.120.0","scenario":"multi_turn","metadata":{"source":"codex-app-server-probe","fileName":"multi_turn.ndjson","description":"One thread with two sequential user turns."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.120.0 (Mac OS 26.4.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/plan_questions/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/plan_questions/codex_transcript.ndjson
+index 1f4ebc25a84..2304676d04a 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/plan_questions/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/plan_questions/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.120.0","scenario":"plan_questions","metadata":{"source":"codex-app-server-probe","fileName":"plan_questions.ndjson","description":"One plan-mode turn that asks a structured clarifying question."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.120.0 (Mac OS 26.4.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/proposed_plan/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/proposed_plan/codex_transcript.ndjson
+index a536fec30cf..6ff3a268d82 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/proposed_plan/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/proposed_plan/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.120.0","scenario":"proposed_plan","metadata":{"source":"codex-app-server-probe","fileName":"proposed_plan.ndjson","description":"One plan-mode turn that emits a proposed plan document."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.120.0 (Mac OS 26.4.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/provider_thread_resume/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/provider_thread_resume/codex_transcript.ndjson
+index dab6f0e613c..27fcb602deb 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/provider_thread_resume/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/provider_thread_resume/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.120.0","scenario":"provider_thread_resume","metadata":{"source":"codex-app-server-probe","fileName":"provider_thread_resume.ndjson","description":"One provider-native thread is started, completed, then resumed by thread id in a fresh app-server session."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.120.0 (Mac OS 26.4.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+@@ -33,7 +33,7 @@
+ {"type":"emit_inbound","label":"thread/status/changed","frame":{"method":"thread/status/changed","params":{"threadId":"019db117-b50d-7a01-a6b6-65e47d749c3e","status":{"type":"idle"}}}}
+ {"type":"emit_inbound","label":"turn/completed","frame":{"method":"turn/completed","params":{"threadId":"019db117-b50d-7a01-a6b6-65e47d749c3e","turn":{"id":"019db117-b519-7fa3-85c8-7762b26478a7","items":[],"status":"completed","error":null,"startedAt":1776792614,"completedAt":1776792622,"durationMs":8794}}}}
+ {"type":"runtime_exit","status":"success"}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.120.0 (Mac OS 26.4.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/resume","frame":{"id":2,"method":"thread/resume","params":{"threadId":"019db117-b50d-7a01-a6b6-65e47d749c3e","excludeTurns":true}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/queued_turn/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/queued_turn/codex_transcript.ndjson
+index f26e022651c..3843ef01f96 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/queued_turn/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/queued_turn/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.120.0","scenario":"queued_turn","metadata":{"source":"codex-app-server-probe","fileName":"queued_turn.ndjson","description":"One thread with a queued second user turn."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.120.0 (Mac OS 26.4.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/simple/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/simple/codex_transcript.ndjson
+index 2e6cef23e4d..24961a80c42 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/simple/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/simple/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.120.0","scenario":"simple","metadata":{"source":"codex-app-server-probe","fileName":"simple.ndjson","description":"One thread and one turn with a deterministic text-only response."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.120.0 (Mac OS 26.4.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/subagent/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/subagent/codex_transcript.ndjson
+index b62e9cea831..eb5be4216da 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/subagent/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/subagent/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.120.0","scenario":"subagent","metadata":{"source":"codex-app-server-probe","fileName":"subagent.ndjson","description":"One root turn that asks Codex to spawn two collab agents."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.120.0 (Mac OS 26.4.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/subagent_continue/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/subagent_continue/codex_transcript.ndjson
+index cdf0e8d90da..e088d47d0e4 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/subagent_continue/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/subagent_continue/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.137.0","scenario":"subagent_continue","metadata":{"source":"record-codex-app-server-replay-fixture","fileName":"subagent_continue.ndjson","description":"A root turn spawns one native Codex subagent, then a later root turn resumes and messages the same child thread."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.137.0","codexHome":"/tmp/codex-home","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2/codex_transcript.ndjson
+index c9fc8e97d83..867efac5e6b 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.141.0","scenario":"subagent_v2","metadata":{"source":"observed-codex-app-server-replay-fixture","fileName":"subagent_v2.ndjson","description":"Agents-v2 Codex subagent spawn observed from a real run: parent emits subAgentActivity(started), child emits a normal turn and final agent message."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.141.0","codexHome":"/tmp/codex-home","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2_nested/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2_nested/codex_transcript.ndjson
+index a85accb50ae..e243eaa1172 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2_nested/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2_nested/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.141.0","scenario":"subagent_v2_nested","metadata":{"source":"observed-codex-app-server-replay-fixture","description":"Agents-v2 Codex nested subagent spawn: root emits a subAgentActivity, that child emits another, and that grandchild emits a final nested child."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.141.0","codexHome":"/tmp/codex-home","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native/codex_transcript.ndjson
+index 2a2420c557f..c3341992fa8 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.120.0","scenario":"thread_fork_native","metadata":{"source":"hand-authored-replay","description":"One completed source turn, a native thread/fork, and the first target fork turn."}}
+-{"type":"expect_outbound","label":"initialize/source","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize/source","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize/source","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.120.0","codexHome":"/tmp/codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized/source","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start/source","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_continue/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_continue/codex_transcript.ndjson
+index 5805ae0eb6b..2b6e2ce4a92 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_continue/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_continue/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.137.0","scenario":"thread_fork_native_continue","metadata":{"source":"record-codex-app-server-replay-fixture","fileName":"thread_fork_native_continue.ndjson","description":"One source marker turn, a native thread fork, a fork-local marker turn, and a recall turn that requires both contexts."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.137.0 (Mac OS 26.5.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_prior_turn/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_prior_turn/codex_transcript.ndjson
+index 2556833b6e1..146505fbc71 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_prior_turn/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_prior_turn/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.124.0-alpha.3","scenario":"thread_fork_native_prior_turn","metadata":{"source":"codex-app-server-live-probe-normalized-for-orchestrator-replay","description":"Two completed source turns, native thread/fork, rollback of the fork to the first source turn, and a fork turn that only sees the first turn.","sourceThreadId":"019dd6ba-2681-7bf0-b051-141b0cbcbb27","forkThreadId":"019dd6ba-47b7-7092-8688-9cf7fe5f6498","firstTurnId":"019dd6ba-268b-7f82-8f4c-9fde0edcfd55","secondTurnId":"019dd6ba-416d-7902-95cf-d4179c3f4738","repeatTurnId":"019dd6ba-47eb-7041-ad45-5abe752c28c9","normalization":"Native frames are live. Initialize frames are normalized to the T3 adapter client info, and a fork-session initialize was inserted to match orchestrator provider-session lifecycle."}}
+-{"type":"expect_outbound","label":"initialize/source","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize/source","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize/source","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.124.0-alpha.3","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized/source","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_siblings/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_siblings/codex_transcript.ndjson
+index 68b31064d82..3677b19ee03 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_siblings/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_siblings/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.137.0","scenario":"thread_fork_native_siblings","metadata":{"source":"record-codex-app-server-replay-fixture","fileName":"thread_fork_native_siblings.ndjson","description":"One source marker turn and two independent native forks that each recall the source plus only their own fork marker."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.137.0 (Mac OS 26.5.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/thread_merge_back_continue/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/thread_merge_back_continue/codex_transcript.ndjson
+index 203b56a6a0d..dc3983cfb43 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/thread_merge_back_continue/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/thread_merge_back_continue/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.137.0","scenario":"thread_merge_back_continue","metadata":{"source":"record-codex-app-server-replay-fixture","fileName":"thread_merge_back_continue.ndjson","description":"A source thread consumes one fork-delta handoff and later recalls source and transferred context."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.137.0 (Mac OS 26.5.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/thread_merge_back_siblings/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/thread_merge_back_siblings/codex_transcript.ndjson
+index 6c093a23e45..9ff75cf978c 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/thread_merge_back_siblings/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/thread_merge_back_siblings/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.137.0","scenario":"thread_merge_back_siblings","metadata":{"source":"record-codex-app-server-replay-fixture","fileName":"thread_merge_back_siblings.ndjson","description":"Two sibling fork deltas are merged sequentially into one source provider thread and recalled together."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.137.0 (Mac OS 26.5.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback/codex_transcript.ndjson
+index 5c2b45abba2..6d39a229136 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.120.0","scenario":"thread_rollback","metadata":{"source":"codex-app-server-probe","fileName":"thread_rollback.ndjson","description":"One thread completes two turns, rolls back the most recent turn, then starts another turn."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.120.0 (Mac OS 26.4.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/todo_list/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/todo_list/codex_transcript.ndjson
+index 21f3d9b935a..b4523e8b629 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/todo_list/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/todo_list/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.120.0","scenario":"todo_list","metadata":{"source":"codex-app-server-probe","fileName":"todo_list.ndjson","description":"One turn that asks Codex to emit progress through update_plan."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.120.0 (Mac OS 26.4.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only_on_request/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only_on_request/codex_transcript.ndjson
+index 1146de01a07..3af4249b13e 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only_on_request/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only_on_request/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.120.0","scenario":"tool_call_read_only_on_request","metadata":{"source":"codex-app-server-probe","fileName":"tool_call_read_only_on_request.ndjson","description":"Write a small probe file with read-only full filesystem visibility and on-request approvals."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.120.0 (Mac OS 26.4.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/tool_call_restricted_granular/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/tool_call_restricted_granular/codex_transcript.ndjson
+index 8f767ad6bd5..3e1f360a039 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/tool_call_restricted_granular/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/tool_call_restricted_granular/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.120.0","scenario":"tool_call_restricted_granular","metadata":{"source":"codex-app-server-probe","fileName":"tool_call_restricted_granular.ndjson","description":"Write a small probe file with restricted read access and granular approval flags enabled."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.120.0 (Mac OS 26.4.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/tool_call_workspace_never/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/tool_call_workspace_never/codex_transcript.ndjson
+index 1a2ce154c0d..d1b33c6fffa 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/tool_call_workspace_never/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/tool_call_workspace_never/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.120.0","scenario":"tool_call_workspace_never","metadata":{"source":"codex-app-server-probe","fileName":"tool_call_workspace_never.ndjson","description":"Write a small probe file with workspace-write sandbox policy and never approvals."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.120.0 (Mac OS 26.4.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt/codex_transcript.ndjson
+index 10c11a06d04..52d7396d00b 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.120.0","scenario":"turn_interrupt","metadata":{"source":"codex-app-server-probe","fileName":"turn_interrupt.ndjson","description":"One active turn is interrupted before it finishes naturally."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.120.0 (Mac OS 26.4.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt_mid_tool/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt_mid_tool/codex_transcript.ndjson
+index 0a49ffd891e..5a490506f05 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt_mid_tool/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt_mid_tool/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.128.0","scenario":"turn_interrupt_mid_tool","metadata":{"source":"record-codex-app-server-replay-fixture","fileName":"turn_interrupt_mid_tool.ndjson","description":"One active turn is interrupted after Codex has already executed a local command."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.128.0 (Mac OS 26.4.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex_p","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/orchestration-v2/testkit/fixtures/web_search/codex_transcript.ndjson b/apps/server/src/orchestration-v2/testkit/fixtures/web_search/codex_transcript.ndjson
+index d6cb3077e44..e5426c9c2ff 100644
+--- a/apps/server/src/orchestration-v2/testkit/fixtures/web_search/codex_transcript.ndjson
++++ b/apps/server/src/orchestration-v2/testkit/fixtures/web_search/codex_transcript.ndjson
+@@ -1,5 +1,5 @@
+ {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.120.0","scenario":"web_search","metadata":{"source":"codex-app-server-probe","fileName":"web_search.ndjson","description":"One turn with a native Codex webSearch item that should become normalized progress."}}
+-{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
++{"type":"expect_outbound","label":"initialize","frame":{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true,"optOutNotificationMethods":["turn/diff/updated"]},"clientInfo":{"name":"t3code_desktop","title":"T3 Code Desktop","version":"0.1.0"}}}}
+ {"type":"emit_inbound","label":"initialize","frame":{"id":1,"result":{"userAgent":"t3code_desktop/0.120.0 (Mac OS 26.4.1; arm64) dumb (t3code_desktop; 0.1.0)","codexHome":"/Users/julius/.codex","platformFamily":"unix","platformOs":"macos"}}}
+ {"type":"expect_outbound","label":"initialized","frame":{"method":"initialized"}}
+ {"type":"expect_outbound","label":"thread/start","frame":{"id":2,"method":"thread/start","params":{}}}
+diff --git a/apps/server/src/persistence/Migrations.ts b/apps/server/src/persistence/Migrations.ts
+index ed89a02b08e..4d3d81e307c 100644
+--- a/apps/server/src/persistence/Migrations.ts
++++ b/apps/server/src/persistence/Migrations.ts
+@@ -70,6 +70,7 @@ import Migration0055 from "./Migrations/055_ScheduledTasks.ts";
+ import Migration0056 from "./Migrations/056_LegacyV1ImportState.ts";
+ import Migration0057 from "./Migrations/057_ApplicationEventSequenceIndexes.ts";
+ import Migration0058 from "./Migrations/058_OrchestrationV2RecoveryIndexes.ts";
++import Migration0059 from "./Migrations/059_OrchestrationV2ShellIndexes.ts";
+ 
+ /**
+  * Migration loader with all migrations defined inline.
+@@ -140,6 +141,7 @@ export const migrationEntries = [
+   [56, "LegacyV1ImportState", Migration0056],
+   [57, "ApplicationEventSequenceIndexes", Migration0057],
+   [58, "OrchestrationV2RecoveryIndexes", Migration0058],
++  [59, "OrchestrationV2ShellIndexes", Migration0059],
+ ] as const;
+ 
+ export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
+diff --git a/apps/server/src/provider/Layers/EventNdjsonLogger.test.ts b/apps/server/src/provider/Layers/EventNdjsonLogger.test.ts
+index 2851cdfcb51..f94e22af6f0 100644
+--- a/apps/server/src/provider/Layers/EventNdjsonLogger.test.ts
++++ b/apps/server/src/provider/Layers/EventNdjsonLogger.test.ts
+@@ -319,6 +319,22 @@ describe("EventNdjsonLogger", () => {
+           { method: "thread/realtime/transcript/delta", payload: circularDelta },
+           threadId,
+         );
++        yield* native.write({ method: "turn/diff/updated", payload: circularDelta }, threadId);
++        yield* native.write(
++          {
++            event: {
++              direction: "incoming",
++              stage: "decoded",
++              payload: {
++                method: "turn/diff/updated",
++                get params() {
++                  throw new Error("unused diff snapshots must not be traversed");
++                },
++              },
++            },
++          },
++          threadId,
++        );
+         yield* native.write(
+           {
+             event: {
+diff --git a/apps/server/src/provider/Layers/EventNdjsonLogger.ts b/apps/server/src/provider/Layers/EventNdjsonLogger.ts
+index 67b5b52db7b..edba0ed1f84 100644
+--- a/apps/server/src/provider/Layers/EventNdjsonLogger.ts
++++ b/apps/server/src/provider/Layers/EventNdjsonLogger.ts
+@@ -57,6 +57,7 @@ const transientNativeMethods = new Set([
+   "item/reasoning/textDelta",
+   "thread/realtime/outputAudio/delta",
+   "thread/realtime/transcript/delta",
++  "turn/diff/updated",
+ ]);
+ const transientAcpUpdates = new Set(["agent_message_chunk", "agent_thought_chunk"]);
+ 
+diff --git a/apps/server/src/relay/AgentAwarenessRelay.ts b/apps/server/src/relay/AgentAwarenessRelay.ts
+index 42884d7b7c5..2eb03f287eb 100644
+--- a/apps/server/src/relay/AgentAwarenessRelay.ts
++++ b/apps/server/src/relay/AgentAwarenessRelay.ts
+@@ -51,6 +51,7 @@ export class AgentAwarenessRelay extends Context.Service<
+   AgentAwarenessRelay,
+   {
+     readonly publishThread: (threadId: ThreadId) => Effect.Effect<void>;
++    readonly drain: Effect.Effect<void>;
+     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
+   }
+ >()("t3/relay/AgentAwarenessRelay") {}
+@@ -59,13 +60,74 @@ export function eventThreadId(event: OrchestrationV2DomainEvent): ThreadId {
+   return event.threadId;
+ }
+ 
+-export function shouldPublishAgentAwarenessEvent(_event: OrchestrationV2DomainEvent): boolean {
+-  // Publishing is identity-deduplicated below. Watching every V2 event keeps
+-  // this consumer correct as the shell projection evolves without duplicating
+-  // projection-specific relevance rules here.
+-  return true;
++export function shouldPublishAgentAwarenessEvent(
++  event: Pick<OrchestrationV2DomainEvent, "type">,
++): boolean {
++  // projectThreadAwarenessV2 reads thread metadata, run status, and pending requests.
++  // Message bodies and tool progress cannot change the published activity.
++  switch (event.type) {
++    case "thread.created":
++    case "thread.archived":
++    case "thread.unarchived":
++    case "thread.deleted":
++    case "thread.metadata-updated":
++    case "thread.model-selection-updated":
++    case "thread.provider-switched":
++    case "run.created":
++    case "run.updated":
++    case "runtime-request.updated":
++      return true;
++    case "thread.settled":
++    case "thread.unsettled":
++    case "thread.snoozed":
++    case "thread.unsnoozed":
++    case "thread.pinned":
++    case "thread.unpinned":
++    case "thread.pin-reordered":
++    case "thread.visited":
++    case "thread.marked-unread":
++    case "thread.runtime-mode-updated":
++    case "thread.interaction-mode-updated":
++    case "run-attempt.created":
++    case "run-attempt.updated":
++    case "node.updated":
++    case "subagent.updated":
++    case "provider-session.attached":
++    case "provider-session.updated":
++    case "provider-session.detached":
++    case "provider-thread.updated":
++    case "provider-turn.updated":
++    case "message.updated":
++    case "turn-item.updated":
++    case "plan.updated":
++    case "checkpoint-scope.created":
++    case "checkpoint.captured":
++    case "checkpoint.rollback-requested":
++    case "context-handoff.updated":
++    case "context-transfer.created":
++    case "context-transfer.updated":
++      return false;
++  }
+ }
+ 
++export const makeAgentAwarenessPublishWorker = Effect.fnUntraced(function* <R>(
++  publish: (threadId: ThreadId) => Effect.Effect<void, never, R>,
++) {
++  const queued = new Set<ThreadId>();
++  const worker = yield* makeDrainableWorker((threadId: ThreadId) =>
++    Effect.sync(() => queued.delete(threadId)).pipe(Effect.andThen(publish(threadId))),
++  );
++  const enqueue = (threadId: ThreadId) =>
++    Effect.suspend(() => {
++      if (queued.has(threadId)) return Effect.void;
++      // Removing the ID when processing starts allows one new queue entry
++      // for updates received while the current snapshot is being published.
++      queued.add(threadId);
++      return worker.enqueue(threadId);
++    }).pipe(Effect.uninterruptible);
++  return { enqueue, drain: worker.drain };
++});
++
+ export function agentAwarenessPublishIdentity(state: RelayAgentActivityState | null): string {
+   if (state === null) {
+     return "null";
+@@ -305,6 +367,9 @@ export const make = Effect.gen(function* () {
+       transformClient: relayEnvironmentClient(relayConfig.environmentCredential),
+     }).pipe(Effect.provide(FetchHttpClient.layer));
+ 
++  let cachedRelayClient: Effect.Success<ReturnType<typeof makeRelayClient>> | undefined;
++  let publishedRelayConfig: NonNullable<Effect.Success<typeof readRelayConfig>> | undefined;
++
+   // Deadlines for publishes that need confirmation (tombstones and
+   // first-state completions). The confirming publish is re-enqueued through
+   // the same drainable worker as every other publish, so a confirmed
+@@ -312,12 +377,19 @@ export const make = Effect.gen(function* () {
+   // clears the deadline. Assigned after the worker exists.
+   const publishConfirmDeadlines = new Map<ThreadId, number>();
+   let schedulePublishConfirm: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
++  const resetPublishedConnection = Effect.gen(function* () {
++    publishedRelayConfig = undefined;
++    cachedRelayClient = undefined;
++    publishConfirmDeadlines.clear();
++    yield* Ref.set(publishedStateByThreadRef, new Map());
++  });
+ 
+   const publishThreadUnsafe = Effect.fn("publishThreadUnsafe")(function* (threadId: ThreadId) {
+     const publishAgentActivity = yield* readPublishAgentActivityEnabled.pipe(
+       Effect.orElseSucceed(() => false),
+     );
+     if (!publishAgentActivity) {
++      yield* resetPublishedConnection;
+       yield* Effect.logDebug("agent activity publish skipped; publication disabled", {
+         threadId,
+       });
+@@ -325,12 +397,20 @@ export const make = Effect.gen(function* () {
+     }
+     const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
+     if (!relayConfig) {
++      yield* resetPublishedConnection;
+       yield* Effect.logDebug("agent activity publish skipped; relay link credentials unavailable", {
+         threadId,
+       });
+       return;
+     }
+-    const relayClient = yield* makeRelayClient(relayConfig);
++    if (
++      publishedRelayConfig?.url !== relayConfig.url ||
++      publishedRelayConfig.issuer !== relayConfig.issuer ||
++      publishedRelayConfig.environmentCredential !== relayConfig.environmentCredential
++    ) {
++      yield* resetPublishedConnection;
++      publishedRelayConfig = relayConfig;
++    }
+     const environmentId = yield* serverEnvironment.getEnvironmentId;
+ 
+     const publishState = (input: {
+@@ -339,6 +419,10 @@ export const make = Effect.gen(function* () {
+       readonly reason: string;
+     }) =>
+       Effect.gen(function* () {
++        if (cachedRelayClient === undefined) {
++          cachedRelayClient = yield* makeRelayClient(relayConfig);
++        }
++        const relayClient = cachedRelayClient;
+         const proof = yield* makePublishProof({
+           privateKey: cloudLinkKeyPair.privateKey,
+           relayIssuer: relayConfig.issuer,
+@@ -478,7 +562,7 @@ export const make = Effect.gen(function* () {
+     });
+   });
+ 
+-  const publishThread: AgentAwarenessRelay["Service"]["publishThread"] = (threadId) =>
++  const processThreadPublish = (threadId: ThreadId) =>
+     publishThreadUnsafe(threadId).pipe(
+       Effect.catchCause((cause) => {
+         return Effect.logWarning("agent activity publish failed", {
+@@ -490,6 +574,10 @@ export const make = Effect.gen(function* () {
+       withRelayClientTracing,
+     );
+ 
++  const worker = yield* makeAgentAwarenessPublishWorker(processThreadPublish);
++  const publishThread: AgentAwarenessRelay["Service"]["publishThread"] = (threadId) =>
++    worker.enqueue(threadId).pipe(Effect.andThen(worker.drain));
++
+   const publishActiveThreadsUnsafe = Effect.gen(function* () {
+     const publishAgentActivity = yield* readPublishAgentActivityEnabled.pipe(
+       Effect.orElseSucceed(() => false),
+@@ -520,7 +608,8 @@ export const make = Effect.gen(function* () {
+     yield* Effect.logInfo("publishing active agent activity snapshot", {
+       count: activeThreadIds.length,
+     });
+-    yield* Effect.forEach(activeThreadIds, publishThread, { concurrency: 4, discard: true });
++    yield* Effect.forEach(activeThreadIds, worker.enqueue, { discard: true });
++    yield* worker.drain;
+     return true;
+   });
+ 
+@@ -542,10 +631,9 @@ export const make = Effect.gen(function* () {
+       }
+     });
+ 
+-  const worker = yield* makeDrainableWorker(publishThread);
+-
++  const scope = yield* Effect.scope;
+   schedulePublishConfirm = (threadId) =>
+-    Effect.forkDetach(
++    Effect.forkIn(
+       Effect.sleep("5 seconds").pipe(
+         Effect.andThen(worker.enqueue(threadId)),
+         Effect.catchCause((cause) =>
+@@ -555,6 +643,7 @@ export const make = Effect.gen(function* () {
+           }),
+         ),
+       ),
++      scope,
+     ).pipe(Effect.asVoid);
+ 
+   const start: AgentAwarenessRelay["Service"]["start"] = Effect.fn("AgentAwarenessRelay.start")(
+@@ -591,13 +680,7 @@ export const make = Effect.gen(function* () {
+         Stream.runForEach(threads.streamDomainEvents, (event) => {
+           const threadId = eventThreadId(event);
+           if (!shouldPublishAgentAwarenessEvent(event)) {
+-            return Effect.logDebug(
+-              "agent activity publishing ignored event without activity changes",
+-              {
+-                eventType: event.type,
+-                threadId,
+-              },
+-            );
++            return Effect.void;
+           }
+           return Effect.logDebug("agent activity publishing queued thread publish", {
+             eventType: event.type,
+@@ -610,6 +693,7 @@ export const make = Effect.gen(function* () {
+ 
+   return AgentAwarenessRelay.of({
+     publishThread,
++    drain: worker.drain,
+     start,
+   });
+ });
+diff --git a/apps/server/src/server.ts b/apps/server/src/server.ts
+index 871c15e8a37..eeb77998f3d 100644
+--- a/apps/server/src/server.ts
++++ b/apps/server/src/server.ts
+@@ -412,7 +412,7 @@ const OrchestrationApplicationLayerLive = CheckpointDiffQuery.layer.pipe(
+ // so every client sees the same shelf.
+ const ThreadSettlementWorkerLive = Layer.effectDiscard(
+   ThreadSettlementService.make.pipe(Effect.flatMap((service) => service.start())),
+-).pipe(Layer.provide(PullRequestServiceLive));
++).pipe(Layer.provide(PullRequestServiceLive), Layer.provide(ProjectionStoreV2.layer));
+ 
+ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
+   Effect.gen(function* () {
+diff --git a/apps/server/src/vcs/GitVcsDriver.ts b/apps/server/src/vcs/GitVcsDriver.ts
+index 61bead6d3b7..23eb29dc667 100644
+--- a/apps/server/src/vcs/GitVcsDriver.ts
++++ b/apps/server/src/vcs/GitVcsDriver.ts
+@@ -74,6 +74,11 @@ export interface GitStatusDetails {
+   aheadOfDefaultCount: number;
+ }
+ 
++export interface GitLocalStatusOptions {
++  /** Skip revision walks and return zero divergence counts for local-only consumers. */
++  readonly includeDivergence?: boolean;
++}
++
+ export interface GitRemoteStatusDetails {
+   isRepo: boolean;
+   defaultBranch: string | null;
+@@ -246,7 +251,10 @@ export class GitVcsDriver extends Context.Service<
+     readonly execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, GitCommandError>;
+     readonly status: (input: VcsStatusInput) => Effect.Effect<VcsStatusResult, GitCommandError>;
+     readonly statusDetails: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;
+-    readonly statusDetailsLocal: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;
++    readonly statusDetailsLocal: (
++      cwd: string,
++      options?: GitLocalStatusOptions,
++    ) => Effect.Effect<GitStatusDetails, GitCommandError>;
+     readonly statusDetailsRemote: (
+       cwd: string,
+       options?: GitRemoteStatusOptions,
+diff --git a/apps/server/src/vcs/GitVcsDriverCore.test.ts b/apps/server/src/vcs/GitVcsDriverCore.test.ts
+index 330e53844ef..eb2a9554774 100644
+--- a/apps/server/src/vcs/GitVcsDriverCore.test.ts
++++ b/apps/server/src/vcs/GitVcsDriverCore.test.ts
+@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Fiber from "effect/Fiber";
+ import * as Layer from "effect/Layer";
++import * as Logger from "effect/Logger";
+ import * as Path from "effect/Path";
+ import * as PlatformError from "effect/PlatformError";
+ import * as Ref from "effect/Ref";
+@@ -550,7 +551,7 @@ it.effect("refreshes the current branch after an external checkout", () =>
+   ).pipe(Effect.provide(TestLayer)),
+ );
+ 
+-it.effect("backs off failed upstream refreshes across linked worktrees", () =>
++it.effect("backs off and logs failed fetch attempts across linked worktrees", () =>
+   Effect.scoped(
+     Effect.gen(function* () {
+       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+@@ -570,6 +571,14 @@ it.effect("backs off failed upstream refreshes across linked worktrees", () =>
+       const driver = yield* makeGitVcsDriverCore().pipe(
+         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, failingFetchSpawner),
+       );
++      const warnings: string[] = [];
++      const logger = Logger.make<unknown, void>(({ message }) => {
++        warnings.push(String(message));
++      });
++      const readRemoteStatus = (workingDirectory: string) =>
++        driver
++          .statusDetailsRemote(workingDirectory)
++          .pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger])));
+       const fileSystem = yield* FileSystem.FileSystem;
+       const cwd = yield* makeTmpDir();
+       const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+@@ -612,25 +621,31 @@ it.effect("backs off failed upstream refreshes across linked worktrees", () =>
+       );
+       yield* Ref.set(fetchAttempts, 0);
+ 
+-      yield* driver.statusDetailsRemote(cwd);
+-      yield* driver.statusDetailsRemote(worktreePath);
++      yield* readRemoteStatus(cwd);
++      yield* readRemoteStatus(worktreePath);
+       assert.equal(yield* Ref.get(fetchAttempts), 1);
++      assert.lengthOf(warnings, 1);
++      assert.include(warnings[0], "Background Git fetch failed");
+ 
+       yield* TestClock.adjust("29 seconds");
+-      yield* driver.statusDetailsRemote(worktreePath);
++      yield* readRemoteStatus(worktreePath);
+       assert.equal(yield* Ref.get(fetchAttempts), 1);
++      assert.lengthOf(warnings, 1);
+ 
+       yield* TestClock.adjust("1 second");
+-      yield* driver.statusDetailsRemote(cwd);
++      yield* readRemoteStatus(cwd);
+       assert.equal(yield* Ref.get(fetchAttempts), 2);
++      assert.lengthOf(warnings, 2);
+ 
+       yield* TestClock.adjust("59 seconds");
+-      yield* driver.statusDetailsRemote(worktreePath);
++      yield* readRemoteStatus(worktreePath);
+       assert.equal(yield* Ref.get(fetchAttempts), 2);
++      assert.lengthOf(warnings, 2);
+ 
+       yield* TestClock.adjust("1 second");
+-      yield* driver.statusDetailsRemote(cwd);
++      yield* readRemoteStatus(cwd);
+       assert.equal(yield* Ref.get(fetchAttempts), 3);
++      assert.lengthOf(warnings, 3);
+     }),
+   ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+ );
+@@ -1023,6 +1038,67 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
+       }),
+     );
+ 
++    it.effect("can read local files without traversing revision history", () =>
++      Effect.gen(function* () {
++        const cwd = yield* makeTmpDir();
++        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
++        const { initialBranch } = yield* initRepoWithCommit(cwd);
++        yield* git(remote, ["init", "--bare"]);
++        yield* git(cwd, ["remote", "add", "origin", remote]);
++        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
++        yield* git(cwd, ["checkout", "-b", "feature/local-only"]);
++        yield* writeTextFile(cwd, "feature.txt", "feature\n");
++        yield* git(cwd, ["add", "feature.txt"]);
++        yield* git(cwd, ["commit", "-m", "feature commit"]);
++        yield* writeTextFile(cwd, "feature.txt", "feature\nlocal edit\n");
++        yield* writeTextFile(cwd, "untracked.txt", "untracked\n");
++
++        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
++        const commands: ReadonlyArray<string>[] = [];
++        const spawner = ChildProcessSpawner.make((command) =>
++          Effect.gen(function* () {
++            if (!ChildProcess.isStandardCommand(command)) {
++              return yield* Effect.die("expected a standard Git command");
++            }
++            commands.push(command.args);
++            return yield* delegate.spawn(command);
++          }),
++        );
++        const driver = yield* makeGitVcsDriverCore().pipe(
++          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
++          Effect.provide(ServerConfigLayer),
++        );
++
++        for (const hasUpstream of [false, true]) {
++          if (hasUpstream) {
++            yield* git(cwd, ["push", "-u", "origin", "feature/local-only"]);
++          }
++          commands.length = 0;
++          const local = yield* driver.statusDetailsLocal(cwd, { includeDivergence: false });
++          assert.isFalse(commands.some((args) => args.includes("rev-list")));
++          assert.isTrue(commands.some((args) => args.includes("--no-ahead-behind")));
++          assert.equal(local.hasUpstream, hasUpstream);
++          assert.isTrue(local.hasWorkingTreeChanges);
++          assert.deepEqual(local.workingTree.files, [
++            { path: "feature.txt", insertions: 1, deletions: 0 },
++            { path: "untracked.txt", insertions: 0, deletions: 0 },
++          ]);
++
++          commands.length = 0;
++          const full = yield* driver.statusDetailsLocal(cwd);
++          assert.isTrue(commands.some((args) => args.includes("rev-list")));
++          assert.equal(full.aheadCount, hasUpstream ? 0 : 1);
++          assert.equal(full.aheadOfDefaultCount, 1);
++          assert.deepEqual(local, {
++            ...full,
++            aheadCount: 0,
++            behindCount: 0,
++            aheadOfDefaultCount: 0,
++          });
++        }
++      }),
++    );
++
+     it.effect("reports remote divergence without reading working-tree details", () =>
+       Effect.gen(function* () {
+         const cwd = yield* makeTmpDir();
+diff --git a/apps/server/src/vcs/GitVcsDriverCore.ts b/apps/server/src/vcs/GitVcsDriverCore.ts
+index 9586d71a701..66aed29a096 100644
+--- a/apps/server/src/vcs/GitVcsDriverCore.ts
++++ b/apps/server/src/vcs/GitVcsDriverCore.ts
+@@ -1246,6 +1246,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function*
+     return yield* fetchRemoteForStatus(cacheKey.gitCommonDir, cacheKey.remoteName).pipe(
+       Effect.tap(() => Effect.sync(() => clearStatusRemoteRefreshFailures(cacheKey))),
+       Effect.tapError(() => Effect.sync(() => recordStatusRemoteRefreshFailure(cacheKey))),
++      Effect.tapCause((cause) => Effect.logWarning("Background Git fetch failed", cause)),
+       Effect.as(true as const),
+     );
+   });
+@@ -1270,13 +1271,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function*
+     const upstream = yield* resolveCurrentUpstream(cwd);
+     if (!upstream) return;
+     const gitCommonDir = yield* resolveGitCommonDir(cwd);
++    // The cache loader logs failed attempts; cache hits keep using the last fetched refs.
+     yield* Cache.get(
+       statusRemoteRefreshCache,
+       new StatusRemoteRefreshCacheKey({
+         gitCommonDir,
+         remoteName: upstream.remoteName,
+       }),
+-    );
++    ).pipe(Effect.ignore);
+   });
+ 
+   const resolveDefaultBranchName = (
+@@ -1583,11 +1585,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function*
+     };
+   });
+ 
+-  const readStatusDetailsLocal = Effect.fn("readStatusDetailsLocal")(function* (cwd: string) {
++  const readStatusDetailsLocal = Effect.fn("readStatusDetailsLocal")(function* (
++    cwd: string,
++    options?: GitVcsDriver.GitLocalStatusOptions,
++  ) {
++    const includeDivergence = options?.includeDivergence !== false;
++    const statusArgs = [
++      "status",
++      "--porcelain=2",
++      "--branch",
++      ...(includeDivergence ? [] : ["--no-ahead-behind"]),
++    ];
+     const statusResult = yield* executeGitWithStableDiagnostics(
+       "GitVcsDriver.statusDetails.status",
+       cwd,
+-      ["status", "--porcelain=2", "--branch"],
++      statusArgs,
+       {
+         allowNonZeroExit: true,
+       },
+@@ -1610,7 +1622,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function*
+         ...gitCommandContext({
+           operation: "GitVcsDriver.statusDetails.status",
+           cwd,
+-          args: ["status", "--porcelain=2", "--branch"],
++          args: statusArgs,
+         }),
+         detail: "Git status failed.",
+         exitCode: statusResult.exitCode,
+@@ -1710,7 +1722,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function*
+         upstreamRef = value.length > 0 ? value : null;
+         continue;
+       }
+-      if (line.startsWith("# branch.ab ")) {
++      if (includeDivergence && line.startsWith("# branch.ab ")) {
+         const value = line.slice("# branch.ab ".length).trim();
+         const parsed = parseBranchAb(value);
+         aheadCount = parsed.ahead;
+@@ -1725,7 +1737,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function*
+     }
+ 
+     const fallbackAheadCount =
+-      !upstreamRef && refName
++      includeDivergence && !upstreamRef && refName
+         ? yield* computeAheadCountAgainstBase(cwd, refName).pipe(Effect.orElseSucceed(() => 0))
+         : null;
+ 
+@@ -1738,7 +1750,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function*
+       refName !== null &&
+       (refName === defaultBranch ||
+         (defaultBranch === null && (refName === "main" || refName === "master")));
+-    if (refName && !isDefaultBranch) {
++    if (includeDivergence && refName && !isDefaultBranch) {
+       aheadOfDefaultCount =
+         fallbackAheadCount !== null
+           ? fallbackAheadCount
+@@ -1788,8 +1800,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function*
+ 
+   const statusDetailsLocal: GitVcsDriver.GitVcsDriver["Service"]["statusDetailsLocal"] = Effect.fn(
+     "statusDetailsLocal",
+-  )(function* (cwd) {
+-    return yield* readStatusDetailsLocal(cwd);
++  )(function* (cwd, options) {
++    return yield* readStatusDetailsLocal(cwd, options);
+   });
+ 
+   const statusDetails: GitVcsDriver.GitVcsDriver["Service"]["statusDetails"] = Effect.fn(
+diff --git a/apps/web/src/components/CommandPalette.tsx b/apps/web/src/components/CommandPalette.tsx
+index 10090bd54e9..6071d271bd6 100644
+--- a/apps/web/src/components/CommandPalette.tsx
++++ b/apps/web/src/components/CommandPalette.tsx
+@@ -1178,7 +1178,14 @@ function OpenCommandPaletteDialog(props: {
+         projectTitleById,
+         sortOrder: clientSettings.sidebarThreadSortOrder,
+         icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+-        renderLeadingContent: (thread) => <ThreadRowLeadingStatus thread={thread} />,
++        renderLeadingContent: (thread) => (
++          <ThreadRowLeadingStatus
++            thread={thread}
++            snapshot={changeRequestSnapshotByKey.get(
++              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
++            )}
++          />
++        ),
+         renderTrailingContent: (thread) => <ThreadRowTrailingStatus thread={thread} />,
+         renderDescription: (thread, { projectTitle }) => {
+           const modelInstanceId =
+@@ -1230,6 +1237,7 @@ function OpenCommandPaletteDialog(props: {
+       }),
+     [
+       activeThreadId,
++      changeRequestSnapshotByKey,
+       clientSettings.sidebarThreadSortOrder,
+       navigate,
+       projectCwdById,
+diff --git a/apps/web/src/components/ThreadStatusIndicators.test.ts b/apps/web/src/components/ThreadStatusIndicators.test.ts
+index 21949a1d180..d5564e70b04 100644
+--- a/apps/web/src/components/ThreadStatusIndicators.test.ts
++++ b/apps/web/src/components/ThreadStatusIndicators.test.ts
+@@ -554,6 +554,25 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
+     ).toEqual(mergedPr);
+   });
+ 
++  it("shows the last matching PR snapshot while its live status lease is released", () => {
++    const openPr = { ...mergedPr, state: "open" as const };
++    const input = {
++      threadBranch: featureBranch,
++      gitStatus: null,
++      snapshot: snapshotFor(featureBranch, openPr, provider),
++      retainTerminalOnBranchMismatch: false,
++    };
++    expect(resolveDisplayedThreadPr(input)).toEqual(openPr);
++    expect(resolveDisplayedThreadPrProvider(input)).toEqual(provider);
++    expect(resolveDisplayedThreadPr({ ...input, threadBranch: "feature/other" })).toBeNull();
++    expect(
++      resolveDisplayedThreadPr({
++        ...input,
++        snapshot: { ...input.snapshot, linkedPullRequest },
++      }),
++    ).toBeNull();
++  });
++
+   it("retains a merged PR after a main checkout", () => {
+     const matchingStatus = status({
+       refName: featureBranch,
+diff --git a/apps/web/src/components/ThreadStatusIndicators.tsx b/apps/web/src/components/ThreadStatusIndicators.tsx
+index 8e2c3aff50d..c28ff60c800 100644
+--- a/apps/web/src/components/ThreadStatusIndicators.tsx
++++ b/apps/web/src/components/ThreadStatusIndicators.tsx
+@@ -12,7 +12,7 @@ import {
+ } from "@t3tools/contracts";
+ import { Atom } from "effect/unstable/reactivity";
+ import { FolderGit2Icon, TerminalIcon } from "lucide-react";
+-import { useMemo } from "react";
++import { useCallback, useMemo } from "react";
+ import { appAtomRegistry } from "../rpc/atomRegistry";
+ import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
+ import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+@@ -27,6 +27,8 @@ import {
+   resolveThreadLastVisitedAt,
+   resolveThreadStatusPill,
+   type ThreadStatusPill,
++  useRetainedValue,
++  useSidebarRowSubscriptionLease,
+ } from "./Sidebar.logic";
+ import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+ import type { SidebarThreadSummary } from "../types";
+@@ -58,9 +60,10 @@ export interface LinkedThreadPullRequestStatus {
+ export function useLinkedThreadPullRequest(
+   environmentId: EnvironmentId | null,
+   linkedPullRequest: ThreadLinkedPullRequest | null | undefined,
++  enabled = true,
+ ): LinkedThreadPullRequestStatus | null {
+   const queried = useEnvironmentQuery(
+-    environmentId === null || linkedPullRequest == null
++    !enabled || environmentId === null || linkedPullRequest == null
+       ? null
+       : linkedPullRequestDetailAtom({
+           environmentId,
+@@ -353,7 +356,7 @@ export function nextThreadChangeRequestSnapshot(input: {
+  * checkouts only, a cached merged/closed PR for the thread. Local thread
+  * metadata follows the shared checkout, so the cached branch intentionally
+  * survives that metadata changing to the newly checked-out branch. Open PRs
+- * are never retained — their state can still change.
++ * are retained only while live status is absent and the branch still matches.
+  */
+ export function resolveDisplayedThreadPr(input: {
+   threadBranch: string | null;
+@@ -388,6 +391,15 @@ export function resolveDisplayedThreadPr(input: {
+     return gitStatus.pr;
+   }
+ 
++  if (
++    gitStatus === null &&
++    threadBranch !== null &&
++    snapshot?.branch === threadBranch &&
++    snapshot.linkedPullRequest === undefined
++  ) {
++    return snapshot.pr;
++  }
++
+   if (
+     threadBranch !== null &&
+     retainTerminalOnBranchMismatch &&
+@@ -434,6 +446,15 @@ export function resolveDisplayedThreadPrProvider(input: {
+     return gitStatus.sourceControlProvider;
+   }
+ 
++  if (
++    gitStatus === null &&
++    threadBranch !== null &&
++    snapshot?.branch === threadBranch &&
++    snapshot.linkedPullRequest === undefined
++  ) {
++    return snapshot.sourceControlProvider;
++  }
++
+   if (
+     threadBranch !== null &&
+     retainTerminalOnBranchMismatch &&
+@@ -550,7 +571,19 @@ export function ThreadStatusLabel({
+  * like the command palette. Shows the change request state icon (if present) and the
+  * thread status dot, matching the sidebar's leading indicators.
+  */
+-export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
++export function ThreadRowLeadingStatus({
++  thread,
++  snapshot,
++}: {
++  thread: SidebarThreadSummary;
++  snapshot?: ThreadChangeRequestSnapshot | undefined;
++}) {
++  const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(false);
++  // Observe the containing title even when this thread has no badge yet.
++  const statusRef = useCallback(
++    (node: HTMLSpanElement | null) => rowRef(node?.parentElement ?? null),
++    [rowRef],
++  );
+   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+   const localLastVisitedAt = useUiStateStore(
+     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
+@@ -567,9 +600,11 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
+   const linkedPullRequest = useLinkedThreadPullRequest(
+     thread.environmentId,
+     thread.linkedPullRequest,
++    leaseLiveStatus,
+   );
+   const gitStatus = useEnvironmentQuery(
+-    thread.linkedPullRequest == null &&
++    leaseLiveStatus &&
++      thread.linkedPullRequest == null &&
+       (thread.branch != null || thread.worktreePath !== null) &&
+       gitCwd !== null
+       ? vcsEnvironment.status({
+@@ -578,14 +613,20 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
+         })
+       : null,
+   );
+-  const pr =
+-    thread.linkedPullRequest == null
+-      ? resolveThreadPr({ threadBranch: thread.branch, gitStatus: gitStatus.data })
+-      : (linkedPullRequest?.pr ?? null);
+-  const prStatus = prStatusIndicator(
+-    pr,
+-    linkedPullRequest?.sourceControlProvider ?? gitStatus.data?.sourceControlProvider,
++  const visibleGitStatus = useRetainedValue(
++    JSON.stringify([thread.environmentId, gitCwd]),
++    gitStatus.data,
+   );
++  const displayedPrInput = {
++    threadBranch: thread.branch,
++    gitStatus: visibleGitStatus,
++    snapshot,
++    retainTerminalOnBranchMismatch: thread.worktreePath === null,
++    linkedPullRequest: thread.linkedPullRequest,
++    linkedPullRequestStatus: linkedPullRequest,
++  };
++  const pr = resolveDisplayedThreadPr(displayedPrInput);
++  const prStatus = prStatusIndicator(pr, resolveDisplayedThreadPrProvider(displayedPrInput));
+   const threadStatus = resolveThreadStatusPill({
+     thread: {
+       ...thread,
+@@ -593,12 +634,13 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
+     },
+   });
+ 
+-  if (!prStatus && !threadStatus) {
+-    return null;
+-  }
+-
+   return (
+-    <span className="inline-flex shrink-0 items-center gap-1.5">
++    <span
++      ref={statusRef}
++      className={
++        prStatus || threadStatus ? "inline-flex shrink-0 items-center gap-1.5" : "contents"
++      }
++    >
+       {prStatus && pr ? (
+         <Tooltip>
+           <TooltipTrigger
+diff --git a/apps/web/src/connection/desktopLocal.test.ts b/apps/web/src/connection/desktopLocal.test.ts
+index adc101ed61b..c36ca800dd5 100644
+--- a/apps/web/src/connection/desktopLocal.test.ts
++++ b/apps/web/src/connection/desktopLocal.test.ts
+@@ -2,7 +2,11 @@ import {
+   BearerConnectionTarget,
+   PrimaryConnectionTarget,
+ } from "@t3tools/client-runtime/connection";
+-import { EnvironmentId, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
++import {
++  type DesktopEnvironmentBootstrap,
++  EnvironmentId,
++  PRIMARY_LOCAL_ENVIRONMENT_ID,
++} from "@t3tools/contracts";
+ import { describe, expect, it } from "vite-plus/test";
+ 
+ import {
+@@ -38,6 +42,63 @@ describe("desktop local connection identity", () => {
+ });
+ 
+ describe("desktop local topology reads", () => {
++  it("reuses snapshots when polling returns fresh objects for the same topology", () => {
++    const secondary: DesktopEnvironmentBootstrap = {
++      id: "wsl:default",
++      label: "WSL",
++      runningDistro: "Ubuntu",
++      httpBaseUrl: "http://127.0.0.1:4000",
++      wsBaseUrl: "ws://127.0.0.1:4000",
++      bootstrapToken: "bootstrap-1",
++    };
++    let entries = [secondary];
++    const reader = createDesktopSecondaryBootstrapsReader(() => ({
++      getLocalEnvironmentBootstraps: () => entries.map((entry) => ({ ...entry })),
++    }));
++
++    const connected = reader.readSnapshot();
++    expect(reader.readSnapshot()).toBe(connected);
++    expect(reader.readResult()).toEqual({ _tag: "Success", bootstraps: connected });
++    expect(reader.readSnapshot()).toBe(connected);
++
++    entries = [];
++    const empty = reader.readSnapshot();
++    expect(empty).toEqual([]);
++    expect(reader.readSnapshot()).toBe(empty);
++  });
++
++  it.each<Partial<DesktopEnvironmentBootstrap>>([
++    { id: "wsl:Debian" },
++    { label: "Renamed backend" },
++    { runningDistro: "Debian" },
++    { httpBaseUrl: "http://127.0.0.1:4001" },
++    { wsBaseUrl: "ws://127.0.0.1:4001" },
++    { bootstrapToken: "bootstrap-2" },
++  ])("publishes bootstrap changes: %j", (change) => {
++    let secondary: DesktopEnvironmentBootstrap = {
++      id: "wsl:default",
++      label: "WSL",
++      runningDistro: "Ubuntu",
++      httpBaseUrl: "http://127.0.0.1:4000",
++      wsBaseUrl: "ws://127.0.0.1:4000",
++      bootstrapToken: "bootstrap-1",
++    };
++    const reader = createDesktopSecondaryBootstrapsReader(() => ({
++      getLocalEnvironmentBootstraps: () => [{ ...secondary }],
++    }));
++    const before = reader.readSnapshot();
++    secondary = { ...secondary, ...change };
++    const after = reader.readSnapshot();
++    expect(after).not.toBe(before);
++    expect(after).toEqual([secondary]);
++    expect(reader.readSnapshot()).toBe(after);
++  });
++
++  it("keeps the empty snapshot stable without a desktop bridge", () => {
++    const reader = createDesktopSecondaryBootstrapsReader(() => undefined);
++    expect(reader.readSnapshot()).toBe(reader.readSnapshot());
++  });
++
+   it("distinguishes a successful empty topology from a read failure", () => {
+     let readBootstraps = () => [];
+     const reader = createDesktopSecondaryBootstrapsReader(() => ({
+diff --git a/apps/web/src/connection/desktopLocal.ts b/apps/web/src/connection/desktopLocal.ts
+index c9d8b938771..817c3e6d7c3 100644
+--- a/apps/web/src/connection/desktopLocal.ts
++++ b/apps/web/src/connection/desktopLocal.ts
+@@ -67,13 +67,30 @@ export function createDesktopSecondaryBootstrapsReader(
+   const readResult = (): DesktopSecondaryBootstrapsRead => {
+     const bridge = resolveBridge();
+     if (bridge === undefined) {
+-      snapshot = [];
++      if (snapshot.length > 0) snapshot = [];
+       return { _tag: "Success", bootstraps: snapshot };
+     }
+     try {
+-      snapshot = bridge
++      const next = bridge
+         .getLocalEnvironmentBootstraps()
+         .filter((entry) => entry.id !== PRIMARY_LOCAL_ENVIRONMENT_ID);
++      if (
++        next.length !== snapshot.length ||
++        next.some((entry, index) => {
++          const previous = snapshot[index];
++          return (
++            previous === undefined ||
++            entry.id !== previous.id ||
++            entry.label !== previous.label ||
++            entry.runningDistro !== previous.runningDistro ||
++            entry.httpBaseUrl !== previous.httpBaseUrl ||
++            entry.wsBaseUrl !== previous.wsBaseUrl ||
++            entry.bootstrapToken !== previous.bootstrapToken
++          );
++        })
++      ) {
++        snapshot = next;
++      }
+       return { _tag: "Success", bootstraps: snapshot };
+     } catch (cause) {
+       return { _tag: "Failure", cause };
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index c2ef8d179b7..1b36eb9c5a6 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -98,6 +98,7 @@ patchedDependencies:
+   '@react-navigation/native-stack@7.17.6': e667c3cef8c78bb9ff4882ee5bd23a432247b843060a9499eb5f07e9e2295552
+   effect@4.0.0-beta.103: af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6
+   expo-audio@57.0.4: fa9a3e0442ed395d4071bb406e08c3a471c9a84700bdfa0b9ad7ff144c96041a
++  expo-notifications@57.0.15: f89252c2c08dc7b3acb8415f319ebbe15fff8c9f88a64ebe1830cd5ac5c9ac40
+   expo-sharing@57.0.17: 8d2e3b10eb3f52036a9a086800180ec6cebf3b75bccc5b1775117a7244d4ac45
+   react-native-gesture-handler@2.32.0: 808eb26f9e57cf4945efd3985af4d9c764da6f91f4c9764433cc868602bbf4d3
+   react-native-keyboard-controller@1.21.13: 6e4339347bc5bb3c9ea67d85ff5c814058b211c5750f247aba59d07869a2e787
+@@ -368,7 +369,7 @@ importers:
+         version: 57.0.1(expo@57.0.18)(react@19.2.3)
+       expo-notifications:
+         specifier: ~57.0.15
+-        version: 57.0.15(expo@57.0.18)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(typescript@6.0.3)
++        version: 57.0.15(patch_hash=f89252c2c08dc7b3acb8415f319ebbe15fff8c9f88a64ebe1830cd5ac5c9ac40)(expo@57.0.18)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(typescript@6.0.3)
+       expo-paste-input:
+         specifier: ^0.1.15
+         version: 0.1.15(expo@57.0.18)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
+@@ -16867,7 +16868,7 @@ snapshots:
+       expo: 57.0.18(f9c992a5d7c53d81398568d3950992dc)
+       react: 19.2.3
+ 
+-  expo-notifications@57.0.15(expo@57.0.18)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(typescript@6.0.3):
++  expo-notifications@57.0.15(patch_hash=f89252c2c08dc7b3acb8415f319ebbe15fff8c9f88a64ebe1830cd5ac5c9ac40)(expo@57.0.18)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(typescript@6.0.3):
+     dependencies:
+       '@expo/image-utils': 0.11.5(typescript@6.0.3)
+       abort-controller: 3.0.0
+diff --git a/pnpm-workspace.yaml b/pnpm-workspace.yaml
+index ee1bd25547f..764207cebc2 100644
+--- a/pnpm-workspace.yaml
++++ b/pnpm-workspace.yaml
+@@ -168,6 +168,7 @@ patchedDependencies:
+   "@react-navigation/native-stack@7.17.6": patches/@react-navigation%2Fnative-stack@7.17.6.patch
+   effect@4.0.0-beta.103: patches/effect@4.0.0-beta.103.patch
+   expo-audio@57.0.4: patches/expo-audio@57.0.4.patch
++  expo-notifications@57.0.15: patches/expo-notifications@57.0.15.patch
+   expo-sharing@57.0.17: patches/expo-sharing@57.0.17.patch
+   react-native-gesture-handler@2.32.0: patches/react-native-gesture-handler@2.32.0.patch
+   react-native-keyboard-controller@1.21.13: patches/react-native-keyboard-controller@1.21.13.patch
