@@ -15,6 +15,7 @@ import {
   resolveWorkspaceDisplayName,
   type EnvMode,
 } from "./BranchToolbar.logic";
+import { composerFloatingLayerProps } from "./chat/composerEventScope";
 import {
   Select,
   SelectGroup,
@@ -71,9 +72,10 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
     const lockedRow = (
       <span
         className={cn(
-          "inline-flex shrink-0 items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs",
+          "inline-flex h-7 min-w-0 items-center gap-1 border border-transparent px-[calc(--spacing(2)-1px)] font-normal text-muted-foreground/70 text-xs sm:h-6",
           displayMode === "panel" && THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
         )}
+        data-composer-context-control
       >
         {activeWorktreePath ? (
           <FolderGitIcon
@@ -125,10 +127,11 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
               variant="ghost"
               size={displayMode === "panel" ? "default" : "xs"}
               className={cn(
-                "min-w-0 shrink font-medium",
+                "min-w-0 shrink font-normal text-xs!",
                 displayMode === "panel" && THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
               )}
               aria-label="Workspace"
+              data-composer-context-control
             />
           }
         >
@@ -152,7 +155,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
                 ? // flex-1 pushes the kind label and chevron cell to the right edge, so the
                   // chevron lines up with every other row's trigger.
                   "min-w-0 flex-1 truncate text-left"
-                : "min-w-0 max-w-[240px] truncate transition-[max-width,opacity] duration-300 ease-out group-data-[compact]/composer-context:max-w-0 group-data-[compact]/composer-context:opacity-0"
+                : "min-w-0 max-w-[240px] truncate group-data-[compact]/composer-context:max-w-0"
             }
           >
             <SelectValue />
@@ -166,6 +169,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         {workspacePath ? <TooltipPopup side="left">{workspacePath}</TooltipPopup> : null}
       </Tooltip>
       <SelectPopup
+        {...(displayMode === "toolbar" ? composerFloatingLayerProps : {})}
         {...(displayMode === "panel"
           ? {
               alignItemWithTrigger: false,

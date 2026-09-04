@@ -31,7 +31,6 @@ import {
   ChevronDownIcon,
   CloudDownloadIcon,
   CloudUploadIcon,
-  ExternalLinkIcon,
   FileDiffIcon,
   GitBranchPlusIcon,
   GitCommitIcon,
@@ -45,7 +44,7 @@ import { RadioGroup } from "~/components/ui/radio-group";
 import { Spinner } from "~/components/ui/spinner";
 import { toggleVariants } from "~/components/ui/toggle";
 import { cn } from "~/lib/utils";
-import { openPullRequestLink, useOpenPrLink } from "~/lib/openPullRequestLink";
+import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import {
   buildMenuItems,
   formatGitActionElapsed,
@@ -103,7 +102,6 @@ import { vcsActionManager, vcsEnvironment } from "~/state/vcs";
 import { randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "~/terminal-links";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { readLocalApi } from "~/localApi";
 import {
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
   THREAD_DETAILS_PANEL_ICON_CLASS,
@@ -115,6 +113,7 @@ import {
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./chat/threadDetailsPanelStyles";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
+import { useOpenLink } from "~/browser/useOpenLink";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -502,10 +501,13 @@ interface PublishRepositoryDialogProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly environmentId: ScopedThreadRef["environmentId"] | null;
+  /** Thread the dialog was opened from, so the new repository can open beside it. */
+  readonly threadRef: ScopedThreadRef | null;
   readonly gitCwd: string;
 }
 
 function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
+  const openLink = useOpenLink(props.threadRef);
   const navigate = useNavigate();
   const sourceControlDiscovery = useEnvironmentQuery(
     props.environmentId === null
@@ -1026,12 +1028,9 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       size="sm"
                       className="w-full"
                       onClick={() => {
-                        const api = readLocalApi();
-                        if (!api) return;
-                        void api.shell.openExternal(publishResult.repository.url);
+                        void openLink(publishResult.repository.url).catch(() => undefined);
                       }}
                     >
-                      <ExternalLinkIcon className="size-3.5" aria-hidden />
                       Open on {publishProviderLabel}
                     </Button>
                   </>
@@ -1102,7 +1101,6 @@ export default function GitActionsControl({
   gitCwd,
   activeThreadRef,
   draftId,
-  onOpenPullRequest,
   displayMode = "toolbar",
   onOpenChanges,
 }: GitActionsControlProps) {
@@ -1332,45 +1330,6 @@ export default function GitActionsControl({
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [activeEnvironmentId, gitCwd, refreshVcsStatus]);
-
-  const openExistingPr = useCallback(async () => {
-    const openPr = gitStatusForActions?.pr?.state === "open" ? gitStatusForActions.pr : null;
-    // Beside the thread where it was made, the way the browser opens beside it. Checked before
-    // the shell, which opening in the app does not need.
-    if (openPr && onOpenPullRequest) {
-      onOpenPullRequest(openPr.number);
-      return;
-    }
-    const api = readLocalApi();
-    if (!api) {
-      toastManager.add({
-        type: "error",
-        title: "Link opening is unavailable.",
-        data: threadToastData,
-      });
-      return;
-    }
-    const prUrl = openPr?.url ?? null;
-    if (!prUrl) {
-      toastManager.add({
-        type: "error",
-        title: "No open pull request found.",
-        data: threadToastData,
-      });
-      return;
-    }
-    void openPullRequestLink(api.shell, prUrl).catch((err: unknown) => {
-      console.error(err);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Unable to open pull request link",
-          description: err instanceof Error ? err.message : "An error occurred.",
-          ...(threadToastData !== undefined ? { data: threadToastData } : {}),
-        }),
-      );
-    });
-  }, [gitStatusForActions, onOpenPullRequest, threadToastData]);
 
   runGitActionWithToast = useEffectEvent(
     async ({
@@ -2143,6 +2102,7 @@ export default function GitActionsControl({
         open={isPublishDialogOpen}
         onOpenChange={setIsPublishDialogOpen}
         environmentId={activeEnvironmentId}
+        threadRef={activeThreadRef}
         gitCwd={gitCwd}
       />
 

@@ -39,7 +39,7 @@ export interface ProjectThreadStartTurnSpec {
  * offline outbox drain so both deliver identical commands.
  */
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
-  const title = deriveThreadTitleSeed({ text: spec.text, attachments: spec.attachments });
+  const title = deriveThreadTitleSeed({ text: spec.text, attachments: spec.uploadedAttachments });
   const isWorktree = spec.workspaceMode === "worktree";
   return {
     commandId: CommandId.make(spec.commandId),

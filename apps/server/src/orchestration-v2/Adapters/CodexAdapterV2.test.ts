@@ -24,6 +24,7 @@ import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -597,6 +598,59 @@ describe("CodexAdapterV2 process spawning", () => {
 });
 
 describe("CodexAdapterV2 dynamic tool projection", () => {
+  it("preserves native browser and app icons alongside MCP tool output", () => {
+    const browser = projectCodexDynamicToolItem({
+      type: "mcpToolCall",
+      id: "browser",
+      server: "browser",
+      tool: "open",
+      status: "completed",
+      arguments: {},
+      result: {
+        content: [],
+        _meta: {
+          "codex/toolSurface": {
+            kind: "browserUse",
+            browserFamily: "Chrome",
+            screenshot: {
+              pageUrl: "https://example.com/docs",
+              faviconUrl: "https://example.com/icon.png",
+            },
+          },
+        },
+      },
+    });
+    assert.equal(browser.toolSurface, "browser");
+    assert.deepEqual(browser.toolIcon, {
+      _tag: "website",
+      pageUrl: "https://example.com/docs",
+      faviconUrl: "https://example.com/icon.png",
+    });
+    assert.equal(browser.toolSource?.name, "Chrome");
+    const app = projectCodexDynamicToolItem({
+      type: "mcpToolCall",
+      id: "app",
+      server: "computer",
+      tool: "click",
+      status: "completed",
+      arguments: {},
+      result: {
+        content: [],
+        _meta: {
+          "codex/toolSurface": {
+            kind: "computerUse",
+            app: { kind: "appId", appId: "com.apple.finder" },
+          },
+        },
+      },
+    });
+    assert.deepEqual(app.toolIcon, {
+      _tag: "native-app",
+      app: { _tag: "app-id", appId: "com.apple.finder" },
+    });
+    assert.equal(app.toolSource?.name, "Finder");
+  });
+
   it("preserves MCP arguments and prefers structured output", () => {
     const projection = projectCodexDynamicToolItem({
       type: "mcpToolCall",
@@ -1205,11 +1259,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
       });
       const events: Array<ProviderAdapterV2Event> = [];
+      const firstTerminal = yield* Deferred.make<void>();
       yield* runtime.events.pipe(
         Stream.runForEach((event) =>
           Effect.sync(() => {
             events.push(event);
-          }),
+          }).pipe(
+            Effect.andThen(
+              event.type === "turn.terminal"
+                ? Deferred.succeed(firstTerminal, undefined)
+                : Effect.void,
+            ),
+          ),
         ),
         Effect.forkScoped,
       );
@@ -1236,6 +1297,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         terminalEvents,
         subagentUpdates,
         hasPendingBackgroundWork,
+        firstTerminal: Deferred.await(firstTerminal),
       };
     });
 
@@ -1244,6 +1306,205 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       (event): event is Extract<ProviderAdapterV2Event, { type: "message.updated" }> =>
         event.type === "message.updated" && event.message.role === "assistant",
     );
+
+  it.effect("keeps an asynchronous Codex question actionable after the turn completes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "async-question-thread";
+        const nativeTurnId = "async-question-turn";
+        const usage = {
+          totalTokens: 15,
+          inputTokens: 10,
+          cachedInputTokens: 2,
+          outputTokens: 5,
+          reasoningOutputTokens: 1,
+        };
+        const transcript = makeCodexReplayTranscript({
+          scenario: "async-question-and-billed-usage",
+          entries: [
+            ...codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId,
+              prompt: "Continue while I decide.",
+            }),
+            {
+              type: "emit_inbound",
+              label: "question",
+              frame: {
+                method: "item/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  item: {
+                    type: "agentMessage",
+                    id: "async-question-item",
+                    text: "Which branch?",
+                    delivery: "async",
+                    questions: [{ title: "Which branch?", options: ["main", "dev"] }],
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "usage",
+              frame: {
+                method: "thread/tokenUsage/updated",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  tokenUsage: { total: usage, last: usage, modelContextWindow: 200_000 },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "complete",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("async-question-attempt"),
+            text: "Continue while I decide.",
+          }),
+        );
+        yield* harness.firstTerminal;
+        const requests = harness.events.flatMap((event) =>
+          event.type === "runtime_request.updated" ? [event.runtimeRequest] : [],
+        );
+        assert.lengthOf(requests, 1);
+        assert.equal(requests[0]?.status, "pending");
+        assert.deepEqual(requests[0]?.responseCapability, { type: "message" });
+        const questionItem = harness.events.find(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+        );
+        assert.equal(questionItem?.type, "turn_item.updated");
+        if (
+          questionItem?.type === "turn_item.updated" &&
+          questionItem.turnItem.type === "user_input_request"
+        ) {
+          assert.deepEqual(
+            questionItem.turnItem.questions[0]?.options.map((option) => option.label),
+            ["main", "dev"],
+          );
+          assert.equal(questionItem.turnItem.responseMode, "message");
+        }
+        const questionNode = harness.events.find(
+          (event) => event.type === "node.updated" && event.node.id === requests[0]?.nodeId,
+        );
+        assert.equal(
+          questionNode?.type === "node.updated" && questionNode.node.countsForRun,
+          false,
+        );
+        const completed = harness.events.find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        assert.equal(completed?.type, "provider_turn.updated");
+        if (completed?.type === "provider_turn.updated") {
+          assert.deepEqual(completed.providerTurn.turnTokenUsage, {
+            usageStatus: "complete",
+            usageScope: "main_agent",
+            hasSubagents: false,
+            inputTokens: 10,
+            cachedInputTokens: 2,
+            outputTokens: 5,
+            reasoningTokens: 1,
+          });
+        }
+        assert.isEmpty(assistantMessages(harness.events));
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("compacts Codex with the native RPC and completes the compaction turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "compact-thread";
+        const nativeTurnId = "compact-turn";
+        const item = { type: "contextCompaction", id: "compact-item" };
+        const transcript = makeCodexReplayTranscript({
+          scenario: "native-compaction",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "unused" }).slice(0, 5),
+            {
+              type: "expect_outbound",
+              label: "compact",
+              frame: {
+                id: 3,
+                method: "thread/compact/start",
+                params: { threadId: nativeThreadId },
+              },
+            },
+            { type: "emit_inbound", label: "compact", frame: { id: 3, result: {} } },
+            {
+              type: "emit_inbound",
+              label: "start",
+              frame: {
+                method: "turn/started",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+                },
+              },
+            },
+            ...(["item/started", "item/completed"] as const).map((method) => ({
+              type: "emit_inbound" as const,
+              label: method,
+              frame: { method, params: { threadId: nativeThreadId, turnId: nativeTurnId, item } },
+            })),
+            {
+              type: "emit_inbound",
+              label: "complete",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        assert.isDefined(harness.runtime.compactThread);
+        yield* harness.runtime.compactThread!(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("compact-attempt"),
+            text: "/compact",
+          }),
+        );
+        yield* harness.firstTerminal;
+        const items = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+            ? [event.turnItem]
+            : [],
+        );
+        assert.deepEqual(
+          items.map((entry) => entry.status),
+          ["running", "completed"],
+        );
+        assert.equal(items[0]?.id, items[1]?.id);
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
 
   it.effect("resumes a provider thread without requesting or decoding its history", () =>
     Effect.scoped(

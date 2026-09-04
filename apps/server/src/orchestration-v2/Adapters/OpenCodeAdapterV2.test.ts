@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import type { ToolPart } from "@opencode-ai/sdk/v2";
 import {
   NodeId,
   OpenCodeSettings,
@@ -170,7 +171,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     runtimePolicy: policy,
   });
   const now = yield* DateTime.now;
-  const startTurn = () =>
+  const startTurn = (text = "hello") =>
     runtime.startTurn({
       appThread: {
         id: threadId,
@@ -206,7 +207,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
         createdBy: "user",
         creationSource: "web",
         messageId: MessageId.make(`message-opencode-${suffix}`),
-        text: "hello",
+        text,
         attachments: [],
       },
       modelSelection,
@@ -225,6 +226,225 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  it.effect(
+    "preserves tool lifecycle, approval kinds, and late assistant text without cached tool payloads",
+    () =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        const nativeSessionId = "native-opencode-tool-lifecycle";
+        const harness = yield* makeOpenCodeRuntimeHarness("tool-lifecycle", nativeSessionId, {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          session: {
+            create: async () => ({
+              data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
+            }),
+            promptAsync: async () => ({ data: true }),
+          },
+        });
+        yield* harness.startTurn();
+        const received = yield* harness.runtime.events.pipe(
+          Stream.takeUntil(
+            (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+          ),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const states = [
+          { status: "pending", input: { command: "pwd" }, raw: "" },
+          {
+            status: "running",
+            input: { command: "pwd" },
+            title: "Working directory",
+            time: { start: 1 },
+          },
+          {
+            status: "completed",
+            input: { command: "pwd" },
+            output: "/repo\n",
+            title: "Working directory",
+            metadata: {},
+            time: { start: 1, end: 2 },
+          },
+          {
+            status: "error",
+            input: { command: "pwd" },
+            error: "Command failed",
+            time: { start: 3, end: 4 },
+          },
+        ] satisfies ReadonlyArray<ToolPart["state"]>;
+        for (const state of states) {
+          yield* Effect.promise(() =>
+            nativeEvents.push({
+              type: "message.part.updated",
+              properties: {
+                sessionID: nativeSessionId,
+                part: {
+                  id: state.status === "error" ? "part-failed" : "part-working",
+                  sessionID: nativeSessionId,
+                  messageID: "late-assistant",
+                  type: "tool",
+                  callID: state.status === "error" ? "call-failed" : "call-working",
+                  tool: "bash",
+                  state,
+                },
+              },
+            }),
+          );
+        }
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.part.updated",
+            properties: {
+              sessionID: nativeSessionId,
+              part: {
+                id: "part-read",
+                sessionID: nativeSessionId,
+                messageID: "late-assistant",
+                type: "tool",
+                callID: "call-read",
+                tool: "read",
+                state: { status: "pending", input: { filePath: "/outside/file" }, raw: "" },
+              },
+            },
+          }),
+        );
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "permission.asked",
+            properties: {
+              id: "read-permission",
+              sessionID: nativeSessionId,
+              permission: "external_directory",
+              patterns: ["/outside/*"],
+              always: [],
+              metadata: {},
+              tool: { messageID: "late-assistant", callID: "call-read" },
+            },
+          }),
+        );
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.part.updated",
+            properties: {
+              sessionID: nativeSessionId,
+              part: {
+                id: "part-text",
+                sessionID: nativeSessionId,
+                messageID: "late-assistant",
+                type: "text",
+                text: "Tool results received",
+                time: { start: 4 },
+              },
+            },
+          }),
+        );
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.updated",
+            properties: {
+              sessionID: nativeSessionId,
+              info: {
+                id: "late-assistant",
+                sessionID: nativeSessionId,
+                role: "assistant",
+                time: { created: 1, completed: 4 },
+              },
+            },
+          }),
+        );
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "session.compacted",
+            properties: { sessionID: nativeSessionId },
+          }),
+        );
+        const events = yield* Fiber.join(received);
+        const items = events.flatMap((event) =>
+          event.type === "turn_item.updated" ? [event.turnItem] : [],
+        );
+        const commands = items.filter((item) => item.type === "command_execution");
+        assert.deepEqual(
+          commands.map((item) => item.status),
+          ["pending", "running", "completed", "failed"],
+        );
+        assert.deepEqual(
+          commands.map((item) => item.input),
+          ["pwd", "pwd", "pwd", "pwd"],
+        );
+        assert.equal(commands[2]?.output, "/repo\n");
+        assert.equal(commands[3]?.output, "Command failed");
+        assert.isTrue(
+          events.some(
+            (event) =>
+              event.type === "runtime_request.updated" && event.runtimeRequest.kind === "file-read",
+          ),
+        );
+        const assistant = items.filter((item) => item.type === "assistant_message");
+        assert.equal(assistant.at(-1)?.text, "Tool results received");
+        assert.equal(assistant.at(-1)?.status, "completed");
+      }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
+  it.effect("compacts with the native summarize API and emits a completed compaction", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const summarizeCalls: Array<unknown> = [];
+      let promptCalls = 0;
+      const harness = yield* makeOpenCodeRuntimeHarness("compact", "native-opencode-compact", {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        session: {
+          create: async () => ({
+            data: { id: "native-opencode-compact", time: { created: 1, updated: 1 } },
+          }),
+          summarize: async (input: unknown) => {
+            summarizeCalls.push(input);
+            return { data: true };
+          },
+          promptAsync: async () => {
+            promptCalls += 1;
+            return { data: true };
+          },
+        },
+      });
+      yield* harness.startTurn("/compact");
+      const events = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+      );
+      assert.deepEqual(summarizeCalls, [
+        {
+          sessionID: "native-opencode-compact",
+          providerID: "anthropic",
+          modelID: "claude-sonnet",
+          auto: false,
+        },
+      ]);
+      assert.equal(promptCalls, 0);
+      assert.equal(
+        events.filter(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "compaction" &&
+            event.turnItem.status === "completed",
+        ).length,
+        1,
+      );
+      assert.isTrue(
+        events.some((event) => event.type === "turn.terminal" && event.status === "completed"),
+      );
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
   it.effect("keeps a newly admitted prompt alive across stale idle and delayed busy evidence", () =>
     Effect.gen(function* () {
       const idAllocator = yield* IdAllocatorV2;

@@ -6,7 +6,7 @@
  *
  * @module ProjectionSnapshotQuery
  */
-import type { CheckpointRef, ProjectId, ThreadId } from "@t3tools/contracts";
+import type { ApprovalRequestId, CheckpointRef, ProjectId, ThreadId } from "@t3tools/contracts";
 import type {
   OrchestrationCheckpointSummary,
   OrchestrationProject,
@@ -16,6 +16,7 @@ import type {
   OrchestrationSearchThreadsResult,
   OrchestrationShellSnapshot,
   OrchestrationThread,
+  OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadDetailWindow,
   OrchestrationThreadShell,
@@ -70,6 +71,12 @@ export interface ProjectionThreadDetailQuery {
  * ProjectionSnapshotQueryShape - Service API for read-model snapshots.
  */
 export interface ProjectionSnapshotQueryShape {
+  /** Read the latest request or resolution without loading the thread history. */
+  readonly getUserInputActivity: (input: {
+    readonly threadId: ThreadId;
+    readonly requestId: ApprovalRequestId;
+  }) => Effect.Effect<Option.Option<OrchestrationThreadActivity>, ProjectionRepositoryError>;
+
   /**
    * Read the lightweight command snapshot used to bootstrap the in-memory
    * orchestration engine without hydrating message/activity/checkpoint bodies.

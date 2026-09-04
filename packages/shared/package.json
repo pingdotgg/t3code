@@ -3,10 +3,6 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./Array": {
-      "types": "./src/Array.ts",
-      "import": "./src/Array.ts"
-    },
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"
@@ -83,9 +79,9 @@
       "types": "./src/toolActivity.ts",
       "import": "./src/toolActivity.ts"
     },
-    "./t3McpToolPresentation": {
-      "types": "./src/t3McpToolPresentation.ts",
-      "import": "./src/t3McpToolPresentation.ts"
+    "./favicon": {
+      "types": "./src/favicon.ts",
+      "import": "./src/favicon.ts"
     },
     "./Struct": {
       "types": "./src/Struct.ts",
@@ -118,14 +114,6 @@
     "./orchestrationTiming": {
       "types": "./src/orchestrationTiming.ts",
       "import": "./src/orchestrationTiming.ts"
-    },
-    "./orchestrationV2Timeline": {
-      "types": "./src/orchestrationV2Timeline.ts",
-      "import": "./src/orchestrationV2Timeline.ts"
-    },
-    "./orchestrationV2PendingBackgroundWork": {
-      "types": "./src/orchestrationV2PendingBackgroundWork.ts",
-      "import": "./src/orchestrationV2PendingBackgroundWork.ts"
     },
     "./remote": {
       "types": "./src/remote.ts",
@@ -263,6 +251,10 @@
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"
     },
+    "./usageLimits": {
+      "types": "./src/usageLimits.ts",
+      "import": "./src/usageLimits.ts"
+    },
     "./desktopAppControl": {
       "types": "./src/desktopAppControl.ts",
       "import": "./src/desktopAppControl.ts"
@@ -270,6 +262,26 @@
     "./claudeCompaction": {
       "types": "./src/claudeCompaction.ts",
       "import": "./src/claudeCompaction.ts"
+    },
+    "./nodeSqliteClient": {
+      "types": "./src/nodeSqliteClient.ts",
+      "import": "./src/nodeSqliteClient.ts"
+    },
+    "./orchestrationV2Timeline": {
+      "types": "./src/orchestrationV2Timeline.ts",
+      "import": "./src/orchestrationV2Timeline.ts"
+    },
+    "./t3McpToolPresentation": {
+      "types": "./src/t3McpToolPresentation.ts",
+      "import": "./src/t3McpToolPresentation.ts"
+    },
+    "./Array": {
+      "types": "./src/Array.ts",
+      "import": "./src/Array.ts"
+    },
+    "./orchestrationV2PendingBackgroundWork": {
+      "types": "./src/orchestrationV2PendingBackgroundWork.ts",
+      "import": "./src/orchestrationV2PendingBackgroundWork.ts"
     }
   },
   "scripts": {

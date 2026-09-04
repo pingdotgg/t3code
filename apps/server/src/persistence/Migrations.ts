@@ -56,17 +56,20 @@ import Migration0041 from "./Migrations/041_AuthSessionClientConnection.ts";
 import Migration0042 from "./Migrations/042_ProjectionThreadLinkedPullRequest.ts";
 import Migration0043 from "./Migrations/043_ProjectionThreadsUnsettledAt.ts";
 import Migration0044 from "./Migrations/044_ClearAutomaticProjectModelDefaults.ts";
-import Migration0045 from "./Migrations/045_OrchestrationV2.ts";
-import Migration0046 from "./Migrations/046_OrchestrationV2Subagents.ts";
-import Migration0047 from "./Migrations/047_OrchestrationV2Foundation.ts";
-import Migration0048 from "./Migrations/048_OrchestrationV2ProviderSessionBindings.ts";
-import Migration0049 from "./Migrations/049_OrchestrationV2ThreadLaunchWorkflows.ts";
-import Migration0050 from "./Migrations/050_ApplicationEventSource.ts";
-import Migration0051 from "./Migrations/051_OrchestrationV2EffectCancellation.ts";
-import Migration0052 from "./Migrations/052_ScheduledTasks.ts";
-import Migration0053 from "./Migrations/053_LegacyV1ImportState.ts";
-import Migration0054 from "./Migrations/054_ApplicationEventSequenceIndexes.ts";
-import Migration0055 from "./Migrations/055_OrchestrationV2RecoveryIndexes.ts";
+import Migration0045 from "./Migrations/045_ProjectionProjectsAutoPull.ts";
+import Migration0046 from "./Migrations/046_RepairAutomaticSettlementTimestamps.ts";
+import Migration0047 from "./Migrations/047_ProjectionProjectIcon.ts";
+import Migration0048 from "./Migrations/048_OrchestrationV2.ts";
+import Migration0049 from "./Migrations/049_OrchestrationV2Subagents.ts";
+import Migration0050 from "./Migrations/050_OrchestrationV2Foundation.ts";
+import Migration0051 from "./Migrations/051_OrchestrationV2ProviderSessionBindings.ts";
+import Migration0052 from "./Migrations/052_OrchestrationV2ThreadLaunchWorkflows.ts";
+import Migration0053 from "./Migrations/053_ApplicationEventSource.ts";
+import Migration0054 from "./Migrations/054_OrchestrationV2EffectCancellation.ts";
+import Migration0055 from "./Migrations/055_ScheduledTasks.ts";
+import Migration0056 from "./Migrations/056_LegacyV1ImportState.ts";
+import Migration0057 from "./Migrations/057_ApplicationEventSequenceIndexes.ts";
+import Migration0058 from "./Migrations/058_OrchestrationV2RecoveryIndexes.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -123,17 +126,20 @@ export const migrationEntries = [
   [42, "ProjectionThreadLinkedPullRequest", Migration0042],
   [43, "ProjectionThreadsUnsettledAt", Migration0043],
   [44, "ClearAutomaticProjectModelDefaults", Migration0044],
-  [45, "OrchestrationV2", Migration0045],
-  [46, "OrchestrationV2Subagents", Migration0046],
-  [47, "OrchestrationV2Foundation", Migration0047],
-  [48, "OrchestrationV2ProviderSessionBindings", Migration0048],
-  [49, "OrchestrationV2ThreadLaunchWorkflows", Migration0049],
-  [50, "ApplicationEventSource", Migration0050],
-  [51, "OrchestrationV2EffectCancellation", Migration0051],
-  [52, "ScheduledTasks", Migration0052],
-  [53, "LegacyV1ImportState", Migration0053],
-  [54, "ApplicationEventSequenceIndexes", Migration0054],
-  [55, "OrchestrationV2RecoveryIndexes", Migration0055],
+  [45, "ProjectionProjectsAutoPull", Migration0045],
+  [46, "RepairAutomaticSettlementTimestamps", Migration0046],
+  [47, "ProjectionProjectIcon", Migration0047],
+  [48, "OrchestrationV2", Migration0048],
+  [49, "OrchestrationV2Subagents", Migration0049],
+  [50, "OrchestrationV2Foundation", Migration0050],
+  [51, "OrchestrationV2ProviderSessionBindings", Migration0051],
+  [52, "OrchestrationV2ThreadLaunchWorkflows", Migration0052],
+  [53, "ApplicationEventSource", Migration0053],
+  [54, "OrchestrationV2EffectCancellation", Migration0054],
+  [55, "ScheduledTasks", Migration0055],
+  [56, "LegacyV1ImportState", Migration0056],
+  [57, "ApplicationEventSequenceIndexes", Migration0057],
+  [58, "OrchestrationV2RecoveryIndexes", Migration0058],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

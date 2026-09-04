@@ -21,10 +21,12 @@ export function resolveThreadActivityMetadata(input: {
 
 export function resolveThreadActivityStatus(status: OrchestrationV2TurnItem["status"]): {
   readonly label: string;
-  readonly tone: "active" | "danger" | "success" | "warning";
+  readonly tone: "active" | "danger" | "success" | "warning" | "neutral";
 } {
   const label = status.charAt(0).toUpperCase() + status.slice(1).replaceAll("_", " ");
   switch (status) {
+    case "idle":
+      return { label, tone: "neutral" };
     case "completed":
       return { label, tone: "success" };
     case "failed":

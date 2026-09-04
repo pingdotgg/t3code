@@ -174,7 +174,10 @@ export function ThreadDetailsPrRow({
       className={cn("-mx-0.5 size-4 shrink-0", statePresentation.toneClassName)}
     />
   ) : (
-    <ChangeRequestStatusIcon className={cn(THREAD_DETAILS_PANEL_ICON_CLASS, status.colorClass)} />
+    <ChangeRequestStatusIcon
+      state={pr.state}
+      className={cn(THREAD_DETAILS_PANEL_ICON_CLASS, status.colorClass)}
+    />
   );
 
   // Everything the host reported, at a glance. The row stays one line; the tooltip is where the

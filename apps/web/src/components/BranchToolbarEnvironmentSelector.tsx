@@ -1,5 +1,4 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { CloudIcon, MonitorIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
 import type { EnvironmentOption } from "./BranchToolbar.logic";
@@ -10,6 +9,8 @@ import {
   THREAD_DETAILS_PANEL_ROW_POPUP_CLASS,
   THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
 } from "./chat/threadDetailsPanelStyles";
+import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { composerFloatingLayerProps } from "./chat/composerEventScope";
 import {
   Select,
   SelectGroup,
@@ -57,23 +58,15 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
     return (
       <span
         className={cn(
-          "inline-flex min-w-0 max-w-full items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs",
+          "inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-[calc(--spacing(2)-1px)] font-normal text-muted-foreground/70 text-xs sm:h-6",
           displayMode === "panel" && THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
         )}
+        data-composer-context-control
       >
-        {activeEnvironment?.isPrimary ? (
-          <MonitorIcon
-            className={
-              displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"
-            }
-          />
-        ) : (
-          <CloudIcon
-            className={
-              displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"
-            }
-          />
-        )}
+        <EnvironmentMachineIcon
+          kind={activeEnvironment?.machine ?? "server"}
+          className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"}
+        />
         <span
           data-composer-label
           className="min-w-0 max-w-[240px] truncate transition-[max-width,opacity] duration-300 ease-out group-data-[compact]/composer-context:max-w-0 group-data-[compact]/composer-context:opacity-0"
@@ -95,24 +88,16 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         variant="ghost"
         size={displayMode === "panel" ? "default" : "xs"}
         className={cn(
-          "min-w-0 max-w-full font-medium",
+          "min-w-0 max-w-full font-normal text-xs!",
           displayMode === "panel" && THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
         )}
         aria-label="Run on"
+        data-composer-context-control
       >
-        {activeEnvironment?.isPrimary ? (
-          <MonitorIcon
-            className={
-              displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"
-            }
-          />
-        ) : (
-          <CloudIcon
-            className={
-              displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"
-            }
-          />
-        )}
+        <EnvironmentMachineIcon
+          kind={activeEnvironment?.machine ?? "server"}
+          className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"}
+        />
         <span
           data-composer-label
           className="min-w-0 max-w-[240px] truncate transition-[max-width,opacity] duration-300 ease-out group-data-[compact]/composer-context:max-w-0 group-data-[compact]/composer-context:opacity-0"
@@ -121,6 +106,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         </span>
       </SelectTrigger>
       <SelectPopup
+        {...(displayMode === "toolbar" ? composerFloatingLayerProps : {})}
         {...(displayMode === "panel"
           ? {
               alignItemWithTrigger: false,
@@ -133,11 +119,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           {availableEnvironments.map((env) => (
             <SelectItem key={env.environmentId} value={env.environmentId}>
               <span className="inline-flex items-center gap-1.5">
-                {env.isPrimary ? (
-                  <MonitorIcon className="size-3" />
-                ) : (
-                  <CloudIcon className="size-3" />
-                )}
+                <EnvironmentMachineIcon kind={env.machine} className="size-3" />
                 {env.label}
               </span>
             </SelectItem>

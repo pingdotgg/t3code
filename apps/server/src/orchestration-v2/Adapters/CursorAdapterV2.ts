@@ -33,6 +33,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -42,8 +43,14 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { cursorSdkModelSelection } from "../../provider/cursorSdkModel.ts";
+import {
+  discoverCursorSkills,
+  hasCursorSkillMention,
+  rewriteCursorSkillMentions,
+} from "../../provider/Drivers/CursorSkills.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { t3OrchestrationPromptForFirstRun } from "../../provider/T3OrchestrationInstructions.ts";
+import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
@@ -807,6 +814,7 @@ export interface CursorAdapterV2Options {
   readonly settings: CursorSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly fileSystem: FileSystem.FileSystem;
+  readonly path: Path.Path;
   readonly idAllocator: IdAllocatorV2Shape;
   readonly runner: CursorAgentSdkRunnerShape;
   readonly serverConfig: ServerConfig["Service"];
@@ -815,7 +823,7 @@ export interface CursorAdapterV2Options {
 export function makeCursorAdapterV2(
   adapterOptions: CursorAdapterV2Options,
 ): ProviderAdapterV2Shape {
-  const { fileSystem, idAllocator, runner, serverConfig } = adapterOptions;
+  const { fileSystem, path, idAllocator, runner, serverConfig } = adapterOptions;
   const apiKey = adapterOptions.environment.CURSOR_API_KEY?.trim() || undefined;
 
   return ProviderAdapterV2.of({
@@ -2007,12 +2015,31 @@ export function makeCursorAdapterV2(
           return next;
         });
 
+        let cursorSkillNames: ReadonlySet<string> | undefined;
         const resolveUserMessage = Effect.fnUntraced(function* (
           turnInput: ProviderAdapterV2TurnInput,
         ) {
-          const text = t3OrchestrationPromptForFirstRun({
+          const rawText = turnInput.message.text;
+          if (hasCursorSkillMention(rawText) && cursorSkillNames === undefined) {
+            const skills = yield* discoverCursorSkills(
+              turnInput.runtimePolicy.cwd ?? undefined,
+              adapterOptions.environment,
+            ).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+            );
+            cursorSkillNames = new Set(
+              skills
+                .filter((skill) => skill.enabled && skill.userInvocable !== false)
+                .map((skill) => skill.name),
+            );
+          }
+          const userText = t3OrchestrationPromptForFirstRun({
             prompt: providerMessageTextWithAttachmentPaths({
-              text: turnInput.message.text,
+              text:
+                cursorSkillNames === undefined
+                  ? rawText
+                  : rewriteCursorSkillMentions(rawText, cursorSkillNames),
               attachments: turnInput.message.attachments,
               attachmentsDir: serverConfig.attachmentsDir,
             }),
@@ -2050,12 +2077,13 @@ export function makeCursorAdapterV2(
               }),
             { concurrency: 1 },
           );
-          if (text.length === 0 && images.length === 0) {
+          if (userText.length === 0 && images.length === 0) {
             return yield* new ProviderAdapterProtocolError({
               driver: CURSOR_PROVIDER,
               detail: "Cursor turn requires non-empty text or attachments.",
             });
           }
+          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model })}`;
           return images.length === 0
             ? text
             : ({
@@ -2468,6 +2496,7 @@ export function makeCursorAdapterV2(
 export type CursorAdapterV2DriverEnv =
   | CursorAgentSdkRunner
   | FileSystem.FileSystem
+  | Path.Path
   | IdAllocatorV2
   | ServerConfig;
 
@@ -2482,6 +2511,7 @@ export const CursorAdapterV2Driver: ProviderAdapterDriver<
     function* (input: ProviderAdapterDriverCreateInput<CursorSettings>) {
       const hostEnvironment = yield* HostProcessEnvironment;
       const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const idAllocator = yield* IdAllocatorV2;
       const runner = yield* CursorAgentSdkRunner;
       const serverConfig = yield* ServerConfig;
@@ -2493,6 +2523,7 @@ export const CursorAdapterV2Driver: ProviderAdapterDriver<
         },
         environment: mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         fileSystem,
+        path,
         idAllocator,
         runner,
         serverConfig,
@@ -2516,12 +2547,13 @@ export const CursorAdapterV2Driver: ProviderAdapterDriver<
 export const layer: Layer.Layer<
   ProviderAdapterV2,
   never,
-  CursorAgentSdkRunner | FileSystem.FileSystem | IdAllocatorV2 | ServerConfig
+  CursorAgentSdkRunner | FileSystem.FileSystem | Path.Path | IdAllocatorV2 | ServerConfig
 > = Layer.effect(
   ProviderAdapterV2,
   Effect.gen(function* () {
     const hostEnvironment = yield* HostProcessEnvironment;
     const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const idAllocator = yield* IdAllocatorV2;
     const runner = yield* CursorAgentSdkRunner;
     const serverConfig = yield* ServerConfig;
@@ -2530,6 +2562,7 @@ export const layer: Layer.Layer<
       settings: DEFAULT_CURSOR_SETTINGS,
       environment: hostEnvironment,
       fileSystem,
+      path,
       idAllocator,
       runner,
       serverConfig,

@@ -19,7 +19,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
-import { parseTurnDiffFilesFromUnifiedDiff } from "../checkpointing/Diffs.ts";
+import { parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "./IdAllocator.ts";
 
@@ -442,10 +442,11 @@ export const layer: Layer.Layer<
                   toCheckpointRef: checkpointRef,
                   fallbackFromToHead: false,
                   ignoreWhitespace: false,
+                  format: "numstat",
                 })
                 .pipe(
                   Effect.map((diff) =>
-                    parseTurnDiffFilesFromUnifiedDiff(diff).map((file) => ({
+                    parseTurnDiffFilesFromNumstat(diff).map((file) => ({
                       path: file.path,
                       kind: "modified",
                       additions: file.additions,

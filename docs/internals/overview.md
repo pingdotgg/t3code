@@ -18,13 +18,13 @@ but its renderer follows the same boundary.
 ┌──────────────────▼─────────────────────────────┐
 │ apps/server                                    │
 │  orchestration engine (event-sourced)          │
-│  provider driver registry (5 built-in drivers) │
+│  provider driver registry (6 built-in drivers) │
 │  checkpointing, VCS, terminals, filesystem     │
 └──────────────────┬─────────────────────────────┘
                    │ per-driver transport
 ┌──────────────────▼─────────────────────────────┐
 │ Agent CLIs: Codex, Claude, Cursor, Grok,       │
-│ OpenCode                                       │
+│ OpenCode, Antigravity                          │
 └────────────────────────────────────────────────┘
 ```
 
@@ -82,14 +82,23 @@ A turn is complete when its session leaves `running` status, projected by
 `settledTurnStateForSessionStatus` in [`projector.ts`][projector]. Checkpoint work settling later
 does not define turn end.
 
-Thread settlement is server-owned. Per-environment settings control PR and inactivity settlement.
-[`ThreadSettlementService`][settlement] sweeps threads at startup, when those settings change, and
-once per minute, including when no client is connected. It dispatches the guarded internal
-`thread.auto-settle` command, which reuses the orchestrator's settle lifecycle. Automatic
-settlement excludes live and blocked work and requires a comparable PR timestamp for immediate PR
-settlement. The command also rejects a thread that changed after the sweep's snapshot or carries
-any explicit settled override. Clients render the persisted settlement state and do not derive
-settlement from PR or inactivity state. Settling detaches the thread's idle provider sessions.
+Thread settlement is server-owned. Each server's settings control PR and inactivity settlement.
+Clients synchronize those preferences through `SHARED_SERVER_SETTING_KEYS` for connected servers
+that advertise `threadAutoSettlement`. [`ThreadSettlementService`][settlement] sweeps at startup,
+on settings changes, and once per minute, including when no client is connected. Merge notifications
+trigger an immediate check and invalidate cached PR state. Existing worktrees share the same PR
+lookup cache as the sidebar; missing worktrees fall back to the project root.
+
+The guarded `thread.auto-settle` command rejects newer activity, explicit settled overrides, and
+live or blocked work. It records the last activity timestamp for stable sorting. PR settlement
+requires a comparable merge or close timestamp; inactivity can settle a quiet thread with an open
+PR. Clients render the persisted settlement state. Settling detaches idle provider sessions.
+
+At run completion, `RunFinalizationService` refreshes PR discovery when the checkout matches the
+thread's non-default branch and a newer run is not active. `VcsStatusBroadcaster` requires loaded
+remote status and permission from background policy. `GitManager` retries only a successful
+"no PR" cache entry for the current branch, preserving known PRs and failure backoff without
+fetching remotes. Remote status cache writes share a lock per cwd, including the initial load.
 
 ## Drainable workers
 
@@ -110,8 +119,8 @@ build production behavior on receipts.
 
 ## Provider drivers
 
-Five drivers ship built in, registered in [`builtInDrivers.ts`][drivers] as `BUILT_IN_DRIVERS`:
-Codex, Claude, Cursor, Grok, and OpenCode. A driver declares its kind and config schema and creates a
+Six drivers ship built in, registered in [`builtInDrivers.ts`][drivers] as `BUILT_IN_DRIVERS`:
+Codex, Claude, Cursor, Grok, OpenCode, and Antigravity. A driver declares its kind and config schema and creates a
 scoped adapter; `ProviderInstanceRegistry` owns live instances and `ProviderAdapterRegistry` resolves
 an instance to its adapter, so `ProviderService` routes session and turn operations without knowing
 which agent is behind them. See [providers.md](./providers.md).

@@ -25,12 +25,10 @@ import {
   ClientWebDeployment,
   CommandId,
   type DiscoveredLocalServerList,
-  EventId,
   type EditorId,
   type FileManagerRevealKind,
   type OrchestrationClientOrigin,
   type OrchestrationV2Command,
-  type OrchestrationCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
   type MessageId,
@@ -57,6 +55,7 @@ import {
   ProjectWriteFileError,
   ProjectMutationError,
   ProviderUploadFeedbackError,
+  ProviderSetupError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
   type ServerSelfUpdateError,
@@ -108,6 +107,8 @@ import {
   shellStreamItemsFromResumeSnapshot,
 } from "./orchestration-v2/ShellStream.ts";
 import { ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION } from "./orchestration-v2/ProjectionStore.ts";
+import { bufferLiveStream } from "./orchestration/LiveStreamBudget.ts";
+import { coalesceThreadLiveStream } from "./orchestration-v2/ThreadLiveEventCoalescer.ts";
 import {
   decideThreadResume,
   threadReplayEncodedBytes,
@@ -132,6 +133,9 @@ import {
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
+import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts";
+import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
+import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -181,9 +185,8 @@ import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 
-const EDITOR_DISCOVERY_TIMEOUT = Duration.seconds(5);
-const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
+const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
 
 const resolveDiscoveryForConfig = <A, E, R>(
   discovery: Effect.Effect<A, E, R>,
@@ -615,6 +618,9 @@ const makeWsRpcLayer = (
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
+      const providerAuth = yield* ProviderAuthService;
+      const providerInstances = yield* ProviderInstanceRegistry;
+      const providerInstallation = yield* makeProviderInstallation();
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
@@ -816,6 +822,7 @@ const makeWsRpcLayer = (
                   sequence: stored.sequence,
                   event: projectDomainEventForWire(stored.event),
                 })),
+                coalesceThreadLiveStream,
                 Stream.mapError(
                   (cause) =>
                     new OrchestrationV2GetThreadProjectionError({
@@ -903,6 +910,51 @@ const makeWsRpcLayer = (
                   }),
               ),
             );
+            if (input.afterSequence > highWater) {
+              return yield* snapshotThenLive();
+            }
+            const stats = yield* applicationEvents
+              .getAgentReplayStats({
+                threadId: input.threadId,
+                afterSequence: input.afterSequence,
+                throughSequence: highWater,
+                maxEvents: THREAD_RESUME_MAX_REPLAY_EVENTS,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationV2GetThreadProjectionError({
+                      threadId: input.threadId,
+                      message: `Failed to measure orchestration V2 thread ${input.threadId} replay`,
+                      cause,
+                    }),
+                ),
+              );
+            if (
+              decideThreadResume({
+                afterSequence: input.afterSequence,
+                highWater,
+                replayEventCount: stats.eventCount,
+                replayEncodedBytes: stats.payloadBytes,
+              }).mode === "snapshot"
+            ) {
+              return yield* snapshotThenLive();
+            }
+            if (stats.hasCreateEvent) {
+              const shell = yield* threadManagement.getThreadShell(input.threadId).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationV2GetThreadProjectionError({
+                      threadId: input.threadId,
+                      message: `Failed to locate recreated orchestration V2 thread ${input.threadId}`,
+                      cause,
+                    }),
+                ),
+              );
+              // A retained creation can belong to a thread already deleted.
+              // Only replace its bounded replay when a snapshot can exist.
+              if (shell !== null) return yield* snapshotThenLive();
+            }
             const replay = yield* loadReplayThrough(input.afterSequence, highWater);
             const plan = decideThreadResume({
               afterSequence: input.afterSequence,
@@ -1019,7 +1071,9 @@ const makeWsRpcLayer = (
             );
 
           const liveFrom = (afterSequence: number) =>
-            toShellStream(applicationEvents.streamApplicationEvents({ afterSequence }));
+            bufferLiveStream(
+              toShellStream(applicationEvents.streamApplicationEvents({ afterSequence })),
+            );
 
           const enrichmentRefreshes = Stream.fromSubscription(enrichmentChanges).pipe(
             Stream.filter((change) => change.repositoryIdentityResolved),
@@ -1195,6 +1249,7 @@ const makeWsRpcLayer = (
             ),
             Stream.flatMap(Stream.fromIterable),
             Stream.filterMap((item) => (item === null ? Result.failVoid : Result.succeed(item))),
+            (stream) => bufferLiveStream(stream),
             Stream.mapError(
               (cause) =>
                 new OrchestrationV2GetShellSnapshotError({
@@ -1233,6 +1288,12 @@ const makeWsRpcLayer = (
               ...(mutation.defaultModelSelection === undefined
                 ? {}
                 : { defaultModelSelection: mutation.defaultModelSelection }),
+              ...(mutation.autoPull === undefined ? {} : { autoPull: mutation.autoPull }),
+              ...(mutation.projectIcon === undefined ? {} : { projectIcon: mutation.projectIcon }),
+              ...(mutation.faviconPath === undefined ? {} : { faviconPath: mutation.faviconPath }),
+              ...(mutation.defaultThreadEnvMode === undefined
+                ? {}
+                : { defaultThreadEnvMode: mutation.defaultThreadEnvMode }),
               ...(mutation.scripts === undefined ? {} : { scripts: mutation.scripts }),
             });
           case "project.delete": {
@@ -1626,7 +1687,7 @@ const makeWsRpcLayer = (
               });
             }).pipe(
               Effect.mapError((cause) =>
-                Schema.is(ProviderUploadFeedbackError)(cause)
+                isProviderUploadFeedbackError(cause)
                   ? cause
                   : new ProviderUploadFeedbackError({
                       threadId: input.threadId,
@@ -1644,6 +1705,87 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.providerConsumeResetCredit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerConsumeResetCredit,
+            Effect.gen(function* () {
+              const instance = yield* providerInstances.getInstance(input.instanceId);
+              // A disabled instance must not spend anything on its account.
+              if (instance === undefined || !instance.enabled) {
+                return yield* new ProviderSetupError({
+                  instanceId: input.instanceId,
+                  operation: "consume-reset-credit",
+                  detail: instance ? "This provider is disabled." : "Provider instance not found.",
+                });
+              }
+              if (instance.consumeResetCredit === undefined) {
+                return yield* new ProviderSetupError({
+                  instanceId: input.instanceId,
+                  operation: "consume-reset-credit",
+                  detail: "This provider does not bank reset credits.",
+                });
+              }
+              const outcome = yield* instance.consumeResetCredit().pipe(
+                Effect.mapError(
+                  (error) =>
+                    new ProviderSetupError({
+                      instanceId: input.instanceId,
+                      operation: "consume-reset-credit",
+                      detail: error.detail,
+                      cause: error,
+                    }),
+                ),
+              );
+              return { outcome };
+            }),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.providerAuthStart]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerAuthStart,
+            providerAuth.start(input, currentSessionId),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.providerAuthComplete]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerAuthComplete,
+            providerAuth.complete(input, currentSessionId),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.providerAuthCancel]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerAuthCancel,
+            providerAuth.cancel(input, currentSessionId),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.providerAuthLogout]: (input) =>
+          observeRpcEffect(WS_METHODS.providerAuthLogout, providerAuth.logout(input), {
+            "rpc.aggregate": "provider",
+          }),
+        [WS_METHODS.providerAuthSubscribe]: (input) =>
+          observeRpcStream(
+            WS_METHODS.providerAuthSubscribe,
+            providerAuth.subscribe(input, currentSessionId),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.providerInstallStart]: (input) =>
+          observeRpcEffect(WS_METHODS.providerInstallStart, providerInstallation.start(input), {
+            "rpc.aggregate": "provider",
+          }),
+        [WS_METHODS.providerInstallCancel]: (input) =>
+          observeRpcEffect(WS_METHODS.providerInstallCancel, providerInstallation.cancel(input), {
+            "rpc.aggregate": "provider",
+          }),
+        [WS_METHODS.providerInstallSubscribe]: (input) =>
+          observeRpcStream(
+            WS_METHODS.providerInstallSubscribe,
+            providerInstallation.subscribe(input),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.providerInstallRemove]: (input) =>
+          observeRpcEffect(WS_METHODS.providerInstallRemove, providerInstallation.remove(input), {
+            "rpc.aggregate": "provider",
+          }),
         [WS_METHODS.serverUpdateServer]: (input) =>
           observeRpcEffect(WS_METHODS.serverUpdateServer, serverSelfUpdate.update(input), {
             "rpc.aggregate": "server",
@@ -1760,6 +1902,10 @@ const makeWsRpcLayer = (
           ),
         [WS_METHODS.serverGetUsageSummary]: (input) =>
           observeRpcEffect(WS_METHODS.serverGetUsageSummary, usage.readSummary(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.serverRefreshUsageRates]: (_input) =>
+          observeRpcEffect(WS_METHODS.serverRefreshUsageRates, usage.refreshRates, {
             "rpc.aggregate": "server",
           }),
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) =>
@@ -1927,6 +2073,16 @@ const makeWsRpcLayer = (
             pullRequests.requestReviewers(input),
             { "rpc.aggregate": "pull-requests" },
           ),
+        [WS_METHODS.pullRequestsLabelCandidates]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsLabelCandidates,
+            pullRequests.labelCandidates(input),
+            { "rpc.aggregate": "pull-requests" },
+          ),
+        [WS_METHODS.pullRequestsSetLabels]: (input) =>
+          observeRpcEffect(WS_METHODS.pullRequestsSetLabels, pullRequests.setLabels(input), {
+            "rpc.aggregate": "pull-requests",
+          }),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlLookupRepository,
@@ -2082,7 +2238,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.assetsCreateUrl,
             Effect.gen(function* () {
-              if (input.resource._tag === "attachment") {
+              if (
+                input.resource._tag === "attachment" ||
+                input.resource._tag === "native-app-icon"
+              ) {
                 return yield* issueAssetUrl({ resource: input.resource });
               }
               if (input.resource._tag === "project-favicon") {

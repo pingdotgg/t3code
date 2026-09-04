@@ -9,7 +9,11 @@ import {
   type PlanId,
   type RunId,
   type ThreadId,
+  type ToolActivitySurface,
+  type ToolActivityIcon,
+  type ToolActivitySource,
 } from "@t3tools/contracts";
+import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import type {
   ThreadPendingApproval,
@@ -20,6 +24,8 @@ import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/tu
 
 import type { ChatMessage, ProposedPlan, SessionPhase, TurnDiffSummary } from "./types";
 import * as DateTime from "effect/DateTime";
+import * as Equal from "effect/Equal";
+import { shallow } from "zustand/vanilla/shallow";
 
 export type ProviderPickerKind = ProviderDriverKind;
 
@@ -44,9 +50,16 @@ export const PROVIDER_OPTIONS: Array<{
     pickerSidebarBadge: "new",
   },
   { value: ProviderDriverKind.make("grok"), label: "Grok", available: true },
+  {
+    value: ProviderDriverKind.make("antigravity"),
+    label: "Antigravity",
+    available: true,
+    pickerSidebarBadge: "new",
+  },
 ];
 
 export type WorkLogToolLifecycleStatus =
+  | "idle"
   | "inProgress"
   | "completed"
   | "failed"
@@ -64,6 +77,14 @@ export interface WorkLogEntry {
   readonly changedFiles?: ReadonlyArray<string>;
   readonly tone: "thinking" | "tool" | "info" | "error";
   readonly toolTitle?: string;
+  readonly toolCallId?: string;
+  readonly viewedImagePath?: string;
+  readonly toolSurface?: ToolActivitySurface;
+  readonly toolIcon?: ToolActivityIcon;
+  readonly toolSource?: ToolActivitySource;
+  readonly sourceActivityKind?: string;
+  readonly taskId?: string;
+  readonly agentRole?: string;
   readonly toolData?: unknown;
   readonly requestKind?: string;
   readonly itemType?: OrchestrationV2TurnItem["type"];
@@ -144,13 +165,6 @@ export type TimelineEntry = (
   /** V2 identity resolved from the item's execution node, when locally available. */
   readonly attempt?: TimelineAttempt;
 };
-
-export interface TimelineEntriesProjection {
-  readonly messages: ReadonlyArray<ChatMessage>;
-  readonly proposedPlans: ReadonlyArray<ProposedPlan>;
-  readonly workEntries: ReadonlyArray<WorkLogEntry>;
-  readonly entries: TimelineEntry[];
-}
 
 export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
   return (
@@ -254,10 +268,20 @@ export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
 }
 
 export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
+  if (
+    !workLogEntryIsToolLike(entry) ||
+    workEntryIndicatesToolFailure(entry) ||
+    entry.tone === "thinking"
+  ) {
+    return false;
+  }
+  const status = entry.toolLifecycleStatus;
   return (
-    workLogEntryIsToolLike(entry) &&
-    !workEntryIndicatesToolFailure(entry) &&
-    entry.toolLifecycleStatus === "completed"
+    status !== "failed" &&
+    status !== "declined" &&
+    status !== "inProgress" &&
+    status !== "stopped" &&
+    status !== "idle"
   );
 }
 
@@ -429,7 +453,6 @@ export function hasActionableProposedPlan(plan: LatestProposedPlanState | null):
 
 const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"]["type"]>([
   "approval_request",
-  "compaction",
   "fork",
   "handoff",
   "run_interrupt_request",
@@ -465,6 +488,8 @@ function projectedWorkEntryStatus(
       return "inProgress";
     case "completed":
       return "completed";
+    case "idle":
+      return "idle";
     case "failed":
       return "failed";
     case "cancelled":
@@ -534,9 +559,17 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
     toolLifecycleStatus: projectedWorkEntryStatus(item),
     structuredPayload: item,
     projectedItem: row,
+    ...extractToolActivityPresentation(item),
   } as const;
 
   switch (item.type) {
+    case "compaction":
+      return {
+        ...common,
+        label: item.status === "running" ? "Compacting context" : "Context compacted",
+        sourceActivityKind: "context-compaction",
+        ...(item.summary ? { detail: item.summary } : {}),
+      };
     case "reasoning":
       return {
         ...common,
@@ -618,7 +651,7 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
  * Persistent client-owned messages are inserted by timestamp without sorting
  * the canonical sequence. True optimistic sends remain appended afterward.
  */
-export function deriveTimelineEntriesFromVisibleTurnItems(input: {
+export interface TimelineEntriesInput {
   readonly visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
   readonly optimisticMessages: ReadonlyArray<ChatMessage>;
   readonly anchoredMessages?: ReadonlyArray<ChatMessage>;
@@ -626,7 +659,16 @@ export function deriveTimelineEntriesFromVisibleTurnItems(input: {
   readonly attempts?: ReadonlyArray<OrchestrationV2RunAttempt>;
   readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
   readonly plans?: ReadonlyArray<OrchestrationV2PlanArtifact>;
-}): TimelineEntry[] {
+}
+
+export interface TimelineEntriesProjection {
+  readonly input: TimelineEntriesInput;
+  readonly entries: TimelineEntry[];
+}
+
+export function deriveTimelineEntriesFromVisibleTurnItems(
+  input: TimelineEntriesInput,
+): TimelineEntry[] {
   const committedMessageIds = new Set<string>();
   const entries: TimelineEntry[] = [];
   const attemptByRootNodeId = new Map(
@@ -663,9 +705,9 @@ export function deriveTimelineEntriesFromVisibleTurnItems(input: {
         id: item.messageId,
         role: item.type === "user_message" ? "user" : "assistant",
         text: item.text,
-        ...(item.type === "user_message" && item.attachments.length > 0
+        ...((item.attachments?.length ?? 0) > 0
           ? {
-              attachments: item.attachments.map((attachment) => {
+              attachments: (item.attachments ?? []).map((attachment) => {
                 const previewUrl = input.attachmentUrlById?.get(attachment.id);
                 return previewUrl ? { ...attachment, previewUrl } : attachment;
               }),
@@ -797,6 +839,137 @@ export function deriveTimelineEntriesFromVisibleTurnItems(input: {
   }
 
   return entries;
+}
+
+/** Text and update time do not change a streaming assistant message's row structure. */
+export function isStreamingMessageTextUpdate(previous: ChatMessage, next: ChatMessage): boolean {
+  if (
+    previous.role !== "assistant" ||
+    next.role !== "assistant" ||
+    !previous.streaming ||
+    !next.streaming
+  ) {
+    return false;
+  }
+  const { text: _previousText, updatedAt: _previousUpdatedAt, ...previousMetadata } = previous;
+  const { text: _nextText, updatedAt: _nextUpdatedAt, ...nextMetadata } = next;
+  return shallow(previousMetadata, nextMetadata);
+}
+
+/** Keep provenance and execution metadata in the rebuild boundary, including inspector data. */
+export function isStreamingTurnItemTextUpdate(
+  previous: OrchestrationV2ProjectedTurnItem,
+  next: OrchestrationV2ProjectedTurnItem,
+): boolean {
+  const { item: previousItem, ...previousSource } = previous;
+  const { item: nextItem, ...nextSource } = next;
+  if (
+    previousItem.type !== "assistant_message" ||
+    nextItem.type !== "assistant_message" ||
+    !previousItem.streaming ||
+    !nextItem.streaming ||
+    !shallow(previousSource, nextSource) ||
+    projectedItemCreatedAt(previous) !== projectedItemCreatedAt(next)
+  ) {
+    return false;
+  }
+  const { text: _previousText, updatedAt: _previousUpdatedAt, ...previousMetadata } = previousItem;
+  const { text: _nextText, updatedAt: _nextUpdatedAt, ...nextMetadata } = nextItem;
+  // Wire decoding can recreate timestamps and attachments on each update.
+  // Compare only the changed item's metadata, never the entire transcript.
+  return Equal.equals(previousMetadata, nextMetadata);
+}
+
+function reuseTimelineEntries(
+  input: TimelineEntriesInput,
+  previous: TimelineEntriesProjection,
+): TimelineEntry[] | null {
+  const before = previous.input;
+  if (
+    input.visibleTurnItems.length < before.visibleTurnItems.length ||
+    !shallow(input.optimisticMessages, before.optimisticMessages) ||
+    !shallow(input.anchoredMessages, before.anchoredMessages) ||
+    !shallow(input.attachmentUrlById, before.attachmentUrlById) ||
+    !shallow(input.attempts, before.attempts) ||
+    !shallow(input.nodes, before.nodes) ||
+    !shallow(input.plans, before.plans)
+  ) {
+    return null;
+  }
+  const appended = input.visibleTurnItems.length > before.visibleTurnItems.length;
+  // Anchored and optimistic messages need to be interleaved/deduplicated when
+  // committed items arrive. Keep the full projection for that transition.
+  if (
+    appended &&
+    (input.optimisticMessages.length > 0 || (input.anchoredMessages?.length ?? 0) > 0)
+  ) {
+    return null;
+  }
+  const replacements = new Map<
+    OrchestrationV2ProjectedTurnItem,
+    OrchestrationV2ProjectedTurnItem
+  >();
+  for (const [index, previousItem] of before.visibleTurnItems.entries()) {
+    const item = input.visibleTurnItems[index]!;
+    if (item === previousItem) continue;
+    if (!isStreamingTurnItemTextUpdate(previousItem, item)) return null;
+    replacements.set(previousItem, item);
+  }
+  if (replacements.size === 0 && !appended) return previous.entries;
+  const entries = previous.entries.map((entry): TimelineEntry => {
+    const row =
+      entry.kind === "message" && entry.projectedItem !== undefined
+        ? replacements.get(entry.projectedItem)
+        : undefined;
+    if (entry.kind !== "message" || row?.item.type !== "assistant_message") return entry;
+    return {
+      ...entry,
+      projectedItem: row,
+      message: {
+        ...entry.message,
+        text: row.item.text,
+        updatedAt: DateTime.formatIso(row.item.updatedAt),
+      },
+    };
+  });
+  if (appended) {
+    entries.push(
+      ...deriveTimelineEntriesFromVisibleTurnItems({
+        ...input,
+        visibleTurnItems: input.visibleTurnItems.slice(before.visibleTurnItems.length),
+      }),
+    );
+  }
+  return entries;
+}
+
+/** Reuse immutable entries during streaming without reordering the canonical v2 sequence. */
+export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
+  input: TimelineEntriesInput,
+  previous: TimelineEntriesProjection | null = null,
+): TimelineEntriesProjection {
+  const reused = previous === null ? null : reuseTimelineEntries(input, previous);
+  if (reused !== null) return { input, entries: reused };
+  const entries = deriveTimelineEntriesFromVisibleTurnItems(input);
+  if (previous === null || !shallow(input.attachmentUrlById, previous.input.attachmentUrlById)) {
+    return { input, entries };
+  }
+  // Tool output and lifecycle changes rebuild grouping, but unchanged message
+  // objects and previews still let memoized history rows stay mounted.
+  const previousMessages = new Map(
+    previous.entries.flatMap((entry) =>
+      entry.kind === "message" ? [[entry.id, entry] as const] : [],
+    ),
+  );
+  return {
+    input,
+    entries: entries.map((entry) => {
+      if (entry.kind !== "message" || entry.projectedItem === undefined) return entry;
+      const before = previousMessages.get(entry.id);
+      if (before?.projectedItem !== entry.projectedItem) return entry;
+      return before.attempt === entry.attempt ? before : { ...entry, message: before.message };
+    }),
+  };
 }
 
 export function inferCheckpointTurnCountByRunId(

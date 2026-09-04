@@ -17,14 +17,16 @@ export interface PendingApprovalCardProps {
   ) => Promise<unknown>;
 }
 
-const DEFAULT_APPROVAL_OPTIONS = [
+const DEFAULT_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
   { decision: "accept", label: "Allow once" },
   { decision: "acceptForSession", label: "Allow session" },
   { decision: "decline", label: "Decline" },
-] satisfies ReadonlyArray<ProviderApprovalOption>;
+];
 
 export function PendingApprovalCard(props: PendingApprovalCardProps) {
-  const options = props.approval.options ?? DEFAULT_APPROVAL_OPTIONS;
+  const options: ReadonlyArray<ProviderApprovalOption> =
+    props.approval.options ?? DEFAULT_APPROVAL_OPTIONS;
+  const warning = options.find((option) => option.warning)?.warning;
   // Opaque for the same reason as PendingUserInputCard: nothing blurs the feed
   // behind this card, so a translucent surface bleeds messages through it.
   const canRespond = props.approval.responseCapability === "live";
@@ -48,6 +50,11 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
           to continue.
         </Text>
       ) : null}
+      {warning ? (
+        <Text className="font-sans text-xs leading-normal text-adaptive-amber-700-300">
+          {warning}
+        </Text>
+      ) : null}
       <View className="flex-row flex-wrap gap-2.5">
         {options.map((option) => (
           <Pressable
@@ -59,7 +66,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
                   ? "bg-adaptive-rose-100-500-a18"
                   : "bg-adaptive-neutral-200-800"
             }`}
-            disabled={props.respondingApprovalId === props.approval.requestId}
+            disabled={disabled}
             onPress={() => void props.onRespond(props.approval.requestId, option.decision)}
           >
             <Text

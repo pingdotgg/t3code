@@ -1,7 +1,7 @@
 import {
   type ChatAttachment,
   CommandId,
-  type MessageId,
+  MessageId,
   type ModelSelection,
   OrchestrationV2Command,
   type OrchestrationV2AppThread,
@@ -52,6 +52,7 @@ import {
   emptyProjection,
   isTurnItemAtOrBeforeRun,
   ProjectionStoreV2,
+  type ProjectionCheckpointContext,
 } from "./ProjectionStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
@@ -179,6 +180,9 @@ export interface OrchestratorV2Shape {
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
+  readonly getCheckpointContext: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ProjectionCheckpointContext, OrchestratorV2Error>;
   readonly getThreadSnapshot: (threadId: ThreadId) => Effect.Effect<
     {
       readonly schemaVersion: number;
@@ -221,6 +225,16 @@ export class OrchestratorV2 extends Context.Service<OrchestratorV2, Orchestrator
 
 function nextRunOrdinal(projection: OrchestrationV2ThreadProjection): number {
   return projection.runs.length + 1;
+}
+
+function isNativeMaintenanceCommand(message: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+}): boolean {
+  return (
+    message.attachments.length === 0 &&
+    ["/compact", "/logout"].includes(message.text.trim().toLowerCase())
+  );
 }
 
 function commandThreadId(command: OrchestrationV2Command): ThreadId {
@@ -1580,7 +1594,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             settledOverride: "settled",
-            settledAt: alreadySettled ? thread.settledAt : now,
+            settledAt: alreadySettled ? thread.settledAt : (command.settledAt ?? now),
             unsettledAt: null,
             pinnedAt: null,
             pinOrderKey: null,
@@ -2284,6 +2298,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Target run ${input.targetRunId} was not found.`,
         });
       }
+      if (isNativeMaintenanceCommand(input)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: input.command.commandId,
+          commandType: input.command.type,
+          cause:
+            input.text.trim().toLowerCase() === "/compact"
+              ? "Context compaction must run as a separate turn. Queue it or wait for the active turn to finish."
+              : "Signing out must run as a separate turn. Queue it or wait for the active turn to finish.",
+        });
+      }
+      const targetMessage = input.projection.messages.find(
+        (message) => message.id === targetRun.userMessageId,
+      );
+      if (targetMessage !== undefined && isNativeMaintenanceCommand(targetMessage)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: input.command.commandId,
+          commandType: input.command.type,
+          cause:
+            targetMessage.text.trim().toLowerCase() === "/compact"
+              ? "Wait for context compaction to finish before steering the thread."
+              : "Wait for sign-out to finish before steering the thread.",
+        });
+      }
       const rootNodeId = targetRun.rootNodeId;
       if (rootNodeId === null) {
         return yield* new OrchestratorDispatchError({
@@ -2912,11 +2949,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
         projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       }
-      if (command.titleSeed !== undefined && projection.messages.length === 0) {
+      const userMessages = projection.messages.filter((message) => message.role === "user");
+      const onlyMaintenanceHistory =
+        userMessages.length > 0 && userMessages.every(isNativeMaintenanceCommand);
+      if (
+        !isNativeMaintenanceCommand(command) &&
+        ((command.titleSeed !== undefined && projection.messages.length === 0) ||
+          (command.createdBy === "user" && onlyMaintenanceHistory))
+      ) {
         const now = yield* DateTime.now;
         const thread: OrchestrationV2AppThread = {
           ...projection.thread,
-          title: command.titleSeed,
+          title: command.titleSeed ?? projection.thread.title,
           titleRegeneration: { requestId: command.commandId, startedAt: now },
           updatedAt: now,
         };
@@ -4999,19 +5043,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Runtime request ${command.requestId} is ${runtimeRequest.status}.`,
         });
       }
-      if (runtimeRequest.responseCapability.type !== "live") {
+      if (runtimeRequest.responseCapability.type === "not_resumable") {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
           cause: runtimeRequest.responseCapability.reason,
         });
       }
-      const providerSessionId = runtimeRequest.responseCapability.providerSessionId;
-
+      const providerSessionId =
+        runtimeRequest.responseCapability.type === "live"
+          ? runtimeRequest.responseCapability.providerSessionId
+          : null;
       const providerSession = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );
-      if (providerSession === undefined) {
+      if (providerSessionId !== null && providerSession === undefined) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -5024,6 +5070,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...runtimeRequest,
         status: "resolved" as const,
         resolvedAt: now,
+        ...(command.decision === undefined ? {} : { decision: command.decision }),
+        ...(command.answers === undefined ? {} : { answers: command.answers }),
       };
       const emitEvent = emit(events, command);
       const requestNode = projection.nodes.find((node) => node.id === runtimeRequest.nodeId);
@@ -5036,8 +5084,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         threadId: command.threadId,
         ...(requestNode?.runId == null ? {} : { runId: requestNode.runId }),
         nodeId: runtimeRequest.nodeId,
-        driver: providerSession.driver,
-        providerInstanceId: providerSession.providerInstanceId,
+        ...(providerSession === undefined
+          ? {}
+          : {
+              driver: providerSession.driver,
+              providerInstanceId: providerSession.providerInstanceId,
+            }),
         occurredAt: now,
         payload: resolvedRequest,
       });
@@ -5047,8 +5099,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           ...(requestNode.runId === null ? {} : { runId: requestNode.runId }),
           nodeId: requestNode.id,
-          driver: providerSession.driver,
-          providerInstanceId: providerSession.providerInstanceId,
+          ...(providerSession === undefined
+            ? {}
+            : {
+                driver: providerSession.driver,
+                providerInstanceId: providerSession.providerInstanceId,
+              }),
           occurredAt: now,
           payload: {
             ...requestNode,
@@ -5069,8 +5125,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           ...(approvalTurnItem.runId === null ? {} : { runId: approvalTurnItem.runId }),
           ...(approvalTurnItem.nodeId === null ? {} : { nodeId: approvalTurnItem.nodeId }),
-          driver: providerSession.driver,
-          providerInstanceId: providerSession.providerInstanceId,
+          ...(providerSession === undefined
+            ? {}
+            : {
+                driver: providerSession.driver,
+                providerInstanceId: providerSession.providerInstanceId,
+              }),
           occurredAt: now,
           payload: {
             ...approvalTurnItem,
@@ -5080,6 +5140,86 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
         });
       }
+      if (runtimeRequest.responseCapability.type === "message") {
+        if (resolvedNodeStatus === "cancelled") return;
+        if (approvalTurnItem?.type !== "user_input_request") {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "The question for this request was not found.",
+          });
+        }
+        const replies: string[] = [];
+        for (const question of approvalTurnItem.questions) {
+          const answer = command.answers?.[question.id];
+          if (typeof answer !== "string" || answer.trim().length === 0) {
+            if (question.required === false) continue;
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: "Answer each question before sending.",
+            });
+          }
+          replies.push(`${question.question}\n${answer.trim()}`);
+        }
+        if (replies.length === 0) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Enter an answer before sending.",
+          });
+        }
+        let dispatchMode: Extract<
+          OrchestrationV2Command,
+          { type: "message.dispatch" }
+        >["dispatchMode"] = {
+          type: "queue_after_active",
+        };
+        const activeRun = projection.runs.find((run) => run.status === "running");
+        const activeProviderThread = projection.providerThreads.find(
+          (thread) => thread.id === activeRun?.providerThreadId,
+        );
+        const activeProviderTurn = projection.providerTurns.find(
+          (turn) => turn.runAttemptId === activeRun?.activeAttemptId && turn.status === "running",
+        );
+        if (activeRun && activeProviderTurn && activeProviderThread?.providerSessionId) {
+          const activeSession = yield* providerSessions
+            .get(activeProviderThread.providerSessionId)
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause,
+                  }),
+              ),
+            );
+          if (
+            Option.isSome(activeSession) &&
+            activeSession.value.providerSession.capabilities.turns.supportsActiveSteering
+          ) {
+            dispatchMode = { type: "steer_active", targetRunId: activeRun.id };
+          }
+        }
+        // The resolution and normal message dispatch share one event transaction.
+        return yield* dispatchMessage(
+          {
+            type: "message.dispatch",
+            commandId: command.commandId,
+            threadId: command.threadId,
+            messageId: MessageId.make(`async-answer:${command.requestId}`),
+            text: replies.join("\n\n"),
+            attachments: [],
+            createdBy: "user",
+            creationSource: "server",
+            dispatchMode,
+          },
+          events,
+          effects,
+        );
+      }
+      if (providerSessionId === null) return;
       yield* Ref.update(effects, (existing) => [
         ...existing,
         {
@@ -6799,7 +6939,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         }
         yield* dispatchThreadMutation(
-          { type: "thread.settle", commandId: command.commandId, threadId: command.threadId },
+          {
+            type: "thread.settle",
+            commandId: command.commandId,
+            threadId: command.threadId,
+            ...(command.settledAt === undefined ? {} : { settledAt: command.settledAt }),
+          },
           events,
           effects,
         );
@@ -7184,6 +7329,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projectionStore
         .getThreadProjection(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
+    getCheckpointContext: (threadId) =>
+      projectionStore
+        .getCheckpointContext(threadId)
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
     getThreadSnapshot: (threadId) =>
       projectionStore
         .getThreadSnapshot(threadId)
@@ -7219,7 +7368,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
     ),
     streamStoredEventsFrom: (input) =>
-      eventSink.stream(input).pipe(
+      eventSink.stream({ ...input, bounded: true }).pipe(
         Stream.mapError(
           (cause) =>
             new OrchestratorDomainEventStreamError({
@@ -7283,6 +7432,13 @@ export const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
         }),
       ),
     getThreadProjection: (threadId) =>
+      Effect.fail(
+        new OrchestratorProjectionError({
+          threadId,
+          cause: "Orchestration V2 live runtime is not configured.",
+        }),
+      ),
+    getCheckpointContext: (threadId) =>
       Effect.fail(
         new OrchestratorProjectionError({
           threadId,

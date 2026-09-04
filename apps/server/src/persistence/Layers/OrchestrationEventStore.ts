@@ -27,6 +27,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { replayAndBufferLiveEvents } from "../../orchestration/LiveStreamBudget.ts";
+
 import {
   toPersistenceDecodeError,
   toPersistenceSqlError,
@@ -81,18 +83,6 @@ const HasEventAfterRequestSchema = Schema.Struct({
 const ReadFromSequenceRequestSchema = Schema.Struct({
   sequenceExclusive: NonNegativeInt,
   limit: Schema.Number,
-});
-const AggregateReplayRequestSchema = Schema.Struct({
-  aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.String,
-  fromSequenceExclusive: NonNegativeInt,
-  toSequenceInclusive: NonNegativeInt,
-  limit: Schema.Number,
-});
-const AggregateReplayStatsRowSchema = Schema.Struct({
-  eventCount: Schema.Number,
-  payloadBytes: Schema.Number,
-  hasCreateEvent: Schema.Number,
 });
 const DEFAULT_READ_FROM_SEQUENCE_LIMIT = 1_000;
 const READ_PAGE_SIZE = 500;
@@ -297,57 +287,6 @@ const makeEventStore = Effect.gen(function* () {
           AND (application_event_version = 1 OR aggregate_kind = 'project')
         ORDER BY sequence ASC
         LIMIT ${request.limit}
-      `,
-  });
-
-  const readAggregateEventRows = SqlSchema.findAll({
-    Request: AggregateReplayRequestSchema,
-    Result: OrchestrationEventPersistedRowSchema,
-    execute: (request) =>
-      sql`
-        SELECT
-          sequence,
-          event_id AS "eventId",
-          event_type AS "type",
-          aggregate_kind AS "aggregateKind",
-          stream_id AS "aggregateId",
-          occurred_at AS "occurredAt",
-          command_id AS "commandId",
-          causation_event_id AS "causationEventId",
-          correlation_id AS "correlationId",
-          payload_json AS "payload",
-          metadata_json AS "metadata"
-        FROM orchestration_events
-        WHERE aggregate_kind = ${request.aggregateKind}
-          AND stream_id = ${request.aggregateId}
-          AND sequence > ${request.fromSequenceExclusive}
-          AND sequence <= ${request.toSequenceInclusive}
-        ORDER BY sequence ASC
-        LIMIT ${request.limit}
-      `,
-  });
-
-  const readAggregateReplayStats = SqlSchema.findOne({
-    Request: AggregateReplayRequestSchema,
-    Result: AggregateReplayStatsRowSchema,
-    execute: (request) =>
-      sql`
-        SELECT
-          COUNT(*) AS "eventCount",
-          COALESCE(SUM(octet_length(payload_json)), 0) AS "payloadBytes",
-          COALESCE(MAX(event_type IN (
-            'thread.created', 'project.created'
-          )), 0) AS "hasCreateEvent"
-        FROM (
-          SELECT payload_json, event_type
-          FROM orchestration_events
-          WHERE aggregate_kind = ${request.aggregateKind}
-            AND stream_id = ${request.aggregateId}
-            AND sequence > ${request.fromSequenceExclusive}
-            AND sequence <= ${request.toSequenceInclusive}
-          ORDER BY sequence ASC
-          LIMIT ${request.limit}
-        )
       `,
   });
 
@@ -562,6 +501,36 @@ const makeEventStore = Effect.gen(function* () {
       ),
     );
 
+  const getAgentReplayStats: OrchestrationEventStoreShape["getAgentReplayStats"] = (input) =>
+    sql<{
+      readonly eventCount: number;
+      readonly payloadBytes: number;
+      readonly hasCreateEvent: number;
+    }>`
+      SELECT
+        COUNT(*) AS "eventCount",
+        COALESCE(SUM(octet_length(payload_json)), 0) AS "payloadBytes",
+        COALESCE(MAX(event_type = 'thread.created'), 0) AS "hasCreateEvent"
+      FROM (
+        SELECT payload_json, event_type
+        FROM orchestration_events
+        WHERE aggregate_kind = 'thread'
+          AND stream_id = ${input.threadId}
+          AND application_event_version = 2
+          AND sequence > ${input.afterSequence}
+          AND sequence <= ${input.throughSequence}
+        ORDER BY sequence ASC
+        LIMIT ${Math.max(0, Math.floor(input.maxEvents)) + 1}
+      )
+    `.pipe(
+      Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.getAgentReplayStats:query")),
+      Effect.map((rows) => ({
+        eventCount: rows[0]?.eventCount ?? 0,
+        payloadBytes: rows[0]?.payloadBytes ?? 0,
+        hasCreateEvent: (rows[0]?.hasCreateEvent ?? 0) !== 0,
+      })),
+    );
+
   const latestAgentSequence: OrchestrationEventStoreShape["latestAgentSequence"] = (threadId) =>
     sql<{ readonly sequence: number | null }>`
       SELECT MAX(sequence) AS sequence
@@ -645,20 +614,21 @@ const makeEventStore = Effect.gen(function* () {
   const streamApplicationEvents: OrchestrationEventStoreShape["streamApplicationEvents"] = (
     input,
   ) =>
-    Stream.unwrap(
-      Effect.gen(function* () {
-        const subscription = yield* PubSub.subscribe(committedEvents);
-        const highWater = yield* latestApplicationSequence;
-        const afterSequence = input?.afterSequence ?? 0;
-        const replay = catchUpApplicationEvents({
-          afterSequence,
-          throughSequence: highWater,
-        });
-        const live = Stream.fromSubscription(subscription).pipe(
-          Stream.filter((event) => event.sequence > Math.max(highWater, afterSequence)),
-        );
-        return Stream.concat(replay, live);
-      }),
+    replayAndBufferLiveEvents({
+      subscribe: PubSub.subscribe(committedEvents),
+      latestSequence: latestApplicationSequence,
+      afterSequence: input?.afterSequence ?? 0,
+      replay: (throughSequence) =>
+        catchUpApplicationEvents({
+          afterSequence: input?.afterSequence ?? 0,
+          throughSequence,
+        }),
+    }).pipe(
+      Stream.catchTag("LiveStreamBufferError", (cause) =>
+        Stream.fail(
+          toPersistenceSqlError("OrchestrationEventStore.streamApplicationEvents:buffer")(cause),
+        ),
+      ),
     );
 
   const findEventAfter = SqlSchema.findOneOption({
@@ -691,11 +661,10 @@ const makeEventStore = Effect.gen(function* () {
   return {
     append,
     readFromSequence,
-    readAggregateRange,
-    getAggregateReplayStats,
     readAll: () => readFromSequence(0, Number.MAX_SAFE_INTEGER),
     appendAgentEvents,
     readAgentEvents,
+    getAgentReplayStats,
     latestAgentSequence,
     latestApplicationSequence,
     readApplicationEvents: catchUpApplicationEvents,

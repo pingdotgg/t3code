@@ -21,6 +21,7 @@ import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
+import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
 
 export class ServerEnvironmentIdPersistenceError extends Schema.TaggedErrorClass<ServerEnvironmentIdPersistenceError>()(
   "ServerEnvironmentIdPersistenceError",
@@ -189,6 +190,7 @@ export const make = Effect.gen(function* () {
   const environmentId = yield* identity.getEnvironmentId;
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
   const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
+  const machine = yield* detectServerEnvironmentMachineKind();
   const launcher = yield* resolveServiceLauncherMode();
   const serverSelfUpdate = resolveServerSelfUpdateCapability({
     desktopManaged: serverConfig.mode === "desktop",
@@ -207,6 +209,7 @@ export const make = Effect.gen(function* () {
     platform: {
       os: platformOs(hostPlatform),
       arch: platformArch(hostArchitecture),
+      ...(machine === null ? {} : { machine }),
     },
     serverVersion: packageJson.version,
     orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
@@ -220,11 +223,13 @@ export const make = Effect.gen(function* () {
       threadAutoSettlement: true,
       threadSnooze: true,
       environmentThemes: true,
+      usageLimitSources: true,
       threadPinning: true,
       threadPinReorder: true,
       threadTitleRegeneration: true,
       threadVisitedTracking: true,
       threadPullRequestLinking: true,
+      environmentIcon: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       // Running-thread continuation across a self-update (#9167) marks v1
       // provider session bindings; the v2 recovery path terminalizes running

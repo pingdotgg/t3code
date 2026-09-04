@@ -155,7 +155,17 @@ export const make = Effect.gen(function* () {
         }
         runs.push(run);
       }
-      const requests = projection.runtimeRequests.filter((request) => request.status === "pending");
+      const messageRequestNodeIds = new Set(
+        projection.runtimeRequests
+          .filter(
+            (request) =>
+              request.status === "pending" && request.responseCapability.type === "message",
+          )
+          .map((request) => request.nodeId),
+      );
+      const requests = projection.runtimeRequests.filter(
+        (request) => request.status === "pending" && request.responseCapability.type !== "message",
+      );
       const detail = `Cancelled because the server ${trigger === "startup" ? "restarted" : "shut down"} before the provider work completed.`;
       const commandId = CommandId.make(
         `command:runtime-reconcile:${trigger}:${projection.thread.id}:${DateTime.formatIso(now)}`,
@@ -219,6 +229,7 @@ export const make = Effect.gen(function* () {
         for (const node of projection.nodes.filter(
           (candidate) =>
             candidate.runId === run.id &&
+            !messageRequestNodeIds.has(candidate.id) &&
             (candidate.status === "pending" ||
               candidate.status === "running" ||
               candidate.status === "waiting"),
@@ -289,6 +300,7 @@ export const make = Effect.gen(function* () {
         for (const item of projection.turnItems.filter(
           (candidate) =>
             candidate.runId === run.id &&
+            (candidate.nodeId === null || !messageRequestNodeIds.has(candidate.nodeId)) &&
             (candidate.status === "pending" ||
               candidate.status === "running" ||
               candidate.status === "waiting"),

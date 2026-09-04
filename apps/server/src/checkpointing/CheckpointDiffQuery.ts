@@ -99,7 +99,7 @@ export const make = Effect.gen(function* () {
         return emptyDiff;
       }
 
-      const projection = yield* threads.getThreadProjection(input.threadId).pipe(
+      const projection = yield* threads.getCheckpointContext(input.threadId).pipe(
         Effect.mapError(
           () =>
             new CheckpointThreadNotFoundError({
@@ -107,7 +107,7 @@ export const make = Effect.gen(function* () {
               threadId: input.threadId,
             }),
         ),
-        Effect.withSpan("checkpoint.turnDiff.lookupProjection"),
+        Effect.withSpan("checkpoint.turnDiff.lookupContext"),
       );
       const completedRunIds = new Set(
         projection.runs.filter((run) => run.status === "completed").map((run) => run.id),

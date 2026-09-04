@@ -38,10 +38,10 @@ export function createEnvironmentThreadShellAtoms(input: {
   // Point reads and aggregate lists share values without keeping an atom alive
   // for every listed thread. Replaced source objects can be collected.
   const scopedThreads = new WeakMap<
-    OrchestrationThreadShell,
+    OrchestrationV2ThreadShell,
     Map<EnvironmentId, EnvironmentThreadShell>
   >();
-  const scopedThread = (environmentId: EnvironmentId, thread: OrchestrationThreadShell) => {
+  const scopedThread = (environmentId: EnvironmentId, thread: OrchestrationV2ThreadShell) => {
     let byEnvironment = scopedThreads.get(thread);
     if (byEnvironment === undefined) {
       byEnvironment = new Map();
@@ -49,7 +49,7 @@ export function createEnvironmentThreadShellAtoms(input: {
     }
     let value = byEnvironment.get(environmentId);
     if (value === undefined) {
-      value = scopeThreadShell(environmentId, thread);
+      value = presentThreadShell(environmentId, thread);
       byEnvironment.set(environmentId, value);
     }
     return value;
@@ -132,16 +132,9 @@ export function createEnvironmentThreadShellAtoms(input: {
 
   const threadShellAtomFamily = Atom.family((key: string) => {
     const ref = parseThreadKey(key);
-    let previousSource: OrchestrationV2ThreadShell | null = null;
-    let previousValue: EnvironmentThreadShell | null = null;
     return Atom.make((get) => {
       const source = get(environmentThreadIndexAtom(ref.environmentId)).get(ref.threadId) ?? null;
-      if (source === previousSource) {
-        return previousValue;
-      }
-      previousSource = source;
-      previousValue = source === null ? null : presentThreadShell(ref.environmentId, source);
-      return previousValue;
+      return source === null ? null : scopedThread(ref.environmentId, source);
     }).pipe(Atom.withLabel(`environment-thread-shell:${key}`));
   });
 

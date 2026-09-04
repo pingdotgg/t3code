@@ -2,11 +2,15 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderSetupError,
+  ProviderThreadId,
   ThreadId,
+  type OrchestrationV2ProviderSession,
+  type OrchestrationV2ThreadShell,
   type ProviderAuthState,
-  type ProviderSession,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -17,18 +21,17 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import {
-  ProviderSessionDirectoryPersistenceError,
-  ProviderValidationError,
-  type ProviderServiceError,
-} from "../Errors.ts";
+  ProjectionStoreReadError,
+  ProjectionStoreV2,
+} from "../../orchestration-v2/ProjectionStore.ts";
+import {
+  ProviderSessionManagerV2,
+  ProviderSessionReleaseError,
+} from "../../orchestration-v2/ProviderSessionManager.ts";
+import { AcpProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/AcpAdapterV2.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import type { ProviderAuthController } from "../Services/ProviderAuthService.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
-import { ProviderService } from "../Services/ProviderService.ts";
-import {
-  ProviderSessionDirectory,
-  type ProviderRuntimeBindingWithMetadata,
-} from "../Services/ProviderSessionDirectory.ts";
 import { makeProviderAuthService } from "./ProviderAuthService.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-personal");
@@ -69,7 +72,7 @@ function makeInstance(input: {
     get snapshot(): never {
       throw new Error("Auth routing must not refresh the provider snapshot.");
     },
-    get adapter(): never {
+    get orchestrationAdapter(): never {
       throw new Error("Auth routing must not start an adapter session.");
     },
     get textGeneration(): never {
@@ -78,46 +81,65 @@ function makeInstance(input: {
   };
 }
 
-function makeBinding(
+const nowUtc = DateTime.makeUnsafe(now);
+
+/**
+ * A thread bound to a provider instance with (or without) a live native
+ * thread. The auth service reads only the routing fields, so the rest of the
+ * shell row is left out.
+ */
+function makeThread(
   thread: string,
-  status: NonNullable<ProviderRuntimeBindingWithMetadata["status"]>,
-  providerInstanceId = instanceId,
-): ProviderRuntimeBindingWithMetadata {
-  return {
-    threadId: ThreadId.make(thread),
-    provider: driverKind,
-    providerInstanceId,
-    status,
-    lastSeenAt: now,
+  input: { readonly providerInstanceId?: ProviderInstanceId; readonly active?: boolean } = {},
+): OrchestrationV2ThreadShell {
+  const shell: Pick<
+    OrchestrationV2ThreadShell,
+    "id" | "providerInstanceId" | "activeProviderThreadId"
+  > = {
+    id: ThreadId.make(thread),
+    providerInstanceId: input.providerInstanceId ?? instanceId,
+    activeProviderThreadId:
+      input.active === false ? null : ProviderThreadId.make(`${thread}:native`),
   };
+  return shell as unknown as OrchestrationV2ThreadShell;
 }
 
-function makeSession(thread: string, providerInstanceId = instanceId): ProviderSession {
+function makeSession(
+  session: string,
+  status: OrchestrationV2ProviderSession["status"] = "ready",
+  providerInstanceId = instanceId,
+): OrchestrationV2ProviderSession {
   return {
-    threadId: ThreadId.make(thread),
-    provider: driverKind,
+    id: ProviderSessionId.make(session),
+    driver: driverKind,
     providerInstanceId,
-    status: "ready",
-    runtimeMode: "approval-required",
-    createdAt: now,
-    updatedAt: now,
+    status,
+    cwd: "/workspace",
+    model: null,
+    capabilities: AcpProviderCapabilitiesV2,
+    createdAt: nowUtc,
+    updatedAt: nowUtc,
+    lastError: null,
   };
 }
 
 const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* (
   input: {
     enabled?: boolean;
-    bindings?: ReadonlyArray<ProviderRuntimeBindingWithMetadata>;
-    sessions?: ReadonlyArray<ProviderSession>;
-    directoryError?: ProviderSessionDirectoryPersistenceError;
-    stopError?: ProviderServiceError;
+    threads?: ReadonlyArray<OrchestrationV2ThreadShell>;
+    sessions?: ReadonlyMap<ThreadId, ReadonlyArray<OrchestrationV2ProviderSession>>;
+    shellError?: boolean;
+    stopError?: boolean;
     logoutError?: ProviderSetupError;
   } = {},
 ) {
   const actions: string[] = [];
   const registryChanges = yield* PubSub.unbounded<void>();
-  const sessions = new Map(input.sessions?.map((session) => [session.threadId, session]));
-  const bindings = new Map(input.bindings?.map((binding) => [binding.threadId, binding]));
+  const threads = input.threads ?? [];
+  const sessions = new Map(
+    [...(input.sessions?.entries() ?? [])].map(([threadId, list]) => [threadId, [...list]]),
+  );
+  const released: string[] = [];
   const idle = idleAuthState;
   let state = idle;
   let flowOwner: string | undefined;
@@ -190,38 +212,50 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
             Effect.succeed(instances.find((instance) => instance.instanceId === id)),
           subscribeChanges: PubSub.subscribe(registryChanges),
         }),
-        Layer.mock(ProviderSessionDirectory)({
-          listBindings: () =>
+        Layer.mock(ProjectionStoreV2)({
+          getRecoveryThreadIds: () =>
             Effect.suspend(() => {
               assert.isTrue(gateClosed);
-              actions.push("list-bindings");
-              return input.directoryError
-                ? Effect.fail(input.directoryError)
-                : Effect.succeed([...bindings.values()]);
+              actions.push("list-threads");
+              return input.shellError
+                ? Effect.fail(
+                    new ProjectionStoreReadError({
+                      threadId: ThreadId.make("shell"),
+                      cause: new Error("private database diagnostics"),
+                    }),
+                  )
+                : Effect.succeed(threads.map((thread) => thread.id));
+            }),
+          getThreadProjection: (threadId) =>
+            Effect.sync(() => {
+              actions.push(`sessions:${threadId}`);
+              return {
+                providerSessions: sessions.get(threadId) ?? [],
+              } as never;
             }),
         }),
-        Layer.mock(ProviderService)({
-          listSessions: () =>
-            Effect.sync(() => {
-              assert.isTrue(gateClosed);
-              actions.push("list-sessions");
-              return [...sessions.values()];
-            }),
-          stopSession: ({ threadId }) =>
+        Layer.mock(ProviderSessionManagerV2)({
+          release: ({ providerSessionId, reason }) =>
             Effect.suspend(() => {
               assert.isTrue(gateClosed);
-              actions.push(`stop:${threadId}`);
-              if (input.stopError) return Effect.fail(input.stopError);
-              sessions.delete(threadId);
-              const binding = bindings.get(threadId);
-              if (binding) bindings.set(threadId, { ...binding, status: "stopped" });
+              actions.push(`stop:${providerSessionId}`);
+              if (input.stopError) {
+                return Effect.fail(
+                  new ProviderSessionReleaseError({
+                    providerSessionId,
+                    reason,
+                    cause: new Error("private process diagnostics"),
+                  }),
+                );
+              }
+              released.push(providerSessionId);
               return Effect.void;
             }),
         }),
       ),
     ),
   );
-  return { service, actions, sessions, bindings };
+  return { service, actions, released };
 });
 
 const makeStreamingController = Effect.fn("ProviderAuthService.test.makeStreamingController")(
@@ -278,8 +312,8 @@ const makeSubscriptionHarness = Effect.fn("ProviderAuthService.test.makeSubscrip
                 return instance;
               }),
           }),
-          Layer.mock(ProviderService)({}),
-          Layer.mock(ProviderSessionDirectory)({}),
+          Layer.mock(ProjectionStoreV2)({}),
+          Layer.mock(ProviderSessionManagerV2)({}),
         ),
       ),
     );
@@ -307,20 +341,21 @@ const observeAuth = Effect.fn("ProviderAuthService.test.observeAuth")(function* 
 describe("ProviderAuthService", () => {
   it.effect("stops routed sessions before sign-in, including for a disabled instance", () =>
     Effect.gen(function* () {
-      const { service, actions, sessions } = yield* makeHarness({
+      const { service, actions, released } = yield* makeHarness({
         enabled: false,
-        sessions: [makeSession("active")],
+        threads: [makeThread("active")],
+        sessions: new Map([[ThreadId.make("active"), [makeSession("active-session")]]]),
       });
       const state = yield* service.start({ instanceId }, owner);
 
       assert.strictEqual(state.instanceId, instanceId);
       assert.strictEqual(state.phase, "waiting");
-      assert.strictEqual(sessions.size, 0);
+      assert.deepStrictEqual(released, ["active-session"]);
       assert.deepStrictEqual(actions, [
         "close-gate",
-        "list-bindings",
-        "list-sessions",
-        "stop:active",
+        "list-threads",
+        "sessions:active",
+        "stop:active-session",
         "start-sign-in",
       ]);
     }),
@@ -474,40 +509,72 @@ describe("ProviderAuthService", () => {
     }),
   );
 
-  it.effect("stops active and persisted sessions once before native logout", () =>
+  it.effect("stops every live session on the instance before native logout", () =>
     Effect.gen(function* () {
-      const { service, actions, sessions, bindings } = yield* makeHarness({
-        bindings: [
-          makeBinding("shared", "running"),
-          makeBinding("starting", "starting"),
-          makeBinding("persisted", "running"),
-          makeBinding("already-stopped", "stopped"),
-          makeBinding("other-instance", "running", otherInstanceId),
+      const { service, actions, released } = yield* makeHarness({
+        threads: [
+          makeThread("running"),
+          makeThread("starting"),
+          makeThread("idle", { active: false }),
+          makeThread("other-instance", { providerInstanceId: otherInstanceId }),
         ],
-        sessions: [
-          makeSession("shared"),
-          makeSession("runtime-only"),
-          makeSession("other-instance", otherInstanceId),
-        ],
+        sessions: new Map([
+          [
+            ThreadId.make("running"),
+            [
+              makeSession("running-session", "running"),
+              makeSession("stopped-session", "stopped"),
+              makeSession("errored-session", "error"),
+              makeSession("foreign-session", "ready", otherInstanceId),
+            ],
+          ],
+          [ThreadId.make("starting"), [makeSession("starting-session", "starting")]],
+          [ThreadId.make("idle"), [makeSession("idle-session")]],
+          [
+            ThreadId.make("other-instance"),
+            [makeSession("other-session", "ready", otherInstanceId)],
+          ],
+        ]),
       });
       const state = yield* service.logout({ instanceId });
 
       assert.strictEqual(state.phase, "idle");
       assert.deepStrictEqual(actions, [
         "close-gate",
-        "list-bindings",
-        "list-sessions",
-        "stop:shared",
-        "stop:starting",
-        "stop:persisted",
-        "stop:runtime-only",
+        "list-threads",
+        "sessions:running",
+        "stop:running-session",
+        "sessions:starting",
+        "stop:starting-session",
+        "sessions:idle",
+        "stop:idle-session",
+        "sessions:other-instance",
         "native-logout",
       ]);
-      assert.deepStrictEqual([...sessions.keys()], [ThreadId.make("other-instance")]);
-      assert.strictEqual(bindings.get(ThreadId.make("starting"))?.status, "stopped");
-      assert.strictEqual(bindings.get(ThreadId.make("persisted"))?.status, "stopped");
-      assert.strictEqual(bindings.get(ThreadId.make("other-instance"))?.status, "running");
+      assert.deepStrictEqual(released, ["running-session", "starting-session", "idle-session"]);
     }),
+  );
+
+  it.effect(
+    "releases a shared native session once after a thread's selected provider changes",
+    () =>
+      Effect.gen(function* () {
+        const shared = makeSession("shared-native-session");
+        const { service, released } = yield* makeHarness({
+          threads: [
+            makeThread("changed-selection", { providerInstanceId: otherInstanceId }),
+            makeThread("same-session"),
+          ],
+          sessions: new Map([
+            [ThreadId.make("changed-selection"), [shared]],
+            [ThreadId.make("same-session"), [shared]],
+          ]),
+        });
+
+        yield* service.logout({ instanceId });
+
+        assert.deepStrictEqual(released, [shared.id]);
+      }),
   );
 
   it.effect.each([
@@ -525,7 +592,7 @@ describe("ProviderAuthService", () => {
       assert.strictEqual(result, handled);
       assert.deepStrictEqual(
         actions,
-        handled ? ["close-gate", "list-bindings", "list-sessions", "native-logout"] : [],
+        handled ? ["close-gate", "list-threads", "native-logout"] : [],
       );
     }),
   );
@@ -546,32 +613,25 @@ describe("ProviderAuthService", () => {
     }),
   );
 
-  it.effect("does not log out when the session directory cannot be read", () =>
+  it.effect("does not log out when the thread shell cannot be read", () =>
     Effect.gen(function* () {
-      const { service, actions } = yield* makeHarness({
-        directoryError: new ProviderSessionDirectoryPersistenceError({
-          operation: "listBindings",
-          detail: "private database diagnostics",
-        }),
-      });
+      const { service, actions } = yield* makeHarness({ shellError: true });
       const error = yield* Effect.flip(service.logout({ instanceId }));
 
       assert.instanceOf(error, ProviderSetupError);
       assert.strictEqual(error.instanceId, instanceId);
       assert.strictEqual(error.operation, "stopSessions");
       assert.notInclude(error.detail, "private database diagnostics");
-      assert.deepStrictEqual(actions, ["close-gate", "list-bindings"]);
+      assert.deepStrictEqual(actions, ["close-gate", "list-threads"]);
     }),
   );
 
   it.effect("does not log out or consume the command when stopping a session fails", () =>
     Effect.gen(function* () {
-      const { service, actions, sessions } = yield* makeHarness({
-        sessions: [makeSession("active")],
-        stopError: new ProviderValidationError({
-          operation: "stopSession",
-          issue: "private process diagnostics",
-        }),
+      const { service, actions, released } = yield* makeHarness({
+        threads: [makeThread("active")],
+        sessions: new Map([[ThreadId.make("active"), [makeSession("active-session")]]]),
+        stopError: true,
       });
       const error = yield* Effect.flip(
         service.tryHandlePromptCommand({ instanceId, text: "/logout", hasAttachments: false }),
@@ -580,12 +640,12 @@ describe("ProviderAuthService", () => {
       assert.instanceOf(error, ProviderSetupError);
       assert.strictEqual(error.operation, "stopSessions");
       assert.notInclude(error.detail, "private process diagnostics");
-      assert.strictEqual(sessions.size, 1);
+      assert.deepStrictEqual(released, []);
       assert.deepStrictEqual(actions, [
         "close-gate",
-        "list-bindings",
-        "list-sessions",
-        "stop:active",
+        "list-threads",
+        "sessions:active",
+        "stop:active-session",
       ]);
     }),
   );

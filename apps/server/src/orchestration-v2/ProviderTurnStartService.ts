@@ -5,6 +5,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2TurnItem,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -19,6 +20,7 @@ import * as Schema from "effect/Schema";
 
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { ProjectService } from "../project/ProjectService.ts";
+import { ProviderAuthService } from "../provider/Services/ProviderAuthService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import {
   ContextHandoffServiceV2,
@@ -27,6 +29,7 @@ import {
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
+import { makeProviderFailure } from "./ProviderFailure.ts";
 import {
   canRouteRelatedSubagent,
   RunExecutionServiceV2,
@@ -65,6 +68,7 @@ export const layer: Layer.Layer<
   | FileSystem.FileSystem
   | GitWorkflowService
   | ProjectService
+  | ProviderAuthService
   | ProjectionStoreV2
   | ProviderSessionManagerV2
   | RunExecutionServiceV2
@@ -78,6 +82,7 @@ export const layer: Layer.Layer<
     const fileSystem = yield* FileSystem.FileSystem;
     const gitWorkflow = yield* GitWorkflowService;
     const projects = yield* ProjectService;
+    const providerAuth = yield* ProviderAuthService;
     const projectionStore = yield* ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionServiceV2;
@@ -138,6 +143,148 @@ export const layer: Layer.Layer<
           runId,
           cause: `Run ${runId} is missing its execution projection state.`,
         });
+      }
+      if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
+        const isEmptyCompaction =
+          message.text.trim().toLowerCase() === "/compact" &&
+          !projection.messages.some(
+            (candidate) =>
+              candidate.role === "user" &&
+              (candidate.text.trim().toLowerCase() !== "/compact" ||
+                candidate.attachments.length > 0),
+          );
+        // Preparing a run may already point the thread at a newly selected
+        // provider. Account commands still belong to its last native session.
+        const nativeThreads = new Map(
+          projection.providerThreads
+            .filter(
+              (candidate) => candidate.ownerNodeId === null && candidate.nativeThreadRef !== null,
+            )
+            .map((candidate) => [candidate.id, candidate]),
+        );
+        const previousNativeRun = projection.runs.reduce<OrchestrationV2Run | undefined>(
+          (previous, candidate) =>
+            candidate.ordinal < run.ordinal &&
+            candidate.providerThreadId !== null &&
+            nativeThreads.has(candidate.providerThreadId) &&
+            (previous === undefined || candidate.ordinal > previous.ordinal)
+              ? candidate
+              : previous,
+          undefined,
+        );
+        const nativeThread = nativeThreads.get(
+          previousNativeRun?.providerThreadId ??
+            projection.thread.activeProviderThreadId ??
+            providerThread.id,
+        );
+        const authInstanceId = nativeThread?.providerInstanceId ?? run.providerInstanceId;
+        const authResult = isEmptyCompaction
+          ? null
+          : yield* Effect.result(
+              providerAuth.tryHandlePromptCommand({
+                instanceId: authInstanceId,
+                text: message.text,
+                hasAttachments: false,
+              }),
+            );
+        if (isEmptyCompaction || authResult?._tag === "Failure" || authResult?.success) {
+          const now = yield* DateTime.now;
+          const failure = isEmptyCompaction
+            ? makeProviderFailure({
+                class: "validation_error",
+                message: "Start a conversation before compacting this thread.",
+              })
+            : authResult?._tag === "Failure"
+              ? makeProviderFailure({
+                  class: "permission_error",
+                  message: authResult.failure.detail,
+                })
+              : undefined;
+          const status = failure === undefined ? "completed" : "failed";
+          const itemBase = {
+            id: idAllocator.derive.runSignalTurnItem({
+              runId,
+              signal: isEmptyCompaction ? "empty-compaction" : "provider-sign-out",
+            }),
+            threadId: projection.thread.id,
+            runId,
+            nodeId: rootNode.id,
+            providerThreadId: nativeThread?.id ?? providerThread.id,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal:
+              Math.max(
+                0,
+                ...projection.turnItems
+                  .filter((item) => item.runId === runId)
+                  .map((item) => item.ordinal),
+              ) + 1,
+            status,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+          } as const;
+          const item: OrchestrationV2TurnItem =
+            failure !== undefined
+              ? {
+                  ...itemBase,
+                  type: "error",
+                  title: isEmptyCompaction
+                    ? "Cannot compact an empty thread"
+                    : "Provider sign-out failed",
+                  failure,
+                }
+              : {
+                  ...itemBase,
+                  type: "command_execution",
+                  title: "Provider signed out",
+                  input: message.text.trim(),
+                  output: "Provider signed out",
+                  exitCode: 0,
+                };
+          const eventPayloads = [
+            { type: "turn-item.updated", payload: item },
+            { type: "run.updated", payload: { ...run, status, startedAt: now, completedAt: now } },
+            {
+              type: "run-attempt.updated",
+              payload: { ...attempt, status, startedAt: now, completedAt: now },
+            },
+            {
+              type: "node.updated",
+              payload: { ...rootNode, status, startedAt: now, completedAt: now },
+            },
+            {
+              type: "provider-thread.updated",
+              payload: {
+                ...providerThread,
+                status: providerThread.nativeThreadRef === null ? "not_loaded" : "idle",
+                updatedAt: now,
+              },
+            },
+          ] as const;
+          const events = yield* Effect.forEach(eventPayloads, (event) =>
+            Effect.gen(function* () {
+              return {
+                ...event,
+                id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                threadId: projection.thread.id,
+                runId,
+                nodeId: rootNode.id,
+                providerInstanceId: authInstanceId,
+                occurredAt: now,
+              } satisfies OrchestrationV2DomainEvent;
+            }),
+          );
+          yield* eventSink.writeIfRunCurrent({
+            threadId: projection.thread.id,
+            runId,
+            activeAttemptId: attempt.id,
+            expectedStatus: "starting",
+            events,
+          });
+          return;
+        }
       }
       const { worktreePath, branch } = projection.thread;
       if (worktreePath !== null && branch !== null) {

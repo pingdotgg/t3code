@@ -24,20 +24,6 @@ import type * as Stream from "effect/Stream";
 
 import type { OrchestrationEventStoreError } from "../Errors.ts";
 
-export interface OrchestrationAggregateReplayRange {
-  readonly aggregateKind: OrchestrationEvent["aggregateKind"];
-  readonly aggregateId: string;
-  readonly fromSequenceExclusive: number;
-  readonly toSequenceInclusive: number;
-}
-
-export interface OrchestrationAggregateReplayStats {
-  readonly eventCount: number;
-  readonly payloadBytes: number;
-  /** A creation in this range does not prove that the aggregate still exists. */
-  readonly hasCreateEvent: boolean;
-}
-
 /**
  * OrchestrationEventStoreShape - Service API for orchestration event persistence.
  */
@@ -68,19 +54,6 @@ export interface OrchestrationEventStoreShape {
     limit?: number,
   ) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
 
-  /** Read one aggregate through a captured global head, without decoding other streams. */
-  readonly readAggregateRange: (
-    input: OrchestrationAggregateReplayRange & { readonly limit?: number },
-  ) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
-
-  /**
-   * Measure at most maxEvents + 1 rows without decoding payloads. The extra
-   * row tells the caller to use a snapshot instead of a truncated replay.
-   */
-  readonly getAggregateReplayStats: (
-    input: OrchestrationAggregateReplayRange & { readonly maxEvents: number },
-  ) => Effect.Effect<OrchestrationAggregateReplayStats, OrchestrationEventStoreError>;
-
   /**
    * Read all events from the beginning of the stream.
    *
@@ -102,6 +75,21 @@ export interface OrchestrationEventStoreShape {
     readonly commandId?: CommandId;
     readonly limit?: number;
   }) => Stream.Stream<OrchestrationV2StoredEvent, OrchestrationEventStoreError>;
+
+  /** Measure one thread's bounded replay without loading or decoding its payloads. */
+  readonly getAgentReplayStats: (input: {
+    readonly threadId: ThreadId;
+    readonly afterSequence: number;
+    readonly throughSequence: number;
+    readonly maxEvents: number;
+  }) => Effect.Effect<
+    {
+      readonly eventCount: number;
+      readonly payloadBytes: number;
+      readonly hasCreateEvent: boolean;
+    },
+    OrchestrationEventStoreError
+  >;
 
   readonly latestAgentSequence: (
     threadId?: ThreadId,

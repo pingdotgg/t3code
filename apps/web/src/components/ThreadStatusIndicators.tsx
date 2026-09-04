@@ -28,6 +28,7 @@ import {
   resolveThreadStatusPill,
   type ThreadStatusPill,
 } from "./Sidebar.logic";
+import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import type { SidebarThreadSummary } from "../types";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";

@@ -5,8 +5,10 @@ import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/c
 import {
   activeThreadAnchorTimestampMs,
   getThreadSortTimestamp,
+  resolveSettledThreadTimestamp,
   sortThreads,
   toSortableTimestamp,
+  type SettledThreadTimestampInput,
   type ThreadSortInput,
 } from "../lib/threadSort";
 import type { SidebarThreadSummary, Thread } from "../types";
@@ -202,6 +204,18 @@ export function buildBulkTitleRegenerationContextMenuItem(input: {
     id: "regenerate-title",
     label: `Regenerate titles (${input.actionableCount})`,
   };
+}
+
+/**
+ * Bulk unpin follows the same "count only what the action will touch" rule
+ * as title regeneration: on a mixed selection the label counts the pinned
+ * rows alone, and the item disappears when nothing selected is pinned.
+ */
+export function buildBulkUnpinContextMenuItem(input: {
+  pinnedCount: number;
+}): ContextMenuItem<"unpin"> | null {
+  if (input.pinnedCount === 0) return null;
+  return { id: "unpin", label: `Unpin (${input.pinnedCount})` };
 }
 
 export interface ThreadStatusPill {
@@ -793,10 +807,10 @@ export function resolveSettledTimestamp(thread: SettledTimestampInput): string |
 // Settled rows are history, so they order by when the work ENDED, not when
 // the thread was created or last touched.
 export function sortSettledThreadsForSidebar<
-  T extends SettledTimestampInput & { readonly id: string },
+  T extends SettledThreadTimestampInput & { readonly id: string },
 >(threads: readonly T[]): T[] {
   const timestampMs = (thread: T) => {
-    const timestamp = resolveSettledTimestamp(thread);
+    const timestamp = resolveSettledThreadTimestamp(thread);
     return timestamp === null ? 0 : Date.parse(timestamp);
   };
   return [...threads].toSorted(

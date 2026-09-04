@@ -18,6 +18,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { replayAndBufferLiveEvents } from "../orchestration/LiveStreamBudget.ts";
+
 import {
   CommandReceiptStoreV2,
   type CommandReceiptV2,
@@ -150,6 +152,8 @@ export interface EventSinkV2Shape {
   readonly stream: (input?: {
     readonly threadId?: ThreadId;
     readonly afterSequence?: number;
+    /** Bound RPC subscribers; internal workers must not drop their subscription under load. */
+    readonly bounded?: boolean;
   }) => Stream.Stream<OrchestrationV2StoredEvent, EventSinkV2Error>;
   readonly latestSequence: (input?: {
     readonly threadId?: ThreadId;
@@ -517,28 +521,37 @@ const baseLayer: Layer.Layer<
       return loop(input.afterSequence);
     };
 
-    const stream = (input?: { readonly threadId?: ThreadId; readonly afterSequence?: number }) =>
-      Stream.unwrap(
+    const stream = (input?: Parameters<EventSinkV2Shape["stream"]>[0]) => {
+      const afterSequence = input?.afterSequence ?? 0;
+      const matchesThread = (stored: OrchestrationV2StoredEvent) =>
+        input?.threadId === undefined || stored.event.threadId === input.threadId;
+      const replay = (throughSequence: number) =>
+        catchUp({
+          afterSequence,
+          throughSequence,
+          ...(input?.threadId === undefined ? {} : { threadId: input.threadId }),
+        });
+      if (input?.bounded === true) {
+        return replayAndBufferLiveEvents({
+          subscribe: PubSub.subscribe(liveEvents),
+          latestSequence: eventStore.latestSequence(),
+          afterSequence,
+          filter: matchesThread,
+          replay,
+        });
+      }
+      return Stream.unwrap(
         Effect.gen(function* () {
-          // Subscribe first, then capture the database high-water mark. Events
-          // committed between those operations are buffered by the subscription.
           const subscription = yield* PubSub.subscribe(liveEvents);
           const highWater = yield* eventStore.latestSequence();
-          const afterSequence = input?.afterSequence ?? 0;
-          const replay = catchUp({
-            afterSequence,
-            throughSequence: highWater,
-            ...(input?.threadId === undefined ? {} : { threadId: input.threadId }),
-          });
           const live = Stream.fromSubscription(subscription).pipe(
             Stream.filter((stored) => stored.sequence > Math.max(highWater, afterSequence)),
-            Stream.filter(
-              (stored) => input?.threadId === undefined || stored.event.threadId === input.threadId,
-            ),
+            Stream.filter(matchesThread),
           );
-          return Stream.concat(replay, live);
+          return Stream.concat(replay(highWater), live);
         }),
       );
+    };
 
     return EventSinkV2.of({
       write: (input) =>

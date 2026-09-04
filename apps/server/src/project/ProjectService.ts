@@ -3,8 +3,10 @@ import {
   ModelSelection,
   ProjectId,
   type Project,
+  type ProjectIconOverride,
   type ProjectScript,
   type ProjectSnapshot,
+  type ThreadEnvMode,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -34,6 +36,10 @@ export interface ProjectUpdateInput {
   readonly title?: string;
   readonly workspaceRoot?: string;
   readonly defaultModelSelection?: ModelSelection | null;
+  readonly autoPull?: boolean;
+  readonly projectIcon?: ProjectIconOverride | null;
+  readonly faviconPath?: string | null;
+  readonly defaultThreadEnvMode?: ThreadEnvMode | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
 }
 
@@ -128,8 +134,11 @@ export const make = Effect.gen(function* () {
     title: row.title,
     workspaceRoot: row.workspaceRoot,
     repositoryIdentity: enrichment?.repositoryIdentity ?? null,
-    faviconPath: enrichment?.faviconPath ?? null,
+    faviconPath: row.faviconPath ?? enrichment?.faviconPath ?? null,
     defaultModelSelection: row.defaultModelSelection,
+    defaultThreadEnvMode: row.defaultThreadEnvMode,
+    autoPull: row.autoPull,
+    projectIcon: row.projectIcon,
     scripts: row.scripts,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -327,6 +336,12 @@ export const make = Effect.gen(function* () {
           ...(input.defaultModelSelection === undefined
             ? {}
             : { defaultModelSelection: input.defaultModelSelection }),
+          ...(input.autoPull === undefined ? {} : { autoPull: input.autoPull }),
+          ...(input.projectIcon === undefined ? {} : { projectIcon: input.projectIcon }),
+          ...(input.faviconPath === undefined ? {} : { faviconPath: input.faviconPath }),
+          ...(input.defaultThreadEnvMode === undefined
+            ? {}
+            : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
           ...(input.scripts === undefined ? {} : { scripts: [...input.scripts] }),
         },
         (workspaceRoot === existing.value.workspaceRoot

@@ -2,6 +2,7 @@ import {
   MessageId,
   NodeId,
   ProviderInstanceId,
+  ProviderDriverKind,
   ProviderThreadId,
   RunId,
   RunAttemptId,
@@ -600,7 +601,7 @@ describe("buildThreadFeed", () => {
 
     expect(presented.some((entry) => entry.type === "run-fold")).toBe(false);
     expect(presented.find((entry) => entry.type === "work-toggle")).toMatchObject({
-      summary: "Ran 1 command",
+      summary: "vp check",
       hiddenCount: 1,
       hasFailure: true,
       live: false,
@@ -693,15 +694,6 @@ describe("buildThreadFeed", () => {
         { id: "activity-3", groupedToolDetail: true, live: false },
       ],
     });
-    const unchanged = deriveThreadFeedPresentation(
-      feed,
-      null,
-      new Set(),
-      new Set(["work-group:activity-1", "unrelated-group"]),
-    );
-    expect(unchanged[0]).toBe(expanded[0]);
-    expect(unchanged[1]).toBe(expanded[1]);
-    expect(deriveThreadFeedPresentation(feed, null, new Set())).toEqual(collapsed);
   });
 
   it("pretty prints T3 MCP dynamic tool activities and attaches the product logo", () => {
@@ -764,6 +756,217 @@ describe("buildThreadFeed", () => {
   });
 });
 
+describe("retained v2 feed presentation", () => {
+  it("retains unchanged rows while the assistant streams", () => {
+    const rows = [
+      projected(userMessage(), 0),
+      projected(command(), 1),
+      projected({ ...assistantMessage(), streaming: true }, 2),
+    ];
+    const latestRun = {
+      runId,
+      status: "running" as const,
+      startedAt: "2026-06-20T00:00:01.000Z",
+      completedAt: null,
+    };
+    const before = buildThreadFeed(rows);
+    const beforePresentation = deriveThreadFeedPresentation(
+      before,
+      latestRun,
+      new Set(),
+      new Set(),
+      latestRun.startedAt,
+    );
+    const after = buildThreadFeed([
+      rows[0]!,
+      rows[1]!,
+      projected(
+        { ...assistantMessage("2026-06-20T00:00:04.000Z"), text: "Still working", streaming: true },
+        2,
+      ),
+    ]);
+    const afterPresentation = deriveThreadFeedPresentation(
+      after,
+      latestRun,
+      new Set(),
+      new Set(),
+      latestRun.startedAt,
+    );
+    expect(after[0]).toBe(before[0]);
+    expect(after[1]).toBe(before[1]);
+    expect(after[2]).not.toBe(before[2]);
+    expect(afterPresentation[0]).toBe(beforePresentation[0]);
+    expect(afterPresentation[1]).toBe(beforePresentation[1]);
+  });
+
+  it("keeps a standalone compaction visible and folds it with other completed work", () => {
+    const compact = projected(
+      {
+        ...base("compacted", "2026-06-20T00:00:02.000Z", 1),
+        type: "compaction",
+        driver: null,
+        summary: "Shorter context",
+      },
+      1,
+    );
+    const latestRun = {
+      runId,
+      status: "completed" as const,
+      startedAt: "2026-06-20T00:00:01.000Z",
+      completedAt: "2026-06-20T00:00:04.000Z",
+    };
+    const onlyCompaction = deriveThreadFeedPresentation(
+      buildThreadFeed([projected(userMessage(), 0), compact]),
+      latestRun,
+      new Set(),
+    );
+    expect(onlyCompaction.map((entry) => entry.type)).toEqual(["message", "activity-group"]);
+    const feed = buildThreadFeed([
+      projected(userMessage(), 0),
+      compact,
+      projected(command("2026-06-20T00:00:03.000Z"), 2),
+      projected(assistantMessage("2026-06-20T00:00:04.000Z"), 3),
+    ]);
+    expect(
+      deriveThreadFeedPresentation(feed, latestRun, new Set()).map((entry) => entry.type),
+    ).toEqual(["message", "run-fold", "message"]);
+    const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([runId]));
+    expect(
+      expanded.find(
+        (entry) =>
+          entry.type === "activity-group" &&
+          entry.activities[0]?.projectedItem.item.type === "compaction",
+      ),
+    ).toMatchObject({ activities: [{ summary: "Context compacted" }] });
+  });
+
+  it("retains assistant image attachments from the wire", () => {
+    const image = {
+      type: "image" as const,
+      id: "assistant-image",
+      name: "result.png",
+      mimeType: "image/png",
+      sizeBytes: 100,
+    };
+    const feed = buildThreadFeed([
+      projected({ ...assistantMessage(), text: "", attachments: [image] }, 0),
+    ]);
+    expect(feed).toMatchObject([
+      { type: "message", message: { role: "assistant", attachments: [image] } },
+    ]);
+  });
+
+  it("keeps native application icons and source identity in collapsed and expanded work", () => {
+    const icon = {
+      _tag: "native-app" as const,
+      app: { _tag: "app-id" as const, appId: "com.example.Editor" },
+    };
+    const source = {
+      key: "native-app:com.example.editor",
+      name: "Editor",
+      kind: "computer" as const,
+      icon,
+    };
+    const rows = [0, 1].map((index) =>
+      projected(
+        {
+          ...base(`native-${index}`, `2026-06-20T00:00:0${index + 2}.000Z`, index + 1),
+          type: "dynamic_tool" as const,
+          toolName: "computer.click",
+          input: { x: index, y: 1 },
+          output: null,
+          toolSurface: "computer" as const,
+          toolIcon: icon,
+          toolSource: source,
+        },
+        index,
+      ),
+    );
+    const feed = buildThreadFeed(rows);
+    const latestRun = { runId, status: "running" as const, startedAt: null, completedAt: null };
+    const collapsed = deriveThreadFeedPresentation(feed, latestRun, new Set());
+    const toggle = collapsed[0];
+    if (toggle?.type !== "work-toggle") throw new Error("Expected a collapsed work group");
+    const presented = deriveThreadFeedPresentation(
+      feed,
+      latestRun,
+      new Set(),
+      new Set([toggle.groupId]),
+    );
+    expect(presented[0]).toMatchObject({
+      type: "work-toggle",
+      summary: "Used Editor",
+      toolSurface: "computer",
+      toolIcon: icon,
+    });
+    expect(presented[1]).toMatchObject({
+      type: "activity-group",
+      activities: [
+        { icon: "computer", workEntry: { toolSource: source, toolIcon: icon } },
+        { icon: "computer", workEntry: { toolSource: source, toolIcon: icon } },
+      ],
+    });
+  });
+
+  it.each([
+    ["failed", "Failed to click in the preview browser", true],
+    ["cancelled", "Stopped clicking in the preview browser", false],
+  ] as const)(
+    "keeps %s calls terminal while the parent run remains live",
+    (status, summary, hasFailure) => {
+      const feed = buildThreadFeed([
+        projected(
+          {
+            ...base("preview-click", "2026-06-20T00:00:02.000Z", 1),
+            type: "dynamic_tool",
+            status,
+            toolName: "mcp__t3-code__preview_click",
+            input: { element: "button" },
+            output: null,
+          },
+          0,
+        ),
+      ]);
+      const rows = deriveThreadFeedPresentation(
+        feed,
+        { runId, status: "running", startedAt: "2026-06-20T00:00:01.000Z", completedAt: null },
+        new Set(),
+        new Set(),
+        "2026-06-20T00:00:01.000Z",
+      );
+      expect(rows[0]).toMatchObject({ type: "work-toggle", summary, hasFailure, shimmer: false });
+    },
+  );
+
+  it("shows an idle native subagent without claiming completion", () => {
+    const rows = buildThreadFeed([
+      projected(
+        {
+          ...base("native-agent", "2026-06-20T00:00:02.000Z", 1),
+          type: "subagent",
+          status: "idle",
+          subagentId: NodeId.make("native-agent"),
+          origin: "provider_native",
+          driver: ProviderDriverKind.make("antigravity"),
+          providerInstanceId: ProviderInstanceId.make("antigravity"),
+          childThreadId: null,
+          title: "Search",
+          prompt: "Find relevant files",
+          result: null,
+        },
+        0,
+      ),
+    ]);
+    expect(rows[0]).toMatchObject({
+      type: "activity-group",
+      activities: [{ status: "neutral", lifecycleStatus: "idle", prominent: true }],
+    });
+    expect(deriveThreadFeedPresentation(rows, null, new Set())).toMatchObject([
+      { type: "activity-group", activities: [{ lifecycleStatus: "idle" }] },
+    ]);
+  });
+});
+
 const singleSelectQuestion = {
   id: "runtime",
   header: "Runtime",
@@ -791,10 +994,10 @@ describe("pending user input answers", () => {
     expect(
       togglePendingUserInputOptionSelection(
         singleSelectQuestion,
-        { selectedOptionLabels: ["Go"] },
+        { selectedOptionValues: ["Go"] },
         "Node.js",
       ),
-    ).toEqual({ customAnswer: "", selectedOptionLabels: ["Node.js"] });
+    ).toEqual({ customAnswer: "", selectedOptionValues: ["Node.js"] });
 
     const orders = togglePendingUserInputOptionSelection(multiSelectQuestion, undefined, "Orders");
     const ordersAndListings = togglePendingUserInputOptionSelection(
@@ -804,18 +1007,18 @@ describe("pending user input answers", () => {
     );
     expect(ordersAndListings).toEqual({
       customAnswer: "",
-      selectedOptionLabels: ["Orders", "Listings"],
+      selectedOptionValues: ["Orders", "Listings"],
     });
     expect(
       togglePendingUserInputOptionSelection(multiSelectQuestion, ordersAndListings, "Orders"),
-    ).toEqual({ customAnswer: "", selectedOptionLabels: ["Listings"] });
+    ).toEqual({ customAnswer: "", selectedOptionValues: ["Listings"] });
 
     const paddedOrders = togglePendingUserInputOptionSelection(
       multiSelectQuestion,
       undefined,
       "  Orders  ",
     );
-    expect(paddedOrders).toEqual({ customAnswer: "", selectedOptionLabels: ["Orders"] });
+    expect(paddedOrders).toEqual({ customAnswer: "", selectedOptionValues: ["Orders"] });
     expect(
       togglePendingUserInputOptionSelection(multiSelectQuestion, paddedOrders, "  Orders  "),
     ).toEqual({ customAnswer: "" });
@@ -824,8 +1027,8 @@ describe("pending user input answers", () => {
   it("builds array answers for multi-select questions", () => {
     expect(
       buildPendingUserInputAnswers([singleSelectQuestion, multiSelectQuestion], {
-        runtime: { selectedOptionLabels: ["Go"] },
-        scope: { selectedOptionLabels: ["Orders", "Listings"] },
+        runtime: { selectedOptionValues: ["Go"] },
+        scope: { selectedOptionValues: ["Orders", "Listings"] },
       }),
     ).toEqual({
       runtime: "Go",
@@ -836,7 +1039,8 @@ describe("pending user input answers", () => {
   it("clears selected options while a custom answer is active", () => {
     expect(
       setPendingUserInputCustomAnswer(
-        { selectedOptionLabels: ["Orders", "Listings"] },
+        multiSelectQuestion,
+        { selectedOptionValues: ["Orders", "Listings"] },
         "Orders first",
       ),
     ).toEqual({ customAnswer: "Orders first" });
@@ -844,13 +1048,54 @@ describe("pending user input answers", () => {
 
   it("matches selected chips against normalized option labels", () => {
     expect(
-      isPendingUserInputOptionSelected({ selectedOptionLabels: ["Orders"] }, "  Orders  "),
+      isPendingUserInputOptionSelected(
+        multiSelectQuestion,
+        { selectedOptionValues: ["Orders"] },
+        "  Orders  ",
+      ),
     ).toBe(true);
     expect(
       isPendingUserInputOptionSelected(
-        { selectedOptionLabels: ["Orders"], customAnswer: "Orders first" },
+        multiSelectQuestion,
+        { selectedOptionValues: ["Orders"], customAnswer: "Orders first" },
         "  Orders  ",
       ),
     ).toBe(false);
+  });
+});
+
+describe("provider question values", () => {
+  const question = {
+    ...singleSelectQuestion,
+    allowCustomAnswer: false,
+    options: [
+      { label: "Same label", value: "  exact first  ", description: "First" },
+      { label: "Same label", value: "second", description: "Second" },
+    ],
+  } as const;
+
+  it("submits raw option values and distinguishes duplicate labels", () => {
+    const first = togglePendingUserInputOptionSelection(question, undefined, "  exact first  ");
+    expect(isPendingUserInputOptionSelected(question, first, "  exact first  ")).toBe(true);
+    expect(isPendingUserInputOptionSelected(question, first, "second")).toBe(false);
+    expect(buildPendingUserInputAnswers([question], { runtime: first })).toEqual({
+      runtime: "  exact first  ",
+    });
+    expect(togglePendingUserInputOptionSelection(question, first, "Same label")).toBe(first);
+  });
+
+  it("rejects arbitrary text when the provider only accepts offered options", () => {
+    expect(setPendingUserInputCustomAnswer(question, undefined, "Other")).toEqual({});
+    expect(
+      buildPendingUserInputAnswers([question], { runtime: { customAnswer: "Other" } }),
+    ).toBeNull();
+    expect(
+      buildPendingUserInputAnswers([question], { runtime: { selectedOptionValues: ["unknown"] } }),
+    ).toBeNull();
+    expect(
+      buildPendingUserInputAnswers([question], {
+        runtime: { selectedOptionValues: ["second"], customAnswer: "stale draft" },
+      }),
+    ).toEqual({ runtime: "second" });
   });
 });

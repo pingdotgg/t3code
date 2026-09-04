@@ -13,10 +13,12 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { LegacyV1ThreadImporter, LegacyV1ThreadImportError } from "./LegacyV1ThreadImporter.ts";
 import { OrchestratorProjectionError, OrchestratorV2 } from "./Orchestrator.ts";
 import {
   existingThreadIdsForCommand,
   layer,
+  layerWithLegacyImporter,
   ThreadManagementDurableRunProjectionError,
   ThreadManagementProjectThreadsListError,
   ThreadManagementProjectionLoadError,
@@ -316,5 +318,33 @@ it.effect("uses thread-not-found only after a projection loads outside the proje
     expect(error).toBeInstanceOf(ThreadManagementThreadNotFoundError);
     expect(error).toMatchObject({ projectId, threadId });
     expect("cause" in error).toBe(false);
+  }).pipe(Effect.provide(testLayer));
+});
+
+it.effect("preserves failed legacy materialization when reading checkpoint context", () => {
+  const threadId = ThreadId.make("thread:thread-management:checkpoint-import-failure");
+  const importError = new LegacyV1ThreadImportError({
+    threadId,
+    operation: "hydrate transcript for",
+    cause: new Error("checkpoint import failed"),
+  });
+  const testLayer = layerWithLegacyImporter.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(OrchestratorV2)({
+          getCheckpointContext: () =>
+            Effect.succeed({ runs: [], checkpointScopes: [], checkpoints: [] }),
+        }),
+        Layer.mock(LegacyV1ThreadImporter)({
+          ensureTranscript: () => Effect.fail(importError),
+        }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const service = yield* ThreadManagementService;
+    const error = yield* service.getCheckpointContext(threadId).pipe(Effect.flip);
+    expect(error).toBeInstanceOf(OrchestratorProjectionError);
+    expect(error).toMatchObject({ threadId, cause: importError });
   }).pipe(Effect.provide(testLayer));
 });

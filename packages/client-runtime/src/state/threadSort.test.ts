@@ -39,7 +39,7 @@ describe("resolveSettledThreadTimestamp", () => {
       resolveSettledThreadTimestamp({
         settledAt: "2026-03-09T10:00:00.000Z",
         latestUserMessageAt: "2026-03-09T11:00:00.000Z",
-        latestTurn: null,
+        latestRun: null,
         updatedAt: "2026-03-09T12:00:00.000Z",
       }),
     ).toBe("2026-03-09T10:00:00.000Z");
@@ -50,7 +50,7 @@ describe("resolveSettledThreadTimestamp", () => {
       resolveSettledThreadTimestamp({
         settledAt: "invalid",
         latestUserMessageAt: "2026-03-09T11:00:00.000Z",
-        latestTurn: null,
+        latestRun: null,
         updatedAt: "2026-03-09T12:00:00.000Z",
       }),
     ).toBe("2026-03-09T11:00:00.000Z");
@@ -58,7 +58,7 @@ describe("resolveSettledThreadTimestamp", () => {
       resolveSettledThreadTimestamp({
         settledAt: null,
         latestUserMessageAt: null,
-        latestTurn: null,
+        latestRun: null,
         updatedAt: "2026-03-09T12:00:00.000Z",
       }),
     ).toBe("2026-03-09T12:00:00.000Z");

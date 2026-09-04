@@ -1,6 +1,9 @@
 import { assert, it } from "@effect/vitest";
 import {
   EventId,
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -26,6 +29,7 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import {
   isTurnItemAtOrBeforeRun,
   ProjectionStoreV2,
+  ProjectionStoreThreadNotFoundError,
   layer as projectionStoreLayer,
 } from "./ProjectionStore.ts";
 import {
@@ -1300,6 +1304,142 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         1,
       );
     }),
+  );
+
+  it.effect(
+    "reads checkpoint context without decoding transcript or checkpoint file payloads",
+    () =>
+      Effect.gen(function* () {
+        const projectionStore = yield* ProjectionStoreV2;
+        const sql = yield* SqlClient.SqlClient;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:checkpoint-context");
+        const runId = RunId.make("run:checkpoint-context");
+        const nodeId = NodeId.make("node:checkpoint-context");
+        const scopeId = CheckpointScopeId.make("scope:checkpoint-context");
+        const checkpointId = CheckpointId.make("checkpoint:checkpoint-context");
+        const ref = CheckpointRef.make("refs/t3/checkpoint-context/1");
+        yield* projectionStore.apply({
+          id: EventId.make("event:checkpoint-context:thread"),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project:checkpoint-context"),
+            title: "Checkpoint context",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: "feature",
+            worktreePath: "/repo/worktree",
+            activeProviderThreadId: null,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make("event:checkpoint-context:run"),
+          type: "run.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: runId,
+            threadId,
+            ordinal: 1,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make("message:checkpoint-context"),
+            rootNodeId: nodeId,
+            activeAttemptId: null,
+            status: "completed",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            checkpointId,
+            contextHandoffId: null,
+          },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make("event:checkpoint-context:scope"),
+          type: "checkpoint-scope.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: scopeId,
+            threadId,
+            runId,
+            nodeId,
+            parentScopeId: null,
+            providerThreadId: null,
+            kind: "root_run",
+            ordinalWithinParent: 0,
+            advancesAppRunCount: true,
+            cwd: "/repo/worktree",
+            createdAt: now,
+          },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make("event:checkpoint-context:checkpoint"),
+          type: "checkpoint.captured",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: checkpointId,
+            threadId,
+            scopeId,
+            runId,
+            nodeId,
+            parentCheckpointId: null,
+            ordinalWithinScope: 1,
+            appRunOrdinal: 1,
+            ref,
+            status: "ready",
+            files: [],
+            capturedAt: now,
+          },
+        });
+        // Old transcript shapes must not make a metadata-only diff unreadable.
+        yield* sql`
+        INSERT INTO orchestration_v2_projection_turn_items (
+          turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+          parent_item_id, ordinal, type, status, updated_at, payload_json
+        ) VALUES (
+          'turn-item:checkpoint-context:obsolete', ${threadId}, ${runId}, ${nodeId}, NULL, NULL,
+          NULL, 1, 'assistant_message', 'completed', ${DateTime.formatIso(now)},
+          ${encodeUnknownJsonString({ obsolete: "transcript shape" })}
+        )
+      `;
+        assert.strictEqual(
+          (yield* Effect.exit(projectionStore.getThreadProjection(threadId)))._tag,
+          "Failure",
+        );
+        yield* sql`
+        UPDATE orchestration_v2_projection_checkpoints
+        SET payload_json = json_set(payload_json, '$.files', 'obsolete file summary')
+        WHERE checkpoint_id = ${checkpointId}
+      `;
+        assert.deepEqual(yield* projectionStore.getCheckpointContext(threadId), {
+          runs: [{ id: runId, ordinal: 1, status: "completed" }],
+          checkpointScopes: [{ id: scopeId, runId, kind: "root_run", cwd: "/repo/worktree" }],
+          checkpoints: [{ scopeId, runId, appRunOrdinal: 1, status: "ready", ref }],
+        });
+        const missing = yield* projectionStore
+          .getCheckpointContext(ThreadId.make("thread:checkpoint-context:missing"))
+          .pipe(Effect.flip);
+        assert.instanceOf(missing, ProjectionStoreThreadNotFoundError);
+      }),
   );
 
   it.effect("builds shell snapshots without decoding full turn item payloads", () =>

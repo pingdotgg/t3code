@@ -46,6 +46,12 @@ import {
 } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
+import {
+  TurnTokenUsage,
+  ToolActivitySurface,
+  ToolActivityIcon,
+  ToolActivitySource,
+} from "./providerRuntime.ts";
 
 export const OrchestrationV2Actor = Schema.Literals(["user", "agent", "system"]);
 export type OrchestrationV2Actor = typeof OrchestrationV2Actor.Type;
@@ -470,6 +476,7 @@ export const OrchestrationV2ExecutionNode = Schema.Struct({
     "system",
   ]),
   status: Schema.Literals([
+    "idle",
     "pending",
     "running",
     "waiting",
@@ -513,6 +520,7 @@ export const OrchestrationV2Subagent = Schema.Struct({
   completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
   status: Schema.Literals([
+    "idle",
     "pending",
     "running",
     "waiting",
@@ -667,6 +675,7 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   tokenUsage: Schema.optional(OrchestrationV2ProviderTurnTokenUsage),
+  turnTokenUsage: Schema.optional(TurnTokenUsage),
 });
 export type OrchestrationV2ProviderTurn = typeof OrchestrationV2ProviderTurn.Type;
 
@@ -682,10 +691,13 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
   status: Schema.Literals(["pending", "resolved", "expired", "cancelled"]),
   responseCapability: Schema.Union([
     Schema.Struct({ type: Schema.Literal("live"), providerSessionId: ProviderSessionId }),
+    Schema.Struct({ type: Schema.Literal("message") }),
     Schema.Struct({ type: Schema.Literal("not_resumable"), reason: Schema.String }),
   ]),
   createdAt: Schema.DateTimeUtc,
   resolvedAt: Schema.NullOr(Schema.DateTimeUtc),
+  decision: Schema.optional(ProviderApprovalDecision),
+  answers: Schema.optional(ProviderUserInputAnswers),
 });
 export type OrchestrationV2RuntimeRequest = typeof OrchestrationV2RuntimeRequest.Type;
 
@@ -726,9 +738,12 @@ export const OrchestrationV2UserInputQuestion = Schema.Struct({
     Schema.Struct({
       label: TrimmedNonEmptyString,
       description: TrimmedNonEmptyString,
+      value: Schema.optional(Schema.String),
     }),
   ),
   multiSelect: Schema.optional(Schema.Boolean),
+  allowCustomAnswer: Schema.optional(Schema.Boolean),
+  required: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2UserInputQuestion = typeof OrchestrationV2UserInputQuestion.Type;
 
@@ -801,6 +816,7 @@ export class OrchestrationV2CheckpointUnavailableError extends Schema.TaggedErro
 }
 
 export const OrchestrationV2TurnItemStatus = Schema.Literals([
+  "idle",
   "pending",
   "running",
   "waiting",
@@ -864,6 +880,9 @@ export type OrchestrationV2UserMessageInputIntent =
   typeof OrchestrationV2UserMessageInputIntent.Type;
 
 const OrchestrationV2TurnItemBaseFields = {
+  toolSurface: Schema.optional(ToolActivitySurface),
+  toolIcon: Schema.optional(ToolActivityIcon),
+  toolSource: Schema.optional(ToolActivitySource),
   id: TurnItemId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
@@ -910,6 +929,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     type: Schema.Literal("assistant_message"),
     messageId: MessageId,
     text: Schema.String,
+    attachments: Schema.optional(Schema.Array(ChatAttachment)),
     streaming: Schema.Boolean,
   }),
   Schema.Struct({
@@ -937,6 +957,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     type: Schema.Literal("user_input_request"),
     requestId: RuntimeRequestId,
     questions: Schema.Array(OrchestrationV2UserInputQuestion),
+    responseMode: Schema.optional(Schema.Literal("message")),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1588,6 +1609,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("assistant_message"),
     messageId: MessageId,
     text: Schema.String,
+    attachments: Schema.optional(Schema.Array(ChatAttachment)),
     streaming: Schema.Boolean,
   }),
   Schema.Struct({
@@ -1615,6 +1637,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("user_input_request"),
     requestId: RuntimeRequestId,
     questions: Schema.Array(OrchestrationV2UserInputQuestion),
+    responseMode: Schema.optional(Schema.Literal("message")),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -2022,6 +2045,7 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.settle"),
     commandId: CommandId,
     threadId: ThreadId,
+    settledAt: Schema.optional(Schema.DateTimeUtc),
   }),
   /**
    * Server-internal settlement (#8600): dispatched by the settlement sweep,
@@ -2034,6 +2058,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     snapshotAt: Schema.DateTimeUtc,
+    settledAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsettle"),

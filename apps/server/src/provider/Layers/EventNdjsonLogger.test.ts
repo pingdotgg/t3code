@@ -497,6 +497,51 @@ describe("EventNdjsonLogger", () => {
     }),
   );
 
+  it.effect("keeps OpenCode tool input, final output, and errors in native logs", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const threadId = ThreadId.make("thread-tool-lifecycle");
+
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
+        const native = store.logger("native");
+        const input = { command: "run-build" };
+        const states = [
+          { status: "pending", input },
+          { status: "completed", input, output: "Build complete", time: { start: 1, end: 2 } },
+          { status: "error", input, error: "Build failed", time: { start: 3, end: 4 } },
+          { status: "unknown", input },
+          null,
+        ];
+        const events = states.map((state) => ({
+          event: {
+            type: "message.part.updated",
+            payload: { properties: { part: { type: "tool", state } } },
+          },
+        }));
+        for (const event of events) {
+          yield* native.write(event, threadId);
+        }
+        yield* store.close();
+
+        const payloads = NodeFS.readFileSync(
+          ownedLogPath(basePath, "thread-tool-lifecycle"),
+          "utf8",
+        )
+          .trim()
+          .split("\n")
+          .map((line) => parseLogLine(line).payload);
+        assert.deepEqual(
+          payloads,
+          events.map((event) => encodeUnknownJson(event)),
+        );
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.effect("contains hostile event accessors inside guarded serialization", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
