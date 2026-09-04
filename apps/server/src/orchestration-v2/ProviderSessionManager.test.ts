@@ -886,6 +886,8 @@ it.effect("ProviderSessionManagerV2 revokes MCP credentials when release persist
       assert.equal(closeError._tag, "ProviderSessionCloseError");
       assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
       assert.isUndefined(yield* registry.resolve(token!));
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      assert.equal((yield* Ref.get(state)).openCount, 2);
     });
 
     yield* effect.pipe(
@@ -1190,6 +1192,8 @@ it.effect(
         ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
       >([]);
       const duringOpen = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+      const openEntered = yield* Deferred.make<void>();
+      const openGate = yield* Deferred.make<void>();
       const effect = Effect.gen(function* () {
         const eventSink = yield* EventSinkV2;
         const idAllocator = yield* IdAllocatorV2;
@@ -1220,8 +1224,21 @@ it.effect(
         // releases. Eager adapters (ACP, OpenCode) bake the credential into
         // the process during openSession, so the release must not revoke it;
         // rotating afterwards cannot repair those adapters.
-        yield* Ref.set(duringOpen, manager.close(s1).pipe(Effect.orDie));
-        yield* manager.open({ threadId, providerSessionId: s2, modelSelection, runtimePolicy });
+        yield* Ref.set(
+          duringOpen,
+          Deferred.succeed(openEntered, undefined).pipe(Effect.andThen(Deferred.await(openGate))),
+        );
+        const opening = yield* manager
+          .open({ threadId, providerSessionId: s2, modelSelection, runtimePolicy })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(openEntered);
+        const closing = yield* manager.close(s1).pipe(Effect.result, Effect.forkChild);
+        yield* TestClock.adjust("30 seconds");
+        assert.equal((yield* Fiber.join(closing))._tag, "Failure");
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        yield* Deferred.succeed(openGate, undefined);
+        yield* Fiber.join(opening);
+        yield* manager.close(s1);
 
         const slot = McpProviderSession.readMcpProviderSession(threadId);
         assert.equal(
@@ -1238,6 +1255,7 @@ it.effect(
       });
 
       yield* effect.pipe(
+        Effect.ensuring(Deferred.succeed(openGate, undefined)),
         Effect.provide(
           makeTestLayer({
             state,
@@ -1402,11 +1420,15 @@ for (const operation of ["close", "detach"] as const) {
         const state = yield* Ref.make(emptyState);
         const closeEntered = yield* Deferred.make<void>();
         const closeGate = yield* Deferred.make<void>();
+        const mcpConfigs = yield* Ref.make<
+          ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+        >([]);
         yield* Effect.gen(function* () {
           const eventSink = yield* EventSinkV2;
           const idAllocator = yield* IdAllocatorV2;
           const manager = yield* ProviderSessionManagerV2;
           const projectionStore = yield* ProjectionStoreV2;
+          const registry = yield* McpSessionRegistry.McpSessionRegistry;
           const threadId = ThreadId.make(`thread-release-timeout-${operation}`);
           const providerSessionId = yield* idAllocator.allocate.providerSession({
             providerInstanceId: modelSelection.instanceId,
@@ -1455,13 +1477,21 @@ for (const operation of ["close", "detach"] as const) {
           );
           assert.equal((yield* Ref.get(state)).openCount, 1);
           assert.equal((yield* Ref.get(state)).closeCount, 0);
+          const token = (yield* Ref.get(mcpConfigs))[0]?.authorizationHeader.replace(
+            /^Bearer\s+/,
+            "",
+          );
+          assert.isDefined(yield* registry.resolve(token!));
 
           // Retrying must wait for the original cleanup, not treat the removed entry as stopped.
           const cancelledWaiter = yield* release.pipe(Effect.forkChild);
           yield* Fiber.interrupt(cancelledWaiter);
-          const retry = yield* release.pipe(Effect.result, Effect.forkChild);
+          const retry = yield* manager
+            .detach({ providerSessionId, threadId, revokeMcpCredential: true })
+            .pipe(Effect.result, Effect.forkChild);
           yield* TestClock.adjust("30 seconds");
           assert.equal((yield* Fiber.join(retry))._tag, "Failure");
+          assert.isUndefined(yield* registry.resolve(token!));
           yield* Deferred.succeed(closeGate, undefined);
           yield* release;
           assert.equal((yield* Ref.get(state)).closeCount, 1);
@@ -1478,6 +1508,7 @@ for (const operation of ["close", "detach"] as const) {
               state,
               idleTimeoutMs: 3_600_000,
               capabilities: ExclusiveCapabilities,
+              mcpConfigs,
               beforeClose: Deferred.succeed(closeEntered, undefined).pipe(
                 Effect.andThen(Deferred.await(closeGate)),
               ),
