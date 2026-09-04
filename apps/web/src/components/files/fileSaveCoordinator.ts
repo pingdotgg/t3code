@@ -5,7 +5,8 @@ export interface FileSaveCoordinatorOptions<A, E> {
   readonly canPersist?: () => boolean;
   readonly persist: (contents: string) => Promise<AtomCommandResult<A, E>>;
   readonly onPendingChange: (pending: boolean) => void;
-  readonly onConfirmed: (contents: string) => void;
+  /** Return false when another editor has newer unsaved contents. */
+  readonly onConfirmed: (contents: string) => boolean | void;
 }
 
 export class FileSaveCoordinator<A = unknown, E = unknown> {
@@ -59,14 +60,15 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
     const revision = this.latestRevision;
     const result = await this.options.persist(contents);
     const succeeded = result._tag === "Success";
+    let confirmed = false;
     if (succeeded) {
       this.confirmedRevision = revision;
-      this.options.onConfirmed(contents);
+      confirmed = this.options.onConfirmed(contents) !== false;
     }
 
     this.saving = false;
     if (revision === this.latestRevision) {
-      if (succeeded) this.options.onPendingChange(false);
+      if (confirmed) this.options.onPendingChange(false);
       return;
     }
 
