@@ -5,6 +5,9 @@ environments. It reads the providers' local session history and shows API-equiva
 processed tokens, cache savings, provider shares, and model breakdowns. Subscription billing is
 separate from the raw token cost shown here.
 
+Press `Cmd+U` on macOS or `Ctrl+U` on Windows and Linux to open the page. The shortcut stays with
+the terminal while it has focus.
+
 Grok Build totals come from persisted session updates. Interactive turns that never wrote a
 completed-turn record will not appear.
 
