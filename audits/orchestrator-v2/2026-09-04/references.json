@@ -1,0 +1,11 @@
+{
+  "capturedAt": "2026-09-04T19:00:02.808291+00:00",
+  "branch": "t3code/codex-turn-mapping",
+  "head": "8af5734365f7c45bc08b57066dbae42f9f7d4235",
+  "main": "d7cf8aaa8d4fbcbdd523b4f4bc86fda5c47b4a70",
+  "mergeBase": "c8f77e0d441264efb0acfac312e852c81ae3da83",
+  "previousAuditHead": "d2f1f511f4cc833bc930d6c355cd0f9b61e835a0",
+  "previousAuditMain": "57a66608b918d673eeec7e6c94ea5906b756fcd0",
+  "dirtyFiles": 56,
+  "comparisonCounts": "8\t333"
+}
