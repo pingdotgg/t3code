@@ -6,8 +6,8 @@
 environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
 cost. These estimates are not your subscription bill.
 
-If you have configured multiple instances of a provider (for example separate Claude accounts
-with their own config directories), each instance's history is included.
+If you have configured multiple Claude Code or Codex instances with separate homes, each
+instance's history is included. Grok Build history is read from the server's single Grok home.
 
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
