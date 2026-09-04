@@ -38,6 +38,7 @@ import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFix
 import {
   archiveThread,
   createProject,
+  updateProject,
   interruptThreadTurn,
   forkThreadFromRun,
   mergeThreadBack,
@@ -154,6 +155,50 @@ describe("V2 environment commands", () => {
           title: "Project",
           workspaceRoot: "/workspace/project",
           createWorkspaceRootIfMissing: true,
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("persists and clears project presentation and environment settings", () =>
+    Effect.gen(function* () {
+      const projects: ProjectMutation[] = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects });
+      const projectId = ProjectId.make("project-1");
+      const projectIcon = { kind: "emoji", emoji: "🌲" } as const;
+      yield* updateProject({
+        projectId,
+        autoPull: true,
+        projectIcon,
+        faviconPath: "/workspace/project/icon.png",
+        defaultThreadEnvMode: "worktree",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      yield* updateProject({
+        projectId,
+        autoPull: false,
+        projectIcon: null,
+        faviconPath: null,
+        defaultThreadEnvMode: null,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(projects).toEqual([
+        {
+          type: "project.update",
+          commandId: "00000000-0000-4000-8000-000000000000",
+          projectId,
+          autoPull: true,
+          projectIcon,
+          faviconPath: "/workspace/project/icon.png",
+          defaultThreadEnvMode: "worktree",
+        },
+        {
+          type: "project.update",
+          commandId: "00000000-0000-4000-8000-000000000000",
+          projectId,
+          autoPull: false,
+          projectIcon: null,
+          faviconPath: null,
+          defaultThreadEnvMode: null,
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),

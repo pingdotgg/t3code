@@ -9,7 +9,7 @@ import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
-import * as NodeSqliteClient from "../NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { OrchestrationEventStore } from "../Services/OrchestrationEventStore.ts";
 import { OrchestrationEventStoreLive } from "./OrchestrationEventStore.ts";
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
@@ -213,7 +213,7 @@ it.effect("upgrades populated history to indexed high-water lookups without OR s
   Effect.gen(function* () {
     const store = yield* OrchestrationEventStore;
     const sql = yield* SqlClient.SqlClient;
-    yield* runMigrations({ toMigrationInclusive: 53 });
+    yield* runMigrations({ toMigrationInclusive: 56 });
     yield* sql`
       WITH RECURSIVE history(n) AS (
         SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 25000
@@ -228,7 +228,7 @@ it.effect("upgrades populated history to indexed high-water lookups without OR s
         CASE WHEN n % 3 = 0 THEN 1 ELSE 2 END
       FROM history
     `;
-    yield* runMigrations({ toMigrationInclusive: 54 });
+    yield* runMigrations({ toMigrationInclusive: 57 });
 
     const statements: Array<string> = [];
     const tracer = Tracer.make({

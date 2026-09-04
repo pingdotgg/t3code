@@ -200,6 +200,7 @@ const registerGrokAskUserQuestionExtensions = ({
 export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdapterV2Flavor {
   return {
     driver: GROK_PROVIDER,
+    runtimeHarness: "Grok",
     capabilities: GrokProviderCapabilitiesV2,
     // Idle settle over-settled preamble-before-tools turns and cancelled the
     // prompt while Grok continued, freezing T3 projection mid-turn.
@@ -222,6 +223,7 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
     // Grok ACP initialize reports promptCapabilities.image:false but the agent
     // still accepts image content blocks (verified with real screenshots).
     supportsImagePrompts: true,
+    supportsCompaction: true,
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
     makeRuntime:
       options.makeRuntime ??

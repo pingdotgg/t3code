@@ -69,6 +69,15 @@ export function isVideoAttachment(attachment: ChatFileAttachment): boolean {
   return videoMimeType(attachment) !== null;
 }
 
+export function isBrowserPreviewAttachment(attachment: ChatFileAttachment): boolean {
+  const mimeType = attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase();
+  return (
+    /\.(?:html?|pdf)$/i.test(attachment.name) ||
+    mimeType === "application/pdf" ||
+    mimeType === "text/html"
+  );
+}
+
 export interface ChatMessage {
   readonly id: MessageId;
   readonly role: "user" | "assistant" | "system";

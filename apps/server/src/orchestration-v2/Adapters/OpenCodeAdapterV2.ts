@@ -63,6 +63,7 @@ import {
 } from "../../provider/NativeProtocolLogging.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { t3OrchestrationSystemPrompt } from "../../provider/T3OrchestrationInstructions.ts";
+import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import {
   OpenCodeRuntime,
   OpenCodeRuntimeError,
@@ -255,8 +256,9 @@ interface ActiveOpenCodeTurn {
   readonly runAttemptId: OrchestrationV2ProviderTurn["runAttemptId"];
   readonly startedAt: DateTime.Utc;
   readonly itemOrdinals: Map<string, number>;
-  readonly parts: Map<string, OpenCodePart>;
+  readonly parts: Map<string, Exclude<OpenCodePart, ToolPart>>;
   readonly partIdsByMessage: Map<string, Set<string>>;
+  readonly toolNamesByCallId: Map<string, string>;
   readonly providerTurn: OrchestrationV2ProviderTurn;
   nextItemOrdinal: number;
   nativeUserMessageId: string | null;
@@ -641,6 +643,12 @@ export function openCodePermissionRules(
       pattern: "*",
       action: "allow" as const,
     })),
+  );
+
+  rules.push(
+    { permission: "read", pattern: "*.env", action: requiresApproval ? "ask" : "deny" },
+    { permission: "read", pattern: "*.env.*", action: requiresApproval ? "ask" : "deny" },
+    { permission: "read", pattern: "*.env.example", action: "allow" },
   );
 
   if (
@@ -1711,10 +1719,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           const turnItemId = idAllocator.derive.approvalTurnItem({ requestId });
           const permissionToolName =
             request.type === "permission" && request.value.tool !== undefined
-              ? Array.from(turn.parts.values()).find(
-                  (part): part is ToolPart =>
-                    part.type === "tool" && part.callID === request.value.tool?.callID,
-                )?.tool
+              ? turn.toolNamesByCallId.get(request.value.tool.callID)
               : undefined;
           const permissionRequestKind =
             request.type === "permission"
@@ -2133,6 +2138,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             itemOrdinals: new Map(),
             parts: new Map(),
             partIdsByMessage: new Map(),
+            toolNamesByCallId: new Map(),
             providerTurn,
             nextItemOrdinal: 1,
             nativeUserMessageId: message.id,
@@ -2239,6 +2245,40 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           });
         });
 
+        const emitCompactionItem = Effect.fn("OpenCodeAdapterV2.emitCompactionItem")(function* (
+          state: OpenCodeThreadState,
+          turn: ActiveOpenCodeTurn,
+        ) {
+          const nativeItemId = `${turn.providerTurnId}:compaction`;
+          if (turn.itemOrdinals.has(nativeItemId)) return;
+          const now = yield* DateTime.now;
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: OPENCODE_PROVIDER,
+            turnItem: {
+              id: idAllocator.derive.turnItemFromProviderItem({
+                driver: OPENCODE_PROVIDER,
+                nativeItemId,
+              }),
+              threadId: turn.threadId,
+              runId: turn.runId,
+              nodeId: turn.rootNodeId,
+              providerThreadId: state.providerThread.id,
+              providerTurnId: turn.providerTurnId,
+              nativeItemRef: providerRef(nativeItemId, "weak"),
+              parentItemId: null,
+              ordinal: itemOrdinal(turn, nativeItemId),
+              type: "compaction",
+              driver: OPENCODE_PROVIDER,
+              status: "completed",
+              title: "Context compacted",
+              startedAt: turn.startedAt,
+              completedAt: now,
+              updatedAt: now,
+            },
+          });
+        });
+
         const handleMessageUpdated = Effect.fnUntraced(function* (
           event: Extract<OpenCodeEvent, { type: "message.updated" }>,
         ) {
@@ -2278,10 +2318,15 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             if (!turn.isRoot) yield* projectChildUserPart(state, turn, part);
             return;
           }
-          turn.parts.set(part.id, part);
-          const ids = turn.partIdsByMessage.get(part.messageID) ?? new Set<string>();
-          ids.add(part.id);
-          turn.partIdsByMessage.set(part.messageID, ids);
+          if (part.type === "tool") {
+            // Approval routing needs the tool name, without retaining its input and output.
+            turn.toolNamesByCallId.set(part.callID, part.tool);
+          } else {
+            turn.parts.set(part.id, part);
+            const ids = turn.partIdsByMessage.get(part.messageID) ?? new Set<string>();
+            ids.add(part.id);
+            turn.partIdsByMessage.set(part.messageID, ids);
+          }
           switch (part.type) {
             case "text":
             case "reasoning":
@@ -2344,6 +2389,13 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               yield* handleMessageUpdated(event);
               yield* handleAssistantCompleted(event);
               return;
+            case "session.compacted": {
+              const state = threads.get(event.properties.sessionID);
+              if (state?.activeTurn !== undefined && state.activeTurn !== null) {
+                yield* emitCompactionItem(state, state.activeTurn);
+              }
+              return;
+            }
             case "message.part.updated":
               yield* handlePartUpdated(event);
               return;
@@ -2729,6 +2781,11 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                   }),
               ),
             ),
+          compactThread: (turnInput) =>
+            runtimeSession.startTurn({
+              ...turnInput,
+              message: { ...turnInput.message, text: "/compact" },
+            }),
           startTurn: (turnInput) =>
             Effect.gen(function* () {
               const sessionId = nativeThreadId(turnInput.providerThread);
@@ -2747,7 +2804,10 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                   `OpenCode model '${turnInput.modelSelection.model}' must use provider/model format`,
                 );
               }
-              const parts = resolvePromptParts(turnInput);
+              const isCompaction =
+                turnInput.message.text.trim() === "/compact" &&
+                turnInput.message.attachments.length === 0;
+              const parts = isCompaction ? [] : resolvePromptParts(turnInput);
               const startedAt = yield* DateTime.now;
               const syntheticNativeTurnId = `${sessionId}:attempt:${turnInput.attemptId}`;
               const providerTurnId = idAllocator.derive.providerTurn({
@@ -2781,6 +2841,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 itemOrdinals: new Map(),
                 parts: new Map(),
                 partIdsByMessage: new Map(),
+                toolNamesByCallId: new Map(),
                 providerTurn,
                 nextItemOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
                 nativeUserMessageId: null,
@@ -2790,8 +2851,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 planId: null,
                 admissionGeneration: state.nextAdmissionGeneration++,
                 admissionReconciliationGeneration: null,
-                admissionPending: true,
-                admissionAccepted: false,
+                admissionPending: !isCompaction,
+                admissionAccepted: isCompaction,
                 admissionMessageObserved: false,
                 idleDuringAdmission: false,
                 admissionSettled: Deferred.makeUnsafe<void>(),
@@ -2809,6 +2870,40 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 lastRunOrdinal: turnInput.runOrdinal,
               });
               yield* updateProviderSession("running", null);
+              if (isCompaction) {
+                yield* sdkCall(
+                  "session.summarize",
+                  { sessionID: sessionId, ...parsedModel, auto: false },
+                  (signal) =>
+                    client.session.summarize(
+                      { sessionID: sessionId, ...parsedModel, auto: false },
+                      { signal: AbortSignal.any([signal, admissionAbortController!.signal]) },
+                    ),
+                ).pipe(
+                  Effect.tap(() =>
+                    turn.interrupted ? Effect.void : emitCompactionItem(state, turn),
+                  ),
+                  Effect.tap(() =>
+                    finalizeTurn(state, turn, turn.interrupted ? "interrupted" : "completed"),
+                  ),
+                  Effect.tapError((cause) =>
+                    finalizeTurn(state, turn, turn.interrupted ? "interrupted" : "failed", {
+                      failure: makeProviderFailure({ cause, class: "provider_error" }),
+                    }),
+                  ),
+                  Effect.ensuring(Deferred.succeed(admissionSettled, undefined)),
+                );
+                return;
+              }
+              const systemPrompt = [
+                orchestrationSystemPrompt,
+                buildRuntimeInstructions({
+                  harness: "OpenCode",
+                  model: turnInput.modelSelection.model,
+                }),
+              ]
+                .filter(Boolean)
+                .join("\n\n");
               const agent =
                 getModelSelectionStringOptionValue(turnInput.modelSelection, "agent") ??
                 (turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : undefined);
@@ -2824,9 +2919,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                   model: parsedModel,
                   ...(agent === undefined ? {} : { agent }),
                   ...(variant === undefined ? {} : { variant }),
-                  ...(orchestrationSystemPrompt === undefined
-                    ? {}
-                    : { system: orchestrationSystemPrompt }),
+                  system: systemPrompt,
                   parts,
                 },
                 (signal) =>
@@ -2837,9 +2930,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                       model: parsedModel,
                       ...(agent === undefined ? {} : { agent }),
                       ...(variant === undefined ? {} : { variant }),
-                      ...(orchestrationSystemPrompt === undefined
-                        ? {}
-                        : { system: orchestrationSystemPrompt }),
+                      system: systemPrompt,
                       parts,
                     },
                     { signal: AbortSignal.any([signal, admissionAbortController!.signal]) },

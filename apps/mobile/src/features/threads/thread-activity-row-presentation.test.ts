@@ -28,6 +28,7 @@ describe("thread activity row presentation", () => {
   });
 
   it("maps lifecycle status to dot tone and an accessible label", () => {
+    expect(resolveThreadActivityStatus("idle")).toEqual({ label: "Idle", tone: "neutral" });
     expect(resolveThreadActivityStatus("running")).toEqual({ label: "Running", tone: "active" });
     expect(resolveThreadActivityStatus("completed")).toEqual({
       label: "Completed",

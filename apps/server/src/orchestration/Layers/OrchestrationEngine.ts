@@ -367,8 +367,6 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
   return {
     readEvents,
-    readThreadEvents,
-    getThreadReplayStats,
     dispatch,
     subscribeDomainEvents: PubSub.subscribe(eventPubSub).pipe(Effect.map(Stream.fromSubscription)),
     // Each access creates a fresh PubSub subscription so that multiple

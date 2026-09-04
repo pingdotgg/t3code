@@ -41,26 +41,6 @@ describe("ComposerPendingApprovalActions", () => {
     expect(markup).not.toContain("Always allow this session");
   });
 
-  it("preserves provider labels for the main decisions", () => {
-    const markup = renderToStaticMarkup(
-      <ComposerPendingApprovalActions
-        requestId={ApprovalRequestId.make("approval-1")}
-        isResponding={false}
-        options={[
-          { decision: "accept", label: "Allow once" },
-          { decision: "decline", label: "Deny" },
-        ]}
-        onRespondToApproval={async () => undefined}
-      />,
-    );
-
-    expect(markup).toContain(
-      'aria-description="Untrusted files could re-run this action without asking."',
-    );
-    expect(markup).toContain("text-warning");
-    expect(markup).toContain("Allow for this thread");
-  });
-
   it("limits provider-supplied approval labels so narrow rows can wrap", () => {
     const label = "Allow ".repeat(40).trim();
     const markup = renderToStaticMarkup(

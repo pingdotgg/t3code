@@ -18,7 +18,7 @@
  * metadata).
  */
 import * as DateTime from "effect/DateTime";
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import type { OrchestrationThreadActivity, OrchestrationV2Subagent } from "@t3tools/contracts";
 
 export type RuntimeSubagentStatus =
   | "pending"
@@ -735,14 +735,7 @@ export function projectedSubagentsToRuntime(
     readonly title: string | null;
     readonly prompt: string;
     readonly model: string | null;
-    readonly status:
-      | "pending"
-      | "running"
-      | "waiting"
-      | "completed"
-      | "failed"
-      | "cancelled"
-      | "interrupted";
+    readonly status: OrchestrationV2Subagent["status"];
     readonly progress?: string | undefined;
     readonly result: string | null;
     readonly startedAt: DateTime.Utc | null;
