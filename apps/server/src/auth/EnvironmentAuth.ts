@@ -750,10 +750,8 @@ export const make = Effect.gen(function* () {
                       ttl: Duration.hours(1),
                     }
                   : {}),
-                // The desktop bootstrap credential is intentionally reusable
-                // across renderer reloads and desktop restarts. Treat its
-                // access token as one rotating client session instead of
-                // accumulating a new authorized-client row on every exchange.
+                // Desktop restarts forget the previous bearer token. Replace
+                // its session, including stale entries left by older versions.
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
                 client: {
                   ...requestMetadata,

@@ -224,6 +224,37 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
     }).pipe(Effect.provide(makeSessionStoreLayer())),
   );
 
+  it.effect("keeps the previous desktop session valid when replacement fails", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const sql = yield* SqlClient.SqlClient;
+      const previous = yield* sessions.issue({
+        subject: "desktop-bootstrap",
+        method: "bearer-access-token",
+      });
+      yield* sql`
+        CREATE TRIGGER reject_auth_session_insert BEFORE INSERT ON auth_sessions
+        BEGIN
+          SELECT RAISE(ABORT, 'simulated insert failure');
+        END
+      `;
+
+      const error = yield* sessions
+        .issue({
+          subject: "desktop-bootstrap",
+          method: "bearer-access-token",
+          replaceActiveForSubjectAndMethod: true,
+        })
+        .pipe(Effect.flip);
+
+      expect(error._tag).toBe("SessionCredentialIssueError");
+      expect((yield* sessions.verify(previous.token)).sessionId).toBe(previous.sessionId);
+      expect((yield* sessions.listActive()).map((session) => session.sessionId)).toEqual([
+        previous.sessionId,
+      ]);
+    }).pipe(Effect.provide(Layer.mergeAll(makeSessionStoreLayer(), SqlitePersistenceMemory))),
+  );
+
   it.effect("rejects websocket tokens once the parent session has expired", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;

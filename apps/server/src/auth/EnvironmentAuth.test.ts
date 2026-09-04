@@ -182,6 +182,15 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       const browserSession = yield* serverAuth.authenticateHttpRequest(
         makeCookieRequest(sessions.cookieName, browser.sessionToken),
       );
+      const staleSessions = yield* Effect.forEach([1, 2, 3], () =>
+        sessions.issue({ subject: "desktop-bootstrap", method: "bearer-access-token" }),
+      );
+      const pairing = yield* serverAuth.issuePairingCredential();
+      const paired = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        pairing.credential,
+        undefined,
+        { ...requestMetadata, label: "T3 Code Desktop" },
+      );
       const first = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
         "desktop-bootstrap-token",
         undefined,
@@ -204,11 +213,20 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
         makeBearerRequest(second.access_token),
       );
 
-      expect(active).toHaveLength(2);
+      expect(active).toHaveLength(3);
       expect(active.map((entry) => entry.sessionId)).toContain(browserSession.sessionId);
       expect(active.map((entry) => entry.sessionId)).toContain(secondSession.sessionId);
       expect(active.map((entry) => entry.sessionId)).not.toContain(firstSession.sessionId);
       expect(firstError._tag).toBe("ServerAuthInvalidCredentialError");
+      for (const stale of staleSessions) {
+        const error = yield* sessions.verify(stale.token).pipe(Effect.flip);
+        expect(error._tag).toBe("SessionTokenRevokedError");
+      }
+      const pairedSession = yield* serverAuth.authenticateHttpRequest(
+        makeBearerRequest(paired.access_token),
+      );
+      expect(pairedSession.subject).toBe("one-time-token");
+      expect(active.map((entry) => entry.sessionId)).toContain(pairedSession.sessionId);
     }).pipe(
       Effect.provide(
         makeEnvironmentAuthLayer({
