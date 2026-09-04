@@ -6246,14 +6246,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         parseValidDate(value) ?? .distantPast
     }
 
-    /// Every publish re-maps every thread, and most timestamps are unchanged
-    /// between publishes, so parsed dates are memoized. ISO8601DateFormatter
-    /// costs microseconds per call, which adds up to milliseconds per publish
-    /// across hundreds of threads during streaming.
+    /// Reuse unchanged timestamps across snapshot mappings. Keep the cache bounded
+    /// even when a long session receives many different event times.
     private func parseValidDate(_ value: String) -> Date? {
         if let cached = parsedDates[value] { return cached }
-        guard let parsed = Self.fractionalDateFormatter.date(from: value)
-            ?? Self.dateFormatter.date(from: value) else { return nil }
+        guard let parsed = NativeTimestampParser.parse(value) else { return nil }
         if parsedDates.count >= 4096 { parsedDates.removeAll(keepingCapacity: true) }
         parsedDates[value] = parsed
         return parsed
@@ -6267,7 +6264,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
-    private static let dateFormatter = ISO8601DateFormatter()
 }
 
 extension FeatureDeviceSession {
