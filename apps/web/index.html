@@ -477,7 +477,11 @@
         cursor: pointer;
       }
     </style>
-    <title>T3 Code (Alpha)</title>
+    <title>T3 Code</title>
+    <script>
+      // Desktop preload injects branding before page scripts run: correct label from first paint.
+      document.title = window.desktopBridge?.getAppBranding?.()?.displayName ?? document.title;
+    </script>
   </head>
   <body>
     <div id="root">

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  resolveHostedAppChannelLabel,
   resolveServerBackedAppDisplayName,
   resolveServerBackedAppStageLabel,
+  resolveWindowTitle,
 } from "./branding.logic";
 
 const originalWindow = globalThis.window;
@@ -103,6 +105,14 @@ describe("branding logic", () => {
     ).toBe("T3 Code (Alpha)");
   });
 
+  it("labels hosted channels and rejects everything else", () => {
+    expect(resolveHostedAppChannelLabel("nightly")).toBe("Nightly");
+    expect(resolveHostedAppChannelLabel("Latest ")).toBe("Latest");
+    expect(resolveHostedAppChannelLabel("preview")).toBeNull();
+    expect(resolveHostedAppChannelLabel("")).toBeNull();
+    expect(resolveHostedAppChannelLabel(undefined)).toBeNull();
+  });
+
   it("keeps the fallback display name for malformed nightly primary server versions", () => {
     expect(
       resolveServerBackedAppDisplayName({
@@ -112,5 +122,62 @@ describe("branding logic", () => {
         primaryServerVersion: "0.0.28-nightly.20260616",
       }),
     ).toBe("T3 Code (Alpha)");
+  });
+});
+
+describe("resolveWindowTitle", () => {
+  it("falls back to the app display name without an active thread", () => {
+    expect(
+      resolveWindowTitle({
+        appDisplayName: "T3 Code (Nightly)",
+        projectTitle: null,
+        threadTitle: null,
+        desktop: true,
+      }),
+    ).toBe("T3 Code (Nightly)");
+  });
+
+  it("joins project and thread titles on desktop without the app name", () => {
+    expect(
+      resolveWindowTitle({
+        appDisplayName: "T3 Code (Nightly)",
+        projectTitle: "acme-web",
+        threadTitle: "New thread",
+        desktop: true,
+      }),
+    ).toBe("acme-web / New thread");
+  });
+
+  it("keeps the app display name as a suffix on the web", () => {
+    expect(
+      resolveWindowTitle({
+        appDisplayName: "T3 Code (Alpha)",
+        projectTitle: "acme-web",
+        threadTitle: "New thread",
+        desktop: false,
+      }),
+    ).toBe("acme-web / New thread — T3 Code (Alpha)");
+  });
+
+  it("omits the separator without a project title", () => {
+    expect(
+      resolveWindowTitle({
+        appDisplayName: "T3 Code (Nightly)",
+        projectTitle: "  ",
+        threadTitle: "Fix login bug",
+        desktop: true,
+      }),
+    ).toBe("Fix login bug");
+  });
+
+  it("ignores whitespace-only thread titles", () => {
+    expect(
+      resolveWindowTitle({
+        appDisplayName: "T3 Code (Nightly)",
+        projectTitle: "acme-web",
+        threadTitle: "  ",
+        desktop: true,
+      }),
+    ).toBe("T3 Code (Nightly)");
   });
 });

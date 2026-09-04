@@ -601,9 +601,10 @@ export const make = Effect.gen(function* () {
       }
     });
 
-    window.on("page-title-updated", (event) => {
+    window.on("page-title-updated", (event, title) => {
       event.preventDefault();
-      window.setTitle(environment.displayName);
+      const trimmed = title.trim();
+      window.setTitle(trimmed === "" ? environment.displayName : trimmed);
     });
     window.on("resize", scheduleBoundsPersist);
     window.on("move", scheduleBoundsPersist);
@@ -677,7 +678,6 @@ export const make = Effect.gen(function* () {
       }
       clearDevelopmentLoadRetry();
       developmentLoadRetryIndex = 0;
-      window.setTitle(environment.displayName);
     });
     window.webContents.on(
       "did-fail-load",

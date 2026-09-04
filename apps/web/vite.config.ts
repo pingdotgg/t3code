@@ -13,6 +13,7 @@ import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { tailwindPlugins } from "./vite/tailwind";
+import { formatAppDisplayName, resolveHostedAppChannelLabel } from "./src/branding.logic";
 
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
@@ -39,6 +40,18 @@ const configuredRelayTracingUrl = repoEnv.VITE_RELAY_OTLP_TRACES_URL?.trim() || 
 const configuredRelayTracingDataset = repoEnv.VITE_RELAY_OTLP_TRACES_DATASET?.trim() || "";
 const configuredRelayTracingToken = repoEnv.VITE_RELAY_OTLP_TRACES_TOKEN?.trim() || "";
 const configuredHostedAppChannel = process.env.VITE_HOSTED_APP_CHANNEL?.trim() || "";
+const hostedChannelLabel = resolveHostedAppChannelLabel(configuredHostedAppChannel);
+// The bootstrap <title> must match what branding.ts resolves once modules
+// load, or web tabs flash the wrong name until then; desktop replaces it
+// with the injected branding before first paint either way.
+const bootstrapTitlePlugin = (): Plugin => ({
+  name: "t3code-bootstrap-title",
+  transformIndexHtml(html, ctx) {
+    const stageLabel = hostedChannelLabel ?? (ctx.server ? "Dev" : "Alpha");
+    const title = formatAppDisplayName({ baseName: "T3 Code", stageLabel });
+    return html.replace("<title>T3 Code</title>", `<title>${title}</title>`);
+  },
+});
 const configuredAppVersion = process.env.APP_VERSION?.trim() || pkg.version;
 const configuredHostedAppUrl = (() => {
   const explicitHostedAppUrl = process.env.VITE_HOSTED_APP_URL?.trim();
@@ -155,6 +168,7 @@ export default defineConfig(() => {
   return {
     assetsInclude: ["**/*.wasm"],
     plugins: [
+      bootstrapTitlePlugin(),
       devCompressionPlugin(),
       // Route components load as split chunks so settings, pull-request, and
       // usage code stay out of the cold-start payload; the router prefetches

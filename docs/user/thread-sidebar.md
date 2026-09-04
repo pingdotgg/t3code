@@ -86,3 +86,9 @@ pill** fallback because their colors are not controlled by T3 Code.
 To generate a fresh title from the conversation, open a thread's context menu and choose
 **Regenerate title**. While T3 Code is generating it, the action reads **Regenerating…** and cannot
 be selected again. The option is hidden when the connected environment needs a server update.
+
+## Window title
+
+The window title follows the thread you have open: desktop shows the project and thread, like
+`my-project / Fix login bug`, and browser tabs add the app name as a suffix. Titles update when a
+thread is renamed or a generated title arrives, and return to the app name with no thread open.
