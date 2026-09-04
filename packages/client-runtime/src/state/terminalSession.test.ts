@@ -361,6 +361,40 @@ describe("terminal session reducers", () => {
     }
   });
 
+  it.each([0, -1])("discards output without encoding when the byte budget is %s", (maxBytes) => {
+    const initial = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
+      type: "snapshot",
+      snapshot: BASE_SNAPSHOT,
+    });
+    const cursor = readTerminalOutputUpdate(initial.output, INITIAL_TERMINAL_OUTPUT_CURSOR).cursor;
+    const data = "x".repeat(65_536);
+    const encode = vi.spyOn(TextEncoder.prototype, "encode");
+    try {
+      const discarded = applyTerminalAttachStreamEvent(
+        initial,
+        { type: "output", threadId: TARGET.threadId, terminalId: TARGET.terminalId, data },
+        maxBytes,
+      );
+      expect(encode).not.toHaveBeenCalled();
+      expect(discarded.output.nextOffset).toBe(initial.output.nextOffset + data.length);
+      expect(discarded.output.retainedBytes).toBe(0);
+      expect(readTerminalOutputUpdate(discarded.output, cursor)).toMatchObject({
+        type: "reset",
+        data: "",
+      });
+
+      const empty = applyTerminalAttachStreamEvent(
+        initial,
+        { type: "output", threadId: TARGET.threadId, terminalId: TARGET.terminalId, data: "" },
+        maxBytes,
+      );
+      expect(empty.output).toBe(initial.output);
+      expect(encode).not.toHaveBeenCalled();
+    } finally {
+      encode.mockRestore();
+    }
+  });
+
   it("resets for repeated snapshots, clear, and restart even when output text repeats", () => {
     let state = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
       type: "snapshot",
@@ -404,7 +438,7 @@ describe("terminal session reducers", () => {
       snapshot: { ...BASE_SNAPSHOT, history: "other" },
     });
     expect(next.output.resetVersion).toBe(first.output.resetVersion);
-    expect(next.output.latestChunkId).toBe(first.output.latestChunkId);
+    expect(next.output.nextOffset).toBe(first.output.nextOffset);
     expect(readTerminalOutputUpdate(next.output, cursor)).toMatchObject({
       type: "reset",
       data: "other",
@@ -436,24 +470,25 @@ describe("terminal session reducers", () => {
     expect(terminalOutputText(state.output)).toBe(received);
   });
 
-  it("recovers from a compaction boundary with the retained snapshot", () => {
+  it("appends every unread character across a compaction boundary", () => {
     let state = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
       type: "snapshot",
       snapshot: { ...BASE_SNAPSHOT, history: "" },
     });
     let cursor = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR).cursor;
-    for (let index = 0; index < 1200; index += 1) {
+    const writes = Array.from({ length: 1200 }, (_, index) => ["x", "é", "界", "🙂"][index % 4]!);
+    for (const [index, data] of writes.entries()) {
       state = applyTerminalAttachStreamEvent(state, {
         type: "output",
         threadId: TARGET.threadId,
         terminalId: TARGET.terminalId,
-        data: "x",
+        data,
       });
       if (index === 99) cursor = readTerminalOutputUpdate(state.output, cursor).cursor;
     }
     expect(readTerminalOutputUpdate(state.output, cursor)).toMatchObject({
-      type: "reset",
-      data: "x".repeat(1200),
+      type: "append",
+      data: writes.slice(100).join(""),
     });
   });
 });

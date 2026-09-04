@@ -1,5 +1,6 @@
 export interface TerminalOutputChunk {
-  readonly id: number;
+  /** UTF-16 string offset within this generation and reset. */
+  readonly startOffset: number;
   readonly data: string;
   readonly byteLength: number;
 }
@@ -9,24 +10,20 @@ export interface TerminalOutputState {
   readonly chunks: ReadonlyArray<TerminalOutputChunk>;
   readonly retainedBytes: number;
   readonly resetVersion: number;
-  readonly latestChunkId: number;
-  /**
-   * A cursor below this id cannot safely append after chunks are merged or trimmed.
-   */
-  readonly compactedThroughId: number;
+  readonly nextOffset: number;
 }
 
 export interface TerminalOutputCursor {
   readonly generation: number;
   readonly resetVersion: number;
-  readonly lastChunkId: number;
+  readonly offset: number;
 }
 
 /** Forces the first `readTerminalOutputUpdate` to resynchronize from a reset. */
 export const INITIAL_TERMINAL_OUTPUT_CURSOR = Object.freeze<TerminalOutputCursor>({
   generation: -1,
   resetVersion: -1,
-  lastChunkId: 0,
+  offset: 0,
 });
 
 export type TerminalOutputUpdate =
@@ -57,8 +54,7 @@ export const EMPTY_TERMINAL_OUTPUT_STATE = Object.freeze<TerminalOutputState>({
   chunks: Object.freeze([]),
   retainedBytes: 0,
   resetVersion: 0,
-  latestChunkId: 0,
-  compactedThroughId: 0,
+  nextOffset: 0,
 });
 
 interface Utf8Chunk {
@@ -129,19 +125,22 @@ function trimBufferToBytes(buffer: string, maxBufferBytes: number): string {
 
 function splitOutputChunks(
   data: string,
-  firstChunkId: number,
+  firstOffset: number,
   maxChunkBytes = DEFAULT_TERMINAL_CHUNK_BYTES,
 ): {
   readonly chunks: ReadonlyArray<TerminalOutputChunk>;
-  readonly latestChunkId: number;
+  readonly nextOffset: number;
   readonly byteLength: number;
 } {
   const split = splitStringByUtf8Bytes(data, maxChunkBytes);
   let byteLength = 0;
-  const chunks = split.map((chunk, index) => {
+  let nextOffset = firstOffset;
+  const chunks = split.map((chunk) => {
     byteLength += chunk.byteLength;
+    const startOffset = nextOffset;
+    nextOffset += chunk.data.length;
     return {
-      id: firstChunkId + index,
+      startOffset,
       data: chunk.data,
       byteLength: chunk.byteLength,
     };
@@ -149,39 +148,34 @@ function splitOutputChunks(
 
   return {
     chunks,
-    latestChunkId: firstChunkId + chunks.length - 1,
+    nextOffset,
     byteLength,
   };
 }
 
 /**
- * Merge adjacent chunks up to the standard chunk size so a long
- * run of tiny interactive writes cannot exhaust the chunk budget and force a
- * full renderer reset. Merged chunks take the id of their last constituent.
+ * Merge adjacent chunks without changing their string positions. A reader can
+ * still append the unread suffix when its cursor falls inside a merged chunk.
  */
-function compactRetainedChunks(chunks: ReadonlyArray<TerminalOutputChunk>): {
-  readonly chunks: ReadonlyArray<TerminalOutputChunk>;
-  readonly compactedThroughId: number | null;
-} {
+function compactRetainedChunks(chunks: ReadonlyArray<TerminalOutputChunk>) {
   const compacted: TerminalOutputChunk[] = [];
-  let compactedThroughId: number | null = null;
   for (const chunk of chunks) {
     const previous = compacted.at(-1);
     if (
       previous !== undefined &&
+      previous.startOffset + previous.data.length === chunk.startOffset &&
       previous.byteLength + chunk.byteLength <= DEFAULT_TERMINAL_CHUNK_BYTES
     ) {
       compacted[compacted.length - 1] = {
-        id: chunk.id,
+        startOffset: previous.startOffset,
         data: `${previous.data}${chunk.data}`,
         byteLength: previous.byteLength + chunk.byteLength,
       };
-      compactedThroughId = chunk.id;
     } else {
       compacted.push(chunk);
     }
   }
-  return { chunks: compacted, compactedThroughId };
+  return compacted;
 }
 
 // Scan only the removed prefix instead of encoding retained output again.
@@ -198,6 +192,7 @@ function trimOutputChunkStart(
   }
   return {
     ...chunk,
+    startOffset: chunk.startOffset + offset,
     data: chunk.data.slice(offset),
     byteLength: chunk.byteLength - droppedBytes,
   };
@@ -208,34 +203,31 @@ function appendOutput(
   data: string,
   maxBufferBytes: number,
 ): TerminalOutputState {
-  const appended = splitOutputChunks(
-    data,
-    current.latestChunkId + 1,
-    Math.min(DEFAULT_TERMINAL_CHUNK_BYTES, Math.max(1, maxBufferBytes)),
-  );
-  if (appended.chunks.length === 0) return current;
+  if (data.length === 0) return current;
   if (maxBufferBytes <= 0) {
     return {
       generation: current.generation,
       chunks: [],
       retainedBytes: 0,
       resetVersion: current.resetVersion + 1,
-      latestChunkId: appended.latestChunkId,
-      compactedThroughId: appended.latestChunkId,
+      nextOffset: current.nextOffset + data.length,
     };
   }
+  const appended = splitOutputChunks(
+    data,
+    current.nextOffset,
+    Math.min(DEFAULT_TERMINAL_CHUNK_BYTES, Math.max(1, maxBufferBytes)),
+  );
 
   const chunks = [...current.chunks, ...appended.chunks];
   let retainedBytes = current.retainedBytes + appended.byteLength;
   let firstRetainedIndex = 0;
-  let compactedThroughId = current.compactedThroughId;
   while (retainedBytes > maxBufferBytes && firstRetainedIndex < chunks.length) {
     const first = chunks[firstRetainedIndex]!;
     const bytesToDrop = retainedBytes - maxBufferBytes;
     if (bytesToDrop < first.byteLength) {
       const trimmed = trimOutputChunkStart(first, bytesToDrop);
       retainedBytes -= first.byteLength - trimmed.byteLength;
-      compactedThroughId = Math.max(compactedThroughId, first.id);
       if (trimmed.byteLength > 0) {
         chunks[firstRetainedIndex] = trimmed;
       } else {
@@ -248,36 +240,14 @@ function appendOutput(
   }
 
   let retainedChunks = firstRetainedIndex === 0 ? chunks : chunks.slice(firstRetainedIndex);
-  if (retainedChunks.length === 0) {
-    return {
-      generation: current.generation,
-      chunks: [],
-      retainedBytes: 0,
-      resetVersion: current.resetVersion + 1,
-      latestChunkId: appended.latestChunkId,
-      compactedThroughId: appended.latestChunkId,
-    };
-  }
   if (retainedChunks.length > MAX_TERMINAL_OUTPUT_CHUNKS) {
-    // Compact only chunks that predate this append: an up-to-date cursor sits
-    // on the previous latest chunk id, and merged spans keep the id of their
-    // last constituent, so that boundary survives compaction.
-    const retainedOldCount = Math.max(0, retainedChunks.length - appended.chunks.length);
-    const compacted = compactRetainedChunks(retainedChunks.slice(0, retainedOldCount));
-    const compactedChunks = [...compacted.chunks, ...retainedChunks.slice(retainedOldCount)];
-    if (compactedChunks.length > MAX_TERMINAL_OUTPUT_CHUNKS) {
-      return resetOutput(
-        {
-          ...current,
-          latestChunkId: appended.latestChunkId,
-        },
-        retainedChunks.map((chunk) => chunk.data).join(""),
-        maxBufferBytes,
-      );
-    }
-    retainedChunks = compactedChunks;
-    if (compacted.compactedThroughId !== null) {
-      compactedThroughId = Math.max(compactedThroughId, compacted.compactedThroughId);
+    retainedChunks = compactRetainedChunks(retainedChunks);
+    const excessChunks = retainedChunks.length - MAX_TERMINAL_OUTPUT_CHUNKS;
+    if (excessChunks > 0) {
+      for (const chunk of retainedChunks.slice(0, excessChunks)) {
+        retainedBytes -= chunk.byteLength;
+      }
+      retainedChunks = retainedChunks.slice(excessChunks);
     }
   }
 
@@ -286,8 +256,7 @@ function appendOutput(
     chunks: retainedChunks,
     retainedBytes,
     resetVersion: current.resetVersion,
-    latestChunkId: appended.latestChunkId,
-    compactedThroughId,
+    nextOffset: appended.nextOffset,
   };
 }
 
@@ -299,7 +268,7 @@ function resetOutput(
   const retained = trimBufferToBytes(data, maxBufferBytes);
   const reset = splitOutputChunks(
     retained,
-    current.latestChunkId + 1,
+    0,
     Math.min(DEFAULT_TERMINAL_CHUNK_BYTES, Math.max(1, maxBufferBytes)),
   );
   return {
@@ -307,8 +276,7 @@ function resetOutput(
     chunks: reset.chunks,
     retainedBytes: reset.byteLength,
     resetVersion: current.resetVersion + 1,
-    latestChunkId: reset.latestChunkId,
-    compactedThroughId: current.latestChunkId,
+    nextOffset: reset.nextOffset,
   };
 }
 
@@ -323,26 +291,28 @@ export function readTerminalOutputUpdate(
   const nextCursor = {
     generation: output.generation,
     resetVersion: output.resetVersion,
-    lastChunkId: output.latestChunkId,
+    offset: output.nextOffset,
   };
   const firstChunk = output.chunks[0];
   if (
     cursor.generation !== output.generation ||
     cursor.resetVersion !== output.resetVersion ||
-    // The cursor may precede a trimmed chunk or sit inside merged data.
-    cursor.lastChunkId < output.compactedThroughId ||
-    (firstChunk !== undefined && firstChunk.id > cursor.lastChunkId + 1)
+    cursor.offset < (firstChunk?.startOffset ?? output.nextOffset)
   ) {
     return { type: "reset", data: terminalOutputText(output), cursor: nextCursor };
   }
 
-  const appended = output.chunks.filter((chunk) => chunk.id > cursor.lastChunkId);
+  const appended = output.chunks.filter(
+    (chunk) => chunk.startOffset + chunk.data.length > cursor.offset,
+  );
   if (appended.length === 0) {
     return { type: "none", cursor: nextCursor };
   }
   return {
     type: "append",
-    data: appended.map((chunk) => chunk.data).join(""),
+    data: appended
+      .map((chunk) => chunk.data.slice(Math.max(0, cursor.offset - chunk.startOffset)))
+      .join(""),
     cursor: nextCursor,
   };
 }

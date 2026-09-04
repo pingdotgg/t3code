@@ -60,7 +60,7 @@ describe("ghosttyCellText", () => {
 describe("GhosttyTerminalCore snapshots", () => {
   const cores = new Set<GhosttyTerminalCore>();
 
-  async function createCore() {
+  async function createCore(onData: (data: string) => void = () => {}) {
     const core = await GhosttyTerminalCore.create(
       12,
       3,
@@ -71,7 +71,7 @@ describe("GhosttyTerminalCore snapshots", () => {
         background: { r: 0, g: 0, b: 0 },
         cursor: { r: 255, g: 255, b: 255 },
       },
-      () => {},
+      onData,
     );
     cores.add(core);
     return core;
@@ -258,6 +258,31 @@ describe("GhosttyTerminalCore snapshots", () => {
     expect(received).toBe(inputs.join(""));
     expect(reset).not.toHaveBeenCalled();
     expect(core.snapshot()).toEqual(reference.snapshot());
+  });
+
+  it("answers a live VT query when batched reads cross a chunk compaction", async () => {
+    const replies: string[] = [];
+    const core = await createCore((data) => replies.push(data));
+    core.write("\x1b[5n");
+    expect(replies).toEqual(["\x1b[0n"]);
+    replies.length = 0;
+
+    let state = createSession("");
+    const initial = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
+    writeTerminalOutputUpdate(core, initial);
+    let cursor = initial.cursor;
+    for (let index = 0; index < 1000; index += 1) {
+      state = append(state, "x");
+      const update = readTerminalOutputUpdate(state.output, cursor);
+      writeTerminalOutputUpdate(core, update);
+      cursor = update.cursor;
+    }
+    for (let index = 0; index < 24; index += 1) state = append(state, "x");
+    state = append(state, "\x1b[5n");
+    const update = readTerminalOutputUpdate(state.output, cursor);
+    writeTerminalOutputUpdate(core, update);
+
+    expect({ type: update.type, replies }).toEqual({ type: "append", replies: ["\x1b[0n"] });
   });
 
   it("recovers a lagging renderer once from bounded output and resumes appending", async () => {
