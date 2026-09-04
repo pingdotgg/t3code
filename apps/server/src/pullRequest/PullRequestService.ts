@@ -2126,23 +2126,34 @@ export const make = Effect.gen(function* () {
   // epoch strands every entry made under the old one — no enumerating a cache whose keys
   // (cursors, commits) nothing holds a list of. The counter is shared and monotonic so a
   // scope re-entering `refEpochs` after eviction can never mint a key an old entry still has.
+  // Detail and diff ride separate epochs: a poll only needs title/check freshness, so it
+  // strands the cheap detail hold while the mounted diff keeps its stale-while-revalidate
+  // path. Mutations and the manual refresh strand both.
   let epochCounter = 0;
   let listingsEpoch = 0;
   let turnRefreshEpoch = 0;
   const refEpochs = new Map<string, number>();
+  const diffEpochs = new Map<string, number>();
   const REF_EPOCH_CAPACITY = 2_048;
   const refScope = (ref: PullRequestRef) => `${ref.projectId} ${ref.repository} ${ref.number}`;
   const refEpoch = (ref: PullRequestRef) =>
     Math.max(turnRefreshEpoch, refEpochs.get(refScope(ref)) ?? 0);
+  const diffEpoch = (ref: PullRequestRef) =>
+    Math.max(turnRefreshEpoch, diffEpochs.get(refScope(ref)) ?? 0);
   const refCacheKey = (ref: PullRequestRef) =>
     JSON.stringify([refEpoch(ref), ref.projectId, ref.repository, ref.number]);
-  const bumpRefEpoch = (ref: PullRequestRef) => {
+  const bumpMapEpoch = (epochs: Map<string, number>, ref: PullRequestRef) => {
     const scope = refScope(ref);
-    if (!refEpochs.has(scope) && refEpochs.size >= REF_EPOCH_CAPACITY) {
-      const oldest = refEpochs.keys().next().value;
-      if (oldest !== undefined) refEpochs.delete(oldest);
+    if (!epochs.has(scope) && epochs.size >= REF_EPOCH_CAPACITY) {
+      const oldest = epochs.keys().next().value;
+      if (oldest !== undefined) epochs.delete(oldest);
     }
-    refEpochs.set(scope, ++epochCounter);
+    epochs.set(scope, ++epochCounter);
+  };
+  const bumpDetailEpoch = (ref: PullRequestRef) => bumpMapEpoch(refEpochs, ref);
+  const bumpRefEpoch = (ref: PullRequestRef) => {
+    bumpMapEpoch(refEpochs, ref);
+    bumpMapEpoch(diffEpochs, ref);
   };
 
   /** The positional filter slot of a cache key, back as the record `listUncached` takes. */
@@ -2354,7 +2365,7 @@ export const make = Effect.gen(function* () {
   );
   const diff: PullRequestService["Service"]["diff"] = (input) => {
     const key = JSON.stringify([
-      refEpoch(input),
+      diffEpoch(input),
       input.projectId,
       input.repository,
       input.number,
@@ -2396,7 +2407,9 @@ export const make = Effect.gen(function* () {
   const invalidate: PullRequestService["Service"]["invalidate"] = (input) => {
     const reference = input.reference;
     if (reference !== undefined) {
-      return Effect.sync(() => bumpRefEpoch(reference));
+      return Effect.sync(() =>
+        input.scope === "detail" ? bumpDetailEpoch(reference) : bumpRefEpoch(reference),
+      );
     }
     return Effect.sync(() => {
       listingsEpoch = ++epochCounter;

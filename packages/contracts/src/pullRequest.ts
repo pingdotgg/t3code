@@ -685,9 +685,12 @@ export type PullRequestListStatsResult = typeof PullRequestListStatsResult.Type;
  * forgets that one change request's detail and diff; without one it forgets the listings.
  * A separate request rather than a flag on the reads, so an explicit "refresh" one person
  * presses is the only thing that spends host requests — every ordinary read shares.
+ * The detail scope forgets only the detail (and its summary/activity siblings) while leaving
+ * the diff's stale-while-revalidate hold alone, for polls that only need title/check freshness.
  */
 export const PullRequestInvalidateInput = Schema.Struct({
   reference: Schema.optional(PullRequestRef),
+  scope: Schema.optional(Schema.Literals(["detail", "all"])),
 });
 export type PullRequestInvalidateInput = typeof PullRequestInvalidateInput.Type;
 

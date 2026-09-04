@@ -713,22 +713,30 @@ export function PullRequestDetailPanel({
       state: resolvedCoreDetail.state,
     });
   }, [onStateChange, resolvedCoreDetail]);
+  // The refreshes below go around the server's cache rather than through it. An ordinary
+  // read is answered from what the server already holds while it refreshes behind the answer,
+  // which is right for a reopen and wrong for a poll: the point of a poll is what that refresh
+  // brings back, and nothing pushes it to a panel already told the old answer, so a poll served
+  // from the hold shows the previous poll's data for good. The invalidation goes first so the
+  // re-reads miss that cache; if it fails, the reads still run and at worst answer from it.
+  // The poll strands only the detail hold while the button strands detail and diff alike.
+  const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
   // Core detail is cheap enough to re-read while this stays open. Activity is heavier, so the
   // revision effect above reads it only after this same pull request reports a change. Keyed by
   // the pull request rather than by the panel, because this one panel shows a different pull
-  // request every time it is opened.
-  useLiveRefresh(
-    () => {
-      detailQuery.refresh();
-      setRefreshToken((token) => token + 1);
-    },
-    { key: `pull-request:${reference.projectId}:${reference.repository}#${reference.number}` },
-  );
-  // The button, on the other hand, goes around the server's cache rather than through it: it is
-  // the answer for a reader who can see that what they are looking at is behind. The
-  // invalidation goes first so the re-reads miss that cache; if it fails, the reads still run
-  // and at worst answer from it.
-  const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
+  // request every time it is opened. The poll strands only the detail hold: title and check
+  // freshness need the detail re-read to miss it, while the mounted Code tab keeps its slices
+  // and its server stale-while-revalidate diff path instead of waiting on a full host fetch
+  // every interval and focus.
+  const refreshDetailFromHost = useCallback(async () => {
+    await invalidate({ environmentId, input: { reference, scope: "detail" } });
+    detailQuery.refresh();
+  }, [detailQuery.refresh, environmentId, invalidate, reference]);
+  useLiveRefresh(() => void refreshDetailFromHost(), {
+    key: `pull-request:${reference.projectId}:${reference.repository}#${reference.number}`,
+  });
+  // The button is the answer for a reader who can see that what they are looking at is behind,
+  // so it reads everything: the detail, the activity, and through the refresh token, the diff.
   const refreshFromHost = useCallback(async () => {
     await invalidate({ environmentId, input: { reference } });
     refreshDetail();
