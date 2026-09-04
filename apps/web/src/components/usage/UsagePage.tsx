@@ -64,10 +64,20 @@ export function UsagePage() {
     window: makeWindow(30),
   }));
   const [metric, setMetric] = useState<UsageMetric>(() => {
-    const stored = localStorage.getItem(USAGE_METRIC_STORAGE_KEY);
-    return isUsageMetric(stored) ? stored : "cost";
+    try {
+      const stored = localStorage.getItem(USAGE_METRIC_STORAGE_KEY);
+      return isUsageMetric(stored) ? stored : "cost";
+    } catch {
+      return "cost";
+    }
   });
-  useEffect(() => localStorage.setItem(USAGE_METRIC_STORAGE_KEY, metric), [metric]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(USAGE_METRIC_STORAGE_KEY, metric);
+    } catch {
+      // Storage may be missing, blocked, or full; the in-memory selection still works.
+    }
+  }, [metric]);
   const showingLimits = metric === "limits";
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const { days: windowDays, window } = windowSelection;
