@@ -38,13 +38,12 @@ const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; descr
     },
     conventional_commits: {
       label: "Conventional Commits",
-      description:
-        "Uses Conventional Commit prefixes for change descriptions; change request titles and descriptions stay concise.",
+      description: "Use Conventional Commit prefixes and keep change request text concise.",
     },
     custom: {
       label: "Custom instructions",
       description:
-        "Applies your instructions to change descriptions and change request titles and descriptions in every project.",
+        "Use your instructions for change descriptions and change requests in every project.",
     },
   };
 
@@ -90,7 +89,7 @@ export function SourceControlWritingSettingsSection() {
   );
 
   return (
-    <SettingsSection title="Text generation">
+    <SettingsSection id="source-control-text-generation" title="Text generation">
       <SettingsRow
         serverScoped
         {...searchableSetting("source-control-writing-style")}
@@ -163,7 +162,7 @@ export function SourceControlWritingSettingsSection() {
       <SettingsRow
         serverScoped
         {...searchableSetting("follow-change-request-templates")}
-        description="Structures change request descriptions using the current repository's template when one is available."
+        description="Use the repository's template for change request descriptions when available."
         resetAction={
           style.followChangeRequestTemplates !== defaults.followChangeRequestTemplates ? (
             <SettingResetButton
@@ -196,7 +195,7 @@ export function SourceControlWritingSettingsSection() {
       <SettingsRow
         serverScoped
         {...searchableSetting("source-control-writer-model")}
-        description="Optional model override for change descriptions, change request titles and descriptions, and branch or bookmark names. Off uses the global text generation model."
+        description="Model for source control text and branch or bookmark names. Off uses the global default."
         control={
           <div className="flex flex-wrap items-center justify-end gap-2">
             {usesDedicatedModel && !canEnableDedicatedModel ? (

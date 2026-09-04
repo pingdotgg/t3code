@@ -164,17 +164,6 @@ function isAddProviderButton(element: ReactElement<Record<string, unknown>>): bo
   return element.props["aria-label"] === "Add provider";
 }
 
-function findAdvancedPanel(panel: ReactElement<Record<string, unknown>>) {
-  return visitElements(
-    panel,
-    (element) => element.props.className === "mt-1" && typeof element.props.open === "boolean",
-  );
-}
-
-function flushEffects(): void {
-  for (const effect of settingsSearchState.effects.splice(0)) effect();
-}
-
 async function flushPromises(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
@@ -297,15 +286,19 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(visitElements(panel, isAddProviderButton)).not.toBeNull();
   });
 
-  it("opens Advanced when search targets the provider health interval", () => {
-    settingsSearchState.targetId = "provider-health-check-interval";
+  it("keeps Advanced visible when search targets the provider health interval", () => {
     let panel = renderPanel();
+    expect(visitElements(panel, (element) => element.props.title === "Advanced")).not.toBeNull();
+    expect(
+      visitElements(panel, (element) => element.props.id === "provider-health-check-interval"),
+    ).not.toBeNull();
 
-    expect(findAdvancedPanel(panel)?.props.open).toBe(false);
-    flushEffects();
-
+    settingsSearchState.targetId = "provider-health-check-interval";
     panel = renderPanel();
-    expect(findAdvancedPanel(panel)?.props.open).toBe(true);
+    expect(visitElements(panel, (element) => element.props.title === "Advanced")).not.toBeNull();
+    expect(
+      visitElements(panel, (element) => element.props.id === "provider-health-check-interval"),
+    ).not.toBeNull();
   });
 
   it("deletes and resets provider configuration without erasing shared preferences", () => {
