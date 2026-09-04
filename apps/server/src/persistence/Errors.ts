@@ -1,3 +1,4 @@
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 
@@ -72,21 +73,31 @@ export class PersistenceDecodeError extends Schema.TaggedErrorClass<PersistenceD
 const isPersistenceSqlError = Schema.is(PersistenceSqlError);
 const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
 
-// Kept for orchestration/projection call sites, which are being revamped separately.
 /**
- * SQLite names its condition through a fixed result-code table, so the code and
- * its canonical string are bounded and carry no query data. The driver message
- * is not bounded: a constraint failure spells out the table and column it hit.
- * Only the normalized pair is carried here; `cause` keeps everything else.
+ * Read a SQLite condition through SQL error wrappers.
+ * Use Node's fixed description or Bun's numeric code, never the driver message.
  */
 function sqliteCondition(cause: unknown): string | undefined {
-  let value: unknown = cause;
-  for (let depth = 0; depth < 4 && typeof value === "object" && value !== null; depth += 1) {
-    const { errcode, errstr } = value as { errcode?: unknown; errstr?: unknown };
-    if (typeof errcode === "number" && typeof errstr === "string") {
-      return `SQLITE(${errcode}) ${errstr}`;
+  let value = cause;
+  for (let depth = 0; depth < 4 && Predicate.isObject(value); depth += 1) {
+    if (
+      "errcode" in value &&
+      typeof value.errcode === "number" &&
+      "errstr" in value &&
+      typeof value.errstr === "string"
+    ) {
+      return `SQLITE(${value.errcode}) ${value.errstr}`;
     }
-    value = (value as { cause?: unknown }).cause;
+    if (
+      "name" in value &&
+      value.name === "SQLiteError" &&
+      "errno" in value &&
+      typeof value.errno === "number" &&
+      Number.isInteger(value.errno)
+    ) {
+      return `SQLITE(${value.errno})`;
+    }
+    value = "cause" in value ? value.cause : undefined;
   }
   return undefined;
 }
@@ -101,10 +112,9 @@ function describeSqlCause(cause: unknown): string | undefined {
   return sqliteCondition(cause);
 }
 
+// Kept for orchestration/projection call sites, which are being revamped separately.
 export function toPersistenceSqlError(operation: string) {
   return (cause: unknown): PersistenceSqlError => {
-    // Restating the operation as the detail only doubled it in the message and
-    // buried the cause; `message` already reads well without a detail.
     const detail = describeSqlCause(cause);
     return new PersistenceSqlError({
       operation,
