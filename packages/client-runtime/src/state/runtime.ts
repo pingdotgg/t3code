@@ -336,6 +336,12 @@ export interface AtomQueryOptions extends AtomCommandOptions {
    * verification flows where a cached failure must not satisfy a retry.
    */
   readonly refresh?: boolean;
+  /**
+   * Give up after this many milliseconds. The query fiber is interrupted so
+   * the atom mount is released, and the result is a defect failure. Used by
+   * one-shot reads that must not hang while an environment is reconnecting.
+   */
+  readonly timeoutMs?: number;
 }
 
 export async function executeAtomQuery<A, E>(
@@ -357,9 +363,18 @@ export async function executeAtomQuery<A, E>(
           }
         });
       }
-      return yield* AtomRegistry.getResult(registry, atom, {
+      const result = AtomRegistry.getResult(registry, atom, {
         suspendOnWaiting: true,
       });
+      const timeoutMs = options.timeoutMs;
+      return yield* timeoutMs === undefined
+        ? result
+        : result.pipe(
+            Effect.timeoutOrElse({
+              duration: timeoutMs,
+              orElse: () => Effect.die(new Error(`Atom query timed out after ${timeoutMs}ms`)),
+            }),
+          );
     }),
   );
   return executeAtomCommand(() => Effect.runPromiseExit(query), options, reporter);
