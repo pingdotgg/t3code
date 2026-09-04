@@ -3136,6 +3136,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             cause,
           }),
       });
+
+      // The stream teardown (handleStreamExit -> stopSessionInternal) runs
+      // asynchronously after close(), so until it completes the context is
+      // still in `sessions` with `stopped` unset. Mark the session closed now
+      // so sendTurn rejects (via requireSession) instead of enqueueing a
+      // prompt onto the dying runtime.
+      const closedAt = yield* nowIso;
+      context.session = {
+        ...context.session,
+        status: "closed",
+        activeTurnId: undefined,
+        updatedAt: closedAt,
+      };
     }
   });
 
@@ -4858,7 +4871,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const hasSession: ClaudeAdapterShape["hasSession"] = (threadId) =>
     Effect.sync(() => {
       const context = sessions.get(threadId);
-      return context !== undefined && !context.stopped;
+      // A stopped or already-closed context is not a routable session. The
+      // closed check matters because an auth-failure teardown marks the
+      // session closed (see handleResultMessage) before the async stream exit
+      // removes the context, so a recovery must be able to replace it in that
+      // window instead of treating the dying process as active.
+      return context !== undefined && !context.stopped && context.session.status !== "closed";
     });
 
   const stopSessions = Effect.fn("stopSessions")(function* (

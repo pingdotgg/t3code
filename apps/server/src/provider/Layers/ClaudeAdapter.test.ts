@@ -43,7 +43,11 @@ import {
   SYNTHETIC_CLAUDE_STANDARD_MODEL,
   SYNTHETIC_CLAUDE_THINKING_MODEL,
 } from "../ClaudeModelCatalog.testFixtures.ts";
-import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
+import {
+  ProviderAdapterProcessError,
+  ProviderAdapterSessionNotFoundError,
+  ProviderAdapterValidationError,
+} from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import type { ClaudeScopedLimitNames } from "./claudeUsageLimits.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
@@ -5683,6 +5687,18 @@ describe("ClaudeAdapterLive", () => {
         const hasSession = yield* adapter.hasSession(session.threadId);
         assert.equal(hasSession, false);
         assert.equal(harness.query.closeCalls > 0, true);
+
+        // No prompt may be accepted onto the dying runtime: a follow-up turn
+        // after the teardown must fail (session no longer routable) rather than
+        // enqueue onto the closed query.
+        const followUp = yield* adapter
+          .sendTurn({
+            threadId: session.threadId,
+            input: "hello again",
+            attachments: [],
+          })
+          .pipe(Effect.flip);
+        assert.instanceOf(followUp, ProviderAdapterSessionNotFoundError);
       }).pipe(
         Effect.provideService(Random.Random, makeDeterministicRandomService()),
         Effect.provide(harness.layer),
