@@ -5,10 +5,12 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import {
+  sourceControlProviderBinaryPath,
   SourceControlProviderError,
   type SourceControlProviderDiscoveryItem,
+  type SourceControlProviderKind,
+  type ServerSettings,
 } from "@t3tools/contracts";
-import type { SourceControlProviderKind } from "@t3tools/contracts";
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
@@ -22,6 +24,7 @@ import {
   type SourceControlProviderDiscoverySpec,
 } from "./SourceControlProviderDiscovery.ts";
 import { ServerConfig } from "../config.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 
@@ -194,9 +197,25 @@ function bindProviderContext(
   });
 }
 
+function configureDiscoverySpecs(
+  specs: ReadonlyArray<SourceControlProviderDiscoverySpec>,
+  settings: ServerSettings,
+): ReadonlyArray<SourceControlProviderDiscoverySpec> {
+  return specs.map((spec) => {
+    if (spec.type !== "cli") return spec;
+    return {
+      ...spec,
+      executable:
+        sourceControlProviderBinaryPath(settings.sourceControlProviders, spec.kind) ??
+        spec.executable,
+    };
+  });
+}
+
 export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWithProviders")(
   function* (registrations: ReadonlyArray<SourceControlProviderRegistration>) {
     const config = yield* ServerConfig;
+    const settingsService = yield* ServerSettingsService;
     const process = yield* VcsProcess.VcsProcess;
     const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
     const providers = new Map<
@@ -204,6 +223,10 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       SourceControlProvider.SourceControlProvider["Service"]
     >(registrations.map((registration) => [registration.kind, registration.provider]));
     const discoverySpecs = registrations.map((registration) => registration.discovery);
+    const configuredDiscoverySpecs = settingsService.getSettings.pipe(
+      Effect.map((settings) => configureDiscoverySpecs(discoverySpecs, settings)),
+      Effect.orElseSucceed(() => discoverySpecs),
+    );
 
     const get: SourceControlProviderRegistry["Service"]["get"] = (kind) =>
       Effect.succeed(providers.get(kind) ?? unsupportedProvider(kind));
@@ -236,12 +259,8 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
         );
         const context = selectProviderContext(remotes.remotes);
 
-        return yield* refineUnknownRemoteProvider({
-          specs: discoverySpecs,
-          process,
-          cwd,
-          context,
-        });
+        const specs = yield* configuredDiscoverySpecs;
+        return yield* refineUnknownRemoteProvider({ specs, process, cwd, context });
       },
     );
 
@@ -254,15 +273,21 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       timeToLive: (exit) => (Exit.isSuccess(exit) ? PROVIDER_DETECTION_CACHE_TTL : Duration.zero),
     });
 
-    const resolveHandle: SourceControlProviderRegistry["Service"]["resolveHandle"] = (input) =>
-      (input.context === undefined
-        ? Cache.get(providerContextCache, input.cwd)
-        : refineUnknownRemoteProvider({
-            specs: discoverySpecs,
-            process,
-            cwd: input.cwd,
-            context: input.context,
-          })
+    const resolveHandle: SourceControlProviderRegistry["Service"]["resolveHandle"] = (input) => {
+      const providedContext = input.context;
+      return (
+        providedContext === undefined
+          ? Cache.get(providerContextCache, input.cwd)
+          : configuredDiscoverySpecs.pipe(
+              Effect.flatMap((specs) =>
+                refineUnknownRemoteProvider({
+                  specs,
+                  process,
+                  cwd: input.cwd,
+                  context: providedContext,
+                }),
+              ),
+            )
       ).pipe(
         Effect.map((context) => {
           const kind = context?.provider.kind ?? "unknown";
@@ -273,20 +298,25 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
           } satisfies SourceControlProviderHandle;
         }),
       );
+    };
 
     return SourceControlProviderRegistry.of({
       get,
       resolveHandle,
       resolve: (input) => resolveHandle(input).pipe(Effect.map((handle) => handle.provider)),
-      discover: Effect.all(
-        discoverySpecs.map((spec) =>
-          probeSourceControlProvider({
-            spec,
-            process,
-            cwd: config.cwd,
-          }),
+      discover: configuredDiscoverySpecs.pipe(
+        Effect.flatMap((specs) =>
+          Effect.all(
+            specs.map((spec) =>
+              probeSourceControlProvider({
+                spec,
+                process,
+                cwd: config.cwd,
+              }),
+            ),
+            { concurrency: "unbounded" },
+          ),
         ),
-        { concurrency: "unbounded" },
       ),
     });
   },

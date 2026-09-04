@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   decodeGitLabMergeRequestJson,
   decodeGitLabMergeRequestListJson,
@@ -409,22 +410,28 @@ function parseRepositoryPath(repository: string): {
 
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
+  const settings = yield* ServerSettings.ServerSettingsService;
 
   const run = (
     input: Parameters<GitLabCli["Service"]["execute"]>[0],
     mapError: (error: VcsError) => GitLabCliError,
   ) =>
-    process
-      .run({
-        operation: "GitLabCli.execute",
-        command: "glab",
-        args: input.args,
-        cwd: input.cwd,
-        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
-        ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
-      })
-      .pipe(Effect.mapError(mapError));
+    settings.getSettings.pipe(
+      Effect.map((current) => current.sourceControlProviders.gitlab.binaryPath),
+      Effect.orElseSucceed(() => "glab"),
+      Effect.flatMap((binaryPath) =>
+        process.run({
+          operation: "GitLabCli.execute",
+          command: binaryPath,
+          args: input.args,
+          cwd: input.cwd,
+          timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
+          ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
+        }),
+      ),
+      Effect.mapError(mapError),
+    );
 
   const execute: GitLabCli["Service"]["execute"] = (input) =>
     run(input, (error) =>

@@ -92,6 +92,8 @@ The **Source Control settings** page shows you exactly what's connected:
 - 👤 Which account is signed in (when available)
 
 Run a quick **Rescan** after setting up a new machine or changing credentials.
+If a CLI is installed outside the server's `PATH`, expand its provider row and set **CLI
+executable** to the command name or absolute path, then rescan.
 
 ## Getting Started
 

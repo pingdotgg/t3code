@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
@@ -338,19 +339,25 @@ function deriveRepositoryCloneUrlsFromCreateOutput(
 
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
+  const settings = yield* ServerSettings.ServerSettingsService;
 
   const execute: GitHubCli["Service"]["execute"] = (input) =>
-    process
-      .run({
-        operation: "GitHubCli.execute",
-        command: "gh",
-        args: input.args,
-        cwd: input.cwd,
-        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
-        ...(input.maxOutputBytes !== undefined ? { maxOutputBytes: input.maxOutputBytes } : {}),
-      })
-      .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
+    settings.getSettings.pipe(
+      Effect.map((current) => current.sourceControlProviders.github.binaryPath),
+      Effect.orElseSucceed(() => "gh"),
+      Effect.flatMap((binaryPath) =>
+        process.run({
+          operation: "GitHubCli.execute",
+          command: binaryPath,
+          args: input.args,
+          cwd: input.cwd,
+          timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+          ...(input.maxOutputBytes !== undefined ? { maxOutputBytes: input.maxOutputBytes } : {}),
+        }),
+      ),
+      Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)),
+    );
 
   return GitHubCli.of({
     execute,

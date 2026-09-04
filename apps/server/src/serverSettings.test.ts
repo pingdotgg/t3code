@@ -868,6 +868,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
 
       const next = yield* serverSettings.updateSettings({
+        sourceControlProviders: {
+          github: { binaryPath: "  /opt/homebrew/bin/gh  " },
+          gitlab: { binaryPath: "  /opt/homebrew/bin/glab  " },
+          azureDevOps: { binaryPath: "  /opt/homebrew/bin/az  " },
+        },
         providers: {
           codex: {
             binaryPath: "  /opt/homebrew/bin/codex  ",
@@ -908,6 +913,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         serverPassword: "secret-password",
         customModels: [],
       });
+      assert.deepEqual(next.sourceControlProviders, {
+        github: { binaryPath: "/opt/homebrew/bin/gh" },
+        gitlab: { binaryPath: "/opt/homebrew/bin/glab" },
+        azureDevOps: { binaryPath: "/opt/homebrew/bin/az" },
+      });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
@@ -936,6 +946,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
 
       const next = yield* serverSettings.updateSettings({
+        sourceControlProviders: {
+          github: { binaryPath: "   " },
+          gitlab: { binaryPath: "" },
+          azureDevOps: { binaryPath: "   " },
+        },
         providers: {
           codex: {
             binaryPath: "   ",
@@ -948,6 +963,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       assert.equal(next.providers.codex.binaryPath, "codex");
       assert.equal(next.providers.claudeAgent.binaryPath, "claude");
+      assert.deepEqual(next.sourceControlProviders, {
+        github: { binaryPath: "gh" },
+        gitlab: { binaryPath: "glab" },
+        azureDevOps: { binaryPath: "az" },
+      });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 

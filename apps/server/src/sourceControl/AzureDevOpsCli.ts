@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   decodeAzureDevOpsPullRequestJson,
   decodeAzureDevOpsPullRequestListJson,
@@ -354,30 +355,34 @@ function decodeAzureDevOpsJson<S extends Schema.Top>(
 
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
+  const settings = yield* ServerSettings.ServerSettingsService;
 
   const execute: AzureDevOpsCli["Service"]["execute"] = (input) =>
-    process
-      .run({
-        operation: "AzureDevOpsCli.execute",
-        command: "az",
-        args: input.args,
-        cwd: input.cwd,
-        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
-      })
-      .pipe(
-        Effect.mapError((error) =>
-          AzureDevOpsCommandFailedError.fromVcsError(
-            {
-              operation: "execute",
-              command: "az",
-              cwd: input.cwd,
-              argumentCount: input.args.length,
-            },
-            error,
-          ),
+    settings.getSettings.pipe(
+      Effect.map((current) => current.sourceControlProviders.azureDevOps.binaryPath),
+      Effect.orElseSucceed(() => "az"),
+      Effect.flatMap((binaryPath) =>
+        process.run({
+          operation: "AzureDevOpsCli.execute",
+          command: binaryPath,
+          args: input.args,
+          cwd: input.cwd,
+          timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
+        }),
+      ),
+      Effect.mapError((error) =>
+        AzureDevOpsCommandFailedError.fromVcsError(
+          {
+            operation: "execute",
+            command: "az",
+            cwd: input.cwd,
+            argumentCount: input.args.length,
+          },
+          error,
         ),
-      );
+      ),
+    );
 
   const executeJson = (input: Parameters<AzureDevOpsCli["Service"]["execute"]>[0]) =>
     execute({
