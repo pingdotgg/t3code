@@ -1995,10 +1995,7 @@ describe("ProviderRuntimeIngestion", () => {
       threadId: asThreadId("thread-1"),
       turnId,
     });
-    await waitForThread(
-      harness.readModel,
-      (thread) => thread.session?.activeTurnId === turnId,
-    );
+    await waitForThread(harness.readModel, (thread) => thread.session?.activeTurnId === turnId);
 
     for (const [itemId, delta] of [
       ["item-buffered-first", "first item"],
@@ -2026,17 +2023,114 @@ describe("ProviderRuntimeIngestion", () => {
       payload: { state: "completed" },
     });
 
-    const thread = await waitForThread(
-      harness.readModel,
-      (entry) =>
-        entry.messages.some((message: ProviderRuntimeTestMessage) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
           message.id === "assistant:item-buffered-second" && !message.streaming,
-        ),
+      ),
     );
     expect(thread.messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "assistant:item-buffered-first", text: "first item" }),
         expect.objectContaining({ id: "assistant:item-buffered-second", text: "second item" }),
+      ]),
+    );
+  });
+
+  it("completes the matching assistant item when items overlap", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnId = asTurnId("turn-overlapping-items");
+    const base = {
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    };
+
+    harness.emit({ ...base, type: "turn.started", eventId: asEventId("overlap-start") });
+    for (const [itemId, delta] of [
+      ["overlap-first", "first item"],
+      ["overlap-second", "second item"],
+    ] as const) {
+      harness.emit({
+        ...base,
+        type: "content.delta",
+        eventId: asEventId(`${itemId}-delta`),
+        itemId: asItemId(itemId),
+        payload: { streamKind: "assistant_text", delta },
+      });
+    }
+    for (const itemId of ["overlap-first", "overlap-second"] as const) {
+      harness.emit({
+        ...base,
+        type: "item.completed",
+        eventId: asEventId(`${itemId}-completed`),
+        itemId: asItemId(itemId),
+        payload: { itemType: "assistant_message", status: "completed" },
+      });
+    }
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.messages.filter((message: ProviderRuntimeTestMessage) => !message.streaming).length >=
+        2,
+    );
+    expect(thread.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "assistant:overlap-first", text: "first item" }),
+        expect.objectContaining({ id: "assistant:overlap-second", text: "second item" }),
+      ]),
+    );
+  });
+
+  it("finalizes every active assistant item at an approval boundary", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnId = asTurnId("turn-overlapping-approval");
+    const base = {
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    };
+
+    harness.emit({ ...base, type: "turn.started", eventId: asEventId("approval-overlap-start") });
+    for (const [itemId, delta] of [
+      ["approval-first", "first before approval"],
+      ["approval-second", "second before approval"],
+    ] as const) {
+      harness.emit({
+        ...base,
+        type: "content.delta",
+        eventId: asEventId(`${itemId}-delta`),
+        itemId: asItemId(itemId),
+        payload: { streamKind: "assistant_text", delta },
+      });
+    }
+    harness.emit({
+      ...base,
+      type: "request.opened",
+      eventId: asEventId("approval-overlap-request"),
+      requestId: ApprovalRequestId.make("approval-overlap"),
+      payload: { requestType: "command_execution_approval", detail: "pwd" },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      ["assistant:approval-first", "assistant:approval-second"].every((id) =>
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) => message.id === id && !message.streaming,
+        ),
+      ),
+    );
+    expect(thread.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "assistant:approval-first", text: "first before approval" }),
+        expect.objectContaining({
+          id: "assistant:approval-second",
+          text: "second before approval",
+        }),
       ]),
     );
   });
