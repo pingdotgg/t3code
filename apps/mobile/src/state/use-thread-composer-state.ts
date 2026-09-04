@@ -126,21 +126,28 @@ export function useThreadComposerState() {
     () => (selectedThreadKey ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []) : []),
     [queuedMessagesByThreadKey, selectedThreadKey],
   );
-  const selectedThreadFeed = useMemo(() => {
-    if (!selectedThreadDetail) {
-      return [];
-    }
+  const localFeedbackMessages = useMemo(() => {
     const submissions = selectedThreadKey
       ? (feedbackSubmissionsByThreadKey[selectedThreadKey] ?? [])
       : [];
-    return buildThreadFeed(selectedThreadDetail, {
-      localMessages: submissions.flatMap((submission) =>
-        submission.status === "interrupted"
-          ? []
-          : [codexFeedbackMessage(submission), codexFeedbackMessage(submission, "assistant")],
-      ),
-    });
-  }, [feedbackSubmissionsByThreadKey, selectedThreadDetail, selectedThreadKey]);
+    return submissions.flatMap((submission) =>
+      submission.status === "interrupted"
+        ? []
+        : [codexFeedbackMessage(submission), codexFeedbackMessage(submission, "assistant")],
+    );
+  }, [feedbackSubmissionsByThreadKey, selectedThreadKey]);
+  const selectedThreadMessages = selectedThreadDetail?.messages;
+  const selectedThreadActivities = selectedThreadDetail?.activities;
+  const selectedThreadFeed = useMemo(
+    () =>
+      selectedThreadMessages && selectedThreadActivities
+        ? buildThreadFeed(
+            { messages: selectedThreadMessages, activities: selectedThreadActivities },
+            { localMessages: localFeedbackMessages },
+          )
+        : [],
+    [localFeedbackMessages, selectedThreadActivities, selectedThreadMessages],
+  );
 
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
   const draftMessage = selectedDraft?.text ?? "";
