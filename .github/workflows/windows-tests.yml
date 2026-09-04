@@ -62,7 +62,7 @@ jobs:
 
       - name: Ensure Electron runtime is installed
         if: inputs.package == '' || inputs.package == 'apps/desktop'
-        run: vp run --filter @t3tools/desktop ensure:electron
+        run: vp run --filter "@t3tools/desktop" ensure:electron
 
       # `vp run ... test -- <files>` does not forward positional args to vitest,
       # so file-scoped runs call `vp test run` inside the package instead.
