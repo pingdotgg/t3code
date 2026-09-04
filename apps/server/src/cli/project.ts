@@ -16,6 +16,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli";
@@ -102,6 +103,8 @@ export class ProjectLiveServerRequestError extends Schema.TaggedErrorClass<Proje
   }
 }
 
+const isProjectLiveServerRequestError = Schema.is(ProjectLiveServerRequestError);
+
 export class ProjectTitleEmptyError extends Schema.TaggedErrorClass<ProjectTitleEmptyError>()(
   "ProjectTitleEmptyError",
   {
@@ -184,6 +187,34 @@ export function projectCommandErrorFromLiveServerRequest(cause: unknown): Projec
   }
 
   return new ProjectLiveServerRequestError({ operation: "callLiveServer", cause });
+}
+
+const hasConnectionRefusedCode = (cause: unknown): boolean => {
+  const seen = new Set<object>();
+  let current = cause;
+
+  while (Predicate.isObject(current) && !seen.has(current)) {
+    seen.add(current);
+    if (Predicate.hasProperty(current, "code") && current.code === "ECONNREFUSED") {
+      return true;
+    }
+    current = Predicate.hasProperty(current, "cause") ? current.cause : undefined;
+  }
+
+  return false;
+};
+
+export function isProjectLiveServerConnectionRefusedError(cause: unknown): boolean {
+  if (!isProjectLiveServerRequestError(cause)) {
+    return false;
+  }
+
+  const transportError = cause.cause;
+  return (
+    HttpClientError.isHttpClientError(transportError) &&
+    transportError.reason._tag === "TransportError" &&
+    hasConnectionRefusedCode(transportError.reason.cause)
+  );
 }
 
 const projectCommandUuid = Crypto.Crypto.pipe(
@@ -368,6 +399,11 @@ const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecu
       origin: runtimeState.value.origin,
       cause: attempted.failure,
     });
+
+    if (!isProjectLiveServerConnectionRefusedError(attempted.failure)) {
+      return yield* attempted.failure;
+    }
+
     yield* clearPersistedServerRuntimeState(config.serverRuntimeStatePath);
     return Option.none<{ readonly origin: string }>();
   },

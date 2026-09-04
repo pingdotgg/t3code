@@ -137,6 +137,22 @@ const readPersistedSnapshot = (baseDir: string) =>
     }).pipe(Effect.provide(makeProjectPersistenceLayer(config)));
   });
 
+const persistCliRuntimeState = (baseDir: string, origin: string) =>
+  Effect.gen(function* () {
+    const config = yield* makeCliTestServerConfig(baseDir);
+    const state = yield* makePersistedServerRuntimeState({ config, port: 0 });
+    yield* persistServerRuntimeState({
+      path: config.serverRuntimeStatePath,
+      state: { ...state, origin },
+    });
+    return config;
+  });
+
+const reserveLoopbackPort = Effect.gen(function* () {
+  const net = yield* NetService.NetService;
+  return yield* net.reserveLoopbackPort();
+}).pipe(Effect.provide(NetService.layer));
+
 const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     const config = yield* makeCliTestServerConfig(baseDir);
@@ -601,6 +617,73 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
           assert.isTrue(addedProject !== undefined);
           assert.equal(addedProject?.title, "Live Project");
         }),
+      );
+    }),
+  );
+
+  it.effect(
+    "preserves runtime state and avoids offline mutation for non-refused probe failures",
+    () =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(
+          NodePath.join(NodeOS.tmpdir(), "t3-cli-projects-live-failure-test-"),
+        );
+        const workspaceRoot = NodeFS.mkdtempSync(
+          NodePath.join(NodeOS.tmpdir(), "t3-cli-projects-live-failure-workspace-"),
+        );
+        const config = yield* persistCliRuntimeState(baseDir, "http://[invalid");
+
+        const error = yield* runCliWithRuntime([
+          "project",
+          "add",
+          workspaceRoot,
+          "--title",
+          "Should Not Be Added",
+          "--base-dir",
+          baseDir,
+        ]).pipe(Effect.flip);
+
+        if (typeof error !== "object" || error === null || !("_tag" in error)) {
+          assert.fail(`Expected a tagged project command error, got ${String(error)}`);
+        }
+        assert.equal(error._tag, "ProjectLiveServerRequestError");
+        assert.isTrue(NodeFS.existsSync(config.serverRuntimeStatePath));
+        const snapshot = yield* readPersistedSnapshot(baseDir);
+        assert.isFalse(
+          snapshot.projects.some(
+            (project) => project.workspaceRoot === workspaceRoot && project.deletedAt === null,
+          ),
+        );
+      }),
+  );
+
+  it.effect("clears a refused runtime endpoint before falling back to offline mutation", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-projects-refused-runtime-test-"),
+      );
+      const workspaceRoot = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-projects-refused-runtime-workspace-"),
+      );
+      const refusedPort = yield* reserveLoopbackPort;
+      const config = yield* persistCliRuntimeState(baseDir, `http://127.0.0.1:${refusedPort}`);
+
+      yield* runCliWithRuntime([
+        "project",
+        "add",
+        workspaceRoot,
+        "--title",
+        "Offline After Refusal",
+        "--base-dir",
+        baseDir,
+      ]);
+
+      assert.isFalse(NodeFS.existsSync(config.serverRuntimeStatePath));
+      const snapshot = yield* readPersistedSnapshot(baseDir);
+      assert.isTrue(
+        snapshot.projects.some(
+          (project) => project.workspaceRoot === workspaceRoot && project.deletedAt === null,
+        ),
       );
     }),
   );
