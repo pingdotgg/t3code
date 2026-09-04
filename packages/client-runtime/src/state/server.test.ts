@@ -31,6 +31,7 @@ import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
+  createPersistedThreadDiscoverySession,
   makeEnvironmentServerConfigState,
   isLegacyUpdateHandoffLoss,
   matchesServerUpdateReadyEvent,
@@ -72,6 +73,101 @@ const TARGET = new PrimaryConnectionTarget({
   label: "Test environment",
   httpBaseUrl: "https://environment.example.test",
   wsBaseUrl: "wss://environment.example.test",
+});
+
+describe("persisted thread discovery session", () => {
+  it("checks each connected environment once per app opening", async () => {
+    const environmentId = EnvironmentId.make("environment-discovery");
+    const calls: EnvironmentId[] = [];
+    const session = createPersistedThreadDiscoverySession();
+    const environments = [{ environmentId, connected: true }];
+
+    session.check(environments, async (id) => {
+      calls.push(id);
+    });
+    session.check(environments, async (id) => {
+      calls.push(id);
+    });
+    await Promise.resolve();
+
+    expect(calls).toEqual([environmentId]);
+  });
+
+  it("allows a new check after the app reopens", async () => {
+    const environmentId = EnvironmentId.make("environment-reopened");
+    const calls: EnvironmentId[] = [];
+    const discover = async (id: EnvironmentId) => {
+      calls.push(id);
+    };
+
+    createPersistedThreadDiscoverySession().check([{ environmentId, connected: true }], discover);
+    createPersistedThreadDiscoverySession().check([{ environmentId, connected: true }], discover);
+    await Promise.resolve();
+
+    expect(calls).toEqual([environmentId, environmentId]);
+  });
+
+  it("waits for an environment to connect before claiming its check", async () => {
+    const environmentId = EnvironmentId.make("environment-late-connect");
+    const calls: EnvironmentId[] = [];
+    const session = createPersistedThreadDiscoverySession();
+    const discover = async (id: EnvironmentId) => {
+      calls.push(id);
+    };
+
+    session.check([{ environmentId, connected: false }], discover);
+    session.check([{ environmentId, connected: true }], discover);
+    await Promise.resolve();
+
+    expect(calls).toEqual([environmentId]);
+  });
+
+  it("allows a retry when discovery fails", async () => {
+    const environmentId = EnvironmentId.make("environment-discovery-retry");
+    const calls: EnvironmentId[] = [];
+    let shouldFail = true;
+    const session = createPersistedThreadDiscoverySession();
+
+    const discover = async (id: EnvironmentId) => {
+      calls.push(id);
+      if (shouldFail) {
+        shouldFail = false;
+        throw new Error("temporary connection failure");
+      }
+    };
+
+    session.check([{ environmentId, connected: true }], discover);
+    await Promise.resolve();
+    await Promise.resolve();
+    session.check([{ environmentId, connected: true }], discover);
+    await Promise.resolve();
+
+    expect(calls).toEqual([environmentId, environmentId]);
+  });
+
+  it("allows a retry when the command resolves with an AsyncResult failure", async () => {
+    const environmentId = EnvironmentId.make("environment-discovery-command-failure");
+    const calls: EnvironmentId[] = [];
+    let shouldFail = true;
+    const session = createPersistedThreadDiscoverySession();
+
+    const discover = async (id: EnvironmentId) => {
+      calls.push(id);
+      if (shouldFail) {
+        shouldFail = false;
+        return { _tag: "Failure" as const };
+      }
+      return { _tag: "Success" as const };
+    };
+
+    session.check([{ environmentId, connected: true }], discover);
+    await Promise.resolve();
+    await Promise.resolve();
+    session.check([{ environmentId, connected: true }], discover);
+    await Promise.resolve();
+
+    expect(calls).toEqual([environmentId, environmentId]);
+  });
 });
 
 function session(client: WsRpcProtocolClient): RpcSession {

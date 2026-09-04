@@ -519,6 +519,7 @@ const makeWsRpcLayer = (
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const providerAuth = yield* ProviderAuthService;
       const providerInstances = yield* ProviderInstanceRegistry;
+      const providerThreadReconciler = yield* ProviderThreadReconciler.ProviderThreadReconciler;
       const providerInstallation = yield* makeProviderInstallation();
       const serverUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
@@ -1740,17 +1741,14 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "provider" },
           ),
-        [WS_METHODS.providerDiscoverPersistedThreads]: (input) =>
+        [WS_METHODS.providerDiscoverPersistedThreads]: () =>
           observeRpcEffect(
             WS_METHODS.providerDiscoverPersistedThreads,
-            ProviderThreadReconciler.reconcilePersistedProviderThreads({
-              workspaceRoots: new Set([input.workspaceRoot]),
-            }).pipe(
+            providerThreadReconciler.reconcile().pipe(
               Effect.map((importedCount) => ({ importedCount })),
               Effect.mapError(
                 (cause) =>
                   new ProviderPersistedThreadDiscoveryError({
-                    workspaceRoot: input.workspaceRoot,
                     cause,
                   }),
               ),

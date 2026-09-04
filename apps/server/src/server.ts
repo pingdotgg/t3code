@@ -277,9 +277,7 @@ const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
 
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
-  Layer.provideMerge(
-    ProviderThreadReconcilerLive.pipe(Layer.provide(ProviderSessionDirectoryLayerLive)),
-  ),
+  Layer.provideMerge(ProviderThreadReconcilerLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(CheckpointReactorLive),
@@ -547,7 +545,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     assetRouteLayer,
     attachmentUploadRouteLayer,
     staticAndDevRouteLayer,
-    websocketRpcRouteLayer.pipe(Layer.provide(ProviderSessionDirectoryLayerLive)),
+    websocketRpcRouteLayer,
   ),
   McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
 ).pipe(

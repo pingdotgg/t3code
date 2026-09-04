@@ -27,12 +27,10 @@ import type { ProviderInstance } from "../ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import {
   ProviderSessionDirectory,
+  type ProviderRuntimeBindingWithMetadata,
   type ProviderSessionDirectory as ProviderSessionDirectoryShape,
 } from "../Services/ProviderSessionDirectory.ts";
-import type {
-  ProviderPersistedThread,
-  ProviderPersistedThreadDiscoveryInput,
-} from "../Services/ProviderAdapter.ts";
+import type { ProviderPersistedThread } from "../Services/ProviderAdapter.ts";
 import {
   groupPersistedThreadDiscoveryCandidates,
   providerThreadDiscoveryExclusions,
@@ -169,7 +167,6 @@ it.effect("does not recover a reconciliation interruption", () =>
 it.effect("discovers every Codex root through the server-owned reconciler", () =>
   Effect.gen(function* () {
     const commands: OrchestrationCommand[] = [];
-    let receivedInput: ProviderPersistedThreadDiscoveryInput | undefined;
     const discoveryInstance = {
       ...instance,
       enabled: true,
@@ -179,15 +176,11 @@ it.effect("discovers every Codex root through the server-owned reconciler", () =
         }),
       },
       adapter: {
-        discoverPersistedThreads: (input?: ProviderPersistedThreadDiscoveryInput) =>
-          Effect.sync(() => {
-            receivedInput = input;
-            return [persistedThread];
-          }),
+        discoverPersistedThreads: () => Effect.succeed([persistedThread]),
       },
     } as unknown as ProviderInstance;
 
-    const importedCount = yield* reconcilePersistedProviderThreads({}).pipe(
+    const importedCount = yield* reconcilePersistedProviderThreads().pipe(
       Effect.provideService(ProviderInstanceRegistry, {
         listInstances: Effect.succeed([discoveryInstance]),
       } as unknown as ProviderInstanceRegistry["Service"]),
@@ -196,7 +189,7 @@ it.effect("discovers every Codex root through the server-owned reconciler", () =
         upsert: () => Effect.void,
       } as unknown as ProviderSessionDirectoryShape["Service"]),
       Effect.provideService(ProjectionSnapshotQuery, {
-        getShellSnapshot: () => Effect.succeed({ projects: [] }),
+        getShellSnapshot: () => Effect.succeed({ projects: [], threads: [] }),
         getThreadShellById: () => Effect.succeed(Option.none()),
         getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
       } as unknown as ProjectionSnapshotQueryShape["Service"]),
@@ -218,13 +211,513 @@ it.effect("discovers every Codex root through the server-owned reconciler", () =
     );
 
     expect(importedCount).toBe(1);
-    expect(receivedInput?.workspaceRoots).toBeUndefined();
     expect(commands.map((command) => command.type)).toEqual([
       "project.create",
       "thread.create",
       "thread.message.import",
       "thread.message.import",
     ]);
+  }),
+);
+
+it.effect("re-reads an unassigned thread when its workspace gets a project", () =>
+  Effect.gen(function* () {
+    const unassignedProjectId = ProjectId.make("codex-unassigned-threads");
+    const projectId = ProjectId.make("project-1");
+    const oldInstanceId = ProviderInstanceId.make("codex-old");
+    let discoveryInput:
+      | Parameters<NonNullable<ProviderInstance["adapter"]["discoverPersistedThreads"]>>[0]
+      | undefined;
+    const bindings: Array<Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]> = [];
+    const commands: OrchestrationCommand[] = [];
+    const discoveryInstance = {
+      ...instance,
+      enabled: true,
+      snapshot: {
+        getSnapshot: Effect.succeed({ models: [{ slug: "gpt-5.6-sol", isDefault: true }] }),
+      },
+      adapter: {
+        discoverPersistedThreads: (
+          input: Parameters<
+            NonNullable<ProviderInstance["adapter"]["discoverPersistedThreads"]>
+          >[0],
+        ) => {
+          discoveryInput = input;
+          return Effect.succeed([persistedThread]);
+        },
+      },
+    } as unknown as ProviderInstance;
+    const binding = {
+      threadId: importedThreadId,
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: oldInstanceId,
+      resumeCursor: { threadId: PROVIDER_THREAD_ID },
+      runtimePayload: {
+        imported: true,
+        continuationKey: CONTINUATION_KEY,
+        cwd: persistedThread.cwd,
+        providerDiscoveryCursor: persistedThread.discoveryCursor,
+      },
+      lastSeenAt: persistedThread.updatedAt,
+    };
+
+    yield* reconcilePersistedProviderThreads().pipe(
+      Effect.provideService(ProviderInstanceRegistry, {
+        listInstances: Effect.succeed([discoveryInstance]),
+      } as unknown as ProviderInstanceRegistry["Service"]),
+      Effect.provideService(ProviderSessionDirectory, {
+        listBindings: () => Effect.succeed([binding]),
+        upsert: (nextBinding: Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]) =>
+          Effect.sync(() => {
+            bindings.push(nextBinding);
+          }),
+      } as unknown as ProviderSessionDirectoryShape["Service"]),
+      Effect.provideService(ProjectionSnapshotQuery, {
+        getShellSnapshot: () =>
+          Effect.succeed({
+            projects: [
+              { id: projectId, workspaceRoot: persistedThread.cwd },
+              { id: unassignedProjectId, workspaceRoot: "/tmp/unassigned-codex-threads" },
+            ],
+            threads: [{ id: importedThreadId, projectId: unassignedProjectId }],
+          }),
+        getThreadShellById: () =>
+          Effect.succeed(
+            Option.some({
+              id: importedThreadId,
+              projectId: unassignedProjectId,
+              modelSelection: { instanceId: oldInstanceId, model: "gpt-5.6-sol" },
+            }),
+          ),
+        getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.some({ id: projectId })),
+        getThreadDetailById: () => Effect.succeed(Option.some({ messages: [] })),
+      } as unknown as ProjectionSnapshotQueryShape["Service"]),
+      Effect.provideService(OrchestrationEngineService, {
+        dispatch: (command: OrchestrationCommand) =>
+          Effect.sync(() => {
+            commands.push(command);
+            return { sequence: commands.length };
+          }),
+      } as unknown as OrchestrationEngineServiceShape["Service"]),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-provider-thread-reconciler-rehome-test-",
+          }).pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    );
+
+    expect(discoveryInput?.forceReadProviderThreadIds).toEqual(new Set([PROVIDER_THREAD_ID]));
+    expect(commands).toContainEqual(
+      expect.objectContaining({ type: "thread.meta.update", projectId }),
+    );
+    expect(bindings.at(-1)).toMatchObject({ providerInstanceId: instance.instanceId });
+  }),
+);
+
+it.effect("rebinds an imported thread without rereading its unchanged transcript", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project-1");
+    const oldInstanceId = ProviderInstanceId.make("codex-old");
+    let discoveryInput:
+      | Parameters<NonNullable<ProviderInstance["adapter"]["discoverPersistedThreads"]>>[0]
+      | undefined;
+    const bindings: Array<Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]> = [];
+    const commands: OrchestrationCommand[] = [];
+    const discoveryInstance = {
+      ...instance,
+      enabled: true,
+      snapshot: {
+        getSnapshot: Effect.succeed({ models: [{ slug: "gpt-5.6-sol", isDefault: true }] }),
+      },
+      adapter: {
+        discoverPersistedThreads: (
+          input: Parameters<
+            NonNullable<ProviderInstance["adapter"]["discoverPersistedThreads"]>
+          >[0],
+        ) => {
+          discoveryInput = input;
+          return Effect.succeed([]);
+        },
+      },
+    } as unknown as ProviderInstance;
+    const binding = {
+      threadId: importedThreadId,
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: oldInstanceId,
+      resumeCursor: { threadId: PROVIDER_THREAD_ID },
+      runtimePayload: {
+        imported: true,
+        continuationKey: CONTINUATION_KEY,
+        cwd: persistedThread.cwd,
+        providerDiscoveryCursor: persistedThread.discoveryCursor,
+      },
+      lastSeenAt: persistedThread.updatedAt,
+    };
+
+    yield* reconcilePersistedProviderThreads().pipe(
+      Effect.provideService(ProviderInstanceRegistry, {
+        listInstances: Effect.succeed([discoveryInstance]),
+      } as unknown as ProviderInstanceRegistry["Service"]),
+      Effect.provideService(ProviderSessionDirectory, {
+        listBindings: () => Effect.succeed([binding]),
+        upsert: (nextBinding: Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]) =>
+          Effect.sync(() => {
+            bindings.push(nextBinding);
+          }),
+      } as unknown as ProviderSessionDirectoryShape["Service"]),
+      Effect.provideService(ProjectionSnapshotQuery, {
+        getShellSnapshot: () =>
+          Effect.succeed({
+            projects: [{ id: projectId, workspaceRoot: persistedThread.cwd }],
+            threads: [{ id: importedThreadId, projectId }],
+          }),
+        getThreadShellById: () =>
+          Effect.succeed(
+            Option.some({
+              id: importedThreadId,
+              projectId,
+              modelSelection: { instanceId: oldInstanceId, model: "gpt-5.6-sol" },
+            }),
+          ),
+        getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.some({ id: projectId })),
+      } as unknown as ProjectionSnapshotQueryShape["Service"]),
+      Effect.provideService(OrchestrationEngineService, {
+        dispatch: (command: OrchestrationCommand) =>
+          Effect.sync(() => {
+            commands.push(command);
+            return { sequence: commands.length };
+          }),
+      } as unknown as OrchestrationEngineServiceShape["Service"]),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-provider-thread-reconciler-owner-test-",
+          }).pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    );
+
+    expect(discoveryInput?.cursorByProviderThreadId).toEqual(
+      new Map([[PROVIDER_THREAD_ID, persistedThread.discoveryCursor]]),
+    );
+    expect(discoveryInput?.forceReadProviderThreadIds).toBeUndefined();
+    expect(bindings).toHaveLength(1);
+    expect(bindings[0]).toMatchObject({
+      providerInstanceId: instance.instanceId,
+      runtimePayload: {
+        modelSelection: { instanceId: instance.instanceId, model: "gpt-5.6-sol" },
+      },
+    });
+    expect(commands).toEqual([
+      expect.objectContaining({
+        type: "thread.meta.update",
+        threadId: importedThreadId,
+        modelSelection: { instanceId: instance.instanceId, model: "gpt-5.6-sol" },
+      }),
+    ]);
+  }),
+);
+
+it.effect("repairs a failed ownership handoff when the selected model changes before retry", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project-1");
+    const oldInstanceId = ProviderInstanceId.make("codex-old");
+    const commands: OrchestrationCommand[] = [];
+    const repairedBindings: Array<Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]> =
+      [];
+    let selectedModel = "gpt-5.6-sol";
+    let projectedModel = selectedModel;
+    let projectedInstanceId = oldInstanceId;
+    let failBindingUpdate = true;
+    const discoveryInstance = {
+      ...instance,
+      enabled: true,
+      snapshot: {
+        getSnapshot: Effect.sync(() => ({
+          models: [{ slug: selectedModel, isDefault: true }],
+        })),
+      },
+      adapter: {
+        discoverPersistedThreads: () => Effect.succeed([]),
+      },
+    } as unknown as ProviderInstance;
+    let persistedBinding: ProviderRuntimeBindingWithMetadata = {
+      threadId: importedThreadId,
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: oldInstanceId,
+      resumeCursor: { threadId: PROVIDER_THREAD_ID },
+      runtimePayload: {
+        imported: true,
+        continuationKey: CONTINUATION_KEY,
+        cwd: persistedThread.cwd,
+        providerDiscoveryCursor: persistedThread.discoveryCursor,
+        modelSelection: { instanceId: oldInstanceId, model: "gpt-5.6-sol" },
+      },
+      lastSeenAt: persistedThread.updatedAt,
+    };
+    const services = {
+      registry: {
+        listInstances: Effect.succeed([discoveryInstance]),
+      } as unknown as ProviderInstanceRegistry["Service"],
+      directory: {
+        listBindings: () => Effect.succeed([persistedBinding]),
+        upsert: (nextBinding: Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]) =>
+          Effect.gen(function* () {
+            if (failBindingUpdate) {
+              failBindingUpdate = false;
+              return yield* Effect.die("binding update failed after projection update");
+            }
+            persistedBinding = { ...nextBinding, lastSeenAt: persistedBinding.lastSeenAt };
+            repairedBindings.push(nextBinding);
+          }),
+      } as unknown as ProviderSessionDirectoryShape["Service"],
+      snapshots: {
+        getShellSnapshot: () =>
+          Effect.succeed({
+            projects: [{ id: projectId, workspaceRoot: persistedThread.cwd }],
+            threads: [{ id: importedThreadId, projectId }],
+          }),
+        getThreadShellById: () =>
+          Effect.succeed(
+            Option.some({
+              id: importedThreadId,
+              projectId,
+              modelSelection: {
+                instanceId: projectedInstanceId,
+                model: projectedModel,
+              },
+            }),
+          ),
+      } as unknown as ProjectionSnapshotQueryShape["Service"],
+      engine: {
+        dispatch: (command: OrchestrationCommand) =>
+          Effect.sync(() => {
+            commands.push(command);
+            if (command.type === "thread.meta.update" && command.modelSelection !== undefined) {
+              projectedInstanceId = command.modelSelection.instanceId;
+              projectedModel = command.modelSelection.model;
+            }
+            return { sequence: commands.length };
+          }),
+      } as unknown as OrchestrationEngineServiceShape["Service"],
+    };
+    const reconciliation = reconcilePersistedProviderThreads().pipe(
+      Effect.provideService(ProviderInstanceRegistry, services.registry),
+      Effect.provideService(ProviderSessionDirectory, services.directory),
+      Effect.provideService(ProjectionSnapshotQuery, services.snapshots),
+      Effect.provideService(OrchestrationEngineService, services.engine),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-provider-thread-reconciler-recovery-test-",
+          }).pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    );
+
+    yield* reconciliation;
+    selectedModel = "gpt-5.6-sol-retry";
+    yield* reconciliation;
+
+    expect(commands).toHaveLength(2);
+    expect(commands[0]).toEqual(
+      expect.objectContaining({
+        type: "thread.meta.update",
+        threadId: importedThreadId,
+        modelSelection: { instanceId: instance.instanceId, model: "gpt-5.6-sol" },
+      }),
+    );
+    expect(commands[1]).toEqual(
+      expect.objectContaining({
+        type: "thread.meta.update",
+        threadId: importedThreadId,
+        modelSelection: { instanceId: instance.instanceId, model: "gpt-5.6-sol-retry" },
+      }),
+    );
+    expect(repairedBindings).toHaveLength(1);
+    expect(repairedBindings[0]).toMatchObject({
+      providerInstanceId: instance.instanceId,
+      runtimePayload: {
+        modelSelection: { instanceId: instance.instanceId, model: "gpt-5.6-sol-retry" },
+      },
+    });
+  }),
+);
+
+it.effect("repairs a binding-first ownership handoff after the selected model changes", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project-1");
+    const oldInstanceId = ProviderInstanceId.make("codex-old");
+    const selectedModel = "gpt-5.6-sol-retry";
+    const commands: OrchestrationCommand[] = [];
+    const repairedBindings: Array<Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]> =
+      [];
+    const discoveryInstance = {
+      ...instance,
+      enabled: true,
+      snapshot: {
+        getSnapshot: Effect.succeed({ models: [{ slug: selectedModel, isDefault: true }] }),
+      },
+      adapter: {
+        discoverPersistedThreads: () => Effect.succeed([]),
+      },
+    } as unknown as ProviderInstance;
+    const binding = {
+      threadId: importedThreadId,
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: instance.instanceId,
+      resumeCursor: { threadId: PROVIDER_THREAD_ID },
+      runtimePayload: {
+        imported: true,
+        continuationKey: CONTINUATION_KEY,
+        cwd: persistedThread.cwd,
+        providerDiscoveryCursor: persistedThread.discoveryCursor,
+        modelSelection: { instanceId: instance.instanceId, model: "gpt-5.6-sol" },
+      },
+      lastSeenAt: persistedThread.updatedAt,
+    };
+
+    yield* reconcilePersistedProviderThreads().pipe(
+      Effect.provideService(ProviderInstanceRegistry, {
+        listInstances: Effect.succeed([discoveryInstance]),
+      } as unknown as ProviderInstanceRegistry["Service"]),
+      Effect.provideService(ProviderSessionDirectory, {
+        listBindings: () => Effect.succeed([binding]),
+        upsert: (nextBinding: Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]) =>
+          Effect.sync(() => {
+            repairedBindings.push(nextBinding);
+          }),
+      } as unknown as ProviderSessionDirectoryShape["Service"]),
+      Effect.provideService(ProjectionSnapshotQuery, {
+        getShellSnapshot: () =>
+          Effect.succeed({
+            projects: [{ id: projectId, workspaceRoot: persistedThread.cwd }],
+            threads: [{ id: importedThreadId, projectId }],
+          }),
+        getThreadShellById: () =>
+          Effect.succeed(
+            Option.some({
+              id: importedThreadId,
+              projectId,
+              modelSelection: { instanceId: oldInstanceId, model: "gpt-5.6-sol" },
+            }),
+          ),
+      } as unknown as ProjectionSnapshotQueryShape["Service"]),
+      Effect.provideService(OrchestrationEngineService, {
+        dispatch: (command: OrchestrationCommand) =>
+          Effect.sync(() => {
+            commands.push(command);
+            return { sequence: commands.length };
+          }),
+      } as unknown as OrchestrationEngineServiceShape["Service"]),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-provider-thread-reconciler-binding-first-recovery-test-",
+          }).pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    );
+
+    expect(commands).toEqual([
+      expect.objectContaining({
+        type: "thread.meta.update",
+        threadId: importedThreadId,
+        modelSelection: { instanceId: instance.instanceId, model: selectedModel },
+      }),
+    ]);
+    expect(repairedBindings).toHaveLength(1);
+    expect(repairedBindings[0]).toMatchObject({
+      providerInstanceId: instance.instanceId,
+      runtimePayload: {
+        modelSelection: { instanceId: instance.instanceId, model: selectedModel },
+      },
+    });
+  }),
+);
+
+it.effect("preserves a user model choice when the provider default changes", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project-1");
+    const userModel = "gpt-5.4";
+    const commands: OrchestrationCommand[] = [];
+    const bindings: Array<Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]> = [];
+    const discoveryInstance = {
+      ...instance,
+      enabled: true,
+      snapshot: {
+        getSnapshot: Effect.succeed({ models: [{ slug: "gpt-5.6-sol", isDefault: true }] }),
+      },
+      adapter: {
+        discoverPersistedThreads: () => Effect.succeed([]),
+      },
+    } as unknown as ProviderInstance;
+    const binding = {
+      threadId: importedThreadId,
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: instance.instanceId,
+      resumeCursor: { threadId: PROVIDER_THREAD_ID },
+      runtimePayload: {
+        imported: true,
+        continuationKey: CONTINUATION_KEY,
+        cwd: persistedThread.cwd,
+        providerDiscoveryCursor: persistedThread.discoveryCursor,
+        modelSelection: { instanceId: instance.instanceId, model: userModel },
+      },
+      lastSeenAt: persistedThread.updatedAt,
+    };
+
+    yield* reconcilePersistedProviderThreads().pipe(
+      Effect.provideService(ProviderInstanceRegistry, {
+        listInstances: Effect.succeed([discoveryInstance]),
+      } as unknown as ProviderInstanceRegistry["Service"]),
+      Effect.provideService(ProviderSessionDirectory, {
+        listBindings: () => Effect.succeed([binding]),
+        upsert: (nextBinding: Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]) =>
+          Effect.sync(() => {
+            bindings.push(nextBinding);
+          }),
+      } as unknown as ProviderSessionDirectoryShape["Service"]),
+      Effect.provideService(ProjectionSnapshotQuery, {
+        getShellSnapshot: () =>
+          Effect.succeed({
+            projects: [{ id: projectId, workspaceRoot: persistedThread.cwd }],
+            threads: [{ id: importedThreadId, projectId }],
+          }),
+        getThreadShellById: () =>
+          Effect.succeed(
+            Option.some({
+              id: importedThreadId,
+              projectId,
+              modelSelection: { instanceId: instance.instanceId, model: userModel },
+            }),
+          ),
+      } as unknown as ProjectionSnapshotQueryShape["Service"]),
+      Effect.provideService(OrchestrationEngineService, {
+        dispatch: (command: OrchestrationCommand) =>
+          Effect.sync(() => {
+            commands.push(command);
+            return { sequence: commands.length };
+          }),
+      } as unknown as OrchestrationEngineServiceShape["Service"]),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-provider-thread-reconciler-model-choice-test-",
+          }).pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    );
+
+    expect(commands).toEqual([]);
+    expect(bindings).toEqual([]);
   }),
 );
 

@@ -1,5 +1,6 @@
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { createPersistedThreadDiscoverySession } from "@t3tools/client-runtime/state/server";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   Outlet,
@@ -37,7 +38,6 @@ import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
 import { applyAppearanceContrast } from "~/appearanceContrast";
 import { useClientSettings } from "../hooks/useSettings";
-import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { PlanAgentSelectionHeal } from "../planAgentSelectionHeal";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -58,12 +58,7 @@ import {
 } from "../state/server";
 import { useAtomValue } from "@effect/atom-react";
 import { useAtomCommand } from "../state/use-atom-command";
-import {
-  readProject,
-  setActiveEnvironmentId,
-  useActiveEnvironmentId,
-  useProjects,
-} from "../state/entities";
+import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
   createKeybindingsUpdateToastController,
@@ -157,7 +152,7 @@ function RootRouteView() {
         <SlowRpcRequestToastCoordinator />
         <HostedStaticEnvironmentBootstrap />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
-        {primaryEnvironmentAuthenticated ? <CodexPersistedThreadsBootstrap /> : null}
+        <PersistedThreadsBootstrap />
         {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {appShell}
@@ -389,42 +384,23 @@ function AuthenticatedTracingBootstrap() {
   return null;
 }
 
-/**
- * External Codex history is a project-scoped opt-in. The active route is the
- * UI's durable notion of which project the user has opened, including a new
- * draft thread, so discovery is requested once for that workspace root.
- */
-function CodexPersistedThreadsBootstrap() {
-  const { activeDraftThread, activeThread } = useHandleNewThread();
-  const projects = useProjects();
+const persistedThreadDiscoverySession = createPersistedThreadDiscoverySession();
+
+function PersistedThreadsBootstrap() {
+  const { environments } = useEnvironments();
   const discoverPersistedThreads = useAtomCommand(serverEnvironment.discoverPersistedThreads, {
     reportFailure: false,
   });
-  const requestedWorkspaceRef = useRef<string | null>(null);
-  const routeThread = activeThread ?? activeDraftThread;
-  const project = routeThread
-    ? (projects.find(
-        (candidate) =>
-          candidate.environmentId === routeThread.environmentId &&
-          candidate.id === routeThread.projectId,
-      ) ?? null)
-    : null;
-  const requestKey = project ? `${project.environmentId}:${project.workspaceRoot}` : null;
 
   useEffect(() => {
-    if (project === null || requestKey === null || requestedWorkspaceRef.current === requestKey) {
-      return;
-    }
-    requestedWorkspaceRef.current = requestKey;
-    void discoverPersistedThreads({
-      environmentId: project.environmentId,
-      input: { workspaceRoot: project.workspaceRoot },
-    }).catch(() => {
-      if (requestedWorkspaceRef.current === requestKey) {
-        requestedWorkspaceRef.current = null;
-      }
-    });
-  }, [discoverPersistedThreads, project, requestKey]);
+    persistedThreadDiscoverySession.check(
+      environments.map((environment) => ({
+        environmentId: environment.environmentId,
+        connected: environment.connection.phase === "connected",
+      })),
+      (environmentId) => discoverPersistedThreads({ environmentId, input: {} }),
+    );
+  }, [discoverPersistedThreads, environments]);
 
   return null;
 }

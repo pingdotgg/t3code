@@ -120,6 +120,7 @@ import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
 import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts";
 import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
+import * as ProviderThreadReconciler from "./provider/Layers/ProviderThreadReconciler.ts";
 import {
   AntigravityInstallation,
   AntigravityInstallationError,
@@ -777,6 +778,9 @@ const buildAppUnderTest = (options?: {
             getInstance: () => Effect.succeed(undefined),
             listInstances: Effect.succeed([]),
             ...options?.layers?.providerInstanceRegistry,
+          }),
+          Layer.mock(ProviderThreadReconciler.ProviderThreadReconciler)({
+            reconcile: () => Effect.succeed(0),
           }),
           Layer.mock(AntigravityInstallation)({
             managedDirectory: "unused-test-antigravity-runtime",

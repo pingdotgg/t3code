@@ -38,6 +38,12 @@ function makeListedThread(id: string, overrides: Record<string, unknown> = {}): 
   } as unknown as ListedThread;
 }
 
+const discoveryCursor = (
+  cwd = "/work/project",
+  status = "idle",
+  updatedAt = "2026-05-03T03:09:20.000Z",
+) => JSON.stringify([updatedAt, status, cwd]);
+
 it("maps persisted Codex turns to ordered user and assistant history", () => {
   const thread = {
     id: "provider-thread-1",
@@ -156,16 +162,20 @@ it("omits partial and empty messages while applying timestamp fallbacks", () => 
       createdAt: "2026-05-03T03:09:20.000Z",
     }),
   ]);
-  expect(persisted.discoveryCursor).toBe("2026-05-03T03:09:20.000Z:inProgress");
+  expect(persisted.discoveryCursor).toBe(discoveryCursor("/work/project", "inProgress"));
 });
 
-it("selects only user-visible threads whose discovery cursor changed", () => {
+it("reads new threads and threads whose update time, status, or workspace changed", () => {
   const unchanged = makeListedThread("unchanged");
   const statusChanged = makeListedThread("status-changed", { status: { type: "idle" } });
+  const updatedChanged = makeListedThread("updated-changed", { updatedAt: 1_777_777_820 });
+  const workspaceChanged = makeListedThread("workspace-changed", { cwd: "/work/other" });
   const selected = selectCodexThreadsForRead(
     [
       unchanged,
       statusChanged,
+      updatedChanged,
+      workspaceChanged,
       makeListedThread("new"),
       makeListedThread("ephemeral", { ephemeral: true }),
       makeListedThread("subagent", { source: { subAgent: { threadId: "parent" } } }),
@@ -175,32 +185,23 @@ it("selects only user-visible threads whose discovery cursor changed", () => {
     {
       excludeProviderThreadIds: new Set(["native"]),
       cursorByProviderThreadId: new Map([
-        ["unchanged", "2026-05-03T03:09:20.000Z:idle"],
-        ["status-changed", "2026-05-03T03:09:20.000Z:active"],
+        ["unchanged", discoveryCursor()],
+        ["status-changed", discoveryCursor("/work/project", "active")],
+        ["updated-changed", discoveryCursor()],
+        ["workspace-changed", discoveryCursor()],
       ]),
     },
   );
 
-  expect(selected.map((thread) => thread.id)).toEqual(["status-changed", "new"]);
+  expect(selected.map((thread) => thread.id)).toEqual([
+    "status-changed",
+    "updated-changed",
+    "workspace-changed",
+    "new",
+  ]);
 });
 
-it("filters persisted threads to explicitly opened workspace roots", () => {
-  const selected = selectCodexThreadsForRead(
-    [
-      makeListedThread("project", { cwd: "/work/project" }),
-      makeListedThread("other", { cwd: "/work/other" }),
-    ],
-    {
-      excludeProviderThreadIds: new Set(),
-      cursorByProviderThreadId: new Map(),
-      workspaceRoots: new Set(["/work/project/"]),
-    },
-  );
-
-  expect(selected.map((thread) => thread.id)).toEqual(["project"]);
-});
-
-it("keeps every durable thread when no workspace filter is supplied", () => {
+it("keeps durable threads from every workspace in the environment", () => {
   const selected = selectCodexThreadsForRead(
     [
       makeListedThread("project", { cwd: "/work/project" }),
@@ -215,14 +216,25 @@ it("keeps every durable thread when no workspace filter is supplied", () => {
   expect(selected.map((thread) => thread.id)).toEqual(["project", "other"]);
 });
 
-it("re-reads known imports so scoped discovery can rehome them", () => {
+it("does not read an unchanged imported thread", () => {
   const selected = selectCodexThreadsForRead(
     [makeListedThread("known", { cwd: "/work/project" })],
     {
       excludeProviderThreadIds: new Set(),
-      cursorByProviderThreadId: new Map([["known", "2026-05-03T03:09:20.000Z:idle"]]),
+      cursorByProviderThreadId: new Map([["known", discoveryCursor()]]),
+    },
+  );
+
+  expect(selected).toEqual([]);
+});
+
+it("reads an unchanged imported thread when its project may have changed", () => {
+  const selected = selectCodexThreadsForRead(
+    [makeListedThread("known", { cwd: "/work/project" })],
+    {
+      excludeProviderThreadIds: new Set(),
+      cursorByProviderThreadId: new Map([["known", discoveryCursor()]]),
       forceReadProviderThreadIds: new Set(["known"]),
-      workspaceRoots: new Set(["/work/project"]),
     },
   );
 
