@@ -10,12 +10,22 @@ interface TypeField {
 }
 
 interface TypeLayout {
+  readonly kind: "struct" | "union" | "enum" | "packed" | "alias" | "opaque";
   readonly size: number;
   readonly align: number;
+  /** Struct and union members; absent on enum, alias, and opaque types. */
   readonly fields: Readonly<Record<string, TypeField>>;
+  /** Alias target, e.g. GhosttyMode -> u16. */
+  readonly type?: string;
 }
 
 type TypeLayouts = Readonly<Record<string, TypeLayout>>;
+
+/** The ABI manifest returned by ghostty_type_json (schema 1). */
+interface TypeManifest {
+  readonly schema: number;
+  readonly types: TypeLayouts;
+}
 
 const textDecoder = new TextDecoder();
 
@@ -38,7 +48,13 @@ export class GhosttyRuntime {
     const bytes = new Uint8Array(memory.buffer);
     let end = jsonPointer;
     while (end < bytes.length && bytes[end] !== 0) end += 1;
-    this.layouts = JSON.parse(textDecoder.decode(bytes.subarray(jsonPointer, end))) as TypeLayouts;
+    const manifest = JSON.parse(
+      textDecoder.decode(bytes.subarray(jsonPointer, end)),
+    ) as TypeManifest;
+    if (manifest.schema !== 1) {
+      throw new Error(`Unsupported libghostty-vt type manifest schema: ${manifest.schema}`);
+    }
+    this.layouts = manifest.types;
   }
 
   static async load(): Promise<GhosttyRuntime> {
@@ -80,14 +96,14 @@ export class GhosttyRuntime {
   }
 
   alloc(size: number): number {
-    const pointer = this.call("ghostty_wasm_alloc_u8_array", size);
+    const pointer = this.call("ghostty_wasm_alloc", size);
     if (pointer === 0) throw new Error(`libghostty-vt failed to allocate ${size} bytes`);
     new Uint8Array(this.memory.buffer, pointer, size).fill(0);
     return pointer;
   }
 
   free(pointer: number, size: number): void {
-    if (pointer !== 0) this.call("ghostty_wasm_free_u8_array", pointer, size);
+    if (pointer !== 0) this.call("ghostty_wasm_free", pointer, size);
   }
 
   allocOpaque(): number {
@@ -132,9 +148,20 @@ export class GhosttyRuntime {
     return new Uint8Array(this.memory.buffer, pointer, size);
   }
 
-  setField(pointer: number, structName: string, fieldName: string, value: number): void {
+  /** Resolves a struct member and the primitive it is stored as, following aliases. */
+  private field(structName: string, fieldName: string): TypeField {
     const field = this.layout(structName).fields[fieldName];
     if (!field) throw new Error(`libghostty-vt field is unavailable: ${structName}.${fieldName}`);
+    let type = field.type;
+    for (let alias = this.layouts[type]; alias?.kind === "alias"; alias = this.layouts[type]) {
+      if (alias.type === undefined || alias.type === type) break;
+      type = alias.type;
+    }
+    return type === field.type ? field : { ...field, type };
+  }
+
+  setField(pointer: number, structName: string, fieldName: string, value: number): void {
+    const field = this.field(structName, fieldName);
     const view = this.view(pointer + field.offset, field.size);
     switch (field.type) {
       case "bool":
@@ -160,8 +187,7 @@ export class GhosttyRuntime {
   }
 
   readField(pointer: number, structName: string, fieldName: string): number {
-    const field = this.layout(structName).fields[fieldName];
-    if (!field) throw new Error(`libghostty-vt field is unavailable: ${structName}.${fieldName}`);
+    const field = this.field(structName, fieldName);
     const view = this.view(pointer + field.offset, field.size);
     switch (field.type) {
       case "bool":

@@ -40,3 +40,9 @@ semver build metadata, and the focused web ABI test reads it back through `ghost
 compares it against mobile's `VERSION` — so the web vendor directory holds only the artifacts, drift
 cannot hide, and there is no second pin to keep in sync. The same test enforces the artifact budget
 and exercises repeated create/write/free cycles with multi-codepoint graphemes.
+
+Both builds pass the same `-Dvt-features` list to compile out snapshots, Kitty graphics, and the
+glyph protocol, which neither adapter calls; that is what keeps the web artifact inside its budget
+and the Android libraries small. Adopting a new C API means checking it belongs to an enabled
+feature (`render_state`, `input_encode`, `selection`, `color`, `grid_introspection`, `formatter`)
+or adding that feature to both build scripts.

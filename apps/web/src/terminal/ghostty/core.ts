@@ -245,16 +245,25 @@ export class GhosttyTerminalCore {
     theme: GhosttyTheme,
     onPtyData: (data: string) => void,
   ): void {
-    const optionsSize = this.runtime.layout("GhosttyTerminalOptions").size;
-    const options = this.runtime.alloc(optionsSize);
-    this.runtime.setField(options, "GhosttyTerminalOptions", "cols", cols);
-    this.runtime.setField(options, "GhosttyTerminalOptions", "rows", rows);
-    this.runtime.setField(options, "GhosttyTerminalOptions", "max_scrollback", MAX_SCROLLBACK_ROWS);
     this.terminalSlot = this.runtime.allocOpaque();
-    const terminalResult = this.runtime.call("ghostty_terminal_new", 0, this.terminalSlot, options);
-    this.runtime.free(options, optionsSize);
+    const terminalResult = this.runtime.call(
+      "ghostty_terminal_new",
+      0,
+      this.terminalSlot,
+      cols,
+      rows,
+    );
     this.assertSuccess("ghostty_terminal_new", terminalResult);
     this.terminal = this.runtime.readPointer(this.terminalSlot);
+    // Scrollback is a runtime option (size_t, 4 bytes on wasm32) rather than
+    // a constructor argument.
+    const scrollback = this.runtime.alloc(4);
+    this.runtime.view(scrollback, 4).setUint32(0, MAX_SCROLLBACK_ROWS, true);
+    this.assertSuccess(
+      "ghostty_terminal_set",
+      this.runtime.call("ghostty_terminal_set", this.terminal, 28, scrollback),
+    );
+    this.runtime.free(scrollback, 4);
     this.applyDefaultCursorBlink();
     this.ptyWriter = onPtyData;
     this.ptyWriterId = this.runtime.attachPtyWriter(this.terminal, onPtyData);
@@ -324,10 +333,9 @@ export class GhosttyTerminalCore {
 
   resetAndWrite(data: string): void {
     this.ensureActive();
+    // RIS keeps the embedder's default cursor blink (option 23), so nothing
+    // needs reapplying before the replay runs.
     this.runtime.call("ghostty_terminal_reset", this.terminal);
-    // RIS returns the cursor to Ghostty's built-in steady default, so the
-    // embedder default has to be applied again before the replay runs.
-    this.applyDefaultCursorBlink();
     this.rows = [];
     if (data.length === 0) return;
     const writer = this.ptyWriter;
@@ -442,13 +450,24 @@ export class GhosttyTerminalCore {
     );
   }
 
+  /**
+   * Reads a DEC private mode (`CSI ? n h/l`) through GhosttyTerminalModeConfig:
+   * a u16 mode id whose high bit selects ANSI modes, followed by the bool value
+   * the library fills in.
+   */
+  private readDecPrivateMode(mode: number): boolean {
+    this.runtime.setField(this.scratch, "GhosttyTerminalModeConfig", "mode", mode);
+    this.runtime.setField(this.scratch, "GhosttyTerminalModeConfig", "value", 0);
+    return (
+      this.runtime.call("ghostty_terminal_get", this.terminal, 37, this.scratch) ===
+        GHOSTTY_SUCCESS &&
+      this.runtime.readField(this.scratch, "GhosttyTerminalModeConfig", "value") !== 0
+    );
+  }
+
   isMouseAnyEventTracking(): boolean {
     this.ensureActive();
-    this.runtime.bytes(this.scratch, 1)[0] = 0;
-    return (
-      this.runtime.call("ghostty_terminal_mode_get", this.terminal, 1003, this.scratch) ===
-        GHOSTTY_SUCCESS && this.runtime.bytes(this.scratch, 1)[0] !== 0
-    );
+    return this.readDecPrivateMode(1003);
   }
 
   isAlternateScreen(): boolean {
@@ -462,11 +481,7 @@ export class GhosttyTerminalCore {
 
   isApplicationCursorKeys(): boolean {
     this.ensureActive();
-    this.runtime.bytes(this.scratch, 1)[0] = 0;
-    return (
-      this.runtime.call("ghostty_terminal_mode_get", this.terminal, 1, this.scratch) ===
-        GHOSTTY_SUCCESS && this.runtime.bytes(this.scratch, 1)[0] !== 0
-    );
+    return this.readDecPrivateMode(1);
   }
 
   encodeKey(event: KeyboardEvent, action: "press" | "release" = "press"): string {
@@ -504,7 +519,7 @@ export class GhosttyTerminalCore {
     if (textPointer !== 0) this.runtime.bytes(textPointer, textBytes.length).set(textBytes);
     this.runtime.call("ghostty_key_event_set_utf8", this.keyEvent, textPointer, textBytes.length);
 
-    const written = this.runtime.call("ghostty_wasm_alloc_usize");
+    const written = this.runtime.alloc(4);
     const encoded = this.encodeOutput(written, (output, outputSize) =>
       this.runtime.call(
         "ghostty_key_encoder_encode",
@@ -515,7 +530,7 @@ export class GhosttyTerminalCore {
         written,
       ),
     );
-    this.runtime.call("ghostty_wasm_free_usize", written);
+    this.runtime.free(written, 4);
     if (textPointer !== 0) this.runtime.free(textPointer, textBytes.length);
     return encoded;
   }
@@ -526,11 +541,8 @@ export class GhosttyTerminalCore {
     if (input.length === 0) return "";
     const inputPointer = this.runtime.alloc(input.length);
     this.runtime.bytes(inputPointer, input.length).set(input);
-    this.runtime.bytes(this.scratch, 1)[0] = 0;
-    const bracketed =
-      this.runtime.call("ghostty_terminal_mode_get", this.terminal, 2004, this.scratch) ===
-        GHOSTTY_SUCCESS && this.runtime.bytes(this.scratch, 1)[0] !== 0;
-    const written = this.runtime.call("ghostty_wasm_alloc_usize");
+    const bracketed = this.readDecPrivateMode(2004);
+    const written = this.runtime.alloc(4);
     let encoded = "";
     const sizeResult = this.runtime.call(
       "ghostty_paste_encode",
@@ -558,7 +570,7 @@ export class GhosttyTerminalCore {
         result === GHOSTTY_SUCCESS ? decoder.decode(this.runtime.bytes(output, outputLength)) : "";
       this.runtime.free(output, outputSize);
     }
-    this.runtime.call("ghostty_wasm_free_usize", written);
+    this.runtime.free(written, 4);
     this.runtime.free(inputPointer, input.length);
     return encoded;
   }
@@ -613,7 +625,7 @@ export class GhosttyTerminalCore {
     this.runtime.call("ghostty_mouse_event_set_position", this.mouseEvent, position);
     this.runtime.free(position, positionLayout.size);
 
-    const written = this.runtime.call("ghostty_wasm_alloc_usize");
+    const written = this.runtime.alloc(4);
     const encoded = this.encodeOutput(written, (output, outputSize) =>
       this.runtime.call(
         "ghostty_mouse_encoder_encode",
@@ -624,7 +636,7 @@ export class GhosttyTerminalCore {
         written,
       ),
     );
-    this.runtime.call("ghostty_wasm_free_usize", written);
+    this.runtime.free(written, 4);
     return encoded;
   }
 
@@ -689,7 +701,7 @@ export class GhosttyTerminalCore {
   hyperlinkAt(col: number, row: number): string | null {
     this.ensureActive();
     const ref = this.gridRef(col, row);
-    const written = this.runtime.call("ghostty_wasm_alloc_usize");
+    const written = this.runtime.alloc(4);
     const sizeResult = this.runtime.call("ghostty_grid_ref_hyperlink_uri", ref, 0, 0, written);
     const outputSize = this.runtime.view(written, 4).getUint32(0, true);
     let hyperlink: string | null = null;
@@ -708,7 +720,7 @@ export class GhosttyTerminalCore {
       }
       this.runtime.free(output, outputSize);
     }
-    this.runtime.call("ghostty_wasm_free_usize", written);
+    this.runtime.free(written, 4);
     this.runtime.free(ref, this.runtime.layout("GhosttyGridRef").size);
     return hyperlink;
   }
@@ -800,7 +812,7 @@ export class GhosttyTerminalCore {
     optionsView.setUint8(8, 1);
     optionsView.setUint8(9, 1);
     optionsView.setUint32(12, 0, true);
-    const written = this.runtime.call("ghostty_wasm_alloc_usize");
+    const written = this.runtime.alloc(4);
     const sizeResult = this.runtime.call(
       "ghostty_terminal_selection_format_buf",
       this.terminal,
@@ -827,7 +839,7 @@ export class GhosttyTerminalCore {
       }
       this.runtime.free(output, outputSize);
     }
-    this.runtime.call("ghostty_wasm_free_usize", written);
+    this.runtime.free(written, 4);
     this.runtime.free(options, SELECTION_FORMAT_OPTIONS_SIZE);
     return text;
   }
