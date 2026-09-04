@@ -330,35 +330,31 @@ function ProcessSignalActions({
   return (
     <div className="flex items-center justify-end gap-1.5">
       <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              disabled={isSignaling || !canMaintainEnvironment}
-              className="cursor-pointer text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:pointer-events-none disabled:opacity-50"
-              onClick={() => onSignal(process.pid, "SIGINT")}
-            >
-              INT
-            </button>
-          }
-        />
+        <TooltipTrigger render={<span className="inline-flex" />}>
+          <button
+            type="button"
+            disabled={isSignaling || !canMaintainEnvironment}
+            className="cursor-pointer text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
+            onClick={() => onSignal(process.pid, "SIGINT")}
+          >
+            INT
+          </button>
+        </TooltipTrigger>
         <TooltipPopup side="top">
           {canMaintainEnvironment ? "Send SIGINT" : "This connection cannot manage processes."}
         </TooltipPopup>
       </Tooltip>
       <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              disabled={isSignaling || !canMaintainEnvironment}
-              className="cursor-pointer text-[11px] font-medium text-destructive underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
-              onClick={() => onSignal(process.pid, "SIGKILL")}
-            >
-              KILL
-            </button>
-          }
-        />
+        <TooltipTrigger render={<span className="inline-flex" />}>
+          <button
+            type="button"
+            disabled={isSignaling || !canMaintainEnvironment}
+            className="cursor-pointer text-[11px] font-medium text-destructive underline-offset-2 hover:underline disabled:opacity-50"
+            onClick={() => onSignal(process.pid, "SIGKILL")}
+          >
+            KILL
+          </button>
+        </TooltipTrigger>
         <TooltipPopup side="top">
           {canMaintainEnvironment ? "Send SIGKILL" : "This connection cannot manage processes."}
         </TooltipPopup>
