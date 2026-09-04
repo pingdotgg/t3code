@@ -796,6 +796,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       expect(launched.payload).toMatchObject({
         taskId: started.toolCall.toolCallId,
         title: "Antigravity subagent batch",
+        taskType: "subagent_batch",
         description: "Launch subagents",
         status: "running",
       });
@@ -857,7 +858,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       const completed = yield* h.waitForEvent((event) => event.type === "task.completed");
       expect(completed.payload).toEqual({
         taskId: "replayed:4",
-        taskType: "subagent",
+        taskType: "subagent_batch",
         toolUseId: "replayed:4",
         title: "Antigravity subagent batch",
         status: "failed",
@@ -1085,7 +1086,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         expect(settled.payload).toMatchObject({
           taskId: "trajectory:4",
           title: "Antigravity subagent batch",
-          taskType: "subagent",
+          taskType: "subagent_batch",
           status:
             stop === "disconnect"
               ? "failed"
