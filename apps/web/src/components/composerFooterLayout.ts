@@ -48,6 +48,36 @@ export function shouldUseRestingComposerLayout(input: {
   return input.isExistingThread && !input.isMobileViewport && collapsed && !input.hasExpandedChrome;
 }
 
+/**
+ * How much taller the empty expanded composer is than its resting row on
+ * desktop widths, from the layout classes in ChatComposer: the body loses
+ * 8px of top padding, the prompt clamps from min-h-17.5 (70px) to 32px, and
+ * the 48px footer leaves flow.
+ */
+export const COMPOSER_RESTING_EXPANSION_MIN_PX = 94;
+
+/**
+ * The space the timeline reserves at its end for the composer overlay.
+ *
+ * The overlay is measured live, but a resting composer is much shorter than
+ * an expanded one. Reserving only the resting height lets a scroll to the end
+ * land flush against the short composer, and the expansion that follows then
+ * covers the last rows because the timeline never moves for footer growth.
+ * While resting, the reservation keeps the last expanded height, or at least
+ * the resting height plus the empty expansion, so expanding again changes
+ * nothing above the composer. An expanded measurement is authoritative and
+ * may shrink it.
+ */
+export function resolveComposerTimelineInset(input: {
+  currentInset: number;
+  overlayHeight: number;
+  isResting: boolean;
+}): number {
+  return input.isResting
+    ? Math.max(input.currentInset, input.overlayHeight + COMPOSER_RESTING_EXPANSION_MIN_PX)
+    : input.overlayHeight;
+}
+
 export function shouldAnimateComposerRestingTransition(input: {
   hasCompletedInitialLayout: boolean;
   stateChanged: boolean;
