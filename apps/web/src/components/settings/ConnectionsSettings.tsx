@@ -26,6 +26,7 @@ import {
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
   AuthEnvironmentMaintainScope,
+  AuthDiagnosticsReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
@@ -262,6 +263,11 @@ const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
     scope: AuthPreviewOperateScope,
     title: "Control previews",
     description: "Open browser previews and host browser automation.",
+  },
+  {
+    scope: AuthDiagnosticsReadScope,
+    title: "View diagnostics and usage",
+    description: "Read process diagnostics, resource history, and usage totals.",
   },
   {
     scope: AuthTerminalOperateScope,
