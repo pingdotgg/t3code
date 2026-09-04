@@ -254,8 +254,8 @@ describe("mobile model options", () => {
       const [option] = buildModelOptions(unavailableConfig, selection);
       expect(option).toMatchObject({
         key: `google_work:${selection.model}`,
-        label: model.name,
-        subtitle: "Google",
+        label: `${model.name} · Google`,
+        subtitle: "Google Work",
         providerKey: "google_work",
         providerLabel: "Google Work",
         providerDriver: "antigravity",
@@ -282,6 +282,7 @@ describe("mobile model options", () => {
       const missing = options.find((option) => option.selection.model === selection.model);
       expect(missing).toMatchObject({
         label: selection.model,
+        subtitle: "Google Work",
         providerLabel: "Google Work",
         providerDriver: "antigravity",
         isUnavailable: true,
