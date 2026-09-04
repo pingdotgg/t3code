@@ -293,15 +293,22 @@ export const prepareTailcatRegistration = Effect.fn(
         "This connection code has no pairing credential. Ask the other machine for a fresh code.",
     });
   }
+  if (payload.environmentId === undefined) {
+    return yield* new ConnectionBlockedError({
+      reason: "configuration",
+      detail:
+        "This connection code does not name its environment. Ask the other machine for a fresh code.",
+    });
+  }
+  const connectionId = `tailcat:${payload.environmentId}`;
   const gateway = yield* ClientCapabilities.TailcatEnvironmentGateway;
-  const provisioned = yield* gateway.provision(payload);
-  if (payload.environmentId !== undefined && payload.environmentId !== provisioned.environmentId) {
+  const provisioned = yield* gateway.provision({ payload, connectionId });
+  if (payload.environmentId !== provisioned.environmentId) {
     return yield* new ConnectionBlockedError({
       reason: "configuration",
       detail: "The machine behind this Tailcat address is not the environment the code named.",
     });
   }
-  const connectionId = `tailcat:${provisioned.environmentId}`;
   const label = input.label?.trim() || provisioned.label || payload.name || "Tailcat environment";
   return new TailcatConnectionRegistration({
     target: new TailcatConnectionTarget({

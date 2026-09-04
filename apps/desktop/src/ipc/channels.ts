@@ -47,7 +47,6 @@ export const SET_WSL_BACKEND_ENABLED_CHANNEL = "desktop:set-wsl-backend-enabled"
 export const SET_WSL_DISTRO_CHANNEL = "desktop:set-wsl-distro";
 export const SET_WSL_ONLY_CHANNEL = "desktop:set-wsl-only";
 export const SSH_PASSWORD_PROMPT_CANCELLED_RESULT = "ssh-password-prompt-cancelled";
-export const GET_TAILCAT_RUNTIME_AVAILABILITY_CHANNEL = "desktop:get-tailcat-runtime-availability";
 export const ENSURE_TAILCAT_ENVIRONMENT_CHANNEL = "desktop:ensure-tailcat-environment";
 export const RESTART_TAILCAT_ENVIRONMENT_CHANNEL = "desktop:restart-tailcat-environment";
 export const DISCONNECT_TAILCAT_ENVIRONMENT_CHANNEL = "desktop:disconnect-tailcat-environment";

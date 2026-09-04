@@ -41,12 +41,12 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
 
-import { baseDirFlag, DurationFromString } from "./config.ts";
+import { baseDirFlag, DurationFromString, jsonFlag } from "./config.ts";
 import {
-  RUNNING_SERVER_REQUEST_TIMEOUT,
   RunningServerRequestError,
   type RunningServerSession,
   withRunningServerSession,
+  callRunningServer,
 } from "./remote.ts";
 
 const RPC_OPEN_TIMEOUT = Duration.seconds(10);
@@ -110,12 +110,7 @@ const runPeerCommand = <A, E, R>(
 // Typed federation failures are worded for the user by the server; anything
 // else (authorization, transport, no answer) gets the generic wrapper.
 const call = <A, E>(operation: string, request: Effect.Effect<A, E>) =>
-  request.pipe(
-    Effect.timeout(RUNNING_SERVER_REQUEST_TIMEOUT),
-    Effect.mapError((cause) =>
-      isFederationError(cause) ? cause : new RunningServerRequestError({ operation, cause }),
-    ),
-  );
+  callRunningServer(operation, request, isFederationError);
 
 const scopeList = (scopes: ReadonlyArray<FederationScope>): string =>
   scopes.length === 0 ? "none" : scopes.join(" ");
@@ -262,11 +257,6 @@ const followRemoteRun = Effect.fn("peer.followRemoteRun")(function* (
   );
   return yield* Ref.get(latest);
 });
-
-const jsonFlag = Flag.boolean("json").pipe(
-  Flag.withDescription("Emit JSON instead of human-readable output."),
-  Flag.withDefault(false),
-);
 
 const peerIdArgument = Argument.string("peer-id").pipe(
   Argument.withDescription("Peer environment id, as listed by `t3 peer list`."),

@@ -3,6 +3,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { formatAbsoluteTimestamp } from "~/timestampFormat";
 import type {
   EnvironmentId,
   TailcatConnectionCodeResult,
@@ -35,7 +36,6 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { formatFederationTimestamp } from "./FederationSection.logic";
 import { SettingsRow, useRelativeTimeTick } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import {
@@ -115,7 +115,7 @@ const TrustedPeerRow = memo(function TrustedPeerRow({
           <span className="font-mono">…{tailcatNodeKeyFingerprint(peer.nodeKey)}</span>
           <span aria-hidden> · </span>
           {peer.lastSeenAt
-            ? `Last seen ${formatFederationTimestamp(peer.lastSeenAt)}`
+            ? `Last seen ${formatAbsoluteTimestamp(peer.lastSeenAt)}`
             : "Not connected yet"}
           {peer.sessionIds.length > 0 ? (
             <>
@@ -374,6 +374,12 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
     },
     [environmentId, revokeTrustedPeer, runCommand],
   );
+  const onRevoke = useCallback(
+    (peerId: string) => {
+      void handleRevoke(peerId);
+    },
+    [handleRevoke],
+  );
 
   const handleRegenerate = useCallback(async () => {
     setIsRegenerating(true);
@@ -487,7 +493,7 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
               <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
                 <p>{state.lastError.message}</p>
                 <p className="mt-1 text-destructive/70">
-                  {state.lastError.code} · {formatFederationTimestamp(state.lastError.at)}
+                  {state.lastError.code} · {formatAbsoluteTimestamp(state.lastError.at)}
                 </p>
               </div>
             ) : null}
@@ -552,7 +558,7 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
                       peer={peer}
                       busy={revokingPeerId === peer.id}
                       onRename={handleRename}
-                      onRevoke={(peerId) => void handleRevoke(peerId)}
+                      onRevoke={onRevoke}
                     />
                   ))}
                 </div>
@@ -561,7 +567,7 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
 
             <div className="flex items-center justify-between gap-3 border-t border-border/50 pt-3">
               <p className="text-[11px] text-muted-foreground/70">
-                Updated {formatFederationTimestamp(state.updatedAt)}
+                Updated {formatAbsoluteTimestamp(state.updatedAt)}
               </p>
               <div className="flex items-center gap-1">
                 <Button

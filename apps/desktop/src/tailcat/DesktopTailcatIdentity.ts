@@ -1,4 +1,4 @@
-import type { TailcatNodeKey } from "@t3tools/contracts";
+import { type TailcatNodeKey, tailcatNodeKeyFingerprint } from "@t3tools/contracts";
 import * as TailcatRuntime from "@t3tools/tailcat/runtime";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -221,7 +221,7 @@ export const make = Effect.gen(function* () {
     };
     const encrypted = yield* store(record);
     yield* Effect.logInfo("Created the Tailcat client identity.", {
-      nodeKeyFingerprint: generated.nodeKey.slice(-8),
+      nodeKeyFingerprint: tailcatNodeKeyFingerprint(generated.nodeKey),
       encrypted,
     });
     return { record, encrypted };

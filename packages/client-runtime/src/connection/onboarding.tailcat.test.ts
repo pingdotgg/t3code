@@ -26,12 +26,12 @@ const code = (options: { readonly withPairingToken?: boolean } = {}) =>
 
 const gateway = (environmentId: EnvironmentId = ENVIRONMENT_ID) =>
   TailcatEnvironmentGateway.of({
-    provision: (payload) =>
+    provision: ({ payload, connectionId }) =>
       Effect.succeed({
         environmentId,
         label: "GPU box",
         bootstrap: {
-          connectionId: `tailcat:${environmentId}`,
+          connectionId,
           address: payload.address,
           remotePort: payload.port,
           localPort: 48831,

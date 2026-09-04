@@ -6,7 +6,6 @@ export type TailcatProvisioningPhase = "starting-tunnel" | "pairing";
 
 export interface TailcatProvisioningProgress {
   /** The forwarder connection id being provisioned (`tailcat:<environment id or address>`). */
-  readonly connectionId: string;
   readonly phase: TailcatProvisioningPhase;
 }
 

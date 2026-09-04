@@ -70,10 +70,15 @@ export interface ProvisionedTailcatEnvironment extends PreparedTailcatEnvironmen
 export class TailcatEnvironmentGateway extends Context.Service<
   TailcatEnvironmentGateway,
   {
-    /** Establishes the forward for a pasted code and pairs with T3 auth. */
-    readonly provision: (
-      code: TailcatConnectionCodePayload,
-    ) => Effect.Effect<ProvisionedTailcatEnvironment, ConnectionAttemptError>;
+    /**
+     * Establishes the forward for a pasted code and pairs with T3 auth. The
+     * connection id is minted by onboarding so the forwarder and the saved
+     * profile always agree on it.
+     */
+    readonly provision: (input: {
+      readonly payload: TailcatConnectionCodePayload;
+      readonly connectionId: string;
+    }) => Effect.Effect<ProvisionedTailcatEnvironment, ConnectionAttemptError>;
     /** Ensures a live forward exists for a saved environment. */
     readonly prepare: (input: {
       readonly connectionId: string;

@@ -15,6 +15,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -67,7 +68,6 @@ export const TAILCAT_RECENT_OUTPUT_LINES = 40;
 
 export type TailcatAllowPolicy =
   | { readonly _tag: "all" }
-  | { readonly _tag: "none" }
   | { readonly _tag: "keys"; readonly nodeKeys: ReadonlyArray<TailcatNodeKey> };
 
 export interface TailcatExecutableResolution {
@@ -250,8 +250,6 @@ export function tailcatAllowFlag(policy: TailcatAllowPolicy): ReadonlyArray<stri
   switch (policy._tag) {
     case "all":
       return [];
-    case "none":
-      return ["--allow=none"];
     case "keys":
       return policy.nodeKeys.length === 0
         ? ["--allow=none"]
@@ -373,27 +371,20 @@ export const make = Effect.fn("TailcatRuntime.make")(function* (
       return { stdout, stderr, exitCode };
     }).pipe(
       Effect.scoped,
-      Effect.mapError(
-        (cause) =>
+      Effect.catchCause((failure) => {
+        const cause = Cause.squash(failure);
+        return Effect.fail(
           new TailcatCommandError({
             subcommand: input.subcommand,
             exitCode: null,
-            detail: isNotFoundSpawnError(cause)
-              ? `The Tailcat runtime at ${input.executablePath} could not be started.`
-              : `tailcat ${input.subcommand} failed to run.`,
+            detail:
+              isNotFoundSpawnError(cause) || Cause.hasDies(failure)
+                ? `The Tailcat runtime at ${input.executablePath} could not be started.`
+                : `tailcat ${input.subcommand} failed to run.`,
             cause,
           }),
-      ),
-      Effect.catchDefect((cause) =>
-        Effect.fail(
-          new TailcatCommandError({
-            subcommand: input.subcommand,
-            exitCode: null,
-            detail: `The Tailcat runtime at ${input.executablePath} could not be started.`,
-            cause,
-          }),
-        ),
-      ),
+        );
+      }),
       Effect.timeoutOrElse({
         duration: timeout,
         orElse: () =>
@@ -596,6 +587,8 @@ export const make = Effect.fn("TailcatRuntime.make")(function* (
     readonly output: OutputBuffer;
     readonly exited: Deferred.Deferred<Option.Option<number>>;
     readonly stdoutLines: Stream.Stream<string>;
+    /** SIGTERM, then SIGKILL after the grace period; never fails. */
+    readonly stop: Effect.Effect<void>;
   }
 
   /**
@@ -618,24 +611,14 @@ export const make = Effect.fn("TailcatRuntime.make")(function* (
         }),
       )
       .pipe(
-        Effect.mapError(
-          (cause) =>
-            new TailcatStartupError({
-              subcommand: input.subcommand,
-              exitCode: null,
-              recentOutput: [],
-              detail: `Could not start tailcat ${input.subcommand}.`,
-              cause,
-            }),
-        ),
-        Effect.catchDefect((cause) =>
+        Effect.catchCause((cause) =>
           Effect.fail(
             new TailcatStartupError({
               subcommand: input.subcommand,
               exitCode: null,
               recentOutput: [],
               detail: `Could not start tailcat ${input.subcommand}.`,
-              cause,
+              cause: Cause.squash(cause),
             }),
           ),
         ),
@@ -656,7 +639,10 @@ export const make = Effect.fn("TailcatRuntime.make")(function* (
       Stream.tap(output.push),
       Stream.catch(() => Stream.empty),
     );
-    return { handle, output, exited, stdoutLines };
+    const stop = handle
+      .kill({ killSignal: "SIGTERM", forceKillAfter: TAILCAT_PROCESS_STOP_GRACE })
+      .pipe(Effect.ignore);
+    return { handle, output, exited, stdoutLines, stop };
   });
 
   const processHandle = (spawned: SpawnedProcess): TailcatProcessHandle => ({
@@ -664,9 +650,7 @@ export const make = Effect.fn("TailcatRuntime.make")(function* (
     exit: Deferred.await(spawned.exited),
     isRunning: spawned.handle.isRunning.pipe(Effect.orElseSucceed(() => false)),
     recentOutput: spawned.output.lines,
-    stop: spawned.handle
-      .kill({ killSignal: "SIGTERM", forceKillAfter: TAILCAT_PROCESS_STOP_GRACE })
-      .pipe(Effect.ignore),
+    stop: spawned.stop,
   });
 
   const serve: TailcatRuntime["Service"]["serve"] = Effect.fn("TailcatRuntime.serve")(function* ({
@@ -702,9 +686,7 @@ export const make = Effect.fn("TailcatRuntime.make")(function* (
     // The race must settle before the kill: killing inside a `timeoutOrElse`
     // fallback lets the exit branch win and reports a crash, not a timeout.
     if (Option.isNone(settled)) {
-      yield* spawned.handle
-        .kill({ killSignal: "SIGTERM", forceKillAfter: TAILCAT_PROCESS_STOP_GRACE })
-        .pipe(Effect.ignore);
+      yield* spawned.stop;
       return yield* new TailcatTimeoutError({
         subcommand: "serve",
         timeoutMs: Duration.toMillis(TAILCAT_SERVE_READY_TIMEOUT),
@@ -805,9 +787,7 @@ export const make = Effect.fn("TailcatRuntime.make")(function* (
           Effect.gen(function* () {
             // A failed readiness probe or listen timeout must not leave a
             // forwarder behind: the process is owned by this attempt.
-            yield* spawned.handle
-              .kill({ killSignal: "SIGTERM", forceKillAfter: TAILCAT_PROCESS_STOP_GRACE })
-              .pipe(Effect.ignore);
+            yield* spawned.stop;
             if (error === "not-listening") {
               const recentOutput = yield* spawned.output.lines;
               return yield* new TailcatStartupError({
@@ -825,9 +805,7 @@ export const make = Effect.fn("TailcatRuntime.make")(function* (
       // The race must settle before the kill: killing inside a `timeoutOrElse`
       // fallback lets the exit branch win and reports a crash, not a timeout.
       if (Option.isNone(settled)) {
-        yield* spawned.handle
-          .kill({ killSignal: "SIGTERM", forceKillAfter: TAILCAT_PROCESS_STOP_GRACE })
-          .pipe(Effect.ignore);
+        yield* spawned.stop;
         return yield* new TailcatTimeoutError({
           subcommand: "forward",
           timeoutMs: Duration.toMillis(readinessTimeout),

@@ -4,16 +4,15 @@ import type {
   TailcatAddress,
   TailcatConnectionDiagnostics,
   TailcatFailure,
-  TailcatFailureCode,
   TailcatForwardStatus,
   TailcatPathProbe,
-  TailcatRuntimeAvailability,
   TailcatRuntimeInfo,
 } from "@t3tools/contracts";
+import { TailcatFailureCode } from "@t3tools/contracts";
 import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
 import * as NetService from "@t3tools/shared/Net";
 import { tailcatBackoffDelayMs, TAILCAT_BACKOFF_RESET_AFTER_MS } from "@t3tools/tailcat/backoff";
-import type { TailcatRuntimeError } from "@t3tools/tailcat/errors";
+import { tailcatFailureCode, type TailcatRuntimeError } from "@t3tools/tailcat/errors";
 import * as TailcatRuntime from "@t3tools/tailcat/runtime";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -52,21 +51,8 @@ export const TAILCAT_FORWARD_MAX_RESTARTS = 8;
 export class DesktopTailcatEnvironmentError extends Schema.TaggedErrorClass<DesktopTailcatEnvironmentError>()(
   "DesktopTailcatEnvironmentError",
   {
-    code: Schema.Literals([
-      "binary-missing",
-      "binary-not-executable",
-      "version-incompatible",
-      "identity-failed",
-      "startup-failed",
-      "process-exited",
-      "timeout",
-      "address-invalid",
-      "port-in-use",
-      "remote-unavailable",
-      "unknown",
-    ]),
+    code: TailcatFailureCode,
     detail: Schema.String,
-    connectionId: Schema.optionalKey(Schema.String),
   },
 ) {
   /**
@@ -81,7 +67,6 @@ export class DesktopTailcatEnvironmentError extends Schema.TaggedErrorClass<Desk
 export class DesktopTailcatEnvironment extends Context.Service<
   DesktopTailcatEnvironment,
   {
-    readonly runtimeAvailability: Effect.Effect<TailcatRuntimeAvailability>;
     readonly ensureEnvironment: (
       input: DesktopTailcatEnvironmentEnsureInput,
     ) => Effect.Effect<DesktopTailcatEnvironmentBootstrap, DesktopTailcatEnvironmentError>;
@@ -106,7 +91,6 @@ interface RunningForward {
 }
 
 interface ForwardEntry {
-  readonly connectionId: string;
   readonly address: TailcatAddress;
   readonly remotePort: number;
   readonly localPort: number;
@@ -116,41 +100,22 @@ interface ForwardEntry {
   readonly consecutiveFailures: number;
   readonly lastError: TailcatFailure | null;
   readonly path: TailcatPathProbe | null;
-  /** Set while a disconnect is in progress so the monitor does not restart. */
-  readonly stopping: boolean;
   /** Bumped per spawned forward so a stale exit monitor never acts on a newer one. */
   readonly generation: number;
 }
 
 const describe = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
+const withoutKey = <K, V>(map: ReadonlyMap<K, V>, key: K): ReadonlyMap<K, V> => {
+  const next = new Map(map);
+  next.delete(key);
+  return next;
+};
 const isDesktopTailcatEnvironmentError = Schema.is(DesktopTailcatEnvironmentError);
 
-function failureCodeOf(
+const failureCodeOf = (
   error: TailcatRuntimeError | DesktopTailcatIdentity.DesktopTailcatIdentityError,
-): TailcatFailureCode {
-  switch (error._tag) {
-    case "TailcatBinaryMissingError":
-      return "binary-missing";
-    case "TailcatBinaryNotExecutableError":
-      return "binary-not-executable";
-    case "TailcatVersionIncompatibleError":
-      return "version-incompatible";
-    case "TailcatAddressInvalidError":
-      return "address-invalid";
-    case "TailcatPortInUseError":
-      return "port-in-use";
-    case "TailcatStartupError":
-      return "startup-failed";
-    case "TailcatTimeoutError":
-      return "timeout";
-    case "TailcatProcessExitedError":
-      return "process-exited";
-    case "TailcatCommandError":
-      return "unknown";
-    case "DesktopTailcatIdentityError":
-      return "identity-failed";
-  }
-}
+): TailcatFailureCode =>
+  error._tag === "DesktopTailcatIdentityError" ? "identity-failed" : tailcatFailureCode(error);
 
 export const make = Effect.gen(function* () {
   const runtime = yield* TailcatRuntime.TailcatRuntime;
@@ -180,8 +145,8 @@ export const make = Effect.gen(function* () {
   const getEntry = (connectionId: string) =>
     Ref.get(entries).pipe(Effect.map((map) => Option.fromUndefinedOr(map.get(connectionId))));
 
-  const setEntry = (entry: ForwardEntry) =>
-    Ref.update(entries, (map) => new Map(map).set(entry.connectionId, entry));
+  const setEntry = (connectionId: string, entry: ForwardEntry) =>
+    Ref.update(entries, (map) => new Map(map).set(connectionId, entry));
 
   const patchEntry = (connectionId: string, patch: (entry: ForwardEntry) => ForwardEntry) =>
     Ref.update(entries, (map) => {
@@ -191,18 +156,6 @@ export const make = Effect.gen(function* () {
 
   const failure = (code: TailcatFailureCode, message: string): Effect.Effect<TailcatFailure> =>
     nowIso.pipe(Effect.map((at) => ({ code, message, at })));
-
-  const runtimeAvailability: DesktopTailcatEnvironment["Service"]["runtimeAvailability"] =
-    runtime.resolve.pipe(
-      Effect.map((info): TailcatRuntimeAvailability => ({ available: true, runtime: info })),
-      Effect.catch((error) =>
-        Effect.succeed<TailcatRuntimeAvailability>({
-          available: false,
-          code: failureCodeOf(error),
-          message: error.message,
-        }),
-      ),
-    );
 
   const runtimeInfo: Effect.Effect<TailcatRuntimeInfo | null> = runtime.resolve.pipe(
     Effect.map((info): TailcatRuntimeInfo | null => info),
@@ -229,11 +182,12 @@ export const make = Effect.gen(function* () {
 
   /** Starts (or restarts) the forward for an entry; the entry must be locked. */
   const startForward = (
+    connectionId: string,
     entry: ForwardEntry,
   ): Effect.Effect<ForwardEntry, DesktopTailcatEnvironmentError> =>
     Effect.gen(function* () {
       const scope = yield* Scope.make("sequential");
-      yield* setEntry({ ...entry, status: "starting", running: null, stopping: false });
+      yield* setEntry(connectionId, { ...entry, status: "starting", running: null });
       const started = yield* identity
         .withKeyFile((keyPath) =>
           runtime.forward({
@@ -252,19 +206,17 @@ export const make = Effect.gen(function* () {
               ? new DesktopTailcatEnvironmentError({
                   code: error.code,
                   detail: `${error.detail} The environment may be offline, or this device is not trusted yet: redeem a fresh connection code.`,
-                  connectionId: entry.connectionId,
                 })
               : new DesktopTailcatEnvironmentError({
                   code: failureCodeOf(error),
                   detail: error.message,
-                  connectionId: entry.connectionId,
                 }),
           ),
           Effect.onError(() => Scope.close(scope, Exit.void).pipe(Effect.ignore)),
           Effect.tapError((error) =>
             failure(error.code, error.detail).pipe(
               Effect.flatMap((recorded) =>
-                patchEntry(entry.connectionId, (current) => ({
+                patchEntry(connectionId, (current) => ({
                   ...current,
                   status: "failed",
                   running: null,
@@ -282,21 +234,19 @@ export const make = Effect.gen(function* () {
       const published = yield* Deferred.make<void>();
       const monitor = yield* Deferred.await(published).pipe(
         Effect.andThen(started.exit),
-        Effect.flatMap((exitCode) => onForwardExit(entry.connectionId, generation, exitCode)),
+        Effect.flatMap((exitCode) => onForwardExit(connectionId, generation, exitCode)),
         Effect.forkIn(serviceScope),
       );
       const next: ForwardEntry = {
         ...entry,
         status: "ready",
         running: { scope, handle: started, startedAt, monitor },
-        stopping: false,
         lastError: null,
         generation,
       };
-      yield* setEntry(next);
+      yield* setEntry(connectionId, next);
       yield* Deferred.succeed(published, undefined);
       yield* Effect.logInfo("Tailcat forward ready.", {
-        connectionId: entry.connectionId,
         localPort: entry.localPort,
         remotePort: entry.remotePort,
         pid: started.pid,
@@ -305,7 +255,7 @@ export const make = Effect.gen(function* () {
     });
 
   /**
-   * Unexpected exit: record it and restart with backoff unless stopping. The
+   * Unexpected exit: record it and restart with backoff unless a newer forward replaced it. The
    * generation guard makes a monitor from an older forward a no-op once the
    * connection was re-ensured or restarted.
    */
@@ -316,11 +266,7 @@ export const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const current = yield* getEntry(connectionId);
-      if (
-        Option.isNone(current) ||
-        current.value.stopping ||
-        current.value.generation !== generation
-      ) {
+      if (Option.isNone(current) || current.value.generation !== generation) {
         return;
       }
       const recorded = yield* failure(
@@ -356,13 +302,12 @@ export const make = Effect.gen(function* () {
           const latest = yield* getEntry(connectionId);
           if (
             Option.isNone(latest) ||
-            latest.value.stopping ||
             latest.value.running !== null ||
             latest.value.generation !== generation
           ) {
             return;
           }
-          yield* startForward({
+          yield* startForward(connectionId, {
             ...latest.value,
             restartCount: latest.value.restartCount + 1,
           }).pipe(Effect.ignore);
@@ -370,18 +315,17 @@ export const make = Effect.gen(function* () {
       );
     });
 
-  const bootstrapOf = (entry: ForwardEntry, running: RunningForward) =>
+  const bootstrapOf = (connectionId: string, entry: ForwardEntry, running: RunningForward) =>
     identity.nodeKey.pipe(
       Effect.mapError(
         (error) =>
           new DesktopTailcatEnvironmentError({
             code: "identity-failed",
             detail: error.message,
-            connectionId: entry.connectionId,
           }),
       ),
       Effect.map((clientNodeKey): DesktopTailcatEnvironmentBootstrap => ({
-        connectionId: entry.connectionId,
+        connectionId,
         address: entry.address,
         remotePort: entry.remotePort,
         localPort: entry.localPort,
@@ -414,10 +358,9 @@ export const make = Effect.gen(function* () {
                 ...current,
                 consecutiveFailures: 0,
               }));
-              return yield* bootstrapOf(entry, running);
+              return yield* bootstrapOf(input.connectionId, entry, running);
             }
           }
-          yield* patchEntry(input.connectionId, (current) => ({ ...current, stopping: true }));
           yield* stopRunning(running);
         }
         const localPort =
@@ -429,7 +372,6 @@ export const make = Effect.gen(function* () {
                     new DesktopTailcatEnvironmentError({
                       code: "port-in-use",
                       detail: `Could not reserve a loopback port: ${error.message}`,
-                      connectionId: input.connectionId,
                     }),
                 ),
               );
@@ -440,7 +382,6 @@ export const make = Effect.gen(function* () {
             TAILCAT_BACKOFF_RESET_AFTER_MS <
             (yield* DateTime.now.pipe(Effect.map(DateTime.toEpochMillis)));
         const base: ForwardEntry = {
-          connectionId: input.connectionId,
           address: input.address,
           remotePort: input.remotePort,
           localPort,
@@ -451,11 +392,10 @@ export const make = Effect.gen(function* () {
             Option.isSome(existing) && !resetFailures ? existing.value.consecutiveFailures : 0,
           lastError: Option.isSome(existing) ? existing.value.lastError : null,
           path: Option.isSome(existing) ? existing.value.path : null,
-          stopping: false,
           generation: Option.isSome(existing) ? existing.value.generation : 0,
         };
-        const started = yield* startForward(base);
-        return yield* bootstrapOf(started, started.running!);
+        const started = yield* startForward(input.connectionId, base);
+        return yield* bootstrapOf(input.connectionId, started, started.running!);
       }),
     );
 
@@ -470,19 +410,17 @@ export const make = Effect.gen(function* () {
           return yield* new DesktopTailcatEnvironmentError({
             code: "unknown",
             detail: "This Tailcat environment has no active tunnel to restart.",
-            connectionId,
           });
         }
         if (existing.value.running !== null) {
-          yield* patchEntry(connectionId, (current) => ({ ...current, stopping: true }));
           yield* stopRunning(existing.value.running);
         }
-        const started = yield* startForward({
+        const started = yield* startForward(connectionId, {
           ...existing.value,
           restartCount: existing.value.restartCount + 1,
           consecutiveFailures: 0,
         });
-        return yield* bootstrapOf(started, started.running!);
+        return yield* bootstrapOf(connectionId, started, started.running!);
       }),
     );
 
@@ -496,25 +434,20 @@ export const make = Effect.gen(function* () {
         if (Option.isNone(existing)) {
           return;
         }
-        yield* patchEntry(connectionId, (current) => ({ ...current, stopping: true }));
         if (existing.value.running !== null) {
           yield* stopRunning(existing.value.running);
         }
-        yield* Ref.update(entries, (map) => {
-          const next = new Map(map);
-          next.delete(connectionId);
-          return next;
-        });
+        yield* Ref.update(entries, (map) => withoutKey(map, connectionId));
         yield* Effect.logInfo("Tailcat forward stopped.", { connectionId });
       }),
     );
 
-  const diagnosticsOf = (entry: ForwardEntry) =>
+  const diagnosticsOf = (connectionId: string, entry: ForwardEntry) =>
     Effect.gen(function* () {
       const recentOutput = entry.running === null ? [] : yield* entry.running.handle.recentOutput;
       const clientNodeKey = yield* identity.nodeKey.pipe(Effect.option);
       return {
-        connectionId: entry.connectionId,
+        connectionId,
         address: entry.address,
         remotePort: entry.remotePort,
         status: entry.status,
@@ -535,7 +468,7 @@ export const make = Effect.gen(function* () {
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.succeed(Option.none()),
-          onSome: (entry) => diagnosticsOf(entry).pipe(Effect.map(Option.some)),
+          onSome: (entry) => diagnosticsOf(connectionId, entry).pipe(Effect.map(Option.some)),
         }),
       ),
     );
@@ -554,7 +487,6 @@ export const make = Effect.gen(function* () {
               new DesktopTailcatEnvironmentError({
                 code: failureCodeOf(error),
                 detail: error.message,
-                connectionId,
               }),
           ),
         );
@@ -579,7 +511,6 @@ export const make = Effect.gen(function* () {
   );
 
   return DesktopTailcatEnvironment.of({
-    runtimeAvailability,
     ensureEnvironment,
     restartEnvironment,
     disconnectEnvironment,

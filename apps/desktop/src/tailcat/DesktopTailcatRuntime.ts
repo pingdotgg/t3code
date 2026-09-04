@@ -1,3 +1,4 @@
+import { tailcatExecutableName, tailcatPlatformKey } from "@t3tools/tailcat/manifest";
 import * as TailcatRuntime from "@t3tools/tailcat/runtime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -17,8 +18,10 @@ export function desktopTailcatBundledCandidates(
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
 ): ReadonlyArray<string> {
   const architecture = environment.processArch as NodeJS.Architecture;
-  const executable = environment.platform === "win32" ? "tailcat.exe" : "tailcat";
-  const platformKey = `${environment.platform}-${architecture}`;
+  const platformKey = tailcatPlatformKey(environment.platform, architecture);
+  if (platformKey === undefined) {
+    return [];
+  }
   const packaged = TailcatRuntime.bundledTailcatCandidates({
     platform: environment.platform,
     architecture,
@@ -27,7 +30,7 @@ export function desktopTailcatBundledCandidates(
     repoRootCandidates: environment.isDevelopment ? [environment.rootDir] : [],
   });
   const staged = environment.resolveResourcePathCandidates(
-    environment.path.join("tailcat", platformKey, executable),
+    environment.path.join("tailcat", platformKey, tailcatExecutableName(environment.platform)),
   );
   return Array.from(new Set([...packaged, ...staged]));
 }

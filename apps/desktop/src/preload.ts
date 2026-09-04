@@ -94,8 +94,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   },
   resolveSshPasswordPrompt: (requestId, password) =>
     ipcRenderer.invoke(IpcChannels.RESOLVE_SSH_PASSWORD_PROMPT_CHANNEL, { requestId, password }),
-  getTailcatRuntimeAvailability: () =>
-    ipcRenderer.invoke(IpcChannels.GET_TAILCAT_RUNTIME_AVAILABILITY_CHANNEL),
   ensureTailcatEnvironment: (input) =>
     ipcRenderer.invoke(IpcChannels.ENSURE_TAILCAT_ENVIRONMENT_CHANNEL, input),
   restartTailcatEnvironment: (connectionId) =>

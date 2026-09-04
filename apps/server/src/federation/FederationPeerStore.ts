@@ -3,7 +3,7 @@ import {
   FederationCapability,
   type FederationPeer,
   type FederationPeerStatus,
-  FederationRemoteRun,
+  FederationRun,
   FederationScopes,
   FederationTransport,
   IsoDateTime,
@@ -52,13 +52,27 @@ export const PersistedInboundRun = Schema.Struct({
   threadId: ThreadId,
   peerId: EnvironmentId,
   createdAt: IsoDateTime,
+  /** Event-log sequence just before the run was created; its events all follow it. */
+  startSequence: Schema.optionalKey(Schema.Int),
 });
 export type PersistedInboundRun = typeof PersistedInboundRun.Type;
+
+/**
+ * A run this environment started on a peer. Event tails and sync bookkeeping
+ * are re-fetchable, so they stay in memory; only identity and the last known
+ * projection are written to disk.
+ */
+export const PersistedRemoteRun = Schema.Struct({
+  peerId: EnvironmentId,
+  peerLabel: TrimmedNonEmptyString,
+  run: FederationRun,
+});
+export type PersistedRemoteRun = typeof PersistedRemoteRun.Type;
 
 const PersistedFederationState = Schema.Struct({
   version: Schema.Literal(1),
   peers: Schema.Array(PersistedFederationPeer),
-  remoteRuns: Schema.Array(FederationRemoteRun),
+  remoteRuns: Schema.Array(PersistedRemoteRun),
   inboundRuns: Schema.Array(PersistedInboundRun),
 });
 type PersistedFederationState = typeof PersistedFederationState.Type;
@@ -99,17 +113,13 @@ export class FederationPeerStore extends Context.Service<
       peer: PersistedFederationPeer,
     ) => Effect.Effect<void, FederationPeerStoreError>;
     readonly removePeer: (peerId: EnvironmentId) => Effect.Effect<void, FederationPeerStoreError>;
-    readonly peerStatus: (peerId: EnvironmentId) => Effect.Effect<PeerRuntimeStatus>;
     readonly setPeerStatus: (
       peerId: EnvironmentId,
       status: PeerRuntimeStatus,
     ) => Effect.Effect<void>;
-    readonly remoteRuns: Effect.Effect<ReadonlyArray<FederationRemoteRun>>;
+    readonly remoteRuns: Effect.Effect<ReadonlyArray<PersistedRemoteRun>>;
     readonly upsertRemoteRun: (
-      run: FederationRemoteRun,
-    ) => Effect.Effect<void, FederationPeerStoreError>;
-    readonly removeRemoteRunsForPeer: (
-      peerId: EnvironmentId,
+      run: PersistedRemoteRun,
     ) => Effect.Effect<void, FederationPeerStoreError>;
     readonly inboundRuns: Effect.Effect<ReadonlyArray<PersistedInboundRun>>;
     readonly recordInboundRun: (
@@ -161,9 +171,11 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const peerStatus: FederationPeerStore["Service"]["peerStatus"] = (peerId) =>
+  const peerStatus = (peerId: EnvironmentId) =>
     Ref.get(statuses).pipe(
-      Effect.map((current) => current.get(peerId) ?? { status: "unknown", lastError: null }),
+      Effect.map(
+        (current) => current.get(peerId) ?? { status: "unknown" as const, lastError: null },
+      ),
     );
 
   const presentPeer: FederationPeerStore["Service"]["presentPeer"] = (peer) =>
@@ -213,7 +225,6 @@ export const make = Effect.gen(function* () {
           }),
         ),
       ),
-    peerStatus,
     setPeerStatus: (peerId, status) =>
       Ref.update(statuses, (current) => new Map(current).set(peerId, status)),
     remoteRuns: Ref.get(state).pipe(Effect.map((current) => current.remoteRuns)),
@@ -227,11 +238,6 @@ export const make = Effect.gen(function* () {
           ),
           run,
         ],
-      })),
-    removeRemoteRunsForPeer: (peerId) =>
-      update((current) => ({
-        ...current,
-        remoteRuns: current.remoteRuns.filter((run) => run.peerId !== peerId),
       })),
     inboundRuns: Ref.get(state).pipe(Effect.map((current) => current.inboundRuns)),
     recordInboundRun: (run) =>

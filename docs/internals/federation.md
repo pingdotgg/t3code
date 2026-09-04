@@ -46,11 +46,11 @@ transport:
 2. The caller signs `{ iss: <its id>, aud: <peer id>, jti: <nonce> }` as an EdDSA JWT
    (`typ: t3-federation-auth+jwt`, 2-minute max age).
 3. `POST /api/federation/token { environmentId, assertion }` → the peer verifies the signature
-   against the pinned key, consumes the nonce, and issues a one-hour session with subject
-   `federation:<peerId>` and scope `federation:peer`.
+   against the pinned key, consumes the nonce, and issues a one-hour session whose subject is
+   the peer's environment id and whose only scope is `federation:peer`.
 
 Every other endpoint runs behind the normal session middleware and then `authorizePeer`,
-which requires the `federation:` subject, the marker scope, an existing peer record, and the
+which requires the marker scope, a subject that is a known peer's environment id, and the
 specific `FederationScope` the endpoint needs. Federation sessions are refused at the `/ws`
 upgrade, so a peer can never reach the client RPC surface. Clients hold sessions per peer and
 refresh them once on a 401.
@@ -94,7 +94,8 @@ the same owner operations over a WS RPC session minted against the running serve
 how `t3 pair` discovers it. `t3 remote tailcat …` (`apps/server/src/cli/remote.ts`) covers the
 Tailcat remote-access side over the HTTP `tailcat` group.
 
-`federation.json` in the state directory holds peers, inbound runs, and tracked remote runs
+`federation.json` in the state directory holds peers, inbound runs, and tracked remote runs (their identity and latest
+projection; run events stay in memory and are re-fetched from the peer)
 (with a bounded event tail). The owner's clients subscribe to `federation.subscribePeers` and
 `federation.subscribeRemoteRuns`; a poller syncs active remote runs every two seconds and goes
 idle when none are active. Every remote run and artifact carries the executing

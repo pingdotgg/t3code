@@ -30,6 +30,10 @@ const hostFlag = Flag.string("host").pipe(
   Flag.withDescription("Host/interface to bind (for example 127.0.0.1, 0.0.0.0, or a Tailnet IP)."),
   Flag.optional,
 );
+export const jsonFlag = Flag.boolean("json").pipe(
+  Flag.withDescription("Emit JSON instead of human-readable output."),
+  Flag.withDefault(false),
+);
 export const baseDirFlag = Flag.string("base-dir").pipe(
   Flag.withDescription(
     "Explicit T3 Code data directory; runtime state is stored under userdata (equivalent to T3CODE_HOME).",

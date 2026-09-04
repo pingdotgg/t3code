@@ -5,15 +5,7 @@ import type {
   FederationRunStatus,
   FederationScope,
 } from "@t3tools/contracts";
-import {
-  T3ConnectionCodeInvalidError,
-  decodeFederationPeerCode,
-  isT3ConnectionCode,
-  peekT3ConnectionCodeKind,
-} from "@t3tools/shared/t3ConnectionCode";
-import * as Schema from "effect/Schema";
-
-const isCodeInvalidError = Schema.is(T3ConnectionCodeInvalidError);
+import { describeT3ConnectionCode } from "@t3tools/shared/t3ConnectionCode";
 
 export const FEDERATION_SCOPE_OPTIONS: ReadonlyArray<{
   readonly scope: FederationScope;
@@ -155,37 +147,18 @@ export type FederationPeerCodePreview =
 
 /** Live feedback for the peer-code field; a Tailcat connection code is redirected, not rejected. */
 export function describeFederationPeerCode(raw: string, nowMs: number): FederationPeerCodePreview {
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
-    return { kind: "empty" };
+  const preview = describeT3ConnectionCode(raw, "peer");
+  switch (preview.kind) {
+    case "empty":
+    case "invalid":
+      return preview;
+    case "other-kind":
+      return { kind: "tailcat-code", message: preview.message };
+    case "valid":
+      return {
+        kind: "valid",
+        payload: preview.payload,
+        expired: preview.expiresAtMs !== null && preview.expiresAtMs <= nowMs,
+      };
   }
-  if (!isT3ConnectionCode(trimmed)) {
-    return { kind: "invalid", message: "Paste the full peer code. It starts with t3c://peer/." };
-  }
-  if (peekT3ConnectionCodeKind(trimmed) === "tailcat") {
-    return {
-      kind: "tailcat-code",
-      message:
-        "This is a Tailcat connection code for a device. Use Add environment → Tailcat instead.",
-    };
-  }
-  try {
-    const payload = decodeFederationPeerCode(trimmed);
-    return { kind: "valid", payload, expired: Date.parse(payload.expiresAt) <= nowMs };
-  } catch (cause) {
-    return {
-      kind: "invalid",
-      message: isCodeInvalidError(cause) ? cause.message : "This peer code could not be read.",
-    };
-  }
-}
-
-const timestampFormatter = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
-
-export function formatFederationTimestamp(value: string): string {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : timestampFormatter.format(parsed);
 }

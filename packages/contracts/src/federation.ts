@@ -45,15 +45,6 @@ export const FEDERATION_DEFAULT_SCOPES = [
   "runs.read",
 ] as const satisfies ReadonlyArray<FederationScope>;
 
-export const FEDERATION_ALL_SCOPES = [
-  "environment.read",
-  "projects.read",
-  "runs.read",
-  "runs.start",
-  "runs.cancel",
-  "artifacts.read",
-] as const satisfies ReadonlyArray<FederationScope>;
-
 export const FederationCapability = Schema.Literals([
   "hello",
   "projects.list",
@@ -394,4 +385,3 @@ export class FederationError extends Schema.TaggedErrorClass<FederationError>()(
  */
 export const FEDERATION_PEER_CODE_PAIRING_SUBJECT = "federation-peer-code" as const;
 export const FEDERATION_PEER_CODE_DEFAULT_TTL_SECONDS = 300;
-export const FEDERATION_SESSION_SUBJECT_PREFIX = "federation:" as const;

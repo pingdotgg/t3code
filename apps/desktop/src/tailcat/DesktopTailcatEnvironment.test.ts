@@ -6,7 +6,6 @@ import type {
 } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import { tailcatBackoffDelayMs } from "@t3tools/tailcat/backoff";
-import { TailcatBinaryMissingError } from "@t3tools/tailcat/errors";
 import * as TailcatRuntime from "@t3tools/tailcat/runtime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -336,7 +335,6 @@ describe("DesktopTailcatEnvironment", () => {
 
       assert.instanceOf(error, DesktopTailcatEnvironment.DesktopTailcatEnvironmentError);
       assert.equal(error.code, "remote-unavailable");
-      assert.equal(error.connectionId, CONNECTION_ID);
       assert.isTrue(error.message.startsWith("[tailcat:remote-unavailable] "));
       assert.include(error.message, "not trusted");
       assert.include(error.message, "offline");
@@ -483,7 +481,6 @@ describe("DesktopTailcatEnvironment", () => {
 
       const missing = yield* environment.restartEnvironment("unknown-connection").pipe(Effect.flip);
       assert.equal(missing.code, "unknown");
-      assert.equal(missing.connectionId, "unknown-connection");
     }).pipe(Effect.provide(harness.layer));
   });
 
@@ -504,34 +501,5 @@ describe("DesktopTailcatEnvironment", () => {
       assert(Option.isSome(diagnostics));
       assert.deepEqual(diagnostics.value.path, PATH_PROBE);
     }).pipe(Effect.provide(harness.layer));
-  });
-
-  it.effect("runtimeAvailability maps a missing binary to an unavailable runtime", () => {
-    const available = makeHarness();
-    const missing = makeHarness({
-      resolve: Effect.fail(
-        new TailcatBinaryMissingError({
-          candidates: ["/opt/t3/resources/tailcat/linux-x64/tailcat"],
-          detail: "The Tailcat runtime is not available.",
-        }),
-      ),
-    });
-    return Effect.gen(function* () {
-      const availability = yield* DesktopTailcatEnvironment.DesktopTailcatEnvironment.pipe(
-        Effect.flatMap((environment) => environment.runtimeAvailability),
-        Effect.provide(available.layer),
-      );
-      assert.deepEqual(availability, { available: true, runtime: RUNTIME_INFO });
-
-      const unavailable = yield* DesktopTailcatEnvironment.DesktopTailcatEnvironment.pipe(
-        Effect.flatMap((environment) => environment.runtimeAvailability),
-        Effect.provide(missing.layer),
-      );
-      assert.deepEqual(unavailable, {
-        available: false,
-        code: "binary-missing",
-        message: "The Tailcat runtime is not available.",
-      });
-    });
   });
 });

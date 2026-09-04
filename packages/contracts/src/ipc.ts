@@ -100,7 +100,6 @@ import type {
   DesktopTailcatEnvironmentBootstrap,
   DesktopTailcatEnvironmentEnsureInput,
   TailcatConnectionDiagnostics,
-  TailcatRuntimeAvailability,
 } from "./tailcat.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import type { ClientSettings, QuitConfirmationMode } from "./settings.ts";
@@ -1104,7 +1103,6 @@ export interface DesktopBridge {
    * optional: older desktop shells predate Tailcat, and web/mobile never have
    * a process host.
    */
-  getTailcatRuntimeAvailability?: () => Promise<TailcatRuntimeAvailability>;
   ensureTailcatEnvironment?: (
     input: DesktopTailcatEnvironmentEnsureInput,
   ) => Promise<DesktopTailcatEnvironmentBootstrap>;

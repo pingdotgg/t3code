@@ -18,13 +18,15 @@ export const TAILCAT_PINNED_VERSION: string = manifestJson.version;
  */
 export const TAILCAT_COMPATIBLE_RANGE = `^${manifestJson.version}`;
 
-export type TailcatPlatformKey =
-  | "linux-x64"
-  | "linux-arm64"
-  | "win32-x64"
-  | "win32-arm64"
-  | "darwin-arm64"
-  | "darwin-x64";
+export const TAILCAT_PLATFORM_KEYS = [
+  "linux-x64",
+  "linux-arm64",
+  "win32-x64",
+  "win32-arm64",
+  "darwin-arm64",
+  "darwin-x64",
+] as const;
+export type TailcatPlatformKey = (typeof TAILCAT_PLATFORM_KEYS)[number];
 
 export function tailcatPlatformKey(
   platform: NodeJS.Platform,

@@ -3,7 +3,6 @@ import {
   DesktopTailcatEnvironmentBootstrapSchema,
   DesktopTailcatEnvironmentEnsureInputSchema,
   TailcatConnectionDiagnostics,
-  TailcatRuntimeAvailability,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -18,16 +17,6 @@ import * as DesktopTailcatEnvironment from "../../tailcat/DesktopTailcatEnvironm
  * private key or the child process; it receives a loopback endpoint and
  * diagnostics, and asks for lifecycle changes by connection id.
  */
-
-export const getTailcatRuntimeAvailability = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.GET_TAILCAT_RUNTIME_AVAILABILITY_CHANNEL,
-  payload: Schema.Void,
-  result: TailcatRuntimeAvailability,
-  handler: Effect.fn("desktop.ipc.tailcatEnvironment.runtimeAvailability")(function* () {
-    const tailcat = yield* DesktopTailcatEnvironment.DesktopTailcatEnvironment;
-    return yield* tailcat.runtimeAvailability;
-  }),
-});
 
 export const ensureTailcatEnvironment = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.ENSURE_TAILCAT_ENVIRONMENT_CHANNEL,
@@ -84,7 +73,6 @@ export const probeTailcatConnectionPath = DesktopIpc.makeIpcMethod({
 });
 
 export const methods = [
-  getTailcatRuntimeAvailability,
   ensureTailcatEnvironment,
   restartTailcatEnvironment,
   disconnectTailcatEnvironment,

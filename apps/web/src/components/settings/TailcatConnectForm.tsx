@@ -18,7 +18,9 @@ import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { useRelativeTimeTick } from "./settingsLayout";
 import {
-  describeTailcatConnectionCode,
+  isTailcatConnectionCodeExpired,
+  parseTailcatConnectionCodePreview,
+  type TailcatConnectionCodePreview,
   formatTailcatConnectionError,
 } from "./TailcatRemoteAccess.logic";
 
@@ -55,7 +57,14 @@ export const TailcatConnectForm = memo(function TailcatConnectForm({
   const canPasteFromClipboard =
     typeof navigator !== "undefined" && navigator.clipboard?.readText !== undefined;
 
-  const preview = useMemo(() => describeTailcatConnectionCode(code, nowMs), [code, nowMs]);
+  const parsed = useMemo(() => parseTailcatConnectionCodePreview(code), [code]);
+  const preview = useMemo(
+    (): TailcatConnectionCodePreview =>
+      parsed.kind === "valid"
+        ? { ...parsed, expired: isTailcatConnectionCodeExpired(parsed, nowMs) }
+        : parsed,
+    [parsed, nowMs],
+  );
   const environmentMismatch =
     preview.kind === "valid" &&
     expectedEnvironmentId !== undefined &&

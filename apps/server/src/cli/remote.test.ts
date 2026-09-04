@@ -363,8 +363,7 @@ it.layer(NodeServices.layer)("t3 remote tailcat", (it) => {
 
           const peers = yield* captureStdout(["remote", "tailcat", "peers", "--base-dir", baseDir]);
           assert.include(peers, "peer-phone (Phone)");
-          // Last 8 hex characters of the node key.
-          assert.include(peers, "node key: …89abcdef");
+          assert.include(peers, "node key: 0123·4567·cdef");
           assert.include(peers, "created: 2026-06-20T00:00:00.000Z");
           assert.include(peers, "last seen: 2026-06-21T08:30:00.000Z");
         }),

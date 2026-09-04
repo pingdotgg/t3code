@@ -23,6 +23,7 @@ import {
   TailcatServeStatus,
   type TailcatTrustedPeer,
   TrimmedNonEmptyString,
+  tailcatNodeKeyFingerprint,
 } from "@t3tools/contracts";
 import { TAILCAT_BINARY_OVERRIDE_ENV } from "@t3tools/tailcat/runtime";
 import * as Cause from "effect/Cause";
@@ -41,8 +42,8 @@ import { RpcClientError } from "effect/unstable/rpc";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
-import { renderTerminalQrCode } from "../startupAccess.ts";
-import { baseDirFlag, DurationFromString } from "./config.ts";
+import { formatTailcatConnectionCodeLines } from "../tailcat/startupOutput.ts";
+import { baseDirFlag, DurationFromString, jsonFlag } from "./config.ts";
 import { type DiscoveredPairTarget, discoverPairTarget, makePairServerConfig } from "./pair.ts";
 
 /**
@@ -219,18 +220,36 @@ const tailcatUnavailableFromState = (
   );
 };
 
+/**
+ * Bounds a request to the running server and wraps anything that is not a
+ * typed server error (authorization, transport, no answer) so the user sees
+ * one consistent failure shape.
+ */
+export const callRunningServer = <A, E, T extends E>(
+  operation: string,
+  request: Effect.Effect<A, E>,
+  isTyped: (cause: E) => cause is T,
+): Effect.Effect<A, T | RunningServerRequestError> =>
+  request.pipe(
+    Effect.timeout(RUNNING_SERVER_REQUEST_TIMEOUT),
+    Effect.mapError((cause) =>
+      cause instanceof Error && !isTyped(cause as E)
+        ? new RunningServerRequestError({ operation, cause })
+        : isTyped(cause as E)
+          ? (cause as T)
+          : new RunningServerRequestError({ operation, cause }),
+    ),
+  );
+
 const makeTailcatApi = Effect.fn("remote.makeTailcatApi")(function* (
   session: RunningServerSession,
 ) {
   const client = yield* HttpApiClient.make(EnvironmentHttpApi, { baseUrl: session.origin });
   const headers = { authorization: `Bearer ${session.token}` };
   const call = <A, E>(operation: string, request: Effect.Effect<A, E>) =>
-    request.pipe(
-      Effect.timeout(RUNNING_SERVER_REQUEST_TIMEOUT),
+    callRunningServer(operation, request, isTailcatRemoteAccessError).pipe(
       Effect.mapError((cause) =>
-        isTailcatRemoteAccessError(cause)
-          ? tailcatCliErrorFromServer(cause)
-          : new RunningServerRequestError({ operation, cause }),
+        isTailcatRemoteAccessError(cause) ? tailcatCliErrorFromServer(cause) : cause,
       ),
     );
 
@@ -265,8 +284,7 @@ const runTailcatCommand = <A, E, R>(
     run: (session) => Effect.flatMap(makeTailcatApi(session), run),
   }).pipe(Effect.provide(FetchHttpClient.layer));
 
-/** Last 8 hex characters of a `nodekey:<64 hex>`: enough to tell devices apart by eye. */
-export const nodeKeyFingerprint = (nodeKey: string): string => nodeKey.slice(-8);
+export const nodeKeyFingerprint = tailcatNodeKeyFingerprint;
 
 const formatRuntime = (state: TailcatRemoteAccessState): string => {
   if (state.runtime === null) {
@@ -327,7 +345,7 @@ export const formatTrustedPeers = (
     .map((peer) =>
       [
         `${peer.id} (${peer.label})`,
-        `  node key: …${nodeKeyFingerprint(peer.nodeKey)}`,
+        `  node key: ${nodeKeyFingerprint(peer.nodeKey)}`,
         `  created: ${peer.createdAt}`,
         `  last seen: ${peer.lastSeenAt ?? "never"}`,
       ].join("\n"),
@@ -344,15 +362,7 @@ export const formatConnectionCode = (
   if (options.json) {
     return JSON.stringify(issued, null, 2);
   }
-  return [
-    `Connection code (expires ${issued.expiresAt}, single use):`,
-    issued.code,
-    "",
-    renderTerminalQrCode(issued.code),
-    "",
-    "Paste the code in T3 Code under Add Environment → Tailcat, or scan it with the mobile app.",
-    "Warning: this code embeds a one-time pairing credential. Share it only with the device you are pairing.",
-  ].join("\n");
+  return formatTailcatConnectionCodeLines(issued).join("\n");
 };
 
 // Right after enabling, the service still reports "disabled" until its
@@ -372,11 +382,6 @@ const awaitSettledTailcatState = (api: TailcatApi) =>
       until: isSettledTailcatState,
     }),
   );
-
-const jsonFlag = Flag.boolean("json").pipe(
-  Flag.withDescription("Emit JSON instead of human-readable output."),
-  Flag.withDefault(false),
-);
 
 const tailcatStatusCommand = Command.make("status", {
   baseDir: baseDirFlag,

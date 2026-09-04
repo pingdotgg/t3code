@@ -1,11 +1,11 @@
 import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
 import { WS_METHODS } from "@t3tools/contracts";
 
 import { connectionAtomRuntime } from "../connection/runtime";
-import { createEnvironmentStreamAtomFamily } from "./environmentRpcStream";
 
 /**
  * Federation as seen from one environment: its peers and the remote runs it
@@ -13,11 +13,11 @@ import { createEnvironmentStreamAtomFamily } from "./environmentRpcStream";
  * remote run executes on the peer; this environment only tracks it.
  */
 export const federationEnvironment = {
-  peers: createEnvironmentStreamAtomFamily(connectionAtomRuntime, {
+  peers: createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
     label: "environment-data:federation:peers",
     tag: WS_METHODS.federationSubscribePeers,
   }),
-  remoteRuns: createEnvironmentStreamAtomFamily(connectionAtomRuntime, {
+  remoteRuns: createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
     label: "environment-data:federation:remote-runs",
     tag: WS_METHODS.federationSubscribeRemoteRuns,
   }),

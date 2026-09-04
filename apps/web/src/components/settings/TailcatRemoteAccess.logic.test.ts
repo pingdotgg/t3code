@@ -35,6 +35,7 @@ describe("describeTailcatConnectionCode", () => {
     expect(describeTailcatConnectionCode(`  ${code}\n`, NOW_MS)).toEqual({
       kind: "valid",
       payload: expect.objectContaining({ address: ADDRESS, port: 3773, name: "Studio" }),
+      expiresAtMs: Date.parse("2026-09-03T12:05:00.000Z"),
       expired: false,
       hasPairingToken: true,
     });
@@ -120,7 +121,7 @@ describe("tailcat labels", () => {
         compatible: true,
       }),
     ).toBe("bundled 0.5.0");
-    expect(tailcatNodeKeyFingerprint(`nodekey:${"0".repeat(56)}deadbeef`)).toBe("deadbeef");
+    expect(tailcatNodeKeyFingerprint(`nodekey:${"0".repeat(56)}deadbeef`)).toBe("0000·0000·beef");
   });
 
   it("rounds code lifetime to whole minutes with a floor of one", () => {

@@ -15,9 +15,10 @@ import {
   type TailcatRuntimeInfo,
   type TailcatServeStatus,
   TailcatTrustedPeer,
+  tailcatNodeKeyFingerprint,
 } from "@t3tools/contracts";
 import { encodeTailcatConnectionCode } from "@t3tools/shared/t3ConnectionCode";
-import { decodeTailcatAddress, tailcatKeyFingerprint } from "@t3tools/tailcat/address";
+import { decodeTailcatAddress } from "@t3tools/tailcat/address";
 import { tailcatBackoffDelayMs } from "@t3tools/tailcat/backoff";
 import {
   type TailcatRuntimeError,
@@ -137,8 +138,6 @@ export class TailcatRemoteAccess extends Context.Service<
 interface RunningServe {
   readonly scope: Scope.Closeable;
   readonly handle: TailcatRuntime.TailcatServeHandle;
-  readonly allow: TailcatRuntime.TailcatAllowPolicy;
-  readonly generation: number;
 }
 
 interface RuntimeState {
@@ -150,7 +149,6 @@ interface RuntimeState {
   readonly failures: number;
   readonly lastError: TailcatFailure | null;
   readonly runtime: TailcatRuntimeInfo | null;
-  readonly generation: number;
 }
 
 const INITIAL_RUNTIME_STATE: RuntimeState = {
@@ -162,7 +160,6 @@ const INITIAL_RUNTIME_STATE: RuntimeState = {
   failures: 0,
   lastError: null,
   runtime: null,
-  generation: 0,
 };
 
 function allowPolicyEquals(
@@ -256,7 +253,7 @@ export const make = Effect.gen(function* () {
         ? null
         : Result.match(decodeTailcatAddress(current.address), {
             onFailure: () => null,
-            onSuccess: (decoded) => tailcatKeyFingerprint(decoded.serverNodeKey),
+            onSuccess: (decoded) => tailcatNodeKeyFingerprint(decoded.serverNodeKey),
           });
     return {
       enabled: saved.enabled,
@@ -273,7 +270,7 @@ export const make = Effect.gen(function* () {
   });
 
   const published = yield* SubscriptionRef.make<TailcatRemoteAccessState>(yield* buildState);
-  const publish = buildState.pipe(Effect.flatMap((state) => SubscriptionRef.set(published, state)));
+  const publish = buildState.pipe(Effect.tap((state) => SubscriptionRef.set(published, state)));
 
   const signalReconcile = Queue.offer(signals, "reconcile").pipe(Effect.asVoid);
 
@@ -286,6 +283,21 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  // Both timers are one-shot wake-ups for the reconcile loop; only the delay differs.
+  type TimerSlot = Ref.Ref<Option.Option<Fiber.Fiber<void>>>;
+  const disarmTimer = (slot: TimerSlot) =>
+    Ref.getAndSet(slot, Option.none()).pipe(
+      Effect.flatMap(
+        Option.match({ onNone: () => Effect.void, onSome: (fiber) => Fiber.interrupt(fiber) }),
+      ),
+    );
+  const armTimer = (slot: TimerSlot, delayMs: number) =>
+    Effect.sleep(Duration.millis(delayMs)).pipe(
+      Effect.andThen(signalReconcile),
+      Effect.forkIn(serviceScope),
+      Effect.flatMap((fiber) => Ref.set(slot, Option.some(fiber))),
+    );
+
   /**
    * The pairing window is derived, never stored: it is open exactly while an
    * unconsumed, unexpired connection code exists. Expiry does not emit a store
@@ -294,21 +306,16 @@ export const make = Effect.gen(function* () {
   const refreshPairingWindow = Effect.gen(function* () {
     const active = yield* listActiveConnectionCodes;
     const open = active.length > 0;
-    yield* Option.match(yield* Ref.getAndSet(expiryTimer, Option.none()), {
-      onNone: () => Effect.void,
-      onSome: (fiber) => Fiber.interrupt(fiber),
-    });
+    yield* disarmTimer(expiryTimer);
     if (open) {
       const currentMs = yield* DateTime.now.pipe(Effect.map(DateTime.toEpochMillis));
       const earliestExpiry = Math.min(
         ...active.map((link) => DateTime.toEpochMillis(link.expiresAt)),
       );
-      const delayMs = Math.max(0, earliestExpiry - currentMs) + Duration.toMillis(EXPIRY_GRACE);
-      const fiber = yield* Effect.sleep(Duration.millis(delayMs)).pipe(
-        Effect.andThen(signalReconcile),
-        Effect.forkIn(serviceScope),
+      yield* armTimer(
+        expiryTimer,
+        Math.max(0, earliestExpiry - currentMs) + Duration.toMillis(EXPIRY_GRACE),
       );
-      yield* Ref.set(expiryTimer, Option.some(fiber));
     }
     const previous = yield* Ref.get(runtimeState);
     yield* Ref.update(runtimeState, (current) => ({ ...current, pairingOpen: open }));
@@ -348,16 +355,8 @@ export const make = Effect.gen(function* () {
 
   const scheduleRetry = (failures: number) =>
     Effect.gen(function* () {
-      yield* Option.match(yield* Ref.getAndSet(retryTimer, Option.none()), {
-        onNone: () => Effect.void,
-        onSome: (fiber) => Fiber.interrupt(fiber),
-      });
-      const delayMs = tailcatBackoffDelayMs(failures, yield* Random.next);
-      const fiber = yield* Effect.sleep(Duration.millis(delayMs)).pipe(
-        Effect.andThen(signalReconcile),
-        Effect.forkIn(serviceScope),
-      );
-      yield* Ref.set(retryTimer, Option.some(fiber));
+      yield* disarmTimer(retryTimer);
+      yield* armTimer(retryTimer, tailcatBackoffDelayMs(failures, yield* Random.next));
     });
 
   const recordFailure = (error: TailcatRuntimeError | TailcatRemoteAccessError) =>
@@ -385,10 +384,8 @@ export const make = Effect.gen(function* () {
 
   const startServe = (allow: TailcatRuntime.TailcatAllowPolicy, localPort: number) =>
     Effect.gen(function* () {
-      const generation = (yield* Ref.get(runtimeState)).generation + 1;
       yield* Ref.update(runtimeState, (state) => ({
         ...state,
-        generation,
         status: state.address === null ? ("starting" as const) : ("restarting" as const),
       }));
       yield* publish;
@@ -408,7 +405,7 @@ export const make = Effect.gen(function* () {
         Effect.provideService(Scope.Scope, scope),
         Effect.onError(() => Scope.close(scope, Exit.void).pipe(Effect.ignore)),
       );
-      const running: RunningServe = { scope, handle, allow, generation };
+      const running: RunningServe = { scope, handle };
       yield* Ref.update(runtimeState, (state) => ({
         ...state,
         running,
@@ -424,12 +421,12 @@ export const make = Effect.gen(function* () {
         trustedPeerCount: allow._tag === "keys" ? allow.nodeKeys.length : null,
       });
       // Watch for an unexpected exit. A stop we initiated replaces `running`
-      // first, so only a still-current generation schedules a restart.
+      // first, so only the still-current handle schedules a restart.
       yield* handle.exit.pipe(
         Effect.flatMap((exitCode) =>
           Effect.gen(function* () {
             const current = yield* Ref.get(runtimeState);
-            if (current.running?.generation !== generation) {
+            if (current.running?.handle !== handle) {
               return;
             }
             const recentOutput = yield* handle.recentOutput;
@@ -469,7 +466,7 @@ export const make = Effect.gen(function* () {
       return;
     }
     const allow = yield* desiredAllowPolicy;
-    if (current.running !== null && allowPolicyEquals(current.running.allow, allow)) {
+    if (current.running !== null && allowPolicyEquals(current.running.handle.allow, allow)) {
       return;
     }
     if (current.running !== null) {
@@ -602,8 +599,7 @@ export const make = Effect.gen(function* () {
       yield* runtime.refresh.pipe(Effect.ignore);
     }
     yield* signalReconcile;
-    yield* publish;
-    return yield* SubscriptionRef.get(published);
+    return yield* publish;
   });
 
   const recordTrustedPeer: TailcatRemoteAccess["Service"]["recordTrustedPeer"] = Effect.fn(
@@ -614,42 +610,38 @@ export const make = Effect.gen(function* () {
     const existing = saved.trustedPeers.find((peer) => peer.nodeKey === input.nodeKey);
     const label = input.label?.trim() || existing?.label || "Paired device";
     const sessionIds = input.sessionId === undefined ? [] : [input.sessionId];
-    const peers = existing
-      ? saved.trustedPeers.map((peer) =>
-          peer.nodeKey === input.nodeKey
-            ? {
-                ...peer,
-                label,
-                lastSeenAt: at,
-                sessionIds: [
-                  ...peer.sessionIds,
-                  ...sessionIds.filter((sessionId) => !peer.sessionIds.includes(sessionId)),
-                ],
-              }
-            : peer,
-        )
-      : [
-          ...saved.trustedPeers,
-          {
-            id: yield* crypto.randomUUIDv4.pipe(
-              Effect.mapError(
-                (cause) =>
-                  new TailcatRemoteAccessError({
-                    code: "unknown",
-                    message: `Could not allocate a peer id: ${String(cause)}`,
-                  }),
-              ),
+    const updated = existing
+      ? {
+          ...existing,
+          label,
+          lastSeenAt: at,
+          sessionIds: [
+            ...existing.sessionIds,
+            ...sessionIds.filter((sessionId) => !existing.sessionIds.includes(sessionId)),
+          ],
+        }
+      : {
+          id: yield* crypto.randomUUIDv4.pipe(
+            Effect.mapError(
+              (cause) =>
+                new TailcatRemoteAccessError({
+                  code: "unknown",
+                  message: `Could not allocate a peer id: ${String(cause)}`,
+                }),
             ),
-            nodeKey: input.nodeKey,
-            label,
-            createdAt: at,
-            lastSeenAt: at,
-            sessionIds,
-          },
-        ];
+          ),
+          nodeKey: input.nodeKey,
+          label,
+          createdAt: at,
+          lastSeenAt: at,
+          sessionIds,
+        };
+    const peers = existing
+      ? saved.trustedPeers.map((peer) => (peer === existing ? updated : peer))
+      : [...saved.trustedPeers, updated];
     yield* writePersisted({ ...saved, trustedPeers: peers });
     yield* Effect.logInfo(existing ? "Tailcat peer re-paired." : "Tailcat peer trusted.", {
-      fingerprint: tailcatKeyFingerprint(input.nodeKey),
+      fingerprint: tailcatNodeKeyFingerprint(input.nodeKey),
       label,
     });
     yield* signalReconcile;
@@ -677,12 +669,11 @@ export const make = Effect.gen(function* () {
       { discard: true },
     );
     yield* Effect.logInfo("Tailcat peer revoked.", {
-      fingerprint: tailcatKeyFingerprint(peer.nodeKey),
+      fingerprint: tailcatNodeKeyFingerprint(peer.nodeKey),
       revokedSessions: peer.sessionIds.length,
     });
     yield* signalReconcile;
-    yield* publish;
-    return yield* SubscriptionRef.get(published);
+    return yield* publish;
   });
 
   const renameTrustedPeer: TailcatRemoteAccess["Service"]["renameTrustedPeer"] = Effect.fn(
@@ -708,8 +699,7 @@ export const make = Effect.gen(function* () {
         peer.id === peerId ? { ...peer, label: trimmed } : peer,
       ),
     });
-    yield* publish;
-    return yield* SubscriptionRef.get(published);
+    return yield* publish;
   });
 
   const regenerateIdentity: TailcatRemoteAccess["Service"]["regenerateIdentity"] = Effect.gen(
@@ -732,8 +722,7 @@ export const make = Effect.gen(function* () {
       }));
       yield* Effect.logInfo("Tailcat identity regenerated; connected devices must re-pair.");
       yield* signalReconcile;
-      yield* publish;
-      return yield* SubscriptionRef.get(published);
+      return yield* publish;
     },
   ).pipe(Effect.withSpan("TailcatRemoteAccess.regenerateIdentity"));
 

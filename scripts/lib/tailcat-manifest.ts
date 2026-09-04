@@ -3,6 +3,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
+import {
+  TAILCAT_PLATFORM_KEYS,
+  tailcatExecutableName as runtimeExecutableName,
+  tailcatPlatformKey,
+} from "@t3tools/tailcat/manifest";
 
 /**
  * Pure helpers around `native/tailcat/manifest.json`, the single source of
@@ -10,21 +15,14 @@ import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
  * builds, verifies, and rewrites through these; the desktop and CLI packaging
  * scripts read the manifest to check that a staged binary matches the pin.
  *
- * `packages/tailcat/src/manifest.ts` consumes the same JSON at runtime; the
- * platform-key vocabulary below mirrors it so a manifest that passes here also
- * satisfies the runtime resolver.
+ * `packages/tailcat/src/manifest.ts` consumes the same JSON at runtime and owns
+ * the platform-key vocabulary, so a manifest that passes here also satisfies
+ * the runtime resolver.
  */
 
-export const TAILCAT_PLATFORM_KEYS = [
-  "linux-x64",
-  "linux-arm64",
-  "win32-x64",
-  "win32-arm64",
-  "darwin-arm64",
-  "darwin-x64",
-] as const;
 export const TailcatPlatformKey = Schema.Literals(TAILCAT_PLATFORM_KEYS);
 export type TailcatPlatformKey = typeof TailcatPlatformKey.Type;
+export { TAILCAT_PLATFORM_KEYS };
 
 export const TAILCAT_MANIFEST_RELATIVE_PATH = "native/tailcat/manifest.json";
 export const TAILCAT_LICENSE_RELATIVE_PATH = "native/tailcat/LICENSE";
@@ -89,28 +87,12 @@ export class TailcatManifestError extends Schema.TaggedErrorClass<TailcatManifes
   }
 }
 
+/** Executable name for a platform key; the runtime keys the same function by platform. */
 export function tailcatExecutableName(platformKey: string): string {
-  return platformKey.startsWith("win32-") ? "tailcat.exe" : "tailcat";
+  return runtimeExecutableName(platformKey.startsWith("win32-") ? "win32" : "linux");
 }
 
-export function tailcatHostPlatformKey(
-  platform: NodeJS.Platform,
-  architecture: NodeJS.Architecture,
-): TailcatPlatformKey | undefined {
-  if (architecture !== "arm64" && architecture !== "x64") {
-    return undefined;
-  }
-  switch (platform) {
-    case "linux":
-      return `linux-${architecture}`;
-    case "win32":
-      return `win32-${architecture}`;
-    case "darwin":
-      return `darwin-${architecture}`;
-    default:
-      return undefined;
-  }
-}
+export const tailcatHostPlatformKey = tailcatPlatformKey;
 
 export interface GoTarget {
   readonly goos: "linux" | "windows" | "darwin";

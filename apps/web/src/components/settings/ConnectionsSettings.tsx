@@ -5,6 +5,7 @@ import {
   RadioTowerIcon,
   TerminalIcon,
 } from "lucide-react";
+import { formatAbsoluteTimestamp } from "~/timestampFormat";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type KeyboardEvent,
@@ -182,19 +183,6 @@ const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 // neither can collide with a real distro name.
 const BACKEND_VALUE_DEFAULT_WSL = "backend:default-wsl";
 const BACKEND_VALUE_WSL_OFF = "backend:wsl-off";
-
-const accessTimestampFormatter = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
-
-function formatAccessTimestamp(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return accessTimestampFormatter.format(parsed);
-}
 
 const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
   readonly scope: AuthEnvironmentScope;
@@ -706,7 +694,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
     copyPairingValue(pairingLink.credential, "code");
   }, [copyPairingValue, pairingLink.credential]);
 
-  const expiresAbsolute = formatAccessTimestamp(pairingLink.expiresAt);
+  const expiresAbsolute = formatAbsoluteTimestamp(pairingLink.expiresAt);
 
   const primaryLabel = pairingLink.label ?? "Pairing link";
   const selectedQrOption = selectQrEndpointOption(
@@ -729,7 +717,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
             <ConnectionStatusDot
-              tooltipText={`Link created at ${formatAccessTimestamp(pairingLink.createdAt)}`}
+              tooltipText={`Link created at ${formatAbsoluteTimestamp(pairingLink.createdAt)}`}
               dotClassName="bg-amber-400"
             />
             <h3 className="text-sm font-medium text-foreground">{primaryLabel}</h3>
@@ -957,7 +945,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
       ? `Connected for ${formatElapsedDurationLabel(lastConnectedAt, nowMs)}`
       : "Connected"
     : lastConnectedAt
-      ? `Last connected at ${formatAccessTimestamp(lastConnectedAt)}`
+      ? `Last connected at ${formatAbsoluteTimestamp(lastConnectedAt)}`
       : "Not connected yet.";
   const deviceInfoBits = [
     clientSession.client.deviceType !== "unknown"

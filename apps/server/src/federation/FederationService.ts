@@ -4,12 +4,12 @@ import {
   CommandId,
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
-  type EnvironmentId,
+  EnvironmentAuthInvalidError,
+  EnvironmentId,
   EnvironmentHttpApi,
   FEDERATION_PEER_CODE_DEFAULT_TTL_SECONDS,
   FEDERATION_PEER_CODE_PAIRING_SUBJECT,
   FEDERATION_PROTOCOL_VERSION,
-  FEDERATION_SESSION_SUBJECT_PREFIX,
   type FederationAddPeerInput,
   type FederationArtifactFetchResponse,
   type FederationArtifactsResponse,
@@ -26,6 +26,7 @@ import {
   type FederationProjectsResponse,
   type FederationRemoteArtifactInput,
   type FederationRemoteRun,
+  type FederationRunEvent,
   type FederationRemoteRunInput,
   type FederationRemoteRunsSnapshot,
   type FederationRun,
@@ -213,6 +214,39 @@ interface PeerSession {
 const internalError = (message: string) => new FederationError({ code: "internal", message });
 const isFederationError = Schema.is(FederationError);
 const isConnectionCodeInvalidError = Schema.is(T3ConnectionCodeInvalidError);
+const isAuthRejection = Schema.is(EnvironmentAuthInvalidError);
+const isEnvironmentId = Schema.is(EnvironmentId);
+
+const withoutKey = <K, V>(map: ReadonlyMap<K, V>, key: K): ReadonlyMap<K, V> => {
+  const next = new Map(map);
+  next.delete(key);
+  return next;
+};
+
+/** Volatile per-run sync state; re-fetchable from the peer, so never persisted. */
+interface RemoteRunSync {
+  readonly events: ReadonlyArray<FederationRunEvent>;
+  readonly lastSyncedAt: string | null;
+  readonly syncError: string | null;
+}
+const EMPTY_SYNC: RemoteRunSync = { events: [], lastSyncedAt: null, syncError: null };
+const remoteRunKey = (peerId: EnvironmentId, threadId: ThreadId) => `${peerId}:${threadId}`;
+
+const shallowEqual = (a: unknown, b: unknown): boolean =>
+  a === b ||
+  (typeof a === "object" &&
+    a !== null &&
+    typeof b === "object" &&
+    b !== null &&
+    Object.keys(a).length === Object.keys(b).length &&
+    Object.entries(a).every(([key, value]) => (b as Record<string, unknown>)[key] === value));
+
+/** Field-wise comparison of two run projections (nested values are one level deep). */
+const sameRun = (a: FederationRun, b: FederationRun): boolean =>
+  Object.keys(a).length === Object.keys(b).length &&
+  (Object.keys(a) as ReadonlyArray<keyof FederationRun>).every((key) =>
+    shallowEqual(a[key], b[key]),
+  );
 
 const describeCause = (cause: unknown): string =>
   cause instanceof Error ? cause.message : typeof cause === "string" ? cause : String(cause);
@@ -243,9 +277,14 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const serviceScope = yield* Scope.Scope;
 
-  const pendingPeerCodes = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<FederationScope>>>(
-    new Map(),
-  );
+  const pendingPeerCodes = yield* Ref.make<
+    ReadonlyMap<
+      string,
+      { readonly scopes: ReadonlyArray<FederationScope>; readonly expiresAtMs: number }
+    >
+  >(new Map());
+  const remoteRunSync = yield* Ref.make<ReadonlyMap<string, RemoteRunSync>>(new Map());
+  const peerClients = new Map<string, PeerClient>();
   const challenges = yield* Ref.make<ReadonlyMap<string, PendingChallenge>>(new Map());
   const peerSessions = yield* Ref.make<ReadonlyMap<EnvironmentId, PeerSession>>(new Map());
   const pollSignals = yield* Queue.unbounded<"poll">();
@@ -269,8 +308,16 @@ export const make = Effect.gen(function* () {
     Effect.flatMap((next) => SubscriptionRef.set(snapshotRef, next)),
   );
 
+  const presentRemoteRuns = Effect.gen(function* () {
+    const stored = yield* peers.remoteRuns;
+    const sync = yield* Ref.get(remoteRunSync);
+    return stored.map((record): FederationRemoteRun => ({
+      ...record,
+      ...(sync.get(remoteRunKey(record.peerId, record.run.threadId)) ?? EMPTY_SYNC),
+    }));
+  });
   const buildRuns = Effect.gen(function* () {
-    const runs = yield* peers.remoteRuns;
+    const runs = yield* presentRemoteRuns;
     return {
       runs: runs.toSorted((left, right) =>
         right.run.requestedAt.localeCompare(left.run.requestedAt),
@@ -303,6 +350,41 @@ export const make = Effect.gen(function* () {
       }),
     ),
   );
+
+  /** How this environment introduces itself to a peer, in both pairing directions. */
+  const describeSelf = Effect.gen(function* () {
+    const descriptor = yield* serverEnvironment.getDescriptor;
+    const ourNodeKey = yield* transport.clientNodeKey.pipe(Effect.option);
+    return {
+      protocolVersion: FEDERATION_PROTOCOL_VERSION,
+      environmentId: identity.environmentId,
+      publicKey: identity.publicKey,
+      label: descriptor.label,
+      serverVersion: descriptor.serverVersion,
+      capabilities: FEDERATION_CAPABILITIES,
+      transport: yield* ourTransport,
+      ...(Option.isSome(ourNodeKey) ? { tailcatNodeKey: ourNodeKey.value } : {}),
+    };
+  });
+
+  const peerTimeout =
+    <A, E, R>(message: string) =>
+    (effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.timeoutOrElse({
+          duration: PEER_REQUEST_TIMEOUT,
+          orElse: () => Effect.fail(new FederationError({ code: "peer-unreachable", message })),
+        }),
+      );
+
+  const lookupPeer = (peerId: EnvironmentId, missing: () => FederationError) =>
+    peers
+      .getPeer(peerId)
+      .pipe(
+        Effect.flatMap(
+          Option.match({ onNone: () => Effect.fail(missing()), onSome: Effect.succeed }),
+        ),
+      );
 
   // ── Peer-facing protocol ────────────────────────────────────────────
 
@@ -341,19 +423,18 @@ export const make = Effect.gen(function* () {
         message: "This code is a device pairing code, not a federation peer code.",
       });
     }
-    const offered =
+    yield* prunePendingPeerCodes;
+    const pendingCode =
       grant.id === undefined ? undefined : (yield* Ref.get(pendingPeerCodes)).get(grant.id);
-    if (offered === undefined) {
+    if (pendingCode === undefined || grant.id === undefined) {
       return yield* new FederationError({
         code: "code-expired",
         message: "This peer code is no longer offered by this environment. Create a new one.",
       });
     }
-    yield* Ref.update(pendingPeerCodes, (current) => {
-      const next = new Map(current);
-      next.delete(grant.id!);
-      return next;
-    });
+    const offered = pendingCode.scopes;
+    const consumedLinkId = grant.id;
+    yield* Ref.update(pendingPeerCodes, (current) => withoutKey(current, consumedLinkId));
     const at = yield* nowIso;
     const existing = yield* peers.getPeer(request.environmentId);
     yield* peers
@@ -390,20 +471,20 @@ export const make = Effect.gen(function* () {
       allowedScopes: request.grantedScopes,
     });
     yield* publishPeers;
-    const descriptor = yield* serverEnvironment.getDescriptor;
-    const ourNodeKey = yield* transport.clientNodeKey.pipe(Effect.option);
-    return {
-      protocolVersion: FEDERATION_PROTOCOL_VERSION,
-      environmentId: identity.environmentId,
-      publicKey: identity.publicKey,
-      label: descriptor.label,
-      serverVersion: descriptor.serverVersion,
-      capabilities: FEDERATION_CAPABILITIES,
-      grantedScopes: offered,
-      transport: yield* ourTransport,
-      ...(Option.isSome(ourNodeKey) ? { tailcatNodeKey: ourNodeKey.value } : {}),
-    } satisfies FederationPairResponse;
+    return { ...(yield* describeSelf), grantedScopes: offered } satisfies FederationPairResponse;
   });
+
+  const prunePendingPeerCodes = nowMs.pipe(
+    Effect.flatMap((current) =>
+      Ref.update(pendingPeerCodes, (pending) => {
+        const next = new Map(pending);
+        for (const [id, entry] of pending) {
+          if (entry.expiresAtMs <= current) next.delete(id);
+        }
+        return next;
+      }),
+    ),
+  );
 
   const pruneChallenges = nowMs.pipe(
     Effect.flatMap((current) =>
@@ -418,19 +499,13 @@ export const make = Effect.gen(function* () {
   );
 
   const requirePeer = (peerId: EnvironmentId) =>
-    peers.getPeer(peerId).pipe(
-      Effect.flatMap(
-        Option.match({
-          onNone: () =>
-            Effect.fail(
-              new FederationError({
-                code: "peer-unknown",
-                message: "This environment is not paired with the requesting environment.",
-              }),
-            ),
-          onSome: Effect.succeed,
+    lookupPeer(
+      peerId,
+      () =>
+        new FederationError({
+          code: "peer-unknown",
+          message: "This environment is not paired with the requesting environment.",
         }),
-      ),
     );
 
   const issueChallenge: FederationService["Service"]["issueChallenge"] = Effect.fn(
@@ -479,15 +554,11 @@ export const make = Effect.gen(function* () {
         message: "The federation challenge is unknown or expired. Request a new one.",
       });
     }
-    yield* Ref.update(challenges, (current) => {
-      const next = new Map(current);
-      next.delete(answered);
-      return next;
-    });
+    yield* Ref.update(challenges, (current) => withoutKey(current, answered));
     const session = yield* environmentAuth
       .issueSession({
         ttl: FEDERATION_SESSION_TTL,
-        subject: `${FEDERATION_SESSION_SUBJECT_PREFIX}${peer.peerId}`,
+        subject: peer.peerId,
         scopes: [AuthFederationPeerScope],
         label: `Federation: ${peer.label}`,
       })
@@ -507,31 +578,19 @@ export const make = Effect.gen(function* () {
   const authorizePeer: FederationService["Service"]["authorizePeer"] = Effect.fn(
     "FederationService.authorizePeer",
   )(function* (principal, required) {
-    if (
-      !principal.subject.startsWith(FEDERATION_SESSION_SUBJECT_PREFIX) ||
-      !principal.scopes.has(AuthFederationPeerScope)
-    ) {
+    if (!principal.scopes.has(AuthFederationPeerScope) || !isEnvironmentId(principal.subject)) {
       return yield* new FederationError({
         code: "peer-unknown",
         message: "This session is not a federation peer session.",
       });
     }
-    const peerId = principal.subject.slice(
-      FEDERATION_SESSION_SUBJECT_PREFIX.length,
-    ) as EnvironmentId;
-    const peer = yield* peers.getPeer(peerId).pipe(
-      Effect.flatMap(
-        Option.match({
-          onNone: () =>
-            Effect.fail(
-              new FederationError({
-                code: "peer-revoked",
-                message: "This environment no longer trusts the requesting environment.",
-              }),
-            ),
-          onSome: Effect.succeed,
+    const peer = yield* lookupPeer(
+      principal.subject,
+      () =>
+        new FederationError({
+          code: "peer-revoked",
+          message: "This environment no longer trusts the requesting environment.",
         }),
-      ),
     );
     if (!peer.grantedScopes.includes(required)) {
       return yield* new FederationError({
@@ -564,16 +623,17 @@ export const make = Effect.gen(function* () {
     threadId: ThreadId,
   ) =>
     peers.inboundRuns.pipe(
-      Effect.flatMap((runs) =>
-        runs.some((run) => run.threadId === threadId && run.peerId === peer.peerId)
-          ? Effect.void
-          : Effect.fail(
+      Effect.flatMap((runs) => {
+        const record = runs.find((run) => run.threadId === threadId && run.peerId === peer.peerId);
+        return record === undefined
+          ? Effect.fail(
               new FederationError({
                 code: "run-not-found",
                 message: "No federated run with that id was started by this peer.",
               }),
-            ),
-      ),
+            )
+          : Effect.succeed(record);
+      }),
     );
 
   const projectLocalRun = (threadId: ThreadId) =>
@@ -672,8 +732,11 @@ export const make = Effect.gen(function* () {
       worktreePath: null,
       createdAt,
     });
+    // Events of this run all follow the sequence the log was at before it was created,
+    // so followers never have to scan older history.
+    const startSequence = yield* orchestrationEngine.latestSequence;
     yield* peers
-      .recordInboundRun({ threadId, peerId: peer.peerId, createdAt })
+      .recordInboundRun({ threadId, peerId: peer.peerId, createdAt, startSequence })
       .pipe(Effect.mapError(storeError));
     yield* dispatchClientCommand({
       type: "thread.turn.start",
@@ -722,11 +785,12 @@ export const make = Effect.gen(function* () {
   const localRunEvents: FederationService["Service"]["localRunEvents"] = Effect.fn(
     "FederationService.localRunEvents",
   )(function* (peer, threadId, afterSequence) {
-    yield* requireInboundRun(peer, threadId);
+    const inbound = yield* requireInboundRun(peer, threadId);
     const run = yield* projectLocalRun(threadId);
     const latestSequence = yield* orchestrationEngine.latestSequence;
+    const fromSequence = Math.max(afterSequence, inbound.startSequence ?? 0);
     const events = yield* orchestrationEngine
-      .readEvents(afterSequence, Math.max(1, latestSequence - afterSequence))
+      .readEvents(fromSequence, Math.max(1, latestSequence - fromSequence))
       .pipe(
         Stream.map((event) => summarizeFederationRunEvent(event, threadId)),
         Stream.filter((event) => event !== null),
@@ -798,12 +862,25 @@ export const make = Effect.gen(function* () {
 
   // ── Requester side ──────────────────────────────────────────────────
 
-  const clientFor = (httpBaseUrl: string) =>
+  const makeClient = (httpBaseUrl: string) =>
     HttpApiClient.make(EnvironmentHttpApi, { baseUrl: httpBaseUrl }).pipe(
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
-
-  type PeerClient = Effect.Success<ReturnType<typeof clientFor>>;
+  type PeerClient = Effect.Success<ReturnType<typeof makeClient>>;
+  // Building an HttpApi client reflects the whole API; one per forward endpoint is plenty.
+  const clientFor = (httpBaseUrl: string) =>
+    Effect.suspend(() => {
+      const cached = peerClients.get(httpBaseUrl);
+      if (cached !== undefined) return Effect.succeed(cached);
+      return makeClient(httpBaseUrl).pipe(
+        Effect.tap((client) =>
+          Effect.sync(() => {
+            if (peerClients.size >= 32) peerClients.clear();
+            peerClients.set(httpBaseUrl, client);
+          }),
+        ),
+      );
+    });
 
   const mapPeerCallError = (peerId: EnvironmentId) => (cause: unknown) =>
     Effect.gen(function* () {
@@ -876,33 +953,16 @@ export const make = Effect.gen(function* () {
           // One retry after a session refresh covers a revoked or expired
           // token; anything else is a real failure.
           isAuthRejection(cause)
-            ? Ref.update(peerSessions, (current) => {
-                const next = new Map(current);
-                next.delete(peer.peerId);
-                return next;
-              }).pipe(Effect.andThen(attempt))
+            ? Ref.update(peerSessions, (current) => withoutKey(current, peer.peerId)).pipe(
+                Effect.andThen(attempt),
+              )
             : Effect.fail(cause),
         ),
-        Effect.timeoutOrElse({
-          duration: PEER_REQUEST_TIMEOUT,
-          orElse: () =>
-            Effect.fail(
-              new FederationError({
-                code: "peer-unreachable",
-                message: `${peer.label} did not answer in time.`,
-              }),
-            ),
-        }),
+        peerTimeout(`${peer.label} did not answer in time.`),
         Effect.catch((cause) => mapPeerCallError(peer.peerId)(cause)),
         Effect.tap(() => peers.setPeerStatus(peer.peerId, { status: "online", lastError: null })),
       );
     });
-
-  const isAuthRejection = (cause: unknown): boolean =>
-    typeof cause === "object" &&
-    cause !== null &&
-    "_tag" in cause &&
-    (cause as { _tag: unknown })._tag === "EnvironmentAuthInvalidError";
 
   const requireAllowed = (
     peer: FederationPeerStore.PersistedFederationPeer,
@@ -918,19 +978,13 @@ export const make = Effect.gen(function* () {
         );
 
   const requireLocalPeer = (peerId: EnvironmentId) =>
-    peers.getPeer(peerId).pipe(
-      Effect.flatMap(
-        Option.match({
-          onNone: () =>
-            Effect.fail(
-              new FederationError({
-                code: "peer-unknown",
-                message: "That environment is not paired here.",
-              }),
-            ),
-          onSome: Effect.succeed,
+    lookupPeer(
+      peerId,
+      () =>
+        new FederationError({
+          code: "peer-unknown",
+          message: "That environment is not paired here.",
         }),
-      ),
     );
 
   const refreshPeer: FederationService["Service"]["refreshPeer"] = Effect.fn(
@@ -984,7 +1038,13 @@ export const make = Effect.gen(function* () {
         ttl: Duration.seconds(ttlSeconds),
       })
       .pipe(Effect.mapError((error) => internalError(error.message)));
-    yield* Ref.update(pendingPeerCodes, (current) => new Map(current).set(issued.id, input.scopes));
+    yield* prunePendingPeerCodes;
+    yield* Ref.update(pendingPeerCodes, (current) =>
+      new Map(current).set(issued.id, {
+        scopes: input.scopes,
+        expiresAtMs: DateTime.toEpochMillis(issued.expiresAt),
+      }),
+    );
     const descriptor = yield* serverEnvironment.getDescriptor;
     const expiresAt = DateTime.formatIso(issued.expiresAt);
     const payload = {
@@ -1048,34 +1108,16 @@ export const make = Effect.gen(function* () {
       const client = yield* clientFor(endpoint.httpBaseUrl).pipe(
         Effect.mapError((cause) => internalError(describeCause(cause))),
       );
-      const descriptor = yield* serverEnvironment.getDescriptor;
-      const ourNodeKey = yield* transport.clientNodeKey.pipe(Effect.option);
       const response = yield* client.federation
         .pair({
           payload: {
+            ...(yield* describeSelf),
             token: payload.token,
-            protocolVersion: FEDERATION_PROTOCOL_VERSION,
-            environmentId: identity.environmentId,
-            publicKey: identity.publicKey,
-            label: descriptor.label,
-            serverVersion: descriptor.serverVersion,
-            capabilities: FEDERATION_CAPABILITIES,
-            transport: yield* ourTransport,
             grantedScopes: input.grantedScopes,
-            ...(Option.isSome(ourNodeKey) ? { tailcatNodeKey: ourNodeKey.value } : {}),
           },
         })
         .pipe(
-          Effect.timeoutOrElse({
-            duration: PEER_REQUEST_TIMEOUT,
-            orElse: () =>
-              Effect.fail(
-                new FederationError({
-                  code: "peer-unreachable",
-                  message: "The other machine did not answer the pairing request in time.",
-                }),
-              ),
-          }),
+          peerTimeout("The other machine did not answer the pairing request in time."),
           Effect.mapError((cause) =>
             isFederationError(cause)
               ? cause
@@ -1139,9 +1181,12 @@ export const make = Effect.gen(function* () {
   )(function* (peerId) {
     const peer = yield* requireLocalPeer(peerId);
     yield* peers.removePeer(peerId).pipe(Effect.mapError(storeError));
-    yield* Ref.update(peerSessions, (current) => {
+    yield* Ref.update(peerSessions, (current) => withoutKey(current, peerId));
+    yield* Ref.update(remoteRunSync, (current) => {
       const next = new Map(current);
-      next.delete(peerId);
+      for (const key of current.keys()) {
+        if (key.startsWith(`${peerId}:`)) next.delete(key);
+      }
       return next;
     });
     yield* transport.drop(peerId);
@@ -1149,7 +1194,7 @@ export const make = Effect.gen(function* () {
     const sessions = yield* environmentAuth.listSessions().pipe(Effect.orElseSucceed(() => []));
     yield* Effect.forEach(
       sessions.filter(
-        (session) => session.subject === `${FEDERATION_SESSION_SUBJECT_PREFIX}${peerId}`,
+        (session) => session.subject === peerId && session.scopes.includes(AuthFederationPeerScope),
       ),
       (session) => environmentAuth.revokeSession(session.sessionId).pipe(Effect.ignore),
       { discard: true },
@@ -1167,8 +1212,17 @@ export const make = Effect.gen(function* () {
     return yield* callPeer(peer, (client, headers) => client.federation.projects({ headers }));
   });
 
-  const upsertRemoteRun = (record: FederationRemoteRun) =>
-    peers.upsertRemoteRun(record).pipe(Effect.mapError(storeError), Effect.andThen(publishRuns));
+  const persistRemoteRun = (record: FederationPeerStore.PersistedRemoteRun) =>
+    peers.upsertRemoteRun(record).pipe(Effect.mapError(storeError));
+  const updateRemoteRunSync = (
+    peerId: EnvironmentId,
+    threadId: ThreadId,
+    patch: (current: RemoteRunSync) => RemoteRunSync,
+  ) =>
+    Ref.update(remoteRunSync, (current) => {
+      const key = remoteRunKey(peerId, threadId);
+      return new Map(current).set(key, patch(current.get(key) ?? EMPTY_SYNC));
+    });
 
   const startRemoteRun: FederationService["Service"]["startRemoteRun"] = Effect.fn(
     "FederationService.startRemoteRun",
@@ -1194,13 +1248,19 @@ export const make = Effect.gen(function* () {
       lastSyncedAt: yield* nowIso,
       syncError: null,
     };
-    yield* upsertRemoteRun(record);
+    yield* persistRemoteRun({ peerId: record.peerId, peerLabel: record.peerLabel, run });
+    yield* updateRemoteRunSync(record.peerId, run.threadId, () => ({
+      events: [],
+      lastSyncedAt: record.lastSyncedAt,
+      syncError: null,
+    }));
+    yield* publishRuns;
     yield* Queue.offer(pollSignals, "poll");
     return record;
   });
 
   const findRemoteRun = (input: FederationRemoteRunInput) =>
-    peers.remoteRuns.pipe(
+    presentRemoteRuns.pipe(
       Effect.flatMap((runs) => {
         const record = runs.find(
           (run) => run.peerId === input.peerId && run.run.threadId === input.threadId,
@@ -1226,7 +1286,13 @@ export const make = Effect.gen(function* () {
       client.federation.cancelRun({ headers, params: { threadId: input.threadId } }),
     );
     const updated = { ...record, run, lastSyncedAt: yield* nowIso, syncError: null };
-    yield* upsertRemoteRun(updated);
+    yield* persistRemoteRun({ peerId: record.peerId, peerLabel: record.peerLabel, run });
+    yield* updateRemoteRunSync(record.peerId, run.threadId, (current) => ({
+      ...current,
+      lastSyncedAt: updated.lastSyncedAt,
+      syncError: null,
+    }));
+    yield* publishRuns;
     return updated;
   });
 
@@ -1270,26 +1336,36 @@ export const make = Effect.gen(function* () {
       ).pipe(Effect.result);
       const at = yield* nowIso;
       if (Result.isFailure(response)) {
-        yield* upsertRemoteRun({
-          ...record,
+        // Failures are volatile state; only a new failure message is worth a publish.
+        const message = response.failure.message;
+        yield* updateRemoteRunSync(record.peerId, record.run.threadId, (current) => ({
+          ...current,
           lastSyncedAt: at,
-          syncError: response.failure.message,
-        });
+          syncError: message,
+        }));
+        if (record.syncError !== message) yield* publishRuns;
         return;
       }
-      const merged = [...record.events, ...response.success.events].slice(-REMOTE_RUN_EVENT_LIMIT);
-      yield* upsertRemoteRun({
-        ...record,
-        run: response.success.run,
-        events: merged,
+      const { run, events } = response.success;
+      const runChanged = !sameRun(record.run, run);
+      const recovered = record.syncError !== null;
+      yield* updateRemoteRunSync(record.peerId, record.run.threadId, (current) => ({
+        events: [...current.events, ...events].slice(-REMOTE_RUN_EVENT_LIMIT),
         lastSyncedAt: at,
         syncError: null,
-      });
+      }));
+      if (runChanged) {
+        yield* persistRemoteRun({ peerId: record.peerId, peerLabel: record.peerLabel, run });
+      }
+      // An idle run produces no events and no projection change: nothing to write or push.
+      if (runChanged || events.length > 0 || recovered) {
+        yield* publishRuns;
+      }
     });
 
   const pollLoop = Effect.gen(function* () {
     for (;;) {
-      const runs = yield* peers.remoteRuns;
+      const runs = yield* presentRemoteRuns;
       const active = runs.filter((record) => isFederationRunActive(record.run));
       if (active.length === 0) {
         // Nothing to watch: sleep until a run starts instead of polling peers for nothing.
@@ -1306,12 +1382,23 @@ export const make = Effect.gen(function* () {
   });
   yield* pollLoop.pipe(Effect.forkIn(serviceScope));
 
+  // Only peers with a live forward are refreshed on the timer: opening a tunnel
+  // to every peer every few minutes would keep a child process per peer alive
+  // forever. Explicit refreshes and runs open tunnels on demand.
   const refreshAllPeers = peers.peers.pipe(
     Effect.flatMap((stored) =>
-      Effect.forEach(stored, (peer) => refreshPeer(peer.peerId).pipe(Effect.ignore), {
-        discard: true,
-        concurrency: 2,
-      }),
+      Effect.forEach(
+        stored,
+        (peer) =>
+          transport
+            .isActive(peer.peerId)
+            .pipe(
+              Effect.flatMap((active) =>
+                active ? refreshPeer(peer.peerId).pipe(Effect.ignore) : Effect.void,
+              ),
+            ),
+        { discard: true, concurrency: 2 },
+      ),
     ),
   );
   yield* Effect.sleep(Duration.seconds(15)).pipe(

@@ -6,15 +6,8 @@ import type {
   TailcatRuntimeInfo,
   TailcatServeStatus,
 } from "@t3tools/contracts";
-import {
-  T3ConnectionCodeInvalidError,
-  decodeTailcatConnectionCode,
-  isT3ConnectionCode,
-  peekT3ConnectionCodeKind,
-} from "@t3tools/shared/t3ConnectionCode";
-import * as Schema from "effect/Schema";
-
-const isCodeInvalidError = Schema.is(T3ConnectionCodeInvalidError);
+import { parseTailcatBridgeError, TAILCAT_BRIDGE_FALLBACK_DETAIL } from "~/connection/platform";
+import { describeT3ConnectionCode } from "@t3tools/shared/t3ConnectionCode";
 
 export type TailcatStatusBadgeVariant = "outline" | "warning" | "success" | "error";
 
@@ -55,11 +48,7 @@ export function tailcatRuntimeLabel(runtime: TailcatRuntimeInfo | null): string 
   return runtime === null ? null : `${runtime.source} ${runtime.version}`;
 }
 
-/** The last eight hex characters of a `nodekey:<hex>` value, enough to tell devices apart. */
-export function tailcatNodeKeyFingerprint(nodeKey: string): string {
-  const hex = nodeKey.startsWith("nodekey:") ? nodeKey.slice("nodekey:".length) : nodeKey;
-  return hex.slice(-8);
-}
+export { tailcatNodeKeyFingerprint } from "@t3tools/contracts";
 
 /** Whole minutes a freshly minted code stays valid, never below one. */
 export function connectionCodeLifetimeMinutes(expiresAt: string, nowMs: number): number {
@@ -68,16 +57,18 @@ export function connectionCodeLifetimeMinutes(expiresAt: string, nowMs: number):
   return Math.max(1, Math.round((expiresAtMs - nowMs) / 60_000));
 }
 
+export interface TailcatConnectionCodeParsed {
+  readonly kind: "valid";
+  readonly payload: TailcatConnectionCodePayload;
+  readonly expiresAtMs: number | null;
+  readonly hasPairingToken: boolean;
+}
+
 export type TailcatConnectionCodePreview =
   | { readonly kind: "empty" }
   | { readonly kind: "invalid"; readonly message: string }
   | { readonly kind: "peer-code"; readonly message: string }
-  | {
-      readonly kind: "valid";
-      readonly payload: TailcatConnectionCodePayload;
-      readonly expired: boolean;
-      readonly hasPairingToken: boolean;
-    };
+  | (TailcatConnectionCodeParsed & { readonly expired: boolean });
 
 /**
  * Live feedback for the connection-code field. A federation peer code is
@@ -88,38 +79,38 @@ export function describeTailcatConnectionCode(
   raw: string,
   nowMs: number,
 ): TailcatConnectionCodePreview {
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
-    return { kind: "empty" };
+  const preview = parseTailcatConnectionCodePreview(raw);
+  return preview.kind === "valid"
+    ? { ...preview, expired: isTailcatConnectionCodeExpired(preview, nowMs) }
+    : preview;
+}
+
+/** The decode half of the preview: memoize on the pasted text, judge expiry per tick. */
+export function parseTailcatConnectionCodePreview(
+  raw: string,
+): Exclude<TailcatConnectionCodePreview, { kind: "valid" }> | TailcatConnectionCodeParsed {
+  const preview = describeT3ConnectionCode(raw, "tailcat");
+  switch (preview.kind) {
+    case "empty":
+    case "invalid":
+      return preview;
+    case "other-kind":
+      return { kind: "peer-code", message: preview.message };
+    case "valid":
+      return {
+        kind: "valid",
+        payload: preview.payload,
+        expiresAtMs: preview.expiresAtMs,
+        hasPairingToken: preview.payload.pairingToken !== undefined,
+      };
   }
-  if (!isT3ConnectionCode(trimmed)) {
-    return {
-      kind: "invalid",
-      message: "Paste the full connection code. It starts with t3c://tailcat/.",
-    };
-  }
-  if (peekT3ConnectionCodeKind(trimmed) === "peer") {
-    return {
-      kind: "peer-code",
-      message: "This is a federation peer code. Add it under Federation → Add peer instead.",
-    };
-  }
-  try {
-    const payload = decodeTailcatConnectionCode(trimmed);
-    return {
-      kind: "valid",
-      payload,
-      expired: payload.expiresAt !== undefined && Date.parse(payload.expiresAt) <= nowMs,
-      hasPairingToken: payload.pairingToken !== undefined,
-    };
-  } catch (cause) {
-    return {
-      kind: "invalid",
-      message: isCodeInvalidError(cause)
-        ? cause.message
-        : "This Tailcat connection code could not be read.",
-    };
-  }
+}
+
+export function isTailcatConnectionCodeExpired(
+  parsed: TailcatConnectionCodeParsed,
+  nowMs: number,
+): boolean {
+  return parsed.expiresAtMs !== null && parsed.expiresAtMs <= nowMs;
 }
 
 /** "Direct", "Relay (via fra)", "Relay", or "Unknown" for a measured path. */
@@ -148,8 +139,6 @@ export function tailcatForwardStatusLabel(status: TailcatForwardStatus): string 
       return "Ready";
     case "failed":
       return "Failed";
-    case "stopped":
-      return "Stopped";
   }
 }
 
@@ -158,13 +147,11 @@ export function tailcatForwardStatusLabel(status: TailcatForwardStatus): string 
  * like a sentence in the dialog. Connection errors already arrive clean.
  */
 export function formatTailcatConnectionError(error: unknown, fallback: string): string {
-  const raw = error instanceof Error ? error.message : typeof error === "string" ? error : "";
-  const cleaned = raw
-    .replace(/^Error invoking remote method '[^']+':\s*/u, "")
-    .replace(/^(?:[A-Za-z]*Error):\s*/u, "")
-    .replace(/^\[tailcat:[a-z-]+\]\s*/u, "")
-    .trim();
-  return cleaned.length > 0 ? cleaned : fallback;
+  if (!(error instanceof Error) && typeof error !== "string") {
+    return fallback;
+  }
+  const { detail } = parseTailcatBridgeError(error);
+  return detail === TAILCAT_BRIDGE_FALLBACK_DETAIL ? fallback : detail;
 }
 
 /** The state has no secrets (keys are public, sessions are ids), so it can be copied whole. */

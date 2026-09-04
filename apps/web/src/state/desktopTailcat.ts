@@ -2,7 +2,6 @@ import type {
   DesktopBridge,
   DesktopTailcatEnvironmentBootstrap,
   TailcatConnectionDiagnostics,
-  TailcatRuntimeAvailability,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -10,7 +9,6 @@ import { Atom } from "effect/unstable/reactivity";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
-const DESKTOP_TAILCAT_RUNTIME_STALE_TIME_MS = 30_000;
 const DESKTOP_TAILCAT_DIAGNOSTICS_STALE_TIME_MS = 5_000;
 const DESKTOP_TAILCAT_DIAGNOSTICS_IDLE_TTL_MS = 60_000;
 
@@ -22,7 +20,6 @@ const DESKTOP_TAILCAT_DIAGNOSTICS_IDLE_TTL_MS = 60_000;
 export type DesktopTailcatBridge = Pick<
   DesktopBridge,
   | "ensureTailcatEnvironment"
-  | "getTailcatRuntimeAvailability"
   | "getTailcatConnectionDiagnostics"
   | "probeTailcatConnectionPath"
   | "restartTailcatEnvironment"
@@ -57,31 +54,6 @@ export function isDesktopTailcatAvailable(
 ): boolean {
   return bridge?.ensureTailcatEnvironment !== undefined;
 }
-
-export function createDesktopTailcatRuntimeAvailabilityAtom(
-  getBridge: () => DesktopTailcatBridge | undefined,
-) {
-  const loadRuntimeAvailability = Effect.fn("loadDesktopTailcatRuntimeAvailability")(function* () {
-    const bridge = getBridge();
-    const getTailcatRuntimeAvailability = bridge?.getTailcatRuntimeAvailability;
-    if (bridge === undefined || getTailcatRuntimeAvailability === undefined) {
-      return yield* new DesktopTailcatUnavailableError();
-    }
-    return yield* Effect.tryPromise({
-      try: (): Promise<TailcatRuntimeAvailability> => getTailcatRuntimeAvailability.call(bridge),
-      catch: (cause) => new DesktopTailcatBridgeError({ operation: "runtime check", cause }),
-    });
-  });
-
-  return Atom.make(loadRuntimeAvailability()).pipe(
-    Atom.swr({ staleTime: DESKTOP_TAILCAT_RUNTIME_STALE_TIME_MS, revalidateOnMount: true }),
-    Atom.keepAlive,
-    Atom.withLabel("desktop:tailcat-runtime-availability"),
-  );
-}
-
-export const desktopTailcatRuntimeAvailabilityAtom =
-  createDesktopTailcatRuntimeAvailabilityAtom(getDesktopTailcatBridge);
 
 /**
  * Transport diagnostics for one saved Tailcat environment, keyed by its

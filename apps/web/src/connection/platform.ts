@@ -200,6 +200,8 @@ const isTailcatFailureCode = Schema.is(TailcatFailureCode);
  * it with the invoked channel and the desktop error itself carries a
  * `[tailcat:<code>]` marker, so the renderer can map it back to a failure code.
  */
+export const TAILCAT_BRIDGE_FALLBACK_DETAIL = "The Tailcat tunnel failed.";
+
 export function parseTailcatBridgeError(cause: unknown): {
   readonly code: TailcatFailureCode | null;
   readonly detail: string;
@@ -211,12 +213,12 @@ export function parseTailcatBridgeError(cause: unknown): {
     .trim();
   const marker = /^\[tailcat:([a-z-]+)\]\s*/u.exec(unprefixed);
   if (marker === null) {
-    return { code: null, detail: unprefixed || "The Tailcat tunnel failed." };
+    return { code: null, detail: unprefixed || TAILCAT_BRIDGE_FALLBACK_DETAIL };
   }
   const code = marker[1];
   return {
     code: code !== undefined && isTailcatFailureCode(code) ? code : null,
-    detail: unprefixed.slice(marker[0].length).trim() || "The Tailcat tunnel failed.",
+    detail: unprefixed.slice(marker[0].length).trim() || TAILCAT_BRIDGE_FALLBACK_DETAIL,
   };
 }
 
@@ -246,22 +248,8 @@ export function tailcatPreparationError(cause: unknown): ConnectionAttemptError 
     case "port-in-use":
     case "unknown":
       return new ConnectionTransientError({ reason: "tailcat-unavailable", detail });
-    case null: {
-      const lower = detail.toLowerCase();
-      if (lower.includes("binary") || lower.includes("executable")) {
-        return new ConnectionBlockedError({
-          reason: "unsupported",
-          detail: `${detail} ${TAILCAT_RUNTIME_INSTALL_HINT}`,
-        });
-      }
-      return new ConnectionTransientError({
-        reason: "tailcat-unavailable",
-        detail:
-          lower.includes("not trusted") || lower.includes("offline") || lower.includes("time")
-            ? detail
-            : `Could not prepare the Tailcat environment: ${detail}`,
-      });
-    }
+    case null:
+      return new ConnectionTransientError({ reason: "tailcat-unavailable", detail });
   }
 }
 
@@ -314,7 +302,11 @@ const ensureDesktopTailcatEnvironment = Effect.fn("web.connectionPlatform.tailca
 export const provisionDesktopTailcatEnvironment = Effect.fn(
   "web.connectionPlatform.tailcat.provisionDesktop",
 )(
-  function* (payload: TailcatConnectionCodePayload) {
+  function* (input: {
+    readonly payload: TailcatConnectionCodePayload;
+    readonly connectionId: string;
+  }) {
+    const { payload, connectionId } = input;
     const pairingToken = payload.pairingToken;
     if (pairingToken === undefined) {
       return yield* new ConnectionBlockedError({
@@ -331,16 +323,13 @@ export const provisionDesktopTailcatEnvironment = Effect.fn(
           "This connection code has expired. Create a fresh code on the other machine and paste it again.",
       });
     }
-    const connectionId = `tailcat:${payload.environmentId ?? payload.address}`;
-    yield* Effect.sync(() =>
-      reportTailcatProvisioningProgress({ connectionId, phase: "starting-tunnel" }),
-    );
+    yield* Effect.sync(() => reportTailcatProvisioningProgress({ phase: "starting-tunnel" }));
     const bootstrap = yield* ensureDesktopTailcatEnvironment({
       connectionId,
       address: payload.address,
       remotePort: payload.port,
     });
-    yield* Effect.sync(() => reportTailcatProvisioningProgress({ connectionId, phase: "pairing" }));
+    yield* Effect.sync(() => reportTailcatProvisioningProgress({ phase: "pairing" }));
     const descriptor = yield* fetchRemoteEnvironmentDescriptor({
       httpBaseUrl: bootstrap.httpBaseUrl,
     }).pipe(Effect.mapError(mapRemoteEnvironmentError));

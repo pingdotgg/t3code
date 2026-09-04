@@ -1,8 +1,10 @@
-import { createEnvironmentRpcCommand } from "@t3tools/client-runtime/state/runtime";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcSubscriptionAtomFamily,
+} from "@t3tools/client-runtime/state/runtime";
 import { WS_METHODS } from "@t3tools/contracts";
 
 import { connectionAtomRuntime } from "../connection/runtime";
-import { createEnvironmentStreamAtomFamily } from "./environmentRpcStream";
 
 const serialPerEnvironment = {
   mode: "serial" as const,
@@ -15,7 +17,7 @@ const serialPerEnvironment = {
  * settings screen can drive whichever environment it is looking at.
  */
 export const tailcatEnvironment = {
-  remoteAccess: createEnvironmentStreamAtomFamily(connectionAtomRuntime, {
+  remoteAccess: createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
     label: "environment-data:tailcat:remote-access",
     tag: WS_METHODS.tailcatSubscribeRemoteAccess,
   }),

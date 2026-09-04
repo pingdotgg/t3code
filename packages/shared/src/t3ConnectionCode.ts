@@ -52,6 +52,73 @@ export class T3ConnectionCodeInvalidError extends Schema.TaggedErrorClass<T3Conn
   }
 }
 
+type PayloadForKind<Kind extends T3ConnectionCodeKind> = Kind extends "tailcat"
+  ? TailcatConnectionCodePayload
+  : FederationPeerCodePayload;
+
+/**
+ * What a pasted code is, for live form feedback: nothing yet, not a code,
+ * a code of another kind (with the guidance from the kind-mismatch error),
+ * or a decoded payload plus its expiry as epoch milliseconds.
+ */
+export type T3ConnectionCodePreview<Kind extends T3ConnectionCodeKind> =
+  | { readonly kind: "empty" }
+  | { readonly kind: "invalid"; readonly message: string }
+  | { readonly kind: "other-kind"; readonly actual: T3ConnectionCodeKind; readonly message: string }
+  | {
+      readonly kind: "valid";
+      readonly payload: PayloadForKind<Kind>;
+      readonly expiresAtMs: number | null;
+    };
+
+const isConnectionCodeInvalidError = Schema.is(T3ConnectionCodeInvalidError);
+
+export function describeT3ConnectionCode<Kind extends T3ConnectionCodeKind>(
+  raw: string,
+  expected: Kind,
+): T3ConnectionCodePreview<Kind> {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return { kind: "empty" };
+  }
+  if (!isT3ConnectionCode(trimmed)) {
+    const noun = expected === "tailcat" ? "connection" : "peer";
+    return {
+      kind: "invalid",
+      message: `Paste the full ${noun} code. It starts with t3c://${expected}/.`,
+    };
+  }
+  const actual = peekT3ConnectionCodeKind(trimmed);
+  if (actual !== null && actual !== expected) {
+    return {
+      kind: "other-kind",
+      actual,
+      message: new T3ConnectionCodeInvalidError({ reason: "kind-mismatch", kind: expected, actual })
+        .message,
+    };
+  }
+  try {
+    const payload = (
+      expected === "tailcat"
+        ? decodeTailcatConnectionCode(trimmed)
+        : decodeFederationPeerCode(trimmed)
+    ) as PayloadForKind<Kind>;
+    const expiresAt = payload.expiresAt;
+    return {
+      kind: "valid",
+      payload,
+      expiresAtMs: expiresAt === undefined ? null : Date.parse(expiresAt),
+    };
+  } catch (cause) {
+    return {
+      kind: "invalid",
+      message: isConnectionCodeInvalidError(cause)
+        ? cause.message
+        : `This ${expected === "tailcat" ? "Tailcat connection" : "peer"} code could not be read.`,
+    };
+  }
+}
+
 const TailcatCodeJson = Schema.fromJsonString(TailcatConnectionCodePayload);
 const PeerCodeJson = Schema.fromJsonString(FederationPeerCodePayload);
 const encodeTailcatCodeJson = Schema.encodeSync(TailcatCodeJson);

@@ -42,6 +42,15 @@ export const TailcatNodeKey = TrimmedNonEmptyString.check(
 );
 export type TailcatNodeKey = typeof TailcatNodeKey.Type;
 
+/**
+ * Short, human-comparable form of a node key (`ab12·cd34·ef56`): the first and
+ * last hex groups, so the same key reads the same in every UI, CLI, and log.
+ */
+export function tailcatNodeKeyFingerprint(nodeKey: string): string {
+  const hexPart = nodeKey.trim().replace(/^nodekey:/u, "");
+  return `${hexPart.slice(0, 4)}·${hexPart.slice(4, 8)}·${hexPart.slice(-4)}`;
+}
+
 export const TailcatConnectionCodePayload = Schema.Struct({
   v: Schema.Literal(TAILCAT_CONNECTION_CODE_VERSION),
   transport: Schema.Literal("tailcat"),
@@ -90,16 +99,6 @@ export const TailcatFailure = Schema.Struct({
   at: IsoDateTime,
 });
 export type TailcatFailure = typeof TailcatFailure.Type;
-
-export const TailcatRuntimeAvailability = Schema.Union([
-  Schema.Struct({ available: Schema.Literal(true), runtime: TailcatRuntimeInfo }),
-  Schema.Struct({
-    available: Schema.Literal(false),
-    code: TailcatFailureCode,
-    message: TrimmedNonEmptyString,
-  }),
-]);
-export type TailcatRuntimeAvailability = typeof TailcatRuntimeAvailability.Type;
 
 export const TailcatTrustedPeer = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -192,7 +191,7 @@ export const TailcatPathProbe = Schema.Struct({
 });
 export type TailcatPathProbe = typeof TailcatPathProbe.Type;
 
-export const TailcatForwardStatus = Schema.Literals(["starting", "ready", "failed", "stopped"]);
+export const TailcatForwardStatus = Schema.Literals(["starting", "ready", "failed"]);
 export type TailcatForwardStatus = typeof TailcatForwardStatus.Type;
 
 /** Client-side transport diagnostics for one saved Tailcat environment. */

@@ -68,8 +68,6 @@ const forwardStatusBadgeVariant = (status: TailcatConnectionDiagnostics["status"
       return "warning";
     case "failed":
       return "error";
-    case "stopped":
-      return "outline";
   }
 };
 

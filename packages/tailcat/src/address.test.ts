@@ -1,12 +1,8 @@
 import * as Result from "effect/Result";
+import { tailcatNodeKeyFingerprint } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  decodeTailcatAddress,
-  isTailcatAddressSyntax,
-  isTailcatNodeKey,
-  tailcatKeyFingerprint,
-} from "./address.ts";
+import { decodeTailcatAddress, isTailcatAddressSyntax, isTailcatNodeKey } from "./address.ts";
 
 // Captured from a real `tailcat serve` run (server key 7ea7…ff32, region 302).
 const ADDRESS =
@@ -47,7 +43,7 @@ describe("tailcat address", () => {
 
   it("renders short fingerprints", () => {
     expect(
-      tailcatKeyFingerprint(
+      tailcatNodeKeyFingerprint(
         "nodekey:9ab555a4a588b75d2054adb683db82461bb6c707d43e8ba39439f8eb1e821503",
       ),
     ).toBe("9ab5·55a4·1503");

@@ -59,7 +59,7 @@ import {
   AssetWorkspaceContextResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
-  FEDERATION_SESSION_SUBJECT_PREFIX,
+  AuthFederationPeerScope,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -2836,7 +2836,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             failEnvironmentInternal("internal_error", error),
           ),
         );
-        if (session.subject.startsWith(FEDERATION_SESSION_SUBJECT_PREFIX)) {
+        if (session.scopes.includes(AuthFederationPeerScope)) {
           // Federation peers speak the versioned HTTP protocol only; the RPC
           // surface is for this environment's own clients.
           return yield* failEnvironmentAuthInvalid("invalid_credential");

@@ -1,6 +1,7 @@
-import type { TailcatAddress, TailcatNodeKey } from "@t3tools/contracts";
+import { TailcatAddress, TailcatNodeKey } from "@t3tools/contracts";
 import * as Encoding from "effect/Encoding";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 
 import { TailcatAddressInvalidError } from "./errors.ts";
 
@@ -19,10 +20,11 @@ export interface DecodedTailcatAddress {
   readonly hasEmbeddedRegions: boolean;
 }
 
-const TAILCAT_ADDRESS_PATTERN = /^tc[A-Za-z0-9_-]{16,}$/u;
+const isAddress = Schema.is(TailcatAddress);
+const isNodeKey = Schema.is(TailcatNodeKey);
 
 export function isTailcatAddressSyntax(value: string): value is TailcatAddress {
-  return TAILCAT_ADDRESS_PATTERN.test(value.trim());
+  return isAddress(value.trim());
 }
 
 type CborValue =
@@ -150,10 +152,6 @@ class CborReader {
   }
 }
 
-function hex(bytes: Uint8Array): string {
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 function invalid(detail: string): TailcatAddressInvalidError {
   return new TailcatAddressInvalidError({ detail });
 }
@@ -198,20 +196,18 @@ export function decodeTailcatAddress(
   const regionId = map.get("i");
   const regions = map.get("r");
   return Result.succeed({
-    serverNodeKey: `nodekey:${hex(serverPublic)}` as TailcatNodeKey,
+    serverNodeKey: `nodekey:${Encoding.encodeHex(serverPublic)}` as TailcatNodeKey,
     serverDiscoKey:
-      disco instanceof Uint8Array && disco.length === 32 ? `discokey:${hex(disco)}` : null,
+      disco instanceof Uint8Array && disco.length === 32
+        ? `discokey:${Encoding.encodeHex(disco)}`
+        : null,
     regionId: typeof regionId === "number" ? regionId : null,
     hasEmbeddedRegions: Array.isArray(regions) && regions.length > 0,
   });
 }
 
 /** Short human-readable identity for a node key, for diagnostics and peer lists. */
-export function tailcatKeyFingerprint(nodeKey: string): string {
-  const hexPart = nodeKey.replace(/^nodekey:/u, "");
-  return `${hexPart.slice(0, 4)}·${hexPart.slice(4, 8)}·${hexPart.slice(-4)}`;
-}
 
 export function isTailcatNodeKey(value: string): value is TailcatNodeKey {
-  return /^nodekey:[0-9a-f]{64}$/u.test(value.trim());
+  return isNodeKey(value.trim());
 }

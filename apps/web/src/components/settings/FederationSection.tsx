@@ -3,6 +3,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { formatAbsoluteTimestamp } from "~/timestampFormat";
 import {
   type EnvironmentId,
   FEDERATION_DEFAULT_SCOPES,
@@ -54,7 +55,6 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   FEDERATION_SCOPE_OPTIONS,
   describeFederationPeerCode,
-  formatFederationTimestamp,
   isRemoteRunActive,
   peerStatusDotClassName,
   peerStatusLabel,
@@ -462,7 +462,7 @@ const PeerRow = memo(function PeerRow({ peer, refreshing, onRefresh, onRemove }:
           </div>
           <p className="text-xs text-muted-foreground">
             {peer.lastSeenAt
-              ? `Last seen ${formatFederationTimestamp(peer.lastSeenAt)}`
+              ? `Last seen ${formatAbsoluteTimestamp(peer.lastSeenAt)}`
               : "Not reached yet"}
             {peer.transport ? " · via Tailcat" : " · no transport"}
           </p>
@@ -639,7 +639,7 @@ const RemoteRunChangesDialog = memo(function RemoteRunChangesDialog({
                 <span className="text-muted-foreground">
                   Diff from {peerLabel} · origin{" "}
                   <code className="font-mono">{fetched.ref.environmentId}</code> · fetched{" "}
-                  {formatFederationTimestamp(fetched.fetchedAt)}
+                  {formatAbsoluteTimestamp(fetched.fetchedAt)}
                 </span>
                 <Button size="xs" variant="ghost" onClick={() => copyToClipboard(fetched.diff)}>
                   <CopyIcon aria-hidden />
@@ -697,8 +697,8 @@ const RemoteRunRow = memo(function RemoteRunRow({
             <p className="text-xs text-destructive">{remoteRun.syncError}</p>
           ) : null}
           <p className="text-[11px] text-muted-foreground/70">
-            Requested {formatFederationTimestamp(run.requestedAt)}
-            {run.completedAt ? ` · finished ${formatFederationTimestamp(run.completedAt)}` : ""}
+            Requested {formatAbsoluteTimestamp(run.requestedAt)}
+            {run.completedAt ? ` · finished ${formatAbsoluteTimestamp(run.completedAt)}` : ""}
             {run.turnCount > 0
               ? ` · ${run.turnCount === 1 ? "1 turn" : `${run.turnCount} turns`}`
               : ""}
@@ -1013,6 +1013,15 @@ export const FederationSection = memo(function FederationSection({
     [environmentId, refreshPeer, reportFailure],
   );
 
+  // Stable, void-returning callbacks keep the memoized rows from re-rendering on
+  // every snapshot tick.
+  const onRefreshPeer = useCallback(
+    (peer: FederationPeer) => {
+      void handleRefreshPeer(peer);
+    },
+    [handleRefreshPeer],
+  );
+
   const handleConfirmRemovePeer = useCallback(async () => {
     if (pendingRemovePeer === null) return;
     setIsRemovingPeer(true);
@@ -1042,6 +1051,12 @@ export const FederationSection = memo(function FederationSection({
       );
     },
     [cancelRemoteRun, environmentId, reportFailure],
+  );
+  const onCancelRun = useCallback(
+    (remoteRun: FederationRemoteRun) => {
+      void handleCancelRun(remoteRun);
+    },
+    [handleCancelRun],
   );
 
   return (
@@ -1090,7 +1105,7 @@ export const FederationSection = memo(function FederationSection({
                 key={peer.peerId}
                 peer={peer}
                 refreshing={refreshingPeerId === peer.peerId}
-                onRefresh={(target) => void handleRefreshPeer(target)}
+                onRefresh={onRefreshPeer}
                 onRemove={setPendingRemovePeer}
               />
             ))
@@ -1122,7 +1137,7 @@ export const FederationSection = memo(function FederationSection({
                 environmentId={environmentId}
                 remoteRun={remoteRun}
                 cancelling={cancellingThreadId === remoteRun.run.threadId}
-                onCancel={(target) => void handleCancelRun(target)}
+                onCancel={onCancelRun}
               />
             ))
           )}
