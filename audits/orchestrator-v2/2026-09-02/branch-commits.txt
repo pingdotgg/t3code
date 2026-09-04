@@ -1,0 +1,332 @@
+d2f1f511f4 fix: reconcile main's round-20 features after the rebase
+0550e0a34d fix(web): realign the composer and timeline with main
+e6da41e5c6 fix(web): right-align the stash shoulder tab again
+f0174c4577 fix: reconcile main's round-19 features after the rebase
+2191297898 feat(server): evaluate automatic thread settlement in the v2 orchestrator
+7697286069 fix: reconcile main's round-18 features after the rebase
+99e940dc2b feat(web): port working and thinking timeline rows to orchestration v2
+acdbe292f0 fix: reconcile main's round-17 features after the rebase
+4b35166d02 fix(mobile): keep scroll bounds current after animations
+fa54f54607 fix(chat): remove added tool summary status counts
+b27f50b65a feat(mobile): port chat summaries and transitions to orchestration v2
+60bc3cff93 feat(web): summarize T3 orchestration actions
+72e0c434be fix(web): keep composer shortcut tooltip stable on Mod
+6bcc0e39da fix(web): match composer actions to draft and modifier state
+6ce4cb0a15 fix(web): keep queued messages in place while editing
+e16d934d8a fix(web): keep queued message editing inside the queue panel
+b2afc4cb45 refactor(web): use shared banner rows for queued messages
+85a3c12568 fix(web): keep stash separate from the composer activity column
+e82c717855 fix(web): share the outline for joined composer tabs
+b1533813ce fix(web): align queue headers and prevent stash overlap
+ed6aafa93f fix(web): port composer activity and grouping to orchestration v2
+c1791ab263 fix(orchestration): select visible history before limiting SQL
+47ae99f517 fix(server): recover OpenCode status reconciliation
+0fc565db8a fix(orchestration): retain nested fork history when paging
+07889933e3 fix(server): cancel pending OpenCode prompts safely
+870014496f fix(orchestration): page history through its true end
+051565fc96 fix(web): retain markdown workspace ownership
+be7b07634b fix(clients): anchor feedback in conversation order
+de79f44221 fix(server): correlate OpenCode prompt admission
+dbb6021f84 fix(server): normalize Claude question answers
+70f82caaa0 fix(server): preserve Claude planning lifecycle
+26dfbc2984 fix(server): preserve provider usage in persisted turns
+733db7269f fix(server): allow protocol negotiation in CORS
+3d5bab73d8 fix(server): restore Claude resume compaction
+0921786018 perf(orchestration): bound complete thread snapshots
+9a4734af8e perf(orchestration): bound history reads in SQL
+ff9f875f17 fix(server): project Claude plans and todos
+ecf3dd2c9a fix(server): restore Claude structured questions
+98670f337e fix(server): guard OpenCode prompt admission races
+68104a497e chore(repo): remove tracked audit scratch files
+19a30d03be docs: state portable handoff limits
+3e1ff1531d docs: explain legacy thread migration
+995f4e7e5a fix(protocol): reject incompatible orchestration peers
+44f2004810 fix(web): scope markdown actions to their environment
+5f19d550ae fix(web): restore markdown file chip actions
+642056fdd9 fix(server): keep current provider context usage
+7fca26e6fb fix(web): preserve Windows markdown paths
+53c6857ec9 fix(web): load workspace markdown images through assets
+8bbf7f50c8 fix(server): preserve generic provider attachments
+e44588afa4 fix(clients): restore Codex feedback submission
+dcff638944 fix(orchestration): recreate missing worktrees before turns
+eacc09d40a fix(orchestration): honor migrated thread visibility in search
+2cfe234e46 fix(server): preserve Claude subagent models
+930dd22e72 fix(web): honor disabled legacy plan mode
+82e1b8ed60 fix(orchestration): preserve legacy thread metadata
+feedc3f6bb fix(server): include service launcher in bundle build
+6b3690e063 fix(server): observe pre-aborted Claude approvals
+7e71ff8a80 fix(orchestration): reanchor unsettled threads
+34a4d026a5 fix(server): keep Claude session approvals ephemeral
+b9400c36a3 fix(web): keep failed tool items in the collapsed group summaries
+e0ab034b43 fix: reconcile main's round-16 features after the rebase
+91572bcaf4 chore: refresh macroscope ui-consistency check
+8e0d521beb chore: retrigger ci
+bbbaeeb2a3 fix(server): inject HostProcessPlatform into the Grok plan extractor
+6211ffaa69 fix(lint): allowlist the queue and relationships interop boundaries
+79ab9ff211 fix(mobile): replace remaining dark: utilities with adaptive semantic tokens
+d17919b845 fix(web): dedupe the composer glass styles and align the chat column width
+aafe194a88 fix: reconcile main's round-14 features after the rebase
+3fd374226d fix(web): drag-to-reorder queued messages and retire stale pending rows
+a1d309ea77 feat(web): show attachments on queued messages and edit them in the composer
+1c58988751 feat(server): claim uploaded attachments at v2 dispatch
+bf963f1d4f fix(web): restore the full-screen file-drop target over the chat column
+084d72779d fix: restore main's automatic thread settling after the revert
+a2efa89c95 fix: reconcile main's round-12 features after the rebase
+690ea07bac fix(opencode): route child-session approvals through the v2 adapter
+0301dc423e fix: reconcile main's round-11 features after the rebase
+c380aa6c87 fix(web): collapsed tool rows preview inputs for every tool type
+1c3b15a835 fix(web): show the command on collapsed tool rows, not its stdout
+72056ac893 fix(web): surface v2 todo-list plans as task progress
+c0cbbbc844 fix(web): collapse settled tool runs behind main's summary toggles
+a8df962501 fix(web): converge ChatComposer on main's drawer-era body
+d81b12f2aa fix(web): adopt main's attached-composer surface contract so the glass survives shoulder tabs
+0b8e40fbc5 fix(web): repaint the composer glass and strip the thread-panel popover chrome
+8fdce45017 feat(grok): capture exit_plan_mode into the v2 proposed-plan card (#8358)
+2c188dd57b fix(web): keep following the stream after returning to the live edge (#6519)
+dfc21af186 feat(orchestration-v2): show live context usage in the meter (#8144)
+47b1560306 fix(grok): fail hung prompts on xAI rate-limit completions (#8358, partial)
+a854b2fcfd feat(analytics): credit v2 threads and turns to the starting client (#7774)
+4eb1099038 feat(orchestration-v2): route Codex thread feedback uploads through v2 (#7949)
+f894a3531f feat(orchestration-v2): carry approval options and app names to the client (#8058)
+650a24252e feat(orchestration-v2): project linked pull requests on threads (#8160)
+1533041bfd fix(web): stop mis-marking recovered and text-reported tool failures in the v2 work log
+ab8569a7a3 fix: reconcile main's round-10 features after the rebase
+5d1e08ef48 fix(orchestration): show provider retries in the work log
+8bf0b5fcb3 refactor(web): finish aligning the branch with main's style simplification
+f22abd94cd fix(web): restore the titlebar sizing and timeline fade lost to main's style simplification
+2e42519705 feat(server): honor withheld agent browser access in the v2 runtime
+796911d54d fix: reconcile main's round-9 features after the rebase
+5c722de01c feat(mobile): surface prominent activity status and metadata
+d734b66fff fix(server): reject replaying a command receipt across threads in v2
+ace57ebdfc fix: reconcile main's round-8 features after the rebase
+e74f01c66a perf(server): keep shell snapshots bounded and active-only
+a39f6a267d fix(web): size the titlebar layout-control icons like the sidebar trigger
+7c8af3708e fix(web): align titlebar clusters to one shared pixel inset
+3d812634cf fix(web): keep the titlebar layout controls fixed across right-panel toggles
+b16ac84793 fix: reconcile main's round-6 features after the rebase
+e861e74df5 feat(contracts): track thread title regeneration
+862479b515 feat(orchestration): bound thread history and resume payloads
+167f5f6068 fix(web): restore main's collapse chrome and tab-status keying on the PR panel
+365ffce101 feat(web): prioritize pull request row actions
+9e7a5b0566 fix(web): reconcile main's round-5 features after the rebase
+6f39090bcb fix(mobile): port main's composer stabilization into the v2 thread screens
+15d7ed4ddc feat(web): add pull request actions to thread details
+e69b9944e5 fix(web): restore the branch's slim chat header
+e3fb981cac test(server): expect attachment saved-at lines in ClaudeAdapterV2 turn text
+75fdf57d99 test(web): restore main's right-panel migration expectations after the panel-visibility merge
+1ffb1eaf78 fix(server): port round-3 main fixes into the v2 orchestrator
+fbfa125f2d chore(server): renumber v2 migrations 038-046 to 041-049 after main's 038-040
+f2d1f16c3c fix: repair rerere-damaged files and reconcile main's round-3 features with v2
+fddf025c0b fix(web): show Git action success inline in panel
+09c99a51a1 fix(web): let LegendList own end-follow and disclosure anchoring (#5449)
+bed1245b22 fix(web): port the refined live-follow gesture gating to the v2 timeline
+4e87742e9b chore(web): prune plan-sidebar leftovers after the inline-plans rework
+e778ae6f30 fix: port main fixes stranded by the v2 rewrite (round 2)
+bfb9d9465a fix(server): renumber v2 migrations after main's 037_ProjectionTurnsKeysetIndex
+20cec19eb5 fix: repair conflict-marker artifacts from rebase auto-resolutions
+ec7370e7e5 fix(web): align git action progress button layout
+2b4e393ff5 feat(orchestrator): Surface waiting background work (#4378)
+6a924e9d5f test(server): align migration expectations with renumbered ids
+2e3b863826 fix: port main fixes stranded by the v2 rewrite
+fa557cd774 fix(server): renumber v2 migrations after main's 036_ProjectionThreadsPinned
+3699b557e9 fix(web): remove open PR actions from git controls
+14ca09db7b fix(server): stop tying codex text-generation temp files to the caller's scope (#5406)
+7f3ebe40d9 fix(orchestrator): Prevent redundant delegated completion turns (#5311)
+1b91a552e0 fix(test): keep codex replay recovery off the repo checkout
+4ffad32204 chore: resolve lint warnings across v2 code
+39fab14dc4 test(server): cover v2 thread title regeneration
+fa775c22ad fix(web): restore compact header sizing for project script controls
+d4e31cb20f fix: send mcp-protocol-version header in worktree registration test
+704808d923 fix: adopt effect beta.103 APIs in rebased v2 code
+4e72ea725c feat(chat): refine V2 conversation UI (#5307)
+d13cb6b8f5 fix(server): restore worktree branch naming in the v2 orchestrator (#5309)
+78aea07a31 fix(orchestrator): Order thread lineage by creation time (#5310)
+6a8fcc6576 fix(orchestration-v2): restore generated thread titles (#5176)
+6a7824f352 fix: reconcile rebase with latest main
+cb592a7a92 fix(web): keep Git progress title anchored
+790fe93a99 fix(web): remove elevated thread details panel styling
+3cd279a07a refactor(orchestration): split thread-not-sendable into typed errors
+aadfcb978b fix(orchestration): promoted queued messages keep the queued_turn intent
+e2284c99f1 fix(orchestration): thread visits no longer create activity loops (#5038)
+888283cd7f feat(orchestration): port thread title regeneration to the v2 runtime
+5e29230798 perf(web): keep timeline minimap animations off the main thread
+c123bddb2b fix(relay): stop replaying the whole event store into the awareness relay
+3dc8b570af fix(chat): prevent stale timeline scroll and rerenders
+0ca2c503d9 perf(orchestration): per-thread shell deltas, visit throttling, event compaction (#4971)
+0d57ac71ae [codex] feat(web): show git progress in the commit button (#4963)
+7b28551f4b feat(orchestration): track provider retries and thread visits
+0ee02d5490 feat(server): surface legacy thread migration progress
+dd9b6b0d4b fix: close failed provider adapter scopes
+6832caec1f fix: preserve thread management failure semantics
+981b2ddc74 fix: address latest orchestration review findings
+a2b1e1ef93 fix: preserve orchestration task identity
+5de1955591 fix: address orchestration review findings
+fa408d129f fix(mobile): label queued message intent
+9aeb65f738 fix: address orchestration review findings
+8af2b58d15 fix(orchestrator): preserve migrated and nested history
+327189894e fix(server): preserve project mutation client errors
+e59043aebb fix(orchestrator): validate rollback and search links
+614c744be9 fix(orchestrator): close cancellation edge cases
+af590d13ae fix(orchestrator): decode direct Claude result blocks
+9c3a6b75e9 fix(orchestrator): validate replay edge cases
+69299bf47b fix(orchestrator): preserve terminal effect outcomes
+7b1e9dad86 fix(orchestrator): preserve retryable effect failures
+c7a62d3c36 fix(orchestrator): avoid replaying settled effects
+c17955171a fix(worktrees): make handoff rollback atomic
+49ad52e66d fix(orchestrator): release stranded effect claims
+0a9a06ba64 fix(orchestrator): execute resolved runtime responses
+785e1388d0 fix(orchestrator): harden provider edge cases
+ff10b65fe6 fix(orchestrator): handle fresh review edge cases
+5a2a714d78 fix(orchestrator): address late review findings
+80e5ef9865 fix(mobile): gate thread controls on live runs
+6179f46681 fix(checkpoints): retain thread-start baseline after failed runs
+c2145dde12 fix(client): preserve live thread relationships
+153a1f8548 fix(web): enforce secure provider field defaults
+afeb2089d2 fix(claude): preserve explicit model options
+9f71aa9ca6 fix(server): isolate deterministic attachment ids
+c6adb55a0a fix(testkit): harden provider replay recording
+0d5dbddd16 fix(acp): enforce task and permission invariants
+6c30ce289b fix(orchestration): preserve imported conversation state
+09963b2172 fix(checkpoints): preserve valid run history
+345a9a4a3a fix(acp): discover final teardown descendants
+120242d9fb fix(cursor): log close attempts before execution
+0db5a1d2e6 fix(mobile): distinguish queued and waiting archive states
+1fdab432e8 fix(mobile): allow archiving post-provider work
+0900ea01d9 fix(orchestration): cancel queued work on archive
+7252e40574 fix(orchestration): handle checkpoint-wait runs
+3edb72687d fix(acp): make xai cancellation reliable
+8d27ca499e fix(contracts): reject invalid legacy intervals
+51e044f7ad fix(orchestration): preserve legacy schedule compatibility
+8006f38f2e fix(mobile): preserve active thread state
+32d563e07c fix(orchestration): harden scheduled task startup
+6c82f71da5 fix(orchestrator): schedule effects from durable deadlines (#4656)
+3ba155db4f feat: migrate v1 state into orchestrator v2 (#4400)
+d59b7c2ba3 chore(orchestrator): refresh checks after main sync
+ef8219c2e3 fix(web): restore checked-in project scripts
+4d9180dc78 fix: ignore subagents when sorting sidebar projects
+1e42d8e909 fix: hide subagent threads from v2 lists
+0e018044d7 fix(claude): Settle positive task-notification results
+ba3c821004 fix(orchestrator): Wake settled parents when delegated children finish
+9649b22600 fix(acp): Preserve wake evidence across an app-owned wake
+da04feea48 fix(grok): Prevent spurious wake run after in-turn monitors
+4a3797b482 test(orchestrator): align merged V2 compatibility checks
+16b8599b26 fix(server): clean up Claude replay failures
+45d60f9a51 fix(server): enforce ACP auth and preserve fork provenance
+bafa7a432b fix(server): keep derived threads awake
+0bc459bd0f fix(mobile): wait for fork shell before navigation
+7ae175a5f3 Add worktree handoff and status tools to the t3-code MCP server (#3754)
+83ea5f70c1 feat(subagents): disclose projected results consistently (#3866)
+2a25e1d2de fix(orchestrator): hydrate shell cache and group multi-environment projects (#3640)
+b2e4223af6 test(orchestrator): align Codex approval reviewer replays (#4457)
+c93936748b fix(orchestrator): Preserve claude/codex post-interrupt recovery state (#4229)
+2f50f6b93f test(orchestrator): Align post-merge CTM fixtures (#4193)
+b07b35f8fc fix(web): contain thread details panel effects
+7e3d211988 refactor(web): use shared glass surfaces
+92bfc55bc3 fix(web): remove stacked composer shadows
+39505241c8 fix(web): restore v2 composer chrome
+092daf3c49 fix(server): preserve released migration ordering
+8e173085a7 fix(orchestration): clarify agent delegation and scheduling
+d8b06653df Unify T3 MCP tool presentation across clients
+c026716d34 Render T3 MCP tools with branded timeline labels
+643047ad47 fix(grok): align ACP extensions with open source runtime
+1695b69e12 fix(mobile): support Hermes collection sorting
+a210dc8c28 test(orchestrator): align integration fixtures
+8e879081c3 fix(orchestrator): Harden Grok v2 runtime lifecycle
+a307962b2b fix(orchestrator): dedupe Grok continuation dispatch
+555b0469e9 fix(orchestrator): harden Grok v2 lifecycle (#3578)
+9a065758da fix(acp): bind MCP credentials to activated threads
+14f5595b68 fix(acp): release turns after interrupt timeout
+f17413cc12 fix(claude): reopen queries after MCP credential rotation
+cbcfea8b7d fix(claude): enforce read-only tool availability
+bf9a8775d7 fix(claude): honor never-approval runtime policies
+66f3b79c8e fix(claude): allow questions during plan mode
+cec49e2ca0 fix(claude): preserve approvals with full-access sandbox
+6f0e825e48 fix(claude): redact launch arguments from protocol logs
+17d2f5d2d4 test(desktop): expect orchestrator v2 state directory
+6e01338ad3 fix(ci): restore Claude permission request identity
+4060032ea1 fix(orchestrator): align Claude permission replay with SDK
+ec90f1ec95 feat(orchestrator): pass model options through MCP thread targets (#3872)
+822242fc77 fix(orchestrator): scope Claude MCP tool pre-approval (#3862)
+935aa5deb7 [orchestrator-v2] fix(orchestrator): Codex background command completion and subagent resume (#3908)
+55fd431a06 [orchestrator-v2] fix(orchestrator): Restore Claude session continuity for resume, wake, and idle release (#3860)
+698f41eb60 feat(orchestrator): Add shared provider continuation and background item plumbing
+25df2c7c87 feat: scheduled tasks (automations) (#3638)
+5dc316e8eb Fix Claude task turn mapping
+f2711e089d Allow provider switching via handoff in chat threads
+695c57b422 Remove early access badges from Cursor and Grok
+6c78a01831 Switch Cursor provider to the official SDK
+5f2045fcc3 fix(web): align thread details panel controls and menus (#3606)
+f0bd8850aa Require Cursor API key for provider checks
+036f3f9daf Keep persistent cards visible in folded turns
+0eb1fc59ab Clarify thread relationship icons and ordering
+4313ad89dd Map nested Codex subagent threads correctly
+9f06992061 Adopt userdata-v2 and subagent activity mapping
+db9310c2f6 Map Grok task envelopes to subagent lineage
+4d8e17808b Add iOS associated domains for Clerk
+2e05af6746 Retire V1 client orchestration parity
+af6028c82d Expose V2 thread workflows on mobile
+327f7287bb Enrich mobile V2 execution items
+1a2b7432e9 Render mobile timelines from V2 turn items
+6c6e346d38 Hide subagent threads and simplify thread controls
+0531d50ed5 Split open-in editor controls into panel and toolbar variants
+2aad9bc514 Reserve space for inline thread details panel
+ecddebcc67 Map thread panel into title bar and sidebar
+fcc2a2d096 Record created threads and subagent progress
+ef051d86d8 Handle preparing turns across provider orchestration
+c39d610069 Integrate orchestration V2 controls and process recovery
+b1c074b2ec Complete orchestration V2 frontend cutover
+c9dec10181 Split the V2 frontend plan into parity and enrichment phases
+b56d0e7d53 Integrate orchestration v2 with the application runtime
+f254d805e7 Guarantee MCP revocation during session release
+708aed97c9 Remove MCP credential expiration
+e9e19735a9 Require MCP registry for V2 provider sessions
+3f52b6a9ec Complete orchestration V2 application services
+900c8ec277 Start orchestration V2 application services
+74115dcb01 Align orchestration V2 with Effect service conventions
+65345a5bb4 Share Codex sessions across orchestration threads
+fb1ebd0f2f Map orchestration turns to provider instances
+a115e55b34 Add Orchestration V2 application integration plan
+e35661a849 Add MCP thread management and Codex turn mapping
+ad109c26f5 Add ACP replay harness and session lifecycle support
+4ff48c0983 Handle segmented Cursor turns and stable visible timelines
+8dcf191a94 Add Cursor SDK orchestration replay support
+3056bfd7c0 Add orchestration MCP toolkit
+6b81144d2c refactor(orchestration-v2): adopt host process spawn policy
+d855d91f0a wip
+7078dac915 feat(orchestration-v2): model native subagents
+a4a63953ed Map orchestration v2 WS methods to auth scopes
+73fe5fd878 fix(orchestration-v2): preserve source history on merged switch
+98e98085af fix(orchestration-v2): compose provider switch merge context
+08430b8115 feat(orchestration-v2): add merge-back replay coverage
+2e38197d2b fix(orchestration-v2): resolve cross-provider forks
+e2ba0751f7 feat(orchestration-v2): support cross-provider handoff
+631219bca5 feat(orchestration-v2): wire claude adapter primitives
+b76bbc23de Document Cursor SDK MCP projection for V2
+2182b71bfa Add turn-interrupt replay coverage and protocol logging
+617f327995 Support active Claude steering and turn replay mapping
+c1e8a12537 Map Claude turns to runtime query policies
+41c5f212a7 Map Claude replay fixtures to multi-turn turns
+d4cd542799 Add model selection to orchestration runs
+166fd1c53c Extract Claude SDK query runner from provider adapter
+b460c06441 Add Claude replay fixture recorder
+052c24ec16 Add V2 command capability policy
+be1d5acc70 Add merge-back context handoff support
+76dc095de6 Add orchestration V2 backend checklist
+ca9ba20375 Add thread fork lineage and lazy context transfer
+5e551ef722 Implement orchestration v2 runtime
+75120285ae Map Codex turns into orchestration v2
+eb8af12dca Add orchestration v2 replay and service contracts
+783f4f6e8d Add orchestration v2 docs and probe fixtures
+fa13e794bb Address Codex review feedback
+74942087a3 Switch Codex provider checks to app-server probe
+3182df2608 Flush native logs on adapter shutdown
+3bded8ba56 decoders
+99e5494242 Scope Codex session runtime lifetimes
+a527023141 Normalize Codex IDs and preserve streamed stdout decoding
+4c8648f791 Return Cursor ACP runtime with explicit scope
+ba5d340a04 Delay Codex provider availability until checked
+d914dc0329 resynclock
+4da42ca393 revert more
+77a63c13b8 nit
+e911c41199 Integrate Codex app-server support
+15dff31236 chore(ov2): preserve the integration base for replay
