@@ -196,6 +196,30 @@ describe("thread outbox", () => {
     expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(message))).toEqual(message);
   });
 
+  it("reads file-backed images from v4 queued messages", () => {
+    const message = {
+      ...queuedMessage({
+        messageId: "message-image",
+        createdAt: "2026-06-08T10:00:01.000Z",
+      }),
+      attachments: [
+        {
+          id: "image-1",
+          type: "image" as const,
+          name: "photo.png",
+          mimeType: "image/png",
+          sizeBytes: 3,
+          fileUri: "file:///documents/t3-composer-attachments/photo.png",
+          previewUri: "file:///documents/t3-composer-attachments/photo.png",
+          uploadedAttachmentId: "pending-photo-png",
+          uploadEnvironmentId: EnvironmentId.make("environment-1"),
+        },
+      ],
+    } satisfies QueuedThreadMessage;
+
+    expect(decodeQueuedThreadMessage({ ...message, schemaVersion: 4 })).toEqual(message);
+  });
+
   it("persists the exact selector snapshot while remaining compatible with v1 messages", () => {
     const legacyMessage = queuedMessage({
       messageId: "message-1",

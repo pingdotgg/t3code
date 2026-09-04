@@ -20,9 +20,13 @@ import {
 import { beginForegroundHandoff } from "./foreground-handoff";
 import { uuidv4 } from "./uuid";
 
-export interface DraftComposerImageAttachment extends UploadChatImageAttachment {
+export interface DraftComposerImageAttachment extends Omit<UploadChatImageAttachment, "dataUrl"> {
   readonly id: string;
   readonly previewUri: string;
+  /** Owned image bytes from a file-backed draft. Current writers still use inline bytes. */
+  readonly fileUri?: string;
+  /** Inline bytes from current writers and older drafts. */
+  readonly dataUrl?: string;
   readonly uploadedAttachmentId?: string;
   readonly uploadEnvironmentId?: EnvironmentId;
 }
@@ -40,17 +44,14 @@ export interface DraftComposerFileAttachment {
 
 export type DraftComposerAttachment = DraftComposerImageAttachment | DraftComposerFileAttachment;
 
-/** Wire shape for startTurn: pure uploads without client draft id / previewUri. */
-export function toUploadChatImageAttachments(
-  attachments: ReadonlyArray<DraftComposerImageAttachment>,
-): ReadonlyArray<UploadChatImageAttachment> {
-  return attachments.map((attachment) => ({
-    type: attachment.type,
-    name: attachment.name,
-    mimeType: attachment.mimeType,
-    sizeBytes: attachment.sizeBytes,
-    dataUrl: attachment.dataUrl,
-  }));
+/** Any composer attachment whose bytes live in the app-owned attachment directory. */
+export type FileBackedComposerAttachment = DraftComposerAttachment & { readonly fileUri: string };
+
+/** Files have a local copy. Images can have one after a file-backed draft is restored. */
+export function isFileBackedComposerAttachment(
+  attachment: DraftComposerAttachment,
+): attachment is FileBackedComposerAttachment {
+  return attachment.fileUri !== undefined;
 }
 
 const OWNED_PASTED_IMAGE_DIRECTORY = "t3-composer-paste";

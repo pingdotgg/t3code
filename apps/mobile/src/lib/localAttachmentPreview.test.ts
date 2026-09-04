@@ -46,6 +46,24 @@ beforeEach(() => {
 });
 
 describe("loadLocalAttachmentPreview", () => {
+  it("keeps an image MIME type when its filename has a video extension", async () => {
+    const image = {
+      ...attachment,
+      type: "image" as const,
+      name: "photo.mov",
+      mimeType: "image/png",
+      previewUri: attachment.fileUri,
+    };
+    const preview = await loadLocalAttachmentPreview(image, new AbortController().signal);
+    await preview!.share(new AbortController().signal);
+    expect(mocks.share).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachment: { name: "photo.mov", mimeType: "image/png" },
+      }),
+    );
+    preview!.dispose();
+  });
+
   it("retains and shares a PDF with its original filename and type", async () => {
     const pdf = { ...attachment, name: "report.pdf", mimeType: "application/pdf" };
     const preview = await loadLocalAttachmentPreview(pdf, new AbortController().signal);
