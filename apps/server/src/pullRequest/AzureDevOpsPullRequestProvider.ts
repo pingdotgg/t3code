@@ -169,6 +169,9 @@ export const make = Effect.gen(function* () {
             mergeCapabilities: { merge: true, squash: true, rebase: false },
             viewerPermissions: AZURE_DEVOPS_VIEWER_PERMISSIONS,
             autoMergeEnabled: pullRequest.autoMergeEnabled,
+            ...(pullRequest.autoMergeMethod === undefined
+              ? {}
+              : { autoMergeMethod: pullRequest.autoMergeMethod }),
           }),
         ),
       ),

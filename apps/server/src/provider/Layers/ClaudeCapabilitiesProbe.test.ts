@@ -22,6 +22,7 @@ it("isolates Claude capability probes without dropping workspace setting sources
     environment: {
       HOME: "/home/user",
       ENABLE_CLAUDEAI_MCP_SERVERS: "true",
+      FORCE_CODE_TERMINAL: "1",
     },
     cwd: "/workspace/project",
   });
@@ -37,6 +38,9 @@ it("isolates Claude capability probes without dropping workspace setting sources
   assert.equal(options.abortController, abortController);
   assert.equal(options.env?.HOME, "/home/user");
   assert.equal(options.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
+  assert.equal(options.env?.FORCE_CODE_TERMINAL, undefined);
+  assert.equal(options.env?.CLAUDE_CODE_AUTO_CONNECT_IDE, "0");
+  assert.equal(options.env?.CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL, "1");
 });
 
 it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
@@ -73,22 +77,31 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "const lines = createInterface({ input: process.stdin });",
           'lines.on("line", (line) => {',
           "  const message = JSON.parse(line);",
-          '  if (message.type !== "control_request" || message.request?.subtype !== "initialize") return;',
-          "  process.stdout.write(JSON.stringify({",
+          '  if (message.type !== "control_request") return;',
+          "  const reply = (response) => process.stdout.write(JSON.stringify({",
           '    type: "control_response",',
-          "    response: {",
-          '      subtype: "success",',
-          "      request_id: message.request_id,",
-          "      response: {",
-          '        commands: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],',
-          "        agents: [],",
-          '        output_style: "default",',
-          '        available_output_styles: ["default"],',
-          "        models: [],",
-          '        account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },',
-          "      },",
-          "    },",
+          '    response: { subtype: "success", request_id: message.request_id, response },',
           '  }) + "\\n");',
+          '  if (message.request?.subtype === "initialize") {',
+          "    reply({",
+          '      commands: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],',
+          "      agents: [],",
+          '      output_style: "default",',
+          '      available_output_styles: ["default"],',
+          "      models: [],",
+          '      account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },',
+          "    });",
+          "  }",
+          "  // The probe follows initialize with get_usage on the same process.",
+          '  if (message.request?.subtype === "get_usage") {',
+          "    reply({",
+          "      session: {},",
+          '      subscription_type: "pro",',
+          "      rate_limits_available: true,",
+          '      rate_limits: { five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" } },',
+          "      behaviors: null,",
+          "    });",
+          "  }",
           "});",
           "setInterval(() => {}, 1_000);",
           "",
@@ -118,6 +131,10 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
             input: { hint: "[path]" },
           },
         ],
+        usage: {
+          rate_limits_available: true,
+          rate_limits: { five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" } },
+        },
       });
 
       // @effect-diagnostics-next-line preferSchemaOverJson:off

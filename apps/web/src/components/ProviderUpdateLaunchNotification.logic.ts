@@ -202,10 +202,6 @@ export function providerUpdateNotificationKey(
   return parts.length > 0 ? parts.join("|") : null;
 }
 
-export function providerUpdateCandidateKey(provider: ProviderUpdateCandidate): string {
-  return providerUpdateNotificationKey([provider])!;
-}
-
 export function formatProviderList(providers: ReadonlyArray<Pick<ServerProvider, "driver">>) {
   const names = providers.map(
     (provider) => PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver,

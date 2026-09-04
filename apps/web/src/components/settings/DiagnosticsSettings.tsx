@@ -38,6 +38,7 @@ import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
+import { ExpandableText } from "./ExpandableText";
 import { ResourceTelemetryDiagnostics } from "./ResourceTelemetryDiagnostics";
 import { SettingsPageContainer, SettingsSection, useRelativeTimeTick } from "./settingsLayout";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -159,43 +160,6 @@ function StatsGrid({ children }: { children: ReactNode }) {
 
 function EmptyRows({ label }: { label: string }) {
   return <div className="px-4 py-4 text-xs text-muted-foreground sm:px-5">{label}</div>;
-}
-
-function ExpandableText({
-  text,
-  className,
-  collapsedClassName = "line-clamp-3",
-  expandLabel = "Show full error",
-}: {
-  text: string;
-  className?: string;
-  collapsedClassName?: string;
-  expandLabel?: string;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const canExpand = text.length > 180 || text.includes("\n");
-
-  return (
-    <div className={cn("min-w-0", className)}>
-      <div
-        className={cn(
-          "whitespace-pre-wrap break-words",
-          !expanded && canExpand ? collapsedClassName : null,
-        )}
-      >
-        {text}
-      </div>
-      {canExpand ? (
-        <button
-          type="button"
-          className="cursor-pointer mt-1 text-[11px] font-medium text-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
-          onClick={() => setExpanded((value) => !value)}
-        >
-          {expanded ? "Show less" : expandLabel}
-        </button>
-      ) : null}
-    </div>
-  );
 }
 
 function DiagnosticsTable({
@@ -793,13 +757,13 @@ function DiagnosticsRefreshButton({
       <TooltipTrigger
         render={
           <Button
-            size="icon-micro"
+            size="icon-xs"
             variant="ghost-muted"
             disabled={isPending}
             onClick={onClick}
             aria-label={label}
           >
-            <RefreshCwIcon className={cn("size-3", isPending && "animate-spin")} />
+            <RefreshCwIcon className={cn(isPending && "animate-spin")} />
           </Button>
         }
       />
@@ -1129,13 +1093,13 @@ export function DiagnosticsSettingsPanel() {
               <TooltipTrigger
                 render={
                   <Button
-                    size="icon-micro"
+                    size="icon-xs"
                     variant="ghost-muted"
                     disabled={!observability?.logsDirectoryPath || isOpeningLogsDirectory}
                     onClick={openLogsDirectory}
                     aria-label="Open logs folder"
                   >
-                    <FolderOpenIcon className="size-3" />
+                    <FolderOpenIcon />
                   </Button>
                 }
               />

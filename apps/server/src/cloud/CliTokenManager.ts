@@ -90,7 +90,10 @@ export const waitForLoopbackAuthorization = Effect.fn(
         const result = yield* Effect.raceFirst(
           input.callback.pipe(
             Effect.map(
-              (code): LoopbackAuthorizationResult => ({ _tag: "AuthorizationCode", code }),
+              (code): LoopbackAuthorizationResult => ({
+                _tag: "AuthorizationCode",
+                code,
+              }),
             ),
           ),
           readLoopbackAuthorizationAction(terminalInput),

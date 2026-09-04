@@ -16,6 +16,7 @@ import type { ConnectionCatalogEntry } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionDriver from "./driver.ts";
 import {
+  DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS,
   ConnectionBlockedError,
   ConnectionTransientError,
   PrimaryConnectionTarget,
@@ -163,6 +164,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
       Effect.succeed({
         client: TEST_RPC_CLIENT,
         initialConfig: Effect.die(new Error("Initial config is not used by supervisor tests.")),
+        subscribeServerConfig: (input) => TEST_RPC_CLIENT.subscribeServerConfig(input),
         ready: options?.ready?.(attempt) ?? Effect.void,
         probe: options?.probe?.(attempt) ?? Effect.void,
         closed: Deferred.await(closed),
@@ -1093,6 +1095,186 @@ describe("EnvironmentSupervisor", () => {
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
       expect(yield* Ref.get(harness.releaseCount)).toBe(1);
     }),
+  );
+
+  it.effect("hands off relay authorization after the replacement session is ready", () =>
+    Effect.gen(function* () {
+      const tokenLifetimeMs = DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS * 2;
+      const replacementStarted = yield* Deferred.make<void>();
+      const releaseReplacement = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt === 2
+            ? Effect.fail(transient("Authorization refresh failed."))
+            : Effect.succeed({
+                ...PREPARED_CONNECTION,
+                target: RELAY_TARGET,
+                httpAuthorization: {
+                  _tag: "Dpop",
+                  accessToken: `access-token-${attempt}`,
+                  expiresAtEpochMs: tokenLifetimeMs * attempt,
+                },
+              }),
+        ready: (attempt) =>
+          attempt === 2
+            ? Deferred.succeed(replacementStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseReplacement)),
+              )
+            : Effect.void,
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      const firstSession = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      const firstPrepared = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared));
+      yield* TestClock.adjust(DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS - 1);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+
+      yield* TestClock.adjust(1);
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      yield* Effect.yieldNow;
+
+      yield* TestClock.adjust("2999 millis");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+      yield* TestClock.adjust("1 milli");
+      yield* Deferred.await(replacementStarted);
+
+      expect(yield* Ref.get(harness.prepareCount)).toBe(3);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        generation: 1,
+      });
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session))).toBe(firstSession);
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared))).toBe(
+        firstPrepared,
+      );
+
+      yield* Deferred.succeed(releaseReplacement, undefined);
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session))).not.toBe(
+        firstSession,
+      );
+      expect(
+        Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).httpAuthorization,
+      ).toMatchObject({ accessToken: "access-token-3" });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("cleans up timed-out replacements and an interrupted retry", () =>
+    Effect.gen(function* () {
+      const tokenLifetimeMs = DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS * 2;
+      const replacementStarted = yield* Deferred.make<void>();
+      const retryStarted = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          Effect.succeed({
+            ...PREPARED_CONNECTION,
+            target: RELAY_TARGET,
+            httpAuthorization: {
+              _tag: "Dpop",
+              accessToken: `access-token-${attempt}`,
+              expiresAtEpochMs: tokenLifetimeMs * attempt,
+            },
+          }),
+        ready: (attempt) => {
+          if (attempt === 2) {
+            return Deferred.succeed(replacementStarted, undefined).pipe(
+              Effect.andThen(Effect.never),
+            );
+          }
+          if (attempt === 3) {
+            return Deferred.succeed(retryStarted, undefined).pipe(Effect.andThen(Effect.never));
+          }
+          return Effect.void;
+        },
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      const firstSession = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      yield* TestClock.adjust(DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS);
+      yield* Deferred.await(replacementStarted);
+
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session))).toBe(firstSession);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+
+      yield* TestClock.adjust("15 seconds");
+      yield* Effect.yieldNow;
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session))).toBe(firstSession);
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        generation: 1,
+      });
+
+      yield* TestClock.adjust("3 seconds");
+      yield* Deferred.await(retryStarted);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(3);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session))).toBe(firstSession);
+
+      yield* supervisor.disconnect;
+      yield* awaitState(supervisor.state, (state) => state.phase === "available");
+
+      expect(yield* Ref.get(harness.releaseCount)).toBe(3);
+      expect(Option.isNone(yield* SubscriptionRef.get(supervisor.session))).toBe(true);
+      expect(Option.isNone(yield* SubscriptionRef.get(supervisor.prepared))).toBe(true);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("does not keep a relay session past its authorization expiry", () =>
+    Effect.gen(function* () {
+      const tokenLifetimeMs = DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS * 2;
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt === 1
+            ? Effect.succeed({
+                ...PREPARED_CONNECTION,
+                target: RELAY_TARGET,
+                httpAuthorization: {
+                  _tag: "Dpop",
+                  accessToken: "access-token-1",
+                  expiresAtEpochMs: tokenLifetimeMs,
+                },
+              })
+            : Effect.fail(transient("Authorization refresh failed.")),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* TestClock.adjust(DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS);
+      yield* Effect.yieldNow;
+      for (const delay of [3_000, 4_000, 8_000, 16_000, 16_000, 13_000]) {
+        yield* TestClock.adjust(delay);
+        yield* Effect.yieldNow;
+      }
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "backoff",
+        generation: 1,
+      });
+      expect(Option.isNone(yield* SubscriptionRef.get(supervisor.session))).toBe(true);
+      expect(Option.isNone(yield* SubscriptionRef.get(supervisor.prepared))).toBe(true);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("interrupts relay setup when credentials change", () =>

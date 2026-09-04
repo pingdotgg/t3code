@@ -1,10 +1,16 @@
-import { useCallback } from "react";
+import { lazy, Suspense, useCallback } from "react";
 
 import { useTheme } from "../../hooks/useTheme";
 import { getThemeDefinition, type ThemeAppearance, type ThemeDefinition } from "../../themePalette";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { ThemeEditorPanel } from "./ThemeEditorPanel";
 import { useThemeEditorStore } from "./themeEditorStore";
+
+// The host mounts above the router on every page, but the editor body only
+// renders once a session opens; lazy-loading it keeps the editor UI out of
+// the startup chunk.
+const ThemeEditorPanel = lazy(() =>
+  import("./ThemeEditorPanel").then((module) => ({ default: module.ThemeEditorPanel })),
+);
 
 /**
  * Renders the theme editor above the router. The editor paints its draft on
@@ -97,18 +103,20 @@ export function ThemeEditorHost() {
   const seedTheme = session.seedThemeId ? (getThemeDefinition(session.seedThemeId) ?? null) : null;
 
   return (
-    <ThemeEditorPanel
-      editingTheme={editingTheme}
-      initialAppearance={session.initialAppearance}
-      key={session.id}
-      onOpenChange={(open) => {
-        if (!open) closeThemeEditor();
-      }}
-      onSaved={handleSaved}
-      open
-      restoreTheme={refreshTheme}
-      seedName={session.seedName ?? undefined}
-      seedTheme={seedTheme}
-    />
+    <Suspense fallback={null}>
+      <ThemeEditorPanel
+        editingTheme={editingTheme}
+        initialAppearance={session.initialAppearance}
+        key={session.id}
+        onOpenChange={(open) => {
+          if (!open) closeThemeEditor();
+        }}
+        onSaved={handleSaved}
+        open
+        restoreTheme={refreshTheme}
+        seedName={session.seedName ?? undefined}
+        seedTheme={seedTheme}
+      />
+    </Suspense>
   );
 }

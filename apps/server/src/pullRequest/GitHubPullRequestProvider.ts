@@ -1,7 +1,11 @@
+import * as Cache from "effect/Cache";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import type {
   PullRequestActor,
   PullRequestCapabilities,
+  PullRequestCheck,
   PullRequestReaction,
   PullRequestViewerPermissions,
 } from "@t3tools/contracts";
@@ -14,7 +18,7 @@ import {
   type ProviderChangeRequestDetail,
   type PullRequestProviderApi,
 } from "./PullRequestProvider.ts";
-import type { GitHubViewerAccess } from "./gitHubPullRequestJson.ts";
+import type { GitHubViewerAccess, GitHubWorkflowRunApproval } from "./gitHubPullRequestJson.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
@@ -28,6 +32,8 @@ const CAPABILITIES: PullRequestCapabilities = {
     "update-branch",
     "enable-auto-merge",
     "disable-auto-merge",
+    "revert",
+    "approve-workflows",
   ],
   mergeMethods: ["merge", "squash", "rebase"],
   updateMethods: ["merge", "rebase"],
@@ -41,6 +47,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   },
   reviewers: { request: true, listCandidates: true },
   edit: { changeRequest: true, comment: true },
+  labels: true,
 };
 
 /**
@@ -65,7 +72,15 @@ export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequest
     actions: [
       // Arming a merge and taking the arming back are the merge, deferred: whoever may not
       // merge here may not leave an instruction to merge later either.
-      ...(access.canWrite ? (["merge", "enable-auto-merge", "disable-auto-merge"] as const) : []),
+      ...(access.canWrite
+        ? ([
+            "merge",
+            "enable-auto-merge",
+            "disable-auto-merge",
+            "revert",
+            "approve-workflows",
+          ] as const)
+        : []),
       ...(access.canUpdate ? (["ready", "draft", "close", "reopen"] as const) : []),
       // Whether this viewer may update the branch is GitHub's own answer, read with the
       // comparison; without it the action is offered to nobody rather than to everybody.
@@ -79,6 +94,8 @@ export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequest
     verdicts: access.didAuthor ? (["comment"] as const) : CAPABILITIES.review.verdicts,
     requestReviewers: access.canWrite,
     ...(access.canUpdateBranch === true ? { updateMethods: CAPABILITIES.updateMethods } : {}),
+    // Triage is the one role that labels without writing, which is what triage is for.
+    labels: access.canTriage,
   };
 }
 
@@ -114,6 +131,43 @@ function withAvatar(
   return avatarUrl === null ? actor : { ...actor, avatarUrl };
 }
 
+function withWorkflowApprovals(
+  checks: ReadonlyArray<PullRequestCheck>,
+  runs: ReadonlyArray<GitHubWorkflowRunApproval>,
+  unavailable: boolean,
+): ReadonlyArray<PullRequestCheck> {
+  const representedRunIds = new Set<number>();
+  for (const check of checks) {
+    if (check.status !== "action-required" || check.url === null) continue;
+    const id = check.url.match(/\/actions\/runs\/(\d+)(?:\/|$)/)?.[1];
+    if (id !== undefined) representedRunIds.add(Number(id));
+  }
+  const approvalChecks = runs
+    .filter((run) => !representedRunIds.has(run.id))
+    .map(
+      (run): PullRequestCheck => ({
+        name: run.name,
+        status: "action-required",
+        description: "A maintainer must approve this workflow before it can run.",
+        url: run.url,
+      }),
+    );
+  return [
+    ...checks,
+    ...approvalChecks,
+    ...(unavailable
+      ? [
+          {
+            name: "Workflow approval status",
+            status: "action-required" as const,
+            description: "GitHub could not determine whether workflows are awaiting approval.",
+            url: null,
+          },
+        ]
+      : []),
+  ];
+}
+
 /**
  * Null for anything that is not a plain user login: an app posts as `dependabot[bot]`, which
  * names no page, and a guessed URL that 404s is worse than the initials it would replace.
@@ -128,6 +182,22 @@ const rendersEmpty = (body: string): boolean =>
 
 export const make = Effect.gen(function* () {
   const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+  const repositoryAccessCache = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd, repository, host] = JSON.parse(key) as [string, string, string];
+      return cli.getRepositoryAccess({ cwd, repository, host });
+    },
+    {
+      capacity: 128,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.minutes(10) : Duration.zero),
+    },
+  );
+  const getRepositoryAccess = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly host: string;
+  }) => Cache.get(repositoryAccessCache, JSON.stringify([input.cwd, input.repository, input.host]));
 
   const fail = (operation: string) => (error: GitHubPullRequestCli.GitHubPullRequestCliError) =>
     new PullRequestProviderError({
@@ -223,28 +293,65 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("listChangeRequestStats"))),
 
+    getChangeRequestSummary: (input) =>
+      cli.getPullRequestSummary(input).pipe(Effect.mapError(fail("getChangeRequestSummary"))),
+
     getChangeRequest: (input) =>
       Effect.all(
         [
           cli.getPullRequestDetail(input).pipe(
             Effect.flatMap((pullRequest) =>
-              // Only an open pull request can be behind anything worth saying so about, and only
-              // one whose head repository is known can be compared at all. A comparison that
-              // fails is left unknown: the banner is an offer, never a blocker.
-              pullRequest.state !== "open" || pullRequest.headRepositoryOwner === null
-                ? Effect.succeed({ pullRequest, comparison: null })
-                : cli
-                    .getPullRequestBaseComparison({
-                      ...input,
-                      headRef: `${pullRequest.headRepositoryOwner}:${pullRequest.headBranch}`,
-                    })
-                    .pipe(
-                      Effect.map((comparison) => ({ pullRequest, comparison })),
-                      Effect.orElseSucceed(() => ({ pullRequest, comparison: null })),
-                    ),
+              Effect.all({
+                // Only an open pull request can be behind anything worth saying so about, and
+                // only one whose head repository is known can be compared at all.
+                comparison:
+                  pullRequest.state !== "open" || pullRequest.headRepositoryOwner === null
+                    ? Effect.succeed(null)
+                    : cli
+                        .getPullRequestBaseComparison({
+                          ...input,
+                          headRef: `${pullRequest.headRepositoryOwner}:${pullRequest.headBranch}`,
+                        })
+                        .pipe(Effect.orElseSucceed(() => null)),
+                // GitHub omits a fork workflow that has not been approved from the normal check
+                // rollup. Read the action-required runs by head revision so "all passed" cannot
+                // be shown while a whole workflow is still waiting to start.
+                workflowApprovals:
+                  pullRequest.state !== "open" || pullRequest.isCrossRepository !== true
+                    ? Effect.succeed({
+                        runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+                        unavailable: false,
+                      })
+                    : pullRequest.headSha == null || pullRequest.headRepositoryOwner == null
+                      ? Effect.succeed({
+                          runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+                          unavailable: true,
+                        })
+                      : cli
+                          .listWorkflowRunsRequiringApproval({
+                            ...input,
+                            headSha: pullRequest.headSha,
+                            headBranch: pullRequest.headBranch,
+                            headRepositoryOwner: pullRequest.headRepositoryOwner,
+                            isCrossRepository: true,
+                          })
+                          .pipe(
+                            Effect.matchEffect({
+                              onFailure: (error) =>
+                                error._tag === "GitHubCliRateLimitError" ||
+                                error._tag === "SourceControlRateLimitPausedError"
+                                  ? Effect.fail(error)
+                                  : Effect.succeed({
+                                      runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+                                      unavailable: true,
+                                    }),
+                              onSuccess: (runs) => Effect.succeed({ runs, unavailable: false }),
+                            }),
+                          ),
+              }).pipe(Effect.map((extra) => ({ pullRequest, ...extra }))),
             ),
           ),
-          cli.getRepositoryAccess({
+          getRepositoryAccess({
             cwd: input.cwd,
             repository: input.repository,
             host: input.host,
@@ -259,6 +366,14 @@ export const make = Effect.gen(function* () {
         Effect.map(
           ([detail, repository, viewerAccess]): ProviderChangeRequestDetail => ({
             ...detail.pullRequest,
+            checks: withWorkflowApprovals(
+              detail.pullRequest.checks,
+              detail.workflowApprovals.runs,
+              detail.workflowApprovals.unavailable,
+            ),
+            ...(detail.workflowApprovals.unavailable
+              ? {}
+              : { workflowApprovalsRequired: detail.workflowApprovals.runs.length }),
             reviewers: detail.pullRequest.reviewRequestLogins.map((login) => ({
               login,
               name: null,
@@ -413,6 +528,21 @@ export const make = Effect.gen(function* () {
           requested: input.requested,
         })
         .pipe(Effect.mapError(fail("setReviewerRequest"))),
+
+    listLabelCandidates: (input) =>
+      cli.listLabelCandidates(input).pipe(Effect.mapError(fail("listLabelCandidates"))),
+
+    setLabels: (input) =>
+      cli
+        .setLabels({
+          cwd: input.cwd,
+          repository: input.repository,
+          host: input.host,
+          number: input.number,
+          labels: input.labels,
+          applied: input.applied,
+        })
+        .pipe(Effect.mapError(fail("setLabels"))),
 
     runAction: (input) =>
       cli
