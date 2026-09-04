@@ -33,7 +33,9 @@ export function composerSelectionAtEnd(draftMessage: string): ComposerEditorSele
 
 export function buildComposerSlashCommandItems(input: {
   readonly query: string;
-  readonly atMessageStart: boolean;
+  readonly triggerKind: "slash-command" | "slash-skill";
+  readonly draftMessage: string;
+  readonly triggerRangeStart: number;
   readonly hasThread: boolean;
   readonly hasCompactableConversation?: boolean;
   readonly allowInteractionMode: boolean;
@@ -68,13 +70,22 @@ export function buildComposerSlashCommandItems(input: {
       description: "Switch to default mode",
     },
   ] satisfies ComposerCommandItem[];
-  const items: ComposerCommandItem[] = builtIn.filter(
-    (item) => item.command.includes(query) && (item.command === "model" || allowInteractionMode),
-  );
+  const items: ComposerCommandItem[] =
+    input.triggerKind === "slash-skill"
+      ? []
+      : builtIn.filter(
+          (item) =>
+            item.command.includes(query) && (item.command === "model" || allowInteractionMode),
+        );
 
   // Providers expand commands only at the start of a message. T3 commands
   // change local state and do not have this restriction.
-  if (!input.atMessageStart) return items;
+  if (
+    input.triggerKind === "slash-skill" ||
+    input.draftMessage.slice(0, input.triggerRangeStart).trim() !== ""
+  ) {
+    return items;
+  }
   for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
     if (!command.name.toLowerCase().includes(query)) continue;
     if (command.name === "compact" && !input.hasCompactableConversation) continue;
@@ -260,11 +271,13 @@ export function useComposerCommandMenu({
   const items = useMemo<ComposerCommandItem[]>(() => {
     if (!trigger) return [];
 
-    if (trigger.kind === "slash-command") {
+    if (trigger.kind === "slash-command" || trigger.kind === "slash-skill") {
       const q = trigger.query.toLowerCase();
       const commandItems = buildComposerSlashCommandItems({
         query: q,
-        atMessageStart: trigger.rangeStart === 0,
+        triggerKind: trigger.kind,
+        draftMessage,
+        triggerRangeStart: trigger.rangeStart,
         hasThread,
         hasCompactableConversation,
         allowInteractionMode: onUpdateInteractionMode !== undefined,
@@ -383,6 +396,7 @@ export function useComposerCommandMenu({
 
     return [];
   }, [
+    draftMessage,
     hasThread,
     hasCompactableConversation,
     onUpdateInteractionMode,

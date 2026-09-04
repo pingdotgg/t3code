@@ -118,11 +118,13 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                   ? "Searching workspace skills..."
                   : "Searching workspace files..."
                 : (props.emptyStateText ??
-                  (props.triggerKind === "skill"
-                    ? "No skills found. Try / to browse provider commands."
-                    : props.triggerKind === "path"
-                      ? "No matching files or folders."
-                      : "No matching command."))}
+                  (props.triggerKind === "slash-skill"
+                    ? "No skills found."
+                    : props.triggerKind === "skill"
+                      ? "No skills found. Try / in an empty composer to browse provider commands."
+                      : props.triggerKind === "path"
+                        ? "No matching files or folders."
+                        : "No matching command."))}
             </p>
           </div>
         )}
@@ -142,7 +144,10 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   const skillSourceKind =
     props.item.type === "skill" ? resolveProviderSkillSourceKind(props.item.skill) : null;
   const isSlashSkill =
-    props.triggerKind === "slash-command" && props.item.type === "skill" ? props.item.skill : null;
+    (props.triggerKind === "slash-command" || props.triggerKind === "slash-skill") &&
+    props.item.type === "skill"
+      ? props.item.skill
+      : null;
 
   return (
     <CommandItem

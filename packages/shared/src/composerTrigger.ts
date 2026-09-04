@@ -1,4 +1,9 @@
-export type ComposerTriggerKind = "path" | "slash-command" | "slash-model" | "skill";
+export type ComposerTriggerKind =
+  | "path"
+  | "slash-command"
+  | "slash-model"
+  | "slash-skill"
+  | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 
 export interface ComposerTrigger {
@@ -49,8 +54,20 @@ function isWhitespace(char: string): boolean {
   return char === " " || char === "\n" || char === "\t" || char === "\r";
 }
 
+function hasNonWhitespace(
+  text: string,
+  start: number,
+  end: number,
+  isWhitespaceChar: (char: string) => boolean,
+): boolean {
+  for (let index = start; index < end; index += 1) {
+    if (!isWhitespaceChar(text[index] ?? "")) return true;
+  }
+  return false;
+}
+
 /**
- * Detect an active trigger (@path, $skill, /command) at the cursor position.
+ * Detect an active trigger (@path, $skill, leading /command, inline /skill) at the cursor.
  *
  * Accepts an optional `isWhitespaceChar` override so callers with inline
  * placeholder characters (e.g. terminal context chips on web) can treat
@@ -62,48 +79,66 @@ export function detectComposerTrigger(
   isWhitespaceChar?: (char: string) => boolean,
 ): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
+  const wsCheck = isWhitespaceChar ?? isWhitespace;
   const lineStart = text.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
   const linePrefix = text.slice(lineStart, cursor);
+  const hasContentBeforeLine = hasNonWhitespace(text, 0, lineStart, wsCheck);
 
-  if (linePrefix.startsWith("/")) {
-    const commandMatch = /^\/(\S*)$/.exec(linePrefix);
+  let tokenIdx = cursor - 1;
+  while (tokenIdx >= 0 && !wsCheck(text[tokenIdx] ?? "")) {
+    tokenIdx -= 1;
+  }
+  const tokenStart = tokenIdx + 1;
+  const token = text.slice(tokenStart, cursor);
+  const hasContentBeforeToken = hasNonWhitespace(text, 0, tokenStart, wsCheck);
+
+  const slashStart =
+    !hasContentBeforeLine && linePrefix.startsWith("/")
+      ? lineStart
+      : !hasContentBeforeToken && token.startsWith("/")
+        ? tokenStart
+        : null;
+
+  if (slashStart !== null) {
+    const slashPrefix = text.slice(slashStart, cursor);
+    const commandMatch = /^\/(\S*)$/.exec(slashPrefix);
     if (commandMatch) {
       const commandQuery = commandMatch[1] ?? "";
       if (commandQuery.toLowerCase() === "model") {
         return {
           kind: "slash-model",
           query: "",
-          rangeStart: lineStart,
+          rangeStart: slashStart,
           rangeEnd: cursor,
         };
       }
       return {
         kind: "slash-command",
         query: commandQuery,
-        rangeStart: lineStart,
+        rangeStart: slashStart,
         rangeEnd: cursor,
       };
     }
 
-    const modelMatch = /^\/model(?:\s+(.*))?$/.exec(linePrefix);
+    const modelMatch = /^\/model(?:\s+(.*))?$/.exec(slashPrefix);
     if (modelMatch) {
       return {
         kind: "slash-model",
         query: (modelMatch[1] ?? "").trim(),
-        rangeStart: lineStart,
+        rangeStart: slashStart,
         rangeEnd: cursor,
       };
     }
   }
 
-  const wsCheck = isWhitespaceChar ?? isWhitespace;
-  let tokenIdx = cursor - 1;
-  while (tokenIdx >= 0 && !wsCheck(text[tokenIdx] ?? "")) {
-    tokenIdx -= 1;
+  if (token.startsWith("/") && !token.slice(1).includes("/") && hasContentBeforeToken) {
+    return {
+      kind: "slash-skill",
+      query: token.slice(1),
+      rangeStart: tokenStart,
+      rangeEnd: cursor,
+    };
   }
-  const tokenStart = tokenIdx + 1;
-
-  const token = text.slice(tokenStart, cursor);
   if (token.startsWith("$")) {
     return {
       kind: "skill",

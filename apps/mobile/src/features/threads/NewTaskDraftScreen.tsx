@@ -1238,7 +1238,9 @@ export function NewTaskDraftScreen(props: {
 
   const composerDock = (
     <View className="bg-sheet px-[12px] pt-1" style={{ paddingBottom: controlsBottomPadding }}>
-      {!voiceInput.isBusy && composerMenu.trigger && composerMenu.items.length > 0 ? (
+      {!voiceInput.isBusy &&
+      composerMenu.trigger &&
+      (composerMenu.items.length > 0 || composerMenu.trigger.kind === "slash-skill") ? (
         <View className="mb-2">
           <ComposerCommandPopover
             items={composerMenu.items}
