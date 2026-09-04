@@ -10,6 +10,7 @@ const SRGB_CHROMATICITIES = [
   0, 0, 122, 38, 0, 0, 128, 132, 0, 0, 250, 0, 0, 0, 128, 232, 0, 0, 117, 48, 0, 0, 234, 96, 0, 0,
   58, 152, 0, 0, 23, 112,
 ] as const;
+const INITIAL_GITHUB_USER_ATTACHMENT_BUFFER_BYTES = 64 * 1024;
 const MAX_GITHUB_USER_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const GITHUB_ASSET_REDIRECT_HOST_PATTERN =
   /^github-production-user-asset-[a-z0-9]+\.s3\.amazonaws\.com$/i;
@@ -101,16 +102,16 @@ function stripConflictingBt709Cicp(bytes: Uint8Array): Uint8Array {
 
   const removedChunks = chunks.filter((chunk) => chunk.type === "cICP");
   const removedByteCount = removedChunks.reduce((sum, chunk) => sum + chunk.end - chunk.start, 0);
-  const normalized = new Uint8Array(bytes.length - removedByteCount);
+  const normalizedLength = bytes.length - removedByteCount;
   let sourceOffset = 0;
   let destinationOffset = 0;
   for (const chunk of removedChunks) {
-    normalized.set(bytes.subarray(sourceOffset, chunk.start), destinationOffset);
+    bytes.copyWithin(destinationOffset, sourceOffset, chunk.start);
     destinationOffset += chunk.start - sourceOffset;
     sourceOffset = chunk.end;
   }
-  normalized.set(bytes.subarray(sourceOffset), destinationOffset);
-  return normalized;
+  bytes.copyWithin(destinationOffset, sourceOffset);
+  return bytes.subarray(0, normalizedLength);
 }
 
 function trustedRedirectUrl(location: string, sourceUrl: string): string | null {
@@ -140,15 +141,29 @@ const readLimitedBody = Effect.fn("GitHubUserAttachment.readLimitedBody")(functi
     return yield* new GitHubUserAttachmentFetchError({ reason: "response-too-large" });
   }
 
-  const chunks: Uint8Array[] = [];
+  const initialCapacity =
+    Number.isSafeInteger(declaredLength) && declaredLength >= 0
+      ? declaredLength
+      : INITIAL_GITHUB_USER_ATTACHMENT_BUFFER_BYTES;
+  let bytes = new Uint8Array(initialCapacity);
   let byteLength = 0;
   yield* response.stream.pipe(
     Stream.runForEach((chunk) => {
-      byteLength += chunk.length;
-      if (byteLength > MAX_GITHUB_USER_ATTACHMENT_BYTES) {
+      const nextByteLength = byteLength + chunk.length;
+      if (nextByteLength > MAX_GITHUB_USER_ATTACHMENT_BYTES) {
         return Effect.fail(new GitHubUserAttachmentFetchError({ reason: "response-too-large" }));
       }
-      chunks.push(chunk);
+      if (nextByteLength > bytes.length) {
+        const nextCapacity = Math.min(
+          MAX_GITHUB_USER_ATTACHMENT_BYTES,
+          Math.max(nextByteLength, bytes.length * 2, INITIAL_GITHUB_USER_ATTACHMENT_BUFFER_BYTES),
+        );
+        const grown = new Uint8Array(nextCapacity);
+        grown.set(bytes.subarray(0, byteLength));
+        bytes = grown;
+      }
+      bytes.set(chunk, byteLength);
+      byteLength = nextByteLength;
       return Effect.void;
     }),
     Effect.mapError((error) =>
@@ -158,13 +173,7 @@ const readLimitedBody = Effect.fn("GitHubUserAttachment.readLimitedBody")(functi
     ),
   );
 
-  const bytes = new Uint8Array(byteLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return bytes;
+  return bytes.subarray(0, byteLength);
 });
 
 export const loadGitHubUserAttachment = Effect.fn("GitHubUserAttachment.loadGitHubUserAttachment")(

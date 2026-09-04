@@ -90,6 +90,7 @@ describe("GitHub user attachments", () => {
       const source = pngWithCicp([1, 1, 0, 1]);
       const { bytes: normalized } = yield* loadDirectImage(source);
 
+      expect(normalized.buffer.byteLength).toBe(source.byteLength);
       expect(chunkTypes(normalized)).toEqual(["IHDR", "cHRM", "gAMA", "IDAT", "IEND"]);
       expect(normalized).toEqual(
         concatBytes([
