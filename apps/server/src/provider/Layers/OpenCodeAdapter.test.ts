@@ -5791,23 +5791,27 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
-  it.effect("maps native task updates and command results to client progress", () =>
+  it.effect("maps native task progress only while a turn is active", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
       const threadId = asThreadId("thread-native-progress");
       const sessionID = "http://127.0.0.1:9999/session";
+      const startProgress = promiseWithResolvers<OpenCodeEvent>();
+      const finishTurn = promiseWithResolvers<OpenCodeEvent>();
+      const lateProgress = promiseWithResolvers<OpenCodeEvent>();
       const todos = [
         { content: "Read files", status: "completed", priority: "high" },
         { content: "Fix OpenCode", status: "in_progress", priority: "high" },
         { content: "Run tests", status: "pending", priority: "medium" },
         { content: "Old task", status: "cancelled", priority: "low" },
       ];
+      const todoEvent = {
+        id: "evt-todos",
+        type: "todo.updated",
+        properties: { sessionID, todos },
+      } satisfies OpenCodeEvent;
       runtimeMock.state.subscribedEvents = [
-        {
-          id: "evt-todos",
-          type: "todo.updated",
-          properties: { sessionID, todos },
-        } satisfies OpenCodeEvent,
+        startProgress.promise,
         ...["todowrite", "bash"].map(
           (tool) =>
             ({
@@ -5835,6 +5839,9 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
               },
             }) satisfies OpenCodeEvent,
         ),
+        finishTurn.promise,
+        lateProgress.promise,
+        { id: "evt-progress-drained", type: "session.compacted", properties: { sessionID } },
       ];
       const eventsFiber = yield* adapter.streamEvents.pipe(
         Stream.filter(
@@ -5851,8 +5858,18 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         threadId,
         runtimeMode: "full-access",
       });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Work through the task list",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      startProgress.resolve(todoEvent);
       const events = yield* Fiber.join(eventsFiber);
       const plan = events.find((event) => event.type === "turn.plan.updated");
+      NodeAssert.equal(plan?.turnId, turn.turnId);
       NodeAssert.deepEqual(plan?.payload.plan, [
         { step: "Read files", status: "completed" },
         { step: "Fix OpenCode", status: "inProgress" },
@@ -5865,6 +5882,28 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         command: "pwd",
         result: "/repo\n",
       });
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      finishTurn.resolve({
+        id: "evt-progress-completed",
+        type: "session.status",
+        properties: { sessionID, status: { type: "idle" } },
+      });
+      yield* Fiber.join(completedFiber);
+      const lateEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "thread.state.changed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      lateProgress.resolve({ ...todoEvent, id: "evt-late-todos" });
+      NodeAssert.deepEqual(
+        (yield* Fiber.join(lateEventsFiber)).map((event) => event.type),
+        ["thread.state.changed"],
+      );
       yield* adapter.stopSession(threadId);
     }),
   );

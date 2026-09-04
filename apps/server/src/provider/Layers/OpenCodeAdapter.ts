@@ -2397,8 +2397,16 @@ export function makeOpenCodeAdapter(
         }
 
         case "todo.updated": {
-          yield* emit({
-            ...(yield* buildEventBase({ threadId: context.session.threadId, turnId, raw: event })),
+          if (turnId === undefined) break;
+          const base = yield* buildEventBase({
+            threadId: context.session.threadId,
+            turnId,
+            raw: event,
+          });
+          // Session-wide task updates must not reopen progress after a turn ends.
+          if (context.activeTurnId !== turnId) break;
+          emitUnsafe({
+            ...base,
             type: "turn.plan.updated",
             payload: {
               plan: event.properties.todos
