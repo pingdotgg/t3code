@@ -20,6 +20,7 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
+import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 import {
   OrchestrationEngineService,
@@ -108,8 +109,12 @@ describe("ThreadDeletionReactor drain", () => {
       const terminalManager = {
         close: () => Effect.void,
       } as unknown as TerminalManager.TerminalManager["Service"];
+      const directory = {
+        remove: () => Effect.void,
+      } as unknown as ProviderSessionDirectory["Service"];
       const layer = ThreadDeletionReactorLive.pipe(
         Layer.provide(Layer.succeed(ProviderService, providerService)),
+        Layer.provide(Layer.succeed(ProviderSessionDirectory, directory)),
         Layer.provide(Layer.succeed(TerminalManager.TerminalManager, terminalManager)),
         Layer.provide(Layer.succeed(OrchestrationEngineService, engine)),
       );
@@ -132,6 +137,44 @@ describe("ThreadDeletionReactor drain", () => {
           yield* Deferred.succeed(releaseSecondEvent, undefined);
           yield* Fiber.join(drained);
           expect(stops).toEqual([1, 2]);
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+  );
+
+  effectIt.effect("forgets the provider binding for a deleted thread", () =>
+    Effect.gen(function* () {
+      const removed: Array<ThreadId> = [];
+      const engine = {
+        latestSequence: Effect.succeed(0),
+        streamDomainEvents: Stream.make(deletedEvent(1)),
+      } as unknown as OrchestrationEngineShape;
+      const providerService = {
+        stopSession: () => Effect.void,
+      } as unknown as ProviderServiceShape;
+      const terminalManager = {
+        close: () => Effect.void,
+      } as unknown as TerminalManager.TerminalManager["Service"];
+      const directory = {
+        remove: (removedThreadId: ThreadId) =>
+          Effect.sync(() => {
+            removed.push(removedThreadId);
+          }),
+      } as unknown as ProviderSessionDirectory["Service"];
+      const layer = ThreadDeletionReactorLive.pipe(
+        Layer.provide(Layer.succeed(ProviderService, providerService)),
+        Layer.provide(Layer.succeed(ProviderSessionDirectory, directory)),
+        Layer.provide(Layer.succeed(TerminalManager.TerminalManager, terminalManager)),
+        Layer.provide(Layer.succeed(OrchestrationEngineService, engine)),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const reactor = yield* ThreadDeletionReactor;
+          yield* reactor.start();
+          yield* reactor.drainThrough(1);
+
+          expect(removed).toEqual([threadId]);
         }),
       ).pipe(Effect.provide(layer));
     }),
