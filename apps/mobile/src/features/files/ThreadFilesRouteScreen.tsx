@@ -322,6 +322,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   );
   const fileEnvironment = useEnvironmentPresentation(environmentId);
   const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
     connection: fileEnvironment.presentation?.connection ?? null,
     session: fileAccessSession.data,
     sessionError: fileAccessSession.error,
@@ -648,6 +649,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   );
   const fileEnvironment = useEnvironmentPresentation(environmentId);
   const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
     connection: fileEnvironment.presentation?.connection ?? null,
     session: fileAccessSession.data,
     sessionError: fileAccessSession.error,

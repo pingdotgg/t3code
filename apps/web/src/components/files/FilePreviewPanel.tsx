@@ -996,6 +996,7 @@ export default function FilePreviewPanel({
   const fileAccessSession = useEnvironmentQuery(environmentSession.sessionStateAtom(environmentId));
   const fileEnvironment = useEnvironmentPresentation(environmentId);
   const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
     connection: fileEnvironment.presentation?.connection ?? null,
     session: fileAccessSession.data,
     sessionError: fileAccessSession.error,

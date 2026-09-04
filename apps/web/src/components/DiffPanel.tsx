@@ -146,6 +146,7 @@ export default function DiffPanel({
   );
   const fileEnvironment = useEnvironmentPresentation(activeThread?.environmentId ?? null);
   const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
     connection: fileEnvironment.presentation?.connection ?? null,
     session: fileAccessSession.data,
     sessionError: fileAccessSession.error,
