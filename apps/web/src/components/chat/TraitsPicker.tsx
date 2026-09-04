@@ -15,7 +15,7 @@ import {
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
 } from "@t3tools/shared/model";
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { ZapIcon } from "lucide-react";
 import { buttonVariants } from "../ui/button";
@@ -39,6 +39,7 @@ import {
   type ComposerControlSize,
 } from "./ComposerControl";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { useComposerMenuState } from "./useComposerMenuState";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -549,12 +550,14 @@ export const TraitsPicker = memo(function TraitsPicker({
   triggerClassName,
   isComposerOwned,
   size = "sm",
+  hidden = false,
   ...persistence
 }: TraitsMenuContentProps &
   TraitsPersistence & {
     size?: ComposerControlSize;
+    hidden?: boolean;
   }) {
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden);
   const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
     getTraitsSectionVisibility({
       provider,
