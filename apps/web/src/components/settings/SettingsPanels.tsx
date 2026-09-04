@@ -2308,7 +2308,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("proactive-panels")}
-          description="Open linked pull requests when found and turn diffs when work finishes."
+          description="Open linked pull requests when found and turn diffs when work changes files."
           resetAction={
             settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled ? (
               <SettingResetButton
@@ -2744,7 +2744,7 @@ export function GeneralSettingsPanel() {
         {isElectron ? (
           <SettingsRow
             {...searchableSetting("quit-confirmation")}
-            description="Choose whether the desktop app quits immediately, after a hold, or after two quick presses."
+            description="Hold mode also quits on two quick presses."
             resetAction={
               settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? (
                 <SettingResetButton

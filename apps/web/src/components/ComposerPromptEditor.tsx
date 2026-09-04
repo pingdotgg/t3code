@@ -1929,7 +1929,7 @@ function ComposerPromptEditorInner({
               terminalContexts.length > 0 ? null : (
                 <div
                   className={cn(
-                    "pointer-events-none absolute inset-0 leading-relaxed text-placeholder",
+                    "pointer-events-none absolute inset-0 leading-relaxed text-placeholder/75",
                     placeholderClassName,
                   )}
                 >

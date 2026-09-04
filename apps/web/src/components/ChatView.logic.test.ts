@@ -1,4 +1,5 @@
 import {
+  ANTIGRAVITY_DEFAULT_MODEL,
   CheckpointRef,
   EnvironmentId,
   MessageId,
@@ -40,6 +41,7 @@ import {
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
   resolveDraftPromotionNavigationTarget,
+  resolveProactiveTurnDiffAction,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   resolveDraftHeroState,
@@ -157,6 +159,80 @@ describe("proactive panels", () => {
         turnCompleted: false,
       }),
     ).toBe(false);
+  });
+
+  it("opens a completed turn diff only for changed files", () => {
+    const changedCheckpoint = {
+      status: "ready",
+      files: [{ path: "src/app.ts", kind: "modified", additions: 1, deletions: 0 }],
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+    const unchangedCheckpoint = {
+      status: "ready",
+      files: [],
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: changedCheckpoint,
+        isGitRepo: true,
+        activeSurfaceKind: null,
+      }),
+    ).toBe("open");
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: unchangedCheckpoint,
+        isGitRepo: true,
+        activeSurfaceKind: null,
+      }),
+    ).toBe("ignore");
+  });
+
+  it("waits for definitive checkpoint and repository state", () => {
+    const missingCheckpoint = {
+      status: "missing",
+      files: [],
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+    const changedCheckpoint = {
+      status: "ready",
+      files: [{ path: "src/app.ts", kind: "modified", additions: 1, deletions: 0 }],
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: undefined,
+        isGitRepo: true,
+        activeSurfaceKind: null,
+      }),
+    ).toBe("defer");
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: missingCheckpoint,
+        isGitRepo: true,
+        activeSurfaceKind: null,
+      }),
+    ).toBe("defer");
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: changedCheckpoint,
+        isGitRepo: undefined,
+        activeSurfaceKind: null,
+      }),
+    ).toBe("defer");
+  });
+
+  it("keeps an active pull request above a completed turn diff", () => {
+    const changedCheckpoint = {
+      status: "ready",
+      files: [{ path: "src/app.ts", kind: "modified", additions: 1, deletions: 0 }],
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: changedCheckpoint,
+        isGitRepo: true,
+        activeSurfaceKind: "pull-request",
+      }),
+    ).toBe("ignore");
   });
 });
 
@@ -793,14 +869,20 @@ describe("resolveComposerProviderSelection", () => {
     );
   });
 
-  it("blocks sends until Antigravity confirms authentication", () => {
+  it("lets Antigravity check saved credentials when resuming after a restart", () => {
     const provider = entry("antigravity", "google_work", {
+      status: "warning",
       auth: { status: "unknown" },
-      models: catalogModels,
+      models: [],
     }).snapshot;
 
-    expect(getAntigravitySendBlockReason(provider, "gemini-pro")).toBe(
-      "Sign in to Antigravity in provider settings before sending.",
+    expect(getAntigravitySendBlockReason(provider, "gemini-pro")).toBeNull();
+    expect(getAntigravitySendBlockReason(provider, ANTIGRAVITY_DEFAULT_MODEL)).toBeNull();
+    expect(
+      getAntigravitySendBlockReason({ ...provider, models: catalogModels }, "gemini-pro"),
+    ).toBeNull();
+    expect(getAntigravitySendBlockReason(provider, "")).toBe(
+      "Choose an Antigravity model before sending.",
     );
   });
 

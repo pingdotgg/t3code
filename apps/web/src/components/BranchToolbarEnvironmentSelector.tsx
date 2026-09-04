@@ -102,7 +102,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           </span>
         </span>
       </SelectTrigger>
-      <SelectPopup {...composerFloatingLayerProps}>
+      <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
         <SelectGroup>
           <SelectGroupLabel>Run on</SelectGroupLabel>
           {availableEnvironments.map((env) => (

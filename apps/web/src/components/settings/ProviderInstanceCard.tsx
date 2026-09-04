@@ -607,7 +607,11 @@ export function ProviderInstanceCard({
                   {instanceId}
                 </code>
               ) : null}
-              {versionCodeNode}
+              {versionLabel ? (
+                <code className="max-w-24 shrink-0 truncate text-xs text-muted-foreground">
+                  {versionLabel}
+                </code>
+              ) : null}
               {versionAdvisory ? (
                 <span role="img" aria-label="Update available" className="inline-flex shrink-0">
                   <ArrowUpCircleIcon className="size-3.5 text-muted-foreground" />

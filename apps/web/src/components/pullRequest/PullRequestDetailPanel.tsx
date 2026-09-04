@@ -141,7 +141,6 @@ import {
 } from "./pullRequestProjectAssignment.logic";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 import {
-  PullRequestActorAvatar,
   PullRequestActorLabel,
   PullRequestDiffStat,
   PullRequestMetaLine,
@@ -656,6 +655,13 @@ export function PullRequestDetailPanel({
     if (detail?.autoMergeMethod !== undefined) setMergeMethod(detail.autoMergeMethod);
   }, [detail?.autoMergeMethod, pullRequestKey]);
   const repositoryUrl = detail === null ? null : changeRequestRepositoryUrl(detail.url);
+  const authorProfileUrl =
+    detail?.provider === "github" &&
+    detail.author !== null &&
+    !detail.author.login.endsWith("[bot]") &&
+    repositoryUrl !== null
+      ? new URL(`/${encodeURIComponent(detail.author.login)}`, repositoryUrl).toString()
+      : null;
   const checkoutCommand = detail
     ? pullRequestCheckoutCommand(
         detail.provider,
@@ -1870,19 +1876,12 @@ export function PullRequestDetailPanel({
               <div className="col-span-2 min-w-0 px-4 pb-2 pt-1">
                 <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
                   <span className="flex min-w-0 shrink items-center gap-1.5 overflow-hidden text-xs text-muted-foreground">
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <span
-                            className="shrink-0 rounded-full"
-                            aria-label={detail.author?.login ?? "ghost"}
-                          />
-                        }
-                      >
-                        <PullRequestActorAvatar actor={detail.author} />
-                      </TooltipTrigger>
-                      <TooltipPopup side="top">{detail.author?.login ?? "ghost"}</TooltipPopup>
-                    </Tooltip>
+                    <PullRequestActorLabel
+                      actor={detail.author}
+                      profileUrl={authorProfileUrl}
+                      className="shrink-0 rounded-full"
+                      labelClassName="sr-only"
+                    />
                     <span className="shrink-0">{formatRelativeTimeLabel(detail.updatedAt)}</span>
                   </span>
                   <span aria-hidden className="h-3 w-px shrink-0 bg-border/70" />
@@ -2042,7 +2041,11 @@ export function PullRequestDetailPanel({
                 )}
                 <div className="mt-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
                   <PullRequestMetaLine className="min-w-0 whitespace-nowrap">
-                    <PullRequestActorLabel actor={detail.author} className="font-medium" />
+                    <PullRequestActorLabel
+                      actor={detail.author}
+                      profileUrl={authorProfileUrl}
+                      className="font-medium"
+                    />
                     <span>updated {formatRelativeTimeLabel(detail.updatedAt)}</span>
                   </PullRequestMetaLine>
                   {checkoutCommand ? (

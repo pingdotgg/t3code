@@ -263,6 +263,68 @@ describe("pending user input answers", () => {
 });
 
 describe("pending approvals", () => {
+  it.each([{}, { requestType: "unknown" }])(
+    "exposes legacy OpenCode approvals without a known request kind: %j",
+    (legacyPayload) => {
+      const requested = makeActivity({
+        id: EventId.make("approval-legacy"),
+        kind: "approval.requested",
+        summary: "Approval requested",
+        createdAt: "2026-08-24T00:00:00.000Z",
+        payload: { requestId: "per-legacy", detail: "*", ...legacyPayload },
+      });
+
+      expect(derivePendingApprovals([requested])).toEqual([
+        {
+          requestId: "per-legacy",
+          requestKind: "command",
+          createdAt: requested.createdAt,
+          detail: "*",
+        },
+      ]);
+    },
+  );
+
+  it.each(["tool_user_input", "auth_tokens_refresh"])(
+    "does not turn %s into an approval",
+    (requestType) => {
+      const activity = makeActivity({
+        id: EventId.make("approval-non-approval"),
+        kind: "approval.requested",
+        summary: "Approval requested",
+        createdAt: "2026-08-24T00:00:00.000Z",
+        payload: { requestId: "not-an-approval", requestType },
+      });
+
+      expect(derivePendingApprovals([activity])).toEqual([]);
+    },
+  );
+
+  it.each(["approval.resolved", "provider.approval.respond.failed"])(
+    "removes legacy approvals after %s",
+    (kind) => {
+      const requested = makeActivity({
+        id: EventId.make("approval-legacy-open"),
+        kind: "approval.requested",
+        summary: "Approval requested",
+        createdAt: "2026-08-24T00:00:00.000Z",
+        payload: { requestId: "per-legacy", requestType: "unknown" },
+      });
+      const resolved = makeActivity({
+        id: EventId.make("approval-legacy-resolved"),
+        kind,
+        summary: "Approval resolved",
+        createdAt: "2026-08-24T00:00:01.000Z",
+        payload: {
+          requestId: "per-legacy",
+          detail: "Unknown pending permission request: per-legacy",
+        },
+      });
+
+      expect(derivePendingApprovals([requested, resolved])).toEqual([]);
+    },
+  );
+
   it("keeps app access approvals and persistence choices from remote environments", () => {
     const options = [
       { decision: "decline", label: "Decline" },
@@ -353,6 +415,173 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("reuses unchanged feed and presentation rows during an assistant text update", () => {
+    const completedTurnId = TurnId.make("completed-turn");
+    const activeTurnId = TurnId.make("active-turn");
+    const thread = makeThread({
+      id: ThreadId.make("feed-reuse"),
+      projectId: ProjectId.make("project-1"),
+      title: "Feed reuse",
+      messages: [
+        {
+          id: MessageId.make("completed-message"),
+          role: "assistant",
+          text: "Completed response",
+          turnId: completedTurnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:01.000Z",
+          updatedAt: "2026-04-01T00:00:01.000Z",
+        },
+        {
+          id: MessageId.make("streaming-message"),
+          role: "assistant",
+          text: "Current response",
+          turnId: activeTurnId,
+          streaming: true,
+          createdAt: "2026-04-01T00:00:04.000Z",
+          updatedAt: "2026-04-01T00:00:04.000Z",
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("completed-tool"),
+          kind: "tool.completed",
+          summary: "Read files",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId: completedTurnId,
+          payload: { itemType: "file_read", status: "completed" },
+        }),
+        makeActivity({
+          id: EventId.make("active-tool"),
+          kind: "tool.updated",
+          summary: "Run checks",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          turnId: activeTurnId,
+          payload: { itemType: "command_execution", command: "vp test", status: "inProgress" },
+        }),
+      ],
+    });
+    const latestTurn = {
+      turnId: activeTurnId,
+      state: "running" as const,
+      startedAt: "2026-04-01T00:00:03.000Z",
+      completedAt: null,
+    };
+    const expandedTurns = new Set([completedTurnId]);
+    const expandedGroups = new Set(["work-group:completed-tool", "work-group:active-tool"]);
+    const previousFeed = buildThreadFeed(thread);
+    const previousRows = deriveThreadFeedPresentation(
+      previousFeed,
+      latestTurn,
+      expandedTurns,
+      expandedGroups,
+      latestTurn.startedAt,
+    );
+    const updatedMessage = {
+      ...thread.messages[1]!,
+      text: "Current response with more text",
+      updatedAt: "2026-04-01T00:00:05.000Z",
+    };
+    const nextFeed = buildThreadFeed({
+      ...thread,
+      messages: [thread.messages[0]!, updatedMessage],
+    });
+    const nextRows = deriveThreadFeedPresentation(
+      nextFeed,
+      latestTurn,
+      expandedTurns,
+      expandedGroups,
+      latestTurn.startedAt,
+    );
+
+    expect(nextFeed).toHaveLength(previousFeed.length);
+    expect(nextRows).toHaveLength(previousRows.length);
+    for (const [before, after] of [
+      [previousFeed, nextFeed],
+      [previousRows, nextRows],
+    ] as const) {
+      for (const [index, row] of after.entries()) {
+        if (row.id === updatedMessage.id) {
+          expect(row).not.toBe(before[index]);
+          expect(row).toMatchObject({ message: updatedMessage });
+        } else {
+          expect(row).toBe(before[index]);
+        }
+      }
+    }
+    expect(nextRows.some((row) => row.type === "turn-fold")).toBe(true);
+    expect(nextRows.some((row) => row.type === "activity-group")).toBe(true);
+  });
+
+  it("regroups cached activities for message changes and pagination", () => {
+    const messages = [2, 4].map((second) => ({
+      id: MessageId.make(`message-${second}`),
+      role: "assistant" as const,
+      text: second === 2 ? "" : "Response",
+      streaming: false,
+      turnId: null,
+      createdAt: `2026-04-01T00:00:0${second}.000Z`,
+      updatedAt: `2026-04-01T00:00:0${second}.000Z`,
+    }));
+    const thread = makeThread({
+      id: ThreadId.make("feed-regroup"),
+      projectId: ProjectId.make("project-1"),
+      title: "Feed grouping",
+      messages,
+      activities: [1, 3, 5].map((second) =>
+        makeActivity({
+          id: EventId.make(`work-${second}`),
+          kind: "runtime.warning",
+          summary: `Notice ${second}`,
+          createdAt: `2026-04-01T00:00:0${second}.000Z`,
+        }),
+      ),
+    });
+    const initial = buildThreadFeed(thread);
+    expect(initial.map((row) => row.id)).toEqual(["work-1", "message-4", "work-5"]);
+    const split = buildThreadFeed({
+      ...thread,
+      messages: [{ ...messages[0]!, text: "Now visible" }, messages[1]!],
+    });
+    expect(split.map((row) => row.id)).toEqual([
+      "work-1",
+      "message-2",
+      "work-3",
+      "message-4",
+      "work-5",
+    ]);
+    expect(split[0]).not.toBe(initial[0]);
+    expect(split.at(-1)).toBe(initial.at(-1));
+    expect(initial[0]).toMatchObject({ activities: [{ id: "work-1" }, { id: "work-3" }] });
+
+    const reordered = buildThreadFeed({
+      ...thread,
+      messages: [messages[0]!, { ...messages[1]!, createdAt: "2026-04-01T00:00:06.000Z" }],
+    });
+    expect(reordered.map((row) => row.id)).toEqual(["work-1", "message-4"]);
+    expect(reordered[0]).toMatchObject({
+      activities: [{ id: "work-1" }, { id: "work-3" }, { id: "work-5" }],
+    });
+    const olderMessage = {
+      ...messages[1]!,
+      id: MessageId.make("older-message"),
+      createdAt: "2026-04-01T00:00:00.000Z",
+    };
+    const page = buildThreadFeed(thread, {
+      loadedMessages: [messages[1]!],
+      localMessages: [olderMessage],
+    });
+    expect(page.map((row) => row.id)).toEqual(["older-message", "message-4", "work-5"]);
+    const prepended = buildThreadFeed(thread, { loadedMessages: [olderMessage, ...messages] });
+    expect(prepended.map((row) => row.id)).toEqual([
+      "older-message",
+      "work-1",
+      "message-4",
+      "work-5",
+    ]);
+    expect(prepended.at(-1)).toBe(page.at(-1));
+  });
+
   it("keeps context compaction as a standalone timeline row", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-context-compaction"),
@@ -634,7 +863,8 @@ describe("buildThreadFeed", () => {
     };
 
     for (const currentTurn of [null, latestTurn]) {
-      const feed = buildThreadFeed({ ...thread, latestTurn: currentTurn });
+      const currentThread = { ...thread, latestTurn: currentTurn };
+      const feed = buildThreadFeed(currentThread);
       expect(feed).toMatchObject([
         {
           type: "activity-group",
@@ -1556,6 +1786,30 @@ describe("buildThreadFeed", () => {
       "work-toggle:work-group:tool-completed",
       "assistant-final",
     ]);
+
+    const interrupted = deriveThreadFeedPresentation(
+      feed,
+      { ...thread.latestTurn!, state: "interrupted", completedAt: "2026-04-01T00:00:20.000Z" },
+      new Set(),
+    );
+    expect(interrupted[1]).toMatchObject({
+      type: "turn-fold",
+      label: "You stopped after 19s",
+      expanded: false,
+    });
+    const retimed = deriveThreadFeedPresentation(
+      buildThreadFeed({
+        ...thread,
+        messages: [
+          thread.messages[0]!,
+          { ...thread.messages[1]!, updatedAt: "2026-04-01T00:00:25.000Z" },
+        ],
+      }),
+      null,
+      new Set(),
+    );
+    expect(retimed[1]).toMatchObject({ type: "turn-fold", label: "Worked for 23s" });
+    expect(collapsed[1]).toMatchObject({ type: "turn-fold", label: "Worked for 17s" });
   });
 
   it("folds assistant messages between the first and terminal messages", () => {
@@ -1854,6 +2108,15 @@ describe("buildThreadFeed", () => {
         { id: "activity-3", groupedToolDetail: true, live: false },
       ],
     });
+    const unchanged = deriveThreadFeedPresentation(
+      feed,
+      null,
+      new Set(),
+      new Set(["work-group:activity-1", "unrelated-group"]),
+    );
+    expect(unchanged[0]).toBe(expanded[0]);
+    expect(unchanged[1]).toBe(expanded[1]);
+    expect(deriveThreadFeedPresentation(feed, null, new Set())).toEqual(collapsed);
   });
 
   it.each(
@@ -2209,6 +2472,43 @@ describe("buildThreadFeed", () => {
         { id: "call-a-1", lifecycleStatus: "completed", groupedToolDetail: true, live: false },
         { id: "call-b-2", lifecycleStatus: "completed", groupedToolDetail: true, live: false },
       ],
+    });
+
+    const correctedFeed = buildThreadFeed({
+      ...thread,
+      activities: thread.activities.map((activity) =>
+        activity.id === "call-a-3"
+          ? {
+              ...activity,
+              tone: "error",
+              payload: {
+                toolCallId: "call-a",
+                itemType: "command_execution",
+                status: "failed",
+                detail: "Corrected failure output",
+              },
+            }
+          : activity,
+      ),
+    });
+    const correctedGroup = correctedFeed.find((entry) => entry.type === "activity-group");
+    expect(correctedGroup).toMatchObject({
+      activities: [
+        { id: "call-a-1", lifecycleStatus: "failed", detail: "Corrected failure output" },
+        { id: "call-b-2", lifecycleStatus: "completed", detail: "second output" },
+      ],
+    });
+    expect(correctedGroup?.activities[0]?.getCopyText()).toContain("Corrected failure output");
+    expect(activityGroup?.activities[0]?.getCopyText()).toContain("first output");
+    const correctedRows = deriveThreadFeedPresentation(
+      correctedFeed,
+      null,
+      new Set([turnId]),
+      new Set([groupId]),
+    );
+    expect(correctedRows.find((entry) => entry.type === "activity-group")).toMatchObject({
+      id: "call-a-1",
+      activities: [{ status: "failure", workEntry: { tone: "error" } }],
     });
   });
 });
