@@ -1658,6 +1658,16 @@ export function makeOpenCodeAdapter(
       }
     });
 
+    // Records a child session of this thread. A child seen during a live turn
+    // means that turn used subagents, whether the relation came from a
+    // `session.created` event or a later ancestry lookup after reconnect.
+    const addRelatedOpenCodeSession = (context: OpenCodeSessionContext, sessionId: string) => {
+      context.relatedSessionIds.add(sessionId);
+      if (context.activeTurnId && context.turnTokenUsage) {
+        context.turnTokenUsage.hasSubagents = true;
+      }
+    };
+
     const isRelatedOpenCodeSession = Effect.fn("isRelatedOpenCodeSession")(function* (
       context: OpenCodeSessionContext,
       candidateSessionId: string,
@@ -1689,7 +1699,7 @@ export function makeOpenCodeAdapter(
       let sessionId: string | undefined = candidateSessionId;
       for (let depth = 0; sessionId !== undefined && depth < 32; depth += 1) {
         if (context.relatedSessionIds.has(sessionId)) {
-          context.relatedSessionIds.add(candidateSessionId);
+          addRelatedOpenCodeSession(context, candidateSessionId);
           return true;
         }
         if (seen.has(sessionId)) {
@@ -2208,10 +2218,7 @@ export function makeOpenCodeAdapter(
       if (event.type === "session.created" || event.type === "session.updated") {
         const session = event.properties.info;
         if (session.parentID && context.relatedSessionIds.has(session.parentID)) {
-          context.relatedSessionIds.add(session.id);
-          if (context.activeTurnId && context.turnTokenUsage) {
-            context.turnTokenUsage.hasSubagents = true;
-          }
+          addRelatedOpenCodeSession(context, session.id);
         }
       } else if (event.type === "session.deleted") {
         context.relatedSessionIds.delete(event.properties.info.id);

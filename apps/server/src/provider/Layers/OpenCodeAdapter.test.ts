@@ -2088,6 +2088,92 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("marks subagents when a child is proven related by ancestry lookup", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-child-ancestry-usage");
+      // The child's `session.created` event was missed. Only the ancestry
+      // lookup can prove that `ses_child` belongs to this thread.
+      runtimeMock.state.sessionParentById.set("ses_child", "http://127.0.0.1:9999/session");
+      runtimeMock.state.sessionStatus = "busy";
+      const busy = promiseWithResolvers<unknown>();
+      const childPermission = promiseWithResolvers<unknown>();
+      const idle = promiseWithResolvers<unknown>();
+      runtimeMock.state.subscribedEvents = [busy.promise, childPermission.promise, idle.promise];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "request.opened" || event.type === "turn.completed"),
+        ),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+      const sendFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "Delegate to a child",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("opencode"),
+            "opencode/kimi-k3",
+          ),
+        })
+        .pipe(Effect.forkChild);
+      busy.resolve({
+        id: "evt-child-ancestry-busy",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "busy" },
+        },
+      });
+      yield* Fiber.join(sendFiber);
+
+      const requestOpened = promiseWithResolvers<void>();
+      runtimeMock.state.sessionGetObserved = (sessionID) => {
+        if (sessionID === "ses_child") requestOpened.resolve(undefined);
+      };
+      childPermission.resolve({
+        id: "evt-child-ancestry-permission",
+        type: "permission.asked",
+        properties: permissionRequest("per_child_ancestry", "ses_child"),
+      });
+      yield* Effect.promise(() => requestOpened.promise);
+      yield* Effect.yieldNow;
+      runtimeMock.state.sessionStatus = "idle";
+      idle.resolve({
+        id: "evt-child-ancestry-idle",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "idle" },
+        },
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        ["request.opened", "turn.completed"],
+      );
+      const completed = events[1];
+      if (completed?.type === "turn.completed") {
+        NodeAssert.deepEqual(completed.payload.tokenUsage, {
+          usageStatus: "unavailable",
+          usageScope: "main_agent",
+          hasSubagents: true,
+        });
+      }
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("sums owned OpenCode step usage and marks unresolved usage partial", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

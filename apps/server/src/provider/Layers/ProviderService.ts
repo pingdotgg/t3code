@@ -560,29 +560,26 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         activeByTurnId: new Map(),
         deferredCompletionsByTurnId: new Map(),
       };
+      // A start never binds send metadata on its own. Claude can start a
+      // synthetic turn for leftover agent output while sendTurn is still
+      // preparing the real turn, so only the adapter's sendTurn response
+      // links a request to its turn. Completions that land before that
+      // response wait in deferredCompletionsByTurnId.
       const current = session.activeByTurnId.get(String(event.turnId));
-      const solePending =
-        session.pendingByRequestId.size === 1
-          ? session.pendingByRequestId.values().next().value
-          : undefined;
       const metadata: TurnAnalyticsMetadata = {
-        ...(current?.metadata ??
-          solePending ?? {
-            requestId: ++turnAnalyticsRequestId,
-            provider: source.provider,
-            startedAtMs: observedAtMs,
-            mixedModels: false,
-          }),
+        ...(current?.metadata ?? {
+          requestId: ++turnAnalyticsRequestId,
+          provider: source.provider,
+          startedAtMs: observedAtMs,
+          mixedModels: false,
+        }),
         ...(event.payload.model ? { model: event.payload.model } : {}),
         ...(event.payload.effort ? { effort: event.payload.effort } : {}),
       };
       setActiveTurnAnalytics(session, String(event.turnId), {
         metadata,
-        requestAssociated: current?.requestAssociated ?? solePending !== undefined,
+        requestAssociated: current?.requestAssociated ?? false,
       });
-      if (solePending?.requestId === metadata.requestId) {
-        session.pendingByRequestId.delete(solePending.requestId);
-      }
       state.sessions.set(sessionKey, session);
       return state;
     });

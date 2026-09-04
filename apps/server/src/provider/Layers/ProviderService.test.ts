@@ -3144,7 +3144,7 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
     }),
   );
 
-  it.effect("keeps metadata when an adapter completes before sendTurn returns", () =>
+  it.effect("waits for the adapter response when a turn completes before sendTurn returns", () =>
     Effect.gen(function* () {
       recordedTurnAnalytics.reset();
       const provider = yield* ProviderService.ProviderService;
@@ -3201,7 +3201,10 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       const terminal = yield* Fiber.join(terminalReceipt);
       assert.equal(terminal._tag, "Some");
       assert.equal(sendFiber.pollUnsafe(), undefined);
+      assert.equal(recordedTurnAnalytics.eventsByName("provider.turn.completed").length, 0);
 
+      yield* Deferred.succeed(returnRelease, undefined);
+      yield* Fiber.join(sendFiber);
       const completed = recordedTurnAnalytics.eventsByName("provider.turn.completed");
       assert.equal(completed.length, 1);
       assert.deepInclude(completed[0]?.properties ?? {}, {
@@ -3209,8 +3212,91 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
         effort: "high",
         interactionMode: "plan",
       });
-      yield* Deferred.succeed(returnRelease, undefined);
-      yield* Fiber.join(sendFiber);
+    }),
+  );
+
+  it.effect("does not give a synthetic turn the metadata of an in-flight send", () =>
+    Effect.gen(function* () {
+      recordedTurnAnalytics.reset();
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-turn-analytics-synthetic-start");
+      const syntheticTurnId = asTurnId("turn-analytics-synthetic");
+      const realTurnId = asTurnId("turn-analytics-real");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* Effect.yieldNow;
+      // Claude closes a leftover synthetic turn while it prepares the real
+      // turn, so both events arrive before sendTurn returns the real turn ID.
+      primaryAnalyticsCodex.sendTurn.mockImplementationOnce((input) =>
+        Effect.gen(function* () {
+          primaryAnalyticsCodex.emit({
+            type: "turn.started",
+            eventId: asEventId("evt-turn-analytics-synthetic-start"),
+            provider: CODEX_DRIVER,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            threadId,
+            turnId: syntheticTurnId,
+            payload: {},
+          });
+          primaryAnalyticsCodex.emit({
+            type: "turn.completed",
+            eventId: asEventId("evt-turn-analytics-synthetic-complete"),
+            provider: CODEX_DRIVER,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            threadId,
+            turnId: syntheticTurnId,
+            payload: { state: "completed" },
+          });
+          primaryAnalyticsCodex.emit({
+            type: "turn.started",
+            eventId: asEventId("evt-turn-analytics-real-start"),
+            provider: CODEX_DRIVER,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            threadId,
+            turnId: realTurnId,
+            payload: { model: "native-real" },
+          });
+          yield* Effect.yieldNow;
+          return { threadId: input.threadId, turnId: realTurnId };
+        }),
+      );
+
+      yield* provider.sendTurn({
+        threadId,
+        input: "start the real turn",
+        attachments: [],
+        interactionMode: "plan",
+        modelSelection: createModelSelection(codexInstanceId, "requested-real"),
+      });
+      const realCompletion = yield* provider.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.completed" && event.turnId === realTurnId),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      primaryAnalyticsCodex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-turn-analytics-real-complete"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        turnId: realTurnId,
+        payload: { state: "completed" },
+      });
+      yield* Fiber.join(realCompletion);
+
+      const completed = recordedTurnAnalytics.eventsByName("provider.turn.completed");
+      assert.equal(completed.length, 2);
+      assert.equal(completed[0]?.properties?.interactionMode, undefined);
+      assert.equal(completed[0]?.properties?.model, undefined);
+      assert.deepInclude(completed[1]?.properties ?? {}, {
+        model: "native-real",
+        interactionMode: "plan",
+      });
     }),
   );
 
@@ -3401,6 +3487,12 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       const terminal = yield* Fiber.join(terminalReceipt);
       assert.equal(terminal._tag, "Some");
       assert.equal(nextSend.pollUnsafe(), undefined);
+      // The canceled request must not hold the completion. The live request
+      // still does, until its adapter response links it to the turn.
+      assert.equal(recordedTurnAnalytics.eventsByName("provider.turn.completed").length, 0);
+      yield* Deferred.succeed(nextReturnRelease, undefined);
+      const nextTurn = yield* Fiber.join(nextSend);
+      assert.equal(nextTurn.turnId, nextTurnId);
 
       const completed = recordedTurnAnalytics.eventsByName("provider.turn.completed");
       assert.equal(completed.length, 1);
@@ -3409,9 +3501,6 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
         effort: "high",
         interactionMode: "plan",
       });
-      yield* Deferred.succeed(nextReturnRelease, undefined);
-      const nextTurn = yield* Fiber.join(nextSend);
-      assert.equal(nextTurn.turnId, nextTurnId);
     }),
   );
 
