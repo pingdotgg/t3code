@@ -16,6 +16,11 @@ import {
 } from "./projectFilesQueryState";
 
 const environmentId = EnvironmentId.make("environment-project-files-query-test");
+const optimisticFile = projectEnvironment.optimisticFile({
+  environmentId,
+  cwd: "/repo",
+  relativePath: "convex.json",
+});
 
 describe("project files queries", () => {
   afterEach(() => {
@@ -24,21 +29,10 @@ describe("project files queries", () => {
     vi.unstubAllGlobals();
   });
 
-  it("resumes an open preview's unsaved draft when write access returns and its editor remounts", async ({
-    onTestFinished,
-  }) => {
+  it("resumes an unsaved draft after closing the preview and restoring write access", async () => {
     vi.stubGlobal("window", {});
     vi.useFakeTimers();
-    // The preview keeps its optimistic file subscription while its editor becomes read-only.
-    onTestFinished(
-      appAtomRegistry.mount(
-        projectEnvironment.optimisticFile({
-          environmentId,
-          cwd: "/repo",
-          relativePath: "convex.json",
-        }),
-      ),
-    );
+    const closePreview = appAtomRegistry.mount(optimisticFile);
     let canWrite = true;
     const persist = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
     const onPendingChange = vi.fn();
@@ -57,6 +51,7 @@ describe("project files queries", () => {
     initial.change("unsaved draft");
     canWrite = false;
     initial.dispose();
+    closePreview();
     await vi.runAllTimersAsync();
 
     expect(persist).not.toHaveBeenCalled();
@@ -74,6 +69,22 @@ describe("project files queries", () => {
     expect(onPendingChange).toHaveBeenLastCalledWith(false);
     expect(getUnsavedProjectFileQueryData(environmentId, "/repo", "convex.json")).toBeNull();
     reopened.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(appAtomRegistry.getNodes().has(optimisticFile)).toBe(false);
+  });
+
+  it("releases a retained unsaved draft when explicitly cleared", async () => {
+    vi.useFakeTimers();
+    setProjectFileQueryData(environmentId, "/repo", "convex.json", "first draft");
+    setProjectFileQueryData(environmentId, "/repo", "convex.json", "latest draft");
+    await vi.runAllTimersAsync();
+    expect(getUnsavedProjectFileQueryData(environmentId, "/repo", "convex.json")?.contents).toBe(
+      "latest draft",
+    );
+
+    clearProjectFileQueryData(environmentId, "/repo", "convex.json");
+    await vi.runAllTimersAsync();
+    expect(appAtomRegistry.getNodes().has(optimisticFile)).toBe(false);
   });
 
   it("keeps the latest optimistic draft when an older write finishes", () => {
