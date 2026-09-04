@@ -47,6 +47,10 @@
       "types": "./src/codexMarkdownDirectives.ts",
       "default": "./src/codexMarkdownDirectives.ts"
     },
+    "./runtime-mode-options": {
+      "types": "./src/runtimeModeOptions.ts",
+      "default": "./src/runtimeModeOptions.ts"
+    },
     "./errors": {
       "types": "./src/errors/index.ts",
       "default": "./src/errors/index.ts"

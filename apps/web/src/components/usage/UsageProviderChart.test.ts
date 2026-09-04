@@ -87,6 +87,7 @@ describe("buildDayColumns", () => {
       { provider: "codex", value: 10 },
       { provider: "claude", value: 20 },
       { provider: "grok", value: 0 },
+      { provider: "pi", value: 0 },
     ]);
   });
 
@@ -106,6 +107,15 @@ describe("providersWithUsage", () => {
         { provider: "claude", costUsd: 0, totalTokens: 200 },
       ]),
     ).toEqual(["claude"]);
+  });
+
+  it("includes Pi when its transcript usage is non-zero", () => {
+    expect(
+      providersWithUsage([
+        { provider: "codex", costUsd: 0, totalTokens: 0 },
+        { provider: "pi", costUsd: 0.25, totalTokens: 120_000 },
+      ]),
+    ).toEqual(["pi"]);
   });
 });
 

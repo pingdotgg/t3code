@@ -96,14 +96,24 @@ provider's CLI, or use T3 Code's managed setup for Antigravity.
 | Grok Build  | [Grok Build CLI](https://x.ai/cli)                                                                         | `grok`             | `grok login`                       |
 | OpenCode    | [OpenCode](https://opencode.ai)                                                                            | `opencode`         | `opencode auth login`              |
 | Antigravity | [Official ACP agent](https://github.com/agentclientprotocol/registry/blob/main/antigravity-acp/agent.json) | Managed by T3 Code | **Sign in with Google** in T3 Code |
+| Pi Agent    | [Pi coding agent](https://github.com/earendil-works/pi) (Early Access)                                     | `pi`               | Configure Pi on the server         |
 
-Codex and Claude are on by default. Cursor, Grok Build, OpenCode, and Antigravity are off by
-default. Turn them on in **Settings** > **Providers** when you want to use them.
+Codex and Claude are on by default. Cursor, Grok Build, OpenCode, Antigravity, and Pi Agent are
+off by default. Turn them on in **Settings** > **Providers** when you want to use them.
 
 For Antigravity, select the environment in provider settings, then install and sign in there.
 The runtime and credentials stay on that environment, even when you use a phone or remote
 browser. See [Antigravity setup](./providers-antigravity.md) for Google sign-in, remote callback
 steps, and supported hosts.
+
+Pi Agent is user-managed. Install it on the environment that runs T3 Code, then configure its
+binary, agent, and session paths in the provider instance:
+
+```bash
+npm install --global @earendil-works/pi-coding-agent
+```
+
+See [Pi Agent setup](./providers-pi-agent.md).
 
 Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
 T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`.

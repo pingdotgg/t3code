@@ -8,6 +8,7 @@ import {
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
   defaultEnabledForDriver,
+  PiSettings,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -20,6 +21,7 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+const decodePiSettings = Schema.decodeUnknownSync(PiSettings);
 
 describe("ClaudeSettings auto-compaction", () => {
   it("uses Claude's default threshold when no override is configured", () => {
@@ -336,6 +338,48 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   });
 });
 
+describe("PiSettings", () => {
+  it("is opt-in and defaults its binary and directory overrides", () => {
+    expect(decodePiSettings({})).toEqual({
+      enabled: false,
+      binaryPath: "pi",
+      agentDir: "",
+      sessionDir: "",
+      customModels: [],
+    });
+    expect(DEFAULT_SERVER_SETTINGS.providers.piAgent).toEqual(decodePiSettings({}));
+  });
+
+  it("accepts and normalizes user-managed binary and directory settings", () => {
+    expect(
+      decodeServerSettingsPatch({
+        providers: {
+          piAgent: {
+            enabled: true,
+            binaryPath: "  /opt/pi  ",
+            agentDir: "  ~/.pi/work  ",
+            sessionDir: "  ~/.pi/sessions  ",
+          },
+        },
+      }),
+    ).toEqual({
+      providers: {
+        piAgent: {
+          enabled: true,
+          binaryPath: "/opt/pi",
+          agentDir: "~/.pi/work",
+          sessionDir: "~/.pi/sessions",
+        },
+      },
+    });
+  });
+  it("shows Pi's actual default session directory as the placeholder", () => {
+    const annotations = Schema.resolveAnnotationsKey(PiSettings.fields.sessionDir);
+
+    expect(annotations?.providerSettingsForm?.placeholder).toBe("~/.pi/agent/sessions");
+  });
+});
+
 describe("provider enabled defaults", () => {
   it("enables only the stable bindings by default", () => {
     const decoded = decodeServerSettings({});
@@ -344,12 +388,14 @@ describe("provider enabled defaults", () => {
     expect(decoded.providers.cursor.enabled).toBe(false);
     expect(decoded.providers.grok.enabled).toBe(false);
     expect(decoded.providers.opencode.enabled).toBe(false);
+    expect(decoded.providers.piAgent.enabled).toBe(false);
   });
 
   it("derives per-driver defaults from the settings schemas", () => {
     expect(defaultEnabledForDriver(ProviderDriverKind.make("codex"))).toBe(true);
     expect(defaultEnabledForDriver(ProviderDriverKind.make("cursor"))).toBe(false);
     expect(defaultEnabledForDriver(ProviderDriverKind.make("grok"))).toBe(false);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("piAgent"))).toBe(false);
     // Unknown fork drivers stay enabled; their own build decides otherwise.
     expect(defaultEnabledForDriver(ProviderDriverKind.make("ollama"))).toBe(true);
   });

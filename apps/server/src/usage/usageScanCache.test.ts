@@ -97,6 +97,34 @@ describe("scan cache round trip", () => {
     expect(restored.get("/codex.jsonl")).toEqual(original.get("/codex.jsonl"));
   });
 
+  it("restores Pi records unchanged", () => {
+    const original: ScanCache = new Map([
+      [
+        "/pi.jsonl",
+        {
+          size: 40,
+          mtimeMs: 300,
+          provider: "pi",
+          records: [
+            record({
+              provider: "pi",
+              model: "gpt-5.6-sol",
+              sessionId: "pi-session",
+              reportedCostUsd: 0.25,
+              dedupeKey: "pi:entry-1",
+            }),
+          ],
+          tailRecords: [],
+          position: position(),
+        },
+      ],
+    ]);
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original))));
+
+    expect(restored.get("/pi.jsonl")).toEqual(original.get("/pi.jsonl"));
+  });
+
   it("drops an entry whose persisted parse state is corrupt", () => {
     // Resuming with a bad reducer state would attach appended usage to the
     // wrong model or replay fork-copied history; that entry must cold parse.

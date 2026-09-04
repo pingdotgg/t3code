@@ -61,4 +61,28 @@ describe("usage pricing", () => {
     expect(lookupRate(table, "provider-b/example-model")?.inputCostPerToken).toBe(3);
     expect(lookupRate(table, "example-model")).toBeNull();
   });
+
+  it("prices an effort-suffixed variant at the base model's rate", () => {
+    const table = parseRateTable({ "gemini-3.8-flash": rate(7.5e-7, 7.5e-8) });
+
+    expect(lookupRate(table, "gemini-3.8-flash-high")).toEqual(
+      lookupRate(table, "gemini-3.8-flash"),
+    );
+    expect(lookupRate(table, "gemini-3.8-flash-medium")).toEqual(
+      lookupRate(table, "gemini-3.8-flash"),
+    );
+    expect(lookupRate(table, "gemini-3.8-flash-low")).toEqual(
+      lookupRate(table, "gemini-3.8-flash"),
+    );
+    expect(lookupRate(table, "gemini/gemini-3.8-flash-high")).toEqual(
+      lookupRate(table, "gemini-3.8-flash"),
+    );
+  });
+
+  it("leaves an effort-suffixed variant unpriced when the base is unknown", () => {
+    const table = parseRateTable({ "some-other-model": rate(1) });
+
+    expect(lookupRate(table, "gemini-3.8-flash-high")).toBeNull();
+    expect(lookupRate(table, "gpt-5.6-sol")).toBeNull();
+  });
 });

@@ -6,6 +6,7 @@ import {
   parseClaudeLine,
   parseCodexLine,
   parseGrokLine,
+  parsePiLine,
   totalTokens,
 } from "./usageTranscripts.ts";
 
@@ -249,6 +250,137 @@ describe("totalTokens", () => {
         reasoningTokens: 25,
       }),
     ).toBe(100);
+  });
+});
+
+describe("parsePiLine", () => {
+  const assistantLine = (overrides?: {
+    role?: string;
+    model?: string;
+    responseModel?: string;
+    timestamp?: string;
+    usage?: Record<string, unknown>;
+  }) =>
+    JSON.stringify({
+      type: "message",
+      id: "a7e96ec5",
+      timestamp: overrides?.timestamp ?? "2026-09-04T09:31:41.064Z",
+      message: {
+        role: overrides?.role ?? "assistant",
+        provider: "cliproxyapi",
+        model: overrides?.model ?? "gpt-5.6-sol",
+        responseModel: overrides?.responseModel,
+        usage: {
+          input: 2595,
+          output: 335,
+          cacheRead: 1024,
+          cacheWrite: 256,
+          reasoning: 73,
+          totalTokens: 4210,
+          cost: {
+            input: 0.01038,
+            output: 0.0067,
+            cacheRead: 0.0004096,
+            cacheWrite: 0.001024,
+            total: 0.0185136,
+          },
+          ...overrides?.usage,
+        },
+      },
+    });
+
+  it("extracts Pi's disjoint token totals and provider-reported cost", () => {
+    const record = parsePiLine(assistantLine(), "pi-session-1");
+
+    expect(record?.provider).toBe("pi");
+    expect(record?.model).toBe("gpt-5.6-sol");
+    expect(record?.sessionId).toBe("pi-session-1");
+    expect(record?.timestampMs).toBe(Date.parse("2026-09-04T09:31:41.064Z"));
+    expect(record?.totals).toEqual({
+      uncachedInputTokens: 2595,
+      cachedInputTokens: 1024,
+      cacheCreationTokens: 256,
+      outputTokens: 335,
+      reasoningTokens: 73,
+    });
+    expect(record?.reportedCostUsd).toBeCloseTo(0.0185136, 12);
+    expect(record?.dedupeKey).toBe("pi:a7e96ec5");
+  });
+
+  it("attributes usage to Pi's response model when it differs from the requested model", () => {
+    const record = parsePiLine(
+      assistantLine({ model: "requested-model", responseModel: "provider-model" }),
+      "pi-session-1",
+    );
+
+    expect(record?.model).toBe("provider-model");
+  });
+
+  it("counts Pi tool-result usage under the Tools/summaries bucket", () => {
+    const record = parsePiLine(
+      assistantLine({
+        role: "toolResult",
+        model: "requested-model",
+        responseModel: "provider-model",
+      }),
+      "pi-session-1",
+    );
+
+    expect(record?.model).toBe("Tools/summaries");
+    expect(record?.totals.outputTokens).toBe(335);
+  });
+
+  it.each(["compaction", "branch_summary"])("counts %s usage as Tools/summaries", (type) => {
+    const record = parsePiLine(
+      JSON.stringify({
+        type,
+        id: `${type}-1`,
+        timestamp: "2026-09-04T09:31:41.064Z",
+        usage: {
+          input: 12,
+          output: 8,
+          cacheRead: 4,
+          cacheWrite: 2,
+          reasoning: 3,
+          cost: { total: 0.25 },
+        },
+      }),
+      "pi-session-1",
+    );
+
+    expect(record).toMatchObject({
+      provider: "pi",
+      model: "Tools/summaries",
+      sessionId: "pi-session-1",
+      totals: {
+        uncachedInputTokens: 12,
+        cachedInputTokens: 4,
+        cacheCreationTokens: 2,
+        outputTokens: 8,
+        reasoningTokens: 3,
+      },
+      reportedCostUsd: 0.25,
+      dedupeKey: `pi:${type}-1`,
+    });
+  });
+
+  it("ignores non-assistant, malformed, model-less, and zero-token entries", () => {
+    expect(parsePiLine(assistantLine({ model: "" }), "session")).toBeNull();
+    expect(
+      parsePiLine(
+        assistantLine({
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            reasoning: 0,
+          },
+        }),
+        "session",
+      ),
+    ).toBeNull();
+    expect(parsePiLine("not json", "session")).toBeNull();
   });
 });
 

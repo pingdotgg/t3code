@@ -68,7 +68,7 @@ export function totalTokens(totals: UsageTokenTotals): number {
  * an order of magnitude.
  */
 export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
-  if (provider === "claude") return line.includes('"usage"');
+  if (provider === "claude" || provider === "pi") return line.includes('"usage"');
   if (provider === "grok") return line.includes('"turn_completed"');
   return line.includes('"token_count"');
 }
@@ -82,6 +82,98 @@ export const GROK_COST_USD_TICKS_PER_DOLLAR = 10_000_000_000;
 export function grokCostTicksToUsd(ticks: unknown): number | null {
   if (typeof ticks !== "number" || !Number.isFinite(ticks) || ticks < 0) return null;
   return ticks / GROK_COST_USD_TICKS_PER_DOLLAR;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Pi Agent                                                                   */
+/* -------------------------------------------------------------------------- */
+
+const PI_AUXILIARY_USAGE_MODEL = "Tools/summaries";
+
+function parsePiUsageRecord(
+  record: Record<string, unknown>,
+  usage: unknown,
+  sessionId: string,
+  model: string,
+): UsageRecord | null {
+  if (typeof usage !== "object" || usage === null) return null;
+  const usageRecord = usage as Record<string, unknown>;
+  const timestampMs = parseTimestampMs(record["timestamp"]);
+  if (timestampMs === null) return null;
+
+  const outputTokens = int(usageRecord["output"]);
+  const totals: UsageTokenTotals = {
+    uncachedInputTokens: int(usageRecord["input"]),
+    cachedInputTokens: int(usageRecord["cacheRead"]),
+    cacheCreationTokens: int(usageRecord["cacheWrite"]),
+    outputTokens,
+    reasoningTokens: Math.min(outputTokens, int(usageRecord["reasoning"])),
+  };
+  if (totalTokens(totals) === 0) return null;
+
+  const cost = usageRecord["cost"];
+  const reportedCost =
+    typeof cost === "object" && cost !== null ? (cost as Record<string, unknown>)["total"] : null;
+  const entryId = typeof record["id"] === "string" ? record["id"] : null;
+
+  return {
+    provider: "pi",
+    timestampMs,
+    model,
+    sessionId,
+    totals,
+    reportedCostUsd:
+      typeof reportedCost === "number" && Number.isFinite(reportedCost) && reportedCost >= 0
+        ? reportedCost
+        : null,
+    // Pi preserves entry ids when a session tree is copied, so this also
+    // prevents copied history from being counted again in another file.
+    dedupeKey: entryId === null ? null : `pi:${entryId}`,
+  };
+}
+
+/**
+ * Parses one usage-bearing entry from a Pi session JSONL file.
+ *
+ * Pi reports uncached input, cache reads, cache writes, output, reasoning, and
+ * exact provider cost as disjoint fields. Assistant responses carry their
+ * response model; tool results and summary entries do not have reliable model
+ * attribution and therefore share Pi's `Tools/summaries` bucket.
+ */
+export function parsePiLine(line: string, sessionId: string): UsageRecord | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+
+  const record = parsed as Record<string, unknown>;
+  const type = record["type"];
+  if (type === "compaction" || type === "branch_summary") {
+    return parsePiUsageRecord(record, record["usage"], sessionId, PI_AUXILIARY_USAGE_MODEL);
+  }
+  if (type !== "message") return null;
+
+  const message = record["message"];
+  if (typeof message !== "object" || message === null) return null;
+  const messageRecord = message as Record<string, unknown>;
+  const role = messageRecord["role"];
+  if (role !== "assistant" && role !== "toolResult") return null;
+
+  if (role === "toolResult") {
+    return parsePiUsageRecord(record, messageRecord["usage"], sessionId, PI_AUXILIARY_USAGE_MODEL);
+  }
+
+  const responseModel =
+    typeof messageRecord["responseModel"] === "string" ? messageRecord["responseModel"].trim() : "";
+  const model =
+    responseModel ||
+    (typeof messageRecord["model"] === "string" ? messageRecord["model"].trim() : "");
+  if (model.length === 0) return null;
+
+  return parsePiUsageRecord(record, messageRecord["usage"], sessionId, model);
 }
 
 /* -------------------------------------------------------------------------- */

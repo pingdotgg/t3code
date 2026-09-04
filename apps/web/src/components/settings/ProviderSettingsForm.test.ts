@@ -22,6 +22,16 @@ describe("ProviderSettingsForm helpers", () => {
     ]);
   });
 
+  it("registers Pi Agent as an early-access provider with its icon", () => {
+    const piAgent = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("piAgent")];
+
+    expect(piAgent).toMatchObject({
+      label: "Pi Agent",
+      badgeLabel: "Early Access",
+    });
+    expect(piAgent?.icon).toBeDefined();
+  });
+
   it("sources labels and descriptions from schema annotations", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();

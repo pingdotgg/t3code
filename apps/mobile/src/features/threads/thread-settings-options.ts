@@ -1,4 +1,5 @@
 import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
+import { filterRuntimeModeOptions } from "@t3tools/client-runtime/runtime-mode-options";
 
 /**
  * Desktop-oriented effort keywords that don't belong in the phone picker.
@@ -35,6 +36,12 @@ export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
     description: "Allow commands and edits without prompts.",
   },
 ];
+
+export function filterRuntimeModeChoices(
+  supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined,
+) {
+  return filterRuntimeModeOptions(RUNTIME_MODE_CHOICES, supportedRuntimeModes);
+}
 
 export function selectableChoices(
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
