@@ -145,6 +145,8 @@ Subagent launches appear as **Antigravity subagent batch** in **Agents** on web 
 and in the work log on mobile. One launch can start several agents. The batch stays active
 after launch while the parent turn runs. When that turn ends, the entry becomes idle and
 states that individual agent status is unavailable. Launch errors remain visible.
+The conversation summary counts launches as batches and shows idle or stopped batches
+without a completion checkmark.
 
 The official ACP agent does not send individual child status, names, models, token usage,
 or reply ownership. T3 Code cannot show separate child entries or separate child replies
