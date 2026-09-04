@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 
 import {
+  createTerminalSelectionAutoCopy,
   getCopyableDomSelectionText,
   isCopyOnSelectEditableTarget,
   normalizeTerminalSelectionText,
@@ -8,6 +11,93 @@ import {
   shouldAutoCopyOnMouseUp,
   snapshotDomSelection,
 } from "./copyOnSelect";
+
+describe("terminal copy on select", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("preserves terminal input when the browser rejects the clipboard write", async () => {
+    const terminalInput = {
+      value: "にほんご",
+      selectionStart: 4,
+      selectionEnd: 4,
+      select: vi.fn(),
+    };
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("navigator", {
+      clipboard: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+    });
+    const onCopied = vi.fn();
+    const autoCopy = createTerminalSelectionAutoCopy({
+      readSettings: () => ({ enabled: true, showToast: true }),
+      writeText: (text) => writeTextToClipboard(text, "terminal selection"),
+      onCopied,
+    });
+
+    await expect(autoCopy.copy("git status")).resolves.toBe(false);
+    expect(terminalInput.value).toBe("にほんご");
+    expect(terminalInput.selectionStart).toBe(4);
+    expect(terminalInput.selectionEnd).toBe(4);
+    expect(terminalInput.select).not.toHaveBeenCalled();
+    expect(onCopied).not.toHaveBeenCalled();
+  });
+
+  it("allows the same selection to retry after a failed write", async () => {
+    const writeText = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("denied"))
+      .mockResolvedValueOnce(true);
+    const onCopied = vi.fn();
+    const autoCopy = createTerminalSelectionAutoCopy({
+      readSettings: () => ({ enabled: true, showToast: true }),
+      writeText,
+      onCopied,
+    });
+
+    await expect(autoCopy.copy("git status")).resolves.toBe(false);
+    await expect(autoCopy.copy("git status")).resolves.toBe(true);
+    expect(onCopied).toHaveBeenCalledOnce();
+  });
+
+  it("coalesces a pending write and honors the current toast setting", async () => {
+    let finishWrite: ((didCopy: boolean) => void) | undefined;
+    const writeText = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishWrite = resolve;
+        }),
+    );
+    const onCopied = vi.fn();
+    const autoCopy = createTerminalSelectionAutoCopy({
+      readSettings: () => ({ enabled: true, showToast: false }),
+      writeText,
+      onCopied,
+    });
+
+    const firstCopy = autoCopy.copy("git status");
+    await expect(autoCopy.copy("git status")).resolves.toBe(false);
+    expect(writeText).toHaveBeenCalledOnce();
+
+    finishWrite?.(true);
+    await expect(firstCopy).resolves.toBe(true);
+    expect(onCopied).not.toHaveBeenCalled();
+  });
+
+  it("keeps a successful explicit copy from immediately auto-copying the same selection", async () => {
+    const writeText = vi.fn().mockResolvedValue(true);
+    const autoCopy = createTerminalSelectionAutoCopy({
+      readSettings: () => ({ enabled: true, showToast: true }),
+      writeText,
+      onCopied: vi.fn(),
+    });
+
+    autoCopy.rememberCopied("git status");
+
+    await expect(autoCopy.copy("git status")).resolves.toBe(false);
+    expect(writeText).not.toHaveBeenCalled();
+  });
+});
 
 function mouseUp(overrides: Partial<MouseEvent> = {}): MouseEvent {
   return { button: 0, ctrlKey: false, metaKey: false, altKey: false, ...overrides } as MouseEvent;
@@ -67,12 +157,23 @@ class FakeElement {
   }
 }
 
-function selectionOf(text: string, startContainer: unknown, endContainer: unknown) {
+function selectionOf(
+  text: string,
+  startContainer: unknown,
+  endContainer: unknown,
+  options: { crossesExcludedContent?: boolean } = {},
+) {
   return {
     isCollapsed: false,
     rangeCount: 1,
     toString: () => text,
-    getRangeAt: () => ({ startContainer, endContainer }),
+    getRangeAt: () => ({
+      startContainer,
+      endContainer,
+      cloneContents: () => ({
+        querySelector: () => (options.crossesExcludedContent ? new FakeElement() : null),
+      }),
+    }),
   } as unknown as Selection;
 }
 
@@ -118,6 +219,10 @@ describe("normalizeTerminalSelectionText", () => {
     expect(normalizeTerminalSelectionText("git status")).toBe("git status");
   });
 
+  it("normalizes line endings and trims blank boundary lines", () => {
+    expect(normalizeTerminalSelectionText("\r\n\r\ngit status\r\n\r\n")).toBe("git status");
+  });
+
   it("rejects empty and blank-line-only selections", () => {
     expect(normalizeTerminalSelectionText("")).toBeNull();
     expect(normalizeTerminalSelectionText("\n\n")).toBeNull();
@@ -128,19 +233,13 @@ describe("normalizeTerminalSelectionText", () => {
 describe("dom selection snapshots", () => {
   it("snapshots null for missing or collapsed selections", () => {
     expect(snapshotDomSelection(null)).toBeNull();
-    expect(
-      snapshotDomSelection({ isCollapsed: true } as unknown as Selection),
-    ).toBeNull();
+    expect(snapshotDomSelection({ isCollapsed: true } as unknown as Selection)).toBeNull();
   });
 
   it("treats an unchanged selection across a click as the same", () => {
     const node = textNode("hello");
-    const before = snapshotDomSelection(
-      selectionWithAnchors("hello", node, 0, node, 5),
-    );
-    const after = snapshotDomSelection(
-      selectionWithAnchors("hello", node, 0, node, 5),
-    );
+    const before = snapshotDomSelection(selectionWithAnchors("hello", node, 0, node, 5));
+    const after = snapshotDomSelection(selectionWithAnchors("hello", node, 0, node, 5));
     expect(sameDomSelectionSnapshot(before, after)).toBe(true);
   });
 
@@ -221,6 +320,20 @@ describe("getCopyableDomSelectionText", () => {
         ),
       ).toBeNull();
     }
+  });
+
+  it("rejects a range that crosses opted-out content between ordinary endpoints", () => {
+    const container = new FakeElement();
+    const message = new FakeElement("DIV", "plain", container);
+    const start = textNode("before", message);
+    const end = textNode("after", message);
+
+    expect(
+      getCopyableDomSelectionText(
+        selectionOf("before private after", start, end, { crossesExcludedContent: true }),
+        container as unknown as HTMLElement,
+      ),
+    ).toBeNull();
   });
 
   it("rejects collapsed, multi-range, and whitespace-only selections", () => {

@@ -47,7 +47,49 @@ export function isCopyOnSelectEditableTarget(target: EventTarget | null): boolea
  */
 export function normalizeTerminalSelectionText(text: string): string | null {
   const normalized = text.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
-  return normalized.length > 0 ? text : null;
+  return normalized.length > 0 ? normalized : null;
+}
+
+/**
+ * Owns terminal auto-copy state without receiving the terminal surface or its
+ * hidden IME input, so clipboard failure cannot mutate terminal input state.
+ */
+export function createTerminalSelectionAutoCopy({
+  readSettings,
+  writeText,
+  onCopied,
+}: {
+  readSettings: () => { enabled: boolean; showToast: boolean };
+  writeText: (text: string) => Promise<boolean>;
+  onCopied: () => void;
+}) {
+  let lastCopiedText: string | null = null;
+
+  return {
+    copy: async (text: string): Promise<boolean> => {
+      if (!readSettings().enabled) return false;
+      if (normalizeTerminalSelectionText(text) === null) return false;
+      if (text === lastCopiedText) return false;
+
+      lastCopiedText = text;
+      try {
+        const didCopy = await writeText(text);
+        if (!didCopy) {
+          if (lastCopiedText === text) lastCopiedText = null;
+          return false;
+        }
+      } catch {
+        if (lastCopiedText === text) lastCopiedText = null;
+        return false;
+      }
+
+      if (readSettings().showToast) onCopied();
+      return true;
+    },
+    rememberCopied: (text: string): void => {
+      lastCopiedText = text;
+    },
+  };
 }
 
 function nodeInEditable(node: Node | null): boolean {
@@ -78,7 +120,11 @@ export function getCopyableDomSelectionText(
   if (text.trim().length === 0) return null;
   const range = selection.getRangeAt(0);
   if (nodeInEditable(range.startContainer) || nodeInEditable(range.endContainer)) return null;
-  if (container && (!container.contains(range.startContainer) || !container.contains(range.endContainer))) {
+  if (range.cloneContents().querySelector(COPY_ON_SELECT_EDITABLE_SELECTOR) !== null) return null;
+  if (
+    container &&
+    (!container.contains(range.startContainer) || !container.contains(range.endContainer))
+  ) {
     return null;
   }
   return text;

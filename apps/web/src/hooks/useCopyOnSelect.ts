@@ -42,8 +42,7 @@ export function useCopyOnSelect(container: HTMLElement | null): void {
     snapshot: null,
     armed: false,
   });
-  const settingsRef = React.useRef({ copyOnSelect, showToast });
-  settingsRef.current = { copyOnSelect, showToast };
+  const readSettings = React.useEffectEvent(() => ({ copyOnSelect, showToast }));
 
   React.useEffect(() => {
     if (!container) return;
@@ -74,7 +73,7 @@ export function useCopyOnSelect(container: HTMLElement | null): void {
       const { snapshot: startSnapshot, armed } = gestureStartRef.current;
       gestureStartRef.current = { snapshot: null, armed: false };
       if (!armed) return;
-      if (!settingsRef.current.copyOnSelect) return;
+      if (!readSettings().copyOnSelect) return;
       if (!shouldAutoCopyOnMouseUp(event)) return;
       const selection = view.getSelection();
       if (sameDomSelectionSnapshot(startSnapshot, snapshotDomSelection(selection))) return;
@@ -82,7 +81,7 @@ export function useCopyOnSelect(container: HTMLElement | null): void {
       if (text === null || text === lastCopiedRef.current) return;
       const fireCopy = () => {
         pendingMultiClickTimer = null;
-        if (!settingsRef.current.copyOnSelect) return;
+        if (!readSettings().copyOnSelect) return;
         if (text === lastCopiedRef.current) return;
         // Reserve before the await so a repeated gesture while this write is
         // pending can't issue a second write and toast.
@@ -93,7 +92,7 @@ export function useCopyOnSelect(container: HTMLElement | null): void {
               if (lastCopiedRef.current === text) lastCopiedRef.current = null;
               return;
             }
-            if (settingsRef.current.showToast) {
+            if (readSettings().showToast) {
               toastManager.add({ type: "success", title: "Copied to clipboard" });
             }
           },
