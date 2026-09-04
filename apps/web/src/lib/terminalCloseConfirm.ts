@@ -7,17 +7,27 @@ export function isTerminalCloseConfirmPending(): boolean {
   return pendingConfirmations > 0;
 }
 
+interface TerminalCloseTarget {
+  readonly label: string;
+  readonly hasRunningSubprocess?: boolean | undefined;
+}
+
 /**
  * Confirmation for individual terminal close actions: drawer buttons, panel
  * buttons, the `terminal.close` keybinding, and closing a terminal surface from
- * the tab strip. Auto-exit cleanup and bulk tab closes skip this path and close
- * directly.
+ * the tab strip. Known idle terminals close directly; missing activity state is
+ * treated conservatively and still prompts. Auto-exit cleanup and bulk tab
+ * closes skip this path and close directly.
  */
 export async function confirmTerminalClose(
-  labels: readonly [string, ...string[]],
+  targets: readonly [TerminalCloseTarget, ...TerminalCloseTarget[]],
 ): Promise<boolean> {
+  if (targets.every((target) => target.hasRunningSubprocess === false)) {
+    return true;
+  }
   const localApi = readLocalApi();
   if (!localApi) return true;
+  const labels = targets.map((target) => target.label);
   pendingConfirmations += 1;
   try {
     return await localApi.dialogs.confirm(
