@@ -88,6 +88,29 @@ const nativeQuestion = {
 } as const;
 
 describe("pending user input answers", () => {
+  it("accepts free-text answers to async questions without options", () => {
+    const question = {
+      id: "0",
+      header: "Question",
+      question: "What should it be named?",
+      options: [],
+      allowCustomAnswer: true,
+      multiSelect: false,
+    };
+    const requested = makeActivity({
+      id: EventId.make("async-question"),
+      kind: "user-input.requested",
+      summary: "User input requested",
+      createdAt: "2026-09-03T00:00:00.000Z",
+      payload: { requestId: "async-1", responseMode: "message", questions: [question] },
+    });
+    const questions = derivePendingUserInputs([requested])[0]?.questions;
+    expect(questions).toEqual([question]);
+    expect(buildPendingUserInputAnswers(questions!, { "0": { customAnswer: "Example" } })).toEqual({
+      "0": "Example",
+    });
+  });
+
   it("preserves native choice values and custom-answer rules from activities", () => {
     const requested = makeActivity({
       id: EventId.make("native-question"),
