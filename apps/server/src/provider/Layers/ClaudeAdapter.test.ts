@@ -476,6 +476,130 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("passes the configured advisor model to Claude", () => {
+    const harness = makeHarness({ claudeConfig: { advisorModel: "opus" } });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const options = harness.getLastCreateQueryInput()?.options;
+      assert.deepEqual(options?.settings, { advisorModel: "opus" });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("omits the advisor model when the setting is empty", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const options = harness.getLastCreateQueryInput()?.options;
+      assert.equal(options?.settings, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("completes the advisor item when the advisor result block arrives", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 7).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-1",
+        uuid: "stream-0",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "server_tool_use",
+            id: "srvtoolu-advisor-1",
+            name: "advisor",
+            input: {},
+          },
+        },
+      } as unknown as SDKMessage);
+
+      // The advisor result lands on its own block index and names the tool it
+      // closes, so completion cannot key off the stream index.
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-1",
+        uuid: "stream-1",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 1,
+          content_block: {
+            type: "advisor_tool_result",
+            tool_use_id: "srvtoolu-advisor-1",
+            content: {
+              type: "advisor_redacted_result",
+              encrypted_content: "opaque",
+            },
+          },
+        },
+      } as unknown as SDKMessage);
+
+      // No result message: the consult must close on its own result block. The
+      // end-of-turn sweep that completes abandoned tool items never runs here,
+      // so this fiber only joins if the advisor block did the work.
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const advisorStarted = runtimeEvents.find((event) => event.type === "item.started");
+      assert.equal(advisorStarted?.type, "item.started");
+      if (advisorStarted?.type === "item.started") {
+        assert.equal(String(advisorStarted.itemId), "srvtoolu-advisor-1");
+        assert.equal(advisorStarted.payload.title, "Advisor consult");
+        assert.equal(advisorStarted.payload.detail, undefined);
+      }
+
+      const advisorCompletions = runtimeEvents.filter(
+        (event) => event.type === "item.completed" && String(event.itemId) === "srvtoolu-advisor-1",
+      );
+      assert.equal(advisorCompletions.length, 1);
+      const advisorCompleted = advisorCompletions[0];
+      assert.equal(advisorCompleted?.type, "item.completed");
+      if (advisorCompleted?.type === "item.completed") {
+        assert.equal(advisorCompleted.payload.status, "completed");
+        assert.equal(advisorCompleted.payload.title, "Advisor consult");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("forwards claude effort levels into query options", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
