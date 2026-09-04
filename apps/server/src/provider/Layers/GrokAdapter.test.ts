@@ -213,7 +213,7 @@ it("requires a settlement to match the live Grok turn", () => {
 });
 
 it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
-  it.effect("sends runtime context with the current model without changing user text", () =>
+  it.effect("sends runtime context with the current model without changing saved prompts", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-runtime-context");
       const tempDir = yield* Effect.promise(() =>
@@ -240,6 +240,24 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
           options: [{ id: "reasoningEffort", value: "low" }],
         },
       });
+      const snapshot = yield* adapter.readThread(threadId);
+      assert.deepEqual(
+        snapshot.turns.map((turn) => turn.items),
+        [
+          [
+            {
+              prompt: [{ type: "text", text: "First prompt" }],
+              result: { stopReason: "end_turn" },
+            },
+          ],
+          [
+            {
+              prompt: [{ type: "text", text: "Second prompt" }],
+              result: { stopReason: "end_turn" },
+            },
+          ],
+        ],
+      );
       yield* adapter.stopSession(threadId);
       const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
       const prompts = requests

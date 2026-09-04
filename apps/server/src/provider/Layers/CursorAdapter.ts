@@ -1045,13 +1045,15 @@ export function makeCursorAdapter(
           }
 
           // ACP has no system-message field; keep runtime context separate from the user's text.
-          promptParts.push({
-            type: "text",
-            text: buildRuntimeInstructions({ harness: "Cursor", model: resolvedModel }),
-          });
           const result = yield* ctx.acp
             .prompt({
-              prompt: promptParts,
+              prompt: [
+                ...promptParts,
+                {
+                  type: "text",
+                  text: buildRuntimeInstructions({ harness: "Cursor", model: resolvedModel }),
+                },
+              ],
             })
             .pipe(
               Effect.mapError((error) =>

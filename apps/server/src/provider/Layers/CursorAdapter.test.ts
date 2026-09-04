@@ -284,6 +284,18 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         input: "please $review this",
         attachments: [],
       });
+      const snapshot = yield* adapter.readThread(threadId);
+      assert.deepStrictEqual(
+        snapshot.turns.map((turn) => turn.items),
+        [
+          [
+            {
+              prompt: [{ type: "text", text: "please /review this" }],
+              result: { stopReason: "end_turn" },
+            },
+          ],
+        ],
+      );
       yield* adapter.stopSession(threadId);
 
       const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
