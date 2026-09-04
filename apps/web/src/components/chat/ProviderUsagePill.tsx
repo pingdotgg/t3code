@@ -3,7 +3,7 @@ import type {
   ServerProvider,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { formatResetsIn } from "@t3tools/shared/usageLimits";
 import { cn } from "~/lib/utils";
@@ -17,6 +17,8 @@ import {
   selectCollapsedUsageProvider,
   type ProviderWithReportedUsage,
 } from "./ProviderUsagePill.logic";
+
+const RESET_LABEL_REFRESH_INTERVAL_MS = 60_000;
 
 function providerLabel(provider: ServerProvider): string {
   return (
@@ -124,7 +126,18 @@ export function ProviderUsagePill({
   const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | null>(
     collapsedProvider?.instanceId ?? null,
   );
+  const [open, setOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!open) return;
+
+    const intervalId = window.setInterval(
+      () => setNow(Date.now()),
+      RESET_LABEL_REFRESH_INTERVAL_MS,
+    );
+    return () => window.clearInterval(intervalId);
+  }, [open]);
 
   if (collapsedProvider === null) return null;
 
@@ -137,16 +150,21 @@ export function ProviderUsagePill({
   const updated = formatRelativeTimeLabel(selectedProvider.usageLimits.checkedAt);
 
   return (
-    <Popover>
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (nextOpen) {
+          setSelectedInstanceId(collapsedProvider.instanceId);
+          setNow(Date.now());
+        }
+      }}
+    >
       <PopoverTrigger
         render={
           <button
             type="button"
             aria-label={`${label} usage: ${collapsedUsage}% used`}
-            onClick={() => {
-              setSelectedInstanceId(collapsedProvider.instanceId);
-              setNow(Date.now());
-            }}
             className="group/usage-pill relative flex h-7 shrink-0 cursor-pointer items-center gap-1.5 overflow-hidden rounded-full border border-border/70 bg-secondary/80 px-2.5 text-xs font-medium text-foreground shadow-xs outline-none transition-[background-color,border-color,box-shadow,scale] [-webkit-app-region:no-drag] hover:border-border hover:bg-secondary active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring data-pressed:bg-accent"
           >
             <ProviderInstanceIcon
