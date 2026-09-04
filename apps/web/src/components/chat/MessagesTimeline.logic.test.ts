@@ -3454,6 +3454,33 @@ function deriveRows(entries: TimelineEntry[], summarizeSubagents = true) {
 }
 
 describe("subagent summary rows", () => {
+  it.each([
+    { statuses: [], count: 1, working: 0, failed: 0 },
+    { statuses: ["completed"], count: 2, working: 0, failed: 0 },
+    { statuses: ["running"], count: 2, working: 1, failed: 0 },
+    { statuses: ["failed"], count: 2, working: 0, failed: 1 },
+  ] as const)(
+    "keeps idle agents distinct alongside $statuses",
+    ({ statuses, count, working, failed }) => {
+      const result = deriveRows([
+        subagentTimelineEntry("idle-agent", "run-1", "idle"),
+        ...statuses.map((status, index) =>
+          subagentTimelineEntry(`agent-${index}`, "run-1", status),
+        ),
+      ]);
+
+      expect(result).toMatchObject([
+        {
+          kind: "agent-spawn",
+          count,
+          idle: 1,
+          working,
+          failed,
+        },
+      ]);
+    },
+  );
+
   it("groups local agents by run without swallowing inherited or unowned entries", () => {
     const result = deriveRows([
       subagentTimelineEntry("agent-a", "run-1", "running"),
@@ -3479,6 +3506,21 @@ describe("subagent summary rows", () => {
     expect(deriveRows([subagentTimelineEntry("agent", "run-1", "running")], false)).toMatchObject([
       { kind: "event", id: "agent" },
     ]);
+  });
+
+  it("refreshes a cached summary when an idle agent completes", () => {
+    const idle = computeStableMessagesTimelineRows(
+      deriveRows([subagentTimelineEntry("agent", "run-1", "idle")]),
+      { byId: new Map(), result: [] },
+    );
+    const completed = computeStableMessagesTimelineRows(
+      deriveRows([subagentTimelineEntry("agent", "run-1", "completed")]),
+      idle,
+    );
+
+    expect(idle.result).toMatchObject([{ idle: 1, working: 0 }]);
+    expect(completed.result).toMatchObject([{ idle: 0, working: 0 }]);
+    expect(completed.result[0]).not.toBe(idle.result[0]);
   });
 
   it("keeps superseded and replacement attempts in separate rosters", () => {

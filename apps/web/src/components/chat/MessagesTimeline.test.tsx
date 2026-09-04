@@ -1607,6 +1607,26 @@ describe("MessagesTimeline", () => {
     expect(markup.match(/data-agent-spawn-cta="true"/gu)).toHaveLength(1);
   });
 
+  it.each(["idle", "completed", "running", "failed"] as const)(
+    "shows resumable idle agents without a completion checkmark alongside %s agents",
+    (status) => {
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          onOpenAgents={() => {}}
+          timelineEntries={[
+            buildSubagentEntry("idle-agent", "idle"),
+            buildSubagentEntry("other-agent", status),
+          ]}
+        />,
+      );
+
+      expect(markup).toContain(`${status === "idle" ? 2 : 1} idle`);
+      expect(markup).not.toContain("✓");
+      expect(markup).not.toContain("completed");
+    },
+  );
+
   it("discloses the full Codex subagent result without projecting child events", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

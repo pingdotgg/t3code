@@ -2044,16 +2044,16 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow({
 }) {
   const { onOpenAgents } = use(TimelineRowCtx);
   const live = row.working > 0;
-  const lead = `${live ? "Kicked off" : "Ran"} ${row.count} agent${row.count === 1 ? "" : "s"}`;
-  const status = live
-    ? row.failed > 0
-      ? `${row.working} working · ${row.failed} failed`
-      : `${row.working} working`
-    : row.failed > 0
-      ? `${row.failed} failed`
-      : row.stopped > 0
-        ? `${row.stopped} stopped`
-        : "completed";
+  const lead = `${live || row.idle > 0 ? "Kicked off" : "Ran"} ${row.count} agent${row.count === 1 ? "" : "s"}`;
+  const settled = !live && row.idle === 0 && row.failed === 0 && row.stopped === 0;
+  const progress = [
+    ...(live ? [`${row.working} working`] : []),
+    ...(row.idle > 0 ? [`${row.idle} idle`] : []),
+    ...(row.stopped > 0 ? [`${row.stopped} stopped`] : []),
+  ].join(" · ");
+  const status = settled
+    ? "completed"
+    : [progress, ...(row.failed > 0 ? [`${row.failed} failed`] : [])].filter(Boolean).join(" · ");
 
   return (
     <button
@@ -2068,10 +2068,8 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow({
       <span className="min-w-0 truncate font-medium">{lead}</span>
       <span className="ml-auto flex min-w-0 items-center gap-2 font-mono text-[.7rem] text-muted-foreground">
         <span className="truncate">
-          {!live && row.failed === 0 && row.stopped === 0 ? (
-            <span aria-hidden="true">✓ </span>
-          ) : null}
-          {live && row.failed > 0 ? `${row.working} working · ` : row.failed > 0 ? null : status}
+          {settled ? <span aria-hidden="true">✓ </span> : null}
+          {row.failed > 0 ? (progress ? `${progress} · ` : null) : status}
           {row.failed > 0 ? <span className="text-destructive">{row.failed} failed</span> : null}
         </span>
         <span className="shrink-0 text-info-foreground">{live ? "Open Agents ▸" : "View ▸"}</span>
