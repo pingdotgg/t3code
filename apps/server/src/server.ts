@@ -34,6 +34,7 @@ import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionD
 import * as ProviderSessionRuntime from "./persistence/ProviderSessionRuntime.ts";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
+import * as CodexResetCredit from "./provider/Layers/codexResetCredit.ts";
 import * as ProviderEventLoggers from "./provider/Layers/ProviderEventLoggers.ts";
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { ProviderAuthServiceLive } from "./provider/Layers/ProviderAuthService.ts";
@@ -479,7 +480,9 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // `ModelManifest.layer` is the legacy-model classification data, refreshed
   // from the repo's `model-manifest.json` on `main` and applied by the
   // Codex/Claude drivers.
-  Layer.provideMerge(Layer.mergeAll(ProviderEventLoggers.layer, ModelManifest.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(ProviderEventLoggers.layer, ModelManifest.layer, CodexResetCredit.layer),
+  ),
   // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
   // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
   // the rewritten registry reads snapshots off the instance registry and

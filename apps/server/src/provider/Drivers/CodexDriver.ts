@@ -36,7 +36,10 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
-import { CODEX_RESET_CREDIT_TIMEOUT, redeemCodexResetCredit } from "../Layers/codexResetCredit.ts";
+import {
+  CODEX_RESET_CREDIT_TIMEOUT,
+  CodexResetCreditCoordinator,
+} from "../Layers/codexResetCredit.ts";
 import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
@@ -83,6 +86,7 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
 export type CodexDriverEnv =
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
+  | CodexResetCreditCoordinator
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
@@ -103,7 +107,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
+      const resetCreditCoordinator = yield* CodexResetCreditCoordinator;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
@@ -236,52 +240,57 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       // the account (instances sharing a Codex home share the credit), keeps
       // one idempotency key until Codex reports an outcome, and is bounded so
       // a hung app-server cannot hold the account lock.
+      // Keyed on the directory holding auth.json: an auth-overlay instance has
+      // its own account under `effectiveHomePath`, while plain instances share
+      // the common home. The continuation key would conflate the two.
+      const accountKey = homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath;
       const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = () =>
-        redeemCodexResetCredit(continuationIdentity.continuationKey, (idempotencyKey) =>
-          Effect.gen(function* () {
-            const { client } = yield* withCodexAppServerClient({
-              binaryPath: effectiveConfig.binaryPath,
-              homePath: effectiveConfig.homePath,
-              launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
-              // Account-level request; any directory serves, same as the status probe.
-              cwd: process.cwd(),
-              environment: processEnv,
-            });
-            const response = yield* client.request("account/rateLimitResetCredit/consume", {
-              idempotencyKey,
-            });
-            return response.outcome;
-          }).pipe(Effect.scoped, Effect.timeout(CODEX_RESET_CREDIT_TIMEOUT)),
-        ).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provideService(Crypto.Crypto, crypto),
-          Effect.mapError(
-            (cause) =>
-              new ProviderDriverError({
-                driver: DRIVER_KIND,
-                instanceId,
-                detail: "Codex could not redeem the reset credit.",
-                cause,
-              }),
-          ),
-          // The windows just changed; re-probe so the snapshot says so. A
-          // refresh that fails keeps the pre-redemption snapshot, credit
-          // count included, so the refresh's own failure is surfaced.
-          Effect.tap(() =>
-            snapshot.refresh.pipe(
-              Effect.flatMap((refreshed) =>
-                refreshed.usageLimits?.unavailable?.reason === "probeFailed"
-                  ? new ProviderDriverError({
-                      driver: DRIVER_KIND,
-                      instanceId,
-                      detail:
-                        "The reset was applied, but Codex could not confirm the new limits. Refresh to check.",
-                    })
-                  : Effect.void,
+        resetCreditCoordinator
+          .redeem(accountKey, (idempotencyKey) =>
+            Effect.gen(function* () {
+              const { client } = yield* withCodexAppServerClient({
+                binaryPath: effectiveConfig.binaryPath,
+                homePath: effectiveConfig.homePath,
+                launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+                // Account-level request; any directory serves, same as the status probe.
+                cwd: process.cwd(),
+                environment: processEnv,
+              });
+              const response = yield* client.request("account/rateLimitResetCredit/consume", {
+                idempotencyKey,
+              });
+              return response.outcome;
+            }).pipe(Effect.scoped, Effect.timeout(CODEX_RESET_CREDIT_TIMEOUT)),
+          )
+          .pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.mapError(
+              (cause) =>
+                new ProviderDriverError({
+                  driver: DRIVER_KIND,
+                  instanceId,
+                  detail: "Codex could not redeem the reset credit.",
+                  cause,
+                }),
+            ),
+            // The windows just changed; re-probe so the snapshot says so. A
+            // refresh that fails keeps the pre-redemption snapshot, credit
+            // count included, so the refresh's own failure is surfaced.
+            Effect.tap(() =>
+              snapshot.refresh.pipe(
+                Effect.flatMap((refreshed) =>
+                  refreshed.usageLimits?.unavailable?.reason === "probeFailed"
+                    ? new ProviderDriverError({
+                        driver: DRIVER_KIND,
+                        instanceId,
+                        detail:
+                          "The reset was applied, but Codex could not confirm the new limits. Refresh to check.",
+                      })
+                    : Effect.void,
+                ),
               ),
             ),
-          ),
-        );
+          );
 
       return {
         instanceId,
