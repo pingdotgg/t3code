@@ -1,92 +1,61 @@
 ---
 title: UI Consistency
 model: claude-opus-5
-effort: high
+effort: medium
 input: full_diff
 tools:
   - browse_code
-  - git_tools
-  - github_api_read_only
   - modify_pr
 include:
-  - "apps/web/src/**/*.ts"
   - "apps/web/src/**/*.tsx"
   - "apps/web/src/**/*.css"
+exclude:
+  - "apps/web/src/**/*.test.tsx"
+labels:
+  - vouch:trusted
+requires:
+  - Check
+maxBudgetPerPR: 25
 conclusion: failure
-showToolCalls: true
+maxBudgetPerRun: 10
 ---
 
 # UI consistency review
 
-Review changed web UI code and directly affected call sites for consistency with the shared component system, Tailwind ownership, and the behavioral constraints below. Apply these rules when a pull request creates, moves, or modifies controls or styling. Do not demand unrelated repository-wide cleanup.
+This is a styling guard for `apps/web`, not a general review. Review only the changed lines in the diff and answer three questions. Do not build the project, inspect emitted CSS, trace selector consumers across the codebase, or ask for screenshots. If the diff does not make a violation obvious, there is no finding.
 
-The goal is not to minimize CSS or class counts at any cost. The goal is to put each behavior in the smallest correct owner while preserving interaction, theming, accessibility, layout, and browser behavior.
+## 1. Shared primitives over custom controls
 
-## Shared controls and variants
+Product UI must use the primitives in `apps/web/src/components/ui` (`Button`, `Input`, `InputGroup`, `Select`, `Toggle`, `Menu`, `Dialog`, `Tooltip`, `ScrollArea`, and the rest of that directory) instead of rebuilding them.
 
-- Prefer the core UI primitives in `apps/web/src/components/ui` over native controls or locally reconstructed primitives. In ordinary product UI, a raw `<button>` that recreates `Button`, a raw input that recreates `Input` or `InputGroup`, or a local trigger that recreates `Select`, `Toggle`, or `Menu` is a concrete finding.
-- Do not flag raw elements that intentionally implement a semantic row, tab, resize handle, swatch, image target, editor surface, or another interaction whose behavior or geometry differs from the core primitive.
-- When multiple call sites repeat the same durable geometry or treatment, prefer a named primitive size or variant. Examples include compact controls, micro icon actions, muted ghost actions, and glass actions. Keep contextual layout, width, and color at the call site.
-- Flag large call-site class strings that override a primitive's core height, radius, padding, focus ring, cursor, hit target, or base state colors. Prefer extending the primitive contract when the same pattern is genuinely shared.
-- Preserve accessibility and interaction semantics during migrations: focus-visible rings, disabled behavior, loading state, keyboard behavior, pointer cursor, `aria-*`, Base UI or Radix render/close props, and coarse-pointer hit targets.
-- Do not require tests for a tiny visual-only class migration. Require focused tests when primitive composition changes behavior, prop forwarding, state transitions, keyboard handling, or width/defaulting logic.
+- Flag a raw `<button>`, `<input>`, `<select>`, or `<textarea>` styled to look like a control when the matching primitive exists.
+- Flag a call site that overrides a primitive's height, radius, padding, focus ring, or base colors with its own class string. If the same look is needed in several places, the fix is a new size or variant on the primitive.
+- Do not flag raw elements that are intentionally not a primitive: semantic rows, tabs, resize handles, swatches, editor surfaces, or anything whose behavior or geometry is different by design.
 
-## CSS and Tailwind ownership
+## 2. Tailwind in the owning component, not global CSS
 
-- Ordinary one-owner presentation belongs in the owning TS or TSX module as static Tailwind classes or owner-level CSS variables. Examples include local geometry, spacing, typography, backgrounds, borders, simple vendor pseudo-elements, and component-only positioning.
-- Keep global CSS when it is genuinely reusable or behaviorally complex: generated markdown or imperative DOM, custom elements and shadow roots, masks, shared or complex pseudo-elements, animations, glass composition, runtime theme variables, safe-area calculations, scrollbar-lane preservation, Electron drag regions, and browser/vendor integration. Simple owner-local pseudo-elements may still belong in the owning module.
-- Before calling a selector dead, trace literal, dynamic, generated, imperative, test, custom-element, and shadow-root consumers. Search both the emitted class string and any class-valued field names through their final DOM sink. A helper returning a class is not proof that it is rendered, and a missed downstream property read can make a deletion unsafe.
-- Flag duplicate declarations only after comparing cascade layer, selector specificity, inheritance, runtime theme scope, media/variant scope, and the final owning element. Textually identical declarations are not necessarily behaviorally redundant.
-- When moving CSS into Tailwind, preserve selector scope and cascade ownership. A utility at the owner is preferable to a fragile global override that depends on stylesheet order.
-- Do not request moving complex global behavior into arbitrary Tailwind merely to reduce `index.css`. Do not preserve ordinary one-owner CSS merely because it already exists globally.
+Styling lives as Tailwind classes in the component that renders the element.
 
-## Themes and generated CSS
+- Flag new rules added to `apps/web/src/index.css` or any other `.css` file when the same styling could be Tailwind classes on the owning component. New global CSS is acceptable only for things Tailwind cannot express at the owner: generated markdown or imperative DOM, custom elements and shadow roots, animations, runtime theme variables, and browser or Electron integration.
+- Flag new `style={{ ... }}` objects or inline `<style>` blocks that carry static values a Tailwind class already covers. Dynamic values computed at runtime are fine.
+- Flag theme-only declarations that use raw `.dark` selectors instead of `@variant dark` / `@variant light`.
 
-- Use the project variants for theme-only declarations:
-  - dark-only declarations use `@variant dark`;
-  - light-only declarations use `@variant light`;
-  - raw `.dark` should remain only in the `dark` and `light` custom-variant definitions.
-- Preserve custom themes and runtime token bridges. Removing a variable or selector is safe only when all runtime, inspector, generated, and theme-palette consumers are accounted for.
-- Contrast and accessibility settings that target app chrome must derive from semantic color tokens. Do not apply `filter` to `html`, `body`, or the app root: it also changes user media, previews, terminals, glass backdrop ownership, and view-transition snapshots.
-- Preserve alpha and surface ownership when deriving contrast tokens. Soften translucent borders and inputs toward transparent rather than an opaque canvas, use a modest semantic-foreground mix for stronger borders, and adjust card, popover, accent, secondary, and message foregrounds against their own surfaces when the base foreground changes.
-- Runtime-adjusted roles must be ordinary custom properties shared by the Tailwind bridge, global CSS, imperative style strings, and bridge snapshots sent to other renderers. Audit literal `var(--foreground)`, `var(--border)`, and related role reads so headings, markdown chrome, menus, previews, and utilities do not split into adjusted and unadjusted colors.
-- Inspect emitted production CSS after unusual variants, arbitrary selectors, nested pseudo-elements, or attribute matching. Source syntax that looks valid is insufficient.
-- Flag malformed or empty emitted selectors such as empty `:is()` or `:not(:is())`, selector branches that can never match their own class attribute, and transformations that silently drop the intended rule.
-- Prefer source-level logic over clever selectors when behavior depends on consumer-provided class strings. Preserve `MenuPopup`'s current defaulting contract: a string `className` containing a `w-*`, `min-w-*`, or `max-w-*` utility after variant prefixes are stripped suppresses `min-w-32`; a string without one and a functional/non-string `className` keep the default. Arbitrary width values count as width utilities, and the consumer class must be merged last so it retains control. Do not replace this with a raw class-attribute substring selector.
-- Do not fail solely because a valid emitted selector is verbose or because a source rule uses an intentional custom property.
+## 3. Composable components
 
-## Scroll and virtualized lists
+The reference for how this codebase wants UI built is the composer banner system in `apps/web/src/components/chat/`:
 
-- `ScrollArea` owns and masks its Base UI viewport. A virtualized list usually owns a native scrolling element and cannot automatically reuse viewport-specific `ScrollArea` behavior.
-- Repeated native or virtualized overflow fades should use the shared virtualized-scroll-fade contract rather than component-named mask selectors.
-- Preserve runtime top and bottom overflow state. Do not replace dynamic fades with an always-on static mask.
-- Preserve fade geometry and keep the native scrollbar lane opaque so the track and thumb stay visible and usable. A visually similar mask that fades the scrollbar is a regression.
-- Verify actual scroll behavior when changing virtualizers, masks, overflow ownership, or scrollbar selectors. Source-level class comparison is not enough.
+- `ComposerBanner.tsx` exports one object of small slot components (`Root`, `Row`, `Icon`, `Content`, `Actions`, `Dismiss`, `Children`, and so on). Each slot owns its own Tailwind classes, exposes a `data-slot` attribute, takes `className` and spreads the rest of its props, and uses `cn` so callers can adjust without overriding. Variants and density are props on `Root`, not ad hoc class strings at call sites. Where a slot needs a real control it renders `Button` from `ui/` rather than a styled `<button>`.
+- `ComposerBannerStack.tsx` composes those slots into the ordered stack and owns only stack behavior (priority, expand and collapse, dismiss transitions).
+- Consumers such as `ComposerActivityStatus.tsx`, `ComposerStashBadge.tsx`, and `ComposerPlanFollowUpBanner.tsx` are a few lines of `<ComposerBanner.Row><ComposerBanner.Icon/><ComposerBanner.Content>…` with no styling of their own.
 
-## Visual and layout preservation
+Hold new and changed UI to that shape:
 
-- Preserve responsive geometry, titlebar insets, panel and inline-preview modes, desktop Electron layout, light and dark contrast, clipping, radius, and composable shadows.
-- For meaningful visual changes, prefer available real-app evidence using the actual component and state. A mock recreation does not validate the real component. Light and dark evidence is useful when theme-sensitive styles change, but missing or inaccessible evidence alone is not a finding; report only a concrete regression supported by the diff, code, or available artifacts.
-- Do not treat a screenshot as proof of keyboard, overflow, scrollbar, responsive, or runtime-theme behavior. Pair visual evidence with source, computed-style, emitted-CSS, or interaction checks as appropriate.
-- Be alert to shared primitive color indirection. When a primitive routes icon color through a CSS variable, ensure migrated contextual icons retain their intended tone, including pressed and disabled states.
-
-## Environment routing in shared renderers
-
-- A shared renderer that performs an environment-scoped action — a server RPC such as opening or revealing a file, an environment-gated capability check, or an OS-derived label — must resolve its target environment from explicit scope: the bound thread's `environmentId`, or an `environmentId` prop threaded from the owning surface. Never let it silently fall back to the globally active environment. Multi-environment surfaces (pull request panels, review annotations, cross-environment listings) can render content from environment B while environment A is active; a silent fallback sends B's paths to A's server and presents A's platform wording.
-- When a call site cannot supply an explicit environment scope, suppress the environment-scoped actions at that call site rather than guessing. A hidden menu item is correct; an item that targets the wrong server is a concrete finding.
-- Capability gating, action dispatch, and user-facing labels must all read from the same environment's server config that the action will execute against. Flag a renderer whose label derives from one environment while its RPC targets another.
-- Flag new call sites of shared markdown, chip, or menu renderers that trigger environment actions without passing explicit scope, and flag new environment-action props whose default reintroduces an active-environment fallback.
-
-## Change discipline
-
-- Review the pull request's changed scope and directly affected consumers. Do not turn a focused PR into a demand for unrelated legacy cleanup.
-- Prefer the smallest durable contract over a component-specific workaround or a broad abstraction with one consumer.
-- Preserve intentional exceptions and comments that explain browser, virtualizer, theme, or Electron constraints.
-- If a proposed cleanup cannot prove ownership or semantic equivalence, ask for evidence or leave it unchanged rather than guessing.
-- Select verification gates according to the changed behavior: typecheck or focused tests for typing and interaction contracts, production build and emitted-CSS inspection for Tailwind or selector transformations, and real-app evidence for meaningful visual behavior when available. These gates are complementary when applicable, but do not require every gate for tiny visual-only migrations or fail solely because an artifact the configured tools cannot produce is absent.
+- Flag a new component that copies a chunk of an existing primitive's markup and classes instead of composing or extending it.
+- Flag a large one-off class string on a shared component when it is clearly the same treatment another call site already uses. The fix is a variant or a new slot on the shared component.
+- Flag a new composer banner or notice that bypasses `ComposerBanner` slots and hand-builds its row, icon column, or actions.
 
 ## Reporting
 
-Report only concrete violations introduced by changed lines or behavior, plus pre-existing behavior that the patch directly makes relevant or worsens. Touching a large file does not make unrelated retained issues reportable. Prefer precise inline comments on the smallest relevant line range. Explain the broken behavior or ownership rule, not merely the preferred syntax, and state the smallest expected fix. A clear consistency or regression risk may fail the check. Do not fail for optional aesthetic preferences, harmless class ordering, or unrelated legacy code.
+Report only violations introduced by changed lines. Post each as a brief inline comment on the relevant line: name the rule, name the primitive or location the code should use instead, and stop. Do not comment on class ordering, aesthetic preference, or untouched legacy code, and do not demand cleanup outside the PR's scope.
 
-This check defaults to failure. When there are no findings, stop immediately and make the entire final response exactly `All clear` on one line. Do not add a title, explanation, punctuation, Markdown, JSON, or trailing analysis, and do not continue reasoning after deciding the review is clean.
+When there are no findings, make the entire final response exactly `All clear` on one line with nothing else.

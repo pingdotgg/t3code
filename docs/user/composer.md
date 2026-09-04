@@ -1,52 +1,119 @@
-# Message composer
+# Messages and context
 
-Messages can contain up to 120,000 characters. If a draft is longer, T3 Code keeps it in the
-composer and shows how many characters need to be removed. Shorten the draft or split it into
-multiple messages, then send again in the same thread.
+Give the agent a task in the composer. Add files, quote a previous response, or
+include a skill when the task needs more context.
 
-You can attach images up to 10 MB. On servers that support file uploads, web and desktop can also
-attach text files, PDFs, ZIP archives, and other files. Each file can be up to the limit advertised
-by the server, capped at 50 MB. Each message can contain up to eight attachments in total. Files
-upload directly to the environment, where your agent can read, copy, or edit them by their file path.
+Messages can contain up to 120,000 characters. Longer drafts stay in the composer
+so you can shorten them or split them into several messages.
 
-On web and desktop, attachments upload as soon as you add them. The send button becomes available
-after every upload finishes. Failed uploads can be retried or removed. On mobile, attachments are
-currently limited to images.
+## Attach files
 
-If you reload before a file finishes uploading, the draft keeps the file's name and shows **Attach
-again** next to it. Attach the file again or remove it, then send.
+Attach up to eight files per message. Images can be up to 10 MB; other files can
+be up to 50 MB, subject to the environment's upload support and limit. The agent
+receives them on the environment's machine.
 
-On web and desktop, HEIC and HEIF photos are automatically converted to JPEG when you drag them into
-the composer or paste them into a message.
+Uploads begin when you add an attachment. All uploads must finish before the
+message can send. Retry or remove a failed upload. On web and desktop, reloading
+before an upload finishes requires you to attach that file again.
 
-On mobile, the model picker shows each OpenCode model's upstream provider, such as Anthropic,
-GitHub Copilot, or OpenCode Zen, beneath its name. Search by that provider name to narrow the list
-when starting a thread or changing an existing thread's model.
+You can drag or paste images into the web or desktop composer. HEIC and HEIF
+photos are converted to JPEG there and when selected from the iOS photo library;
+the image limit applies after conversion. On mobile, you can also send files to
+T3 Code through another app's system share sheet.
+
+See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
+
+## Queue messages offline on mobile
+
+Mobile keeps local copies of draft attachments, so you can preview them and queue
+messages while disconnected. Uploads resume when you reconnect. Drafts and queued
+messages survive app restarts. Signing out of T3 Connect keeps that work on your
+device until you sign back into the same account.
+
+## Model defaults
+
+T3 Code remembers your provider, model, and model options for new threads. A
+project's configured model takes precedence; resetting that project setting
+returns to the remembered selection.
+
+Leaving reasoning level or service tier unset uses the provider's own configuration.
+
+## Quote an assistant response
+
+On web and desktop, select text within one assistant response and choose
+**Cite in composer**. You can add a comment about the quote and write instructions
+around it.
+
+Select the quote in a draft or sent message to return to its source. If the source
+is unavailable or has changed, the saved quote remains readable.
+
+Mobile displays saved quotes and comments, but does not create citations or
+navigate to their sources.
 
 ## Prompt stash
 
-Use the default shortcut, `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux, to stash the current
-prompt and its attachments after all file uploads finish. Restore the entry later from the stash
-menu. Stashes that contain files must be restored in the environment where those files were
-uploaded. Stashed files stay uploaded on the server for 24 hours. If you restore an entry after
-that, the file comes back with **Attach again** next to it. Attach the file again or remove it, then
-send.
+On web and desktop, press `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux to save
+the current prompt and its attachments for later. Wait for uploads to finish first.
+With an empty composer, the same shortcut restores a single stash or opens the
+stash menu when there are several.
+
+Stashes containing uploaded files must be restored in their original environment.
+Those files are retained for 24 hours. After an upload expires, restore the prompt
+and use **Attach again** or remove the missing file before sending.
+
+## Voice input on iPhone
+
+On supported iPhones with iOS 26 or later, use the composer's microphone to record,
+then confirm to transcribe. Text is inserted where your selection was when
+recording started, ready for you to review and edit before sending.
+
+The first use may download Apple's speech model and needs a network connection.
+Later transcription works offline for that language. Recordings can be up to five
+minutes long. Canceling, leaving the screen, or an audio interruption discards the
+recording and preserves your existing draft.
+
+Transcription runs on your device. T3 Code deletes the temporary audio after
+transcription or cancellation; only the message text is sent when you submit.
 
 ## Commands and skills
 
-Type `/` to open the command menu. Type `$` to find and add a skill. Skill rows show their source,
-such as System, Personal, Project, or App.
+Type `/` for commands or `$` to add a skill from the selected environment and
+provider. On mobile, both are also available before starting a thread on
+**New task**.
 
-On mobile, these menus are available on the **New task** screen before you start a thread. They
-use the skills and commands from the selected environment and provider.
+The slash menu also includes skills unless you turn off **Settings → General →
+Show skills in slash menu**. Only skills enabled for the provider are listed.
 
-By default, the `/` menu includes skills. To keep this menu command-only, turn off **Show skills in
-slash menu** in **Settings → General**. Skill results use the `/skill:Skill Name` label and add the
-same `$name` skill token to your message. The original skill name remains searchable. If the provider
-also reports that skill as a native slash command, T3 Code hides the duplicate native entry and keeps
-the `/skill:Skill Name` label.
+Provider commands must start the message to run. T3 Code commands such as
+`/model` and `/plan`, and skill mentions, work on any line.
 
-On desktop, press `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux from a new thread to
-start it in the background. T3 Code opens another new thread and shows an **Open** action for the
-thread that started. The new thread keeps the selected workspace mode and base branch. If **New
-worktree** is selected, each background thread creates its own worktree.
+Send `/compact` in an existing conversation to reduce context usage when the
+provider supports it. Web and desktop also offer compaction from the context meter.
+
+## Images and videos in messages
+
+Select an image or video attachment or link to preview it. Playback support depends
+on your browser or device; save an unsupported video to open it in another app.
+
+On web and desktop, right-click media to save it or copy its path or URL. On mobile,
+touch and hold an image or video thumbnail and choose **Save or share**. On iOS,
+return to the thumbnail to open this menu after watching a full-screen video.
+
+File links refer to the environment's machine, including when you connect remotely.
+Previews use the original file, even outside the workspace. Moving or deleting it
+can break the preview, so save a copy if you need to keep it.
+
+## Files outside the workspace
+
+Follow an agent's file link to read a report or other file outside the workspace.
+These files open read-only. An HTML file outside the workspace cannot load scripts,
+styles, or images from neighboring files.
+
+## HTML and PDF files in the file viewer
+
+On web and desktop, HTML and PDF files open as rendered pages. Switch an HTML
+file to source view to read its markup; a link to a specific line opens source
+automatically. HTML previews cannot access your T3 Code session.
+
+On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
+Android opens the system chooser.

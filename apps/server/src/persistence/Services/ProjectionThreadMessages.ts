@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
+import * as Struct from "effect/Struct";
 import type * as Option from "effect/Option";
 import type * as Effect from "effect/Effect";
 
@@ -33,6 +34,12 @@ export const ProjectionThreadMessage = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type ProjectionThreadMessage = typeof ProjectionThreadMessage.Type;
+
+export const AppendStreamingProjectionThreadMessage = Schema.Struct(
+  Struct.omit(ProjectionThreadMessage.fields, ["isStreaming"]),
+);
+export type AppendStreamingProjectionThreadMessage =
+  typeof AppendStreamingProjectionThreadMessage.Type;
 
 export const ListProjectionThreadMessagesInput = Schema.Struct({
   threadId: ThreadId,
@@ -62,6 +69,11 @@ export interface ProjectionThreadMessageRepositoryShape {
     message: ProjectionThreadMessage,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
+  /** Insert a streaming message or append text to its existing row. */
+  readonly appendStreaming: (
+    message: AppendStreamingProjectionThreadMessage,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
   /**
    * Read a projected thread message by id.
    */
@@ -77,6 +89,11 @@ export interface ProjectionThreadMessageRepositoryShape {
   readonly listByThreadId: (
     input: ListProjectionThreadMessagesInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadMessage>, ProjectionRepositoryError>;
+
+  /** Read the latest user-message timestamp without loading message bodies. */
+  readonly getLatestUserMessageAt: (
+    input: ListProjectionThreadMessagesInput,
+  ) => Effect.Effect<ProjectionThreadMessage["createdAt"] | null, ProjectionRepositoryError>;
 
   /**
    * Delete projected thread messages by thread.

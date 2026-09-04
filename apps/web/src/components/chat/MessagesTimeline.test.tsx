@@ -3,7 +3,7 @@ import { codexFeedbackMessage } from "@t3tools/client-runtime/state/threads";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
-import type { LegendListRef } from "@legendapp/list/react";
+import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -22,16 +22,7 @@ vi.mock("@legendapp/list/react", async () => {
     };
     contentInsetEndAdjustment?: number;
     className?: string;
-    maintainScrollAtEnd?:
-      | boolean
-      | {
-          animated?: boolean;
-          on?: {
-            dataChange?: boolean;
-            itemLayout?: boolean;
-            layout?: boolean;
-          };
-        };
+    maintainScrollAtEnd?: boolean | MaintainScrollAtEndOptions;
     maintainVisibleContentPosition?:
       | boolean
       | {
@@ -62,6 +53,11 @@ vi.mock("@legendapp/list/react", async () => {
         data-maintain-scroll-at-end-data-change={
           typeof props.maintainScrollAtEnd === "object"
             ? props.maintainScrollAtEnd.on?.dataChange
+            : undefined
+        }
+        data-maintain-scroll-at-end-footer-layout={
+          typeof props.maintainScrollAtEnd === "object"
+            ? props.maintainScrollAtEnd.on?.footerLayout
             : undefined
         }
         data-maintain-scroll-at-end-item-layout={
@@ -125,6 +121,10 @@ function MockFileDiff(props: {
 vi.mock("@pierre/diffs/react", () => {
   return { FileDiff: MockFileDiff };
 });
+
+vi.mock("../DiffWorkerPoolProvider", () => ({
+  DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => children,
+}));
 
 function matchMedia() {
   return {
@@ -292,7 +292,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("codex-thread-1");
   });
 
-  it("renders the worked-for row at assistant response text size", () => {
+  it("renders elapsed time for a completed turn", () => {
     const turnId = TurnId.make("turn-with-fold");
     const assistantEntry = buildAssistantTimelineEntry("Done.");
     const markup = renderToStaticMarkup(
@@ -327,23 +327,6 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Worked for 8.0s");
-    expect(markup).toContain("px-1 text-sm leading-relaxed text-muted-foreground");
-  });
-
-  it("uses the larger leading inset only when the top fade is enabled", () => {
-    const timelineEntries = [buildUserTimelineEntry("Hello")];
-
-    const compactMarkup = renderToStaticMarkup(
-      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />,
-    );
-    const fadedMarkup = renderToStaticMarkup(
-      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} topFadeEnabled />,
-    );
-
-    expect(compactMarkup).toContain('class="h-3 sm:h-4"');
-    expect(compactMarkup).not.toContain("topbar-scroll-fade");
-    expect(fadedMarkup).toContain('class="h-10 sm:h-12"');
-    expect(fadedMarkup).toContain("topbar-scroll-fade");
   });
 
   it("keeps assistant changed-files headers sticky below the thread header", () => {
@@ -434,14 +417,17 @@ describe("MessagesTimeline", () => {
         scrollLength: 800,
       }),
     ).toBe(false);
-    // The composer inset is part of contentLength and must not count as
-    // distance-to-end.
+    // LegendList's isAtEnd is true anywhere within the composer-height band
+    // (it subtracts the inset); the last row is still hidden under the
+    // composer there, so the flag must not short-circuit the geometry.
     expect(
-      resolveTimelineIsAtEnd(
-        { isAtEnd: false, contentLength: 2100, scroll: 1170, scrollLength: 800 },
-        100,
-      ),
-    ).toBe(true);
+      resolveTimelineIsAtEnd({
+        isAtEnd: true,
+        contentLength: 2000,
+        scroll: 1100,
+        scrollLength: 800,
+      }),
+    ).toBe(false);
     // Geometry missing (older state shape): fall back to the strict flag.
     expect(resolveTimelineIsAtEnd({ isAtEnd: false })).toBe(false);
 
@@ -490,75 +476,7 @@ describe("MessagesTimeline", () => {
     expect(resolveTimelineMinimapInteractiveWidth(40, true)).toBe("22rem");
   });
 
-  it("anchors the first user message using its measured height", () => {
-    const onAnchorReady = vi.fn();
-    const firstEntry = {
-      ...buildUserTimelineEntry("First prompt."),
-      message: {
-        ...buildUserTimelineEntry("First prompt.").message,
-        attachments: [
-          {
-            type: "image" as const,
-            id: "attachment-1",
-            name: "screenshot.png",
-            mimeType: "image/png",
-            sizeBytes: 1,
-            previewUrl: "data:image/png;base64,iVBORw0KGgo=",
-          },
-        ],
-      },
-    };
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        anchorMessageId={firstEntry.message.id}
-        onAnchorReady={onAnchorReady}
-        contentInsetEndAdjustment={144}
-        timelineEntries={[firstEntry]}
-      />,
-    );
-
-    expect(markup).toContain('data-anchor-index="0"');
-    expect(markup).toContain('data-anchor-offset="16"');
-    expect(markup).toContain('data-anchor-on-ready="true"');
-    expect(markup).not.toContain("data-anchor-max-size=");
-    expect(markup).toContain('data-content-inset-end="144"');
-    expect(markup).toContain("[overflow-anchor:none]");
-    expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
-    expect(markup).toContain('data-maintain-visible-content-position="object"');
-    expect(markup).toContain('data-maintain-visible-content-position-data="true"');
-    expect(markup).toContain('data-maintain-visible-content-position-size="true"');
-    expect(markup).toContain('data-maintain-visible-content-position-restore="true"');
-    expect(onAnchorReady).toHaveBeenCalledOnce();
-    expect(onAnchorReady).toHaveBeenCalledWith(firstEntry.message.id, 0);
-  });
-
-  it("does not reserve end space for a follow-up user message", () => {
-    const onAnchorReady = vi.fn();
-    const firstEntry = buildUserTimelineEntry("First prompt.");
-    const secondEntry = {
-      ...buildUserTimelineEntry("Newest prompt."),
-      id: "entry-2",
-      message: {
-        ...buildUserTimelineEntry("Newest prompt.").message,
-        id: MessageId.make("message-2"),
-      },
-    };
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        anchorMessageId={secondEntry.message.id}
-        onAnchorReady={onAnchorReady}
-        timelineEntries={[firstEntry, secondEntry]}
-      />,
-    );
-
-    expect(markup).not.toContain("data-anchor-index=");
-    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
-    expect(onAnchorReady).not.toHaveBeenCalled();
-  });
-
-  it("renders generic attachments as download links instead of image previews", () => {
+  it("gives browser documents separate preview and download controls", () => {
     const entry = {
       ...buildUserTimelineEntry("Read the report."),
       message: {
@@ -580,13 +498,66 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
     );
 
-    expect(markup).toContain(
-      '<a href="https://environment.test/api/assets/report.pdf" download="report.pdf" class="flex min-w-0 items-center gap-2 rounded-md py-1 text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70">',
-    );
+    expect(markup).toContain('aria-label="Preview report.pdf"');
+    expect(markup).toContain('aria-label="Download report.pdf"');
+    expect(markup).not.toContain('download="report.pdf"');
     expect(markup).not.toContain('alt="report.pdf"');
   });
 
-  it("renders a file download button without creating its URL in advance", () => {
+  it("renders video attachments with the shared video player", () => {
+    const entry = {
+      ...buildUserTimelineEntry("Watch the demo."),
+      message: {
+        ...buildUserTimelineEntry("Watch the demo.").message,
+        attachments: [
+          {
+            type: "file" as const,
+            id: "attachment-demo-mp4",
+            name: "demo.mp4",
+            mimeType: "video/mp4",
+            sizeBytes: 42,
+            previewUrl: "https://environment.test/api/assets/demo.mp4",
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(markup).toContain("<video");
+    expect(markup).toContain('aria-label="demo.mp4"');
+    expect(markup).toContain('controls=""');
+    expect(markup).not.toContain("Expand demo.mp4");
+  });
+
+  it("shows the filename while an optimistic video is unavailable", () => {
+    const entry = {
+      ...buildUserTimelineEntry("Uploading the demo."),
+      message: {
+        ...buildUserTimelineEntry("Uploading the demo.").message,
+        attachments: [
+          {
+            type: "file" as const,
+            id: "optimistic-demo-mp4",
+            name: "pending-demo.mp4",
+            mimeType: "video/mp4",
+            sizeBytes: 42,
+            downloadable: false,
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(markup).not.toContain("<video");
+    expect(markup).toContain(">pending-demo.mp4</div>");
+  });
+  it("renders an ordinary file download button without creating its URL in advance", () => {
     const entry = {
       ...buildUserTimelineEntry("Read the report."),
       message: {
@@ -595,8 +566,8 @@ describe("MessagesTimeline", () => {
           {
             type: "file" as const,
             id: "attachment-report-pdf",
-            name: "report.pdf",
-            mimeType: "application/pdf",
+            name: "archive.zip",
+            mimeType: "application/zip",
             sizeBytes: 42,
           },
         ],
@@ -608,9 +579,9 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain(
-      '<button type="button" aria-label="Download report.pdf" class="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70">',
+      '<button type="button" aria-label="Download archive.zip" class="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70">',
     );
-    expect(markup).not.toContain("href=");
+    expect(markup).not.toContain("<a href=");
   });
 
   it("does not download an optimistic file before the server supplies its attachment ID", () => {
@@ -665,7 +636,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("voice-memo.ogg");
     expect(markup).not.toContain('aria-label="Download voice-memo.ogg"');
     expect(markup).not.toContain('alt="voice-memo.ogg"');
-    expect(markup).not.toContain("href=");
+    expect(markup).not.toContain("<a href=");
   });
 
   it("keeps reserved end space when tool work starts while reading history", () => {
@@ -773,6 +744,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
     expect(markup).toContain('data-maintain-scroll-at-end-animated="false"');
     expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
+    expect(markup).toContain('data-maintain-scroll-at-end-footer-layout="false"');
     expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
     expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
     expect(markup).toContain('data-user-message-collapsed="true"');
@@ -1006,7 +978,7 @@ describe("MessagesTimeline", () => {
             entry: {
               id: "work-1",
               createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Context compacted",
+              label: "Compacted context 899K → 19K tokens",
               tone: "info",
             },
           },
@@ -1014,8 +986,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Context compacted");
-    expect(markup).toContain("Work Log");
+    expect(markup).toContain("Compacted context 899K → 19K tokens");
   });
 
   it("summarizes changed files in one line", () => {
@@ -1126,6 +1097,62 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("tool call failed");
   });
 
+  it("renders trailing tool calls as part of the terminal assistant block", () => {
+    const turnId = TurnId.make("turn-trailing-tools");
+    const assistantMessageId = MessageId.make("assistant-trailing-tools");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        latestTurn={{
+          turnId,
+          state: "error",
+          startedAt: "2026-03-17T19:12:20.000Z",
+          completedAt: "2026-03-17T19:12:30.000Z",
+        }}
+        timelineEntries={[
+          {
+            id: "assistant-entry",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: assistantMessageId,
+              role: "assistant",
+              text: "I’ll search for it now.",
+              turnId,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: "2026-03-17T19:12:29.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "trailing-work-entry",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            entry: {
+              id: "trailing-work",
+              createdAt: "2026-03-17T19:12:30.000Z",
+              turnId,
+              label: "Ran command",
+              tone: "tool",
+              itemType: "command_execution",
+              toolLifecycleStatus: "failed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    const messageIndex = markup.indexOf('data-timeline-row-id="assistant-entry"');
+    const toolIndex = markup.indexOf('data-timeline-row-id="trailing-work-entry"');
+    const metaIndex = markup.indexOf(
+      'data-timeline-row-id="assistant-meta:assistant-trailing-tools"',
+    );
+    expect(messageIndex).toBeGreaterThanOrEqual(0);
+    expect(toolIndex).toBeGreaterThan(messageIndex);
+    expect(metaIndex).toBeGreaterThan(toolIndex);
+    expect(markup.match(/I’ll search for it now\./gu)).toHaveLength(1);
+  });
+
   it("keeps mixed work logs neutral after a later tool call succeeds", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1172,11 +1199,11 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("+2 previous log entries");
+    expect(markup).toContain("Ran 2 commands and received 1 update");
     expect(markup).not.toContain('aria-label="Hidden work includes a failure"');
   });
 
-  it("shows the animated one-line label for a live tool group", () => {
+  it("shows the one-line label for a live tool group", () => {
     const turnId = TurnId.make("turn-live");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1213,7 +1240,6 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Working for");
     expect(markup).toContain("Running pnpm");
-    expect(markup).toContain("live-activity-focus");
   });
 
   it("scopes a live row failure to the tool named by the row", () => {
@@ -1271,7 +1297,30 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("tool call failed");
   });
 
-  it("keeps terminal command copy live while the parent turn is active", () => {
+  it("renders initial thinking as the shared live activity row", () => {
+    const turnId = TurnId.make("turn-live");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnStartedAt={MESSAGE_CREATED_AT}
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: null,
+        }}
+        runningTurnId={turnId}
+        timelineEntries={[]}
+      />,
+    );
+
+    expect(markup).toContain("Thinking");
+    expect(markup).toContain("lucide-brain");
+    expect(markup).toContain('data-timeline-row-id="live-activity-row"');
+  });
+
+  it("keeps the completed command in the shared activity row with a present-tense label", () => {
     const turnId = TurnId.make("turn-live");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1287,19 +1336,19 @@ describe("MessagesTimeline", () => {
         runningTurnId={turnId}
         timelineEntries={[
           {
-            id: "entry-failed",
+            id: "entry-completed",
             kind: "work",
             createdAt: MESSAGE_CREATED_AT,
             entry: {
-              id: "work-failed",
+              id: "work-completed",
               createdAt: MESSAGE_CREATED_AT,
               turnId,
-              toolCallId: "call-failed",
+              toolCallId: "call-completed",
               label: "Run lint",
               tone: "tool",
               itemType: "command_execution",
               command: "pnpm lint",
-              toolLifecycleStatus: "failed",
+              toolLifecycleStatus: "completed",
             },
           },
         ]}
@@ -1307,22 +1356,10 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Running pnpm");
-    expect(markup).toContain("tool call failed");
-  });
-
-  it("aligns the iconless Thinking row with the working timer", () => {
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        isWorking
-        activeTurnStartedAt={MESSAGE_CREATED_AT}
-        timelineEntries={[]}
-      />,
-    );
-
-    expect(markup).toContain("Working for");
-    expect(markup).toContain("Thinking");
-    expect(markup).toContain("gap-1.5 py-0.5 px-1");
+    expect(markup).toContain("lucide-terminal");
+    expect(markup).not.toContain("Ran pnpm");
+    expect(markup).not.toContain("Thinking");
+    expect(markup).not.toContain('data-timeline-row-kind="thinking"');
   });
 
   it("renders review comment contexts as structured cards instead of raw tags", () => {
@@ -1402,7 +1439,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-testid="file-diff"');
   });
 
-  it("renders a muted failure marker for failed tool lifecycle entries", () => {
+  it("keeps failed lifecycle entries discoverable in mixed activity summaries", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -1435,9 +1472,8 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("lucide-x");
-    expect(markup).toContain('aria-label="Tool call failed"');
-    // Ordinary tool failures render muted, not red.
+    expect(markup).toContain('aria-label="Received 1 update and used 1 tool, tool call failed"');
+    // Ordinary tool failures do not use destructive row styling.
     expect(markup).not.toContain("text-destructive");
   });
 
@@ -1473,7 +1509,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("lucide-x");
+    expect(markup).toContain("lucide-circle-alert");
     expect(markup).toContain("text-destructive");
   });
 });

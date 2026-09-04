@@ -11,8 +11,8 @@ import { type MouseEvent, useCallback } from "react";
 
 import { pullRequestHostOf, type SourceControlProviderKind } from "@t3tools/contracts";
 
+import { useOpenLink } from "../browser/useOpenLink";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
-import { readLocalApi } from "../localApi";
 import { useRightPanelStore } from "../rightPanelStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 
@@ -160,6 +160,30 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
   return null;
 }
 
+/**
+ * The pull-request URL a GitHub-style `#123` autolink might name. GitHub writes every bare
+ * reference through `/issues/`, including pull requests, so this only builds a candidate: the
+ * caller must successfully read it as a pull request before treating it as one.
+ */
+export function pullRequestCandidateUrlFromReferenceAutolink(targetUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(targetUrl);
+  } catch {
+    return null;
+  }
+  if (
+    (url.protocol !== "https:" && url.protocol !== "http:") ||
+    !isHostOf(url.hostname.toLowerCase(), "github.com", "github")
+  ) {
+    return null;
+  }
+  const match = /^\/([^/]+\/[^/]+)\/issues\/(\d+)(?:\/|$)/u.exec(url.pathname);
+  if (match?.[1] === undefined || match[2] === undefined) return null;
+  url.pathname = `/${match[1]}/pull/${match[2]}`;
+  return url.toString();
+}
+
 /** Match a stored PR without requiring its project to remain available. */
 export function matchesLinkedPullRequestUrl(
   linkedPullRequest: ThreadLinkedPullRequest,
@@ -263,13 +287,14 @@ export function useOpenChangeRequestLink(
   >,
   targetUrl: string,
   targetThreadRef?: ScopedThreadRef,
+  targetEnvironmentId?: EnvironmentId,
 ) => boolean {
   const navigate = useNavigate();
   const allProjects = useProjects();
   const serverConfigs = useServerConfigs();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   return useCallback(
-    (event, targetUrl, targetThreadRef) => {
+    (event, targetUrl, targetThreadRef, targetEnvironmentId) => {
       if (shouldOpenPullRequestExternally(event)) return false;
       const resolvedThreadRef = targetThreadRef ?? threadRef;
       const parsed = parseChangeRequestUrl(targetUrl);
@@ -285,13 +310,15 @@ export function useOpenChangeRequestLink(
       // against all of them, the primary first where two hold the same repository.
       const projects = resolvedThreadRef
         ? allProjects.filter((project) => project.environmentId === resolvedThreadRef.environmentId)
-        : allProjects
-            .filter((project) => reads(project.environmentId))
-            .toSorted(
-              (left, right) =>
-                Number(right.environmentId === primaryEnvironmentId) -
-                Number(left.environmentId === primaryEnvironmentId),
-            );
+        : targetEnvironmentId
+          ? allProjects.filter((project) => project.environmentId === targetEnvironmentId)
+          : allProjects
+              .filter((project) => reads(project.environmentId))
+              .toSorted(
+                (left, right) =>
+                  Number(right.environmentId === primaryEnvironmentId) -
+                  Number(left.environmentId === primaryEnvironmentId),
+              );
       const project = findProjectForChangeRequest(projects, parsed);
       if (project === undefined || !reads(project.environmentId)) return false;
       event.preventDefault();
@@ -328,6 +355,7 @@ export function useOpenChangeRequestLink(
 
 export function useOpenPrLink(threadRef?: ScopedThreadRef) {
   const openChangeRequest = useOpenChangeRequestLink(threadRef);
+  const openLink = useOpenLink(threadRef);
   return useCallback(
     (event: MouseEvent<HTMLElement>, prUrl: string, targetThreadRef?: ScopedThreadRef) => {
       event.stopPropagation();
@@ -342,16 +370,9 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
       event.preventDefault();
       if (!openInBrowser && openChangeRequest(event, prUrl, targetThreadRef)) return true;
 
-      const api = readLocalApi();
-      if (!api) {
-        toastManager.add({
-          type: "error",
-          title: "Link opening is unavailable.",
-        });
-        return false;
-      }
-
-      void openPullRequestLink(api.shell, prUrl).catch((error) => {
+      // No project to show it in, so it is an ordinary link and follows the
+      // "Open links in" setting; the modifier still forces the system browser.
+      void openLink(prUrl, { event, threadRef: targetThreadRef }).catch((error: unknown) => {
         console.error(error);
         toastManager.add(
           stackedThreadToast({
@@ -363,6 +384,6 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
       });
       return false;
     },
-    [openChangeRequest],
+    [openChangeRequest, openLink],
   );
 }

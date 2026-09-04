@@ -8,6 +8,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -30,10 +31,10 @@ import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
-  applyServerConfigProjection,
   makeEnvironmentServerConfigState,
   isLegacyUpdateHandoffLoss,
   matchesServerUpdateReadyEvent,
+  matchesServerUpdateResumeEvent,
   nudgeReconnectDuringUpdateRestart,
   projectServerWelcome,
   resolveServerConfigValue,
@@ -41,7 +42,11 @@ import {
   serverUpdateStateForProgressEvent,
   serverUpdateStateForServerVersion,
   validateServerUpdateReadyEvent,
+  waitForNextEnvironmentReconnect,
+  waitForDesktopUpdateTarget,
+  runDesktopCommitWithReconnectObserver,
 } from "./server.ts";
+import { applyServerConfigProjection } from "./serverConfigProjection.ts";
 
 const CONFIG = {
   availableEditors: [],
@@ -73,6 +78,7 @@ function session(client: WsRpcProtocolClient): RpcSession {
   return {
     client,
     initialConfig: Effect.succeed(CONFIG),
+    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,
@@ -80,6 +86,83 @@ function session(client: WsRpcProtocolClient): RpcSession {
 }
 
 describe("update restart reconnect nudges", () => {
+  it.effect("retries a desktop commit that was lost before delivery", () =>
+    Effect.gen(function* () {
+      const readyEvents =
+        yield* Queue.unbounded<Parameters<typeof matchesServerUpdateReadyEvent>[1]>();
+      const ready = (serverVersion: string) =>
+        ({
+          version: 1 as const,
+          sequence: 1,
+          type: "ready" as const,
+          payload: {
+            at: "2026-09-01T00:00:00.000Z",
+            environment: { serverVersion },
+          },
+        }) as Parameters<typeof matchesServerUpdateReadyEvent>[1];
+      yield* Queue.offerAll(readyEvents, [ready("0.0.30"), ready("0.0.31")]);
+      const retries = yield* Ref.make(0);
+      const disconnect = new RpcClientError.RpcClientError({
+        reason: new Socket.SocketCloseError({ code: 1006 }),
+      });
+
+      const result = yield* waitForDesktopUpdateTarget(
+        "0.0.31",
+        Queue.take(readyEvents),
+        Ref.update(retries, (count) => count + 1).pipe(Effect.andThen(Effect.fail(disconnect))),
+      );
+
+      expect(result.payload.environment.serverVersion).toBe("0.0.31");
+      expect(yield* Ref.get(retries)).toBe(1);
+    }),
+  );
+  it.effect("observes a fast reconnect even when the caller awaits it later", () =>
+    Effect.gen(function* () {
+      const states = yield* Queue.unbounded<{ readonly phase: string }>();
+      const reconnected = yield* waitForNextEnvironmentReconnect(Stream.fromQueue(states)).pipe(
+        Effect.forkChild,
+      );
+      yield* Queue.offerAll(states, [
+        { phase: "connected" },
+        { phase: "backoff" },
+        { phase: "connected" },
+      ]);
+
+      yield* Fiber.join(reconnected);
+    }),
+  );
+  it.effect("arms the retry observer before a commit can disconnect", () =>
+    Effect.gen(function* () {
+      const allowSubscription = yield* Deferred.make<void>();
+      const subscriptionStarted = yield* Deferred.make<void>();
+      const states = yield* Queue.unbounded<{ readonly phase: string }>();
+      const commits = yield* Ref.make(0);
+      const disconnect = new RpcClientError.RpcClientError({
+        reason: new Socket.SocketCloseError({ code: 1006 }),
+      });
+      const stateChanges = Stream.unwrap(
+        Deferred.succeed(subscriptionStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(allowSubscription)),
+          Effect.as(Stream.fromQueue(states)),
+        ),
+      );
+      const retry = yield* runDesktopCommitWithReconnectObserver(
+        stateChanges,
+        Ref.update(commits, (count) => count + 1).pipe(
+          Effect.andThen(Queue.offerAll(states, [{ phase: "backoff" }, { phase: "connected" }])),
+          Effect.andThen(Effect.fail(disconnect)),
+        ),
+      ).pipe(Effect.flip, Effect.forkChild);
+
+      yield* Deferred.await(subscriptionStarted);
+      expect(yield* Ref.get(commits)).toBe(0);
+      yield* Deferred.succeed(allowSubscription, undefined);
+      yield* Queue.offer(states, { phase: "connected" });
+
+      expect(yield* Fiber.join(retry)).toBe(disconnect);
+      expect(yield* Ref.get(commits)).toBe(1);
+    }),
+  );
   it.effect("retries once per backoff entry instead of only the first", () =>
     Effect.gen(function* () {
       const retries = yield* Ref.make(0);
@@ -291,6 +374,36 @@ describe("server state projection", () => {
     }),
   );
 
+  it("requires tokenless desktop updates to reach the target version", () => {
+    const ready = (serverVersion: string) =>
+      ({
+        version: 1 as const,
+        sequence: 1,
+        type: "ready" as const,
+        payload: {
+          at: "2026-09-01T00:00:00.000Z",
+          environment: { serverVersion },
+        },
+      }) as Parameters<typeof matchesServerUpdateResumeEvent>[1];
+
+    expect(
+      matchesServerUpdateResumeEvent(
+        { targetVersion: "0.0.31", method: "desktop-app" },
+        ready("0.0.30"),
+      ),
+    ).toBe(false);
+    expect(
+      matchesServerUpdateResumeEvent(
+        {
+          targetVersion: "0.0.31",
+          method: "desktop-app",
+          desktopUpdateToken: "update-1",
+        },
+        ready("0.0.30"),
+      ),
+    ).toBe(true);
+  });
+
   it("applies every config category to the projected snapshot", () => {
     const snapshot = applyServerConfigProjection(Option.none(), {
       version: 1,
@@ -477,7 +590,7 @@ describe("server state projection", () => {
 
       yield* Effect.scoped(
         Effect.gen(function* () {
-          const state = yield* makeEnvironmentServerConfigState().pipe(
+          const state = yield* makeEnvironmentServerConfigState({}).pipe(
             Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
             Effect.provideService(Persistence.EnvironmentCacheStore, cache),
           );
@@ -537,7 +650,7 @@ describe("server state projection", () => {
       });
 
       yield* Effect.scoped(
-        makeEnvironmentServerConfigState().pipe(
+        makeEnvironmentServerConfigState({}).pipe(
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
           Effect.provideService(Persistence.EnvironmentCacheStore, cache),
         ),
