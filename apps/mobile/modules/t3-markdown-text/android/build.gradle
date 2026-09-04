@@ -1,0 +1,20 @@
+apply plugin: 'com.android.library'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+group = 'com.t3tools.markdowntext'
+version = '0.0.0'
+
+android {
+  namespace 'expo.modules.t3markdowntext'
+  compileSdk rootProject.ext.compileSdkVersion
+
+  defaultConfig {
+    minSdkVersion rootProject.ext.minSdkVersion
+    targetSdkVersion rootProject.ext.targetSdkVersion
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  implementation 'com.facebook.react:react-android'
+}
