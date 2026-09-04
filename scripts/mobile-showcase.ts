@@ -806,6 +806,47 @@ async function ensureIosSimulator(device: ShowcaseIosDevice): Promise<{
   };
 }
 
+async function iosSimulatorDataPath(udid: string): Promise<string> {
+  const parsed = JSON.parse(await commandOutput("xcrun", ["simctl", "list", "devices", "-j"])) as {
+    readonly devices: Readonly<
+      Record<string, ReadonlyArray<SimctlDevice & { readonly dataPath: string }>>
+    >;
+  };
+  const dataPath = Object.values(parsed.devices)
+    .flat()
+    .find((device) => device.udid === udid)?.dataPath;
+  if (!dataPath) throw new Error(`Could not resolve the data path of iOS simulator ${udid}.`);
+  return dataPath;
+}
+
+// generativeexperiencesd posts a "Ready for Apple Intelligence" follow-up
+// banner on an eligible device's first boot, and CoreFollowUp re-surfaces it
+// on every boot until the user dismisses it. Stamping the readiness marker
+// before boot makes the daemon skip the post, and dropping the CoreFollowUp
+// store clears a banner that a previous boot already queued. Runs while the
+// device is shut down so the files are read fresh on the next boot.
+async function suppressIosSystemFollowUps(udid: string): Promise<void> {
+  const dataPath = await iosSimulatorDataPath(udid);
+  const preferences = NodePath.join(dataPath, "Library/Preferences");
+  await NodeFSP.mkdir(preferences, { recursive: true });
+  await NodeFSP.writeFile(
+    NodePath.join(preferences, "com.apple.generativeexperiences.corefollowup.plist"),
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>DateOfLastAppleIntelligenceReadinessCFU</key>
+\t<date>2020-01-01T00:00:00Z</date>
+</dict>
+</plist>
+`,
+  );
+  await NodeFSP.rm(NodePath.join(dataPath, "Library/CoreFollowUp"), {
+    recursive: true,
+    force: true,
+  });
+}
+
 async function normalizeIosSimulator(appearance: ShowcaseAppearance, udid: string): Promise<void> {
   await runCommand("xcrun", ["simctl", "ui", udid, "appearance", appearance]);
   await runCommand("xcrun", [
@@ -922,6 +963,7 @@ async function captureIos(
     // confirmations, keyboards) without erasing the developer's simulator.
     await runCommand("xcrun", ["simctl", "shutdown", simulator.udid]);
   }
+  await suppressIosSystemFollowUps(simulator.udid);
   await runCommand("xcrun", ["simctl", "boot", simulator.udid]);
   await runCommand("xcrun", ["simctl", "bootstatus", simulator.udid, "-b"]);
   if (capture.device.orientation === "landscape") {
