@@ -29,6 +29,8 @@ import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
+  SETTINGS_MODEL_CONTROLS_CLASSNAME,
+  SETTINGS_MODEL_PICKER_TRIGGER_CLASSNAME,
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
   SettingsRow,
@@ -176,7 +178,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             }
             control={
               selection && activeEntry ? (
-                <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5 sm:max-w-[26rem]">
+                <div className={`${SETTINGS_MODEL_CONTROLS_CLASSNAME} min-w-0 gap-1.5`}>
                   <ProviderModelPicker
                     activeInstanceId={selection.instanceId}
                     model={selection.model}
@@ -184,7 +186,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                     instanceEntries={entries}
                     modelOptionsByInstance={modelOptions}
                     triggerVariant="outline"
-                    triggerClassName="min-w-0 max-w-full shrink-0 text-foreground/90 hover:text-foreground"
+                    triggerClassName={SETTINGS_MODEL_PICKER_TRIGGER_CLASSNAME}
                     {...(mixedModel ? { triggerLabel: "Mixed" } : {})}
                     getModelDisabledReason={modelDisabledReason}
                     onOpenProviderSetup={(instanceId) => {

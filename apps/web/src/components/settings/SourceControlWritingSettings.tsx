@@ -33,7 +33,8 @@ import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { Button } from "../ui/button";
 import {
-  SETTINGS_PICKER_TRIGGER_CLASSNAME,
+  SETTINGS_MODEL_CONTROLS_CLASSNAME,
+  SETTINGS_MODEL_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
   SettingsRow,
   SettingsSection,
@@ -291,7 +292,7 @@ export function SourceControlWritingSettingsSection() {
               Connect an environment to choose its source control writer model.
             </span>
           ) : (
-            <div className="flex max-w-full flex-wrap items-center justify-end gap-2 sm:max-w-[26rem]">
+            <div className={`${SETTINGS_MODEL_CONTROLS_CLASSNAME} gap-2`}>
               {usesDedicatedModel && !canEnableDedicatedModel ? (
                 <span className="text-sm text-muted-foreground">
                   No text generation providers available.
@@ -305,7 +306,7 @@ export function SourceControlWritingSettingsSection() {
                   instanceEntries={instanceEntries}
                   modelOptionsByInstance={modelOptionsByInstance}
                   triggerVariant="outline"
-                  triggerClassName="min-w-0 max-w-full shrink-0 text-foreground/90 hover:text-foreground"
+                  triggerClassName={SETTINGS_MODEL_PICKER_TRIGGER_CLASSNAME}
                   triggerAriaLabel="Source control writer model"
                   {...(mixedWriterModel ? { triggerLabel: "Mixed" } : {})}
                   {...(environmentId
