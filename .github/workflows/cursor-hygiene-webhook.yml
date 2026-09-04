@@ -9,10 +9,6 @@ on:
     types: [opened, closed, reopened]
   discussion:
     types: [created, closed, reopened]
-  issue_comment:
-    types: [created]
-  discussion_comment:
-    types: [created]
 
 permissions:
   contents: read
