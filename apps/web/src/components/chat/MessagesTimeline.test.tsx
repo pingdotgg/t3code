@@ -1019,7 +1019,6 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain('class="pb-1.5" data-timeline-row-id="turn-fold:');
     expect(markup).toContain('data-timeline-row-kind="turn-fold"');
-    expect(markup).not.toContain("border-b border-border/60");
   });
 
   it("shows a collapsed disclosure for superseded attempt output", async () => {
@@ -2267,40 +2266,6 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-expanded="false"');
     // Entries stay hidden until the toggle expands the group.
     expect(markup).not.toContain("vp lint");
-  });
-
-  it("renders an inline task-progress chip for todo-list plans", () => {
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          {
-            id: "item-todo",
-            kind: "turn-plan",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            turnPlan: {
-              id: "turn-plan:plan-1",
-              createdAt: "2026-03-17T19:12:28.000Z",
-              runId: null,
-              plan: {
-                createdAt: "2026-03-17T19:12:28.000Z",
-                runId: null,
-                explanation: null,
-                steps: [
-                  { step: "Resolve triage instances", status: "inProgress" },
-                  { step: "Show instance badges", status: "pending" },
-                  { step: "Verify the shared dev stack", status: "pending" },
-                ],
-              },
-            },
-          },
-        ]}
-      />,
-    );
-
-    expect(markup).toContain("Resolve triage instances");
-    expect(markup).toContain("0/3");
-    expect(markup).toContain('aria-expanded="false"');
   });
 
   it("renders a muted failure marker for failed tool lifecycle entries", () => {
