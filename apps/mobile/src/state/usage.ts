@@ -18,6 +18,7 @@ import {
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import { refreshUsage } from "@t3tools/client-runtime/state/usage";
+import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -53,26 +54,17 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
     const statuses: EnvironmentUsageStatus[] = [];
     for (const [environmentId, presentation] of presentations) {
       const sessionResult = get(environmentSession.sessionStateAtom(environmentId));
-      const session = Option.getOrNull(AsyncResult.value(sessionResult));
-      const isCheckingAccess = session === null && sessionResult._tag !== "Failure";
-      const canReadDiagnostics =
-        sessionResult._tag === "Success" &&
-        !isCheckingAccess &&
-        session?.authenticated === true &&
-        (session.scopes?.includes(AuthDiagnosticsReadScope) ?? false);
-      if (!canReadDiagnostics) {
+      const access = resolveUsageAccess({
+        connectionPhase: presentation.connection.phase,
+        session: Option.getOrNull(AsyncResult.value(sessionResult)),
+        hasSessionError: sessionResult._tag === "Failure",
+      });
+      if (!access.canReadDiagnostics) {
         statuses.push({
           environmentId,
           label: presentation.entry.target.label,
-          isPending: isCheckingAccess,
           isConnected: presentation.connection.phase === "connected",
-          canReadDiagnostics: false,
-          error:
-            sessionResult._tag === "Failure"
-              ? "Could not check this connection's access to diagnostics and usage."
-              : isCheckingAccess
-                ? null
-                : "This connection does not have access to diagnostics and usage.",
+          ...access,
           summary: null,
         });
         continue;
