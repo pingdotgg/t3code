@@ -1757,7 +1757,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
   isExpandedToolGroup: boolean;
   displayLabel?: string | undefined;
 }) {
-  const { timestampFormat, workspaceRoot, routeThreadKey } = use(TimelineRowCtx);
+  const { workspaceRoot, routeThreadKey } = use(TimelineRowCtx);
   const nonEmptyEntries = useMemo(
     () => groupedEntries.filter((entry) => workEntryIsVisibleInGroup(entry, isExpandedToolGroup)),
     [groupedEntries, isExpandedToolGroup],
@@ -1782,7 +1782,6 @@ const WorkGroupSection = memo(function WorkGroupSection({
           <SimpleWorkEntryRow
             key={workEntry.id}
             workEntry={workEntry}
-            timestampFormat={timestampFormat}
             workspaceRoot={workspaceRoot}
             isExpandedToolGroupEntry={false}
             displayLabel={displayLabel}
@@ -1802,7 +1801,7 @@ function ExpandedWorkGroupEntries({
   entries: TimelineWorkEntry[];
   workspaceRoot: string | undefined;
 }) {
-  const { workGroupViewState: viewState, onToggleWorkEntry, timestampFormat } = use(TimelineRowCtx);
+  const { workGroupViewState: viewState, onToggleWorkEntry } = use(TimelineRowCtx);
   const [initialScrollIndex] = useState(() =>
     resolveWorkGroupScrollIndex(entries, viewState.scrollPositions.get(anchorKey)),
   );
@@ -1885,12 +1884,11 @@ function ExpandedWorkGroupEntries({
       <SimpleWorkEntryRow
         key={item.id}
         workEntry={item}
-        timestampFormat={timestampFormat}
         workspaceRoot={workspaceRoot}
         isExpandedToolGroupEntry
       />
     ),
-    [timestampFormat, workspaceRoot],
+    [workspaceRoot],
   );
 
   return (
@@ -3084,13 +3082,11 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
-  timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
   isExpandedToolGroupEntry: boolean;
   displayLabel?: string | undefined;
 }) {
-  const { workEntry, timestampFormat, workspaceRoot, isExpandedToolGroupEntry, displayLabel } =
-    props;
+  const { workEntry, workspaceRoot, isExpandedToolGroupEntry, displayLabel } = props;
   // Before any hooks: spawn CTA rows render their own component.
   if (workEntry.agentSpawn) {
     return <AgentSpawnCtaRow workEntry={workEntry} />;
@@ -3098,7 +3094,6 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   return (
     <PlainWorkEntryRow
       workEntry={workEntry}
-      timestampFormat={timestampFormat}
       workspaceRoot={workspaceRoot}
       isExpandedToolGroupEntry={isExpandedToolGroupEntry}
       displayLabel={displayLabel}
@@ -3108,14 +3103,12 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
 
 const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
-  timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
   isExpandedToolGroupEntry: boolean;
   displayLabel?: string | undefined;
 }) {
-  const { workEntry, timestampFormat, workspaceRoot, isExpandedToolGroupEntry, displayLabel } =
-    props;
-  const { threadRef, onImageExpand } = use(TimelineRowCtx);
+  const { workEntry, workspaceRoot, isExpandedToolGroupEntry, displayLabel } = props;
+  const { threadRef, onImageExpand, timestampFormat } = use(TimelineRowCtx);
   const groupView = use(WorkGroupViewCtx);
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
