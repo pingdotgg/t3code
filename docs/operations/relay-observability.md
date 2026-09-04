@@ -51,3 +51,9 @@ Agents should prefer the provisioned view or APL queries for completed incidents
 tailing the Cloudflare Worker. The stack does not provision a separate query token. Responders who
 need scripted query access use the authorized account-level `AXIOM_TOKEN` together with
 `AXIOM_ORG_ID`; scoped ingest tokens remain write-only credentials for their producers.
+
+DPoP proof failures include the stable `relay.dpop.failure_code` span attribute. A `time_window`
+failure means that a signed proof was too old or too far in the future for the relay's allowed
+window. It can point to a date or time problem on either device, but it can also result from a
+delayed request. The client uses this category, and the absence of a category from an older relay,
+to decide whether clock skew is confirmed or only one possible cause.

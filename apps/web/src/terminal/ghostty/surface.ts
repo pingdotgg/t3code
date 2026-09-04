@@ -1,4 +1,5 @@
 import { isMacPlatform } from "../../lib/utils";
+import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "../../lib/selectionActions";
 import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
 import {
   GhosttyTerminalCore,
@@ -418,6 +419,31 @@ export function shouldReportTerminalMouse(
   return tracking && !event.shiftKey && !event.ctrlKey && !event.metaKey;
 }
 
+type TerminalMouseAction = "press" | "release" | "motion";
+
+export function resolveTerminalMouseData(
+  action: TerminalMouseAction,
+  data: string,
+  previousMotionData: string,
+): { readonly send: boolean; readonly nextMotionData: string } {
+  const nextMotionData = action === "motion" ? data : "";
+  return {
+    send: data.length > 0 && (action !== "motion" || data !== previousMotionData),
+    nextMotionData,
+  };
+}
+
+export function resolveTerminalMouseTrackingState(
+  previousTracking: boolean,
+  tracking: boolean,
+  motionData: string,
+): { readonly tracking: boolean; readonly motionData: string } {
+  return {
+    tracking,
+    motionData: previousTracking === tracking ? motionData : "",
+  };
+}
+
 export function terminalWheelDeltaRows(
   event: Pick<WheelEvent, "deltaY" | "deltaMode">,
   cellHeight: number,
@@ -458,13 +484,6 @@ export function isTerminalLinkPointerGesture(
     : event.ctrlKey && !event.metaKey;
 }
 
-export function shouldShowTerminalLinkHover(
-  mouseTracking: boolean,
-  linkModifierActive: boolean,
-): boolean {
-  return !mouseTracking || linkModifierActive;
-}
-
 export function ghosttyMouseButton(button: number): number | null {
   switch (button) {
     case 0:
@@ -495,7 +514,7 @@ export function advanceTerminalSelectionClickSequence(
 ): TerminalSelectionClickSequence {
   const repeats =
     previous !== null &&
-    event.timeStamp - previous.time <= 500 &&
+    event.timeStamp - previous.time <= SELECTION_MULTI_CLICK_INTERVAL_MS &&
     Math.hypot(event.clientX - previous.x, event.clientY - previous.y) <= 4;
   return {
     count: repeats ? (previous.count >= 3 ? 1 : previous.count + 1) : 1,
@@ -513,6 +532,8 @@ export interface GhosttySelectionPosition {
 export interface GhosttyTerminalSurfaceOptions {
   readonly theme: GhosttyTheme;
   readonly font?: GhosttyTerminalFont;
+  /** Read after font and WASM loading. Hosts can supply a getter for the latest value. */
+  readonly visible?: boolean;
   readonly onData: (data: string) => void;
   readonly onResize: (cols: number, rows: number) => void;
   readonly onSelectionChange: () => void;
@@ -537,6 +558,8 @@ export class GhosttyTerminalSurface {
   private readonly context: CanvasRenderingContext2D;
   private readonly core: GhosttyTerminalCore;
   private readonly options: GhosttyTerminalSurfaceOptions;
+  private visible: boolean;
+  private hasSize = false;
   private metrics: GhosttyCellMetrics;
   private fontFamily: string;
   private requestedFontFamily: string | undefined;
@@ -593,6 +616,8 @@ export class GhosttyTerminalSurface {
   private clearSelectionAfterCopy = false;
   private primedCopySelection = "";
   private wheelRemainder = 0;
+  private lastMouseMotionData = "";
+  private mouseAnyEventTracking = false;
   private dprMedia: MediaQueryList | null = null;
   // Read live on every blink decision, and watched so that dropping the
   // preference restarts a blink cycle that has no timer left to notice it.
@@ -619,8 +644,10 @@ export class GhosttyTerminalSurface {
     this.scrollbarThumb = scrollbarThumb;
     this.context = context;
     this.core = core;
+    this.mouseAnyEventTracking = core.isMouseAnyEventTracking();
     this.metrics = metrics;
     this.options = options;
+    this.visible = options.visible ?? true;
     this.theme = options.theme;
     this.fontFamily = fontFamily;
     this.requestedFontFamily = options.font?.family;
@@ -703,13 +730,28 @@ export class GhosttyTerminalSurface {
       options,
     );
     surface.fit();
-    surface.requestRender();
     return surface;
+  }
+
+  /** Pause canvas work without interrupting output parsing or terminal replies. */
+  setVisible(visible: boolean): void {
+    if (this.disposed || this.visible === visible) return;
+    this.visible = visible;
+    this.cursorOn = true;
+    this.forceFullRender = true;
+    this.scrollbarDirty = true;
+    if (!visible) {
+      this.cancelRender();
+      this.setSelectionAutoscroll(0);
+      return;
+    }
+    this.fit();
   }
 
   write(data: string): void {
     if (this.disposed) return;
     this.core.write(data);
+    this.synchronizeMouseTrackingState();
     // Restart the blink cycle from the visible phase so the cursor never sits
     // invisible through a stream of output or a burst of typing echo.
     this.cursorOn = true;
@@ -719,7 +761,9 @@ export class GhosttyTerminalSurface {
 
   resetAndWrite(data: string): void {
     if (this.disposed) return;
+    this.lastMouseMotionData = "";
     this.core.resetAndWrite(data);
+    this.synchronizeMouseTrackingState();
     // A replayed session starts from the visible phase like any other write:
     // reattaching mid-blink must not open on an invisible cursor.
     this.cursorOn = true;
@@ -799,10 +843,16 @@ export class GhosttyTerminalSurface {
   };
 
   fit(): boolean {
-    if (this.disposed) return false;
+    if (this.disposed || !this.visible) return false;
     const width = this.mount.clientWidth;
     const height = this.mount.clientHeight;
-    if (width <= 0 || height <= 0) return false;
+    if (width <= 0 || height <= 0) {
+      this.hasSize = false;
+      this.forceFullRender = true;
+      this.cancelRender();
+      return false;
+    }
+    this.hasSize = true;
     const ratio = window.devicePixelRatio || 1;
     const pixelWidth = Math.max(1, Math.round(width * ratio));
     const pixelHeight = Math.max(1, Math.round(height * ratio));
@@ -839,7 +889,7 @@ export class GhosttyTerminalSurface {
     // Rendering synchronously keeps the repaint inside the same frame as the
     // layout change: ResizeObserver fires before paint, so the browser never
     // composites the old backing store stretched into the new element box.
-    if (shouldRender) this.renderFrame();
+    if (shouldRender || this.forceFullRender) this.renderFrame();
     return true;
   }
 
@@ -858,6 +908,7 @@ export class GhosttyTerminalSurface {
   }
 
   focus(): void {
+    if (this.disposed || !this.visible) return;
     this.input.focus({ preventScroll: true });
   }
 
@@ -957,8 +1008,7 @@ export class GhosttyTerminalSurface {
       // the surface unmounts inside the debounce window.
       this.options.onResize(this.cols, this.rows);
     }
-    if (this.frame !== 0) window.cancelAnimationFrame(this.frame);
-    if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
+    this.cancelRender();
     if (this.compositionSuppressionTimer !== null) {
       window.clearTimeout(this.compositionSuppressionTimer);
     }
@@ -1272,9 +1322,10 @@ export class GhosttyTerminalSurface {
     if (this.linkActivationPointerId === event.pointerId) return;
     // Hover motion is only reportable in any-event tracking (DEC 1003); normal and
     // button-event tracking never report motion without a captured pressed button.
+    const anyEventTracking = this.synchronizeMouseTrackingState();
     if (
       this.mouseReportingPointerId === event.pointerId ||
-      shouldReportTerminalMouse(this.core.isMouseAnyEventTracking(), event)
+      shouldReportTerminalMouse(anyEventTracking, event)
     ) {
       event.preventDefault();
       this.hoverPointer = { x: event.clientX, y: event.clientY };
@@ -1286,6 +1337,7 @@ export class GhosttyTerminalSurface {
       this.sendMouse("motion", this.buttonFromButtons(event.buttons), event);
       return;
     }
+    this.lastMouseMotionData = "";
     if (!this.selectionAnchorScreen || !this.canvas.hasPointerCapture(event.pointerId)) {
       this.updateHoverCursor(event);
       return;
@@ -1364,6 +1416,7 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onPointerLeave = () => {
+    this.lastMouseMotionData = "";
     this.clearHoveredLink();
   };
 
@@ -1375,10 +1428,7 @@ export class GhosttyTerminalSurface {
 
   private refreshHoveredLink(): void {
     const pointer = this.hoverPointer;
-    const link =
-      pointer && shouldShowTerminalLinkHover(this.core.isMouseTracking(), this.linkModifierActive)
-        ? this.linkAt(pointer.x, pointer.y)
-        : null;
+    const link = pointer && this.linkModifierActive ? this.linkAt(pointer.x, pointer.y) : null;
     this.setHoveredLink(link);
   }
 
@@ -1651,18 +1701,38 @@ export class GhosttyTerminalSurface {
   }
 
   private requestRender(): void {
-    if (this.disposed || this.frame !== 0) return;
+    if (this.disposed || !this.visible || !this.hasSize || this.frame !== 0) return;
     this.frame = window.requestAnimationFrame(() => {
       this.frame = 0;
       this.renderFrame();
     });
   }
 
-  private renderFrame(): void {
-    if (this.disposed) return;
+  private cancelRender(): void {
     if (this.frame !== 0) {
       window.cancelAnimationFrame(this.frame);
       this.frame = 0;
+    }
+    if (this.cursorTimer !== null) {
+      window.clearTimeout(this.cursorTimer);
+      this.cursorTimer = null;
+    }
+  }
+
+  private renderFrame(): void {
+    if (this.disposed || !this.visible) return;
+    if (this.frame !== 0) {
+      window.cancelAnimationFrame(this.frame);
+      this.frame = 0;
+    }
+    // Hidden thread drawers stay mounted so switching back is instant, but a
+    // display:none canvas has nothing to show. Ghostty keeps parsing; the
+    // ResizeObserver refits and repaints in full once the mount has a size.
+    if (this.mount.clientWidth === 0 || this.mount.clientHeight === 0) {
+      this.hasSize = false;
+      this.forceFullRender = true;
+      this.cancelRender();
+      return;
     }
     this.snapshot = this.core.snapshot();
     // A cursor that is not blinking right now must be drawn, never caught in an
@@ -1729,7 +1799,7 @@ export class GhosttyTerminalSurface {
 
   private blinkEnabled(): boolean {
     const snapshot = this.snapshot;
-    if (!snapshot) return false;
+    if (!snapshot || !this.visible || !this.hasSize) return false;
     return shouldBlinkTerminalCursor({
       focused: this.focused,
       cursorBlinking: snapshot.cursorBlinking,
@@ -1822,11 +1892,7 @@ export class GhosttyTerminalSurface {
     return terminalLinkAtPositionWithRange(this.snapshot.rowData, cell.y, cell.x);
   }
 
-  private sendMouse(
-    action: "press" | "release" | "motion",
-    button: number | null,
-    event: MouseEvent,
-  ): void {
+  private sendMouse(action: TerminalMouseAction, button: number | null, event: MouseEvent): void {
     const bounds = this.canvas.getBoundingClientRect();
     const data = this.core.encodeMouse({
       action,
@@ -1848,7 +1914,23 @@ export class GhosttyTerminalSurface {
       paddingBottom: Math.max(0, bounds.height - this.originY - this.rows * this.metrics.height),
       anyButtonPressed: event.buttons !== 0,
     });
-    if (data.length > 0) this.options.onData(data);
+    const resolution = resolveTerminalMouseData(action, data, this.lastMouseMotionData);
+    this.lastMouseMotionData = resolution.nextMotionData;
+    if (resolution.send) this.options.onData(data);
+  }
+
+  private synchronizeMouseTrackingState(): boolean {
+    // Output writes can toggle DEC 1003 without moving the pointer. Keep the
+    // previous mode so the next same-cell motion starts a fresh tracking session.
+    const tracking = this.core.isMouseAnyEventTracking();
+    const state = resolveTerminalMouseTrackingState(
+      this.mouseAnyEventTracking,
+      tracking,
+      this.lastMouseMotionData,
+    );
+    this.mouseAnyEventTracking = state.tracking;
+    this.lastMouseMotionData = state.motionData;
+    return tracking;
   }
 
   private buttonFromButtons(buttons: number): number | null {

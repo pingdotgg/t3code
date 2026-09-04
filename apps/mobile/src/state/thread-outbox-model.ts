@@ -1,4 +1,8 @@
 import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/errors";
+import {
+  clampFileAttachmentUploadBytes,
+  fileAttachmentTooLargeMessage,
+} from "@t3tools/client-runtime/state/attachments";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import {
   CommandId,
@@ -14,13 +18,16 @@ import {
   type ProjectId as ProjectIdType,
   type ProviderInteractionMode as ProviderInteractionModeType,
   type RuntimeMode as RuntimeModeType,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import { DraftComposerImageAttachmentSchema } from "../lib/composer-image-schema";
-import type { DraftComposerImageAttachment } from "../lib/composerImages";
+import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
+import type { DraftComposerAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
+import { resolveProviderInteractionMode } from "../features/threads/legacy-plan-mode";
 
+// Keep current writes until a compatible native baseline includes the v4 reader.
 const THREAD_OUTBOX_SCHEMA_VERSION = 3;
 const THREAD_OUTBOX_MAX_RETRY_DELAY_MS = 16_000;
 
@@ -37,13 +44,13 @@ const QueuedThreadCreationSchema = Schema.Struct({
 });
 
 export const QueuedThreadMessageSchema = Schema.Struct({
-  schemaVersion: Schema.Literals([1, 2, THREAD_OUTBOX_SCHEMA_VERSION]),
+  schemaVersion: Schema.Literals([1, 2, THREAD_OUTBOX_SCHEMA_VERSION, 4]),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   messageId: MessageId,
   commandId: CommandId,
   text: Schema.String,
-  attachments: Schema.Array(DraftComposerImageAttachmentSchema),
+  attachments: Schema.Array(DraftComposerAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
@@ -72,7 +79,7 @@ export interface QueuedThreadMessage {
   readonly messageId: MessageId;
   readonly commandId: CommandId;
   readonly text: string;
-  readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
+  readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly modelSelection?: ModelSelectionType;
   readonly runtimeMode?: RuntimeModeType;
   readonly interactionMode?: ProviderInteractionModeType;
@@ -89,11 +96,19 @@ export interface ThreadSettingsSnapshot {
 export function resolveQueuedThreadSettings(
   message: QueuedThreadMessage,
   thread: ThreadSettingsSnapshot,
+  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "showInteractionModeToggle">> = [],
 ): ThreadSettingsSnapshot {
+  const modelSelection = message.modelSelection ?? thread.modelSelection;
+  const provider = providers.find(
+    (candidate) => candidate.instanceId === modelSelection.instanceId,
+  );
   return {
-    modelSelection: message.modelSelection ?? thread.modelSelection,
+    modelSelection,
     runtimeMode: message.runtimeMode ?? thread.runtimeMode,
-    interactionMode: message.interactionMode ?? thread.interactionMode,
+    interactionMode: resolveProviderInteractionMode(
+      provider,
+      message.interactionMode ?? thread.interactionMode,
+    ),
   };
 }
 
@@ -172,6 +187,46 @@ export function resolveThreadOutboxDeliveryAction(input: {
   return input.environmentConnected ? "send" : "wait";
 }
 
+export type ThreadOutboxDispatchStep =
+  | { readonly step: "wait" }
+  | { readonly step: "remove" }
+  | { readonly step: "retry" }
+  | { readonly step: "restore"; readonly reason: string }
+  | { readonly step: "send" };
+
+/**
+ * Wait for provider and file capabilities before sending. Cleanup does not
+ * need config: a creation whose thread exists, or a message whose thread is
+ * gone, can still be removed while config loads.
+ */
+export function resolveThreadOutboxDispatchStep(input: {
+  readonly deliveryAction: ThreadOutboxDeliveryAction;
+  readonly fileAttachments: ReadonlyArray<{ readonly name: string; readonly sizeBytes: number }>;
+  /** Null while the environment's server config has not synced yet. */
+  readonly serverConfig: { readonly maxFileUploadBytes: number | undefined } | null;
+}): ThreadOutboxDispatchStep {
+  if (input.deliveryAction !== "send") {
+    return { step: input.deliveryAction };
+  }
+  if (input.serverConfig === null) {
+    return { step: "retry" };
+  }
+  if (input.fileAttachments.length === 0) {
+    return { step: "send" };
+  }
+  const maxBytes = input.serverConfig.maxFileUploadBytes;
+  if (maxBytes === undefined) {
+    return { step: "restore", reason: "This server does not support file attachments." };
+  }
+  const effectiveMaxBytes = clampFileAttachmentUploadBytes(maxBytes);
+  const oversized = input.fileAttachments.find(
+    (attachment) => attachment.sizeBytes > effectiveMaxBytes,
+  );
+  return oversized
+    ? { step: "restore", reason: fileAttachmentTooLargeMessage(oversized.name, effectiveMaxBytes) }
+    : { step: "send" };
+}
+
 /**
  * A queued creation can only be dispatched once its payload would pass server
  * validation; incomplete payloads stay pending until the user edits them.
@@ -209,7 +264,7 @@ export function shouldRetryThreadOutboxDelivery(error: unknown): boolean {
 }
 
 export type ThreadOutboxCommandStage = "settings-sync" | "start-turn";
-export type ThreadOutboxFailureAction = "retry" | "discard";
+export type ThreadOutboxFailureAction = "retry" | "restore";
 
 export function resolveThreadOutboxFailureAction(input: {
   readonly stage: ThreadOutboxCommandStage;
@@ -223,5 +278,5 @@ export function resolveThreadOutboxFailureAction(input: {
   ) {
     return "retry";
   }
-  return "discard";
+  return "restore";
 }
