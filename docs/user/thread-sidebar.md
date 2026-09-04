@@ -15,10 +15,10 @@ if that project exists there. Otherwise it selects an environment that has it.
 
 ### Start in the background
 
-On desktop, press `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux to start
-a new thread and immediately open another draft. The next draft keeps the workspace
-mode and base branch you selected. With **New worktree**, each background submission
-creates its own worktree.
+In a desktop browser or the desktop app, press `Cmd+Enter` on macOS or `Ctrl+Enter`
+on Windows and Linux to start a new thread and immediately open another draft. The
+next draft keeps the workspace mode and base branch you selected. With **New
+worktree**, each background submission creates its own worktree.
 
 ## Pin and reorder threads
 
@@ -65,6 +65,8 @@ link when available, otherwise its thread ID. See [keybindings](./keybindings.md
 for custom configuration.
 
 ## Inspect agent work
+
+On web and desktop, use **Agents** to follow work delegated to subagents.
 
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
