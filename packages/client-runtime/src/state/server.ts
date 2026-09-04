@@ -512,9 +512,20 @@ export function createPersistedThreadDiscoverySession() {
           continue;
         }
         requestedEnvironmentIds.add(environment.environmentId);
-        void discover(environment.environmentId).catch(() => {
-          requestedEnvironmentIds.delete(environment.environmentId);
-        });
+        void discover(environment.environmentId)
+          .then((result) => {
+            if (
+              typeof result === "object" &&
+              result !== null &&
+              "_tag" in result &&
+              result._tag === "Failure"
+            ) {
+              requestedEnvironmentIds.delete(environment.environmentId);
+            }
+          })
+          .catch(() => {
+            requestedEnvironmentIds.delete(environment.environmentId);
+          });
       }
     },
   };

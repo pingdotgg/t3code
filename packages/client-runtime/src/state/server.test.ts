@@ -144,6 +144,30 @@ describe("persisted thread discovery session", () => {
 
     expect(calls).toEqual([environmentId, environmentId]);
   });
+
+  it("allows a retry when the command resolves with an AsyncResult failure", async () => {
+    const environmentId = EnvironmentId.make("environment-discovery-command-failure");
+    const calls: EnvironmentId[] = [];
+    let shouldFail = true;
+    const session = createPersistedThreadDiscoverySession();
+
+    const discover = async (id: EnvironmentId) => {
+      calls.push(id);
+      if (shouldFail) {
+        shouldFail = false;
+        return { _tag: "Failure" as const };
+      }
+      return { _tag: "Success" as const };
+    };
+
+    session.check([{ environmentId, connected: true }], discover);
+    await Promise.resolve();
+    await Promise.resolve();
+    session.check([{ environmentId, connected: true }], discover);
+    await Promise.resolve();
+
+    expect(calls).toEqual([environmentId, environmentId]);
+  });
 });
 
 function session(client: WsRpcProtocolClient): RpcSession {
