@@ -1018,20 +1018,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
 
   const resumeQueuedRuns = Effect.gen(function* () {
-    const shell = yield* projectionStore.getShellSnapshot();
+    const threadIds = yield* projectionStore.getRecoveryThreadIds("queued-runs");
     let resumed = 0;
-    for (const thread of shell.threads) {
+    for (const threadId of threadIds) {
       const resumedThread = yield* Effect.gen(function* () {
-        const projection = yield* projectionStore.getThreadProjection(thread.id);
+        const projection = yield* projectionStore.getThreadProjection(threadId);
         if (projection.runs.some(isBlockingRun) || nextQueuedRun(projection) === undefined) {
           return false;
         }
-        yield* threadDispatch.withLock(thread.id, startNextQueuedRun(thread.id));
+        yield* threadDispatch.withLock(threadId, startNextQueuedRun(threadId));
         return true;
       }).pipe(
         Effect.catch((cause) =>
           Effect.logWarning("Failed to resume queued V2 run after recovery", {
-            threadId: thread.id,
+            threadId,
             cause,
           }).pipe(Effect.as(false)),
         ),
@@ -7095,32 +7095,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }),
     ),
   );
-  yield* projectionStore.getShellSnapshot().pipe(
-    Effect.flatMap((shell) =>
+  yield* projectionStore.getRecoveryThreadIds("subagent-results").pipe(
+    Effect.flatMap((threadIds) =>
       Effect.forEach(
-        [...shell.threads, ...shell.archivedThreads].filter(
-          (thread) =>
-            thread.lineage.relationshipToParent === "subagent" &&
-            thread.lineage.parentThreadId !== null &&
-            thread.forkedFrom?.type === "node" &&
-            (thread.status === "completed" ||
-              thread.status === "interrupted" ||
-              thread.status === "failed" ||
-              thread.status === "cancelled" ||
-              thread.status === "rolled_back"),
-        ),
-        (thread) =>
-          threadDispatch
-            .withLock(thread.lineage.parentThreadId!, finalizeAppOwnedSubagent(thread.id))
-            .pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("Failed to recover terminal app-owned subagent", {
-                  childThreadId: thread.id,
-                  parentThreadId: thread.lineage.parentThreadId,
-                  cause,
-                }),
-              ),
+        threadIds,
+        (threadId) =>
+          Effect.gen(function* () {
+            const thread = yield* projectionStore.getThreadShell(threadId);
+            const parentThreadId = thread?.lineage.parentThreadId;
+            if (parentThreadId === undefined || parentThreadId === null) return;
+            yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(threadId));
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to recover terminal app-owned subagent", {
+                childThreadId: threadId,
+                cause,
+              }),
             ),
+          ),
         { concurrency: 8, discard: true },
       ),
     ),
@@ -7130,16 +7122,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }),
     ),
   );
-  yield* projectionStore.getShellSnapshot().pipe(
-    Effect.flatMap((shell) =>
+  yield* projectionStore.getRecoveryThreadIds("delegated-completions").pipe(
+    Effect.flatMap((threadIds) =>
       Effect.forEach(
-        [...shell.threads, ...shell.archivedThreads],
-        (thread) =>
+        threadIds,
+        (threadId) =>
           threadDispatch
             .withLock(
-              thread.id,
+              threadId,
               Effect.gen(function* () {
-                const projection = yield* projectionStore.getThreadProjection(thread.id);
+                const projection = yield* projectionStore.getThreadProjection(threadId);
                 const terminalDeliveryRunIds = projection.runs
                   .filter((run) => delegatedTaskTerminalStatus(run.status) !== null)
                   .filter((run) =>
@@ -7151,15 +7143,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   )
                   .map((run) => run.id);
                 for (const runId of terminalDeliveryRunIds) {
-                  yield* finalizeDelegatedCompletionDelivery(thread.id, runId);
+                  yield* finalizeDelegatedCompletionDelivery(threadId, runId);
                 }
-                const refreshed = yield* projectionStore.getThreadProjection(thread.id);
+                const refreshed =
+                  terminalDeliveryRunIds.length === 0
+                    ? projection
+                    : yield* projectionStore.getThreadProjection(threadId);
                 for (const run of refreshed.runs) {
                   if (
                     run.delegatedCompletion?.delivery !== null &&
                     run.delegatedCompletion !== undefined
                   ) {
-                    yield* offerDelegatedCompletionDelivery(thread.id, run.id);
+                    yield* offerDelegatedCompletionDelivery(threadId, run.id);
                   }
                 }
               }),
@@ -7167,7 +7162,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             .pipe(
               Effect.catchCause((cause) =>
                 Effect.logWarning("Failed to recover delegated completion delivery", {
-                  threadId: thread.id,
+                  threadId,
                   cause,
                 }),
               ),
