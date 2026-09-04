@@ -465,13 +465,16 @@ describe("buildCodexDeveloperInstructions", () => {
     NodeAssert.match(instructions, /as gpt-5\.3-codex with high reasoning effort/);
   });
 
-  it("describes Markdown image support in the runtime context in both modes", () => {
+  it("describes Markdown media support in the runtime context in both modes", () => {
     for (const mode of ["default", "plan"] as const) {
       const instructions = buildCodexDeveloperInstructions(mode, {
         model: "gpt-5.3-codex",
         reasoningEffort: "high",
       });
-      NodeAssert.match(instructions, /<runtime_info>.*embed images.*Markdown.*<\/runtime_info>/);
+      NodeAssert.match(
+        instructions,
+        /<runtime_info>.*embed images and videos.*Markdown.*<\/runtime_info>/,
+      );
     }
   });
 
