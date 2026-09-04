@@ -224,7 +224,7 @@ describe("ssh tunnel scripts", () => {
     assert.include(buildRemoteLaunchScript(), "wait_ready");
     assert.include(
       buildRemoteLaunchScript(),
-      '"$MANAGED_WRAPPER_FILE" "$RUNNER_FILE" "$REMOTE_NONCE" "$WRAPPER_READY_FILE" serve --host 127.0.0.1',
+      '"$MANAGED_WRAPPER_FILE" "$RUNNER_FILE" "$REMOTE_NONCE" "$WRAPPER_READY_FILE" "$CHILD_PID_FILE" serve --host 127.0.0.1',
     );
     assert.include(buildRemoteLaunchScript(), '--base-dir "$DEFAULT_SERVER_HOME"');
     assert.notInclude(buildRemoteLaunchScript(), "server-home");
@@ -245,10 +245,10 @@ describe("ssh tunnel scripts", () => {
       'if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$EXPECTED_PID_START" ]',
     );
     assert.include(buildRemoteStopScript(target), 'if ! kill "$REMOTE_PID" 2>/dev/null');
-    assert.include(buildRemoteStopScript(target), 'PS_IDENTITY="$(LC_ALL=C ps -o lstart=');
+    assert.include(buildRemoteStopScript(target), 'PS_IDENTITY="$(LC_ALL=C ps -ww -o lstart=');
     assert.include(
       buildRemoteStopScript(target),
-      'rm -f "$PID_FILE" "$PID_START_FILE" "$PORT_FILE" "$MANAGED_FILE"',
+      'rm -f "$PID_FILE" "$PID_START_FILE" "$CHILD_PID_FILE" "$PORT_FILE" "$MANAGED_FILE"',
     );
     assert.include(
       buildRemoteLaunchScript(),
@@ -262,11 +262,13 @@ describe("ssh tunnel scripts", () => {
     assert.include(buildRemoteLaunchScript(), "port > 65535");
     assert.include(buildRemoteLaunchScript(), 'PID_START_FILE="$STATE_DIR/pid-start"');
     assert.include(buildRemoteLaunchScript(), 'MANAGED_WRAPPER_FILE="$STATE_DIR/run-managed.sh"');
+    assert.include(buildRemoteLaunchScript(), 'REMOTE_CHILD_PID="$(cat "$CHILD_PID_FILE"');
+    assert.include(buildRemoteLaunchScript(), '[ "$DEFAULT_RUNTIME_PID" = "$REMOTE_CHILD_PID" ]');
+    assert.include(buildRemoteLaunchScript(), 'createHash("sha256").update(commandLine)');
+    assert.include(buildRemoteLaunchScript(), "process_is_expected_wrapper()");
+    assert.include(buildRemoteLaunchScript(), "entries.includes(process.argv[3])");
     assert.include(buildRemoteLaunchScript(), 'randomBytes(24).toString("hex")');
-    assert.include(
-      buildRemoteLaunchScript(),
-      'proc:*|ps:*"$MANAGED_WRAPPER_FILE"*"$REMOTE_NONCE"*',
-    );
+    assert.include(buildRemoteLaunchScript(), 'ps:*"$MANAGED_WRAPPER_FILE"*"$REMOTE_NONCE"*');
     assert.include(buildRemoteLaunchScript(), "printf 'ready\\n' >\"$WRAPPER_READY_FILE\"");
     assert.include(buildRemoteLaunchScript(), '[ "$DEFAULT_RUNTIME_PID" = "$REMOTE_PID" ]');
     assert.include(buildRemoteLaunchScript(), 'Number(origin.port || "80") !== port');
@@ -283,10 +285,6 @@ describe("ssh tunnel scripts", () => {
     assert.include(buildRemoteLaunchScript(), 'rm -f "$PID_FILE"');
     assert.include(buildRemoteLaunchScript(), "printf 'external\\n' >\"$MANAGED_FILE\"");
     assert.include(buildRemoteLaunchScript(), 'if [ -z "$REMOTE_PORT" ]; then');
-    assert.isBelow(
-      buildRemoteLaunchScript().indexOf('if [ "$REMOTE_MANAGED" = "managed" ]'),
-      buildRemoteLaunchScript().indexOf("printf 'external\\n' >\"$MANAGED_FILE\""),
-    );
     assert.isBelow(
       buildRemoteLaunchScript().indexOf('DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port'),
       buildRemoteLaunchScript().indexOf('elif [ -n "$REMOTE_PORT" ]; then'),

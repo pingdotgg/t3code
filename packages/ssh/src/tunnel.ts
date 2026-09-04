@@ -471,6 +471,7 @@ DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
 PID_START_FILE="$STATE_DIR/pid-start"
+CHILD_PID_FILE="$STATE_DIR/child-pid"
 MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
@@ -521,11 +522,14 @@ process_identity() {
   if [ -r "/proc/$PID_TO_IDENTIFY/stat" ] && command -v node >/dev/null 2>&1; then
     PROC_IDENTITY="$(node - "/proc/$PID_TO_IDENTIFY/stat" <<'NODE' 2>/dev/null || true
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 const raw = fs.readFileSync(process.argv[2], "utf8");
 const commandEnd = raw.lastIndexOf(")");
 const fields = commandEnd < 0 ? [] : raw.slice(commandEnd + 2).trim().split(/\\s+/);
 const startTicks = fields[19] ?? "";
-if (/^\\d+$/.test(startTicks)) process.stdout.write("proc:" + startTicks);
+const commandLine = fs.readFileSync(process.argv[2].replace(/stat$/, "cmdline"));
+const commandHash = crypto.createHash("sha256").update(commandLine).digest("hex");
+if (/^\\d+$/.test(startTicks)) process.stdout.write("proc:" + startTicks + ":" + commandHash);
 NODE
 )"
     if [ -n "$PROC_IDENTITY" ]; then
@@ -533,9 +537,17 @@ NODE
       return 0
     fi
   fi
-  PS_IDENTITY="$(LC_ALL=C ps -o lstart= -o command= -p "$PID_TO_IDENTIFY" 2>/dev/null || true)"
+  PS_IDENTITY="$(LC_ALL=C ps -ww -o lstart= -o command= -p "$PID_TO_IDENTIFY" 2>/dev/null || true)"
   [ -n "$PS_IDENTITY" ] || return 2
   printf 'ps:%s' "$PS_IDENTITY"
+}
+process_is_expected_wrapper() {
+  [ -r "/proc/$REMOTE_PID/cmdline" ] || return 1
+  node - "/proc/$REMOTE_PID/cmdline" "$MANAGED_WRAPPER_FILE" "$REMOTE_NONCE" <<'NODE' 2>/dev/null
+const fs = require("node:fs");
+const entries = fs.readFileSync(process.argv[2], "utf8").split("\\0").filter(Boolean);
+process.exit(entries.includes(process.argv[3]) && entries.includes(process.argv[4]) ? 0 : 1);
+NODE
 }
 managed_pid_is_owned() {
   [ "$REMOTE_MANAGED" = "managed" ] || return 1
@@ -636,6 +648,7 @@ valid_port() {
   [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
 }
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+REMOTE_CHILD_PID="$(cat "$CHILD_PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 if ! valid_port "$REMOTE_PORT"; then
@@ -650,6 +663,22 @@ if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
 fi
 if [ -n "$DEFAULT_REMOTE_PORT" ] && [ "$DEFAULT_RUNTIME_PID" = "$REMOTE_PID" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
+elif [ -n "$DEFAULT_REMOTE_PORT" ] && [ "$DEFAULT_RUNTIME_PID" = "$REMOTE_CHILD_PID" ]; then
+  if managed_pid_is_owned; then
+    REMOTE_PORT="$DEFAULT_REMOTE_PORT"
+  else
+    OWNERSHIP_STATUS=$?
+    if [ "$OWNERSHIP_STATUS" -eq 2 ]; then
+      printf 'Could not verify managed remote T3 wrapper process %s. State was retained.\\n' "$REMOTE_PID" >&2
+      exit 1
+    fi
+    REMOTE_PID=""
+    REMOTE_PORT="$DEFAULT_REMOTE_PORT"
+    REMOTE_MANAGED="external"
+    rm -f "$PID_FILE" "$PID_START_FILE" "$CHILD_PID_FILE"
+    printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+    printf 'external\\n' >"$MANAGED_FILE"
+  fi
 elif [ -n "$DEFAULT_REMOTE_PORT" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
@@ -665,7 +694,7 @@ elif [ -n "$DEFAULT_REMOTE_PORT" ]; then
       REMOTE_PID=""
       REMOTE_PORT="$DEFAULT_REMOTE_PORT"
       REMOTE_MANAGED="external"
-      rm -f "$PID_FILE" "$PID_START_FILE"
+      rm -f "$PID_FILE" "$PID_START_FILE" "$CHILD_PID_FILE"
       printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
       printf 'external\\n' >"$MANAGED_FILE"
     else
@@ -703,7 +732,7 @@ elif [ -n "$REMOTE_PORT" ]; then
       printf 'Could not verify managed remote T3 server process %s. State was retained.\\n' "$REMOTE_PID" >&2
       exit 1
     fi
-    rm -f "$PID_FILE" "$PID_START_FILE" "$PORT_FILE" "$MANAGED_FILE"
+    rm -f "$PID_FILE" "$PID_START_FILE" "$CHILD_PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
     REMOTE_PID=""
     REMOTE_PORT=""
     REMOTE_MANAGED=""
@@ -713,7 +742,7 @@ else
     printf 'Managed remote T3 server process %s could not be safely stopped. State was retained.\\n' "$REMOTE_PID" >&2
     exit 1
   fi
-  rm -f "$PID_FILE" "$PID_START_FILE" "$PORT_FILE" "$MANAGED_FILE"
+  rm -f "$PID_FILE" "$PID_START_FILE" "$CHILD_PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
   REMOTE_PID=""
   REMOTE_PORT=""
   REMOTE_MANAGED=""
@@ -730,10 +759,12 @@ set -eu
 RUNNER_FILE="$1"
 LAUNCH_NONCE="$2"
 WRAPPER_READY_FILE="$3"
-shift 3
+CHILD_PID_FILE="$4"
+shift 4
 CHILD_PID=""
 stop_child() {
   rm -f "$WRAPPER_READY_FILE"
+  rm -f "$CHILD_PID_FILE"
   if [ -n "$CHILD_PID" ] && kill -0 "$CHILD_PID" 2>/dev/null; then
     kill "$CHILD_PID" 2>/dev/null || true
     wait "$CHILD_PID" 2>/dev/null || true
@@ -745,16 +776,18 @@ trap stop_child TERM INT HUP
 printf 'ready\\n' >"$WRAPPER_READY_FILE"
 env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" "$@" &
 CHILD_PID="$!"
+printf '%s\\n' "$CHILD_PID" >"$CHILD_PID_FILE"
 CHILD_EXIT=0
 wait "$CHILD_PID" || CHILD_EXIT="$?"
 rm -f "$WRAPPER_READY_FILE"
+rm -f "$CHILD_PID_FILE"
 exit "$CHILD_EXIT"
 SH
   chmod 700 "$MANAGED_WRAPPER_FILE"
   REMOTE_NONCE="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(24).toString("hex"))')"
   WRAPPER_READY_FILE="$STATE_DIR/wrapper-ready.$REMOTE_NONCE"
   rm -f "$WRAPPER_READY_FILE"
-  nohup "$MANAGED_WRAPPER_FILE" "$RUNNER_FILE" "$REMOTE_NONCE" "$WRAPPER_READY_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
+  nohup "$MANAGED_WRAPPER_FILE" "$RUNNER_FILE" "$REMOTE_NONCE" "$WRAPPER_READY_FILE" "$CHILD_PID_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   REMOTE_MANAGED="managed"
   READY_ATTEMPT=0
@@ -775,7 +808,13 @@ SH
     IDENTITY_ATTEMPT=$((IDENTITY_ATTEMPT + 1))
     if PID_IDENTITY="$(process_identity "$REMOTE_PID")"; then
       case "$PID_IDENTITY" in
-        proc:*|ps:*"$MANAGED_WRAPPER_FILE"*"$REMOTE_NONCE"*) REMOTE_PID_START="$PID_IDENTITY"; break ;;
+        proc:*)
+          if process_is_expected_wrapper; then
+            REMOTE_PID_START="$PID_IDENTITY"
+            break
+          fi
+          ;;
+        ps:*"$MANAGED_WRAPPER_FILE"*"$REMOTE_NONCE"*) REMOTE_PID_START="$PID_IDENTITY"; break ;;
       esac
     fi
     sleep 0.05
@@ -800,7 +839,7 @@ SH
       printf 'It wrote nothing to %s, so it exited before producing any output.\\n' "$LOG_FILE" >&2
     fi
     if stop_managed_pid; then
-      rm -f "$PID_FILE" "$PID_START_FILE" "$PORT_FILE" "$MANAGED_FILE"
+      rm -f "$PID_FILE" "$PID_START_FILE" "$CHILD_PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
     fi
     exit 1
   fi
@@ -825,6 +864,7 @@ export const REMOTE_STOP_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
 PID_FILE="$STATE_DIR/pid"
 PID_START_FILE="$STATE_DIR/pid-start"
+CHILD_PID_FILE="$STATE_DIR/child-pid"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
 process_identity() {
@@ -836,11 +876,14 @@ process_identity() {
   if [ -r "/proc/$PID_TO_IDENTIFY/stat" ] && command -v node >/dev/null 2>&1; then
     PROC_IDENTITY="$(node - "/proc/$PID_TO_IDENTIFY/stat" <<'NODE' 2>/dev/null || true
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 const raw = fs.readFileSync(process.argv[2], "utf8");
 const commandEnd = raw.lastIndexOf(")");
 const fields = commandEnd < 0 ? [] : raw.slice(commandEnd + 2).trim().split(/\\s+/);
 const startTicks = fields[19] ?? "";
-if (/^\\d+$/.test(startTicks)) process.stdout.write("proc:" + startTicks);
+const commandLine = fs.readFileSync(process.argv[2].replace(/stat$/, "cmdline"));
+const commandHash = crypto.createHash("sha256").update(commandLine).digest("hex");
+if (/^\\d+$/.test(startTicks)) process.stdout.write("proc:" + startTicks + ":" + commandHash);
 NODE
 )"
     if [ -n "$PROC_IDENTITY" ]; then
@@ -848,7 +891,7 @@ NODE
       return 0
     fi
   fi
-  PS_IDENTITY="$(LC_ALL=C ps -o lstart= -o command= -p "$PID_TO_IDENTIFY" 2>/dev/null || true)"
+  PS_IDENTITY="$(LC_ALL=C ps -ww -o lstart= -o command= -p "$PID_TO_IDENTIFY" 2>/dev/null || true)"
   [ -n "$PS_IDENTITY" ] || return 2
   printf 'ps:%s' "$PS_IDENTITY"
 }
@@ -880,7 +923,7 @@ if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$EXPECTED_PID_START" ]; then
       printf 'Could not verify managed remote T3 server process %s. State was retained.\\n' "$REMOTE_PID" >&2
       exit 1
     fi
-    rm -f "$PID_FILE" "$PID_START_FILE" "$PORT_FILE" "$MANAGED_FILE"
+    rm -f "$PID_FILE" "$PID_START_FILE" "$CHILD_PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
     printf '{"stopped":true}\\n'
     exit 0
   fi
@@ -904,7 +947,7 @@ if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$EXPECTED_PID_START" ]; then
     fi
   fi
 fi
-rm -f "$PID_FILE" "$PID_START_FILE" "$PORT_FILE" "$MANAGED_FILE"
+rm -f "$PID_FILE" "$PID_START_FILE" "$CHILD_PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
 printf '{"stopped":true}\\n'
 `;
 
