@@ -11,14 +11,16 @@ import {
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as Option from "effect/Option";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -398,6 +400,12 @@ export class SessionStore extends Context.Service<
     readonly revokeAllExcept: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
+    /**
+     * Completes when this session is revoked, or immediately if it already is.
+     * WebSocket handlers race the live socket against this so a kick closes the
+     * connection instead of leaving it open until TCP drops.
+     */
+    readonly awaitRevoked: (sessionId: AuthSessionId) => Effect.Effect<void>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly recordClientConnection: (
@@ -478,6 +486,9 @@ export const make = Effect.gen(function* () {
   const authSessions = yield* AuthSessions.AuthSessionRepository;
   const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
   const connectedSessionsRef = yield* Ref.make(new Map<string, number>());
+  const revocationWaitersRef = yield* Ref.make(
+    new Map<string, ReadonlyArray<Deferred.Deferred<void>>>(),
+  );
   const changesPubSub = yield* PubSub.unbounded<SessionCredentialChange>();
   const cookieInput = {
     mode: serverConfig.mode,
@@ -501,6 +512,69 @@ export const make = Effect.gen(function* () {
       type: "clientRemoved",
       sessionId,
     }).pipe(Effect.asVoid);
+
+  const completeRevocationWaiters = (sessionId: AuthSessionId) =>
+    Ref.modify(revocationWaitersRef, (current) => {
+      const waiters = current.get(sessionId) ?? [];
+      if (waiters.length === 0) {
+        return [waiters, current] as const;
+      }
+      const next = new Map(current);
+      next.delete(sessionId);
+      return [waiters, next] as const;
+    }).pipe(
+      Effect.flatMap((waiters) =>
+        Effect.forEach(
+          waiters,
+          (waiter) => Deferred.succeed(waiter, undefined).pipe(Effect.asVoid),
+          { discard: true },
+        ),
+      ),
+    );
+
+  const removeRevocationWaiter = (sessionId: AuthSessionId, waiter: Deferred.Deferred<void>) =>
+    Ref.update(revocationWaitersRef, (current) => {
+      const waiters = current.get(sessionId);
+      if (waiters === undefined) {
+        return current;
+      }
+      const remaining = waiters.filter((entry) => entry !== waiter);
+      if (remaining.length === waiters.length) {
+        return current;
+      }
+      const next = new Map(current);
+      if (remaining.length === 0) {
+        next.delete(sessionId);
+      } else {
+        next.set(sessionId, remaining);
+      }
+      return next;
+    });
+
+  const awaitRevoked: SessionStore["Service"]["awaitRevoked"] = Effect.fn(
+    "SessionStore.awaitRevoked",
+  )(function* (sessionId) {
+    const waiter = yield* Deferred.make<void>();
+    yield* Ref.update(revocationWaitersRef, (current) => {
+      const next = new Map(current);
+      next.set(sessionId, [...(current.get(sessionId) ?? []), waiter]);
+      return next;
+    });
+    return yield* Effect.gen(function* () {
+      const lookup = yield* authSessions.getById({ sessionId }).pipe(Effect.result);
+      if (Result.isSuccess(lookup)) {
+        const row = lookup.success;
+        if (Option.isNone(row) || row.value.revokedAt !== null) {
+          yield* Deferred.succeed(waiter, undefined);
+        }
+      } else {
+        yield* Effect.logWarning(
+          "Failed to check whether a live session was already revoked.",
+        ).pipe(Effect.annotateLogs({ sessionId, cause: lookup.failure }));
+      }
+      return yield* Deferred.await(waiter);
+    }).pipe(Effect.ensuring(removeRevocationWaiter(sessionId, waiter)));
+  });
 
   const loadActiveSession = (sessionId: AuthSessionId) =>
     Effect.gen(function* () {
@@ -895,6 +969,7 @@ export const make = Effect.gen(function* () {
           next.delete(sessionId);
           return next;
         });
+        yield* completeRevocationWaiters(sessionId);
         yield* emitRemoved(sessionId);
       }
       return revoked;
@@ -925,7 +1000,10 @@ export const make = Effect.gen(function* () {
       });
       yield* Effect.forEach(
         revokedSessionIds,
-        (revokedSessionId) => emitRemoved(revokedSessionId),
+        (revokedSessionId) =>
+          completeRevocationWaiters(revokedSessionId).pipe(
+            Effect.andThen(emitRemoved(revokedSessionId)),
+          ),
         {
           concurrency: "unbounded",
           discard: true,
@@ -948,6 +1026,7 @@ export const make = Effect.gen(function* () {
     },
     revoke,
     revokeAllExcept,
+    awaitRevoked,
     markConnected,
     markDisconnected,
     recordClientConnection,

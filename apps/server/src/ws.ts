@@ -2834,7 +2834,13 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         );
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
-          () => rpcWebSocketHttpEffect,
+          () =>
+            rpcWebSocketHttpEffect.pipe(
+              // A kick stamps revoked_at but used to leave this socket open.
+              // Racing the live connection against awaitRevoked interrupts it
+              // so the client is dropped now, not whenever TCP happens to die.
+              Effect.raceFirst(sessions.awaitRevoked(session.sessionId)),
+            ),
           () => sessions.markDisconnected(session.sessionId),
         );
       }).pipe(

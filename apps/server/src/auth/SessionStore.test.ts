@@ -3,6 +3,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -302,6 +303,77 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         expect(revokedClientWebSocket.sessionId).toBe(client.sessionId);
         expect(revokedClientWebSocket.revokedAt.epochMilliseconds).toBeGreaterThanOrEqual(0);
       }
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+
+  it.effect("completes awaitRevoked when the session is revoked", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({
+        subject: "await-revoked",
+        method: "bearer-access-token",
+      });
+      const fiber = yield* sessions
+        .awaitRevoked(issued.sessionId)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* sessions.revoke(issued.sessionId);
+      yield* Fiber.join(fiber);
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+
+  it.effect("completes awaitRevoked immediately when the session is already revoked", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({
+        subject: "already-revoked",
+        method: "bearer-access-token",
+      });
+      yield* sessions.revoke(issued.sessionId);
+      yield* sessions.awaitRevoked(issued.sessionId);
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+
+  it.effect("completes awaitRevoked when other sessions are revoked", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const keep = yield* sessions.issue({
+        subject: "keep",
+        method: "bearer-access-token",
+      });
+      const drop = yield* sessions.issue({
+        subject: "drop",
+        method: "bearer-access-token",
+      });
+      const fiber = yield* sessions
+        .awaitRevoked(drop.sessionId)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* sessions.revokeAllExcept(keep.sessionId);
+      yield* Fiber.join(fiber);
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+
+  it.effect("does not complete awaitRevoked for a different session", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const watched = yield* sessions.issue({
+        subject: "watched",
+        method: "bearer-access-token",
+      });
+      const other = yield* sessions.issue({
+        subject: "other",
+        method: "bearer-access-token",
+      });
+      const fiber = yield* sessions
+        .awaitRevoked(watched.sessionId)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* sessions.revoke(other.sessionId);
+      expect(fiber.pollUnsafe()).toBeUndefined();
+
+      yield* sessions.revoke(watched.sessionId);
+      yield* Fiber.join(fiber);
     }).pipe(Effect.provide(makeSessionStoreLayer())),
   );
 

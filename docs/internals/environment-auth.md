@@ -152,6 +152,10 @@ appends only that ticket to the socket URL as `wsTicket`. This keeps long-lived
 tokens and browser cookies out of WebSocket URLs while letting the handshake
 authenticate.
 
+Revoking a session closes any live WebSocket that authenticated as that session.
+A later upgrade is already rejected because the ticket's parent session is revoked.
+The live socket used to stay open until TCP dropped.
+
 The ticket carries its session's scopes; each RPC method then enforces
 `orchestration:read`, `orchestration:operate`, `terminal:operate`,
 `review:write`, `relay:write`, or `access:read` as appropriate, through

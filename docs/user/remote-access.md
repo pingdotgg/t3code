@@ -284,4 +284,4 @@ controls remain in **Settings** → **Connections** on web and desktop or **Sett
 - Prefer binding `--host` to a trusted private address, such as a Tailnet IP, instead of exposing the server broadly.
 - Anyone with a valid pairing credential can create a session until that credential expires or is revoked.
 - Hosted pairing links keep the credential in the URL hash so it is not sent to the hosted app server, but it can still be exposed through browser history, screenshots, logs, or copy/paste.
-- Use `t3 auth` to revoke credentials or sessions you no longer trust.
+- Use `t3 auth` to revoke credentials or sessions you no longer trust. Revoking a session also closes that client's live connection.
