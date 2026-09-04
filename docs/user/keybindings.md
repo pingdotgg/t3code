@@ -37,6 +37,10 @@ Examples: `mod+j`, `mod+shift+d`, `ctrl+l`, `cmd+k`.
 Commands are IDs like `terminal.toggle`, `commandPalette.toggle`, `preview.refresh`, and
 `chat.new`. Project scripts are addressable as `script.{id}.run`, for example `script.test.run`.
 
+`project.openFolder` opens the system folder picker and adds the chosen folder as a project, or
+jumps to the existing project for that folder. Its default shortcut is `mod+alt+o`. The native
+picker needs the desktop app; elsewhere the shortcut opens the add-project flow instead.
+
 `filePicker.toggle` opens file search for the active project and defaults to `mod+p`.
 `projectSearch.toggle` searches inside the active project's files and defaults to `mod+shift+f`.
 Repeating either shortcut closes that search, and switching shortcuts replaces the open search.

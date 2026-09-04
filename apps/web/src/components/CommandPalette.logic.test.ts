@@ -92,6 +92,11 @@ describe("reduceCommandPaletteUiState", () => {
       mode: "command",
       openIntent: { kind: "new-thread-in" },
     });
+    expect(reduceCommandPaletteUiState(filesOpen, { _tag: "OpenFolderPicker" })).toEqual({
+      open: true,
+      mode: "command",
+      openIntent: { kind: "open-folder" },
+    });
   });
 
   it("preserves the mode on close and resets it on open", () => {
