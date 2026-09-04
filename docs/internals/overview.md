@@ -18,13 +18,13 @@ there, never in the client.
 ┌──────────────────▼─────────────────────────────┐
 │ apps/server                                    │
 │  orchestration engine (event-sourced)          │
-│  provider driver registry (5 built-in drivers) │
+│  provider driver registry (6 built-in drivers) │
 │  checkpointing, VCS, terminals, filesystem     │
 └──────────────────┬─────────────────────────────┘
                    │ per-driver transport
 ┌──────────────────▼─────────────────────────────┐
 │ Agent CLIs: Codex, Claude, Cursor, Grok,       │
-│ OpenCode                                       │
+│ OpenCode, Antigravity                          │
 └────────────────────────────────────────────────┘
 ```
 
@@ -73,7 +73,8 @@ processing is totally ordered. For each envelope `processEnvelope`:
 3. inside one SQL transaction, appends events to the event store, applies them to the in-memory read
    model via [`projector.ts`][projector], projects them into persisted tables, and writes the
    accepted receipt;
-4. after commit, swaps in the new read model and publishes committed events to subscribers.
+4. after commit, swaps in the new read model, cleans up attachments, and publishes committed events
+   to subscribers. Attachment cleanup failures are logged and do not reject committed commands.
 
 Because persistence and projection share a transaction, the read model cannot durably disagree with
 the event log. On dispatch failure the engine rereads persisted events past the starting sequence and
@@ -88,15 +89,27 @@ A turn is complete when its session leaves `running` status, projected by
 `settledTurnStateForSessionStatus` in [`projector.ts`][projector]. Checkpoint work settling later
 does not define turn end.
 
-Thread settlement is server-owned. Per-environment settings control PR and inactivity settlement.
+Thread settlement is server-owned. Each server's own settings control PR and inactivity
+settlement. Those keys are user preferences, so clients write them to every shared-settings sync
+target (`SHARED_SERVER_SETTING_KEYS` in `packages/client-runtime/src/state/sharedSettings.ts`) and
+warn when another target drifts. A target must have an active connection and advertise the
+`threadAutoSettlement` capability, which signals that the server can hold every shared key.
 [`ThreadSettlementReactor`][settlement] checks threads at startup, when those settings change, and
 once per minute, including when no client is connected. It dispatches the guarded internal
 `thread.auto-settle` command, which uses the existing settlement event lifecycle. Automatic
 settlement excludes live background work and requires a comparable PR timestamp for immediate PR
-settlement. The command also rejects any later event for its thread after the reactor's snapshot.
-Clients render the persisted settlement state and do not derive settlement from PR or inactivity
-state. A committed `thread.settled` event also lets `ProviderCommandReactor` stop an idle provider
-session.
+settlement. The command carries the latest activity timestamp and rejects any later event for its
+thread after the reactor's snapshot. The sweep looks a branch up from the thread's worktree when it
+still exists, so it shares the per-cwd PR cache the sidebar polls instead of spending a second host
+request. Clients render the persisted settlement state and do not derive settlement from PR or
+inactivity state. A committed `thread.settled` event also lets `ProviderCommandReactor` stop an idle
+provider session.
+
+At turn completion, `CheckpointReactor` refreshes PR discovery when the checkout matches the
+thread's non-default branch. `VcsStatusBroadcaster` requires loaded remote status and permission
+from background policy. `GitManager` retries only a successful "no PR" cache entry for the current
+branch, preserving known PRs and failure backoff without fetching remotes. Remote status reads
+that write the broadcaster cache share a lock per cwd, including the initial status load.
 
 ## Drainable workers
 
@@ -117,8 +130,8 @@ build production behavior on receipts.
 
 ## Provider drivers
 
-Five drivers ship built in, registered in [`builtInDrivers.ts`][drivers] as `BUILT_IN_DRIVERS`:
-Codex, Claude, Cursor, Grok, and OpenCode. A driver declares its kind and config schema and creates a
+Six drivers ship built in, registered in [`builtInDrivers.ts`][drivers] as `BUILT_IN_DRIVERS`:
+Codex, Claude, Cursor, Grok, OpenCode, and Antigravity. A driver declares its kind and config schema and creates a
 scoped adapter; `ProviderInstanceRegistry` owns live instances and `ProviderAdapterRegistry` resolves
 an instance to its adapter, so `ProviderService` routes session and turn operations without knowing
 which agent is behind them. See [providers.md](./providers.md).

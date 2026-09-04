@@ -10,8 +10,15 @@ function isWindowsAbsolutePath(value: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
 }
 
-function isAbsolutePath(value: string): boolean {
+/** A file route holding an absolute path shows a host file outside the workspace. */
+export function isAbsolutePath(value: string): boolean {
   return value.startsWith("/") || isWindowsAbsolutePath(value);
+}
+
+/** Route segments that `normalizeRoutePath` joins back into the same path, root included. */
+export function fileRoutePathSegments(path: string): string[] {
+  const segments = path.split("/").filter((segment) => segment.length > 0);
+  return path.startsWith("/") ? ["", ...segments] : segments;
 }
 
 function isWindowsPathStyle(value: string): boolean {
@@ -81,7 +88,12 @@ export function resolveWorkspaceRelativeFilePath(
     return null;
   }
 
-  return normalizeRelativePath(normalizedTarget.slice(normalizedRoot.length + 1));
+  const relativePath = normalizedTarget.slice(normalizedRoot.length + 1);
+  // `/repo/../x` starts with the root but escapes it.
+  if (relativePath.split("/").includes("..")) {
+    return null;
+  }
+  return normalizeRelativePath(relativePath);
 }
 
 export function isVideoPreviewFile(path: string): boolean {

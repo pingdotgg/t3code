@@ -1,27 +1,54 @@
-import { memo, useCallback, useEffect, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
-import type { ExpandedImagePreview } from "./ExpandedImagePreview";
-import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
+import type { ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
+import { useAssetUrlRefresh, useAssetUrlState } from "../../assets/assetUrls";
 import { OpenMediaLink } from "../media/OpenMediaLink";
 import { MediaActions, type MediaActionSource } from "../media/MediaActions";
+import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { isContextMenuOpen } from "../../contextMenuFallback";
+import { composerFloatingLayerProps } from "./composerEventScope";
 
 interface ExpandedImageDialogProps {
   preview: ExpandedImagePreview;
   onClose: () => void;
 }
 
+const EXPANDED_MEDIA_STATE_CLASS_NAME =
+  "flex aspect-auto h-48 min-h-0 w-[min(92vw,32rem)] flex-col items-center justify-center gap-3 rounded-lg border border-border/70 bg-black p-6 text-center text-sm text-white shadow-2xl";
+
 function ExpandedMediaFailure({ children }: { children: ReactNode }) {
   return (
-    <div
-      role="alert"
-      className="flex h-48 w-[min(92vw,32rem)] flex-col items-center justify-center gap-3 rounded-lg border border-border/70 bg-black px-6 text-center text-sm text-white shadow-2xl"
-    >
+    <div role="alert" className={EXPANDED_MEDIA_STATE_CLASS_NAME}>
       {children}
     </div>
+  );
+}
+
+function ExpandedVideo({ item }: { readonly item: ExpandedImageItem }) {
+  const asset = item.actionsSource?.asset;
+  const assetUrl = useAssetUrlState(asset?.environmentId ?? null, asset?.resource ?? null);
+  const refreshAssetUrl = useAssetUrlRefresh(asset?.environmentId ?? null, asset?.resource ?? null);
+  const src = asset
+    ? assetUrl._tag === "Success"
+      ? assetUrl.url + (item.srcFragment ?? "")
+      : null
+    : item.src;
+  return (
+    <MediaVideoPlayer
+      src={src}
+      label={item.name}
+      sourceFailed={assetUrl._tag === "Failure"}
+      originalUrl={item.originalUrl}
+      preload="metadata"
+      autoPlay={item.autoPlay ?? true}
+      className="block max-h-[86vh] max-w-[92vw] text-center"
+      videoClassName="aspect-auto max-h-[86vh] w-auto max-w-[92vw] rounded-lg border border-border/70 shadow-2xl"
+      stateClassName={EXPANDED_MEDIA_STATE_CLASS_NAME}
+      onRetry={asset ? refreshAssetUrl : undefined}
+    />
   );
 }
 
@@ -30,7 +57,6 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   onClose,
 }: ExpandedImageDialogProps) {
   const [imageOffset, setImageOffset] = useState(0);
-  const [failedVideoSrc, setFailedVideoSrc] = useState<string | null>(null);
   const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
   const index = (preview.index + imageOffset + preview.images.length) % preview.images.length;
   const item = preview.images[index];
@@ -52,6 +78,20 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
 
   const navigateImage = useCallback((direction: -1 | 1) => {
     setImageOffset((current) => current + direction);
+  }, []);
+
+  // The element that opened the preview gets focus back on close. Without
+  // this a close button click leaves focus on the unmounted dialog, and the
+  // composer that owned the opener reads that as a blur and rests.
+  const openerRef = useRef<Element | null>(null);
+  useEffect(() => {
+    openerRef.current = document.activeElement;
+    return () => {
+      const opener = openerRef.current;
+      if (opener instanceof HTMLElement && opener.isConnected) {
+        opener.focus({ preventScroll: true });
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -90,6 +130,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
 
   return createPortal(
     <div
+      {...composerFloatingLayerProps}
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 px-4 py-6 [-webkit-app-region:no-drag]"
       role="dialog"
       aria-modal="true"
@@ -125,24 +166,9 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
           >
             <XIcon />
           </Button>
-          {item.type === "video" && failedVideoSrc === item.src ? (
-            <ExpandedMediaFailure>
-              <p>This video could not be loaded or played.</p>
-              <OpenMediaLink originalUrl={item.originalUrl} src={item.src} fileName={item.name} />
-            </ExpandedMediaFailure>
-          ) : item.type === "video" ? (
-            <video
-              src={item.src}
-              aria-label={item.name}
-              autoPlay={item.autoPlay ?? true}
-              preload="metadata"
-              controls
-              playsInline
-              onLoadedMetadata={(event) => prepareVideoFirstFrame(event.currentTarget)}
-              onError={() => setFailedVideoSrc(item.src)}
-              className="max-h-[86vh] max-w-[92vw] rounded-lg border border-border/70 bg-black object-contain shadow-2xl"
-            />
-          ) : failedImageSrc === item.src ? (
+          {item.type === "video" ? (
+            <ExpandedVideo key={index} item={item} />
+          ) : item.src === null || failedImageSrc === item.src ? (
             <ExpandedMediaFailure>
               <p>
                 {openOriginalLink

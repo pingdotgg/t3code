@@ -37,6 +37,14 @@ an over-the-air JavaScript update alone is insufficient. The Android view manage
 implements the generated identifier setter as a no-op because this behavior is
 specific to iOS 26 and later.
 
+On iOS 26 the full-screen back swipe is UIKit's `interactiveContentPopGestureRecognizer`,
+and react-native-screens makes it wait for any horizontally scrollable ScrollView to
+fail first. Upstream applies that to every horizontal ScrollView regardless of
+position, so a back swipe on a code block or table that is already at its leading
+edge only bounces. The patch narrows the rule to ScrollViews with content still
+hidden to the left; at the leading edge they yield to the pop gesture like plain
+text does.
+
 After changing a dependency patch, refresh CocoaPods before rebuilding an
 existing iOS project. pnpm installs each patch hash in a different directory;
 an old Pods project can keep compiling the previous directory even though Metro
@@ -86,10 +94,15 @@ composer thumbnails, and workspace image previews. The workspace PDF web preview
 Open PDF action for the native viewer. Android retains its image viewer and uses the
 system chooser for PDFs. Saving images on iOS uses the add-only photo-library permission.
 
-Received videos open directly from their signed asset URL. AVKit handles buffering;
-the client does not download the entire file or show a separate opening overlay before
-presentation. The URL is captured once per preview so credential refresh does not
-restart playback. Saving or sharing still downloads the original file.
+Every full-screen video preview on iOS is AVKit, playing directly from the signed asset
+URL: sent attachments, composer drafts, and file links that point at a video. Inline
+markdown embeds and the workspace file screen play in place with the Expo Video player.
+AVKit handles buffering; the client does not download the entire file or show a separate
+opening overlay before presentation.
+The URL is captured once per preview so credential refresh does not restart playback.
+Media actions (copy path, open in file viewer, save or share) belong to the surface that
+opened the video, a long-press on the thumbnail, so the player carries no
+menu. AVKit has no retry; a failure alerts and closes, re-mints the URL in the background, and the next open plays from the fresh one.
 
 The native presentation promise completes after dismissal. Local draft previews
 hold their file lease until that promise settles. The iOS preview component requests
@@ -97,8 +110,10 @@ native dismissal when its source screen unmounts. Playback pauses in the backgro
 AVPlayer activates audio as playback starts. The presenter pauses and releases
 its own player on close, then restores the previous audio-session configuration
 if no other component changed it during playback. It does not deactivate the
-shared session, which may still serve another player or recorder. Android retains
-its React Native modal and Expo Video player.
+shared session, which may still serve another player or recorder. Android plays every
+video, attachments included, in its React Native modal with the Expo Video player.
+Composer drafts play and share from their local file; other videos stream from the
+signed URL and download only for save or share.
 
 `shareFileFromSource` uses the same source registration to anchor UIKit's activity
 controller. Its promise completes when the native share flow finishes, keeping

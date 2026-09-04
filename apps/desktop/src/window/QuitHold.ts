@@ -11,9 +11,13 @@ export const QUIT_DOUBLE_PRESS_MS = 500;
 // release: macOS suppresses a letter keyUp while the command key is down, so a
 // tap release can go completely unseen and a release-based timer would quit
 // anyway. Once held, quitting waits for Q keyUp or a quiet grace period after
-// modifier keyUp so repeats cannot reach the next app. Keyboards with
-// auto-repeat disabled fall back to the application menu Quit action.
+// repeats stop so they cannot reach the next app. Keyboards with
+// auto-repeat disabled must use a double press or the application menu Quit action.
+// Supporting holds without repeats requires a native physical key-state check.
 export const QUIT_HOLD_RELEASE_GRACE_MS = 600;
+// A slow repeat rate can exceed the fixed grace. Waiting for two observed
+// cadences keeps the timer behind the next repeat without slowing normal rates.
+const QUIT_HOLD_REPEAT_CADENCE_MULTIPLIER = 2;
 
 export interface QuitHoldKeyInput {
   readonly type: string;
@@ -29,6 +33,7 @@ export interface QuitShortcutOptions {
   readonly platform: NodeJS.Platform;
   readonly getMode: () => Promise<QuitConfirmationMode>;
   readonly notify: (event: QuitShortcutHintEvent) => void;
+  readonly concealWindow: () => void;
   readonly quit: () => void;
 }
 
@@ -45,9 +50,11 @@ export function makeQuitShortcutHandler(
   let quitOnRelease = false;
   let heldSince = 0;
   let lastPressAt = 0;
+  let lastRepeatAt = 0;
+  let repeatCadenceMs = 0;
   // Incremented when a press is superseded or explicitly cancelled. A plain
-  // key release does not invalidate its pending mode read: direct mode and a
-  // completed second press must still be honored after that read settles.
+  // key release does not invalidate its pending mode read: a direct-mode
+  // press must still quit after that read settles.
   let generation = 0;
 
   const clearWatchdog = () => {
@@ -58,12 +65,14 @@ export function makeQuitShortcutHandler(
   };
 
   const release = (cancelPendingMode = true, keepDoublePressHint = false) => {
+    if (cancelPendingMode) generation += 1;
     if (!holding && !notified) return;
     const keepHint = keepDoublePressHint && mode === "double-click" && notified;
-    if (cancelPendingMode) generation += 1;
     holding = false;
     armed = false;
     quitOnRelease = false;
+    lastRepeatAt = 0;
+    repeatCadenceMs = 0;
     if (keepHint) return;
 
     mode = undefined;
@@ -77,7 +86,17 @@ export function makeQuitShortcutHandler(
   // Dismisses any overlay first so a cancelled quit cannot leave a stale hint.
   const quitNow = () => {
     release();
+    lastPressAt = 0;
     options.quit();
+  };
+
+  const quitAfterQuietPeriod = () => {
+    clearWatchdog();
+    const quietPeriodMs = Math.max(
+      QUIT_HOLD_RELEASE_GRACE_MS,
+      repeatCadenceMs * QUIT_HOLD_REPEAT_CADENCE_MULTIPLIER,
+    );
+    watchdog = setTimeout(quitNow, quietPeriodMs);
   };
 
   return (event, input) => {
@@ -91,32 +110,40 @@ export function makeQuitShortcutHandler(
         if (!quitOnRelease) {
           release(false, true);
         } else {
-          watchdog = setTimeout(quitNow, QUIT_HOLD_RELEASE_GRACE_MS);
+          quitAfterQuietPeriod();
         }
       }
       return;
     }
     if (input.type !== "keyDown") return;
 
-    if (quitOnRelease && input.isAutoRepeat && key === "q") {
+    const modifierDown = options.platform === "darwin" ? input.meta : input.control;
+    if (input.isAutoRepeat && modifierDown && key === "q") {
+      const now = Date.now();
+      repeatCadenceMs = now - (lastRepeatAt === 0 ? heldSince : lastRepeatAt);
+      lastRepeatAt = now;
+    }
+    if (quitOnRelease) {
       event.preventDefault();
-      clearWatchdog();
+      if (key === "q") {
+        if (modifierDown) {
+          quitAfterQuietPeriod();
+        } else {
+          clearWatchdog();
+        }
+      }
       return;
     }
 
-    const modifierDown = options.platform === "darwin" ? input.meta : input.control;
     if (!modifierDown || input.alt || input.shift || key !== "q") {
       // Re-pressing the platform modifier is the first half of a second full
       // quit shortcut, so it must not cancel an active double-press window.
       if (key === modifierKey && !input.alt && !input.shift) return;
 
-      // Any other key (or an extra modifier) pressed mid-hold breaks the
-      // gesture; without this the hold timer keeps running through the
-      // interruption and the next qualifying repeat would quit early. The
-      // interrupted press also stops counting toward a double press, but only
-      // here, not in release(), which runs mid-restart on an unseen-release
-      // re-press and must not wipe that press's own tap timestamp.
-      if ((holding || notified) && !input.isAutoRepeat) {
+      // Other keys cancel the hold and the first tap, even after release.
+      // Keep this separate from release(), which also runs when a fresh Q
+      // keydown follows a keyUp that macOS did not deliver.
+      if (!input.isAutoRepeat) {
         lastPressAt = 0;
         release();
       }
@@ -129,7 +156,8 @@ export function makeQuitShortcutHandler(
       if (mode === "hold" && armed && Date.now() - heldSince >= QUIT_HOLD_DURATION_MS) {
         armed = false;
         quitOnRelease = true;
-        clearWatchdog();
+        options.concealWindow();
+        quitAfterQuietPeriod();
       }
       return;
     }
@@ -142,6 +170,13 @@ export function makeQuitShortcutHandler(
     if (holding || notified) release();
 
     generation += 1;
+    // Every mode accepts two presses. Quit before reading settings so a slow
+    // read cannot delay the second press. Repeats never reach this branch.
+    if (previousPressAt !== 0 && now - previousPressAt <= QUIT_DOUBLE_PRESS_MS) {
+      quitNow();
+      return;
+    }
+
     const pressGeneration = generation;
     holding = true;
     heldSince = now;
@@ -152,15 +187,6 @@ export function makeQuitShortcutHandler(
           quitNow();
           return;
         }
-        if (
-          resolvedMode === "double-click" &&
-          previousPressAt !== 0 &&
-          now - previousPressAt <= QUIT_DOUBLE_PRESS_MS
-        ) {
-          quitNow();
-          return;
-        }
-
         if (resolvedMode === "double-click") {
           const remainingMs = QUIT_DOUBLE_PRESS_MS - (Date.now() - now);
           if (remainingMs <= 0) {

@@ -11,7 +11,7 @@ export type ComposerBannerVariant = "default" | "error" | "info" | "success" | "
 
 const surfaceColors = cn(
   "[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--card))]",
-  "dark:[--chat-composer-attached-surface:var(--chat-composer-glass-surface,color-mix(in_srgb,var(--background)_96%,var(--color-white)))]",
+  "dark:[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--surface-raised))]",
   "[html[data-theme-id]_&]:[--chat-composer-attached-surface:var(--app-theme-surface-raised)]",
 );
 
@@ -58,7 +58,7 @@ function Surface({
         "before:bg-[color-mix(in_srgb,var(--chat-composer-attached-surface)_var(--glass-opacity),transparent)] before:bg-[linear-gradient(var(--chat-composer-attached-tint),var(--chat-composer-attached-tint))] before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation)",
         "before:mask-[linear-gradient(to_top,transparent_0_var(--chat-composer-attachment-overlap),black_var(--chat-composer-attachment-overlap))] before:shadow-[0_12px_28px_-18px_rgb(0_0_0/40%)] dark:before:shadow-[0_14px_32px_-18px_rgb(0_0_0/75%)]",
         "dark:supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:before:bg-[linear-gradient(var(--chat-composer-attached-tint),var(--chat-composer-attached-tint)),linear-gradient(to_top,transparent_0_var(--chat-composer-attachment-overlap),rgb(0_0_0/18%)_var(--chat-composer-attachment-overlap),transparent_calc(var(--chat-composer-attachment-overlap)+10px))]",
-        "not-supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:before:bg-(--chat-composer-attached-surface)",
+        "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:before:bg-(--chat-composer-attached-surface)",
         className,
       )}
       {...props}
@@ -89,7 +89,7 @@ function Peek({
         neutralOutline,
         "absolute inset-x-0 bottom-0 z-0 mx-auto h-3 w-[96%] cursor-pointer rounded-t-2xl border border-b-0 shadow-[0_6px_18px_rgb(0_0_0/6%)]",
         "bg-[color-mix(in_srgb,var(--chat-composer-attached-surface)_var(--glass-opacity),transparent)] backdrop-blur-(--glass-blur) backdrop-saturate-(--glass-saturation)",
-        "not-supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:bg-(--chat-composer-attached-surface)",
+        "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:bg-(--chat-composer-attached-surface)",
         "transition-opacity duration-150 ease-out focus-visible:outline-2 focus-visible:outline-ring",
         peekBorder[variant],
         className,
@@ -143,11 +143,13 @@ function Column({ className, ...props }: ComponentProps<"div">) {
 
 function Root({
   className,
+  density = "default",
   placement = "attached",
   variant = "default",
   width = "fill",
   ...props
 }: ComponentProps<"div"> & {
+  density?: "default" | "comfortable";
   placement?: "attached" | "floating";
   variant?: ComposerBannerVariant;
   width?: "fill" | "content";
@@ -155,7 +157,8 @@ function Root({
   return (
     <Surface
       className={cn(
-        "min-w-0 p-1 pb-[calc(var(--chat-composer-attachment-overlap)+(--spacing(1)))] text-xs/4 [--composer-banner-icon-column:--spacing(7)] sm:[--composer-banner-icon-column:--spacing(6)]",
+        "min-w-0 px-1 pt-(--composer-banner-padding-block) pb-[calc(var(--chat-composer-attachment-overlap)+var(--composer-banner-padding-block))] text-xs/4 [--composer-banner-icon-column:--spacing(7)] [--composer-banner-padding-block:--spacing(1)] sm:[--composer-banner-icon-column:--spacing(6)]",
+        density === "comfortable" && "[--composer-banner-padding-block:--spacing(1.25)]",
         width === "content" ? "w-fit max-w-full flex-none" : "@container",
         className,
       )}
@@ -183,7 +186,7 @@ function Row({
       "not-has-[>[data-slot=composer-banner-actions]]:grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)]",
       "[&:is(button)]:cursor-pointer [&:is(button)]:rounded-[0.5rem] [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring",
       layout === "wrap-actions" &&
-        "@max-[400px]:flex @max-[400px]:flex-wrap @max-[400px]:gap-y-1 @max-[400px]:*:data-[slot=composer-banner-actions]:ms-auto @max-[400px]:*:data-[slot=composer-banner-actions]:max-w-full @max-[400px]:has-[>[data-slot=composer-banner-icon]]:*:data-[slot=composer-banner-actions]:max-w-[calc(100%-var(--composer-banner-icon-column)-(--spacing(1)))] @max-[400px]:*:data-[slot=composer-banner-content]:min-h-(--composer-banner-icon-column) @max-[400px]:*:data-[slot=composer-banner-content]:flex-[1_1_10rem]",
+        "@max-[400px]:*:data-[slot=composer-banner-content]:min-h-(--composer-banner-icon-column)",
       className,
     ),
     "data-composer-banner-row": "true",
@@ -243,6 +246,7 @@ function Actions({ className, ...props }: ComponentProps<"span">) {
       data-slot="composer-banner-actions"
       className={cn(
         "col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-1",
+        "@max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:col-start-2 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:col-end-4 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:row-start-2 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:-ms-2 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:justify-start",
         className,
       )}
       {...props}
