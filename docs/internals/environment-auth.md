@@ -24,9 +24,10 @@ rather than fall back to bearer authentication. The OAuth token-exchange
 vocabulary gives these grants a familiar meaning, but the environment does not
 implement a general-purpose OAuth authorization server.
 
-WebSockets use short-lived tickets obtained through authenticated HTTP so
-long-lived credentials stay out of socket URLs. A successful handshake grants
-no extra authority: [every RPC declares a required
+Bearer and DPoP clients obtain short-lived WebSocket tickets through authenticated
+HTTP so long-lived tokens stay out of socket URLs. Browser sessions can
+authenticate the upgrade with their cookie. A successful handshake grants no
+extra authority: [every RPC declares a required
 scope](../../apps/server/src/auth/RpcAuthorization.ts).
 
 Desktop restarts forget the previous local bearer token, so its reusable
