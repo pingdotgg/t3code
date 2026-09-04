@@ -71,7 +71,7 @@ import {
 } from "../acp/AntigravityAcpSupport.ts";
 import {
   antigravityApprovalOptions,
-  antigravitySubagentResult,
+  antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
   extractAntigravityUserInputQuestion,
   isAntigravityOpenCommand,
@@ -170,6 +170,7 @@ interface OpenCommand {
 interface OpenSubagent {
   readonly turnId: TurnId | undefined;
   readonly status: "pending" | "running" | undefined;
+  readonly description?: string;
 }
 
 function subagentLinkage(toolCallId: string) {
@@ -177,7 +178,7 @@ function subagentLinkage(toolCallId: string) {
     taskId: RuntimeTaskId.make(toolCallId),
     taskType: "subagent",
     toolUseId: toolCallId,
-    title: "Antigravity subagent",
+    title: "Antigravity subagent batch",
   };
 }
 
@@ -389,7 +390,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
 
   const finishSubagents = (
     context: SessionContext,
-    status: Extract<RuntimeTaskStatus, "cancelled" | "failed" | "interrupted">,
+    status: Extract<RuntimeTaskStatus, "cancelled" | "failed" | "idle">,
     error?: string,
   ) =>
     context.commandLock.withPermit(
@@ -405,6 +406,12 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
             payload: {
               ...subagentLinkage(id),
               status,
+              ...(status === "idle"
+                ? {
+                    description: "Turn ended. Individual agent status is unavailable.",
+                    timelineBypass: true,
+                  }
+                : {}),
               ...(error ? { error } : {}),
             },
           });
@@ -628,8 +635,8 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                 context.subagents.set(toolCall.toolCallId, { turnId, status: undefined });
                 return;
               }
-              if (toolCall.status === "completed" || toolCall.status === "failed") {
-                const summary = antigravitySubagentResult(toolCall);
+              if (toolCall.status === "failed") {
+                const summary = antigravitySubagentOutput(toolCall);
                 yield* emit({
                   type: "task.completed",
                   ...(yield* stamp),
@@ -643,19 +650,38 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                   },
                 });
                 context.subagents.set(toolCall.toolCallId, "finished");
+              } else if (context.activeTurnId === undefined && toolCall.status === "completed") {
+                yield* emit({
+                  type: "task.updated",
+                  ...(yield* stamp),
+                  provider: PROVIDER,
+                  threadId: context.threadId,
+                  turnId,
+                  payload: {
+                    ...linkage,
+                    status: "idle",
+                    description: "Individual agent status is unavailable for this earlier batch.",
+                    timelineBypass: true,
+                  },
+                });
+                context.subagents.set(toolCall.toolCallId, "finished");
               } else {
+                // start_subagent returns after launching a batch. Its output is
+                // the launch description, not a child result or completion.
                 const status = toolCall.status === "pending" ? "pending" : "running";
-                if (subagent?.status !== status) {
+                const description =
+                  antigravitySubagentOutput(toolCall) ?? subagent?.description ?? linkage.title;
+                if (subagent?.status !== status || subagent?.description !== description) {
                   yield* emit({
                     type: "task.progress",
                     ...(yield* stamp),
                     provider: PROVIDER,
                     threadId: context.threadId,
                     turnId,
-                    payload: { ...linkage, description: linkage.title, status },
+                    payload: { ...linkage, description, summary: description, status },
                   });
                 }
-                context.subagents.set(toolCall.toolCallId, { turnId, status });
+                context.subagents.set(toolCall.toolCallId, { turnId, status, description });
               }
               return;
             }
@@ -972,11 +998,8 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
             ? "cancelled"
             : payload.state === "failed"
               ? "failed"
-              : "interrupted",
-          payload.errorMessage ??
-            (payload.state === "completed"
-              ? "Antigravity ended the turn before reporting a subagent result."
-              : undefined),
+              : "idle",
+          payload.errorMessage,
         );
         context.activeTurnId = undefined;
         context.promptFiber = undefined;

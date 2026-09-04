@@ -141,14 +141,15 @@ follow-up message or start a new thread instead.
 
 ### Subagents
 
-Antigravity subagent calls appear in **Agents** on web and desktop, and in the work log on
-mobile. Each call shows its status and the result or error returned by Antigravity. Calls
-that run at the same time have separate entries.
+Subagent launches appear as **Antigravity subagent batch** in **Agents** on web and desktop,
+and in the work log on mobile. One launch can start several agents. The batch stays active
+after launch while the parent turn runs. When that turn ends, the entry becomes idle and
+states that individual agent status is unavailable. Launch errors remain visible.
 
-The official ACP agent does not report subagent names, models, token usage, or parent links.
-Entries use the name **Antigravity subagent**. Child tool calls cannot be assigned to an entry
-because ACP does not include their owning subagent. These entries track each invocation,
-not a separate thread you can open or control.
+The official ACP agent does not send individual child status, names, models, token usage,
+or reply ownership. T3 Code cannot show separate child entries or separate child replies
+from the parent conversation. The launch description is not a child result. Batch entries
+cannot be opened or controlled as separate threads.
 
 ## Accounts and removal
 
