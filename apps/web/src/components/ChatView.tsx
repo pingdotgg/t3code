@@ -3965,7 +3965,7 @@ export default function ChatView(props: ChatViewProps) {
       projectCwd: string;
       previousScripts: ReadonlyArray<ProjectScript>;
       nextScripts: ReadonlyArray<ProjectScript>;
-      keybinding?: string | null;
+      keybinding: NewProjectScriptInput["keybinding"];
       keybindingCommand: KeybindingCommand | null;
     }): Promise<AtomCommandResult<void, unknown>> => {
       const previousKeybinding = keybindingValueForCommand(
