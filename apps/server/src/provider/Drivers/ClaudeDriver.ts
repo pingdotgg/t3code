@@ -126,13 +126,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         env: processEnv,
       });
       const continuationGroupKey = yield* makeClaudeContinuationGroupKey(effectiveConfig);
-      const stampIdentity = withInstanceIdentity({
-        instanceId,
-        driverKind: DRIVER_KIND,
-        displayName,
-        accentColor,
-        continuationGroupKey,
-      });
 
       const adapterOptions = {
         instanceId,
@@ -141,6 +134,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       };
       const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
+      const stampIdentity = withInstanceIdentity({
+        instanceId,
+        driverKind: DRIVER_KIND,
+        displayName,
+        accentColor,
+        continuationGroupKey,
+        adapterCapabilities: adapter.capabilities,
+      });
       const textGeneration = yield* makeClaudeTextGeneration(
         effectiveConfig,
         processEnv,

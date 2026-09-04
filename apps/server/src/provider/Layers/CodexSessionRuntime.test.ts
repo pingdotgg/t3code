@@ -4,7 +4,7 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
-import { DEFAULT_MODEL, ThreadId } from "@t3tools/contracts";
+import { DEFAULT_MODEL, ThreadId, TurnId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
@@ -775,12 +775,104 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  it.effect("forks through the requested turn without passing ephemeral", () =>
+    Effect.gen(function* () {
+      const calls: Array<{
+        method: "thread/start" | "thread/resume" | "thread/fork";
+        payload: unknown;
+      }> = [];
+      const client = {
+        request: <M extends "thread/start" | "thread/resume" | "thread/fork">(
+          method: M,
+          payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          calls.push({ method, payload });
+          return Effect.succeed(
+            makeThreadOpenResponse("forked-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+
+      const opened = yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-fork"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.6-sol",
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+        forkFrom: {
+          threadId: "provider-source-thread",
+          turnId: TurnId.make("provider-turn-1"),
+        },
+      });
+
+      NodeAssert.equal(opened.thread.id, "forked-thread");
+      NodeAssert.equal(calls[0]?.method, "thread/fork");
+      NodeAssert.deepStrictEqual(calls[0]?.payload, {
+        threadId: "provider-source-thread",
+        lastTurnId: TurnId.make("provider-turn-1"),
+        cwd: "/tmp/project",
+        model: "gpt-5.6-sol",
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+        sandbox: "danger-full-access",
+      });
+      NodeAssert.equal("ephemeral" in (calls[0]!.payload as object), false);
+    }),
+  );
+
+  it.effect("does not fall back when thread/fork fails", () =>
+    Effect.gen(function* () {
+      const calls: Array<"thread/start" | "thread/resume" | "thread/fork"> = [];
+      const client = {
+        request: <M extends "thread/start" | "thread/resume" | "thread/fork">(
+          method: M,
+          _payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          calls.push(method);
+          if (method === "thread/fork") {
+            return Effect.fail(
+              new CodexErrors.CodexAppServerRequestError({
+                code: -32603,
+                errorMessage: "native fork failed",
+              }),
+            );
+          }
+          return Effect.succeed(
+            makeThreadOpenResponse(
+              "unexpected-thread",
+            ) as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+
+      const error = yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-fork"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.6-sol",
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+        forkFrom: { threadId: "provider-source-thread" },
+      }).pipe(Effect.flip);
+
+      NodeAssert.ok(isCodexAppServerRequestError(error));
+      NodeAssert.equal(error.errorMessage, "native fork failed");
+      NodeAssert.deepStrictEqual(calls, ["thread/fork"]);
+    }),
+  );
+
   it.effect("falls back to thread/start when resume fails recoverably", () =>
     Effect.gen(function* () {
-      const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
+      const calls: Array<{
+        method: "thread/start" | "thread/resume" | "thread/fork";
+        payload: unknown;
+      }> = [];
       const started = makeThreadOpenResponse("fresh-thread");
       const client = {
-        request: <M extends "thread/start" | "thread/resume">(
+        request: <M extends "thread/start" | "thread/resume" | "thread/fork">(
           method: M,
           payload: CodexRpc.ClientRequestParamsByMethod[M],
         ) => {
@@ -805,6 +897,7 @@ describe("openCodexThread", () => {
         requestedModel: "gpt-5.3-codex",
         serviceTier: undefined,
         resumeThreadId: "stale-thread",
+        forkFrom: undefined,
       });
 
       NodeAssert.equal(opened.thread.id, "fresh-thread");
@@ -818,7 +911,7 @@ describe("openCodexThread", () => {
   it.effect("propagates non-recoverable resume failures", () =>
     Effect.gen(function* () {
       const client = {
-        request: <M extends "thread/start" | "thread/resume">(
+        request: <M extends "thread/start" | "thread/resume" | "thread/fork">(
           method: M,
           _payload: CodexRpc.ClientRequestParamsByMethod[M],
         ) => {
@@ -844,6 +937,7 @@ describe("openCodexThread", () => {
         requestedModel: "gpt-5.3-codex",
         serviceTier: undefined,
         resumeThreadId: "stale-thread",
+        forkFrom: undefined,
       }).pipe(Effect.flip);
 
       NodeAssert.ok(isCodexAppServerRequestError(error));

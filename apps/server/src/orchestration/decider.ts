@@ -17,6 +17,7 @@ import {
 } from "./Errors.ts";
 import {
   listThreadsByProjectId,
+  findThreadById,
   requireActiveProjectWorkspaceRootAbsent,
   requireProject,
   requireProjectAbsent,
@@ -27,6 +28,7 @@ import {
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
 import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
+import { DEFAULT_THREAD_TITLE, forkThreadTitle } from "./threadTitles.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -353,6 +355,98 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.fork": {
+      const source = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.sourceThreadId,
+      });
+      if (source.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Source thread '${command.sourceThreadId}' is deleted and cannot be forked.`,
+        });
+      }
+      yield* requireThreadAbsent({ readModel, command, threadId: command.threadId });
+
+      const latestTurn = source.latestTurn;
+      const sourceTurnIsLatest =
+        command.sourceTurnId !== undefined && latestTurn?.turnId === command.sourceTurnId;
+      const sourceMessageTargetsLatest =
+        command.sourceMessageId !== undefined &&
+        (command.sourceTurnId === undefined || sourceTurnIsLatest);
+      if (
+        command.sourceTurnId === undefined &&
+        latestTurn !== null &&
+        latestTurn.state !== "completed"
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Source thread '${command.sourceThreadId}' is mid-turn and cannot be forked at its latest boundary.`,
+        });
+      }
+
+      if (command.sourceTurnId !== undefined) {
+        if (sourceTurnIsLatest && latestTurn?.state === "running") {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Source thread '${command.sourceThreadId}' is mid-turn and cannot be forked at its latest boundary.`,
+          });
+        }
+        if (sourceTurnIsLatest && latestTurn?.state !== "completed") {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Turn '${command.sourceTurnId}' is not a completed turn of source thread '${command.sourceThreadId}'.`,
+          });
+        }
+      }
+      if (
+        sourceMessageTargetsLatest &&
+        latestTurn?.assistantMessageId !== command.sourceMessageId
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message '${command.sourceMessageId}' is not the assistant message for turn '${latestTurn?.turnId ?? "none"}' on source thread '${command.sourceThreadId}'.`,
+        });
+      }
+
+      const title =
+        command.title ??
+        forkThreadTitle(
+          source.title,
+          listThreadsByProjectId(readModel, source.projectId).map((thread) => thread.title),
+          { sourceIsFork: source.fork != null },
+        );
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.created",
+        payload: {
+          threadId: command.threadId,
+          projectId: source.projectId,
+          title,
+          modelSelection: source.modelSelection,
+          runtimeMode: source.runtimeMode,
+          interactionMode: source.interactionMode,
+          branch: source.branch,
+          worktreePath: source.worktreePath,
+          fork: {
+            sourceThreadId: source.id,
+            sourceTurnId: command.sourceTurnId ?? latestTurn?.turnId ?? null,
+            sourceMessageId: command.sourceMessageId ?? null,
+            forkedAt: command.createdAt,
+          },
+          sideChat: command.sideChat,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -784,6 +878,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (command.sideChat === true && thread.fork == null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is not a fork and cannot become a side chat.`,
+        });
+      }
       const branch =
         command.branch !== undefined &&
         command.expectedBranch !== undefined &&
@@ -823,6 +923,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.linkedPullRequest !== undefined
             ? { linkedPullRequest: command.linkedPullRequest }
             : {}),
+          ...(command.sideChat !== undefined ? { sideChat: command.sideChat } : {}),
           updatedAt: occurredAt,
         },
       };

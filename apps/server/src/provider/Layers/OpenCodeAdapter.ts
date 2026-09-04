@@ -7,6 +7,7 @@ import {
   type ProviderSession,
   RuntimeItemId,
   RuntimeRequestId,
+  type RuntimeMode,
   ThreadId,
   type ToolLifecycleItemType,
   TurnId,
@@ -787,6 +788,27 @@ const abortOpenCodeSessionForTeardown = Effect.fn("abortOpenCodeSessionForTeardo
     Effect.ignore({ log: true }),
   );
 });
+
+const applyForkedOpenCodeSessionPermissions = Effect.fn("applyForkedOpenCodeSessionPermissions")(
+  function* (client: OpencodeClient, sessionId: string, runtimeMode: RuntimeMode) {
+    yield* runOpenCodeSdk("session.update", () =>
+      client.session.update({
+        sessionID: sessionId,
+        permission: buildOpenCodePermissionRules(runtimeMode),
+      }),
+    ).pipe(
+      Effect.catch((updateError) =>
+        runOpenCodeSdk("session.abort", (signal) =>
+          client.session.abort({ sessionID: sessionId }, { signal }),
+        ).pipe(
+          Effect.timeout("1 second"),
+          Effect.ignore({ log: true }),
+          Effect.andThen(Effect.fail(updateError)),
+        ),
+      ),
+    );
+  },
+);
 
 const cancelPendingOpenCodePrompt = Effect.fn("cancelPendingOpenCodePrompt")(function* (
   context: OpenCodeSessionContext,
@@ -2437,6 +2459,14 @@ export function makeOpenCodeAdapter(
         const serverPassword = openCodeSettings.serverPassword;
         const directory = input.cwd ?? serverConfig.cwd;
         const resumeSessionId = parseOpenCodeResume(input.resumeCursor)?.sessionId;
+        const forkSessionId = parseOpenCodeResume(input.forkFrom?.resumeCursor)?.sessionId;
+        if (input.forkFrom !== undefined && forkSessionId === undefined) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "startSession",
+            issue: "OpenCode fork source is missing a valid session cursor.",
+          });
+        }
         const existing = sessions.get(input.threadId);
         if (existing) {
           if (existing.session.status === "connecting" && !(yield* Ref.get(existing.stopped))) {
@@ -2486,6 +2516,25 @@ export function makeOpenCodeAdapter(
               // a confirmed not-found (start fresh); transport/auth/server
               // errors propagate instead of masking as a new empty session.
               const resolved = yield* Effect.gen(function* () {
+                if (forkSessionId) {
+                  const forkedSession = yield* runOpenCodeSdk("session.fork", () =>
+                    client.session.fork({ sessionID: forkSessionId, directory }),
+                  );
+                  const forked = forkedSession.data;
+                  if (!forked) {
+                    return yield* new OpenCodeRuntimeError({
+                      operation: "session.fork",
+                      detail: "OpenCode session.fork returned no session payload.",
+                    });
+                  }
+                  yield* applyForkedOpenCodeSessionPermissions(
+                    client,
+                    forked.id,
+                    input.runtimeMode,
+                  );
+                  return { openCodeSession: forked, created: true };
+                }
+
                 const adopted = resumeSessionId
                   ? yield* runOpenCodeSdk("session.get", () =>
                       client.session.get({ sessionID: resumeSessionId }),
@@ -2537,11 +2586,10 @@ export function makeOpenCodeAdapter(
                       detail: "OpenCode session.fork returned no session payload.",
                     });
                   }
-                  yield* runOpenCodeSdk("session.update", () =>
-                    client.session.update({
-                      sessionID: forked.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
-                    }),
+                  yield* applyForkedOpenCodeSessionPermissions(
+                    client,
+                    forked.id,
+                    input.runtimeMode,
                   );
                   return { openCodeSession: forked, created: true };
                 }
@@ -3322,6 +3370,7 @@ export function makeOpenCodeAdapter(
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "in-session",
+        sessionFork: "latest-turn",
       },
       startSession,
       sendTurn,

@@ -33,6 +33,7 @@ import type * as Stream from "effect/Stream";
 import type { ProviderServiceError } from "../Errors.ts";
 import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
 import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
+import type { ProviderRuntimeBinding } from "./ProviderSessionDirectory.ts";
 
 /**
  * ProviderServiceShape - Service API for provider session and turn orchestration.
@@ -87,6 +88,20 @@ export interface ProviderServiceShape {
    * Aggregates runtime session lists from all registered adapters.
    */
   readonly listSessions: () => Effect.Effect<ReadonlyArray<ProviderSession>>;
+
+  /**
+   * Read the persisted provider binding for a thread without recovering it.
+   */
+  readonly getSessionBinding: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ProviderRuntimeBinding | null, ProviderServiceError>;
+
+  /**
+   * Clear persisted provider resume state without dropping the thread binding.
+   */
+  readonly clearSessionResumeCursor: (
+    threadId: ThreadId,
+  ) => Effect.Effect<void, ProviderServiceError>;
 
   /**
    * Read capabilities for the adapter bound to a configured provider instance.

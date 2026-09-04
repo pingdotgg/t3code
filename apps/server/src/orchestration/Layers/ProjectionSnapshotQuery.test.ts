@@ -11,6 +11,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -40,6 +41,64 @@ const projectionSnapshotLayer = it.layer(
 );
 
 projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
+  it.effect("reads one concrete thread turn state without hydrating thread detail", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id,
+          turn_id,
+          pending_message_id,
+          source_proposed_plan_thread_id,
+          source_proposed_plan_id,
+          assistant_message_id,
+          state,
+          requested_at,
+          started_at,
+          completed_at,
+          checkpoint_turn_count,
+          checkpoint_ref,
+          checkpoint_status,
+          checkpoint_files_json
+        )
+        VALUES (
+          'thread-source',
+          'turn-source',
+          NULL,
+          NULL,
+          NULL,
+          'message-source',
+          'completed',
+          '2026-09-03T12:00:00.000Z',
+          '2026-09-03T12:00:00.000Z',
+          '2026-09-03T12:00:01.000Z',
+          NULL,
+          NULL,
+          NULL,
+          '[]'
+        )
+      `;
+
+      const found = yield* snapshotQuery.getThreadTurnState(
+        ThreadId.make("thread-source"),
+        TurnId.make("turn-source"),
+      );
+      const missing = yield* snapshotQuery.getThreadTurnState(
+        ThreadId.make("thread-source"),
+        TurnId.make("turn-missing"),
+      );
+
+      assert.deepEqual(Option.getOrThrow(found), {
+        state: "completed",
+        assistantMessageId: MessageId.make("message-source"),
+      });
+      assert.isTrue(Option.isNone(missing));
+    }),
+  );
+
   it.effect("hydrates read model from projection tables and computes snapshot sequence", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
@@ -84,6 +143,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           branch,
           worktree_path,
           linked_pull_request_json,
+          fork_json,
+          side_chat,
           latest_turn_id,
           latest_user_message_at,
           pending_approval_count,
@@ -105,6 +166,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           NULL,
           NULL,
           '{"projectId":"project-1","repository":"pingdotgg/t3code","number":42,"url":"https://github.com/pingdotgg/t3code/pull/42"}',
+          '{"sourceThreadId":"thread-source","sourceTurnId":"turn-source","sourceMessageId":"message-source","forkedAt":"2026-09-03T12:00:00.000Z"}',
+          1,
           'turn-1',
           '2026-02-24T00:00:04.000Z',
           1,
@@ -315,6 +378,13 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             number: 42,
             url: "https://github.com/pingdotgg/t3code/pull/42",
           },
+          fork: {
+            sourceThreadId: ThreadId.make("thread-source"),
+            sourceTurnId: asTurnId("turn-source"),
+            sourceMessageId: asMessageId("message-source"),
+            forkedAt: "2026-09-03T12:00:00.000Z",
+          },
+          sideChat: true,
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",
@@ -443,6 +513,13 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             number: 42,
             url: "https://github.com/pingdotgg/t3code/pull/42",
           },
+          fork: {
+            sourceThreadId: ThreadId.make("thread-source"),
+            sourceTurnId: asTurnId("turn-source"),
+            sourceMessageId: asMessageId("message-source"),
+            forkedAt: "2026-09-03T12:00:00.000Z",
+          },
+          sideChat: true,
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",
@@ -488,6 +565,26 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.equal(threadDetail._tag, "Some");
       if (threadDetail._tag === "Some") {
         assert.deepEqual(threadDetail.value, snapshot.threads[0]);
+      }
+
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      assert.deepEqual(commandReadModel.threads[0]?.fork, snapshot.threads[0]?.fork);
+      assert.equal(commandReadModel.threads[0]?.sideChat, true);
+
+      const threadShell = yield* snapshotQuery.getThreadShellById(ThreadId.make("thread-1"));
+      assert.equal(threadShell._tag, "Some");
+      if (threadShell._tag === "Some") {
+        assert.deepEqual(threadShell.value.fork, snapshot.threads[0]?.fork);
+        assert.equal(threadShell.value.sideChat, true);
+      }
+
+      const detailSnapshot = yield* snapshotQuery.getThreadDetailSnapshot(
+        ThreadId.make("thread-1"),
+      );
+      assert.equal(detailSnapshot._tag, "Some");
+      if (detailSnapshot._tag === "Some") {
+        assert.deepEqual(detailSnapshot.value.thread.fork, snapshot.threads[0]?.fork);
+        assert.equal(detailSnapshot.value.thread.sideChat, true);
       }
 
       yield* sql`
@@ -605,6 +702,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           interaction_mode,
           branch,
           worktree_path,
+          fork_json,
+          side_chat,
           latest_turn_id,
           latest_user_message_at,
           pending_approval_count,
@@ -626,6 +725,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             NULL,
             NULL,
             NULL,
+            0,
+            NULL,
             NULL,
             0,
             0,
@@ -644,6 +745,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             'default',
             NULL,
             NULL,
+            '{"sourceThreadId":"thread-active","sourceTurnId":null,"sourceMessageId":null,"forkedAt":"2026-09-03T12:00:00.000Z"}',
+            1,
             NULL,
             NULL,
             0,
@@ -680,6 +783,11 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         [ThreadId.make("thread-archived")],
       );
       assert.equal(archivedShellSnapshot.threads[0]?.archivedAt, "2026-04-06T00:00:06.000Z");
+      assert.equal(archivedShellSnapshot.threads[0]?.sideChat, true);
+      assert.equal(
+        archivedShellSnapshot.threads[0]?.fork?.sourceThreadId,
+        ThreadId.make("thread-active"),
+      );
     }),
   );
 
@@ -916,12 +1024,48 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         const missingProject = yield* snapshotQuery.getActiveProjectByWorkspaceRoot("/tmp/missing");
         assert.equal(missingProject._tag, "None");
 
+        yield* sql`
+          INSERT INTO projection_threads (
+            thread_id,
+            project_id,
+            title,
+            model_selection_json,
+            runtime_mode,
+            interaction_mode,
+            branch,
+            worktree_path,
+            side_chat,
+            latest_turn_id,
+            created_at,
+            updated_at,
+            archived_at,
+            deleted_at
+          )
+          VALUES (
+            'thread-side-chat-first',
+            'project-active',
+            'Side Chat First',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            1,
+            NULL,
+            '2026-03-01T00:00:04.000Z',
+            '2026-03-01T00:00:04.000Z',
+            NULL,
+            NULL
+          )
+        `;
+
         const firstThreadId = yield* snapshotQuery.getFirstActiveThreadIdByProjectId(
           asProjectId("project-active"),
         );
         assert.equal(firstThreadId._tag, "Some");
         if (firstThreadId._tag === "Some") {
           assert.equal(firstThreadId.value, ThreadId.make("thread-first"));
+          assert.notEqual(firstThreadId.value, ThreadId.make("thread-side-chat-first"));
         }
       }),
   );
@@ -1907,6 +2051,142 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       `;
 
       yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          side_chat,
+          fork_json,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-side-chat-search',
+          'project-search',
+          'Side chat search',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          1,
+          '{"sourceThreadId":"thread-active","sourceTurnId":null,"sourceMessageId":null,"forkedAt":"2026-05-01T00:00:08.000Z"}',
+          NULL,
+          NULL,
+          0,
+          0,
+          0,
+          '2026-05-01T00:00:08.000Z',
+          '2026-05-01T00:00:09.000Z',
+          NULL,
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          side_chat,
+          fork_json,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-orphan-side-chat-search',
+          'project-search',
+          'Orphaned side chat search',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          1,
+          '{"sourceThreadId":"thread-gone","sourceTurnId":null,"sourceMessageId":null,"forkedAt":"2026-05-01T00:00:08.000Z"}',
+          NULL,
+          NULL,
+          0,
+          0,
+          0,
+          '2026-05-01T00:00:08.000Z',
+          '2026-05-01T00:00:09.000Z',
+          NULL,
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id,
+          thread_id,
+          turn_id,
+          role,
+          text,
+          is_streaming,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          'message-side-chat',
+          'thread-side-chat-search',
+          NULL,
+          'user',
+          'Side chat needle must not be searchable.',
+          0,
+          '2026-05-01T00:00:17.000Z',
+          '2026-05-01T00:00:17.000Z'
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id,
+          thread_id,
+          turn_id,
+          role,
+          text,
+          is_streaming,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          'message-orphan-side-chat',
+          'thread-orphan-side-chat-search',
+          NULL,
+          'user',
+          'Orphaned needle must be searchable.',
+          0,
+          '2026-05-01T00:00:18.000Z',
+          '2026-05-01T00:00:18.000Z'
+        )
+      `;
+
+      yield* sql`
         INSERT INTO projection_turns (
           thread_id,
           turn_id,
@@ -1947,7 +2227,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       const deduped = yield* snapshotQuery.searchThreads({ query: "needle" });
       assert.deepStrictEqual(
         deduped.matches.map((match) => [match.threadId, match.source]),
-        [[ThreadId.make("thread-active"), "user"]],
+        [
+          [ThreadId.make("thread-orphan-side-chat-search"), "user"],
+          [ThreadId.make("thread-active"), "user"],
+        ],
       );
 
       assert.deepStrictEqual(
@@ -1960,6 +2243,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       );
       assert.deepStrictEqual(
         (yield* snapshotQuery.searchThreads({ query: "hidden needle" })).matches,
+        [],
+      );
+      assert.deepStrictEqual(
+        (yield* snapshotQuery.searchThreads({ query: "side chat needle" })).matches,
         [],
       );
       yield* sql`

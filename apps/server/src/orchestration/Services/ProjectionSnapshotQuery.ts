@@ -19,14 +19,17 @@ import type {
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadDetailWindow,
   OrchestrationThreadShell,
+  MessageId,
   ProjectId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
 import type * as Effect from "effect/Effect";
 
 import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
+import type { ProjectionTurnState } from "../../persistence/Services/ProjectionTurns.ts";
 
 export interface ProjectionSnapshotCounts {
   readonly projectCount: number;
@@ -57,6 +60,11 @@ export interface ProjectionFullThreadDiffContext {
   readonly worktreePath: string | null;
   readonly latestCheckpointTurnCount: number;
   readonly toCheckpointRef: CheckpointRef | null;
+}
+
+export interface ProjectionThreadTurnState {
+  readonly state: ProjectionTurnState;
+  readonly assistantMessageId: MessageId | null;
 }
 
 export interface ProjectionThreadDetailQuery {
@@ -184,6 +192,14 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadShellById: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThreadShell>, ProjectionRepositoryError>;
+
+  /**
+   * Read the lifecycle state and assistant message for one concrete thread turn.
+   */
+  readonly getThreadTurnState: (
+    threadId: ThreadId,
+    turnId: TurnId,
+  ) => Effect.Effect<Option.Option<ProjectionThreadTurnState>, ProjectionRepositoryError>;
 
   /**
    * Read a single active thread detail snapshot by id.

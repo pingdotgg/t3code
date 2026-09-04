@@ -22,7 +22,6 @@ import {
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderDriverKind,
   ProviderInstanceId,
-  ProviderSessionStartInput,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -30,6 +29,7 @@ import {
   expandAssistantCitationsForProvider,
   serializeAssistantCitation,
 } from "@t3tools/shared/assistantCitations";
+import type { ProviderAdapterSessionStartInput } from "../Services/ProviderAdapter.ts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { it, assert, describe, vi } from "@effect/vitest";
 
@@ -85,6 +85,7 @@ const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const codexInstanceId = ProviderInstanceId.make("codex");
 const claudeAgentInstanceId = ProviderInstanceId.make("claudeAgent");
+const cursorInstanceId = ProviderInstanceId.make("cursor");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
@@ -127,7 +128,7 @@ function makeFakeCodexAdapter(
   const sessions = new Map<ThreadId, ProviderSession>();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
 
-  const startSession = vi.fn((input: ProviderSessionStartInput) =>
+  const startSession = vi.fn((input: ProviderAdapterSessionStartInput) =>
     Effect.sync(() => {
       const now = "2026-01-01T00:00:00.000Z";
       const session: ProviderSession = {
@@ -247,6 +248,12 @@ function makeFakeCodexAdapter(
     capabilities: {
       sessionModelSwitch: "in-session",
       ...(supportsConversationRollback !== undefined ? { supportsConversationRollback } : {}),
+      sessionFork:
+        provider === CODEX_DRIVER
+          ? "any-turn"
+          : provider === CLAUDE_AGENT_DRIVER
+            ? "latest-turn"
+            : "unsupported",
       ...(provider === CODEX_DRIVER ? { promptlessTurnContinuation: true } : {}),
     },
     startSession,
@@ -1079,6 +1086,210 @@ it.effect(
 );
 
 routing.layer("ProviderServiceLive routing", (it) => {
+  it.effect("resolves fork sources to provider cursors", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const sourceThreadId = asThreadId("thread-fork-source");
+      const forkThreadId = asThreadId("thread-fork-target");
+      const source = yield* provider.startSession(sourceThreadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId: sourceThreadId,
+        runtimeMode: "full-access",
+      });
+      routing.codex.startSession.mockClear();
+
+      yield* provider.startSession(forkThreadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId: forkThreadId,
+        forkFrom: { threadId: sourceThreadId, turnId: asTurnId("turn-source") },
+        runtimeMode: "full-access",
+      });
+
+      const adapterInput = routing.codex.startSession.mock.calls[0]?.[0];
+      assert.deepEqual(adapterInput?.forkFrom, {
+        resumeCursor: source.resumeCursor,
+        turnId: asTurnId("turn-source"),
+      });
+      assert.equal(adapterInput?.resumeCursor, undefined);
+      yield* provider.stopSession({ threadId: forkThreadId });
+      yield* provider.stopSession({ threadId: sourceThreadId });
+      routing.codex.startSession.mockClear();
+    }),
+  );
+
+  it.effect("prefers an existing fork binding on idempotent retry", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const sourceThreadId = asThreadId("thread-retry-source");
+      const forkThreadId = asThreadId("thread-retry-target");
+      yield* provider.startSession(sourceThreadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId: sourceThreadId,
+        runtimeMode: "full-access",
+      });
+      const forkSession = yield* provider.startSession(forkThreadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId: forkThreadId,
+        forkFrom: { threadId: sourceThreadId },
+        runtimeMode: "full-access",
+      });
+      routing.codex.startSession.mockClear();
+
+      yield* provider.startSession(forkThreadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId: forkThreadId,
+        forkFrom: { threadId: sourceThreadId },
+        runtimeMode: "full-access",
+      });
+
+      const adapterInput = routing.codex.startSession.mock.calls[0]?.[0];
+      assert.deepEqual(adapterInput?.resumeCursor, forkSession.resumeCursor);
+      assert.equal(adapterInput?.forkFrom, undefined);
+      yield* provider.stopSession({ threadId: forkThreadId });
+      yield* provider.stopSession({ threadId: sourceThreadId });
+      routing.codex.startSession.mockClear();
+    }),
+  );
+
+  it.effect("treats a null target cursor as unstarted and forks from the source", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const sourceThreadId = asThreadId("thread-null-target-source");
+      const forkThreadId = asThreadId("thread-null-target-fork");
+      const source = yield* provider.startSession(sourceThreadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId: sourceThreadId,
+        runtimeMode: "full-access",
+      });
+      yield* directory.upsert({
+        threadId: forkThreadId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        runtimeMode: "full-access",
+        resumeCursor: null,
+      });
+      routing.codex.startSession.mockClear();
+
+      yield* provider.startSession(forkThreadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId: forkThreadId,
+        forkFrom: { threadId: sourceThreadId },
+        runtimeMode: "full-access",
+      });
+
+      const adapterInput = routing.codex.startSession.mock.calls[0]?.[0];
+      assert.deepEqual(adapterInput?.forkFrom, { resumeCursor: source.resumeCursor });
+      assert.equal(adapterInput?.resumeCursor, undefined);
+      yield* provider.stopSession({ threadId: forkThreadId });
+      yield* provider.stopSession({ threadId: sourceThreadId });
+      routing.codex.startSession.mockClear();
+    }),
+  );
+
+  it.effect("clears a persisted resume cursor without dropping the session binding", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-clear-resume-cursor");
+      const session = yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      yield* provider.clearSessionResumeCursor(threadId);
+
+      const binding = yield* provider.getSessionBinding(threadId);
+      assert.equal(binding?.threadId, threadId);
+      assert.equal(binding?.provider, CODEX_DRIVER);
+      assert.equal(binding?.providerInstanceId, codexInstanceId);
+      assert.equal(binding?.resumeCursor, null);
+      assert.notEqual(session.resumeCursor, undefined);
+      yield* provider.stopSession({ threadId });
+      routing.codex.startSession.mockClear();
+    }),
+  );
+
+  it.effect("rejects fork sources bound to another provider instance", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const sourceThreadId = asThreadId("thread-cross-instance-source");
+      yield* directory.upsert({
+        threadId: sourceThreadId,
+        provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: claudeAgentInstanceId,
+        runtimeMode: "full-access",
+        resumeCursor: { opaque: "claude-source" },
+      });
+      routing.codex.startSession.mockClear();
+
+      const error = yield* provider
+        .startSession(asThreadId("thread-cross-instance-fork"), {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId: asThreadId("thread-cross-instance-fork"),
+          forkFrom: { threadId: sourceThreadId },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(error, ProviderValidationError);
+      assert.include(error.issue, "bound to provider instance 'claudeAgent', not 'codex'");
+      assert.equal(routing.codex.startSession.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("rejects unsupported forks and missing source cursors with typed errors", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      routing.cursor.startSession.mockClear();
+      const unsupported = yield* provider
+        .startSession(asThreadId("thread-cursor-fork"), {
+          provider: CURSOR_DRIVER,
+          providerInstanceId: cursorInstanceId,
+          threadId: asThreadId("thread-cursor-fork"),
+          forkFrom: { threadId: asThreadId("thread-cursor-source") },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(unsupported, ProviderValidationError);
+      assert.include(unsupported.issue, "does not support session forks");
+      assert.equal(routing.cursor.startSession.mock.calls.length, 0);
+
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const sourceThreadId = asThreadId("thread-missing-fork-cursor-source");
+      yield* directory.upsert({
+        threadId: sourceThreadId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        runtimeMode: "full-access",
+        resumeCursor: null,
+      });
+      const missing = yield* provider
+        .startSession(asThreadId("thread-missing-fork-cursor"), {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId: asThreadId("thread-missing-fork-cursor"),
+          forkFrom: { threadId: sourceThreadId },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(missing, ProviderValidationError);
+      assert.include(missing.issue, "no provider resume state");
+      routing.cursor.startSession.mockClear();
+      routing.codex.startSession.mockClear();
+    }),
+  );
+
   it.effect("allows promptless continuation only for capable providers", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -2533,19 +2744,20 @@ validation.layer("ProviderServiceLive validation", (it) => {
       const provider = yield* ProviderService.ProviderService;
       const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
 
-      validation.codex.startSession.mockImplementationOnce((input: ProviderSessionStartInput) =>
-        Effect.sync(() => {
-          const now = "2026-01-01T00:00:00.000Z";
-          return {
-            provider: ProviderDriverKind.make("codex"),
-            status: "ready",
-            threadId: input.threadId,
-            runtimeMode: input.runtimeMode,
-            cwd: input.cwd ?? process.cwd(),
-            createdAt: now,
-            updatedAt: now,
-          } satisfies ProviderSession;
-        }),
+      validation.codex.startSession.mockImplementationOnce(
+        (input: ProviderAdapterSessionStartInput) =>
+          Effect.sync(() => {
+            const now = "2026-01-01T00:00:00.000Z";
+            return {
+              provider: ProviderDriverKind.make("codex"),
+              status: "ready",
+              threadId: input.threadId,
+              runtimeMode: input.runtimeMode,
+              cwd: input.cwd ?? process.cwd(),
+              createdAt: now,
+              updatedAt: now,
+            } satisfies ProviderSession;
+          }),
       );
 
       const session = yield* provider.startSession(asThreadId("thread-missing"), {

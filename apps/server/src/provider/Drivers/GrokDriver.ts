@@ -80,13 +80,6 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         driverKind: DRIVER_KIND,
         instanceId,
       });
-      const stampIdentity = withInstanceIdentity({
-        instanceId,
-        driverKind: DRIVER_KIND,
-        displayName,
-        accentColor,
-        continuationGroupKey: continuationIdentity.continuationKey,
-      });
       const effectiveConfig = { ...config, enabled } satisfies GrokSettings;
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
@@ -97,6 +90,14 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
+      });
+      const stampIdentity = withInstanceIdentity({
+        instanceId,
+        driverKind: DRIVER_KIND,
+        displayName,
+        accentColor,
+        continuationGroupKey: continuationIdentity.continuationKey,
+        adapterCapabilities: adapter.capabilities,
       });
       const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
 

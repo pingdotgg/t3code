@@ -27,6 +27,7 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ProviderAdapterProcessError } from "../Errors.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import {
@@ -46,6 +47,8 @@ import {
 class OpenCodeAdapter extends Context.Service<OpenCodeAdapter, OpenCodeAdapterShape>()(
   "t3/provider/Layers/OpenCodeAdapter.test/OpenCodeAdapter",
 ) {}
+
+const isProviderAdapterProcessError = Schema.is(ProviderAdapterProcessError);
 
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 
@@ -111,6 +114,9 @@ const runtimeMock = {
     permissionListImplementation: null as (() => Promise<Array<PermissionRequest>>) | null,
     questionListImplementation: null as (() => Promise<Array<QuestionRequest>>) | null,
     sessionUpdateCalls: [] as Array<{ sessionID: string; permission: unknown }>,
+    sessionUpdateImplementation: null as
+      | ((sessionID: string, permission: unknown) => Promise<void>)
+      | null,
     forkCalls: [] as Array<{ sessionID: string; directory?: string }>,
   },
   reset() {
@@ -159,6 +165,7 @@ const runtimeMock = {
     this.state.permissionListImplementation = null;
     this.state.questionListImplementation = null;
     this.state.sessionUpdateCalls.length = 0;
+    this.state.sessionUpdateImplementation = null;
     this.state.forkCalls.length = 0;
   },
 };
@@ -244,6 +251,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         },
         update: async ({ sessionID, permission }: { sessionID: string; permission: unknown }) => {
           runtimeMock.state.sessionUpdateCalls.push({ sessionID, permission });
+          await runtimeMock.state.sessionUpdateImplementation?.(sessionID, permission);
           return { data: { id: sessionID } };
         },
         fork: async ({ sessionID, directory }: { sessionID: string; directory?: string }) => {
@@ -505,6 +513,69 @@ const questionRequest = (id: string, sessionID: string): QuestionRequest => ({
 });
 
 it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
+  it.effect("forks an OpenCode source session before applying child permissions", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+
+      const session = yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId: asThreadId("thread-opencode-fork"),
+        forkFrom: {
+          resumeCursor: { schemaVersion: 1, sessionId: "ses_source" },
+        },
+        cwd: "/tmp/opencode-project",
+        runtimeMode: "full-access",
+      });
+
+      NodeAssert.deepEqual(runtimeMock.state.forkCalls, [
+        { sessionID: "ses_source", directory: "/tmp/opencode-project" },
+      ]);
+      NodeAssert.deepEqual(runtimeMock.state.sessionCreateInputs, []);
+      NodeAssert.equal(runtimeMock.state.sessionUpdateCalls[0]?.sessionID, "ses_source_fork");
+      NodeAssert.deepEqual(session.resumeCursor, {
+        schemaVersion: 1,
+        sessionId: "ses_source_fork",
+      });
+    }),
+  );
+
+  it.effect("aborts a fork whose permission update fails without replacing the update error", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      runtimeMock.state.sessionUpdateImplementation = async () => {
+        throw new Error("permission update failed");
+      };
+      runtimeMock.state.abortImplementation = async () => {
+        throw new Error("cleanup abort failed");
+      };
+
+      const exit = yield* Effect.exit(
+        adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId: asThreadId("thread-opencode-fork-update-failure"),
+          forkFrom: {
+            resumeCursor: { schemaVersion: 1, sessionId: "ses_source" },
+          },
+          cwd: "/tmp/opencode-project",
+          runtimeMode: "full-access",
+        }),
+      );
+
+      NodeAssert.deepEqual(runtimeMock.state.abortCalls, ["ses_source_fork"]);
+      if (Exit.isSuccess(exit)) {
+        NodeAssert.fail("Expected fork permission update to fail");
+      }
+      const failure = Cause.squash(exit.cause);
+      if (!isProviderAdapterProcessError(failure)) {
+        NodeAssert.fail("Expected a ProviderAdapterProcessError");
+      }
+      NodeAssert.equal(failure.detail, "permission update failed");
+      NodeAssert.ok(OpenCodeRuntimeError.is(failure.cause));
+      NodeAssert.equal(failure.cause.operation, "session.update");
+      NodeAssert.equal(failure.cause.detail, "permission update failed");
+    }),
+  );
+
   it.effect("reuses a configured OpenCode server URL instead of spawning a local server", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
