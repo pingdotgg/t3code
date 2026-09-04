@@ -129,6 +129,38 @@ describe("t3code/require-bottom-safe-area-inset", () => {
   );
 
   rule.invalid(
+    "reports an anchor guarded by a condition inside a style array",
+    `
+      import { Pressable } from "react-native";
+
+      export function ShowKeyboardButton(props: { readonly floating: boolean }) {
+        return (
+          <Pressable
+            style={[{ right: 16 }, props.floating && { position: "absolute", bottom: 16 }]}
+          />
+        );
+      }
+    `,
+    (output) => {
+      assert.match(output, /safe-area inset/);
+    },
+  );
+
+  rule.invalid(
+    "reports an anchor on JSX rendered inside an array",
+    `
+      import { View } from "react-native";
+
+      export function Overlays() {
+        return [<View key="fab" style={{ position: "absolute", bottom: 16 }} />];
+      }
+    `,
+    (output) => {
+      assert.match(output, /safe-area inset/);
+    },
+  );
+
+  rule.invalid(
     "reports a screen-filling list sized with a percentage height",
     `
       import { FlatList } from "react-native";

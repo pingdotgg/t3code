@@ -115,16 +115,17 @@ export default defineRule({
     let functionDepth = 0;
     let lastComponentId = 0;
     let currentComponentId = 0;
-    // Style arrays are judged once, merged, so an element never speaks for
-    // itself: `[{ position: "absolute" }, { bottom: 16 }]` is one anchor.
-    let arrayDepth = 0;
+    // Style arrays are judged once, merged, so a direct element never speaks
+    // for itself: `[{ position: "absolute" }, { bottom: 16 }]` is one anchor.
+    // An object wrapped deeper (`cond && {…}`, a ternary, JSX inside the
+    // array) contributes nothing to the merge and is judged on its own.
+    const mergedArrayElements = new WeakSet<object>();
     const componentsReadingInset = new Set<number>();
     const candidates: Array<{ readonly node: unknown; readonly componentId: number }> = [];
 
     const reset = () => {
       isReactNativeFile = false;
       functionDepth = 0;
-      arrayDepth = 0;
       lastComponentId = 0;
       currentComponentId = 0;
       componentsReadingInset.clear();
@@ -200,14 +201,14 @@ export default defineRule({
         }
       },
       ArrayExpression(node) {
-        arrayDepth += 1;
-        if (arrayDepth === 1) checkAbsoluteAnchor(node);
-      },
-      "ArrayExpression:exit"() {
-        arrayDepth -= 1;
+        const elements = Array.isArray(node.elements) ? node.elements : [];
+        for (const element of elements) {
+          if (typeof element === "object" && element !== null) mergedArrayElements.add(element);
+        }
+        checkAbsoluteAnchor(node);
       },
       ObjectExpression(node) {
-        if (arrayDepth === 0) checkAbsoluteAnchor(node);
+        if (!mergedArrayElements.has(node)) checkAbsoluteAnchor(node);
       },
       JSXOpeningElement(node) {
         const attributes = Array.isArray(node.attributes) ? node.attributes : [];
