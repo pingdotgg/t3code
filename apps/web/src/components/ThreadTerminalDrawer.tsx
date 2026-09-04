@@ -1014,6 +1014,8 @@ interface ThreadTerminalDrawerProps {
   keybindings: ResolvedKeybindingsConfig;
   /** Prefer server-provided tab titles when present (e.g. active subprocess name). */
   terminalLabelsById?: ReadonlyMap<string, string>;
+  /** Server-reported subprocess activity used to avoid prompting for idle terminals. */
+  terminalHasRunningSubprocessById?: ReadonlyMap<string, boolean>;
   /** Prefer per-session launch locations when the server already knows a terminal. */
   terminalLaunchLocationsById?: ReadonlyMap<string, TerminalLaunchLocation>;
 }
@@ -1074,6 +1076,7 @@ export default function ThreadTerminalDrawer({
   onAddTerminalContext,
   keybindings,
   terminalLabelsById,
+  terminalHasRunningSubprocessById,
   terminalLaunchLocationsById,
 }: ThreadTerminalDrawerProps) {
   const isPanel = mode === "panel";
@@ -1280,11 +1283,13 @@ export default function ThreadTerminalDrawer({
   const confirmCloseTerminal = useCallback(
     (terminalId: string) => {
       const label = terminalLabelById.get(terminalId) ?? getTerminalLabel(terminalId);
-      void confirmTerminalClose([label]).then((confirmed) => {
+      void confirmTerminalClose([
+        { label, hasRunningSubprocess: terminalHasRunningSubprocessById?.get(terminalId) },
+      ]).then((confirmed) => {
         if (confirmed) onCloseTerminal(terminalId);
       });
     },
-    [onCloseTerminal, terminalLabelById],
+    [onCloseTerminal, terminalHasRunningSubprocessById, terminalLabelById],
   );
 
   useEffect(() => {
