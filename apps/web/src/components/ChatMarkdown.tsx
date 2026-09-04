@@ -1,5 +1,9 @@
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
-import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import {
+  AuthFilesystemReadScope,
+  AuthOrchestrationOperateScope,
+  EnvironmentAuthorizationError,
+} from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
   CheckIcon,
@@ -2202,10 +2206,21 @@ function useChatMarkdownState({
       mediaRequestId.current += 1;
     };
   }, [threadRef?.environmentId, threadRef?.threadId, explicitEnvironmentId, cwd, imageBaseDir]);
-  const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
+  const loadAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     refresh: true,
   });
+  const createAssetUrl = useCallback<typeof loadAssetUrl>((input) => {
+    const resource = input.input.resource;
+    if ((resource._tag === "workspace-file" || resource._tag === "media-file") &&
+      !readEnvironmentScope(input.environmentId, AuthFilesystemReadScope)) {
+      return Promise.resolve(AsyncResult.failure(Cause.fail(new EnvironmentAuthorizationError({
+        message: "This connection cannot read host files.",
+        requiredScope: AuthFilesystemReadScope,
+      }))));
+    }
+    return loadAssetUrl(input);
+  }, [loadAssetUrl]);
   const searchProjectEntries = useAtomQueryRunner(projectEnvironment.searchEntries, {
     reportFailure: false,
   });
@@ -2446,7 +2461,7 @@ function useChatMarkdownState({
   );
   const findWorkspaceBasenameMatch = useCallback(
     async (workspaceRelativePath: string) => {
-      if (!cwd || environmentId === null || !needsWorkspaceBasenameLookup(workspaceRelativePath)) {
+      if (!cwd || environmentId === null || !readEnvironmentScope(environmentId, AuthFilesystemReadScope) || !needsWorkspaceBasenameLookup(workspaceRelativePath)) {
         return null;
       }
       const result = await searchProjectEntries({

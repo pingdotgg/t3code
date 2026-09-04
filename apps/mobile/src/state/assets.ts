@@ -1,3 +1,4 @@
+import { AuthFilesystemReadScope } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type EnvironmentConnectionPhase,
@@ -18,7 +19,12 @@ import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { projectFaviconCache } from "../lib/projectFaviconCache";
 import { type AssetUrlState, deriveAssetUrlState } from "./asset-url-state";
-import { environmentSession, usePreparedConnection } from "./session";
+import {
+  environmentSession,
+  usePreparedConnection,
+  useEnvironmentScope,
+  readEnvironmentScope,
+} from "./session";
 import { useAtomQueryRunner } from "./use-atom-query-runner";
 
 export type { AssetUrlFailureReason, AssetUrlState } from "./asset-url-state";
@@ -49,14 +55,16 @@ export function useAssetUrlState(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
 ): AssetUrlState {
+  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
+  const canReadResource = canReadFiles || (resource?._tag !== "workspace-file" && resource?._tag !== "media-file");
   const preparedConnection = usePreparedConnection(environmentId);
   const connectionPhase = useConnectionPhase(environmentId);
   const result = useAtomValue(
-    environmentId === null || resource === null
+    !canReadResource || environmentId === null || resource === null
       ? EMPTY_ASSET_URL_ATOM
       : assetEnvironment.createUrl({ environmentId, input: { resource } }),
   );
-  const shared = assetUrlStateFromResult(
+  const shared = !canReadResource ? { _tag: "Failure" as const } : assetUrlStateFromResult(
     result,
     preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null,
   );
@@ -90,6 +98,8 @@ export function useRefreshAssetUrl(
   });
   return useCallback(async () => {
     if (environmentId === null || resource === null || httpBaseUrl === null) return null;
+    if ((resource._tag === "workspace-file" || resource._tag === "media-file") &&
+      !readEnvironmentScope(environmentId, AuthFilesystemReadScope)) return null;
     const state = assetUrlStateFromResult(
       await createUrl({ environmentId, input: { resource } }),
       httpBaseUrl,
