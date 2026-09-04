@@ -103,6 +103,22 @@ File links refer to the environment's machine, including when you connect remote
 Previews use the original file, even outside the workspace. Moving or deleting it
 can break the preview, so save a copy if you need to keep it.
 
+## Math in messages
+
+Web and desktop render LaTeX in messages. Inline math accepts `$...$` or `\(...\)`. Display math
+accepts `$$...$$` or `\[...\]`:
+
+```markdown
+Euler's identity is $e^{i\pi} + 1 = 0$.
+
+$$
+\int_0^1 x^2\,dx = \frac{1}{3}
+$$
+```
+
+Escape a dollar sign as `\$` when two prices or other dollar amounts in the same paragraph could
+look like inline math. Mobile currently displays the source text instead.
+
 ## Files outside the workspace
 
 Follow an agent's file link to read a report or other file outside the workspace.
