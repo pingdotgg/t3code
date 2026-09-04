@@ -251,13 +251,11 @@ const COMPOSER_RESTING_CONTROLS_ARRIVAL_DRIFT_PX = 4;
 
 function useComposerRestingTransition(
   isCollapsed: boolean,
-  isResting: boolean,
   restingControlsRef: React.RefObject<HTMLDivElement | null>,
-  onOverlayGeometryChange: (height: number, resting: boolean) => void,
+  onOverlayHeightChange: (height: number) => void,
 ) {
   const elementRef = useRef<HTMLDivElement>(null);
   const isCollapsedRef = useRef(isCollapsed);
-  const isRestingRef = useRef(isResting);
   const previousCollapsedRef = useRef(isCollapsed);
   const previousHeightRef = useRef<number | null>(null);
   const previousContentOffsetsRef = useRef<{
@@ -311,7 +309,6 @@ function useComposerRestingTransition(
       if (!element || !surface) return;
 
       const nextIsCollapsed = isCollapsedRef.current;
-      const nextIsResting = isRestingRef.current;
 
       const visibleTransitionElement = (selector: string) =>
         Array.from(element.querySelectorAll<HTMLElement>(selector)).find(
@@ -360,13 +357,12 @@ function useComposerRestingTransition(
       const nextHeight = nextRect.height;
       // The chat view resize-observes the overlay to place the timeline
       // inset, the scroll-to-end pill, and the mini player. Publishing the
-      // destination geometry here, paired with the resting state it belongs
-      // to, turns that feedback into one update instead of a ChatView
-      // re-render on every animation frame.
+      // destination height here turns that feedback into one update instead
+      // of a ChatView re-render on every animation frame.
       const overlay = element.closest<HTMLElement>('[data-chat-composer-overlay="true"]');
       const overlayHeight = overlay?.getBoundingClientRect().height ?? null;
       if (overlayHeight !== null) {
-        onOverlayGeometryChange(overlayHeight, nextIsResting);
+        onOverlayHeightChange(overlayHeight);
       }
       const nextPromptRect = prompt?.getBoundingClientRect() ?? null;
       const nextPromptTop = nextPromptRect?.top ?? null;
@@ -594,15 +590,10 @@ function useComposerRestingTransition(
         actionFromBottom: nextActionTop === null ? null : nextRect.bottom - nextActionTop,
       };
     },
-    [clearTransitionStyles, onOverlayGeometryChange, restingControlsRef],
+    [clearTransitionStyles, onOverlayHeightChange, restingControlsRef],
   );
 
-  // The resting flag can change without the collapsed layout changing, for
-  // example when an unfocused thread crosses the phone breakpoint. Republish
-  // the geometry then too, so the chat view's next measurement is paired
-  // with the right state. Only a collapsed-layout change animates.
   useLayoutEffect(() => {
-    isRestingRef.current = isResting;
     const requestId = transitionLayoutRequestRef.current + 1;
     transitionLayoutRequestRef.current = requestId;
     const stateChanged = previousCollapsedRef.current !== isCollapsed;
@@ -618,7 +609,7 @@ function useComposerRestingTransition(
         transitionLayoutRequestRef.current += 1;
       }
     };
-  }, [isCollapsed, isResting, transitionToCurrentGeometry]);
+  }, [isCollapsed, transitionToCurrentGeometry]);
 
   useLayoutEffect(() => {
     const element = elementRef.current;
@@ -1239,12 +1230,12 @@ export interface ChatComposerProps {
   onRestingControlsVisibilityChange: (visible: boolean) => void;
   getTimelineScrollableNode: () => HTMLElement | null;
   isTimelineAtLogicalEnd: () => boolean;
+  onComposerOverlayHeightChange: (height: number) => void;
   /**
-   * Overlay height at the destination of a resting transition, with whether
-   * the composer is resting there. Both land in one update so the chat view
-   * never pairs a resting flag with the other layout's height.
+   * Whether the desktop resting layout is active. Reported from a layout
+   * effect, so it is current before the chat view measures the overlay.
    */
-  onComposerOverlayGeometryChange: (height: number, resting: boolean) => void;
+  onRestingChange: (resting: boolean) => void;
 
   // Refs the parent needs kept in sync
   promptRef: React.RefObject<string>;
@@ -1348,7 +1339,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onRestingControlsVisibilityChange,
     getTimelineScrollableNode,
     isTimelineAtLogicalEnd,
-    onComposerOverlayGeometryChange,
+    onComposerOverlayHeightChange,
+    onRestingChange,
     promptRef,
     composerRef,
     composerImagesRef,
@@ -3597,6 +3589,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useLayoutEffect(() => {
     onRestingControlsVisibilityChange(composerControlsVisibleInStrip);
   }, [composerControlsVisibleInStrip, onRestingControlsVisibilityChange]);
+  useLayoutEffect(() => {
+    onRestingChange(isComposerResting);
+  }, [isComposerResting, onRestingChange]);
   const restingImagePreviewCounts = getRestingComposerImagePreviewCounts(
     standaloneComposerImages.length,
   );
@@ -3652,9 +3647,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ) : null;
   const composerMainSurfaceRef = useComposerRestingTransition(
     composerControlsInStrip,
-    isComposerResting,
     restingComposerControlsRef,
-    onComposerOverlayGeometryChange,
+    onComposerOverlayHeightChange,
   );
   const canTrackComposerScrollGesture =
     routeKind === "server" && activeThreadId !== null && !isMobileViewport;

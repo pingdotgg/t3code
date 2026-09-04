@@ -4984,13 +4984,17 @@ function ChatViewContent(props: ChatViewProps) {
       currentClearance === nextHeight ? currentClearance : nextHeight,
     );
   }, []);
-  // The composer reports the destination geometry of each resting transition
-  // together with the state it belongs to, so the reservation never pairs a
-  // resting flag with the other layout's height.
-  const publishComposerOverlayGeometry = useCallback(
-    (height: number, resting: boolean) => {
+  // The composer reports its resting flag from a layout effect, which runs
+  // before this component's own layout effects and before any resize
+  // observation, so every measurement below sees the flag for its layout.
+  // A flag change with no height change still recomputes the reservation.
+  const onComposerRestingChange = useCallback(
+    (resting: boolean) => {
+      if (composerRestingRef.current === resting) return;
       composerRestingRef.current = resting;
-      publishComposerOverlayHeight(height);
+      if (composerOverlayHeightRef.current > 0) {
+        publishComposerOverlayHeight(composerOverlayHeightRef.current);
+      }
     },
     [publishComposerOverlayHeight],
   );
@@ -7955,7 +7959,8 @@ function ChatViewContent(props: ChatViewProps) {
                             onRestingControlsVisibilityChange={setRestingComposerControlsVisible}
                             getTimelineScrollableNode={getTimelineScrollableNode}
                             isTimelineAtLogicalEnd={isTimelineAtLogicalEnd}
-                            onComposerOverlayGeometryChange={publishComposerOverlayGeometry}
+                            onComposerOverlayHeightChange={publishComposerOverlayHeight}
+                            onRestingChange={onComposerRestingChange}
                             promptRef={promptRef}
                             composerImagesRef={composerImagesRef}
                             composerFilesRef={composerFilesRef}
