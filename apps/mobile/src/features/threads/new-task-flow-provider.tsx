@@ -1,5 +1,5 @@
 import { AuthFilesystemReadScope } from "@t3tools/contracts";
-import { useEnvironmentScope } from "../../state/session";
+import { environmentSession } from "../../state/session";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert } from "react-native";
 
@@ -487,10 +487,20 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // Default mode until the user picks one explicitly — same resolution web
   // uses for new draft threads: per-project setting, then the repo's
   // checked-in t3.json, then the server's configured default.
-  const canReadFiles = useEnvironmentScope(
-    selectedProject?.environmentId ?? null,
-    AuthFilesystemReadScope,
+  const fileAccessSession = useEnvironmentQuery(
+    selectedProject !== null && selectedProject.workspaceRoot !== ""
+      ? environmentSession.sessionStateAtom(selectedProject.environmentId)
+      : null,
   );
+  const fileAccessPending =
+    selectedProject !== null &&
+    selectedProject.workspaceRoot !== "" &&
+    fileAccessSession.data === null &&
+    fileAccessSession.error === null;
+  const canReadFiles =
+    fileAccessSession.error === null &&
+    fileAccessSession.data?.authenticated === true &&
+    fileAccessSession.data.scopes?.includes(AuthFilesystemReadScope) === true;
   const t3ProjectFileQuery = useEnvironmentQuery(
     canReadFiles && selectedProject !== null && selectedProject.workspaceRoot !== ""
       ? projectEnvironment.readFile({
@@ -533,7 +543,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const defaultWorkspaceModeSettled =
     selectedProjectDraft.workspaceSelection?.mode !== undefined ||
     projectSettings.sources.defaultThreadEnvMode !== "environment" ||
-    !t3ProjectFileQuery.isPending;
+    (!t3ProjectFileQuery.isPending && !fileAccessPending);
   const workspaceMode = canChooseWorkspace
     ? (selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode)
     : "local";
