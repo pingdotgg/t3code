@@ -35,8 +35,10 @@ import {
   decodeOwnAwardIdJson,
   decodeProjectMergeCapabilitiesJson,
   decodeProjectUsersJson,
+  decodeRepositoryBlobsJson,
   decodeViewerJson,
   gitLabAwardName,
+  REPOSITORY_BLOBS_GRAPHQL_QUERY,
   type GitLabDiffRefs,
   type GitLabMergeRequestDetail,
   type GitLabMergeRequestListItem,
@@ -282,6 +284,20 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
     }) => Effect.Effect<PullRequestMergeCapabilities, GitLabPullRequestCliError>;
+
+    /**
+     * What the merge request's head has of each of these paths, as blob ids.
+     *
+     * The head sha comes from the merge request's own diff refs, so the answer is the version a
+     * reader is looking at rather than whatever the source branch has moved on to. A path the
+     * head does not have is left out.
+     */
+    readonly getFileRevisions: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly number: number;
+      readonly paths: ReadonlyArray<string>;
+    }) => Effect.Effect<ReadonlyMap<string, string>, GitLabPullRequestCliError>;
 
     /**
      * Who this merge request may be sent to, and who it has already been sent to. Two reads at
@@ -1030,6 +1046,88 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  /**
+   * GitLab charges the blobs query by how many paths it is handed, and its connection hands back
+   * one page. A hundred at a time keeps each request inside both.
+   */
+  const BLOB_PATHS_PER_REQUEST = 100;
+
+  const blobsAt = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly ref: string;
+    readonly paths: ReadonlyArray<string>;
+  }): Effect.Effect<ReadonlyMap<string, string> | null, GitLabPullRequestCliError> =>
+    api({
+      cwd: input.cwd,
+      path: "graphql",
+      method: "POST",
+      stdin: JSON.stringify({
+        query: REPOSITORY_BLOBS_GRAPHQL_QUERY,
+        variables: { fullPath: input.repository, ref: input.ref, paths: input.paths },
+      }),
+    }).pipe(
+      Effect.flatMap(
+        (result): Effect.Effect<ReadonlyMap<string, string> | null, GitLabPullRequestCliError> => {
+          const decoded = decodeRepositoryBlobsJson(result.stdout.trim());
+          return Result.isSuccess(decoded)
+            ? Effect.succeed(decoded.success)
+            : Effect.fail(
+                new GitLabMergeRequestReadError({
+                  command: "glab",
+                  cwd: input.cwd,
+                  operation: "getFileRevisions",
+                  cause: decoded.failure,
+                }),
+              );
+        },
+      ),
+    );
+
+  const fileRevisions = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly number: number;
+    readonly paths: ReadonlyArray<string>;
+  }): Effect.Effect<ReadonlyMap<string, string>, GitLabPullRequestCliError> =>
+    input.paths.length === 0
+      ? Effect.succeed(new Map())
+      : getDiffRefs(input).pipe(
+          Effect.flatMap((refs) => {
+            const batches: Array<ReadonlyArray<string>> = [];
+            for (let at = 0; at < input.paths.length; at += BLOB_PATHS_PER_REQUEST) {
+              batches.push(input.paths.slice(at, at + BLOB_PATHS_PER_REQUEST));
+            }
+            return Effect.forEach(
+              batches,
+              (paths) =>
+                blobsAt({ ...input, ref: refs.headSha, paths }).pipe(
+                  Effect.map((page) => ({ paths, page })),
+                ),
+              { concurrency: 2 },
+            ).pipe(
+              Effect.map((pages) => {
+                const revisions = new Map<string, string>();
+                for (const { paths, page } of pages) {
+                  // A batch GitLab did not answer says nothing about its paths, so they are left
+                  // out and the caller reads them as versions it could not learn, which leaves
+                  // the marks on them alone. Filling them in as removed would report every file
+                  // a reader has cleared as changed over a project the token cannot see.
+                  if (page === null) continue;
+                  for (const [path, oid] of page) revisions.set(path, oid);
+                  // Within a batch that was answered, every path was looked for at the head, so
+                  // one that is not there is one the merge request removed. Said as the empty
+                  // revision, which is an answer the caller can compare against and keep.
+                  for (const path of paths) {
+                    if (!revisions.has(path)) revisions.set(path, "");
+                  }
+                }
+                return revisions as ReadonlyMap<string, string>;
+              }),
+            );
+          }),
+        );
+
   const viewerUsername = (input: { readonly cwd: string }) =>
     api({ cwd: input.cwd, path: "user" }).pipe(
       Effect.flatMap((result): Effect.Effect<string, GitLabPullRequestCliError> => {
@@ -1064,6 +1162,8 @@ export const make = Effect.gen(function* () {
     listNotes: (input) => notesPage({ ...input, page: 1, collected: [] }),
 
     listReactions: (input) => awardsPage({ ...input, cursor: null, page: 1, collected: null }),
+
+    getFileRevisions: fileRevisions,
 
     setReaction: (input) =>
       Effect.gen(function* () {

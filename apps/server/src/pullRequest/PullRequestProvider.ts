@@ -8,6 +8,7 @@ import type {
   PullRequestChecksState,
   PullRequestCheck,
   PullRequestComment,
+  PullRequestFileViewed,
   PullRequestCommit,
   PullRequestInvolvement,
   PullRequestLabel,
@@ -220,6 +221,27 @@ export interface ProviderDiffFileContents {
   readonly newContents: string;
 }
 
+export interface ProviderFilesViewed {
+  readonly files: ReadonlyArray<PullRequestFileViewed>;
+  /** The host has more files than were read, so the ones missing here are not "unviewed". */
+  readonly truncated: boolean;
+}
+
+/**
+ * What version each of the asked-for files is at, on the change request's head.
+ *
+ * Opaque strings: the caller only ever compares one against another, and every host names a
+ * version its own way. The empty string is an answer rather than a gap — it is what a file the
+ * change request deletes is at, and a mark taken against it stays cleared.
+ *
+ * A path is absent only when the read could not say: a host that answered for part of the change
+ * must leave the rest out rather than report it as deleted, or a file past the cut would be
+ * cleared once and cleared for good.
+ */
+export interface ProviderFileRevisions {
+  readonly revisions: ReadonlyMap<string, string>;
+}
+
 export interface ProviderRepositoryRef {
   readonly cwd: string;
   /** Provider-native repository identity, e.g. `owner/repo` or `group/subgroup/project`. */
@@ -381,6 +403,46 @@ export interface PullRequestProviderApi {
       readonly newPath: string;
     },
   ) => Effect.Effect<ProviderDiffFileContents, PullRequestProviderError>;
+
+  /**
+   * Which files the reader has already cleared. Only called when the host keeps that record
+   * itself — `capabilities.viewedFiles` of `"host"` — and read apart from the patch: a host that
+   * reports this at all reports it on a clock of its own, moving with every press rather than
+   * with every push.
+   */
+  readonly getFilesViewed?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<ProviderFilesViewed, PullRequestProviderError>;
+
+  /**
+   * Clears files, or puts them back. Only called when `capabilities.viewedFiles` is `"host"`.
+   *
+   * Takes several at once because that is how they are pressed. A provider whose host has no
+   * bulk form still owes one round trip for the batch rather than one per file, since the point
+   * of gathering them here is that the host is asked once.
+   */
+  readonly setFilesViewed?: (
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      readonly files: ReadonlyArray<{ readonly path: string; readonly viewed: boolean }>;
+    },
+  ) => Effect.Effect<void, PullRequestProviderError>;
+
+  /**
+   * What version the head has of each of these files. Required of a host whose
+   * `capabilities.viewedFiles` is `"environment"`, and unused by one that keeps the marks itself.
+   *
+   * The marks live here, but what counts as the same file does not: only the host can say whether
+   * what a reader cleared last week is still what is in front of them. Asked for the marked paths
+   * alone, so the cost follows how much of the change request has been read rather than how large
+   * it is.
+   */
+  readonly getFileRevisions?: (
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      readonly paths: ReadonlyArray<string>;
+    },
+  ) => Effect.Effect<ProviderFileRevisions, PullRequestProviderError>;
 
   readonly runAction: (
     input: ProviderRepositoryRef & {

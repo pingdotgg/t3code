@@ -4,9 +4,12 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   PullRequestActionInput,
   PullRequestCapabilities,
+  PullRequestFilesViewedResult,
   PullRequestListInput,
   PullRequestListResult,
   PullRequestReviewerRequestInput,
+  PullRequestSetFilesViewedInput,
+  pullRequestRepositoryOf,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
 
@@ -14,6 +17,8 @@ const decodeListResult = Schema.decodeUnknownSync(PullRequestListResult);
 const decodeListInput = Schema.decodeUnknownSync(PullRequestListInput);
 const decodeReviewerRequest = Schema.decodeUnknownSync(PullRequestReviewerRequestInput);
 const decodeAction = Schema.decodeUnknownSync(PullRequestActionInput);
+const decodeSetFilesViewed = Schema.decodeUnknownSync(PullRequestSetFilesViewedInput);
+const decodeFilesViewed = Schema.decodeUnknownSync(PullRequestFilesViewedResult);
 
 const LIST_RESULT: PullRequestListResult = {
   viewers: { "github.com": "bilal", "gitlab.com": "bilal.hassan" },
@@ -254,5 +259,93 @@ describe("naming the reader as the author to narrow by", () => {
   it("stands as typed where the host has not said who the reader is", () => {
     expect(resolvePullRequestAuthorFilter("me", null)).toBe("me");
     expect(resolvePullRequestAuthorFilter("me", "  ")).toBe("me");
+  });
+});
+
+describe("the repository a ref names", () => {
+  const identity = (fields: Record<string, unknown>) =>
+    ({ canonicalKey: "example.test/repo", locator: {}, ...fields }) as never;
+
+  it("names an Azure DevOps repository by itself, not by the project path around it", () => {
+    // `az repos pr list --repository` takes a name and detects the organisation and project from
+    // the checkout; handed the recorded path it refuses, and the repository reads as unavailable.
+    expect(
+      pullRequestRepositoryOf(
+        identity({
+          provider: "azure-devops",
+          displayName: "contoso/payments/_git/checkout",
+          owner: "contoso",
+          name: "checkout",
+        }),
+      ),
+    ).toBe("checkout");
+  });
+
+  it("falls back to the path's last segment where an Azure identity has no name", () => {
+    expect(
+      pullRequestRepositoryOf(
+        identity({ provider: "azure-devops", displayName: "contoso/payments/_git/checkout" }),
+      ),
+    ).toBe("checkout");
+  });
+
+  it("keeps a GitLab identity's whole path, because a nested group is part of the name", () => {
+    expect(
+      pullRequestRepositoryOf(
+        identity({
+          provider: "gitlab",
+          displayName: "group/subgroup/service",
+          owner: "group",
+          name: "service",
+        }),
+      ),
+    ).toBe("group/subgroup/service");
+  });
+
+  it("puts owner and name back together for an identity recorded before displayName", () => {
+    expect(
+      pullRequestRepositoryOf(identity({ provider: "github", owner: "t3tools", name: "t3code" })),
+    ).toBe("t3tools/t3code");
+  });
+
+  it("names nothing for a project with no remote to name it by", () => {
+    expect(pullRequestRepositoryOf(null)).toBeNull();
+    expect(pullRequestRepositoryOf(identity({ provider: "github" }))).toBeNull();
+  });
+});
+
+describe("naming the file a tick belongs to", () => {
+  // A space on either end of a name is part of the name as far as git is concerned. The patch on
+  // screen and the environment's record of what was cleared are both keyed by it, so a path
+  // tidied in transit ticks a file that does not exist and leaves the one on screen unticked.
+  it("keeps the spaces around a path being ticked", () => {
+    expect(
+      decodeSetFilesViewed({
+        projectId: "p1",
+        repository: "group/project",
+        number: 7,
+        files: [{ path: "docs/readme.md ", viewed: true }],
+      }).files,
+    ).toEqual([{ path: "docs/readme.md ", viewed: true }]);
+  });
+
+  it("keeps the spaces around a path being reported back", () => {
+    expect(
+      decodeFilesViewed({
+        files: [{ path: " leading.md", state: "viewed" }],
+        truncated: false,
+      }).files,
+    ).toEqual([{ path: " leading.md", state: "viewed" }]);
+  });
+
+  it("still refuses a path that is nothing at all", () => {
+    expect(() =>
+      decodeSetFilesViewed({
+        projectId: "p1",
+        repository: "group/project",
+        number: 7,
+        files: [{ path: "", viewed: true }],
+      }),
+    ).toThrow();
   });
 });

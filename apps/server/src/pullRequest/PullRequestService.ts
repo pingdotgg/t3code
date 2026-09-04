@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import {
@@ -16,6 +17,7 @@ import {
   PullRequestUnavailableError,
   pullRequestHostOf,
   pullRequestProviderRequirement,
+  pullRequestRepositoryOf,
   resolvePullRequestAuthorFilter,
   type OrchestrationProjectShell,
   type PullRequestAction,
@@ -28,6 +30,7 @@ import {
   type PullRequestDiffFileContentsResult,
   type PullRequestDiffStat,
   type PullRequestDiffInput,
+  type PullRequestFilesViewedResult,
   type PullRequestDiffResult,
   type PullRequestInvalidateInput,
   type PullRequestListEntry,
@@ -45,6 +48,7 @@ import {
   type PullRequestReviewerRequestInput,
   type PullRequestLabelCandidateList,
   type PullRequestLabelChangeInput,
+  type PullRequestSetFilesViewedInput,
   type PullRequestSubmitReviewInput,
   type PullRequestSummary,
   type PullRequestThreadReplyInput,
@@ -58,6 +62,7 @@ import {
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
 import {
@@ -116,6 +121,21 @@ const DIFF_CACHE_TTL = Duration.seconds(60);
 const COMMIT_DIFF_CACHE_TTL = Duration.minutes(10);
 /** Sized like the client's own stale time; a row's counts move only when somebody pushes. */
 const LIST_STATS_CACHE_TTL = Duration.seconds(60);
+/**
+ * Short, and with no stale window behind it: this is the reader's own bookkeeping, and the
+ * press that changes it is the same press the page is already showing optimistically. Held at
+ * all only so opening a change request on two devices costs one read.
+ */
+const FILES_VIEWED_CACHE_TTL = Duration.seconds(15);
+/**
+ * How long the head's blob for a file is believed without asking the host again, and how long a
+ * held answer still stands while the next one is fetched. The marks themselves are this
+ * environment's own rows and cost nothing to read; this is the host call behind the **Changed**
+ * badge alone, so a held answer costs a badge that is a minute behind rather than a stale tick.
+ */
+const FILE_REVISIONS_CACHE_TTL = Duration.seconds(60);
+const FILE_REVISIONS_STALE_WINDOW = Duration.minutes(10);
+const FILE_REVISIONS_CACHE_CAPACITY = 64;
 /** A diff can stay interactive while its next cached value is fetched off the critical path. */
 const DIFF_STALE_WINDOW = Duration.minutes(10);
 /** How long one host's signed-in login is believed without asking its CLI again. */
@@ -127,6 +147,7 @@ const LIST_CACHE_CAPACITY = 64;
 const LIST_STATS_CACHE_CAPACITY = 32;
 const DETAIL_CACHE_CAPACITY = 128;
 const DIFF_CACHE_CAPACITY = 128;
+const FILES_VIEWED_CACHE_CAPACITY = 128;
 const VIEWER_CACHE_CAPACITY = 32;
 
 export type PullRequestError = PullRequestUnavailableError | PullRequestOperationError;
@@ -164,6 +185,12 @@ export class PullRequestService extends Context.Service<
     readonly diffFileContents: (
       input: PullRequestDiffFileContentsInput,
     ) => Effect.Effect<PullRequestDiffFileContentsResult, PullRequestError>;
+    readonly filesViewed: (
+      input: PullRequestRef,
+    ) => Effect.Effect<PullRequestFilesViewedResult, PullRequestError>;
+    readonly setFilesViewed: (
+      input: PullRequestSetFilesViewedInput,
+    ) => Effect.Effect<void, PullRequestError>;
     readonly runAction: (input: PullRequestActionInput) => Effect.Effect<void, PullRequestError>;
     readonly update: (input: PullRequestUpdateInput) => Effect.Effect<void, PullRequestError>;
     readonly comment: (input: PullRequestCommentInput) => Effect.Effect<void, PullRequestError>;
@@ -485,6 +512,15 @@ function withRateLimitBackoff(
     ...(api.getDiffFileContents === undefined
       ? {}
       : { getDiffFileContents: wrap("getDiffFileContents", api.getDiffFileContents) }),
+    ...(api.getFilesViewed === undefined
+      ? {}
+      : { getFilesViewed: wrap("getFilesViewed", api.getFilesViewed) }),
+    ...(api.setFilesViewed === undefined
+      ? {}
+      : { setFilesViewed: interactive("setFilesViewed", api.setFilesViewed) }),
+    ...(api.getFileRevisions === undefined
+      ? {}
+      : { getFileRevisions: wrap("getFileRevisions", api.getFileRevisions) }),
     runAction: interactive("runAction", api.runAction),
     ...(api.updateChangeRequest === undefined
       ? {}
@@ -509,27 +545,13 @@ function withRateLimitBackoff(
 }
 
 /**
- * The provider-native repository selector. `displayName` is the full path below the host, which
- * is what nested GitLab groups need; owner/name is the two-segment fallback for identities
- * recorded before that field existed.
- *
- * Azure DevOps is the exception: `az repos pr list --repository` takes a repository name, and
- * takes the organisation and project from the checkout it detects — so the recorded
- * `org/project/_git/repo` path is refused outright and the whole repository reads as
- * unavailable. Its name is the last segment, which is what this hands over.
- *
- * One function because everything downstream is keyed by what it answers: the rows' own
- * `repository`, the per-repository cursors, and the detail and diff reads a row leads to.
+ * The provider-native repository selector for a project, which everything downstream is keyed by:
+ * the rows' own `repository`, the per-repository cursors, and the detail and diff reads a row
+ * leads to. The rule itself is shared with the clients that build a ref, since a ref spelled any
+ * other way is refused before it reaches a provider.
  */
 export function repositoryIdentityOf(project: OrchestrationProjectShell): string | null {
-  const identity = project.repositoryIdentity;
-  if (!identity) return null;
-  if (identity.provider === "azure-devops") {
-    const segments = (identity.displayName ?? "").split("/").filter((part) => part !== "_git");
-    return identity.name || segments.at(-1) || null;
-  }
-  if (identity.displayName) return identity.displayName;
-  return identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null;
+  return pullRequestRepositoryOf(project.repositoryIdentity);
 }
 
 export const make = Effect.gen(function* () {
@@ -539,6 +561,7 @@ export const make = Effect.gen(function* () {
   const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const rateLimits = yield* SourceControlRateLimit.SourceControlRateLimit;
+  const filesViewedStore = yield* PullRequestFilesViewed.PullRequestFilesViewedRepository;
 
   const refineUnknownProjectKinds = (
     projects: ReadonlyArray<OrchestrationProjectShell>,
@@ -1429,6 +1452,382 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const context = yield* Effect.context<never>();
+  /** Runs a refresh as its own fiber, for the reads that answer from a held value first. */
+  const runFork = Effect.runForkWith(context);
+
+  /**
+   * Which repository a row belongs to, spelled widely enough that two of them are two rows.
+   *
+   * A provider's own selector is what the reads are addressed by, and Azure's is the bare
+   * repository name: unique inside one project and not across an organisation, so `api` in two
+   * projects would otherwise share one row and show each other's ticks. The remote already
+   * carries the whole path, so the marks are keyed by that instead.
+   */
+  const filesViewedRepositoryOf = (project: SupportedProject) => {
+    if (project.api.kind !== "azure-devops") return project.repository;
+    const path = project.project.repositoryIdentity?.displayName?.trim();
+    return path === undefined || path.length === 0 ? project.repository : path;
+  };
+
+  /**
+   * Which change request's marks, and whose. The host is part of it because the same
+   * `owner/repo` exists on more than one install, and the reader is part of it for the reason
+   * a host's own record is per-account. A host that will not say who is reading leaves it
+   * empty, which is one reader rather than none.
+   */
+  const filesViewedScope = (project: SupportedProject, number: number, viewer: string | null) => ({
+    provider: project.api.kind,
+    host: project.host,
+    repository: filesViewedRepositoryOf(project),
+    number,
+    viewer: viewer ?? "",
+  });
+
+  const toFilesViewedStoreError = (operation: string) => (cause: unknown) =>
+    new PullRequestOperationError({
+      operation,
+      detail: "This environment could not reach its record of which files you have seen.",
+      cause,
+    });
+
+  /**
+   * What the head has of the files a reader has marked, held between reads. A host says the empty
+   * revision for a file the change request deletes, and leaves out a path it could not look at, so
+   * the entry remembers what it has been asked as well as what it heard: a path asked for and
+   * missing from an answer keeps whatever version was last given for it.
+   */
+  interface HeldFileRevisions {
+    readonly at: number;
+    readonly asked: ReadonlySet<string>;
+    readonly revisions: ReadonlyMap<string, string>;
+  }
+  const heldFileRevisions = new Map<string, HeldFileRevisions>();
+  const refreshingFileRevisions = new Set<string>();
+  /**
+   * Moved every time a held answer is dropped. A refresh already in flight when that happens
+   * still answers its own caller, and its answer is simply not kept: it was taken against a head
+   * the reader has since asked to stop believing, and keeping it would put the dropped entry
+   * straight back. One counter for every scope rather than one each, so an unrelated refresh
+   * costs an in-flight read its place in the cache and nothing else.
+   */
+  let fileRevisionsGeneration = 0;
+  /**
+   * Normalised, because a reference reaches here spelled however the client spelled it while the
+   * project carries the remote's own spelling, and a refresh that missed by a capital would leave
+   * the held answer standing.
+   */
+  const fileRevisionsScope = (projectId: string, repository: string, number: number) =>
+    `${projectId} ${repository.trim().toLowerCase()} ${number}`;
+
+  const recordFileRevisions = (
+    scope: string,
+    paths: ReadonlyArray<string>,
+    answer: ReadonlyMap<string, string>,
+    generation: number,
+  ) =>
+    Effect.map(Clock.currentTimeMillis, (at) => {
+      // Answered from, never stored: the caller asked for this and it is as fresh as anything
+      // could be, but the scope it belongs to has been dropped since the read began.
+      if (generation !== fileRevisionsGeneration) return answer;
+      const held = heldFileRevisions.get(scope);
+      // Past the stale window the old entry is not worth merging into: it would carry paths
+      // nobody has asked about since, at revisions the head has long moved off.
+      const carried =
+        held !== undefined && at - held.at <= Duration.toMillis(FILE_REVISIONS_STALE_WINDOW)
+          ? held
+          : null;
+      const revisions = new Map(carried?.revisions ?? []);
+      const asked = new Set(carried?.asked ?? []);
+      for (const path of paths) {
+        asked.add(path);
+        const revision = answer.get(path);
+        // Left out of the answer is the host not saying, not the head having nothing: deleting
+        // the version it last gave would turn a file already reported as changed back into a
+        // cleared one on the next answer that had to stop short.
+        if (revision !== undefined) revisions.set(path, revision);
+      }
+      heldFileRevisions.delete(scope);
+      if (heldFileRevisions.size >= FILE_REVISIONS_CACHE_CAPACITY) {
+        const oldest = heldFileRevisions.keys().next().value;
+        if (oldest !== undefined) heldFileRevisions.delete(oldest);
+      }
+      // The entry is only as fresh as the oldest revision in it. Stamping it with now because
+      // this read answered would let a reader ticking one new file after another keep carrying the
+      // first file's revision past the point it would have been read again, since every press
+      // renews the whole scope while asking about one path.
+      const stamped = [...revisions.keys()].every((path) => answer.has(path))
+        ? at
+        : (carried?.at ?? at);
+      heldFileRevisions.set(scope, { at: stamped, asked, revisions });
+      return revisions;
+    });
+
+  /** A held entry that covers every path asked for and is still worth answering from. */
+  const heldFileRevisionsFor = (scope: string, paths: ReadonlyArray<string>, now: number) => {
+    const held = heldFileRevisions.get(scope);
+    if (held === undefined) return null;
+    if (now - held.at > Duration.toMillis(FILE_REVISIONS_STALE_WINDOW)) return null;
+    return paths.every((path) => held.asked.has(path)) ? held : null;
+  };
+
+  const forgetFileRevisions = (scope: string) => {
+    heldFileRevisions.delete(scope);
+    fileRevisionsGeneration += 1;
+  };
+
+  const forgetEveryFileRevision = () => {
+    heldFileRevisions.clear();
+    fileRevisionsGeneration += 1;
+  };
+
+  /**
+   * What the head has of these files, or null where the host cannot say. Null is not an error:
+   * without it the marks simply stop reporting staleness, which is worse than the host's own
+   * record but better than refusing to remember anything.
+   *
+   * `held` answers from a value past its lifetime and fetches the next one off the critical path,
+   * because a badge a moment behind beats a page of ticks that will not paint until a host answers.
+   * `fresh` is for the press itself, which stamps what it stores and would otherwise write a
+   * revision the head had already moved off.
+   */
+  const fileRevisionsOf = (
+    project: SupportedProject,
+    number: number,
+    paths: ReadonlyArray<string>,
+    operation: string,
+    freshness: "held" | "fresh" = "held",
+  ): Effect.Effect<ReadonlyMap<string, string> | null, PullRequestError> => {
+    const read = project.api.getFileRevisions;
+    if (read === undefined) return Effect.succeed(null);
+    const scope = fileRevisionsScope(project.project.id, project.repository, number);
+    // Suspended, so a held answer costs the host nothing: a provider is free to do its work as
+    // the request is built rather than as the effect is run.
+    const fetch = Effect.suspend(() => {
+      const generation = fileRevisionsGeneration;
+      return read({
+        cwd: project.project.workspaceRoot,
+        repository: project.repository,
+        host: project.host,
+        number,
+        paths,
+      }).pipe(
+        Effect.mapError(toPullRequestError(operation)),
+        Effect.flatMap((answer) => recordFileRevisions(scope, paths, answer.revisions, generation)),
+      );
+    });
+    return Effect.flatMap(Clock.currentTimeMillis, (now) => {
+      const held = heldFileRevisionsFor(scope, paths, now);
+      if (held === null) return fetch;
+      if (now - held.at <= Duration.toMillis(FILE_REVISIONS_CACHE_TTL))
+        return Effect.succeed(held.revisions);
+      if (freshness === "fresh") return fetch;
+      if (refreshingFileRevisions.has(scope)) return Effect.succeed(held.revisions);
+      // Its own fiber rather than a child: the caller has been answered and is gone before this
+      // lands. One at a time per change request, so a page of files costs one host read.
+      return Effect.sync(() => {
+        refreshingFileRevisions.add(scope);
+        runFork(
+          Effect.ignore(fetch).pipe(
+            Effect.ensuring(Effect.sync(() => refreshingFileRevisions.delete(scope))),
+          ),
+        );
+      }).pipe(Effect.as(held.revisions));
+    });
+  };
+
+  /**
+   * The marks this environment keeps for a host that keeps none of its own.
+   *
+   * A file the head still has at the revision it was cleared at is cleared; one the head has
+   * moved on from is reported as changed, which is what GitHub says of a file pushed to since it
+   * was ticked. Revisions are asked for the marked paths alone, so the cost follows how much of
+   * the change request has been read rather than how large it is, and a reader who has marked
+   * nothing costs no host call at all.
+   */
+  const environmentFilesViewed = (
+    project: SupportedProject,
+    number: number,
+  ): Effect.Effect<PullRequestFilesViewedResult, PullRequestError> =>
+    Effect.gen(function* () {
+      const viewer = yield* viewerOf(project);
+      const marks = yield* filesViewedStore
+        .list(filesViewedScope(project, number, viewer))
+        .pipe(Effect.mapError(toFilesViewedStoreError("filesViewed")));
+      if (marks.length === 0) return { files: [], truncated: false };
+      // These rows are this environment's own. A rate limit or a signed-out CLI costs the marks
+      // their staleness, which is the thing `fileRevisionsOf` already answers null for, and must
+      // not cost the reader every tick they have made. The press itself still fails loudly on a
+      // host that errors, since a mark stamped with a revision nobody read is wrong rather than
+      // merely less informed; a host that answers without the path is stored with no baseline.
+      const revisions = yield* fileRevisionsOf(
+        project,
+        number,
+        marks.map((mark) => mark.path),
+        "filesViewed",
+      ).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("reporting viewed files without what the head has of them", {
+            operation: "filesViewed",
+            reason: error._tag,
+          }).pipe(Effect.as(null)),
+        ),
+      );
+      return {
+        files: marks.map((mark) => {
+          // A path the host had no answer for is one it could not look at, not one it looked at
+          // and found nothing: a read that saw part of a large change must not report the rest
+          // as changed against a revision nobody read. A file the change request deletes is
+          // answered as the empty revision, which is what its mark was stamped with, so it is
+          // cleared once and stays cleared.
+          // A mark stamped with no baseline has nothing to compare against, so it holds until
+          // the reader presses it again. That is the press the host would not answer for, and
+          // reporting it as changed against a revision it was never measured at would move the
+          // file the reader just cleared back into the pile.
+          if (mark.revision === null) return { path: mark.path, state: "viewed" as const };
+          const revision = revisions?.get(mark.path);
+          return {
+            path: mark.path,
+            state:
+              revision === undefined || revision === mark.revision
+                ? ("viewed" as const)
+                : ("dismissed" as const),
+          };
+        }),
+        // Every mark is a row this environment holds, so there is no page to run out of.
+        truncated: false,
+      };
+    });
+
+  /**
+   * One environment-backed write at a time per change request. A tick asks the host what it has
+   * of the file before it stores anything and an untick asks nothing at all, so two presses in
+   * quick succession would otherwise finish in the other order and leave the tick's row standing
+   * over the untick that came after it.
+   */
+  const filesViewedGates = new Map<
+    string,
+    { readonly gate: Semaphore.Semaphore; pending: number }
+  >();
+
+  const inFilesViewedOrder = (
+    project: SupportedProject,
+    number: number,
+    write: Effect.Effect<void, PullRequestError>,
+  ) =>
+    // Suspended rather than generated, so finding the gate, putting it in and taking a place in
+    // its queue are one step. `Semaphore.make` is an effect, and yielding for it between the
+    // lookup and the insert lets two presses each find nothing, each make a gate of their own,
+    // and neither wait on the other, which is the ordering this exists for.
+    Effect.suspend(() => {
+      const key = `${project.project.id} ${filesViewedRepositoryOf(project).trim().toLowerCase()} ${number}`;
+      const held = filesViewedGates.get(key);
+      const entry = held ?? { gate: Semaphore.makeUnsafe(1), pending: 0 };
+      if (held === undefined) filesViewedGates.set(key, entry);
+      entry.pending += 1;
+      // Dropped once nobody is queued behind it, so a long-lived server does not keep a gate per
+      // change request anyone has ever ticked a file in.
+      return entry.gate
+        .withPermits(1)(write)
+        .pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              entry.pending -= 1;
+              if (entry.pending === 0) filesViewedGates.delete(key);
+            }),
+          ),
+        );
+    });
+
+  const environmentSetFilesViewed = (
+    project: SupportedProject,
+    input: PullRequestSetFilesViewedInput,
+  ): Effect.Effect<void, PullRequestError> =>
+    Effect.gen(function* () {
+      const viewer = yield* viewerOf(project);
+      // Only the files being cleared need a revision. An unticked one is about to lose its row,
+      // and what the head has of it changes nothing about deleting it.
+      const cleared = input.files.filter((file) => file.viewed).map((file) => file.path);
+      const revisions =
+        cleared.length === 0
+          ? null
+          : yield* fileRevisionsOf(project, input.number, cleared, "setFilesViewed", "fresh");
+      const viewedAt = DateTime.formatIso(yield* DateTime.now);
+      yield* filesViewedStore
+        .set({
+          ...filesViewedScope(project, input.number, viewer),
+          // A path left out of the answer is the host declining to say, not the head having
+          // nothing of the file: the empty revision is an answer, and a mark stamped with it is
+          // reported as changed as soon as the file turns out to have a version after all. Such a
+          // mark is stored with no baseline instead, and a host too far behind to answer for a
+          // large change stays tickable rather than clearing files that come straight back.
+          files: input.files.map((file) => ({
+            path: file.path,
+            revision: revisions?.get(file.path) ?? null,
+            viewed: file.viewed,
+          })),
+          viewedAt,
+        })
+        .pipe(Effect.mapError(toFilesViewedStoreError("setFilesViewed")));
+    });
+
+  const filesViewedUncached = (input: PullRequestRef) =>
+    requireProject(input).pipe(
+      Effect.flatMap((project): Effect.Effect<PullRequestFilesViewedResult, PullRequestError> => {
+        const read = project.api.getFilesViewed;
+        if (project.api.capabilities.viewedFiles === "host" && read) {
+          return read({
+            cwd: project.project.workspaceRoot,
+            repository: project.repository,
+            host: project.host,
+            number: input.number,
+          }).pipe(Effect.mapError(toPullRequestError("filesViewed")));
+        }
+        if (project.api.capabilities.viewedFiles === "environment") {
+          return environmentFilesViewed(project, input.number);
+        }
+        return Effect.fail(
+          new PullRequestOperationError({
+            operation: "filesViewed",
+            detail: "This host does not track which files a reader has seen.",
+          }),
+        );
+      }),
+    );
+
+  const setFilesViewed: PullRequestService["Service"]["setFilesViewed"] = (input) =>
+    requireProject(input).pipe(
+      Effect.flatMap((project): Effect.Effect<void, PullRequestError> => {
+        const write = project.api.setFilesViewed;
+        if (project.api.capabilities.viewedFiles === "host" && write) {
+          return write({
+            cwd: project.project.workspaceRoot,
+            repository: project.repository,
+            host: project.host,
+            number: input.number,
+            files: input.files,
+          }).pipe(Effect.mapError(toPullRequestError("setFilesViewed")));
+        }
+        if (project.api.capabilities.viewedFiles === "environment") {
+          return inFilesViewedOrder(
+            project,
+            input.number,
+            environmentSetFilesViewed(project, input),
+          );
+        }
+        return Effect.fail(
+          new PullRequestOperationError({
+            operation: "setFilesViewed",
+            detail: "This host does not track which files a reader has seen.",
+          }),
+        );
+      }),
+      // Deliberately not `invalidatedByMutation`: ticking a file off says nothing about the
+      // change request, and dropping a 300-file diff on every checkbox is the whole cost of
+      // the feature. Only this reader's own bookkeeping is forgotten.
+      Effect.tap(() => Effect.sync(() => bumpFilesViewedEpoch(input))),
+    );
+
   const runAction = (input: PullRequestActionInput): Effect.Effect<string, PullRequestError> =>
     requireProject(input).pipe(
       Effect.flatMap((project): Effect.Effect<string, PullRequestError> => {
@@ -2028,9 +2427,6 @@ export const make = Effect.gen(function* () {
       return { stats: stats.flat() };
     });
 
-  const context = yield* Effect.context<never>();
-  const runFork = Effect.runForkWith(context);
-
   /**
    * The diff is not live-polled and is expensive enough to keep its stale-while-revalidate path.
    * Explicit refreshes and mutations still strand held values through the reference epoch.
@@ -2136,14 +2532,20 @@ export const make = Effect.gen(function* () {
     Math.max(turnRefreshEpoch, refEpochs.get(refScope(ref)) ?? 0);
   const refCacheKey = (ref: PullRequestRef) =>
     JSON.stringify([refEpoch(ref), ref.projectId, ref.repository, ref.number]);
-  const bumpRefEpoch = (ref: PullRequestRef) => {
+  const bumpEpoch = (epochs: Map<string, number>, ref: PullRequestRef) => {
     const scope = refScope(ref);
-    if (!refEpochs.has(scope) && refEpochs.size >= REF_EPOCH_CAPACITY) {
-      const oldest = refEpochs.keys().next().value;
-      if (oldest !== undefined) refEpochs.delete(oldest);
+    if (!epochs.has(scope) && epochs.size >= REF_EPOCH_CAPACITY) {
+      const oldest = epochs.keys().next().value;
+      if (oldest !== undefined) epochs.delete(oldest);
     }
-    refEpochs.set(scope, ++epochCounter);
+    epochs.set(scope, ++epochCounter);
   };
+  const bumpRefEpoch = (ref: PullRequestRef) => bumpEpoch(refEpochs, ref);
+  // Its own scope, so a press forgets the reader's ticks and nothing else. The read's key
+  // carries both epochs, which is what makes an ordinary refresh re-ask for these too.
+  const filesViewedEpochs = new Map<string, number>();
+  const filesViewedEpoch = (ref: PullRequestRef) => filesViewedEpochs.get(refScope(ref)) ?? 0;
+  const bumpFilesViewedEpoch = (ref: PullRequestRef) => bumpEpoch(filesViewedEpochs, ref);
 
   /** The positional filter slot of a cache key, back as the record `listUncached` takes. */
   const filtersOfKey = (
@@ -2364,6 +2766,34 @@ export const make = Effect.gen(function* () {
     return staleDiff(key, Cache.get(diffCache, key));
   };
 
+  const filesViewedCache = yield* Cache.makeWith(
+    (key: string) => {
+      const [, , projectId, repository, number] = JSON.parse(key) as [
+        number,
+        number,
+        string,
+        string,
+        number,
+      ];
+      return filesViewedUncached({ projectId, repository, number } as PullRequestRef);
+    },
+    {
+      capacity: FILES_VIEWED_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? FILES_VIEWED_CACHE_TTL : Duration.zero),
+    },
+  );
+  const filesViewed: PullRequestService["Service"]["filesViewed"] = (input) =>
+    Cache.get(
+      filesViewedCache,
+      JSON.stringify([
+        refEpoch(input),
+        filesViewedEpoch(input),
+        input.projectId,
+        input.repository,
+        input.number,
+      ]),
+    );
+
   const listStatsCache = yield* Cache.makeWith(
     (key: string) => {
       const [, refs] = JSON.parse(key) as [number, ReadonlyArray<[string, string, number]>];
@@ -2396,11 +2826,20 @@ export const make = Effect.gen(function* () {
   const invalidate: PullRequestService["Service"]["invalidate"] = (input) => {
     const reference = input.reference;
     if (reference !== undefined) {
-      return Effect.sync(() => bumpRefEpoch(reference));
+      return Effect.sync(() => {
+        bumpRefEpoch(reference);
+        // Not keyed by epoch, so this one is dropped by hand rather than stranded.
+        forgetFileRevisions(
+          fileRevisionsScope(reference.projectId, reference.repository, reference.number),
+        );
+      });
     }
+    // A whole-workspace refresh is the reader asking to be re-answered from the hosts,
+    // and that includes who the hosts say they are.
     return Effect.sync(() => {
       listingsEpoch = ++epochCounter;
       viewersByHost.clear();
+      forgetEveryFileRevision();
     }).pipe(Effect.andThen(Cache.invalidateAll(viewerFlights)));
   };
 
@@ -2422,6 +2861,12 @@ export const make = Effect.gen(function* () {
           Effect.sync(() => {
             bumpRefEpoch(input);
             listingsEpoch = ++epochCounter;
+            // Not keyed by epoch, so this one is dropped by hand. Merging or bringing a stale
+            // branch up to date moves the head, and a mark compared against what the head had
+            // before it moved reports a file as cleared that has been pushed to since.
+            forgetFileRevisions(
+              fileRevisionsScope(input.projectId, input.repository, input.number),
+            );
           }),
         ),
       );
@@ -2431,6 +2876,10 @@ export const make = Effect.gen(function* () {
     const repository = yield* runAction(input);
     bumpRefEpoch({ ...input, repository });
     listingsEpoch = ++epochCounter;
+    // Not keyed by epoch, so this one is dropped by hand. Merging or bringing a stale branch up
+    // to date moves the head, and a mark compared against what the head had before it moved
+    // reports a file as cleared that has been pushed to since.
+    forgetFileRevisions(fileRevisionsScope(input.projectId, repository, input.number));
     if (input.action === "merge") {
       yield* PubSub.publish(mergedPullRequests, {
         projectId: input.projectId,
@@ -2457,6 +2906,8 @@ export const make = Effect.gen(function* () {
     threadComments,
     diff,
     diffFileContents,
+    filesViewed,
+    setFilesViewed,
     runAction: runActionAndInvalidate,
     update: invalidatedByMutation(update),
     comment: invalidatedByMutation(comment),

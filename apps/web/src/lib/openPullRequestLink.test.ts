@@ -343,6 +343,28 @@ describe("findProjectForChangeRequest", () => {
     ).toBeUndefined();
   });
 
+  it("matches an Azure repository cloned over SSH, whose remote shares no part with its URL", () => {
+    // Azure alone addresses one repository under two names: `ssh.dev.azure.com` and `v3/...` over
+    // SSH against `dev.azure.com` and `.../_git/...` everywhere a person sees it. The identity is
+    // recorded in the spelling a link arrives in, so both halves of this comparison line up.
+    const projects = [
+      project({
+        canonicalKey: "dev.azure.com/t3tools/platform/_git/t3code",
+        provider: "azure-devops",
+        displayName: "t3tools/platform/_git/t3code",
+        owner: "t3tools",
+        name: "t3code",
+      }),
+    ];
+    expect(
+      findProjectForChangeRequest(projects, {
+        host: "dev.azure.com",
+        repository: "t3tools/platform/_git/t3code",
+        number: 1,
+      }),
+    ).toBe(projects[0]);
+  });
+
   it("claims nothing for a lookalike host, which is what keeps a link a link", () => {
     const projects = [
       project({

@@ -9,6 +9,7 @@ import {
   ProjectId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { type RepositoryIdentity } from "./environment.ts";
 import { SourceControlProviderKind } from "./sourceControl.ts";
 
 export const PullRequestInvolvement = Schema.Literals(["all", "reviewing", "authored"]);
@@ -369,6 +370,19 @@ export const PullRequestReviewerCapabilities = Schema.Struct({
 export type PullRequestReviewerCapabilities = typeof PullRequestReviewerCapabilities.Type;
 
 /**
+ * Who remembers which files a reader has cleared.
+ *
+ * `host` is the host's own record, so the marks are the ones its web UI shows and a review can be
+ * carried on from either side. `environment` is this server's record, for a host that keeps no
+ * shared one: GitLab holds its viewed files in one browser's local storage, where nothing outside
+ * that browser can read or write them, so marks made here are this environment's own. They still
+ * follow the reader between the clients connected to it, which is more than the host manages, but
+ * they are not the host's and the surface says so.
+ */
+export const PullRequestViewedFilesStore = Schema.Literals(["host", "environment"]);
+export type PullRequestViewedFilesStore = typeof PullRequestViewedFilesStore.Type;
+
+/**
  * What a provider can actually do, so a surface can hide what is missing rather than offer an
  * action that would fail. Every provider fills this in for itself; nothing is assumed.
  *
@@ -404,6 +418,18 @@ export const PullRequestCapabilities = Schema.Struct({
    * what every server before this field was.
    */
   reactions: Schema.optional(Schema.Boolean),
+  /**
+   * Where the reader's own marks are kept, or absent where they are kept nowhere and the
+   * checkbox is not offered at all. Optional for the same reason as `reactions`: a server that
+   * says nothing about it has none, which is what every server before this field was.
+   *
+   * Two answers rather than a flag, because the surface has to say which one it is. A mark the
+   * host keeps is the same mark its own web UI shows; a mark this environment keeps is not, and
+   * a reader who ticks twenty files here and then opens the host would find none of them ticked.
+   * A checkbox that looks the same either way and quietly means different things is the failure
+   * this whole feature exists to avoid.
+   */
+  viewedFiles: Schema.optional(PullRequestViewedFilesStore),
   review: PullRequestReviewCapabilities,
   reviewers: PullRequestReviewerCapabilities,
   /**
@@ -621,6 +647,32 @@ export const PullRequestRef = Schema.Struct({
   number: PositiveInt,
 });
 export type PullRequestRef = typeof PullRequestRef.Type;
+
+/**
+ * The `repository` a {@link PullRequestRef} carries, read off the project's recorded identity.
+ *
+ * `displayName` is the full path below the host, which is what nested GitLab groups need;
+ * owner/name is the two-segment fallback for identities recorded before that field existed.
+ *
+ * Azure DevOps is the exception: `az repos pr list --repository` takes a repository name, and
+ * takes the organisation and project from the checkout it detects, so the recorded
+ * `org/project/_git/repo` path is refused outright and the whole repository reads as
+ * unavailable. Its name is the last segment, which is what this hands over.
+ *
+ * Shared rather than server-only because the server checks a ref's `repository` against the one
+ * it derives here, so a client that spells it any other way is turned away at the door.
+ */
+export function pullRequestRepositoryOf(
+  identity: RepositoryIdentity | null | undefined,
+): string | null {
+  if (!identity) return null;
+  if (identity.provider === "azure-devops") {
+    const segments = (identity.displayName ?? "").split("/").filter((part) => part !== "_git");
+    return identity.name || segments.at(-1) || null;
+  }
+  if (identity.displayName) return identity.displayName;
+  return identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null;
+}
 
 /**
  * The small live shape a linked thread needs. Keeping it separate from detail means a sidebar
@@ -856,6 +908,64 @@ export const PullRequestDiffFileContentsResult = Schema.Struct({
   newContents: Schema.String,
 });
 export type PullRequestDiffFileContentsResult = typeof PullRequestDiffFileContentsResult.Type;
+
+// Not trimmed: a leading or trailing space is a legal part of a file's name, and both the patch
+// and the environment's own record of what a reader cleared are keyed by the name the host gave.
+// Trimming it here files the mark under a name nothing else uses, so the tick never comes back.
+const FilePath = Schema.String.check(Schema.isNonEmpty());
+
+/**
+ * Where one file of a change request stands with the person reading it.
+ *
+ * `dismissed` is the state that earns this its own read: the file was cleared, and has since been
+ * pushed to. It is not `viewed`, since the reader has not seen what is there now, and it is not
+ * `unviewed` either, because saying so would lose the one thing worth telling them, which is that
+ * this file and not the other forty is the one that moved.
+ */
+export const PullRequestFileViewedState = Schema.Literals(["unviewed", "viewed", "dismissed"]);
+export type PullRequestFileViewedState = typeof PullRequestFileViewedState.Type;
+
+export const PullRequestFileViewed = Schema.Struct({
+  path: FilePath,
+  state: PullRequestFileViewedState,
+});
+export type PullRequestFileViewed = typeof PullRequestFileViewed.Type;
+
+/**
+ * Which files of a change request the reader has cleared, read apart from the diff itself.
+ *
+ * Its own read rather than a field on the patch, for the same reason the listing's line counts
+ * are their own: the two move on entirely different clocks. A patch changes when somebody pushes,
+ * and is cached by the minute; this changes on every press of the checkbox. Carrying it on the
+ * diff would mean either forgetting a three-hundred-file patch each time a box is ticked, or
+ * showing a reader their own last press as stale.
+ */
+export const PullRequestFilesViewedResult = Schema.Struct({
+  /** Only the files the host reported a state for. A file missing from this list is unviewed. */
+  files: Schema.Array(PullRequestFileViewed),
+  /**
+   * The host had more files than were read. The checkbox still works on everything on screen;
+   * the count beside it is the one thing that cannot be trusted to be whole, and says so.
+   */
+  truncated: Schema.Boolean,
+});
+export type PullRequestFilesViewedResult = typeof PullRequestFilesViewedResult.Type;
+
+/**
+ * Files to clear, or to put back. Several at once because a reader working down a diff ticks
+ * boxes far faster than a host answers: the surface gathers a burst into one request rather than
+ * opening a subprocess per press.
+ */
+export const PullRequestSetFilesViewedInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  files: Schema.Array(
+    Schema.Struct({
+      path: FilePath,
+      viewed: Schema.Boolean,
+    }),
+  ),
+});
+export type PullRequestSetFilesViewedInput = typeof PullRequestSetFilesViewedInput.Type;
 
 export const PullRequestActionInput = Schema.Struct({
   ...PullRequestRef.fields,

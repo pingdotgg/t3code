@@ -12,10 +12,7 @@ import type {
 import { TrimmedNonEmptyString } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
-import {
-  azureDevOpsOrganizationBaseFromRestApiUrl,
-  azureDevOpsPullRequestWebUrl,
-} from "../sourceControl/azureDevOpsPullRequests.ts";
+import { azureDevOpsPullRequestWebUrl } from "../sourceControl/azureDevOpsPullRequests.ts";
 
 /**
  * Azure's enums are decoded as plain strings and normalized here, in the same tolerant style as
@@ -117,6 +114,16 @@ const RawViewerSchema = Schema.Struct({
   ),
 });
 
+/**
+ * Where a repository lives, in the terms Azure's REST routes address it by. They take the project
+ * and the repository as separate route parameters rather than as one path, so the pair travels
+ * together rather than as a URL that would have to be taken apart again to use.
+ */
+export interface AzureDevOpsRepositoryLocation {
+  readonly project: string;
+  readonly repository: string;
+}
+
 export interface AzureDevOpsPullRequest {
   readonly number: number;
   readonly title: string;
@@ -137,8 +144,8 @@ export interface AzureDevOpsPullRequest {
   readonly body: string;
   readonly reviewRequestLogins: ReadonlyArray<string>;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
-  /** Where this pull request's threads live, when Azure said enough to work it out. */
-  readonly threadsUrl: string | null;
+  /** Where this pull request lives, when Azure said enough to work it out. */
+  readonly location: AzureDevOpsRepositoryLocation | null;
   /** Whether Azure is set to complete this on its own once its policies pass. */
   readonly autoMergeEnabled: boolean;
   /** The completion strategy Azure stored with auto-complete, where it reported one. */
@@ -188,15 +195,16 @@ function toMergeability(value: string | null | undefined): PullRequestMergeabili
 }
 
 /**
- * The REST collection a pull request's threads hang from. Built from what Azure returned rather
- * than from the local remote, whose shape differs between the modern, legacy and SSH forms.
+ * Where a pull request's own repository sits. Taken from what Azure returned rather than from the
+ * local remote, whose shape differs between the modern, legacy and SSH forms.
  */
-function toThreadsUrl(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): string | null {
-  const base = azureDevOpsOrganizationBaseFromRestApiUrl(raw.url);
+function toLocation(
+  raw: Schema.Schema.Type<typeof RawPullRequestSchema>,
+): AzureDevOpsRepositoryLocation | null {
   const project = trimmed(raw.repository?.project?.name);
   const repository = trimmed(raw.repository?.name);
-  if (base === null || project === null || repository === null) return null;
-  return `${base}/${encodeURIComponent(project)}/_apis/git/repositories/${encodeURIComponent(repository)}/pullRequests/${raw.pullRequestId}/threads`;
+  if (project === null || repository === null) return null;
+  return { project, repository };
 }
 
 function toAutoMergeMethod(
@@ -259,7 +267,7 @@ function toPullRequest(
     body: raw.description ?? "",
     reviewRequestLogins: reviewers.map((reviewer) => reviewer.login),
     reviewers,
-    threadsUrl: toThreadsUrl(raw),
+    location: toLocation(raw),
     autoMergeEnabled: (raw.autoCompleteSetBy ?? null) !== null,
     ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),
   };
@@ -369,4 +377,204 @@ export function decodeThreadsJson(
   return Result.succeed(
     comments.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
   );
+}
+
+/**
+ * One push's worth of a pull request. Azure records every push as an iteration and keys the whole
+ * review off them: the changed files, and the marks a reader leaves on those files, both hang
+ * from an iteration rather than from the pull request.
+ */
+const RawIterationSchema = Schema.Struct({
+  id: Schema.Int,
+  sourceRefCommit: Schema.optional(
+    Schema.NullOr(Schema.Struct({ commitId: Schema.optional(Schema.NullOr(Schema.String)) })),
+  ),
+  commonRefCommit: Schema.optional(
+    Schema.NullOr(Schema.Struct({ commitId: Schema.optional(Schema.NullOr(Schema.String)) })),
+  ),
+});
+
+const RawIterationPageSchema = Schema.Struct({ value: Schema.Array(Schema.Unknown) });
+
+const RawChangeEntrySchema = Schema.Struct({
+  changeType: Schema.optional(Schema.NullOr(Schema.String)),
+  sourceServerItem: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Where a renamed file came from. Azure states it here on an iteration's changes. */
+  originalPath: Schema.optional(Schema.NullOr(Schema.String)),
+  item: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        path: Schema.optional(Schema.NullOr(Schema.String)),
+        objectId: Schema.optional(Schema.NullOr(Schema.String)),
+        originalObjectId: Schema.optional(Schema.NullOr(Schema.String)),
+        /** Azure marks a directory this way; a review has nothing to show for one. */
+        isFolder: Schema.optional(Schema.NullOr(Schema.Boolean)),
+        gitObjectType: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
+  ),
+});
+
+const RawChangePageSchema = Schema.Struct({
+  changeEntries: Schema.Array(Schema.Unknown),
+  /** Where the page after this one starts. Azure leaves it out on the last page. */
+  nextSkip: Schema.optional(Schema.NullOr(Schema.Number)),
+});
+
+const RawItemContentSchema = Schema.Struct({
+  content: Schema.optional(Schema.NullOr(Schema.String)),
+  /** What Azure makes of the file it is handing over, which is where it says it is not text. */
+  contentMetadata: Schema.optional(
+    Schema.NullOr(Schema.Struct({ isBinary: Schema.optional(Schema.NullOr(Schema.Boolean)) })),
+  ),
+});
+
+/** The head and the merge base of one iteration, which is the range its patch is taken over. */
+export interface AzureDevOpsIteration {
+  readonly id: number;
+  readonly headCommit: string;
+  readonly mergeBaseCommit: string;
+}
+
+/**
+ * What one file did across an iteration. `oldPath` differs from `path` only for a rename, which
+ * Azure reports by naming the file's previous home rather than as a delete and an add.
+ */
+export interface AzureDevOpsChangeEntry {
+  readonly path: string;
+  readonly oldPath: string;
+  readonly changeKind: "new" | "deleted" | "change" | "rename-pure" | "rename-changed";
+  readonly objectId: string | null;
+  readonly originalObjectId: string | null;
+}
+
+/**
+ * One page of what an iteration changed, and where the next one starts. Azure pages this route
+ * rather than answering with the whole change, so a review large enough to be paged is followed
+ * to its end instead of being cut off at the first page's worth.
+ */
+export interface AzureDevOpsChangePage {
+  readonly changes: ReadonlyArray<AzureDevOpsChangeEntry>;
+  readonly nextSkip: number | null;
+}
+
+/** One file's text at one commit, and whether Azure says the text is text at all. */
+export interface AzureDevOpsItemContent {
+  readonly contents: string;
+  readonly isBinary: boolean;
+}
+
+const decodeIterationPage = decodeJsonResult(RawIterationPageSchema);
+const decodeIterationEntry = Schema.decodeUnknownExit(RawIterationSchema);
+const decodeChangePage = decodeJsonResult(RawChangePageSchema);
+const decodeChangeEntry = Schema.decodeUnknownExit(RawChangeEntrySchema);
+const decodeItemContent = decodeJsonResult(RawItemContentSchema);
+
+/**
+ * Azure leads a path with a slash, which is its own spelling rather than part of the name. Every
+ * other host, and every patch, names the same file without it.
+ *
+ * Not trimmed, unlike everything else read out of this payload: a leading or trailing space is a
+ * legal part of a file's name, and a path trimmed here no longer matches the one the patch and the
+ * viewed mark are keyed by, so the file is filed under a name nothing else uses.
+ */
+function toRepositoryPath(value: string | null | undefined): string | null {
+  if (value === undefined || value === null) return null;
+  const path = value.replace(/^\/+/, "");
+  return path.length === 0 ? null : path;
+}
+
+/**
+ * Azure names a change with one word or two, and a rename arrives either alone or alongside the
+ * edit that came with it. Anything it has added since reads as a plain change, which shows the
+ * file rather than dropping it from the review.
+ */
+function toChangeKind(
+  raw: string | null | undefined,
+  renamed: boolean,
+): AzureDevOpsChangeEntry["changeKind"] {
+  const parts = new Set(
+    (raw ?? "")
+      .toLowerCase()
+      .split(",")
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0),
+  );
+  if (parts.has("delete")) return "deleted";
+  if (renamed || parts.has("rename")) return parts.has("edit") ? "rename-changed" : "rename-pure";
+  if (parts.has("add")) return "new";
+  return "change";
+}
+
+export function decodeIterationsJson(
+  raw: string,
+): Result.Result<ReadonlyArray<AzureDevOpsIteration>, DecodeFailure> {
+  const decoded = decodeIterationPage(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const iterations: AzureDevOpsIteration[] = [];
+  for (const entry of decoded.success.value) {
+    const decodedIteration = decodeIterationEntry(entry);
+    if (Exit.isFailure(decodedIteration)) continue;
+    const iteration = decodedIteration.value;
+    const headCommit = trimmed(iteration.sourceRefCommit?.commitId);
+    const mergeBaseCommit = trimmed(iteration.commonRefCommit?.commitId);
+    // An iteration Azure cannot place both ends of names no range, and a patch needs both.
+    if (headCommit === null || mergeBaseCommit === null) continue;
+    iterations.push({ id: iteration.id, headCommit, mergeBaseCommit });
+  }
+  return Result.succeed(iterations.toSorted((left, right) => left.id - right.id));
+}
+
+export function decodeIterationChangesJson(
+  raw: string,
+): Result.Result<AzureDevOpsChangePage, DecodeFailure> {
+  const decoded = decodeChangePage(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const changes: AzureDevOpsChangeEntry[] = [];
+  for (const entry of decoded.success.changeEntries) {
+    const decodedChange = decodeChangeEntry(entry);
+    if (Exit.isFailure(decodedChange)) continue;
+    const change = decodedChange.value;
+    const path = toRepositoryPath(change.item?.path);
+    if (path === null) continue;
+    // Azure lists the folders a change touched alongside the files themselves. A review shows
+    // files, and a folder has no content to show for either side of one.
+    if (change.item?.isFolder === true) continue;
+    if ((change.item?.gitObjectType ?? "blob").toLowerCase() !== "blob") continue;
+    // Azure names where a renamed file came from in either of two places depending on the route
+    // and the version, so both are read and the current path stands in when neither is there.
+    const oldPath =
+      toRepositoryPath(change.sourceServerItem) ?? toRepositoryPath(change.originalPath) ?? path;
+    changes.push({
+      path,
+      oldPath,
+      changeKind: toChangeKind(change.changeType, oldPath !== path),
+      objectId: trimmed(change.item?.objectId),
+      originalObjectId: trimmed(change.item?.originalObjectId),
+    });
+  }
+  const nextSkip = decoded.success.nextSkip ?? null;
+  return Result.succeed({
+    changes,
+    nextSkip: nextSkip !== null && Number.isSafeInteger(nextSkip) && nextSkip > 0 ? nextSkip : null,
+  });
+}
+
+/**
+ * Azure answers an absent file with an empty body rather than an error, which reads as empty.
+ *
+ * Whether the bytes are text is Azure's to say and not this decoder's to guess: a file it calls
+ * binary is reported as such however innocent its first bytes look, since Azure hands the body
+ * over in an encoding of its own choosing rather than verbatim.
+ */
+export function decodeItemContentJson(
+  raw: string,
+): Result.Result<AzureDevOpsItemContent, DecodeFailure> {
+  const decoded = decodeItemContent(raw);
+  return Result.isSuccess(decoded)
+    ? Result.succeed({
+        contents: decoded.success.content ?? "",
+        isBinary: decoded.success.contentMetadata?.isBinary === true,
+      })
+    : Result.fail(decoded.failure);
 }

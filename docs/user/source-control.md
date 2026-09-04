@@ -9,7 +9,7 @@ T3 Code works with the platforms your team already uses:
 - **GitHub** – Pull requests, repository creation, and clone integration
 - **GitLab** – Merge requests, repository publishing, and hosted clones
 - **Bitbucket** – Pull request workflows (via API token authentication)
-- **Azure DevOps** – Pull request support for Microsoft-hosted repositories
+- **Azure DevOps** – Pull request support for Microsoft-hosted repositories, including the file-by-file diff
 
 ## What You Can Do
 
@@ -82,6 +82,27 @@ T3 Code works with the platforms your team already uses:
   comments stay read-only here, as they already were
 - On GitHub, put a label on a pull request or take one off from the **Labels** row of the review.
   Changing labels needs triage access or better on the repository
+
+**Keep your place in a long review**
+
+- Tick a file off in the **Code** tab once you have read it. The file collapses, and the toolbar
+  keeps a running count of how many files you have cleared
+- Untick it to open the file back up
+- Your ticks are stored with the pull request itself, so a review you start on one machine picks up
+  where you left it on the next, and in your browser too
+- If a file is pushed to after you cleared it, it comes back marked **Changed** so you know to look
+  again
+- On GitHub, the ticks are the ones GitHub keeps, so a review carries on between T3 Code and
+  github.com in either direction
+- On GitLab, Bitbucket, and Azure DevOps, they are kept by the T3 Code server you are connected
+  to, because none of the three offers a record T3 Code can read: GitLab remembers it in one
+  browser's own storage, Bitbucket not at all, and Azure DevOps only inside its own web app. They
+  still follow you between the apps connected to that server, but the host's own site will not
+  show them. The count reads **viewed in T3 Code** so you can tell at a glance, and an info icon
+  beside it explains why
+- Scope the **Code** tab to a single commit and the checkboxes stay, so you can read a change one
+  commit at a time. A tick belongs to the pull request, not to the commit, so a file you clear
+  there is cleared everywhere
 
 ### Know Your Setup at a Glance
 

@@ -19,6 +19,7 @@ import type {
 } from "@t3tools/contracts";
 
 import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
+import { parseDiffFileRevisions } from "./bitbucketDiffRevisions.ts";
 import {
   buildReviewThreads,
   decodeCommentsJson,
@@ -135,7 +136,6 @@ const CONVERSATION_PAGE_SIZE = 50;
 const CONVERSATION_PAGES = 10;
 /** The same ceiling the gh and glab diff reads use. */
 const DIFF_MAX_BYTES = 8 * 1024 * 1024;
-
 export interface BitbucketPullRequestBatch {
   readonly items: ReadonlyArray<BitbucketPullRequest>;
   readonly truncated: boolean;
@@ -181,6 +181,22 @@ export class BitbucketPullRequestApi extends Context.Service<
       readonly repository: string;
       readonly number: number;
     }) => Effect.Effect<BitbucketDiffStat, BitbucketPullRequestApiError>;
+
+    /**
+     * What the pull request's head has of each of these paths, as opaque ids.
+     *
+     * Read off the pull request's own patch, the only place Bitbucket states a file's version. A
+     * path the patch does not carry is answered as the empty revision, and left out altogether
+     * when the patch was cut short at the byte ceiling and so cannot be spoken for.
+     *
+     * Held by the caller rather than here: the marks and the badge they feed share one window,
+     * and a second one underneath it would keep answering after a refresh had asked it not to.
+     */
+    readonly getFileRevisions: (input: {
+      readonly repository: string;
+      readonly number: number;
+      readonly paths: ReadonlyArray<string>;
+    }) => Effect.Effect<ReadonlyMap<string, string>, BitbucketPullRequestApiError>;
 
     readonly getMergeability: (input: {
       readonly repository: string;
@@ -524,6 +540,34 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const pullRequestDiff = (input: {
+    readonly repository: string;
+    readonly number: number;
+    readonly commit?: string | undefined;
+  }): Effect.Effect<
+    { readonly patch: string; readonly truncated: boolean },
+    BitbucketPullRequestApiError
+  > =>
+    input.commit !== undefined && !isCommitSha(input.commit)
+      ? Effect.fail(new BitbucketDiffCommitError())
+      : withRepository(input.repository, (path) =>
+          // Already a unified patch, so it needs no decoding at all — only a bound, which a
+          // diff of any size would otherwise ignore. A commit's own patch sits beside the pull
+          // request's at `/diff/{sha}` and reads the same way.
+          bitbucket
+            .request({
+              method: "GET",
+              url:
+                input.commit === undefined
+                  ? `${path}/pullrequests/${input.number}/diff`
+                  : `${path}/diff/${input.commit}`,
+              maxBytes: DIFF_MAX_BYTES,
+            })
+            .pipe(
+              Effect.map((response) => ({ patch: response.body, truncated: response.truncated })),
+            ),
+        );
+
   return BitbucketPullRequestApi.of({
     getViewer: () =>
       bitbucket.request({ method: "GET", url: "/user" }).pipe(
@@ -595,25 +639,28 @@ export const make = Effect.gen(function* () {
         }),
       ).pipe(Effect.catchIf(isRepositoryPermissionRemovedError, () => Effect.succeed(true))),
 
-    getPullRequestDiff: (input) =>
-      input.commit !== undefined && !isCommitSha(input.commit)
-        ? Effect.fail(new BitbucketDiffCommitError())
-        : withRepository(input.repository, (path) =>
-            // Already a unified patch, so it needs no decoding at all — only a bound, which a
-            // diff of any size would otherwise ignore. A commit's own patch sits beside the pull
-            // request's at `/diff/{sha}` and reads the same way.
-            bitbucket
-              .request({
-                method: "GET",
-                url:
-                  input.commit === undefined
-                    ? `${path}/pullrequests/${input.number}/diff`
-                    : `${path}/diff/${input.commit}`,
-                maxBytes: DIFF_MAX_BYTES,
-              })
-              .pipe(
-                Effect.map((response) => ({ patch: response.body, truncated: response.truncated })),
-              ),
+    getPullRequestDiff: pullRequestDiff,
+
+    getFileRevisions: (input) =>
+      input.paths.length === 0
+        ? Effect.succeed(new Map())
+        : pullRequestDiff({ repository: input.repository, number: input.number }).pipe(
+            Effect.map((diff) => {
+              const all = parseDiffFileRevisions(diff.patch);
+              // Narrowed to what was asked for rather than handed back whole: the caller compares
+              // the paths it named, and a patch of a thousand files has no business in its answer.
+              //
+              // A patch cut short at the byte ceiling says nothing about the files past the cut,
+              // so those paths are left out rather than reported as removed: the caller reads an
+              // absent path as one it could not learn about, and a mark on it is left alone.
+              const asked = new Map<string, string>();
+              for (const path of input.paths) {
+                const revision = all.get(path);
+                if (revision !== undefined) asked.set(path, revision);
+                else if (!diff.truncated) asked.set(path, "");
+              }
+              return asked;
+            }),
           ),
 
     getDiffStat: (input) =>

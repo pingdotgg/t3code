@@ -2,6 +2,9 @@ import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  decodeItemContentJson,
+  decodeIterationChangesJson,
+  decodeIterationsJson,
   decodePullRequestJson,
   decodePullRequestListJson,
   decodeThreadsJson,
@@ -187,17 +190,15 @@ describe("decodePullRequestJson", () => {
     expect(unspecified?.autoMergeMethod).toBeUndefined();
   });
 
-  it("works out where the conversation lives from what Azure returned", () => {
+  it("works out where the repository lives from what Azure returned", () => {
     const detail = expectSuccess(decodePullRequestJson(asJson(pullRequest())));
 
-    expect(detail?.threadsUrl).toBe(
-      "https://dev.azure.com/acme/platform/_apis/git/repositories/web/pullRequests/42/threads",
-    );
+    expect(detail?.location).toEqual({ project: "platform", repository: "web" });
   });
 
-  it("reports no conversation url when Azure said too little to build one", () => {
-    // A web link places the pull request, but without the REST url and repository there is
-    // nothing to hang a threads collection off.
+  it("reports no repository location when Azure said too little to name one", () => {
+    // A web link places the pull request, but with no repository named there is nothing to
+    // address the routes that read its files and its conversation.
     const detail = expectSuccess(
       decodePullRequestJson(
         asJson(
@@ -212,7 +213,7 @@ describe("decodePullRequestJson", () => {
       ),
     );
 
-    expect(detail?.threadsUrl).toBeNull();
+    expect(detail?.location).toBeNull();
   });
 
   it("returns nothing when Azure gave no way to place the pull request at all", () => {
@@ -339,5 +340,212 @@ describe("decodeThreadsJson", () => {
     );
 
     expect(comments).toEqual([]);
+  });
+});
+
+describe("decodeIterationsJson", () => {
+  const iteration = (id: number, head: string, base: string) => ({
+    id,
+    sourceRefCommit: { commitId: head },
+    commonRefCommit: { commitId: base },
+    targetRefCommit: { commitId: base },
+  });
+
+  it("reads every push in order, oldest first", () => {
+    const iterations = expectSuccess(
+      decodeIterationsJson(
+        asJson({ value: [iteration(2, "bbb", "base"), iteration(1, "aaa", "base")] }),
+      ),
+    );
+
+    expect(iterations.map((entry) => entry.id)).toEqual([1, 2]);
+    expect(iterations.at(-1)).toEqual({ id: 2, headCommit: "bbb", mergeBaseCommit: "base" });
+  });
+
+  it("skips a push Azure could not place both ends of", () => {
+    // A patch is taken over a range, and an iteration missing either end names no range at all.
+    const iterations = expectSuccess(
+      decodeIterationsJson(
+        asJson({
+          value: [{ id: 1, sourceRefCommit: { commitId: "aaa" } }, iteration(2, "bbb", "base")],
+        }),
+      ),
+    );
+
+    expect(iterations.map((entry) => entry.id)).toEqual([2]);
+  });
+});
+
+describe("decodeIterationChangesJson", () => {
+  it("names each changed file without the slash Azure leads its paths with", () => {
+    const page = expectSuccess(
+      decodeIterationChangesJson(
+        asJson({
+          changeEntries: [
+            { changeType: "add", item: { path: "/DEMO.md", objectId: "ec00" } },
+            {
+              changeType: "edit",
+              item: { path: "/README.md", objectId: "8f80", originalObjectId: "0ca4" },
+            },
+            { changeType: "delete", item: { path: "/OLD.md", originalObjectId: "1111" } },
+          ],
+        }),
+      ),
+    );
+
+    expect(page.changes.map((change) => [change.path, change.changeKind])).toEqual([
+      ["DEMO.md", "new"],
+      ["README.md", "change"],
+      ["OLD.md", "deleted"],
+    ]);
+  });
+
+  it("keeps a space at the end of a file's name, which belongs to the name", () => {
+    // Git will carry a name that ends in a space, and the patch and the viewed mark are both
+    // keyed by it. Tidying it here files the change under a name nothing else uses.
+    const page = expectSuccess(
+      decodeIterationChangesJson(
+        asJson({
+          changeEntries: [
+            { changeType: "edit", item: { path: "/docs/readme.md ", objectId: "ec00" } },
+            {
+              changeType: "rename",
+              sourceServerItem: "/docs/old.md ",
+              item: { path: "/docs/moved.md", objectId: "aaaa", originalObjectId: "aaaa" },
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(page.changes.map((change) => [change.path, change.oldPath])).toEqual([
+      ["docs/readme.md ", "docs/readme.md "],
+      ["docs/moved.md", "docs/old.md "],
+    ]);
+  });
+
+  it("reads a rename as one file that moved, and says whether it also changed", () => {
+    const page = expectSuccess(
+      decodeIterationChangesJson(
+        asJson({
+          changeEntries: [
+            {
+              changeType: "rename",
+              sourceServerItem: "/docs/old.md",
+              item: { path: "/docs/new.md", objectId: "aaaa", originalObjectId: "aaaa" },
+            },
+            {
+              changeType: "edit, rename",
+              sourceServerItem: "/src/old.ts",
+              item: { path: "/src/new.ts", objectId: "bbbb", originalObjectId: "cccc" },
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(page.changes).toEqual([
+      {
+        path: "docs/new.md",
+        oldPath: "docs/old.md",
+        changeKind: "rename-pure",
+        objectId: "aaaa",
+        originalObjectId: "aaaa",
+      },
+      {
+        path: "src/new.ts",
+        oldPath: "src/old.ts",
+        changeKind: "rename-changed",
+        objectId: "bbbb",
+        originalObjectId: "cccc",
+      },
+    ]);
+  });
+
+  it("drops the folders Azure lists alongside the files that changed", () => {
+    // A review shows files, and a folder has no content on either side to show for one.
+    const page = expectSuccess(
+      decodeIterationChangesJson(
+        asJson({
+          changeEntries: [
+            { changeType: "add", item: { path: "/docs", isFolder: true, gitObjectType: "tree" } },
+            { changeType: "add", item: { path: "/docs/page.md", objectId: "dddd" } },
+          ],
+        }),
+      ),
+    );
+
+    expect(page.changes.map((change) => change.path)).toEqual(["docs/page.md"]);
+  });
+
+  it("carries where the next page of a long change starts", () => {
+    const page = expectSuccess(
+      decodeIterationChangesJson(
+        asJson({
+          changeEntries: [{ changeType: "add", item: { path: "/DEMO.md", objectId: "ec00" } }],
+          nextSkip: 2000,
+        }),
+      ),
+    );
+
+    expect(page.nextSkip).toBe(2000);
+  });
+
+  it("reads the last page, which names no page after it, as the end of the change", () => {
+    const page = expectSuccess(
+      decodeIterationChangesJson(
+        asJson({
+          changeEntries: [{ changeType: "add", item: { path: "/DEMO.md", objectId: "ec00" } }],
+        }),
+      ),
+    );
+
+    expect(page.nextSkip).toBeNull();
+  });
+
+  it("reads where a rename came from out of either of the two places Azure names it", () => {
+    // The iteration-changes route answers with `originalPath`; the commit routes answer with
+    // `sourceServerItem`, and both are the same fact under two names.
+    const page = expectSuccess(
+      decodeIterationChangesJson(
+        asJson({
+          changeEntries: [
+            {
+              changeType: "rename",
+              originalPath: "/docs/old.md",
+              item: { path: "/docs/new.md", objectId: "aaaa", originalObjectId: "aaaa" },
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(page.changes.at(0)?.oldPath).toBe("docs/old.md");
+  });
+});
+
+describe("decodeItemContentJson", () => {
+  it("reads the file's text out of the envelope Azure wraps it in", () => {
+    expect(
+      expectSuccess(decodeItemContentJson(asJson({ path: "/a.md", content: "one\ntwo" }))),
+    ).toEqual({ contents: "one\ntwo", isBinary: false });
+  });
+
+  it("reads an empty file as empty rather than as a failure to look", () => {
+    expect(expectSuccess(decodeItemContentJson(asJson({ path: "/a.md" })))).toEqual({
+      contents: "",
+      isBinary: false,
+    });
+  });
+
+  it("keeps Azure's own word that a file is binary", () => {
+    // Which it answers base64-encoded, so nothing in the text it sent would give it away.
+    expect(
+      expectSuccess(
+        decodeItemContentJson(
+          asJson({ path: "/logo.png", content: "b2xk", contentMetadata: { isBinary: true } }),
+        ),
+      ),
+    ).toEqual({ contents: "b2xk", isBinary: true });
   });
 });

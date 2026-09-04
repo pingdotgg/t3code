@@ -17,6 +17,7 @@ import {
   ChevronsUpDownIcon,
   Columns2Icon,
   FolderTreeIcon,
+  InfoIcon,
   MessageSquareIcon,
   MessageSquareOffIcon,
   Rows3Icon,
@@ -45,6 +46,7 @@ import {
   resolveFileDiffPreviousPath,
   type RenderablePatch,
 } from "~/lib/diffRendering";
+import { APP_BASE_NAME } from "~/branding";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 import { createPullRequestDiffFileContentsLoader } from "~/lib/diffFileContents";
@@ -64,6 +66,7 @@ import { DiffFileTree } from "../diffs/DiffFileTree";
 import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import {
   DropdownMenu,
@@ -79,9 +82,11 @@ import { PullRequestReviewBar } from "./PullRequestReviewBar";
 import {
   isFileDiffCollapsed,
   isLineInFileDiff,
+  toggleFileDiffFoldForViewed,
   type DiffFoldOverride,
 } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
+import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import {
   nextPendingReviewCommentId,
   pullRequestReviewKey,
@@ -332,13 +337,6 @@ export function PullRequestCodeTab({
       input: { ...reference, ...(commit === null ? {} : { commit }) },
     }),
   );
-  const appliedRefreshToken = useRef(refreshToken);
-  useEffect(() => {
-    if (appliedRefreshToken.current === refreshToken) return;
-    appliedRefreshToken.current = refreshToken;
-    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
-    refreshFirstDiffPage();
-  }, [refreshToken, scopeKey, refreshFirstDiffPage]);
   const reviewKey = referenceKey;
   const pendingComments = usePendingReviewComments(reference);
   const addComment = usePullRequestReviewStore((store) => store.addComment);
@@ -411,6 +409,29 @@ export function PullRequestCodeTab({
       ),
     [parsedSlices],
   );
+  const filePaths = useMemo(() => files.map((file) => resolveFileDiffPath(file)), [files]);
+  // Offered under a commit scope as well as from the whole change, because reading a change one
+  // commit at a time is what the scope is for. The tick is kept against the change request rather
+  // than the scope it was made in, so clearing a file here clears it everywhere.
+  const viewedFilesStore = detail.capabilities.viewedFiles;
+  const filesViewed = usePullRequestFilesViewed({
+    environmentId,
+    reference,
+    enabled: viewedFilesStore !== undefined,
+    paths: filePaths,
+  });
+  const { setViewed, refresh: refreshFilesViewed } = filesViewed;
+  // The button goes around the host's cache, so everything the tab reads from it starts over:
+  // the diff from its first page, and with it the ticks, which a push since the last read can
+  // have marked as standing against an older version of the file.
+  const appliedRefreshToken = useRef(refreshToken);
+  useEffect(() => {
+    if (appliedRefreshToken.current === refreshToken) return;
+    appliedRefreshToken.current = refreshToken;
+    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
+    refreshFirstDiffPage();
+    refreshFilesViewed();
+  }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
   const nextCursor = loadedSlices.at(-1)?.nextCursor ?? null;
   // What a slice withheld: the host declining to inline part of it, or a patch the viewer could
   // not structure and so dropped. Neither says anything about there being more to fetch.
@@ -486,6 +507,12 @@ export function PullRequestCodeTab({
         }
 
         const collapsed = isFileDiffCollapsed(fileKey, foldOverride, toggledFiles);
+        // The header carries the reader's own tick, and the viewer redraws a file only when its
+        // version moves. Ticking a file that is already folded changes no fold, so without this
+        // the box on screen would keep saying the opposite of what the count says.
+        const viewedMark = filesViewed.enabled
+          ? `e${filesViewed.isViewed(path) ? "v" : ""}${filesViewed.isStale(path) ? "s" : ""}`
+          : "";
 
         const annotations: ReviewAnnotation[] = [...groups.values()].map((group) => ({
           side: toViewerSide(group.side),
@@ -501,7 +528,7 @@ export function PullRequestCodeTab({
           // The viewer re-renders an item only when its version changes, so everything the
           // annotations show has to be part of it.
           version: fnv1a32(
-            `${collapsed ? "1" : "0"}:${annotations
+            `${collapsed ? "1" : "0"}:${viewedMark}:${annotations
               .map(
                 ({ side, lineNumber, metadata }) =>
                   `${side}:${lineNumber}:${metadata.draft ? "d" : ""}:${metadata.pending
@@ -535,6 +562,7 @@ export function PullRequestCodeTab({
       detail.reviewThreads,
       draft,
       files,
+      filesViewed,
       foldOverride,
       pendingComments,
       placedThreadIds,
@@ -601,6 +629,19 @@ export function PullRequestCodeTab({
         return next;
       }),
     [],
+  );
+
+  // The tick and the fold are one gesture: clearing a file puts it away, un-clearing brings it
+  // back. Folding is still held as the reader's difference from the toolbar's default rather
+  // than derived from what has been ticked, so folding everything ticks nothing off.
+  const setFileViewed = useCallback(
+    (fileKey: string, path: string, viewed: boolean) => {
+      setViewed(path, viewed);
+      setToggledFiles((current) =>
+        toggleFileDiffFoldForViewed(fileKey, viewed, foldOverride, current),
+      );
+    },
+    [foldOverride, setViewed],
   );
 
   // Held as state so the scroll runs after a folded file has been drawn open; scrolling in the
@@ -746,6 +787,15 @@ export function PullRequestCodeTab({
     [toggleFile],
   );
 
+  // Read through refs rather than closed over. The viewer memoizes each visible file's header
+  // portal on the callback below, so a fresh identity on every tick, and on every refresh of the
+  // host's answer, would rebuild every header on screen. Each item's version carries the same
+  // marks, which is what redraws the one file whose tick moved.
+  const filesViewedRef = useRef(filesViewed);
+  filesViewedRef.current = filesViewed;
+  const setFileViewedRef = useRef(setFileViewed);
+  setFileViewedRef.current = setFileViewed;
+
   const renderHeaderMetadata = useCallback(
     (item: CodeViewItem<ReviewAnnotationGroup>) => {
       if (item.type !== "diff") return null;
@@ -755,16 +805,54 @@ export function PullRequestCodeTab({
         additions += hunk.additionLines;
         deletions += hunk.deletionLines;
       }
+      const path = resolveFileDiffPath(item.fileDiff);
       if (additions === 0 && deletions === 0) {
-        const withheld = omittedFileStats.get(resolveFileDiffPath(item.fileDiff));
+        const withheld = omittedFileStats.get(path);
         if (withheld) ({ additions, deletions } = withheld);
       }
-      return (
+      const stat = (
         <PullRequestDiffStat
           additions={additions}
           deletions={deletions}
           className="font-mono text-[11px]"
         />
+      );
+      const viewedFiles = filesViewedRef.current;
+      if (!viewedFiles.enabled) return stat;
+      const viewed = viewedFiles.isViewed(path);
+      const stale = viewedFiles.isStale(path);
+      return (
+        <span className="flex items-center gap-3">
+          {stat}
+          {/* The header itself folds the file, so the tick has to keep its press to itself. The
+              attribute is what the header's capture listener looks for: pressing the word next to
+              the box is pressing the box, and the fold that follows is the tick's to make. */}
+          <label
+            data-viewed-toggle=""
+            className="flex cursor-pointer select-none items-center gap-1.5 text-[11px] text-muted-foreground"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {/* Named here rather than by the label, whose text turns into "Changed" once the
+                file has been pushed to. */}
+            <Checkbox
+              aria-label="Viewed"
+              checked={viewed}
+              onCheckedChange={(next) => setFileViewedRef.current(item.id, path, next === true)}
+            />
+            {stale ? (
+              <Tooltip>
+                <TooltipTrigger render={<span className="text-amber-600 dark:text-amber-500" />}>
+                  Changed
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">
+                  This file has been pushed to since you marked it viewed.
+                </TooltipPopup>
+              </Tooltip>
+            ) : (
+              "Viewed"
+            )}
+          </label>
+        </span>
       );
     },
     [omittedFileStats],
@@ -1084,6 +1172,49 @@ export function PullRequestCodeTab({
             {files.length} {files.length === 1 ? "file" : "files"}
             {nextCursor === null ? "" : "+"}
           </span>
+          {filesViewed.enabled && files.length > 0 ? (
+            <span className="flex min-w-0 items-center gap-1 tabular-nums">
+              {/* Named on a host that keeps no record of its own, so the reader is told whose
+                  ticks these are without having to find the icon beside them. The count holds its
+                  width and the wording gives way, so this segment cannot push the controls on the
+                  right off the strip in the narrow right panel. */}
+              <span className="shrink-0">
+                {filesViewed.viewedCount} / {files.length}
+              </span>
+              <span className="truncate">
+                {viewedFilesStore === "environment" ? `viewed in ${APP_BASE_NAME}` : "viewed"}
+              </span>
+              {viewedFilesStore === "environment" ? (
+                <Tooltip>
+                  <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
+                    <InfoIcon
+                      aria-label="These ticks are kept here, not on the host"
+                      className="text-muted-foreground size-3.5"
+                    />
+                  </TooltipTrigger>
+                  <TooltipPopup side="bottom">
+                    This host keeps no shared record of which files you have read, so these ticks
+                    are kept by this environment. They follow you between the apps connected to it,
+                    but the host's own web UI will not show them.
+                  </TooltipPopup>
+                </Tooltip>
+              ) : null}
+              {filesViewed.truncated ? (
+                <Tooltip>
+                  <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
+                    <TriangleAlertIcon
+                      aria-label="This count covers only part of the change"
+                      className="size-3.5 text-amber-600 dark:text-amber-500"
+                    />
+                  </TooltipTrigger>
+                  <TooltipPopup side="bottom">
+                    This change has more files than the host will report ticks for in one read, so
+                    the count is short and some boxes below start empty.
+                  </TooltipPopup>
+                </Tooltip>
+              ) : null}
+            </span>
+          ) : null}
           {withheldContent ? (
             <Tooltip>
               <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
@@ -1374,6 +1505,10 @@ export function PullRequestCodeTab({
                 if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) {
                   return;
                 }
+                // A label answers for the control it names, and this listener runs before
+                // that control hears anything, so stopping the press here is the only way to
+                // keep the header from folding a file the tick is about to fold the other way.
+                if (node.hasAttribute("data-viewed-toggle")) return;
                 if (node.hasAttribute("data-diffs-header")) {
                   const filePath = node.querySelector("[data-title]")?.textContent?.trim();
                   if (filePath === undefined || filePath === "") return;

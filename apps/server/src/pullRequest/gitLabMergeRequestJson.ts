@@ -947,3 +947,90 @@ export function decodeOwnAwardIdJson(
   }
   return Result.succeed(null);
 }
+
+/**
+ * What the given paths are at one revision, as blob ids.
+ *
+ * Asked for by path rather than by walking the tree: the caller already knows which files it
+ * cares about, and GitLab charges this query by how many paths it is given. A path the revision
+ * does not have comes back missing rather than as an error, which is the answer for a file the
+ * merge request deletes.
+ */
+export const REPOSITORY_BLOBS_GRAPHQL_QUERY = `query($fullPath: ID!, $ref: String!, $paths: [String!]!) {
+  project(fullPath: $fullPath) {
+    repository {
+      blobs(ref: $ref, paths: $paths) {
+        nodes { path oid }
+      }
+    }
+  }
+}`;
+
+const RawRepositoryBlobsSchema = Schema.Struct({
+  data: Schema.Struct({
+    project: Schema.NullOr(
+      Schema.Struct({
+        repository: Schema.optional(
+          Schema.NullOr(
+            Schema.Struct({
+              blobs: Schema.optional(
+                Schema.NullOr(
+                  Schema.Struct({
+                    nodes: Schema.optional(
+                      Schema.NullOr(
+                        Schema.Array(
+                          Schema.NullOr(
+                            Schema.Struct({
+                              path: Schema.optional(Schema.NullOr(Schema.String)),
+                              oid: Schema.optional(Schema.NullOr(Schema.String)),
+                            }),
+                          ),
+                        ),
+                      ),
+                    ),
+                  }),
+                ),
+              ),
+            }),
+          ),
+        ),
+      }),
+    ),
+  }),
+});
+
+const decodeRepositoryBlobs = decodeJsonResult(RawRepositoryBlobsSchema);
+
+/**
+ * Blob ids by path, or null where GitLab did not answer the query at all.
+ *
+ * A project the token cannot see comes back as `project: null`, and a repository can come back
+ * without a blobs connection, neither of which says anything about the paths that were asked for.
+ * That is worth telling apart from a connection that answered: read as "the revision has none of
+ * these files", an unanswered query reports every file a reader has cleared as changed.
+ *
+ * Within an answer, a node missing either half is left out, because half of one names no version,
+ * and the caller reads an absent path as one the revision does not carry.
+ */
+export function decodeRepositoryBlobsJson(
+  raw: string,
+): Result.Result<ReadonlyMap<string, string> | null, DecodeFailure> {
+  const decoded = decodeRepositoryBlobs(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const nodes = decoded.success.data.project?.repository?.blobs?.nodes;
+  if (nodes === undefined || nodes === null) return Result.succeed(null);
+  const blobs = new Map<string, string>();
+  for (const node of nodes) {
+    // Not trimmed, unlike everything else read out of this payload: a leading or trailing space
+    // is a legal part of a file's name, so a path trimmed here is filed under a key neither the
+    // asked-for path nor the viewed mark is spelled with, and the caller reads the file it was
+    // asked about as one this revision does not carry.
+    const path = node?.path;
+    const oid = trimmed(node?.oid);
+    if (path === undefined || path === null || path.length === 0 || oid === null) continue;
+    blobs.set(path, oid);
+  }
+  return Result.succeed(blobs);
+}

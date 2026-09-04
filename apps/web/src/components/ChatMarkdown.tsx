@@ -28,6 +28,7 @@ import type {
   ServerProviderSkill,
   ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
+import { pullRequestRepositoryOf } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -2139,7 +2140,7 @@ function useChatMarkdownState({
       if (project === undefined) return null;
       return {
         projectId: project.id,
-        repository: project.repositoryIdentity?.displayName ?? parsed.repository,
+        repository: pullRequestRepositoryOf(project.repositoryIdentity) ?? parsed.repository,
         number: parsed.number,
         url: href,
       };
