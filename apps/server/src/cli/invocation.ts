@@ -1,3 +1,4 @@
+import type { ServerInstallKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
@@ -32,6 +33,46 @@ export function detectCliRunner(entryPath: string): CliRunner | null {
   }
   if (path.includes("/.bun/install/cache/") || path.includes("/bunx-")) {
     return "bunx";
+  }
+  return null;
+}
+
+const SERVER_INSTALL_BY_RUNNER: Record<CliRunner, ServerInstallKind> = {
+  npx: "npx",
+  "pnpm dlx": "pnpm-dlx",
+  bunx: "bunx",
+};
+
+/**
+ * How the CLI is installed, for clients that must tell the user how to update
+ * it by hand. Package runners are recognised as above. Global installs are
+ * recognised by each package manager's own layout, so the suggested command
+ * is the one that manages that install:
+ *
+ *   npm   <prefix>/lib/node_modules/t3/... (system node, nvm, fnm, volta,
+ *         Homebrew), or %APPDATA%/npm/node_modules/t3/... on Windows
+ *   pnpm  <pnpm home>/global/<n>/...
+ *   bun   ~/.bun/install/global/...
+ *
+ * Pass the resolved entry script: the bin a global install runs is usually a
+ * symlink into the package. Anything else (repo checkouts, project-local
+ * installs, the pinned service runtime) returns null, since no global
+ * command would update the executable that gets restarted.
+ */
+export function detectServerInstall(entryPath: string): ServerInstallKind | null {
+  const runner = detectCliRunner(entryPath);
+  if (runner !== null) {
+    return SERVER_INSTALL_BY_RUNNER[runner];
+  }
+  const path = entryPath.replaceAll("\\", "/");
+  if (path.includes("/pnpm/global/")) {
+    return "pnpm-global";
+  }
+  if (path.includes("/.bun/install/global/")) {
+    return "bun-global";
+  }
+  if (path.includes("/lib/node_modules/") || path.includes("/npm/node_modules/")) {
+    return "npm-global";
   }
   return null;
 }
