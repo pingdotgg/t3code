@@ -62,7 +62,10 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
-import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
+import {
+  resolveAgentAwarenessPlatformPresentation,
+  resolveAutoSettleReferenceEnvironmentId,
+} from "./SettingsRouteScreen.logic";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
@@ -568,36 +571,49 @@ function AutoSettleSettingsRows() {
     reportFailure: true,
   });
 
-  const writableEnvironmentIdsAtom = useMemo(
+  const settingsAccessAtom = useMemo(
     () =>
-      Atom.make(
-        (get) =>
-          new Set(
-            environments.filter(supportsSharedSettingsSync).flatMap((environment) => {
-              const result = get(environmentSession.sessionStateAtom(environment.environmentId));
-              const session = result._tag === "Success" ? result.value : null;
-              return session?.authenticated === true &&
-                session.scopes?.includes(AuthSettingsWriteScope)
-                ? [environment.environmentId]
-                : [];
-            }),
-          ),
+      Atom.make((get) =>
+        environments.filter(supportsSharedSettingsSync).map((environment) => {
+          const result = get(environmentSession.sessionStateAtom(environment.environmentId));
+          const session = result._tag === "Success" ? result.value : null;
+          return {
+            environmentId: environment.environmentId,
+            canWriteSettings:
+              result._tag === "Initial"
+                ? null
+                : session?.authenticated === true &&
+                  session.scopes?.includes(AuthSettingsWriteScope) === true,
+          };
+        }),
       ),
     [environments],
   );
-  const writableEnvironmentIds = useAtomValue(writableEnvironmentIdsAtom);
+  const settingsAccess = useAtomValue(settingsAccessAtom);
+  const writableEnvironmentIds = new Set(
+    settingsAccess.flatMap((environment) =>
+      environment.canWriteSettings ? [environment.environmentId] : [],
+    ),
+  );
   const availableTargets = environments.filter(supportsSharedSettingsSync);
   const syncTargets = availableTargets.filter((environment) =>
     writableEnvironmentIds.has(environment.environmentId),
   );
   const canWriteSettings = syncTargets.length > 0;
-  const reference = syncTargets[0] ?? availableTargets[0] ?? null;
+  const referenceEnvironmentId = resolveAutoSettleReferenceEnvironmentId(settingsAccess);
+  const reference =
+    availableTargets.find((environment) => environment.environmentId === referenceEnvironmentId) ??
+    null;
   const referenceSettings = reference?.serverConfig?.settings ?? null;
 
   const [daysDraft, setDaysDraft] = useState<string | null>(null);
 
   if (reference === null || referenceSettings === null) {
-    return null;
+    return availableTargets.length > 0 ? (
+      <View className="p-4">
+        <Text className="text-sm text-foreground-muted">Loading auto-settle settings…</Text>
+      </View>
+    ) : null;
   }
 
   const writeToAll = (patch: ServerSettingsPatch) => {
