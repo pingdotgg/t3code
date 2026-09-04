@@ -273,6 +273,32 @@ function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }
 
+const TITLE_SHIMMER_STAGGER_MS = 90;
+
+// Splits the title into glyphs so a bright crest can travel through them
+// while it regenerates — the shadcn.io "Shimmering Text" effect. Every
+// character runs the same dim → bright(+3D lift) → dim timeline, offset one
+// stagger step from its neighbor, which produces a smooth traveling wave.
+// Splitting is by code point, not grapheme cluster: ZWJ emoji sequences
+// would shimmer as partial glyphs, which titles are too short and too
+// rarely emoji-laden to justify Segmenter machinery for. Idle titles are a
+// plain string.
+function ShimmeringTitleText(props: { text: string }) {
+  return (
+    <>
+      {Array.from(props.text).map((char, index) => (
+        <span
+          key={index}
+          className="title-shimmer-char whitespace-pre"
+          style={{ animationDelay: `${index * TITLE_SHIMMER_STAGGER_MS}ms` }}
+        >
+          {char}
+        </span>
+      ))}
+    </>
+  );
+}
+
 function SidebarThreadTooltip({
   thread,
   projectTitle,
@@ -1187,11 +1213,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   ) : (
     <span
       className={cn(
-        "min-w-0 flex-1 text-sm transition-opacity motion-reduce:transition-none",
+        "min-w-0 flex-1 text-sm",
         shouldRecede ? "font-normal" : "font-medium",
         variant === "card"
           ? cn(
-              "truncate",
               isUnread || isWoke
                 ? "text-foreground"
                 : shouldRecede
@@ -1201,17 +1226,24 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     : "text-foreground/90",
             )
           : cn(
-              "truncate group-hover/sidebar-row:text-foreground",
+              "group-hover/sidebar-row:text-foreground",
               props.isActive || isWoke
                 ? "text-foreground"
                 : isUnread
                   ? "text-muted-foreground"
                   : "text-secondary-label/70",
             ),
-        isRegeneratingTitle && "opacity-[0.55]",
       )}
     >
-      {thread.title}
+      <span
+        className={cn(
+          "block truncate",
+          isRegeneratingTitle &&
+            "title-shimmering motion-reduce:opacity-[0.55] motion-reduce:text-inherit",
+        )}
+      >
+        {isRegeneratingTitle ? <ShimmeringTitleText text={thread.title} /> : thread.title}
+      </span>
     </span>
   );
 

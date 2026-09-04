@@ -1997,3 +1997,50 @@ code {
     transform: scaleX(0.9);
   }
 }
+
+/* Shimmering title (cloned from shadcn.io/text/shimmering-text): the title
+   rests dim while a bright crest travels through the letters — characters
+   run the same dim → bright → dim timeline, offset one stagger step apart,
+   so at any instant a few neighbors glow with a smooth falloff. The crest
+   also lifts in 3D (translate up-right, scale, rotateY), matching the
+   original's Motion-driven preview. Timing ramps are smooth (not stepped)
+   on purpose: the continuous ramp is what produces the wave's soft falloff.
+   Runs only while a title regeneration is in flight. */
+.title-shimmering {
+  --title-shimmer-dim: color-mix(in oklab, var(--color-foreground) 55%, transparent);
+  --title-shimmer-bright: var(--color-foreground);
+  color: var(--title-shimmer-dim);
+  perspective: 500px;
+}
+
+.title-shimmer-char {
+  display: inline-block;
+  transform-style: preserve-3d;
+  /* One smooth ease for the whole timeline; the 62-100% segment is a static
+     hold, so its timing function never matters. */
+  animation: title-shimmer-char 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .title-shimmer-char {
+    animation: none;
+  }
+}
+
+@keyframes title-shimmer-char {
+  0%,
+  8% {
+    color: var(--title-shimmer-dim);
+    transform: none;
+  }
+  30%,
+  38% {
+    color: var(--title-shimmer-bright);
+    transform: translate(2px, -2px) scale(1.05) rotateY(8deg);
+  }
+  62%,
+  100% {
+    color: var(--title-shimmer-dim);
+    transform: none;
+  }
+}
