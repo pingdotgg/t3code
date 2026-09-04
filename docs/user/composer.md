@@ -30,6 +30,17 @@ messages while disconnected. Uploads resume when you reconnect. Drafts and queue
 messages survive app restarts. Signing out of T3 Connect keeps that work on your
 device until you sign back into the same account.
 
+## Custom models
+
+Each provider's **Models** section in Settings accepts model slugs the provider does not list on its
+own, such as a preview build. A custom model shows up in the picker under its slug until you edit it.
+The pencil next to a custom model opens an editor for a display name and the options the composer
+should offer for it: a choices option (a reasoning level, for instance) or an on/off toggle. Each
+provider suggests the option ids it understands, and **Copy from…** starts from the options of one of
+the provider's built-in models. Values you pick for those options are sent to the provider exactly as
+entered, so use ids and values the provider accepts. Clearing the name and options returns the model
+to a plain slug.
+
 ## Model defaults
 
 T3 Code remembers your provider, model, and model options for new threads. A

@@ -72,6 +72,19 @@ checkpoints but cannot roll back its conversation. The [checkpoint boundary](./o
 therefore rejects revert before touching files. Native permission and question option IDs must
 also survive normalization; a display label is not necessarily a valid reply.
 
+## Custom models
+
+Provider settings accept legacy bare model slugs or `{ slug, name?, capabilities? }` entries.
+The [shared reader](../../packages/shared/src/model.ts) normalizes both forms, and snapshots use
+custom names and descriptors while preserving built-in models on slug collisions. Missing
+capabilities retain the driver's defaults.
+
+Claude adds custom entries with capabilities to its instance-scoped catalog so effort and toggle
+lookups can resolve them. Custom entries have no built-in runtime profile, so copying descriptors
+does not copy model suffix mappings or prompt injection. The editor excludes prompt-injected
+choices when copying a built-in model. Arbitrary option ids can render in the composer, but each
+adapter still decides which ids it forwards and how.
+
 ## Attachments and stored history
 
 Attachments live outside the project workspace. [ProviderService](../../apps/server/src/provider/Layers/ProviderService.ts)
