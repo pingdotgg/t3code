@@ -278,14 +278,16 @@ function SourceAccountLimits(props: {
 
 /**
  * Re-probes every provider (and usage-limit source) on each connected
- * environment; the fresh snapshots then arrive over the config stream, so
- * nothing else needs to move. Resolves once every environment has answered.
+ * environment; the fresh snapshots then arrive over the config stream.
+ * Countdowns and pace anchor to `now` rather than ticking, so a refresh also
+ * re-anchors the clock: quota and elapsed time move together, or not at all.
  */
 export function useRefreshLimits() {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
+  const [now, setNow] = useState(() => Date.now());
   const [refreshing, setRefreshing] = useState(false);
   const refresh = async () => {
     const environmentIds = [...presentations.keys()];
@@ -296,23 +298,22 @@ export function useRefreshLimits() {
         environmentIds.map((environmentId) => refreshProviders({ environmentId, input: {} })),
       );
     } finally {
+      setNow(Date.now());
       setRefreshing(false);
     }
   };
-  return { refreshing, refresh };
+  return { now, refreshing, refresh };
 }
 
 /**
  * Subscription quota windows from every connected environment's providers,
- * read from the config each environment already streams. Countdowns anchor to
- * render time rather than ticking.
+ * read from the config each environment already streams.
  */
-export function UsageLimitsSection() {
+export function UsageLimitsSection(props: { readonly now: number }) {
+  const { now } = props;
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const groups = collectLimitsGroups(presentations);
   const sources = collectLimitSources(presentations);
-  // Anchored once per mount on purpose: countdowns must not tick.
-  const [now] = useState(() => Date.now());
 
   if (groups.length === 0 && sources.length === 0) {
     return (

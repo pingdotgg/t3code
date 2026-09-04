@@ -138,7 +138,7 @@ export function UsageRouteScreen() {
         <SegmentedControl options={TAB_OPTIONS} selected={tab} onSelect={setTab} />
 
         {showingLimits ? (
-          <UsageLimitsSection />
+          <UsageLimitsSection now={limits.now} />
         ) : (
           <>
             {/* Period and metric together: neither applies to Limits, and
