@@ -264,9 +264,8 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
           if (readOnly) return
           if (clearingInput || s == null || count <= 0) return
           val end = (start + count).coerceAtMost(s.length)
-          if (start >= end) return
-          val insertedText = s.subSequence(start, end).toString()
-          if (insertedText.isNotEmpty()) {
+          if (start < end) {
+            val insertedText = s.subSequence(start, end).toString()
             onInput(mapOf("data" to insertedText))
           }
         }
