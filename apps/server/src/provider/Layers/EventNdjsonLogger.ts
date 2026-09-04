@@ -192,7 +192,7 @@ function providerLogPath(directory: string, prefix: string, threadSegment: strin
   return NodePath.join(directory, `${prefix}${threadSegment}.log`);
 }
 
-function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unknown): boolean {
+export function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unknown): boolean {
   if (stream === "orchestration" || typeof event !== "object" || event === null) {
     return true;
   }
@@ -338,8 +338,8 @@ function summarizeProviderEvent(event: unknown): unknown {
   }
 }
 
-/** Bounds traversal before the logger encodes payloads. */
-function boundProviderEventForLogging(event: unknown): unknown {
+/** Bounds traversal before adapters copy payloads or the logger encodes them. */
+export function boundProviderEventForLogging(event: unknown): unknown {
   let remainingCharacters = MAX_RECORD_CHARACTERS;
   let remainingFields = MAX_RECORD_FIELDS;
   const ancestors = new WeakSet<object>();
