@@ -77,12 +77,13 @@ export function useReviewSections(input: {
     () =>
       buildReviewSectionItems({
         checkpoints: readyCheckpoints,
-        gitSections: diffPreview.data?.sources ?? reviewCache.gitSections,
+        gitSections: canReadFiles ? (diffPreview.data?.sources ?? reviewCache.gitSections) : [],
         turnDiffById: reviewCache.turnDiffById,
         loadingTurnIds,
         loadingGitSections: diffPreview.isPending,
       }),
     [
+      canReadFiles,
       diffPreview.isPending,
       diffPreview.data?.sources,
       loadingTurnIds,
