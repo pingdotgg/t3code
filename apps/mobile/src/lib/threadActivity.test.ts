@@ -577,6 +577,151 @@ describe("buildThreadFeed", () => {
     ).toBe(false);
   });
 
+  it("keeps opening and final assistant messages around the first hidden work", () => {
+    const opening = {
+      ...assistantMessage("2026-06-20T00:00:01.500Z"),
+      id: TurnItemId.make("item-opening"),
+      messageId: MessageId.make("message-opening"),
+      text: "I will check the deployment configuration.",
+    };
+    const middle = {
+      ...assistantMessage("2026-06-20T00:00:02.500Z"),
+      id: TurnItemId.make("item-middle"),
+      messageId: MessageId.make("message-middle"),
+      text: "The configuration is valid; checking the build next.",
+    };
+    const feed = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(opening, 1),
+      projected(command(), 2),
+      projected(middle, 3),
+      projected(assistantMessage(), 4),
+    ]);
+    const latestRun = {
+      runId,
+      status: "completed" as const,
+      startedAt: "2026-06-20T00:00:01.000Z",
+      completedAt: "2026-06-20T00:00:03.000Z",
+    };
+
+    const collapsed = deriveThreadFeedPresentation(feed, latestRun, new Set());
+    expect(collapsed.map((entry) => entry.id)).toEqual([
+      "message-user",
+      "message-opening",
+      "run-fold:run-1",
+      "message-assistant",
+    ]);
+    expect(collapsed[1]).toMatchObject({ message: { text: opening.text } });
+    expect(collapsed[2]).toMatchObject({
+      type: "run-fold",
+      createdAt: "2026-06-20T00:00:02.000Z",
+      label: "Worked for 2.0s",
+    });
+
+    const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([runId]));
+    expect(expanded.map((entry) => entry.type)).toEqual([
+      "message",
+      "message",
+      "run-fold",
+      "work-toggle",
+      "message",
+      "message",
+    ]);
+    expect(expanded[4]).toMatchObject({ message: { id: middle.messageId, text: middle.text } });
+  });
+
+  it("does not fold a response that only has opening and final messages", () => {
+    const feed = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(
+        {
+          ...assistantMessage("2026-06-20T00:00:02.000Z"),
+          id: TurnItemId.make("item-opening"),
+          messageId: MessageId.make("message-opening"),
+          text: "The result is ready.",
+        },
+        1,
+      ),
+      projected(assistantMessage(), 2),
+    ]);
+
+    const presented = deriveThreadFeedPresentation(feed, null, new Set());
+    expect(presented.map((entry) => entry.id)).toEqual([
+      "message-user",
+      "message-opening",
+      "message-assistant",
+    ]);
+  });
+
+  it("places the fold after leading resource cards and keeps later cards visible", () => {
+    const { providerThreadId: _providerThreadId, ...forkBase } = base(
+      "item-fork",
+      "2026-06-20T00:00:02.000Z",
+      2,
+    );
+    const resourceItems = [
+      {
+        ...base("item-subagent", "2026-06-20T00:00:01.500Z", 1),
+        type: "subagent",
+        subagentId: NodeId.make("child-agent"),
+        origin: "app_owned",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        childThreadId: sourceThreadId,
+        prompt: "Inspect the deployment configuration",
+        result: "Configuration is valid",
+      },
+      {
+        ...forkBase,
+        type: "fork",
+        source: { type: "run", threadId, runId },
+        targetThreadId: sourceThreadId,
+      },
+      {
+        ...base("item-created-thread", "2026-06-20T00:00:04.000Z", 4),
+        type: "thread_created",
+        targetThreadId: sourceThreadId,
+        targetRunId: null,
+        targetProviderInstanceId: ProviderInstanceId.make("codex"),
+        targetModel: "gpt-5.4",
+      },
+    ] satisfies ReadonlyArray<OrchestrationV2TurnItem>;
+    const projectedResources = [
+      projected(resourceItems[0]!, 1),
+      projected(resourceItems[1]!, 2),
+      projected(resourceItems[2]!, 4),
+    ];
+    const feed = buildThreadFeed([
+      projected(userMessage(), 0),
+      projectedResources[0]!,
+      projectedResources[1]!,
+      projected(command("2026-06-20T00:00:03.000Z"), 3),
+      projectedResources[2]!,
+      projected(assistantMessage("2026-06-20T00:00:05.000Z"), 5),
+    ]);
+
+    const collapsed = deriveThreadFeedPresentation(feed, null, new Set());
+    expect(collapsed.map((entry) => entry.type)).toEqual([
+      "message",
+      "activity-group",
+      "activity-group",
+      "run-fold",
+      "activity-group",
+      "message",
+    ]);
+    expect(collapsed[3]).toMatchObject({
+      type: "run-fold",
+      createdAt: "2026-06-20T00:00:03.000Z",
+    });
+    expect(
+      collapsed.flatMap((entry) =>
+        entry.type === "activity-group"
+          ? entry.activities.map((activity) => activity.projectedItem)
+          : [],
+      ),
+    ).toEqual(projectedResources);
+  });
+
   it("folds settled V2 run work while keeping the terminal assistant message visible", () => {
     const feed = buildThreadFeed([
       projected(userMessage(), 0),
