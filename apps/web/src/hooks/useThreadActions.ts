@@ -20,7 +20,7 @@ import { useCallback, useMemo, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
-import { readEnvironmentScope } from "../state/session";
+import { environmentSession } from "../state/session";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
@@ -45,6 +45,7 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedErrorClass<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
@@ -184,6 +185,9 @@ export function useThreadActions() {
   });
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession);
   const removeWorktree = useAtomCommand(vcsEnvironment.removeWorktree, {
+    reportFailure: false,
+  });
+  const loadSessionState = useAtomQueryRunner(environmentSession.sessionStateAtom, {
     reportFailure: false,
   });
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
@@ -328,11 +332,17 @@ export function useThreadActions() {
       const displayWorktreePath = orphanedWorktreePath
         ? formatWorktreePathForDisplay(orphanedWorktreePath)
         : null;
-      const canDeleteWorktree =
-        orphanedWorktreePath !== null &&
-        threadProject !== null &&
-        readEnvironmentScope(threadRef.environmentId, AuthSourceControlWriteScope);
       const localApi = readLocalApi();
+      let canDeleteWorktree = false;
+      if (orphanedWorktreePath !== null && threadProject !== null && localApi) {
+        const sessionResult = await loadSessionState(threadRef.environmentId);
+        if (sessionResult._tag === "Failure") {
+          return sessionResult;
+        }
+        canDeleteWorktree =
+          sessionResult.value.authenticated &&
+          sessionResult.value.scopes?.includes(AuthSourceControlWriteScope) === true;
+      }
       let shouldDeleteWorktree = false;
       if (canDeleteWorktree && localApi) {
         const confirmationResult = await settlePromise(() =>
@@ -479,6 +489,7 @@ export function useThreadActions() {
       closeTerminal,
       deleteThreadMutation,
       getCurrentRouteThreadRef,
+      loadSessionState,
       refreshVcsStatus,
       removeWorktree,
       router,
