@@ -20,6 +20,7 @@ import {
   type PrimaryConnectionRegistration,
   SshConnectionProfile,
   connectionRegistrationCatalogEntry,
+  connectionTargetConnectionId,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
@@ -137,15 +138,14 @@ export const make = Effect.gen(function* () {
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
+  const tailcat = yield* ClientCapabilities.TailcatEnvironmentGateway;
   const persistedTargets = yield* storage.list;
   const initialEntries = new Map(
     yield* Effect.forEach(
       persistedTargets,
       Effect.fn("EnvironmentRegistry.loadCatalogEntry")(function* (target) {
-        const profile =
-          target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget"
-            ? yield* profiles.get(target.connectionId)
-            : Option.none();
+        const connectionId = connectionTargetConnectionId(target);
+        const profile = connectionId !== null ? yield* profiles.get(connectionId) : Option.none();
         return [
           target.environmentId,
           { target, profile } satisfies ConnectionCatalogEntry,
@@ -552,10 +552,8 @@ export const make = Effect.gen(function* () {
           });
         }
         const target = (yield* getEntry(environmentId)).target;
-        const profile =
-          target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget"
-            ? yield* profiles.get(target.connectionId)
-            : Option.none();
+        const connectionId = connectionTargetConnectionId(target);
+        const profile = connectionId !== null ? yield* profiles.get(connectionId) : Option.none();
 
         yield* registrations.remove(target);
         yield* Ref.update(persistedTargetsByEnvironment, (current) => {
@@ -592,6 +590,17 @@ export const make = Effect.gen(function* () {
           yield* ssh.disconnect(profile.value.target).pipe(
             Effect.tapError((error) =>
               Effect.logWarning("Could not disconnect the managed SSH environment.", {
+                environmentId,
+                error,
+              }),
+            ),
+            Effect.ignore,
+          );
+        }
+        if (target._tag === "TailcatConnectionTarget") {
+          yield* tailcat.disconnect(target.connectionId).pipe(
+            Effect.tapError((error) =>
+              Effect.logWarning("Could not stop the Tailcat forwarder.", {
                 environmentId,
                 error,
               }),

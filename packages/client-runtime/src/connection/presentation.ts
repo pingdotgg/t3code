@@ -103,6 +103,43 @@ export function connectionCatalogDisplayUrl(entry: ConnectionCatalogEntry): stri
       return Option.isSome(entry.profile) && entry.profile.value._tag === "SshConnectionProfile"
         ? `${entry.profile.value.target.username}@${entry.profile.value.target.hostname}`
         : null;
+    case "TailcatConnectionTarget":
+      return Option.isSome(entry.profile) && entry.profile.value._tag === "TailcatConnectionProfile"
+        ? `tailcat:${entry.profile.value.address}`
+        : null;
+  }
+}
+
+export type ConnectionTransportKind = "local" | "direct" | "relay" | "ssh" | "tailcat";
+
+/** The transport family a catalog entry uses, for labels like "Tailcat · Direct". */
+export function connectionTransportKind(entry: ConnectionCatalogEntry): ConnectionTransportKind {
+  switch (entry.target._tag) {
+    case "PrimaryConnectionTarget":
+      return "local";
+    case "BearerConnectionTarget":
+      return "direct";
+    case "RelayConnectionTarget":
+      return "relay";
+    case "SshConnectionTarget":
+      return "ssh";
+    case "TailcatConnectionTarget":
+      return "tailcat";
+  }
+}
+
+export function connectionTransportLabel(kind: ConnectionTransportKind): string {
+  switch (kind) {
+    case "local":
+      return "This machine";
+    case "direct":
+      return "Direct";
+    case "relay":
+      return "T3 Connect";
+    case "ssh":
+      return "SSH";
+    case "tailcat":
+      return "Tailcat";
   }
 }
 
