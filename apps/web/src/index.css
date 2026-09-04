@@ -425,6 +425,34 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+@keyframes live-tool-shine {
+  from {
+    background-position:
+      -4.5rem 0,
+      0 0;
+  }
+  to {
+    background-position:
+      calc(100% + 4.5rem) 0,
+      0 0;
+  }
+}
+
+@utility live-tool-shine {
+  @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+    color: transparent;
+    background-image:
+      linear-gradient(to right, transparent, var(--contrast-foreground), transparent),
+      linear-gradient(var(--contrast-secondary-label), var(--contrast-secondary-label));
+    background-size:
+      4.5rem 100%,
+      100% 100%;
+    background-repeat: no-repeat;
+    background-clip: text;
+    animation: live-tool-shine 2.2s steps(30) infinite;
+  }
+}
+
 @property --assistant-citation-highlight-opacity {
   syntax: "<number>";
   inherits: true;
