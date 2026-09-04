@@ -116,15 +116,39 @@ it.layer(TestLayer)("ProjectService", (it) => {
         commandId: CommandId.make("command:project:update"),
         projectId,
         title: "Renamed",
+        autoPull: true,
+        projectIcon: { kind: "emoji", emoji: "🦊" },
+        faviconPath: "/work/project/custom.svg",
+        defaultThreadEnvMode: "worktree",
       });
       assert.equal(updated.title, "Renamed");
       assert.equal(updated.createdAt, created.createdAt);
+      assert.isTrue(updated.autoPull);
+      assert.deepEqual(updated.projectIcon, { kind: "emoji", emoji: "🦊" });
+      assert.equal(updated.faviconPath, "/work/project/custom.svg");
+      assert.equal(updated.defaultThreadEnvMode, "worktree");
 
       const byId = yield* service.getById(projectId);
       const byWorkspace = yield* service.getByWorkspaceRoot("/work/project/");
       assert.isTrue(Option.isSome(byId));
       assert.isTrue(Option.isSome(byWorkspace));
       assert.equal(Option.getOrThrow(byWorkspace).id, projectId);
+      assert.isTrue(Option.getOrThrow(byId).autoPull);
+      assert.deepEqual(Option.getOrThrow(byId).projectIcon, updated.projectIcon);
+      assert.equal(Option.getOrThrow(byId).faviconPath, updated.faviconPath);
+      assert.equal(Option.getOrThrow(byId).defaultThreadEnvMode, "worktree");
+      const reset = yield* service.update({
+        commandId: CommandId.make("command:project:reset-appearance"),
+        projectId,
+        autoPull: false,
+        projectIcon: null,
+        faviconPath: null,
+        defaultThreadEnvMode: null,
+      });
+      assert.isFalse(reset.autoPull);
+      assert.isNull(reset.projectIcon);
+      assert.equal(reset.faviconPath, hydratedCreated.faviconPath);
+      assert.isNull(reset.defaultThreadEnvMode);
       assert.deepEqual(
         (yield* service.snapshot).projects.map((project) => project.id),
         [projectId],
@@ -148,7 +172,7 @@ it.layer(TestLayer)("ProjectService", (it) => {
       `;
       assert.deepEqual(
         changes.map((change) => change.event_type),
-        ["project.created", "project.meta-updated", "project.deleted"],
+        ["project.created", "project.meta-updated", "project.meta-updated", "project.deleted"],
       );
     }),
   );

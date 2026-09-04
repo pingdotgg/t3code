@@ -1,6 +1,11 @@
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   EnvironmentId,
+  MessageId,
+  RunId,
+  TurnItemId,
+  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2TurnItem,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -133,4 +138,90 @@ export function makeThreadFixture(overrides: ThreadFixtureOverrides = {}): Threa
   });
 
   return { ...shell, ...overrides };
+}
+
+/** Canonical v2 history and a live response for streaming projection tests. */
+export function makeStreamingTimelineFixture(text = "") {
+  const threadId = ThreadId.make("streaming-thread");
+  const runId = RunId.make("live-run");
+  const historyRunId = RunId.make("history-run");
+  const time = (second: number) => new Date(Date.UTC(2026, 8, 4, 0, 0, second)).toISOString();
+  const base = (id: string, run: typeof runId, second: number) => ({
+    id: TurnItemId.make(id),
+    threadId,
+    runId: run,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: second,
+    status: "completed" as const,
+    title: null,
+    startedAt: DateTime.makeUnsafe(time(second)),
+    completedAt: DateTime.makeUnsafe(time(second)),
+    updatedAt: DateTime.makeUnsafe(time(second)),
+  });
+  const items: OrchestrationV2TurnItem[] = [
+    {
+      ...base("history-user-item", historyRunId, 0),
+      type: "user_message",
+      messageId: MessageId.make("history-user"),
+      text: "Inspect",
+      attachments: [],
+      inputIntent: "turn_start",
+      createdBy: "user",
+      creationSource: "web",
+    },
+    {
+      ...base("history-work", historyRunId, 1),
+      type: "command_execution",
+      status: "failed",
+      input: "vp test",
+      output: "Test failed",
+      exitCode: 1,
+    },
+    {
+      ...base("history-assistant-item", historyRunId, 3),
+      type: "assistant_message",
+      messageId: MessageId.make("history-assistant"),
+      text: "Done",
+      streaming: false,
+      updatedAt: DateTime.makeUnsafe(time(4)),
+    },
+    {
+      ...base("live-user-item", runId, 5),
+      type: "user_message",
+      messageId: MessageId.make("live-user"),
+      text: "Continue",
+      attachments: [],
+      inputIntent: "turn_start",
+      createdBy: "user",
+      creationSource: "web",
+    },
+    {
+      ...base("live-work", runId, 6),
+      type: "dynamic_tool",
+      toolName: "read_file",
+      input: { path: "/repo/src/index.ts" },
+      output: "Contents",
+    },
+    {
+      ...base("live-assistant-item", runId, 7),
+      type: "assistant_message",
+      messageId: MessageId.make("live-assistant"),
+      text,
+      streaming: true,
+      status: "running",
+      completedAt: null,
+    },
+  ];
+  const visibleTurnItems: OrchestrationV2ProjectedTurnItem[] = items.map((item, position) => ({
+    position,
+    visibility: "local",
+    sourceThreadId: threadId,
+    sourceItemId: item.id,
+    item,
+  }));
+  return { threadId, runId, historyRunId, visibleTurnItems, time };
 }

@@ -1,3 +1,4 @@
+import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
 import {
   type CanUseTool,
   forkSession as forkClaudeSession,
@@ -89,8 +90,14 @@ import {
   shouldPersistProviderEvent,
 } from "../../provider/Layers/EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
+import {
+  claudeRateLimitEventToUpdate,
+  type ClaudeScopedLimitNames,
+} from "../../provider/Layers/claudeUsageLimits.ts";
+import type { ServerProviderShape } from "../../provider/Services/ServerProvider.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3OrchestrationInstructions.ts";
+import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
@@ -773,15 +780,13 @@ export function makeClaudeQueryOptions(input: {
       : {}),
     ...(input.environment === undefined ? {} : { env: input.environment }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
-    ...(input.mcpServers === undefined
-      ? {}
-      : {
-          systemPrompt: {
-            type: "preset" as const,
-            preset: "claude_code" as const,
-            append: T3_CODE_ORCHESTRATION_INSTRUCTIONS,
-          },
-        }),
+    systemPrompt: {
+      type: "preset" as const,
+      preset: "claude_code" as const,
+      append:
+        buildRuntimeInstructions({ harness: "Claude Code" }) +
+        (input.mcpServers === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS),
+    },
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   const additionalDirectories = [
@@ -1130,12 +1135,8 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
       ? undefined
       : planClaudeSkillDispatch(textWithAttachmentPaths, input.skillNames);
   const content: Array<ClaudeUserContentBlock> = [];
-  if (dispatch) {
-    if (dispatch.leadingText !== undefined) {
-      content.push({ type: "text", text: dispatch.leadingText });
-    }
-  } else if (textWithAttachmentPaths.length > 0) {
-    content.push({ type: "text", text: textWithAttachmentPaths });
+  if (dispatch?.leadingText !== undefined) {
+    content.push({ type: "text", text: dispatch.leadingText });
   }
 
   for (const attachment of input.attachments) {
@@ -1184,6 +1185,8 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   // expands, a command block followed by an image does not.
   if (dispatch) {
     content.push({ type: "text", text: dispatch.commandText });
+  } else if (textWithAttachmentPaths.length > 0) {
+    content.push({ type: "text", text: textWithAttachmentPaths });
   }
 
   return {
@@ -1935,9 +1938,10 @@ function toSessionPermissionUpdates(
   toolName: string,
   suggestions: ReadonlyArray<PermissionUpdate> | undefined,
 ): Array<PermissionUpdate> {
-  const updates = (suggestions ?? []).map(
-    (suggestion): PermissionUpdate => ({ ...suggestion, destination: "session" }),
-  );
+  const updates = (suggestions ?? []).map((suggestion): PermissionUpdate => ({
+    ...suggestion,
+    destination: "session",
+  }));
   if (updates.length > 0) {
     return updates;
   }
@@ -2360,6 +2364,8 @@ export interface ClaudeAdapterV2Options {
   readonly path: Path.Path;
   readonly idAllocator: IdAllocatorV2Shape;
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
+  readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
+  readonly onUsageLimits?: ServerProviderShape["applyUsageLimits"];
   /** Sink for wake-turn continuation requests; defaults to dropping them. */
   readonly continuationRequests?: {
     readonly offer: (request: ProviderContinuationRequest) => Effect.Effect<void>;
@@ -3772,6 +3778,7 @@ export function makeClaudeAdapterV2(
           readonly completedAt: DateTime.Utc;
           readonly failure?: OrchestrationV2ProviderFailure;
           readonly threadDisposition?: "reusable" | "broken";
+          readonly result?: SDKResultMessage;
         }) {
           for (const toolCall of input.context.toolCalls.values()) {
             const artifacts = buildToolCallArtifacts({
@@ -3903,11 +3910,19 @@ export function makeClaudeAdapterV2(
               emitProviderEvent({
                 type: "provider_turn.updated",
                 driver: CLAUDE_PROVIDER,
-                providerTurn: providerTurnPayload({
-                  context: input.context,
-                  status: input.status,
-                  completedAt: input.completedAt,
-                }),
+                providerTurn: {
+                  ...providerTurnPayload({
+                    context: input.context,
+                    status: input.status,
+                    completedAt: input.completedAt,
+                  }),
+                  turnTokenUsage: normalizeClaudeTurnTokenUsage(
+                    input.result,
+                    input.context.subagentsByTaskId.size > 0 ||
+                      input.context.subagentsByToolUseId.size > 0,
+                    input.status,
+                  ),
+                },
               }),
               // Surface this native thread's roster before the root turn
               // terminals so writeFinalRunEvents preserves it. Failed or
@@ -4291,6 +4306,17 @@ export function makeClaudeAdapterV2(
           }
 
           const message = input.message;
+          if (message.type === "rate_limit_event") {
+            const names = adapterOptions.scopedLimitNames
+              ? yield* Ref.get(adapterOptions.scopedLimitNames)
+              : { overageIncluded: undefined };
+            const update = claudeRateLimitEventToUpdate(message.rate_limit_info, names);
+            if (update && adapterOptions.onUsageLimits) {
+              const checkedAt = DateTime.formatIso(yield* DateTime.now);
+              yield* adapterOptions.onUsageLimits({ ...update, checkedAt });
+            }
+            return;
+          }
           const context = yield* Ref.get(activeTurn);
           if (context === null) {
             // task_notification must buffer wake evidence while still tracked
@@ -4315,6 +4341,77 @@ export function makeClaudeAdapterV2(
 
           if (message.type === "assistant") {
             context.nativeMessageCursor = message.uuid;
+          }
+
+          if (message.type === "system" && message.subtype === "compact_boundary") {
+            const now = yield* DateTime.now;
+            const nativeItemId = message.uuid;
+            const postTokens = message.compact_metadata.post_tokens;
+            const afterTokenCount =
+              typeof postTokens === "number" && Number.isFinite(postTokens) && postTokens > 0
+                ? Math.round(postTokens)
+                : undefined;
+            if (afterTokenCount !== undefined) {
+              yield* emitProviderEvent({
+                type: "provider_turn.updated",
+                driver: CLAUDE_PROVIDER,
+                threadId: context.input.threadId,
+                providerTurn: {
+                  id: context.providerTurnId,
+                  providerThreadId: context.input.providerThread.id,
+                  nodeId: context.input.rootNodeId,
+                  runAttemptId: context.input.attemptId,
+                  nativeTurnRef: {
+                    driver: CLAUDE_PROVIDER,
+                    nativeId: context.nativeTurnId,
+                    strength: "strong",
+                  },
+                  ordinal: context.providerTurnOrdinal,
+                  status: "running",
+                  startedAt: context.startedAt,
+                  completedAt: null,
+                  tokenUsage: {
+                    usedTokens: afterTokenCount,
+                    maxTokens: claudeContextWindow(context.input.modelSelection),
+                    updatedAt: DateTime.formatIso(now),
+                  },
+                },
+              });
+            }
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: {
+                id: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CLAUDE_PROVIDER,
+                  nativeItemId,
+                }),
+                threadId: context.input.threadId,
+                runId: context.input.runId,
+                nodeId: context.input.rootNodeId,
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                nativeItemRef: {
+                  driver: CLAUDE_PROVIDER,
+                  nativeId: nativeItemId,
+                  strength: "strong",
+                },
+                parentItemId: null,
+                ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                type: "compaction",
+                driver: CLAUDE_PROVIDER,
+                status: "completed",
+                title: "Context compacted",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                ...(message.compact_metadata.pre_tokens === undefined
+                  ? {}
+                  : { beforeTokenCount: message.compact_metadata.pre_tokens }),
+                ...(afterTokenCount === undefined ? {} : { afterTokenCount }),
+              },
+            });
+            return;
           }
 
           if (message.type === "system" && message.subtype === "api_retry") {
@@ -4686,6 +4783,7 @@ export function makeClaudeAdapterV2(
               context,
               status: interrupted ? "interrupted" : terminalStatusFromResult(message),
               completedAt,
+              result: message,
               ...(resultFailure === null ? {} : { failure: resultFailure }),
             });
           }
@@ -5499,6 +5597,11 @@ export function makeClaudeAdapterV2(
               ),
           ),
           startTurn,
+          compactThread: (turnInput) =>
+            startTurn({
+              ...turnInput,
+              message: { ...turnInput.message, text: "/compact" },
+            }),
           steerTurn,
           interruptTurn,
           respondToRuntimeRequest: Effect.fn("ClaudeAdapterV2.respondToRuntimeRequest")(
@@ -5711,6 +5814,48 @@ export type ClaudeAdapterV2DriverEnv =
   | Path.Path
   | ServerConfig;
 
+export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
+  function* (
+    input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
+    hooks: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "onUsageLimits"> = {},
+  ) {
+    const { instanceId, environment, enabled, config } = input;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const hostEnvironment = yield* HostProcessEnvironment;
+    const idAllocator = yield* IdAllocatorV2;
+    const queryRunner = yield* ClaudeAgentSdkQueryRunner;
+    const serverConfig = yield* ServerConfig;
+    const continuationRequests = yield* ProviderContinuationRequests;
+    const baseEnvironment = mergeProviderInstanceEnvironment(environment, hostEnvironment);
+    const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
+    const path = yield* Path.Path;
+    return makeClaudeAdapterV2({
+      instanceId,
+      settings: { ...config, enabled },
+      environment: claudeEnvironment,
+      attachmentsDir: serverConfig.attachmentsDir,
+      fileSystem,
+      path,
+      idAllocator,
+      queryRunner,
+      continuationRequests,
+      ...hooks,
+    });
+  },
+  (effect, input, _hooks) =>
+    effect.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterDriverCreateError({
+            driver: CLAUDE_DRIVER_KIND,
+            instanceId: input.instanceId,
+            detail: "Failed to create Claude Agent SDK adapter.",
+            cause,
+          }),
+      ),
+    ),
+);
+
 export const ClaudeAdapterV2Driver: ProviderAdapterDriver<
   ClaudeSettings,
   ClaudeAdapterV2DriverEnv
@@ -5718,43 +5863,7 @@ export const ClaudeAdapterV2Driver: ProviderAdapterDriver<
   driverKind: CLAUDE_DRIVER_KIND,
   configSchema: ClaudeSettings,
   defaultConfig: (): ClaudeSettings => DEFAULT_CLAUDE_SETTINGS,
-  create: Effect.fn("ClaudeAdapterV2Driver.create")(
-    function* (input: ProviderAdapterDriverCreateInput<ClaudeSettings>) {
-      const { instanceId, environment, enabled, config } = input;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const hostEnvironment = yield* HostProcessEnvironment;
-      const idAllocator = yield* IdAllocatorV2;
-      const queryRunner = yield* ClaudeAgentSdkQueryRunner;
-      const serverConfig = yield* ServerConfig;
-      const continuationRequests = yield* ProviderContinuationRequests;
-      const baseEnvironment = mergeProviderInstanceEnvironment(environment, hostEnvironment);
-      const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
-      const path = yield* Path.Path;
-      return makeClaudeAdapterV2({
-        instanceId,
-        settings: { ...config, enabled },
-        environment: claudeEnvironment,
-        attachmentsDir: serverConfig.attachmentsDir,
-        fileSystem,
-        path,
-        idAllocator,
-        queryRunner,
-        continuationRequests,
-      });
-    },
-    (effect, input) =>
-      effect.pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderAdapterDriverCreateError({
-              driver: CLAUDE_DRIVER_KIND,
-              instanceId: input.instanceId,
-              detail: "Failed to create Claude Agent SDK adapter.",
-              cause,
-            }),
-        ),
-      ),
-  ),
+  create: (input) => createClaudeAdapterV2(input, {}),
 };
 
 const makeDefaultClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2.layer")(function* () {
