@@ -9,7 +9,8 @@ import {
 import { onTestFinished, vi } from "vite-plus/test";
 
 const composerDraftFileMocks = vi.hoisted(() => {
-  let document = "";
+  let document = JSON.stringify({ schemaVersion: 1, drafts: {} });
+  let readError: Error | null = null;
   let writeError: Error | null = null;
   let releaseRead: (() => void) | null = null;
   let readBarrier = Promise.resolve();
@@ -33,6 +34,9 @@ const composerDraftFileMocks = vi.hoisted(() => {
     setDocument(value: unknown) {
       document = JSON.stringify(value);
     },
+    setReadError(error: Error | null) {
+      readError = error;
+    },
     setWriteError(error: Error | null) {
       writeError = error;
     },
@@ -50,6 +54,10 @@ const composerDraftFileMocks = vi.hoisted(() => {
     },
     Directory: class {
       create() {}
+
+      list() {
+        return [];
+      }
     },
     File: class {
       exists = true;
@@ -61,6 +69,7 @@ const composerDraftFileMocks = vi.hoisted(() => {
 
       async text() {
         await readBarrier;
+        if (readError) throw readError;
         return document;
       }
 
@@ -156,7 +165,8 @@ const DRAFT: ComposerDraft = {
 afterEach(() => {
   vi.useRealTimers();
   resetComposerDraftsLoadState();
-  composerDraftFileMocks.setDocument("");
+  composerDraftFileMocks.setDocument({ schemaVersion: 1, drafts: {} });
+  composerDraftFileMocks.setReadError(null);
   composerDraftFileMocks.setWriteError(null);
   composerDraftFileMocks.setNextWriteBarrier(null);
   composerDraftFileMocks.setOnWrite(null);
@@ -1043,9 +1053,62 @@ describe("mobile composer drafts", () => {
     });
   });
 
+  it.each(["read", "decode"] as const)(
+    "preserves saved drafts and attachment files when the draft %s fails",
+    async (failure) => {
+      vi.useFakeTimers();
+      const file = {
+        id: "saved-file",
+        type: "file" as const,
+        name: "report.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 42,
+        fileUri: "file:///documents/t3-composer-attachments/report.pdf",
+      };
+      composerDraftFileMocks.setDocument({
+        schemaVersion: failure === "decode" ? 999 : 1,
+        drafts: { "environment-1:saved": { text: "Saved draft", attachments: [file] } },
+      });
+      const original = composerDraftFileMocks.getDocument();
+      if (failure === "read") {
+        composerDraftFileMocks.setReadError(new Error("storage unavailable"));
+      }
+
+      await expect(releaseUnusedComposerAttachmentFiles([file])).rejects.toMatchObject({
+        operation: failure,
+      });
+      setComposerDraftText("environment-1:new", "Keep my new edits too");
+      await expect(flushComposerDrafts()).rejects.toMatchObject({ operation: failure });
+
+      expect(composerDraftFileMocks.getDocument()).toBe(original);
+      expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
+    },
+  );
+
+  it("retries a failed debounced read on final flush without dropping saved drafts or new edits", async () => {
+    vi.useFakeTimers();
+    composerDraftFileMocks.setDocument({
+      schemaVersion: 1,
+      drafts: { "environment-1:saved": DRAFT },
+    });
+    const original = composerDraftFileMocks.getDocument();
+    composerDraftFileMocks.setReadError(new Error("storage unavailable"));
+    setComposerDraftText("environment-1:new", "New edits");
+    await vi.advanceTimersByTimeAsync(200);
+    expect(composerDraftFileMocks.getDocument()).toBe(original);
+
+    composerDraftFileMocks.setReadError(null);
+    await flushComposerDrafts();
+
+    expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts).toEqual({
+      "environment-1:saved": DRAFT,
+      "environment-1:new": { text: "New edits", attachments: [] },
+    });
+  });
+
   it("serializes environment cleanup after an older queued write", async () => {
     vi.useFakeTimers();
-    composerDraftFileMocks.setDocument(JSON.stringify({ schemaVersion: 1, drafts: {} }));
+    composerDraftFileMocks.setDocument({ schemaVersion: 1, drafts: {} });
     composerDraftFileMocks.resetWrites();
     let releaseFirstWrite!: () => void;
     const firstWriteBarrier = new Promise<void>((resolve) => {

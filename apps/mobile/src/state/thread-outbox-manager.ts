@@ -276,17 +276,13 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
     const revisionsAtRequest = new Map(revisions);
     return serialize(async () => {
       const persisted = await options.storage.load().catch((cause) => {
-        warn(
-          "[thread-outbox] failed to load messages while clearing environment",
-          new ThreadOutboxManagerError({
-            operation: "clear-environment-load",
-            environmentId,
-            threadId: null,
-            messageId: null,
-            cause,
-          }),
-        );
-        return [];
+        throw new ThreadOutboxManagerError({
+          operation: "clear-environment-load",
+          environmentId,
+          threadId: null,
+          messageId: null,
+          cause,
+        });
       });
       const allMessages = flattenQueuedThreadMessages(
         groupQueuedThreadMessages([...persisted, ...currentMessages()]),

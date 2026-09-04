@@ -80,20 +80,20 @@ export const expoThreadOutboxStorage: ThreadOutboxStorage = {
         try {
           messages.push(decodeQueuedThreadMessage(JSON.parse(await entry.text()) as unknown));
         } catch (cause) {
-          console.warn(
-            "[thread-outbox] ignored invalid persisted message",
-            new ThreadOutboxStorageError({
-              operation: "read-message",
-              environmentId: null,
-              threadId: null,
-              messageId: null,
-              fileName: entry.name,
-              cause,
-            }),
-          );
+          // A partial queue hides attachment owners from cleanup. Keep all
+          // records untouched until every persisted message can be read.
+          throw new ThreadOutboxStorageError({
+            operation: "read-message",
+            environmentId: null,
+            threadId: null,
+            messageId: null,
+            fileName: entry.name,
+            cause,
+          });
         }
       }
     } catch (cause) {
+      if (cause instanceof ThreadOutboxStorageError) throw cause;
       throw new ThreadOutboxStorageError({
         operation: "load",
         environmentId: null,
