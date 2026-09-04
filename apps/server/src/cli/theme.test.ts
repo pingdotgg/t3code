@@ -14,6 +14,11 @@ import { Command } from "effect/unstable/cli";
 
 import { cli } from "../bin.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+
+// These force a failure with chmod, which Windows ignores for directories and
+// cannot use to make a file unreadable, so the failure never happens there.
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 
 const runCli = (args: ReadonlyArray<string>) =>
   Command.runWith(cli, { version: "0.0.0" })(args).pipe(
@@ -161,7 +166,7 @@ describe("t3 theme", () => {
   // rolled back rather than left mutating the environment's theme set. The
   // userdata directory is made read-only while themes stays writable, so the
   // failure lands after the publish -- the case the rollback exists for.
-  it.effect("rolls back a publish when the default cannot be written", () =>
+  it.effect.skipIf(windowsHost)("rolls back a publish when the default cannot be written", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
       writeSettings(baseDir, {});
@@ -229,7 +234,7 @@ describe("t3 theme", () => {
   // Rollback moves the previous directory entry aside and back, so even an
   // entry the watcher would never publish -- here a symlink -- comes back
   // exactly as it was when the set fails.
-  it.effect.skipIf(!symlinksSupported)(
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
     "restores a non-theme destination entry when the set fails",
     () =>
       Effect.gen(function* () {
@@ -255,7 +260,7 @@ describe("t3 theme", () => {
       }),
   );
 
-  it.effect("restores the previous theme when a re-publish fails to set", () =>
+  it.effect.skipIf(windowsHost)("restores the previous theme when a re-publish fails to set", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
       writeSettings(baseDir, {});
@@ -352,7 +357,7 @@ describe("t3 theme", () => {
 
   // An unreadable settings file must never read as "no settings": writing a
   // fresh sparse file over it would discard every key the user had.
-  it.effect("refuses to write when the settings file cannot be read", () =>
+  it.effect.skipIf(windowsHost)("refuses to write when the settings file cannot be read", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
       writeSettings(baseDir, { enableProviderUpdateChecks: false });
