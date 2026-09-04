@@ -49,5 +49,6 @@ The checked-in Android shared libraries and headers are pinned to the revision r
 apps/mobile/modules/t3-terminal/scripts/build-libghostty-android.sh
 ```
 
-The script downloads Zig 0.15.2 when needed, checks out the pinned upstream Ghostty revision, and
-rebuilds all four Android ABIs with 16 KB page-size support.
+The script downloads Zig 0.16.0 when needed, reads the canonical upstream Ghostty revision from
+`native/libghostty-vt/VERSION`, checks it out, and rebuilds all four Android ABIs with 16 KB page-size
+support.
