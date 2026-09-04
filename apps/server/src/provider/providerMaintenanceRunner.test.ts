@@ -70,7 +70,7 @@ const baseProvider: ServerProvider = {
   driver: CODEX_DRIVER,
   enabled: true,
   installed: true,
-  version: null,
+  version: "0.0.0",
   status: "ready",
   auth: { status: "authenticated" },
   checkedAt: "2026-04-10T00:00:00.000Z",
@@ -198,6 +198,7 @@ function makeRegistry(
 
     return {
       registry,
+      providersRef,
       updateStatesRef,
     };
   });
@@ -210,7 +211,8 @@ const makeTestRunner = (registry: ProviderRegistryShape) =>
         Layer.provide(
           Layer.mergeAll(
             Layer.succeed(ProviderRegistry, registry),
-            Layer.succeed(ProviderVersionCache, new Map()),
+            // Fresh per runner so a version cached by one test cannot leak into another.
+            Layer.sync(ProviderVersionCache, () => new Map()),
           ),
         ),
       ),
@@ -245,6 +247,32 @@ describe("providerMaintenanceRunner", () => {
             calls.push({ command, args });
             return { stdout: "updated" };
           }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("reports unchanged when the updater exits 0 but the provider is gone", () => {
+    return Effect.gen(function* () {
+      const { registry, providersRef } = yield* makeRegistry(baseProvider);
+      // After the update, the refreshed snapshot no longer sees an install.
+      const updater = yield* makeTestRunner({
+        ...registry,
+        refreshInstance: () =>
+          Ref.updateAndGet(providersRef, (providers) =>
+            providers.map((provider) => ({ ...provider, installed: false, version: null })),
+          ),
+      });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "unchanged");
+      assert.match(result.providers[0]?.updateState?.message ?? "", /could not verify/);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer(() => ({ stdout: "updated" })),
         ),
       ),
     );

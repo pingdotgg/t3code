@@ -23,7 +23,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
-import { enrichProviderSnapshotWithVersionAdvisory } from "./providerMaintenance.ts";
+import {
+  enrichProviderSnapshotWithVersionAdvisory,
+  ProviderVersionCache,
+} from "./providerMaintenance.ts";
 import type { ProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
@@ -181,6 +184,10 @@ function isOutdatedProvider(provider: ServerProvider | undefined): boolean {
   return provider?.versionAdvisory?.status === "behind_latest";
 }
 
+function hasVerifiedVersion(provider: ServerProvider): boolean {
+  return provider.installed && provider.version !== null;
+}
+
 function makeUpdateState(input: {
   readonly status: ServerProviderUpdateState["status"];
   readonly startedAt: string | null;
@@ -201,6 +208,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const providerRegistry = yield* ProviderRegistry;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
+  const versionCache = yield* ProviderVersionCache;
   const runMaintenanceCommand = (command: string, args: ReadonlyArray<string>) =>
     runProviderMaintenanceCommandWithSpawner({
       spawner,
@@ -258,7 +266,10 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             enrichProviderSnapshotWithVersionAdvisory(
               refreshedProvider,
               maintenanceCapabilities,
-            ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
+            ).pipe(
+              Effect.provideService(HttpClient.HttpClient, httpClient),
+              Effect.provideService(ProviderVersionCache, versionCache),
+            ),
           {
             concurrency: "unbounded",
           },
@@ -381,13 +392,18 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               verified,
               instanceId,
             );
-            const couldNotVerify = verifiedProviders.length === 0;
-            const stillOutdated =
-              couldNotVerify ||
-              verifiedProviders.some((verifiedProvider) => isOutdatedProvider(verifiedProvider));
+            // "Succeeded" needs positive evidence: the provider is still
+            // installed with a readable version. An installer that exits 0
+            // and leaves the binary missing or unreadable is not a success.
+            const couldNotVerify =
+              verifiedProviders.length === 0 ||
+              verifiedProviders.some((verifiedProvider) => !hasVerifiedVersion(verifiedProvider));
+            const stillOutdated = verifiedProviders.some((verifiedProvider) =>
+              isOutdatedProvider(verifiedProvider),
+            );
             return yield* finish(
               makeUpdateState({
-                status: stillOutdated ? "unchanged" : "succeeded",
+                status: couldNotVerify || stillOutdated ? "unchanged" : "succeeded",
                 startedAt,
                 finishedAt,
                 message: couldNotVerify
