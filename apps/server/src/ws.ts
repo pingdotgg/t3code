@@ -2594,6 +2594,17 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.terminalWrite, terminalManager.write(input), {
             "rpc.aggregate": "terminal",
           }),
+        [WS_METHODS.terminalObserve]: (input) =>
+          observeRpcStream(
+            WS_METHODS.terminalObserve,
+            Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
+              Effect.acquireRelease(
+                terminalManager.observeStream(input, (event) => Queue.offer(queue, event)),
+                (unsubscribe) => Effect.sync(unsubscribe),
+              ),
+            ),
+            { "rpc.aggregate": "terminal" },
+          ),
         [WS_METHODS.terminalResize]: (input) =>
           observeRpcEffect(WS_METHODS.terminalResize, terminalManager.resize(input), {
             "rpc.aggregate": "terminal",

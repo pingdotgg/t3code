@@ -7,7 +7,6 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import {
   AuthAccessTokenType,
   AuthAdministrativeScopes,
-  AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   AuthPreviewOperateScope,
   AuthStandardClientScopes,
@@ -6263,6 +6262,109 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           }),
         ),
       );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("terminal observers can read output but cannot start or change a terminal", () =>
+    Effect.gen(function* () {
+      let observations = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          terminalManager: {
+            observeStream: (input, listener) =>
+              Effect.gen(function* () {
+                observations += 1;
+                yield* listener({
+                  type: "snapshot",
+                  snapshot: {
+                    threadId: input.threadId,
+                    terminalId: input.terminalId,
+                    cwd: "/workspace",
+                    worktreePath: null,
+                    status: "exited",
+                    pid: null,
+                    history: "retained output",
+                    exitCode: 0,
+                    exitSignal: null,
+                    label: "Terminal",
+                    updatedAt: "2026-09-04T00:00:00.000Z",
+                  },
+                });
+                return () => {};
+              }),
+            subscribeMetadata: (listener) =>
+              listener({ type: "snapshot", terminals: [] }).pipe(Effect.as(() => {})),
+            subscribe: (listener) =>
+              listener({
+                type: "output",
+                threadId: "thread-1",
+                terminalId: "term-1",
+                data: "live output",
+              }).pipe(Effect.as(() => {})),
+          },
+        },
+      });
+      const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "terminal:read",
+      });
+      assert.equal(token.response.status, 200);
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${token.body.access_token ?? ""}` },
+      });
+      const { ticket } = yield* responseJsonEffect<{ readonly ticket: string }>(ticketResponse);
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const input = { threadId: "thread-1", terminalId: "term-1" };
+            const event = yield* client[WS_METHODS.terminalObserve](input).pipe(
+              Stream.runHead,
+              Effect.map(Option.getOrThrow),
+            );
+            assert.equal(event.type, "snapshot");
+            if (event.type === "snapshot") assert.equal(event.snapshot.history, "retained output");
+            const metadata = yield* client[WS_METHODS.subscribeTerminalMetadata]({}).pipe(
+              Stream.runHead,
+              Effect.map(Option.getOrThrow),
+            );
+            assert.equal(metadata.type, "snapshot");
+            const output = yield* client[WS_METHODS.subscribeTerminalEvents]({}).pipe(
+              Stream.runHead,
+              Effect.map(Option.getOrThrow),
+            );
+            assert.equal(output.type, "output");
+            const errors = [
+              yield* client[WS_METHODS.terminalAttach]({ ...input, cwd: "/workspace" }).pipe(
+                Stream.runHead,
+                Effect.flip,
+              ),
+              yield* client[WS_METHODS.terminalOpen]({ ...input, cwd: "/workspace" }).pipe(
+                Effect.flip,
+              ),
+              yield* client[WS_METHODS.terminalWrite]({ ...input, data: "whoami\r" }).pipe(
+                Effect.flip,
+              ),
+              yield* client[WS_METHODS.terminalResize]({ ...input, cols: 80, rows: 24 }).pipe(
+                Effect.flip,
+              ),
+              yield* client[WS_METHODS.terminalClear](input).pipe(Effect.flip),
+              yield* client[WS_METHODS.terminalRestart]({
+                ...input,
+                cwd: "/workspace",
+                cols: 80,
+                rows: 24,
+              }).pipe(Effect.flip),
+              yield* client[WS_METHODS.terminalClose](input).pipe(Effect.flip),
+            ];
+            for (const error of errors) {
+              assert.equal(error._tag, "EnvironmentAuthorizationError");
+              if (error._tag === "EnvironmentAuthorizationError")
+                assert.equal(error.requiredScope, "terminal:operate");
+            }
+          }),
+        ),
+      );
+      assert.equal(observations, 1);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

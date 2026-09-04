@@ -16,6 +16,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as Exit from "effect/Exit";
@@ -2412,6 +2413,81 @@ it.layer(
         const events = yield* Ref.get(attachEvents);
         expect(events.filter((event) => event.type === "snapshot")).toHaveLength(1);
       }),
+  );
+
+  it.effect("observes terminal history and live output without changing the process", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const opened = yield* manager.open(openInput({ env: { OBSERVER_TEST: "original" } }));
+      const process = ptyAdapter.processes[0]!;
+      const historyReceived = yield* Deferred.make<void>();
+      const unsubscribeHistory = yield* manager.subscribe((event) =>
+        event.type === "output" ? Deferred.succeed(historyReceived, undefined).pipe(Effect.asVoid) : Effect.void,
+      );
+      process.emitData("existing history\n");
+      yield* Deferred.await(historyReceived);
+      unsubscribeHistory();
+
+      const observed = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+      const liveReceived = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.observeStream(
+        { threadId: opened.threadId, terminalId: opened.terminalId },
+        (event) => Ref.update(observed, (events) => [...events, event]).pipe(
+          Effect.andThen(event.type === "output"
+            ? Deferred.succeed(liveReceived, undefined).pipe(Effect.asVoid)
+            : Effect.void),
+        ),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      process.emitData("live output\n");
+      yield* Deferred.await(liveReceived);
+
+      expect(yield* Ref.get(observed)).toMatchObject([
+        { type: "snapshot", snapshot: { cwd: opened.cwd, worktreePath: opened.worktreePath, pid: opened.pid, history: "existing history\n" } },
+        { type: "output", data: "live output\n" },
+      ]);
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(ptyAdapter.spawnInputs[0]?.env.OBSERVER_TEST).toBe("original");
+      expect(process.resizeCalls).toEqual([]);
+      expect(process.writes).toEqual([]);
+      expect(process.killSignals).toEqual([]);
+    }),
+  );
+
+  it.effect("observes exited terminals without restarting and rejects missing sessions", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const missingEvents: TerminalAttachStreamEvent[] = [];
+      const missing = yield* manager.observeStream(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => Effect.sync(() => { missingEvents.push(event); }),
+      ).pipe(Effect.flip);
+      expect(missing._tag).toBe("TerminalSessionLookupError");
+      expect(ptyAdapter.spawnInputs).toEqual([]);
+
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const exited = yield* Deferred.make<void>();
+      const unsubscribeExit = yield* manager.subscribe((event) =>
+        event.type === "exited" ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid) : Effect.void,
+      );
+      process.emitExit({ exitCode: 7 });
+      yield* Deferred.await(exited);
+      unsubscribeExit();
+
+      const events: TerminalAttachStreamEvent[] = [];
+      const unsubscribe = yield* manager.observeStream(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => Effect.sync(() => { events.push(event); }),
+      );
+      unsubscribe();
+      expect(events).toMatchObject([{ type: "snapshot", snapshot: { status: "exited", exitCode: 7, pid: null } }]);
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(process.resizeCalls).toEqual([]);
+      expect(process.writes).toEqual([]);
+      expect(process.killSignals).toEqual([]);
+      expect(missingEvents).toEqual([]);
+    }),
   );
 
   it.effect("buffers attach output delivered during the initial snapshot callback", () =>
