@@ -690,6 +690,9 @@ importers:
       '@types/react-dom':
         specifier: ~19.2.3
         version: 19.2.3(@types/react@19.2.16)
+      '@types/react-test-renderer':
+        specifier: 19.1.0
+        version: 19.1.0
       '@vercel/config':
         specifier: ^0.3.0
         version: 0.3.0
@@ -702,6 +705,9 @@ importers:
       compression:
         specifier: ^1.8.1
         version: 1.8.1
+      react-test-renderer:
+        specifier: 19.2.6
+        version: 19.2.6(react@19.2.6)
       tailwindcss:
         specifier: 4.3.3
         version: 4.3.3
@@ -9091,6 +9097,11 @@ packages:
     peerDependenciesMeta:
       '@types/react':
         optional: true
+
+  react-test-renderer@19.2.6:
+    resolution: {integrity: sha512-GbS6V23YduFTPiWJ5xICbKEjRcqx1Z90js/V5miqhz7qp/d6xSe9Dd6NjSQODFRdzdsqRMPW82E/sFpPRbY5Mw==}
+    peerDependencies:
+      react: ^19.2.6
 
   react@19.2.3:
     resolution: {integrity: sha512-Ku/hhYbVjOQnXDZFv2+RibmLFGwFdeeKHFcOTlrt7xplBnya5OGn/hIRDsqDiSUcfORsDC7MPxwork8jBwsIWA==}
@@ -19794,6 +19805,12 @@ snapshots:
       tslib: 2.8.1
     optionalDependencies:
       '@types/react': 19.2.16
+
+  react-test-renderer@19.2.6(react@19.2.6):
+    dependencies:
+      react: 19.2.6
+      react-is: 19.2.7
+      scheduler: 0.27.0
 
   react@19.2.3: {}
 
