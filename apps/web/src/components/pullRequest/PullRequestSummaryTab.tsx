@@ -4,8 +4,10 @@ import type {
   PullRequestComment,
   PullRequestDetailView,
   PullRequestRef,
+  PullRequestReviewThread,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   ArrowDownUpIcon,
   ChevronDownIcon,
@@ -46,10 +48,12 @@ import { PullRequestLabelPicker } from "./PullRequestLabelPicker";
 import { PullRequestReviewerPicker } from "./PullRequestReviewerPicker";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import {
+  firstVisibleThreadCommentIds,
   latestPullRequestReviewOutcomes,
   orderPullRequestComments,
   pullRequestFindingKey,
   pullRequestReviewOutcome,
+  readableFailure,
   visibleBody,
   type PullRequestFinding,
 } from "./pullRequestDetail.logic";
@@ -161,6 +165,7 @@ function CollapsedComment({
   label,
   body,
   reactionBar,
+  action,
 }: {
   comment: PullRequestComment;
   editing: CommentEditing;
@@ -168,30 +173,34 @@ function CollapsedComment({
   /** Null where the remark is nothing but its verdict, which a dismissal usually is. */
   body: string | null;
   reactionBar: ReactNode;
+  action?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <article className="group rounded-lg border border-border/60 [contain-intrinsic-block-size:44px] [content-visibility:auto]">
-        <CollapsibleTrigger
+        <div
           className={cn(
-            "flex w-full items-center gap-2 p-3 text-left transition-opacity hover:opacity-100",
+            "flex items-center transition-opacity hover:opacity-100 focus-within:opacity-100",
             open ? "opacity-100" : "opacity-65",
           )}
         >
-          <span className="flex min-w-0 flex-1 items-center gap-2 text-xs text-muted-foreground">
-            <CommentAuthor actor={comment.author} />
-            <span>{formatRelativeTimeLabel(comment.createdAt)}</span>
-            <span>{label}</span>
-          </span>
-          <ChevronDownIcon
-            aria-hidden
-            className={cn(
-              "size-3.5 shrink-0 text-muted-foreground transition-transform",
-              open && "rotate-180",
-            )}
-          />
-        </CollapsibleTrigger>
+          <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-2 p-3 text-left">
+            <span className="flex min-w-0 flex-1 items-center gap-2 text-xs text-muted-foreground">
+              <CommentAuthor actor={comment.author} />
+              <span>{formatRelativeTimeLabel(comment.createdAt)}</span>
+              <span>{label}</span>
+            </span>
+            <ChevronDownIcon
+              aria-hidden
+              className={cn(
+                "size-3.5 shrink-0 text-muted-foreground transition-transform",
+                open && "rotate-180",
+              )}
+            />
+          </CollapsibleTrigger>
+          {action ? <div className="pr-3">{action}</div> : null}
+        </div>
         <CollapsiblePanel>
           {open ? (
             <div className="px-3 pb-3">
@@ -525,6 +534,7 @@ export function PullRequestSummaryTab({
       thread.comments.map((comment) => [comment.id, thread] as const),
     ),
   );
+  const resolutionCommentIds = firstVisibleThreadCommentIds(visibleComments, threadByCommentId);
 
   const openLink = useOpenLink(threadRef);
   const openCheck = (url: string) => {
@@ -538,6 +548,16 @@ export function PullRequestSummaryTab({
   const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
     reportFailure: false,
   });
+  const setThreadResolution = useAtomCommand(pullRequestEnvironment.setThreadResolution, {
+    reportFailure: false,
+  });
+  // Include the pull request because this component remains mounted when the panel changes PRs.
+  const [resolutionScope, setResolutionScope] = useState<{
+    readonly pullRequest: string;
+    readonly threadId: string;
+  } | null>(null);
+  const resolvingThreadId =
+    resolutionScope?.pullRequest === detail.url ? resolutionScope.threadId : null;
   // Keyed by the pull request, like the comment window above it, so an editor left open never
   // reappears over the next pull request's description.
   const [bodyScope, setBodyScope] = useState<string | null>(null);
@@ -592,6 +612,51 @@ export function PullRequestSummaryTab({
       setCommentScope(null);
       onRefresh();
     },
+  };
+
+  const resolutionButton = (thread: PullRequestReviewThread, className?: string) => {
+    if (!detail.capabilities.review.resolve || !detail.viewerPermissions.resolve) return null;
+    const resolving = resolvingThreadId === thread.id;
+    const verb = thread.isResolved ? "Unresolve" : "Resolve";
+    const working = thread.isResolved ? "Unresolving..." : "Resolving...";
+    return (
+      <Button
+        size="xs"
+        variant="ghost"
+        className={cn("shrink-0", className)}
+        disabled={resolvingThreadId !== null}
+        aria-busy={resolving || undefined}
+        aria-label={`${verb} review conversation on ${thread.path}${thread.line === null ? "" : ` line ${thread.line}`}`}
+        onClick={async () => {
+          if (resolvingThreadId !== null) return;
+          const scope = { pullRequest: detail.url, threadId: thread.id };
+          setResolutionScope(scope);
+          const result = await setThreadResolution({
+            environmentId,
+            input: { ...reference, threadId: thread.id, resolved: !thread.isResolved },
+          });
+          setResolutionScope((current) =>
+            current?.pullRequest === scope.pullRequest && current.threadId === scope.threadId
+              ? null
+              : current,
+          );
+          if (result._tag === "Failure") {
+            toastManager.add({
+              type: "error",
+              title: "The conversation could not be updated",
+              description: readableFailure(
+                squashAtomCommandFailure(result),
+                "The host refused it. Check that you have write access or opened this change request.",
+              ),
+            });
+            return;
+          }
+          onRefresh();
+        }}
+      >
+        {resolving ? working : verb}
+      </Button>
+    );
   };
 
   return (
@@ -879,6 +944,8 @@ export function PullRequestSummaryTab({
                 {commentOrder === "oldest" ? showOldestCommentsButton : null}
                 {visibleComments.map((comment) => {
                   const thread = threadByCommentId.get(comment.id);
+                  const showsResolutionAction =
+                    thread !== undefined && resolutionCommentIds.has(comment.id);
                   const body = visibleBody(comment.body);
                   const outcome = pullRequestReviewOutcome(comment.reviewState);
                   if (thread?.isResolved || outcome === "dismissed") {
@@ -900,6 +967,7 @@ export function PullRequestSummaryTab({
                             onRefresh={onRefresh}
                           />
                         }
+                        action={showsResolutionAction ? resolutionButton(thread) : null}
                       />
                     );
                   }
@@ -964,6 +1032,7 @@ export function PullRequestSummaryTab({
                               : fixFindingLabel}
                           </Button>
                         ) : null}
+                        {showsResolutionAction ? resolutionButton(thread, "-mt-1") : null}
                       </div>
                       {comment.path ? (
                         <Tooltip>
