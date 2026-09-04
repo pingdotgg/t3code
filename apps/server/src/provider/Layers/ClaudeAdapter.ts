@@ -8,6 +8,8 @@
  */
 import {
   type CanUseTool,
+  type HookCallback,
+  type HookInput,
   query,
   type Options as ClaudeQueryOptions,
   type PermissionMode,
@@ -248,36 +250,52 @@ interface ClaudeTaskAgentState {
   runHandles: TaskRunHandles | undefined;
   /** Set when this task was launched from inside a subagent. */
   owningAgentId: string | undefined;
-  /** Seeded from the launching tool's input; refined by the subagent's own
-   * assistant snapshots (authoritative API model). */
+  /** Seeded only from explicit launch overrides; refined by the subagent's
+   * own assistant snapshots (authoritative runtime identity). */
   model: string | undefined;
   effort: string | undefined;
 }
 
-/**
- * How many racing snapshot models to buffer per session. A snapshot whose
- * task_started never arrives would otherwise pin its entry for the session's
- * lifetime; oldest entries evict first.
- */
-const PENDING_TASK_MODEL_CAP = 64;
+interface ClaudeTaskAgentRefinement {
+  readonly model?: string;
+  readonly effort?: string;
+}
 
-/**
- * Buffers a subagent snapshot's authoritative model under its
- * parent_tool_use_id, for snapshots that beat their task_started to the
- * stream. task_started consumes the entry when it registers the task.
- */
-function rememberPendingTaskModel(
-  pending: Map<string, string>,
-  parentToolUseId: string,
-  model: string,
+const PENDING_TASK_AGENT_REFINEMENT_CAP = 256;
+
+function applyTaskAgentRefinement(
+  agent: ClaudeTaskAgentState,
+  refinement: ClaudeTaskAgentRefinement,
+): boolean {
+  let changed = false;
+  if (refinement.model && refinement.model !== agent.model) {
+    agent.model = refinement.model;
+    changed = true;
+  }
+  if (refinement.effort && refinement.effort !== agent.effort) {
+    agent.effort = refinement.effort;
+    changed = true;
+  }
+  return changed;
+}
+
+function rememberPendingTaskAgentRefinement(
+  pending: Map<string, ClaudeTaskAgentRefinement>,
+  key: string,
+  refinement: ClaudeTaskAgentRefinement,
 ): void {
-  pending.set(parentToolUseId, model);
-  if (pending.size > PENDING_TASK_MODEL_CAP) {
-    const oldest = pending.keys().next();
-    if (!oldest.done) {
-      pending.delete(oldest.value);
+  const existing = pending.get(key);
+  if (existing) {
+    pending.set(key, { ...existing, ...refinement });
+    return;
+  }
+  if (pending.size >= PENDING_TASK_AGENT_REFINEMENT_CAP) {
+    const oldestKey = pending.keys().next().value;
+    if (oldestKey !== undefined) {
+      pending.delete(oldestKey);
     }
   }
+  pending.set(key, refinement);
 }
 
 interface ClaudeSessionContext {
@@ -288,8 +306,7 @@ interface ClaudeSessionContext {
   readonly startedAt: string;
   readonly basePermissionMode: PermissionMode | undefined;
   currentApiModelId: string | undefined;
-  /** Effective effort for the session's turns; subagents without an explicit
-   * effort override inherit this. */
+  /** Effective effort for the parent session's turns. */
   currentEffort: string | undefined;
   resumeSessionId: string | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
@@ -301,12 +318,9 @@ interface ClaudeSessionContext {
   readonly inFlightTools: Map<number, ToolInFlight>;
   readonly claudeTasks: Map<string, ClaudeTaskState>;
   readonly taskAgents: Map<string, ClaudeTaskAgentState>;
-  /**
-   * Authoritative subagent models from assistant snapshots that arrived before
-   * their task_started registered the task, keyed by parent_tool_use_id.
-   * Written through `rememberPendingTaskModel`, consumed by task_started.
-   */
-  readonly pendingTaskModels: Map<string, string>;
+  /** Authoritative snapshots can race ahead of task_started. Keyed by the
+   * spawning Agent tool_use_id until the task identity is available. */
+  readonly pendingTaskAgentRefinements: Map<string, ClaudeTaskAgentRefinement>;
   /**
    * Last emitted workflow-member fingerprint per member slot. A coordinator
    * task_progress repeats the FULL member array every tick; without a
@@ -999,6 +1013,13 @@ function trimmedString(value: unknown): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function runtimeModelFromAssistantSnapshot(value: unknown): string | undefined {
+  const model = trimmedString(value);
+  // Claude uses this sentinel for locally generated error frames; no model
+  // served it, so it must not replace a task's last known runtime model.
+  return model === "<synthetic>" ? undefined : model;
 }
 
 /**
@@ -2937,23 +2958,44 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const assistantParentToolUseId = (message as { parent_tool_use_id?: string | null })
       .parent_tool_use_id;
     if (assistantParentToolUseId !== null && assistantParentToolUseId !== undefined) {
-      // The snapshot's message.model is the authoritative API model the
-      // subagent actually ran on — refine the seeded launch-time value.
+      // The snapshot carries the authoritative model the subagent actually
+      // ran with. It can arrive before task_started or after the terminal task
+      // rows, so retain early values and emit late corrections.
       const owningTaskId = agentIdForParentToolUse(context.taskAgents, assistantParentToolUseId);
-      const snapshotModel = trimmedString(message.message.model);
+      const snapshotModel = runtimeModelFromAssistantSnapshot(message.message.model);
       const owningAgent = owningTaskId ? context.taskAgents.get(owningTaskId) : undefined;
-      if (snapshotModel) {
-        if (owningAgent) {
-          owningAgent.model = snapshotModel;
-        } else {
-          // The snapshot beat its task_started (or its tool_use_id was never
-          // recorded): hold the model until the task registers.
-          rememberPendingTaskModel(
-            context.pendingTaskModels,
-            assistantParentToolUseId,
-            snapshotModel,
-          );
+      if (owningAgent) {
+        const changed = snapshotModel
+          ? applyTaskAgentRefinement(owningAgent, { model: snapshotModel })
+          : false;
+        if (changed && owningTaskId) {
+          const stamp = yield* makeEventStamp();
+          yield* offerRuntimeEvent({
+            eventId: stamp.eventId,
+            provider: PROVIDER,
+            createdAt: stamp.createdAt,
+            threadId: context.session.threadId,
+            ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+            type: "task.updated",
+            payload: {
+              taskId: RuntimeTaskId.make(owningTaskId),
+              ...taskLinkageFor(context.taskAgents, owningTaskId),
+            },
+            providerRefs: nativeProviderRefs(context),
+            raw: {
+              source: "claude.sdk.message",
+              method: sdkNativeMethod(message),
+              messageType: message.type,
+              payload: message,
+            },
+          });
         }
+      } else if (snapshotModel) {
+        rememberPendingTaskAgentRefinement(
+          context.pendingTaskAgentRefinements,
+          assistantParentToolUseId,
+          { model: snapshotModel },
+        );
       }
       context.lastAssistantUuid = message.uuid;
       yield* updateResumeCursor(context);
@@ -3284,40 +3326,55 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               (tool) => tool.itemId === message.tool_use_id,
             )
           : undefined;
-        const owningAgentId = launchingTool?.agentId;
-        // Model/effort: the Agent tool's input carries explicit overrides;
-        // absent ones inherit the session's selection (SDK behavior).
-        // Subagent assistant snapshots refine model with the authoritative API
-        // id: one that already arrived is buffered and outranks the seed here,
-        // later ones refine the record in place. AgentInput.effort may be a
-        // named level or an integer.
+        const existingAgent = context.taskAgents.get(message.task_id);
+        const owningAgentId = existingAgent?.owningAgentId ?? launchingTool?.agentId;
+        // Only explicit Agent tool overrides are safe to seed. File-defined
+        // agents resolve model/effort from their own frontmatter, so falling
+        // back to the parent session silently misattributes their work.
+        // AgentInput.effort may be a named level or an integer.
         const launchInput = launchingTool?.input;
-        const toolUseId = message.tool_use_id;
-        const bufferedModel = toolUseId ? context.pendingTaskModels.get(toolUseId) : undefined;
-        if (toolUseId) {
-          context.pendingTaskModels.delete(toolUseId);
+        const pendingByTaskId = context.pendingTaskAgentRefinements.get(message.task_id);
+        const pendingByToolUseId = message.tool_use_id
+          ? context.pendingTaskAgentRefinements.get(message.tool_use_id)
+          : undefined;
+        const pendingRefinement = {
+          ...pendingByTaskId,
+          ...pendingByToolUseId,
+        };
+        context.pendingTaskAgentRefinements.delete(message.task_id);
+        if (message.tool_use_id) {
+          context.pendingTaskAgentRefinements.delete(message.tool_use_id);
         }
         const model =
-          bufferedModel ??
-          trimmedString(launchInput?.model) ??
-          trimmedString(context.session.model ?? undefined);
+          pendingRefinement?.model ?? existingAgent?.model ?? trimmedString(launchInput?.model);
         const rawLaunchEffort = launchInput?.effort;
         const effort =
+          pendingRefinement?.effort ??
+          existingAgent?.effort ??
           trimmedString(rawLaunchEffort) ??
           (typeof rawLaunchEffort === "number" && Number.isFinite(rawLaunchEffort)
             ? String(rawLaunchEffort)
-            : context.currentEffort);
+            : undefined);
+        // A SendMessage resume re-emits task_started for the same task id with
+        // the resume tool's id. Keep the original Agent launch association:
+        // subagent assistant snapshots continue to reference that original id.
+        const toolUseId = existingAgent?.toolUseId ?? message.tool_use_id;
+        const description = message.description || existingAgent?.description;
+        const subagentType = message.subagent_type ?? existingAgent?.subagentType;
+        const taskType = message.task_type ?? existingAgent?.taskType;
+        const workflowName = message.workflow_name ?? existingAgent?.workflowName;
         // Remember the agent identity so every later task.* payload for this
         // taskId is self-describing (identity must survive activity retention).
         context.taskAgents.set(message.task_id, {
           taskId: message.task_id,
-          toolUseId: message.tool_use_id,
-          description: message.description,
-          subagentType: message.subagent_type,
-          taskType: message.task_type,
-          workflowName: message.workflow_name,
-          skipTranscript: message.skip_transcript === true,
-          runHandles: context.taskAgents.get(message.task_id)?.runHandles,
+          toolUseId,
+          description,
+          subagentType,
+          taskType,
+          workflowName,
+          skipTranscript:
+            message.skip_transcript === true || existingAgent?.skipTranscript === true,
+          runHandles: existingAgent?.runHandles,
           owningAgentId,
           model,
           effort,
@@ -3329,14 +3386,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           payload: {
             taskId: RuntimeTaskId.make(message.task_id),
             description: message.description,
-            ...(message.task_type ? { taskType: message.task_type } : {}),
+            ...(taskType ? { taskType } : {}),
             ...(owningAgentId ? { agentId: owningAgentId } : {}),
-            ...(message.description ? { title: message.description } : {}),
-            ...(message.subagent_type ? { role: message.subagent_type } : {}),
+            ...(description ? { title: description } : {}),
+            ...(subagentType ? { role: subagentType } : {}),
             ...(model ? { model } : {}),
             ...(effort ? { effort } : {}),
-            ...(message.tool_use_id ? { toolUseId: message.tool_use_id } : {}),
-            ...(message.workflow_name ? { workflowName: message.workflow_name } : {}),
+            ...(toolUseId ? { toolUseId } : {}),
+            ...(workflowName ? { workflowName } : {}),
           },
         });
         return;
@@ -3916,11 +3973,77 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const inFlightTools = new Map<number, ToolInFlight>();
       const claudeTasks = new Map<string, ClaudeTaskState>();
       const taskAgents = new Map<string, ClaudeTaskAgentState>();
-      const pendingTaskModels = new Map<string, string>();
+      const pendingTaskAgentRefinements = new Map<string, ClaudeTaskAgentRefinement>();
       const workflowMemberFingerprints = new Map<string, string>();
       const liveTaskIds = new Set<string>();
 
       const contextRef = yield* Ref.make<ClaudeSessionContext | undefined>(undefined);
+
+      const captureSubagentEffort = Effect.fn("captureSubagentEffort")(function* (
+        hookInput: HookInput,
+      ) {
+        if (
+          hookInput.hook_event_name !== "SubagentStart" &&
+          hookInput.hook_event_name !== "SubagentStop"
+        ) {
+          return;
+        }
+        const effort = trimmedString(hookInput.effort?.level);
+        if (!effort) {
+          return;
+        }
+        const context = yield* Ref.get(contextRef);
+        if (!context) {
+          return;
+        }
+        const taskId = hookInput.agent_id;
+        const agent = context.taskAgents.get(taskId);
+        if (!agent) {
+          rememberPendingTaskAgentRefinement(context.pendingTaskAgentRefinements, taskId, {
+            effort,
+          });
+          return;
+        }
+        if (!applyTaskAgentRefinement(agent, { effort })) {
+          return;
+        }
+        const stamp = yield* makeEventStamp();
+        yield* offerRuntimeEvent({
+          eventId: stamp.eventId,
+          provider: PROVIDER,
+          createdAt: stamp.createdAt,
+          threadId: context.session.threadId,
+          ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+          type: "task.updated",
+          payload: {
+            taskId: RuntimeTaskId.make(taskId),
+            ...taskLinkageFor(context.taskAgents, taskId),
+          },
+          providerRefs: nativeProviderRefs(context),
+          raw: {
+            source: "claude.sdk.message",
+            method: hookInput.hook_event_name,
+            messageType: "hook",
+            payload: {
+              hookEventName: hookInput.hook_event_name,
+              agentId: hookInput.agent_id,
+              agentType: hookInput.agent_type,
+              effort,
+            },
+          },
+        });
+      });
+
+      const subagentEffortHook: HookCallback = async (hookInput) => {
+        await runPromise(
+          captureSubagentEffort(hookInput).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("claude.subagent.effort-hook.failed", { cause }),
+            ),
+          ),
+        );
+        return {};
+      };
 
       /**
        * Handle AskUserQuestion tool calls by emitting a `user-input.requested`
@@ -4387,6 +4510,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
+        hooks: {
+          SubagentStart: [{ hooks: [subagentEffortHook] }],
+          SubagentStop: [{ hooks: [subagentEffortHook] }],
+        },
         canUseTool,
         onUserDialog,
         supportedDialogKinds: ["resume_return"],
@@ -4483,7 +4610,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         inFlightTools,
         claudeTasks,
         taskAgents,
-        pendingTaskModels,
+        pendingTaskAgentRefinements,
         workflowMemberFingerprints,
         liveTaskIds,
         turnState: undefined,
