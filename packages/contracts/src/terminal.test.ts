@@ -3,7 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   DEFAULT_TERMINAL_ID,
+  DEFAULT_TERMINAL_REPLAY_BYTES,
+  EXTENDED_TERMINAL_REPLAY_BYTES,
+  MAX_TERMINAL_REPLAY_BYTES,
   TerminalAttachInput,
+  TerminalAttachStreamEvent,
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
@@ -120,6 +124,51 @@ describe("TerminalAttachInput", () => {
     });
 
     expect(parsed.restartIfNotRunning).toBe(true);
+  });
+
+  it("bounds requested replay history", () => {
+    const parsed = decodeSync(TerminalAttachInput, {
+      threadId: "thread-1",
+      terminalId: DEFAULT_TERMINAL_ID,
+      replayBytes: EXTENDED_TERMINAL_REPLAY_BYTES,
+    });
+
+    expect(parsed.replayBytes).toBe(EXTENDED_TERMINAL_REPLAY_BYTES);
+    expect(
+      decodes(TerminalAttachInput, {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        replayBytes: DEFAULT_TERMINAL_REPLAY_BYTES - 1,
+      }),
+    ).toBe(false);
+    expect(
+      decodes(TerminalAttachInput, {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        replayBytes: MAX_TERMINAL_REPLAY_BYTES + 1,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("TerminalAttachStreamEvent", () => {
+  it("accepts ordered replay boundary markers", () => {
+    expect(
+      decodes(TerminalAttachStreamEvent, {
+        type: "replay-start",
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        sequence: 42,
+      }),
+    ).toBe(true);
+    expect(
+      decodes(TerminalAttachStreamEvent, {
+        type: "replay-complete",
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        sequence: 42,
+      }),
+    ).toBe(true);
   });
 });
 

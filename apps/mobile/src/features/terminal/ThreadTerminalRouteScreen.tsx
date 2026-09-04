@@ -1,5 +1,13 @@
-import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
+import {
+  DEFAULT_TERMINAL_ID,
+  EXTENDED_TERMINAL_REPLAY_BYTES,
+  EnvironmentId,
+  ThreadId,
+} from "@t3tools/contracts";
+import {
+  terminalOutputText,
+  type KnownTerminalSession,
+} from "@t3tools/client-runtime/state/terminal";
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "../../components/AppSymbol";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
@@ -47,11 +55,12 @@ import { useSelectedThreadDetail } from "../../state/use-thread-detail";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { TerminalSurface } from "./NativeTerminalSurface";
+import { supportsNativeReplayStreaming } from "./nativeTerminalModule";
 import { getMobileTerminalTheme } from "./terminalTheme";
 import { terminalDebugLog } from "./terminalDebugLog";
 import {
   getTerminalBufferReplayKey,
-  getTerminalSurfaceReplayBuffer,
+  isTerminalBufferReplayPaused,
   TERMINAL_BUFFER_REPLAY_STABILITY_DELAY_MS,
 } from "./terminalBufferReplay";
 import {
@@ -311,6 +320,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
             worktreePath: launchLocation.worktreePath,
             cols: initialAttachGridSize.cols,
             rows: initialAttachGridSize.rows,
+            ...(supportsNativeReplayStreaming()
+              ? { replayBytes: EXTENDED_TERMINAL_REPLAY_BYTES }
+              : {}),
             ...(pendingLaunch?.env ? { env: pendingLaunch.env } : {}),
             ...(pendingLaunch ? { restartIfNotRunning: true } : {}),
           }
@@ -342,8 +354,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   if (lastBufferReplayKeyRef.current === null) {
     lastBufferReplayKeyRef.current = bufferReplayKey;
   }
-  const terminalSurfaceBuffer = getTerminalSurfaceReplayBuffer({
-    buffer: terminal.buffer,
+  const terminalReplayPaused = isTerminalBufferReplayPaused({
     replayKey: bufferReplayKey,
     readyReplayKey: readyBufferReplayKey,
   });
@@ -358,11 +369,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const reopenedStaleTerminalKeyRef = useRef<string | null>(null);
   const pendingExitNavigationRef = useRef<string | null>(null);
 
-  // Attach subscriptions are cached with an idle TTL, so revisiting a
-  // terminal whose session ended while unobserved reuses the stale stream
-  // without a new attach RPC — the server never respawns anything. Detect
-  // that (dead status with processed events, never seen running here) and
-  // issue an explicit open; its snapshot flows into the live subscription.
+  // Attaching to an exited session preserves its final history. This route is
+  // an interactive shell, so explicitly reopen that session after its
+  // snapshot arrives unless this screen observed the exit itself.
   useEffect(() => {
     if (isRunning) {
       reopenedStaleTerminalKeyRef.current = null;
@@ -410,8 +419,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   useEffect(() => {
     terminalDebugLog("surface:props", {
       terminalKey,
-      atomBufferLen: terminal.buffer.length,
-      surfaceBufferLen: terminalSurfaceBuffer.length,
+      retainedBytes: terminal.output.retainedBytes,
+      retainedChunks: terminal.output.chunks.length,
+      replayPaused: terminalReplayPaused,
       replayKey: bufferReplayKey,
       readyReplayKey: readyBufferReplayKey,
       status: terminal.status,
@@ -420,11 +430,12 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   }, [
     bufferReplayKey,
     readyBufferReplayKey,
-    terminal.buffer.length,
+    terminal.output.chunks.length,
+    terminal.output.retainedBytes,
     terminal.status,
     terminal.version,
     terminalKey,
-    terminalSurfaceBuffer.length,
+    terminalReplayPaused,
   ]);
 
   useEffect(() => {
@@ -433,11 +444,11 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       status: terminal.status,
       error: terminal.error,
       summary: terminal.summary?.cwd ?? null,
-      bufferLen: terminal.buffer.length,
+      retainedBytes: terminal.output.retainedBytes,
       version: terminal.version,
     });
   }, [
-    terminal.buffer.length,
+    terminal.output.retainedBytes,
     terminal.error,
     terminal.status,
     terminal.summary?.cwd,
@@ -446,16 +457,16 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   ]);
 
   useEffect(() => {
-    if (terminal.buffer.length === 0 || firstNonEmptyBufferLoggedRef.current) {
+    if (terminal.output.retainedBytes === 0 || firstNonEmptyBufferLoggedRef.current) {
       return;
     }
     firstNonEmptyBufferLoggedRef.current = true;
     terminalDebugLog("session:first-nonempty-buffer", {
       terminalKey,
-      length: terminal.buffer.length,
-      preview: terminal.buffer.slice(0, 160),
+      length: terminal.output.retainedBytes,
+      preview: terminalOutputText(terminal.output).slice(0, 160),
     });
-  }, [terminal.buffer, terminal.buffer.length, terminalKey]);
+  }, [terminal.output, terminalKey]);
   const cwd = terminal.summary?.cwd ?? selectedThreadProject?.workspaceRoot ?? null;
   const serverConfigs = useServerConfigs();
   const hostOs =
@@ -671,7 +682,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     lastBufferReplayKeyRef.current = bufferReplayKey;
     clearBufferReplayTimer();
     setReadyBufferReplayKey(null);
-  }, [bufferReplayKey, clearBufferReplayTimer]);
+    scheduleBufferReplayReady();
+  }, [bufferReplayKey, clearBufferReplayTimer, scheduleBufferReplayReady]);
 
   useEffect(() => clearBufferReplayTimer, [clearBufferReplayTimer]);
 
@@ -1263,12 +1275,19 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
             <View className="flex-1" style={{ paddingBottom: terminalBottomInset }}>
               <TerminalSurface
                 autoFocus={!SHOWCASE_ENABLED}
-                buffer={terminalSurfaceBuffer}
                 fontSize={fontSize}
                 isRunning={isRunning}
                 keyboardFocusRequest={keyboardFocusRequest}
                 onInput={handleInput}
                 onResize={handleResize}
+                output={terminal.output}
+                replayPaused={terminalReplayPaused}
+                // The attach seed (version 0) precedes the server's reply the
+                // same way an open replay does: hold the last frame until it lands.
+                replayPending={
+                  terminal.version === 0 ||
+                  terminal.replayStartVersion > terminal.replayCompleteVersion
+                }
                 style={{ flex: 1 }}
                 terminalKey={terminalKey}
                 theme={terminalTheme}

@@ -42,8 +42,10 @@ export interface WrappedTerminalLinkLine {
 }
 
 const URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
+// The bare-filename alternative requires a letter-initial final segment so
+// numeric hosts with two ports (`docker -p 127.0.0.1:5432:5432`) stay unlinked.
 const FILE_PATH_PATTERN =
-  /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
+  /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}|[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.[A-Za-z][A-Za-z0-9_-]*(?::\d+){2}/g;
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
 
 function trimClosingDelimiters(value: string): string {

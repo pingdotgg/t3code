@@ -15,9 +15,16 @@ import android.widget.FrameLayout
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
+import java.util.ArrayDeque
 import kotlin.math.max
 
 class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
+  private companion object {
+    const val MAX_PENDING_REMOTE_DATA_BYTES = 8 * 1024 * 1024
+  }
+
+  private data class PendingRemoteData(val data: ByteArray, val replay: Boolean)
+
   private val container = FrameLayout(context)
   private val terminalCanvas = TerminalCanvasView(context)
   private val inputView = EditText(context)
@@ -25,6 +32,9 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   private val onResize by EventDispatcher()
   private var terminalHandle = 0L
   private var fedBuffer = ""
+  private var bufferedOutput = ""
+  private val pendingRemoteData = ArrayDeque<PendingRemoteData>()
+  private var pendingRemoteDataBytes = 0
   private var cols = 0
   private var rows = 0
   private var clearingInput = false
@@ -34,6 +44,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   private var mutedForegroundColorValue = Color.parseColor("#959DA5")
   private var cursorColorValue = Color.parseColor("#009FFF")
   private var paletteColors = IntArray(0)
+  private var renderSnapshotScheduled = false
 
   var terminalKey: String = ""
     set(value) {
@@ -43,12 +54,46 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       recreateTerminal()
     }
 
-  var initialBuffer: String = ""
+  var initialBuffer: String
+    get() = bufferedOutput
     set(value) {
-      if (field == value) return
-      field = value
+      if (bufferedOutput == value) return
+      bufferedOutput = value
       feedPendingBuffer()
     }
+
+  fun writeRemoteData(data: String) {
+    writeRemoteData(data, replay = false)
+  }
+
+  fun writeReplayRemoteData(data: String) {
+    writeRemoteData(data, replay = true)
+  }
+
+  private fun writeRemoteData(data: String, replay: Boolean) {
+    if (data.isEmpty()) return
+    if (terminalHandle == 0L) {
+      appendPendingRemoteData(data, replay)
+      return
+    }
+    val response = GhosttyBridge.nativeFeed(terminalHandle, data.toByteArray(Charsets.UTF_8))
+    if (!replay) emitResponse(response)
+    if (terminalCanvas.hasActiveSelection()) {
+      GhosttyBridge.nativeClearSelection(terminalHandle)
+      terminalCanvas.resetSelectionState()
+    }
+    scheduleRenderSnapshot()
+  }
+
+  fun resetRemoteData(data: String) {
+    destroyTerminal()
+    bufferedOutput = data
+    pendingRemoteData.clear()
+    pendingRemoteDataBytes = 0
+    if (data.isEmpty()) terminalCanvas.clearFrame()
+    createTerminal()
+    feedPendingBuffer()
+  }
 
   var fontSize: Float = 10f
     set(value) {
@@ -339,23 +384,54 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   }
 
   private fun feedPendingBuffer() {
-    if (terminalHandle == 0L || initialBuffer == fedBuffer) return
-    if (!initialBuffer.startsWith(fedBuffer)) {
-      recreateTerminal()
-      if (terminalHandle == 0L) return
+    if (terminalHandle == 0L) return
+    if (initialBuffer != fedBuffer) {
+      if (!initialBuffer.startsWith(fedBuffer)) {
+        recreateTerminal()
+        return
+      }
+      val suffix = initialBuffer.substring(fedBuffer.length)
+      if (suffix.isNotEmpty()) {
+        // Retained history is renderer input, not live PTY output. Discard any
+        // terminal query replies it generates instead of forwarding them to the shell.
+        GhosttyBridge.nativeFeed(terminalHandle, suffix.toByteArray(Charsets.UTF_8))
+        // New output invalidates an active selection (matches the web drawer);
+        // otherwise the copy toolbar drifts out of sync with the grid.
+        if (terminalCanvas.hasActiveSelection()) {
+          GhosttyBridge.nativeClearSelection(terminalHandle)
+          terminalCanvas.resetSelectionState()
+        }
+      }
+      fedBuffer = initialBuffer
     }
-    val suffix = initialBuffer.substring(fedBuffer.length)
-    if (suffix.isNotEmpty()) {
-      emitResponse(GhosttyBridge.nativeFeed(terminalHandle, suffix.toByteArray(Charsets.UTF_8)))
-      // New output invalidates an active selection (matches the web drawer);
-      // otherwise the copy toolbar drifts out of sync with the grid.
-      if (terminalCanvas.hasActiveSelection()) {
-        GhosttyBridge.nativeClearSelection(terminalHandle)
-        terminalCanvas.resetSelectionState()
+    if (pendingRemoteData.isNotEmpty()) {
+      while (pendingRemoteData.isNotEmpty()) {
+        val chunk = pendingRemoteData.removeFirst()
+        val response = GhosttyBridge.nativeFeed(terminalHandle, chunk.data)
+        if (!chunk.replay) emitResponse(response)
       }
     }
-    fedBuffer = initialBuffer
+    pendingRemoteDataBytes = 0
     renderSnapshot()
+  }
+
+  private fun appendPendingRemoteData(data: String, replay: Boolean) {
+    val encoded = data.toByteArray(Charsets.UTF_8)
+    if (encoded.size > MAX_PENDING_REMOTE_DATA_BYTES) {
+      var start = encoded.size - MAX_PENDING_REMOTE_DATA_BYTES
+      while (start < encoded.size && (encoded[start].toInt() and 0xC0) == 0x80) start += 1
+      val suffix = encoded.copyOfRange(start, encoded.size)
+      pendingRemoteData.clear()
+      pendingRemoteData.addLast(PendingRemoteData(suffix, replay))
+      pendingRemoteDataBytes = suffix.size
+      return
+    }
+
+    pendingRemoteData.addLast(PendingRemoteData(encoded, replay))
+    pendingRemoteDataBytes += encoded.size
+    while (pendingRemoteDataBytes > MAX_PENDING_REMOTE_DATA_BYTES) {
+      pendingRemoteDataBytes -= pendingRemoteData.removeFirst().data.size
+    }
   }
 
   private fun renderSnapshot() {
@@ -363,6 +439,15 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     TerminalFrame.decode(
       GhosttyBridge.nativeSnapshot(terminalHandle)
     )?.let(terminalCanvas::setFrame)
+  }
+
+  private fun scheduleRenderSnapshot() {
+    if (renderSnapshotScheduled) return
+    renderSnapshotScheduled = true
+    postOnAnimation {
+      renderSnapshotScheduled = false
+      renderSnapshot()
+    }
   }
 
   private fun emitResponse(response: ByteArray) {

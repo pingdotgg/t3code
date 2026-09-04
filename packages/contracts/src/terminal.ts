@@ -8,6 +8,15 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
  */
 export const DEFAULT_TERMINAL_ID = "term-1";
 
+/** Maximum terminal output replayed when a client attaches or resynchronizes. */
+export const DEFAULT_TERMINAL_REPLAY_BYTES = 64 * 1024;
+
+/** Deeper attach replay requested by clients that can consume output incrementally. */
+export const EXTENDED_TERMINAL_REPLAY_BYTES = 4 * 1024 * 1024;
+
+/** Upper bound accepted from a client for one terminal attach replay. */
+export const MAX_TERMINAL_REPLAY_BYTES = 8 * 1024 * 1024;
+
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const TerminalColsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(
   Schema.isLessThanOrEqualTo(1000),
@@ -54,6 +63,11 @@ export const TerminalAttachInput = Schema.Struct({
   rows: Schema.optional(TerminalRowsSchema),
   env: Schema.optional(TerminalEnvSchema),
   restartIfNotRunning: Schema.optional(Schema.Boolean),
+  replayBytes: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(DEFAULT_TERMINAL_REPLAY_BYTES)).check(
+      Schema.isLessThanOrEqualTo(MAX_TERMINAL_REPLAY_BYTES),
+    ),
+  ),
 });
 export type TerminalAttachInput = Schema.Codec.Encoded<typeof TerminalAttachInput>;
 
@@ -220,8 +234,20 @@ const TerminalAttachSnapshotEvent = Schema.Struct({
   snapshot: TerminalSessionSnapshot,
 });
 
+const TerminalReplayStartEvent = Schema.Struct({
+  ...TerminalEventBaseSchema.fields,
+  type: Schema.Literal("replay-start"),
+});
+
+const TerminalReplayCompleteEvent = Schema.Struct({
+  ...TerminalEventBaseSchema.fields,
+  type: Schema.Literal("replay-complete"),
+});
+
 export const TerminalAttachStreamEvent = Schema.Union([
+  TerminalReplayStartEvent,
   TerminalAttachSnapshotEvent,
+  TerminalReplayCompleteEvent,
   TerminalOutputEvent,
   TerminalExitedEvent,
   TerminalClosedEvent,

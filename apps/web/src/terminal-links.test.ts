@@ -38,6 +38,29 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
+  it("finds a bare file name when a source position makes it unambiguous", () => {
+    expect(extractTerminalLinks("failed at surface.ts:42:7")).toEqual([
+      {
+        kind: "path",
+        text: "surface.ts:42:7",
+        start: 10,
+        end: 25,
+      },
+    ]);
+  });
+
+  it("does not treat host ports as bare file positions", () => {
+    expect(extractTerminalLinks("listening on api.example.com:8080 and 127.0.0.1:3000")).toEqual(
+      [],
+    );
+  });
+
+  it("does not treat numeric host-to-host port mappings as file positions", () => {
+    expect(extractTerminalLinks("docker run -p 127.0.0.1:5432:5432 -p 0.0.0.0:8080:8080")).toEqual(
+      [],
+    );
+  });
+
   it("classifies uppercase schemes as URLs at activation time too", () => {
     expect(isTerminalUrl("HTTPS://example.com/docs")).toBe(true);
     expect(isTerminalUrl("Http://example.com")).toBe(true);

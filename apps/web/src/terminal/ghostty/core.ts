@@ -9,7 +9,10 @@ import { GhosttyRuntime, loadGhosttyRuntime } from "./runtime";
 
 const GHOSTTY_SUCCESS = 0;
 const GHOSTTY_OUT_OF_SPACE = -3;
-const MAX_SCROLLBACK_ROWS = 10_000;
+// Despite the older libghostty-vt header calling this a line count, Ghostty's
+// screen implementation applies the value to its internal cell storage. A
+// 4 MB text replay expands substantially once every cell has terminal state.
+const MAX_SCROLLBACK_BYTES = 64 * 1024 * 1024;
 // wasm32 C ABI layout for GhosttyTerminalSelectionFormatOptions at the
 // libghostty-vt revision pinned alongside this module.
 const SELECTION_FORMAT_OPTIONS_SIZE = 16;
@@ -64,12 +67,17 @@ export interface GhosttyColor {
   readonly b: number;
 }
 
-export interface GhosttyTheme {
+export interface GhosttyScreenTheme {
   readonly foreground: GhosttyColor;
   readonly background: GhosttyColor;
   readonly cursor: GhosttyColor;
   /** CSS color the renderer overlays on selected cells; not sent to Ghostty. */
   readonly selectionBackground?: string;
+}
+
+export interface GhosttyTheme extends GhosttyScreenTheme {
+  /** Theme-owned defaults used while the standard alternate screen is active. */
+  readonly alternateScreen?: GhosttyScreenTheme;
 }
 
 export interface GhosttyCell {
@@ -206,6 +214,7 @@ export class GhosttyTerminalCore {
   private mouseEvent = 0;
   private ptyWriterId = 0;
   private ptyWriter: ((data: string) => void) | null = null;
+  private replayActive = false;
   private scratch = 0;
   private graphemes = 0;
   private graphemeCapacity = 0;
@@ -252,7 +261,12 @@ export class GhosttyTerminalCore {
     const options = this.runtime.alloc(optionsSize);
     this.runtime.setField(options, "GhosttyTerminalOptions", "cols", cols);
     this.runtime.setField(options, "GhosttyTerminalOptions", "rows", rows);
-    this.runtime.setField(options, "GhosttyTerminalOptions", "max_scrollback", MAX_SCROLLBACK_ROWS);
+    this.runtime.setField(
+      options,
+      "GhosttyTerminalOptions",
+      "max_scrollback",
+      MAX_SCROLLBACK_BYTES,
+    );
     this.terminalSlot = this.runtime.allocOpaque();
     const terminalResult = this.runtime.call("ghostty_terminal_new", 0, this.terminalSlot, options);
     this.runtime.free(options, optionsSize);
@@ -326,24 +340,43 @@ export class GhosttyTerminalCore {
   }
 
   resetAndWrite(data: string): void {
+    this.beginReplay();
+    try {
+      this.writeReplay(data);
+    } finally {
+      this.endReplay();
+    }
+  }
+
+  /** Reset for ordered history replay while suppressing replay-generated PTY replies. */
+  beginReplay(): void {
     this.ensureActive();
+    if (this.replayActive) this.endReplay();
     this.runtime.call("ghostty_terminal_reset", this.terminal);
     // RIS returns the cursor to Ghostty's built-in steady default, so the
     // embedder default has to be applied again before the replay runs.
     this.applyDefaultCursorBlink();
     this.rows = [];
-    if (data.length === 0) return;
-    const writer = this.ptyWriter;
     if (this.ptyWriterId !== 0) {
       this.runtime.detachPtyWriter(this.terminal, this.ptyWriterId);
       this.ptyWriterId = 0;
     }
-    try {
-      this.write(data);
-    } finally {
-      if (writer !== null && !this.disposed) {
-        this.ptyWriterId = this.runtime.attachPtyWriter(this.terminal, writer);
-      }
+    this.replayActive = true;
+  }
+
+  writeReplay(data: string): void {
+    this.ensureActive();
+    if (!this.replayActive) {
+      throw new Error("Ghostty replay is not active");
+    }
+    this.write(data);
+  }
+
+  endReplay(): void {
+    if (!this.replayActive) return;
+    this.replayActive = false;
+    if (this.ptyWriter !== null && !this.disposed) {
+      this.ptyWriterId = this.runtime.attachPtyWriter(this.terminal, this.ptyWriter);
     }
   }
 
@@ -388,6 +421,14 @@ export class GhosttyTerminalCore {
       this.runtime.call("ghostty_terminal_set", this.terminal, option, color);
     }
     this.runtime.free(color, 3);
+    // Theme changes can coincide with a primary/alternate screen swap. Force
+    // the next snapshot to refresh every cached row so colors from the screen
+    // we just left cannot survive under the new defaults.
+    this.runtime.view(this.scratch, 4).setUint32(0, 2, true);
+    this.assertSuccess(
+      "ghostty_render_state_set(theme dirty)",
+      this.runtime.call("ghostty_render_state_set", this.renderState, 0, this.scratch),
+    );
   }
 
   scroll(deltaRows: number): void {
@@ -397,6 +438,15 @@ export class GhosttyTerminalCore {
     this.runtime.setField(scroll, "GhosttyTerminalScrollViewport", "tag", 2);
     const value = layout.fields.value!;
     this.runtime.view(scroll + value.offset, value.size).setInt32(0, deltaRows, true);
+    this.runtime.call("ghostty_terminal_scroll_viewport", this.terminal, scroll);
+    this.runtime.free(scroll, layout.size);
+  }
+
+  scrollToTop(): void {
+    this.ensureActive();
+    const layout = this.runtime.layout("GhosttyTerminalScrollViewport");
+    const scroll = this.runtime.alloc(layout.size);
+    this.runtime.setField(scroll, "GhosttyTerminalScrollViewport", "tag", 0);
     this.runtime.call("ghostty_terminal_scroll_viewport", this.terminal, scroll);
     this.runtime.free(scroll, layout.size);
   }
@@ -450,6 +500,15 @@ export class GhosttyTerminalCore {
     this.runtime.bytes(this.scratch, 1)[0] = 0;
     return (
       this.runtime.call("ghostty_terminal_mode_get", this.terminal, 1003, this.scratch) ===
+        GHOSTTY_SUCCESS && this.runtime.bytes(this.scratch, 1)[0] !== 0
+    );
+  }
+
+  isSynchronizedOutput(): boolean {
+    this.ensureActive();
+    this.runtime.bytes(this.scratch, 1)[0] = 0;
+    return (
+      this.runtime.call("ghostty_terminal_mode_get", this.terminal, 2026, this.scratch) ===
         GHOSTTY_SUCCESS && this.runtime.bytes(this.scratch, 1)[0] !== 0
     );
   }

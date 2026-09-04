@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { getTerminalBufferReplayKey, getTerminalSurfaceReplayBuffer } from "./terminalBufferReplay";
+import { getTerminalBufferReplayKey, isTerminalBufferReplayPaused } from "./terminalBufferReplay";
 
 describe("terminalBufferReplay", () => {
   it("keys replay readiness by terminal identity and font metrics", () => {
@@ -12,32 +12,29 @@ describe("terminalBufferReplay", () => {
     ).toBe("env-1:thread-1:default:10");
   });
 
-  it("shows terminal history while replay key is unset (initial mount / after key change)", () => {
+  it("pauses replay only while an older font layout is still ready", () => {
     const replayKey = getTerminalBufferReplayKey({
       terminalKey: "env-1:thread-1:default",
       fontSize: 10,
     });
 
     expect(
-      getTerminalSurfaceReplayBuffer({
-        buffer: "fastfetch output",
+      isTerminalBufferReplayPaused({
         replayKey,
         readyReplayKey: null,
       }),
-    ).toBe("fastfetch output");
+    ).toBe(false);
     expect(
-      getTerminalSurfaceReplayBuffer({
-        buffer: "fastfetch output",
+      isTerminalBufferReplayPaused({
         replayKey,
         readyReplayKey: "env-1:thread-1:default:11",
       }),
-    ).toBe("");
+    ).toBe(true);
     expect(
-      getTerminalSurfaceReplayBuffer({
-        buffer: "fastfetch output",
+      isTerminalBufferReplayPaused({
         replayKey,
         readyReplayKey: replayKey,
       }),
-    ).toBe("fastfetch output");
+    ).toBe(false);
   });
 });

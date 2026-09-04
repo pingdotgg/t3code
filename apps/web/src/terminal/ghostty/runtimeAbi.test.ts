@@ -196,6 +196,11 @@ describe("vendored libghostty-vt WebAssembly", () => {
     expect(call("ghostty_terminal_get", terminal, 9, scrollbar)).toBe(0);
     expect(Number(scrollbarView.getBigUint64(8, true))).toBe(36);
 
+    scrollView.setUint32(0, 0, true);
+    call("ghostty_terminal_scroll_viewport", terminal, scroll);
+    expect(call("ghostty_terminal_get", terminal, 9, scrollbar)).toBe(0);
+    expect(Number(scrollbarView.getBigUint64(8, true))).toBe(0);
+
     call("ghostty_wasm_free_u8_array", scroll, 24);
     call("ghostty_wasm_free_u8_array", scrollbar, 24);
     call("ghostty_wasm_free_u8_array", inputPointer, input.length);
@@ -403,7 +408,7 @@ describe("vendored libghostty-vt WebAssembly", () => {
     free(options, 8);
   });
 
-  it("uses Ghostty for mouse encoding, word selection, and OSC 8 hit testing", async () => {
+  it("uses Ghostty for terminal modes, mouse encoding, selection, and link hit testing", async () => {
     const result = await WebAssembly.instantiate(
       decodeWasmDataUrl(wasmDataUrl).buffer as ArrayBuffer,
       { env: { log: () => {} } },
@@ -449,6 +454,36 @@ describe("vendored libghostty-vt WebAssembly", () => {
     call("ghostty_terminal_vt_write", terminal, anyEventResetPointer, anyEventReset.length);
     expect(call("ghostty_terminal_mode_get", terminal, 1003, modeFlag)).toBe(0);
     expect(new Uint8Array(memory.buffer, modeFlag, 1)[0]).toBe(0);
+    const synchronizedOutput = new TextEncoder().encode("\u001b[?2026h");
+    const synchronizedOutputPointer = alloc(synchronizedOutput.length);
+    new Uint8Array(memory.buffer, synchronizedOutputPointer, synchronizedOutput.length).set(
+      synchronizedOutput,
+    );
+    call(
+      "ghostty_terminal_vt_write",
+      terminal,
+      synchronizedOutputPointer,
+      synchronizedOutput.length,
+    );
+    expect(call("ghostty_terminal_mode_get", terminal, 2026, modeFlag)).toBe(0);
+    expect(new Uint8Array(memory.buffer, modeFlag, 1)[0]).toBe(1);
+    const synchronizedOutputReset = new TextEncoder().encode("\u001b[?2026l");
+    const synchronizedOutputResetPointer = alloc(synchronizedOutputReset.length);
+    new Uint8Array(
+      memory.buffer,
+      synchronizedOutputResetPointer,
+      synchronizedOutputReset.length,
+    ).set(synchronizedOutputReset);
+    call(
+      "ghostty_terminal_vt_write",
+      terminal,
+      synchronizedOutputResetPointer,
+      synchronizedOutputReset.length,
+    );
+    expect(call("ghostty_terminal_mode_get", terminal, 2026, modeFlag)).toBe(0);
+    expect(new Uint8Array(memory.buffer, modeFlag, 1)[0]).toBe(0);
+    free(synchronizedOutputResetPointer, synchronizedOutputReset.length);
+    free(synchronizedOutputPointer, synchronizedOutput.length);
     free(anyEventResetPointer, anyEventReset.length);
     free(anyEventPointer, anyEventInput.length);
     free(modeFlag, 1);
@@ -596,7 +631,7 @@ describe("vendored libghostty-vt WebAssembly", () => {
     free(terminalOptions, 8);
   });
 
-  it("encodes modified printable keys in Kitty keyboard mode", async () => {
+  it("encodes legacy controls and modified printable keys in Kitty keyboard mode", async () => {
     const result = await WebAssembly.instantiate(
       decodeWasmDataUrl(wasmDataUrl).buffer as ArrayBuffer,
       { env: { log: () => {} } },
@@ -616,11 +651,6 @@ describe("vendored libghostty-vt WebAssembly", () => {
     const terminalSlot = call("ghostty_wasm_alloc_opaque");
     expect(call("ghostty_terminal_new", 0, terminalSlot, terminalOptions)).toBe(0);
     const terminal = new DataView(memory.buffer).getUint32(terminalSlot, true);
-    const kittyMode = new TextEncoder().encode("\u001b[>1u");
-    const kittyModePointer = alloc(kittyMode.length);
-    new Uint8Array(memory.buffer, kittyModePointer, kittyMode.length).set(kittyMode);
-    call("ghostty_terminal_vt_write", terminal, kittyModePointer, kittyMode.length);
-
     const encoderSlot = call("ghostty_wasm_alloc_opaque");
     const eventSlot = call("ghostty_wasm_alloc_opaque");
     expect(call("ghostty_key_encoder_new", 0, encoderSlot)).toBe(0);
@@ -641,6 +671,31 @@ describe("vendored libghostty-vt WebAssembly", () => {
     call("ghostty_key_event_set_utf8", keyEvent, textPointer, text.length);
 
     const written = call("ghostty_wasm_alloc_usize");
+    expect(call("ghostty_key_encoder_encode", keyEncoder, keyEvent, 0, 0, written)).toBe(-3);
+    const legacyOutputSize = new DataView(memory.buffer, written, 4).getUint32(0, true);
+    const legacyOutput = alloc(legacyOutputSize);
+    expect(
+      call(
+        "ghostty_key_encoder_encode",
+        keyEncoder,
+        keyEvent,
+        legacyOutput,
+        legacyOutputSize,
+        written,
+      ),
+    ).toBe(0);
+    const legacyOutputLength = new DataView(memory.buffer, written, 4).getUint32(0, true);
+    expect(
+      new TextDecoder().decode(new Uint8Array(memory.buffer, legacyOutput, legacyOutputLength)),
+    ).toBe("\u0003");
+    free(legacyOutput, legacyOutputSize);
+
+    const kittyMode = new TextEncoder().encode("\u001b[>1u");
+    const kittyModePointer = alloc(kittyMode.length);
+    new Uint8Array(memory.buffer, kittyModePointer, kittyMode.length).set(kittyMode);
+    call("ghostty_terminal_vt_write", terminal, kittyModePointer, kittyMode.length);
+    call("ghostty_key_encoder_setopt_from_terminal", keyEncoder, terminal);
+
     expect(call("ghostty_key_encoder_encode", keyEncoder, keyEvent, 0, 0, written)).toBe(-3);
     const outputSize = new DataView(memory.buffer, written, 4).getUint32(0, true);
     const output = alloc(outputSize);

@@ -50,7 +50,7 @@ describe("measureGhosttyCell", () => {
     } as unknown as CanvasRenderingContext2D;
 
     expect(measureGhosttyCell(context, 12, "monospace")).toEqual({
-      width: 7.2,
+      width: 7,
       height: 16,
       baseline: 11,
     });
@@ -71,6 +71,108 @@ describe("ghosttyTextRunEnd", () => {
 });
 
 describe("renderGhosttySnapshot", () => {
+  it("remaps terminal defaults without overriding explicit application colors", () => {
+    const fillRectCalls: Array<{ args: number[]; style: string }> = [];
+    const fillTextCalls: Array<{ args: unknown[]; style: string }> = [];
+    let fillStyle = "";
+    const context = {
+      canvas: { width: 200, height: 40 },
+      beginPath: () => {},
+      clip: () => {},
+      fillRect: (...args: number[]) => fillRectCalls.push({ args, style: fillStyle }),
+      fillText: (...args: unknown[]) => fillTextCalls.push({ args, style: fillStyle }),
+      rect: () => {},
+      resetTransform: () => {},
+      restore: () => {},
+      save: () => {},
+      get fillStyle() {
+        return fillStyle;
+      },
+      set fillStyle(value: string | CanvasGradient | CanvasPattern) {
+        fillStyle = String(value);
+      },
+      set font(_value: string) {},
+      set textBaseline(_value: string) {},
+    } as unknown as CanvasRenderingContext2D;
+    const defaultCell = cell("a");
+    const inverseCell = {
+      ...cell("i"),
+      foreground: defaultCell.background,
+      background: defaultCell.foreground,
+    };
+    const applicationCell = {
+      ...cell("b"),
+      foreground: { r: 10, g: 20, b: 30 },
+      background: { r: 40, g: 50, b: 60 },
+    };
+    const snapshot: GhosttySnapshot = {
+      cols: 3,
+      rows: 1,
+      foreground: defaultCell.foreground,
+      background: defaultCell.background,
+      cursor: { r: 9, g: 8, b: 7 },
+      cursorX: 0,
+      cursorY: 0,
+      cursorVisible: true,
+      cursorBlinking: false,
+      cursorStyle: 0,
+      dirtyRows: new Set([0]),
+      rowData: [
+        {
+          cells: [defaultCell, inverseCell, applicationCell],
+          text: "aib",
+          isWrapContinuation: false,
+          wrapsToNext: false,
+        },
+      ],
+    };
+
+    renderGhosttySnapshot({
+      context,
+      snapshot,
+      metrics: { width: 10, height: 20, baseline: 15 },
+      fontSize: 12,
+      fontFamily: "monospace",
+      padding: 4,
+      forceFull: true,
+      cursorOn: true,
+      defaultThemeOverride: {
+        source: {
+          background: defaultCell.background,
+          foreground: defaultCell.foreground,
+          cursor: defaultCell.foreground,
+        },
+        target: {
+          background: { r: 1, g: 2, b: 3 },
+          foreground: { r: 250, g: 251, b: 252 },
+          cursor: { r: 200, g: 201, b: 202 },
+        },
+      },
+    });
+
+    expect(fillRectCalls).toContainEqual({
+      args: [0, 0, 200, 40],
+      style: "rgb(1, 2, 3)",
+    });
+    expect(fillRectCalls).toContainEqual({
+      args: [14, 4, 10, 20],
+      style: "rgb(250, 251, 252)",
+    });
+    expect(fillRectCalls).toContainEqual({
+      args: [24, 4, 10, 20],
+      style: "rgb(40, 50, 60)",
+    });
+    expect(fillRectCalls).toContainEqual({
+      args: [4, 4, 2, 20],
+      style: "rgb(9, 8, 7)",
+    });
+    expect(fillTextCalls).toEqual([
+      { args: ["a", 4, 19, 10], style: "rgb(250, 251, 252)" },
+      { args: ["i", 14, 19, 10], style: "rgb(1, 2, 3)" },
+      { args: ["b", 24, 19, 10], style: "rgb(10, 20, 30)" },
+    ]);
+  });
+
   it("underlines every cell in a hovered wrapped link", () => {
     const fillRectCalls: number[][] = [];
     const context = {
@@ -125,6 +227,126 @@ describe("renderGhosttySnapshot", () => {
       [4, 42, 10, 1],
       [14, 42, 10, 1],
     ]);
+  });
+
+  it("draws solid block elements to exact cell edges", () => {
+    const fillRectCalls: Array<{ args: number[]; style: string }> = [];
+    let fillStyle = "";
+    const context = {
+      canvas: { width: 100, height: 40 },
+      beginPath: () => {},
+      clip: () => {},
+      fillRect: (...args: number[]) => fillRectCalls.push({ args, style: fillStyle }),
+      fillText: () => {},
+      rect: () => {},
+      resetTransform: () => {},
+      restore: () => {},
+      save: () => {},
+      get fillStyle() {
+        return fillStyle;
+      },
+      set fillStyle(value: string | CanvasGradient | CanvasPattern) {
+        fillStyle = String(value);
+      },
+      set font(_value: string) {},
+      set textBaseline(_value: string) {},
+    } as unknown as CanvasRenderingContext2D;
+    const snapshot: GhosttySnapshot = {
+      cols: 3,
+      rows: 1,
+      foreground: { r: 255, g: 255, b: 255 },
+      background: { r: 0, g: 0, b: 0 },
+      cursor: { r: 255, g: 255, b: 255 },
+      cursorX: -1,
+      cursorY: -1,
+      cursorVisible: false,
+      cursorBlinking: false,
+      cursorStyle: 1,
+      dirtyRows: new Set([0]),
+      rowData: [
+        {
+          cells: [cell("▀"), cell("▄"), cell("█")],
+          text: "▀▄█",
+          isWrapContinuation: false,
+          wrapsToNext: false,
+        },
+      ],
+    };
+
+    renderGhosttySnapshot({
+      context,
+      snapshot,
+      metrics: { width: 10, height: 20, baseline: 15 },
+      fontSize: 12,
+      fontFamily: "monospace",
+      padding: 4,
+      forceFull: false,
+      cursorOn: false,
+    });
+
+    expect(fillRectCalls).toContainEqual({ args: [4, 4, 10, 10], style: "rgb(255, 255, 255)" });
+    expect(fillRectCalls).toContainEqual({
+      args: [14, 14, 10, 10],
+      style: "rgb(255, 255, 255)",
+    });
+    expect(fillRectCalls).toContainEqual({
+      args: [24, 4, 10, 20],
+      style: "rgb(255, 255, 255)",
+    });
+  });
+
+  it("keeps one-eighth block edges at least one pixel wide in narrow cells", () => {
+    const fillRectCalls: number[][] = [];
+    const context = {
+      canvas: { width: 100, height: 40 },
+      beginPath: () => {},
+      clip: () => {},
+      fillRect: (...args: number[]) => fillRectCalls.push(args),
+      fillText: () => {},
+      rect: () => {},
+      resetTransform: () => {},
+      restore: () => {},
+      save: () => {},
+      set fillStyle(_value: string | CanvasGradient | CanvasPattern) {},
+      set font(_value: string) {},
+      set textBaseline(_value: string) {},
+    } as unknown as CanvasRenderingContext2D;
+    const snapshot: GhosttySnapshot = {
+      cols: 2,
+      rows: 1,
+      foreground: { r: 255, g: 255, b: 255 },
+      background: { r: 0, g: 0, b: 0 },
+      cursor: { r: 255, g: 255, b: 255 },
+      cursorX: -1,
+      cursorY: -1,
+      cursorVisible: false,
+      cursorBlinking: false,
+      cursorStyle: 1,
+      dirtyRows: new Set([0]),
+      rowData: [
+        {
+          cells: [cell("▏"), cell("▕")],
+          text: "▏▕",
+          isWrapContinuation: false,
+          wrapsToNext: false,
+        },
+      ],
+    };
+
+    renderGhosttySnapshot({
+      context,
+      snapshot,
+      metrics: { width: 4, height: 20, baseline: 15 },
+      fontSize: 7,
+      fontFamily: "monospace",
+      padding: 4,
+      forceFull: false,
+      cursorOn: false,
+    });
+
+    // Rounding 7/8 of a 4px cell would collapse the right bar to nothing.
+    expect(fillRectCalls).toContainEqual([4, 4, 1, 20]);
+    expect(fillRectCalls).toContainEqual([11, 4, 1, 20]);
   });
 
   it("constrains text runs and cursor glyphs to their terminal cells", () => {

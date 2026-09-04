@@ -196,6 +196,13 @@ private extension UIColor {
 public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private static let minimumVerticalScrollStepPoints: CGFloat = 18
   private static let verticalScrollStepMultiplier: CGFloat = 1.15
+  private static let maxScrollbackBytes = 64 * 1024 * 1024
+  private static let maxPendingRemoteDataBytes = 8 * 1024 * 1024
+
+  private struct PendingRemoteData {
+    let data: Data
+    let replay: Bool
+  }
 
   private let terminalViewport = UIView()
   private let inputField = TerminalInputField()
@@ -204,12 +211,18 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private var lastViewportSize: CGSize = .zero
   private var lastContentScale: CGFloat = 0
   private var lastReportedGrid: (cols: Int, rows: Int)?
+  private var bufferedOutput = ""
+  private var pendingRemoteData: [PendingRemoteData?] = []
+  private var pendingRemoteDataHead = 0
+  private var pendingRemoteDataBytes = 0
   private var lastAppliedBuffer = ""
+  private var redrawDisplayLink: CADisplayLink?
   private var pendingVerticalScrollPoints: CGFloat = 0
   private var app: ghostty_app_t?
   private var surface: ghostty_surface_t?
   private var isCreatingSurface = false
   private var surfaceCreationFailed = false
+  private var suppressInput = false
   private var appearance = TerminalAppearanceScheme.dark
   private var backgroundColorValue = UIColor(hexString: "#24292e")
 
@@ -225,10 +238,45 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     }
   }
 
-  var initialBuffer: String = "" {
-    didSet {
-      applyRemoteBuffer(initialBuffer)
+  var initialBuffer: String {
+    get { bufferedOutput }
+    set {
+      guard bufferedOutput != newValue else { return }
+      bufferedOutput = newValue
+      applyRemoteBuffer(bufferedOutput)
     }
+  }
+
+  func writeRemoteData(_ data: String) {
+    writeRemoteData(data, replay: false)
+  }
+
+  func writeReplayRemoteData(_ data: String) {
+    writeRemoteData(data, replay: true)
+  }
+
+  private func writeRemoteData(_ data: String, replay: Bool) {
+    guard !data.isEmpty else { return }
+    if surface == nil {
+      appendPendingRemoteData(data, replay: replay)
+      createSurfaceIfPossible()
+      return
+    }
+    if replay {
+      feedReplayData(Data(data.utf8), redraw: false)
+    } else {
+      feedData(Data(data.utf8), redraw: false)
+    }
+    scheduleRedraw()
+  }
+
+  func resetRemoteData(_ data: String) {
+    resetSurface()
+    bufferedOutput = data
+    pendingRemoteData = []
+    pendingRemoteDataHead = 0
+    pendingRemoteDataBytes = 0
+    createSurfaceIfPossible()
   }
 
   var fontSize: CGFloat = 10 {
@@ -500,6 +548,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     setupWriteCallback()
     resizeSurface()
     feedBuffer(initialBuffer)
+    feedPendingRemoteData()
   }
 
   private func resetSurface() {
@@ -518,6 +567,8 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   }
 
   private func destroySurface() {
+    redrawDisplayLink?.invalidate()
+    redrawDisplayLink = nil
     if let surface {
       ghostty_surface_set_write_callback(surface, nil, nil)
       ghostty_surface_free(surface)
@@ -536,14 +587,14 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     }
 
     if buffer.isEmpty {
-      feedData(Data("\u{1B}[3J\u{1B}[H\u{1B}[2J".utf8))
+      feedReplayData(Data("\u{1B}[3J\u{1B}[H\u{1B}[2J".utf8))
       lastAppliedBuffer = ""
       return
     }
 
     if buffer.hasPrefix(lastAppliedBuffer) {
       let suffix = String(buffer.dropFirst(lastAppliedBuffer.count))
-      feedData(Data(suffix.utf8))
+      feedReplayData(Data(suffix.utf8))
       lastAppliedBuffer = buffer
       return
     }
@@ -554,11 +605,66 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
 
   private func feedBuffer(_ buffer: String) {
     guard !buffer.isEmpty else { return }
-    feedData(Data(buffer.utf8))
+    feedReplayData(Data(buffer.utf8))
     lastAppliedBuffer = buffer
   }
 
-  private func feedData(_ data: Data) {
+  private func feedReplayData(_ data: Data) {
+    feedReplayData(data, redraw: true)
+  }
+
+  private func feedReplayData(_ data: Data, redraw: Bool) {
+    suppressInput = true
+    defer { suppressInput = false }
+    feedData(data, redraw: redraw)
+  }
+
+  private func feedPendingRemoteData() {
+    guard pendingRemoteDataHead < pendingRemoteData.count else { return }
+    for case let chunk? in pendingRemoteData[pendingRemoteDataHead...] {
+      if chunk.replay {
+        feedReplayData(chunk.data, redraw: false)
+      } else {
+        feedData(chunk.data, redraw: false)
+      }
+    }
+    pendingRemoteData = []
+    pendingRemoteDataHead = 0
+    pendingRemoteDataBytes = 0
+    redrawSurface()
+  }
+
+  private func appendPendingRemoteData(_ data: String, replay: Bool) {
+    let encoded = Data(data.utf8)
+    if encoded.count > Self.maxPendingRemoteDataBytes {
+      var start = encoded.count - Self.maxPendingRemoteDataBytes
+      while start < encoded.count, encoded[start] & 0xC0 == 0x80 {
+        start += 1
+      }
+      let suffix = Data(encoded[start...])
+      pendingRemoteData = [PendingRemoteData(data: suffix, replay: replay)]
+      pendingRemoteDataHead = 0
+      pendingRemoteDataBytes = suffix.count
+      return
+    }
+
+    pendingRemoteData.append(PendingRemoteData(data: encoded, replay: replay))
+    pendingRemoteDataBytes += encoded.count
+    while pendingRemoteDataBytes > Self.maxPendingRemoteDataBytes,
+          pendingRemoteDataHead < pendingRemoteData.count,
+          let oldest = pendingRemoteData[pendingRemoteDataHead] {
+      pendingRemoteData[pendingRemoteDataHead] = nil
+      pendingRemoteDataHead += 1
+      pendingRemoteDataBytes -= oldest.data.count
+    }
+    if pendingRemoteDataHead >= 1_024,
+       pendingRemoteDataHead * 2 >= pendingRemoteData.count {
+      pendingRemoteData = Array(pendingRemoteData[pendingRemoteDataHead...])
+      pendingRemoteDataHead = 0
+    }
+  }
+
+  private func feedData(_ data: Data, redraw: Bool = true) {
     guard let surface, !data.isEmpty else { return }
 
     data.withUnsafeBytes { buffer in
@@ -568,6 +674,22 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
       ghostty_surface_feed_data(surface, pointer, buffer.count)
     }
 
+    if redraw {
+      redrawSurface()
+    }
+  }
+
+  private func scheduleRedraw() {
+    guard redrawDisplayLink == nil else { return }
+    let displayLink = CADisplayLink(target: self, selector: #selector(handleScheduledRedraw))
+    redrawDisplayLink = displayLink
+    displayLink.add(to: .main, forMode: .common)
+  }
+
+  @objc
+  private func handleScheduledRedraw() {
+    redrawDisplayLink?.invalidate()
+    redrawDisplayLink = nil
     redrawSurface()
   }
 
@@ -580,6 +702,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
       let view = Unmanaged<T3TerminalView>.fromOpaque(userdata).takeUnretainedValue()
       let bytes = Data(bytes: data, count: len)
       guard let input = String(data: bytes, encoding: .utf8), !input.isEmpty else { return }
+      guard !view.suppressInput else { return }
 
       DispatchQueue.main.async {
         view.onInput(["data": input])
@@ -703,8 +826,9 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   }
 
   private func writeThemeConfigFile() -> String? {
-    guard !themeConfig.isEmpty else { return nil }
-    let configContents = themeConfig
+    // Ghostty budgets its internal cell storage rather than raw replay bytes,
+    // so the configured limit must account for the expansion of terminal text.
+    let configContents = "scrollback-limit = \(Self.maxScrollbackBytes)\n\(themeConfig)"
     let url = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("t3-terminal-theme-\(appearance.rawValue).ghostty")
 

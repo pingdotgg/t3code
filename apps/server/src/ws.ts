@@ -149,6 +149,7 @@ const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchComma
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
+const TERMINAL_ATTACH_BUFFERED_EVENT_LIMIT = 32;
 
 const resolveDiscoveryForConfig = <A, E, R>(
   discovery: Effect.Effect<A, E, R>,
@@ -2454,11 +2455,53 @@ const makeWsRpcLayer = (
         [WS_METHODS.terminalAttach]: (input) =>
           observeRpcStream(
             WS_METHODS.terminalAttach,
-            Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
-              Effect.acquireRelease(
-                terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
-                (unsubscribe) => Effect.sync(unsubscribe),
-              ),
+            Stream.callback<TerminalAttachStreamEvent, TerminalError>(
+              (queue) =>
+                Effect.acquireRelease(
+                  terminalManager.attachStream(input, (event, delivery): Effect.Effect<void> =>
+                    Effect.gen(function* () {
+                      if (delivery === "replay") {
+                        yield* Queue.offer(queue, event);
+                        return;
+                      }
+                      if (Queue.offerUnsafe(queue, event)) return;
+
+                      yield* Queue.clear(queue);
+                      // The clear may have wiped queued replay events,
+                      // including the replay-complete marker. Re-emit it so
+                      // the client never stays latched in replay mode. Only
+                      // clients that sent replayBytes decode the marker.
+                      if (input.replayBytes !== undefined) {
+                        yield* Queue.offer(queue, {
+                          type: "replay-complete" as const,
+                          threadId: input.threadId,
+                          terminalId: input.terminalId,
+                        });
+                      }
+                      if (event.type === "closed") {
+                        yield* Queue.offer(queue, event);
+                        return;
+                      }
+
+                      const latest = yield* terminalManager.readSnapshot(input);
+                      yield* Queue.offer(
+                        queue,
+                        Option.match(latest, {
+                          onNone: () => event,
+                          onSome: (snapshot) => ({ type: "snapshot" as const, snapshot }),
+                        }),
+                      );
+                      if (Option.isSome(latest) && event.type === "error") {
+                        yield* Queue.offer(queue, event);
+                      }
+                    }).pipe(Effect.ignore),
+                  ),
+                  (unsubscribe) => Effect.sync(unsubscribe),
+                ),
+              {
+                bufferSize: TERMINAL_ATTACH_BUFFERED_EVENT_LIMIT,
+                strategy: "suspend",
+              },
             ),
             { "rpc.aggregate": "terminal" },
           ),

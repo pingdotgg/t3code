@@ -983,6 +983,20 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --terminal-foreground: var(--foreground);
   --terminal-cursor: rgb(38 56 78);
   --terminal-selection-background: rgb(37 63 99 / 20%);
+  /* Full-screen TUIs commonly reset cells to terminal defaults. Derive a dark
+     companion from the active terminal palette so custom themes keep control. */
+  --terminal-alt-screen-background: color-mix(in srgb, var(--terminal-background) 5%, rgb(0 0 0));
+  --terminal-alt-screen-foreground: color-mix(
+    in srgb,
+    var(--terminal-foreground) 5%,
+    rgb(255 255 255)
+  );
+  --terminal-alt-screen-cursor: color-mix(in srgb, var(--terminal-cursor) 75%, rgb(255 255 255));
+  --terminal-alt-screen-selection-background: color-mix(
+    in srgb,
+    var(--terminal-alt-screen-foreground) 25%,
+    transparent
+  );
 
   @variant dark {
     color-scheme: dark;

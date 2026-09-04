@@ -13,7 +13,8 @@ import { subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
 import {
   applyTerminalAttachStreamEvent,
   applyTerminalMetadataStreamEvent,
-  EMPTY_TERMINAL_BUFFER_STATE,
+  nextTerminalAttachSeedState,
+  terminalOutputRetentionBytes,
 } from "./terminalSession.ts";
 
 export function createTerminalEnvironmentAtoms<R, E>(
@@ -39,9 +40,23 @@ export function createTerminalEnvironmentAtoms<R, E>(
   return {
     attach: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:attach",
+      // PTYs live on the server. Keeping an idle attach stream alive only
+      // burns output parsing and network work for a renderer that is gone.
+      idleTtlMs: 0,
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalAttach>) =>
-        subscribe(WS_METHODS.terminalAttach, input).pipe(
-          Stream.scan(EMPTY_TERMINAL_BUFFER_STATE, applyTerminalAttachStreamEvent),
+        // Suspend so every run of the stream (the registry re-installs it on
+        // connection hand-off) scans from a fresh seed epoch instead of the
+        // shared empty state, which stale renderer cursors could alias.
+        Stream.suspend(() =>
+          subscribe(WS_METHODS.terminalAttach, input).pipe(
+            Stream.scan(nextTerminalAttachSeedState(), (state, event) =>
+              applyTerminalAttachStreamEvent(
+                state,
+                event,
+                terminalOutputRetentionBytes(input.replayBytes),
+              ),
+            ),
+          ),
         ),
     }),
     events: createEnvironmentRpcSubscriptionAtomFamily(runtime, {

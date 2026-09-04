@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
+import {
+  EMPTY_TERMINAL_SESSION_STATE,
+  type KnownTerminalSession,
+} from "@t3tools/client-runtime/state/terminal";
 import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
@@ -55,11 +58,13 @@ function makeKnownSession(input: {
             updatedAt: input.updatedAt ?? "2026-04-15T20:00:00.000Z",
           }
         : null,
-      buffer: "",
+      output: EMPTY_TERMINAL_SESSION_STATE.output,
       status: input.status,
       error: null,
       hasRunningSubprocess: false,
       updatedAt: input.updatedAt ?? "2026-04-15T20:00:00.000Z",
+      replayStartVersion: 0,
+      replayCompleteVersion: 0,
       version: 1,
       lifecycleVersion: 1,
     },

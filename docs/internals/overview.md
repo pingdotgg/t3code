@@ -58,6 +58,34 @@ background-activity layers) and differ beyond that only in the platform layer th
 UI they build on top. React components never construct transports, retry loops,
 or RPC clients. See [connection-runtime.md](./connection-runtime.md).
 
+## Terminal streaming
+
+The server owns each PTY and keeps two histories with different budgets. [`Manager.ts`][terminal]
+allows durable history to grow to 12 MB before compacting it toward 8 MB. Its recent recovery
+snapshot is separate and grows to 64 KB before compacting toward 48 KB. Incremental renderers can
+request up to 8 MB when attaching. Web starts from the recent snapshot and requests 4 MB when the
+user reaches its top; extended history arrives as ordered 64 KB chunks between explicit replay
+start and completion markers before live output begins. Those boundaries re-arm replay suppression
+after a transport reconnect without forcing the viewport to jump.
+
+PTY output is coalesced for up to 8 ms or 64 KB before `terminal.attach` publishes it. Initial
+history uses backpressure and cancels with the attach scope. Events published while a replay is
+still streaming buffer up to 4 MB behind it; live delivery then flows through a 32-event transport
+queue. When either bound overflows, the server replaces queued deltas with its latest bounded
+snapshot and re-marks the replay complete so clients never stay latched in replay mode. Replay
+markers are only sent to clients that requested `replayBytes`; older clients get the plain snapshot
+stream their bundled contracts can decode.
+
+[`terminalSession.ts`][terminal-state] retains replay as byte-bounded chunks instead of rebuilding a
+growing string for every event. Web and native mobile renderers consume those chunks incrementally;
+if their cursor falls behind retained history, they reset from the current snapshot. The web
+renderer also yields between large Ghostty writes so extended replay does not monopolize the main
+thread. Web and native renderers suppress terminal query replies while replaying retained history.
+Web keeps a bounded set of hidden thread drawers mounted so switching back is instant, and skips
+painting while a drawer has no size; a drawer that does unmount releases its attach subscription at
+once. Ghostty renderers use a 64 MB internal scrollback budget so the 4 MB text replay remains
+available after it expands into styled terminal cells.
+
 ## Orchestration is event-sourced
 
 The server does not mutate app state directly. Clients dispatch typed commands; the engine turns them
@@ -177,3 +205,5 @@ already dispatch.
 [settlement]: ../../apps/server/src/orchestration/ThreadSettlementReactor.ts
 [receipts]: ../../apps/server/src/orchestration/Layers/RuntimeReceiptBus.ts
 [drivers]: ../../apps/server/src/provider/builtInDrivers.ts
+[terminal]: ../../apps/server/src/terminal/Manager.ts
+[terminal-state]: ../../packages/client-runtime/src/state/terminalSession.ts

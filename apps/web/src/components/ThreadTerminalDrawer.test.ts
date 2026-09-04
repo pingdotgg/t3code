@@ -4,6 +4,7 @@ import {
   shouldClearTerminalSelectionAction,
   shouldHandleTerminalExit,
   terminalSelectionLineRange,
+  writeTerminalOutputSegments,
 } from "./ThreadTerminalDrawer";
 
 describe("terminal selection actions", () => {
@@ -54,5 +55,28 @@ describe("terminal selection actions", () => {
     expect(shouldHandleTerminalExit("exited", "running", false)).toBe(true);
     expect(shouldHandleTerminalExit("exited", "exited", false)).toBe(false);
     expect(shouldHandleTerminalExit("closed", "running", true)).toBe(false);
+  });
+});
+
+describe("writeTerminalOutputSegments", () => {
+  it("closes a streamed replay before writing live terminal output", () => {
+    const actions: string[] = [];
+    const result = writeTerminalOutputSegments({
+      terminal: {
+        beginStreamingReplay: (data) => actions.push(`begin:${data}`),
+        appendStreamingReplay: (data) => actions.push(`append:${data}`),
+        completeStreamingReplay: () => actions.push("complete"),
+        write: (data) => actions.push(`write:${data}`),
+      },
+      segments: [
+        { data: "history", delivery: "replay" },
+        { data: "\u001b[5n", delivery: "live" },
+      ],
+      replayState: "waiting",
+      onReplayComplete: () => actions.push("restore-scroll"),
+    });
+
+    expect(actions).toEqual(["begin:history", "complete", "restore-scroll", "write:\u001b[5n"]);
+    expect(result).toEqual({ replayState: "idle", didWrite: true });
   });
 });
