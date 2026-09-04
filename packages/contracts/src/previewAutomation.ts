@@ -63,6 +63,9 @@ const PreviewAutomationTabTargetFields = {
 export const PreviewAutomationTabTargetInput = Schema.Struct(PreviewAutomationTabTargetFields);
 export type PreviewAutomationTabTargetInput = typeof PreviewAutomationTabTargetInput.Type;
 
+export const PreviewAutomationSnapshotInclude = Schema.Literals(["ax", "console", "network"]);
+export type PreviewAutomationSnapshotInclude = typeof PreviewAutomationSnapshotInclude.Type;
+
 export const PreviewAutomationStatus = Schema.Struct({
   available: Schema.Boolean,
   visible: Schema.Boolean,
@@ -465,6 +468,15 @@ export const PreviewAutomationWaitForInput = Schema.Struct({
       description: "Substring that must appear in the current absolute URL.",
     }),
   ).annotate({ description: "Substring that must appear in the current absolute URL." }),
+  scope: Schema.optional(
+    Schema.Literals(["main", "document"]).annotate({
+      description:
+        "Where text and locators are searched. 'main' uses the main landmark when present (default). 'document' searches the whole page, including sidebars.",
+    }),
+  ).annotate({
+    description:
+      "Where text and locators are searched. Defaults to main so sidebar chrome does not satisfy the wait.",
+  }),
   timeoutMs: OptionalTimeoutMs,
 })
   .check(
@@ -488,6 +500,7 @@ export const PreviewAutomationWaitForInput = Schema.Struct({
 export type PreviewAutomationWaitForInput = typeof PreviewAutomationWaitForInput.Type;
 
 export const PreviewAutomationElement = Schema.Struct({
+  id: Schema.optional(Schema.String),
   tag: Schema.String,
   role: Schema.NullOr(Schema.String),
   name: Schema.String,
@@ -527,13 +540,25 @@ export const PreviewAutomationActionEvent = Schema.Struct({
 });
 export type PreviewAutomationActionEvent = typeof PreviewAutomationActionEvent.Type;
 
+export const PreviewAutomationSnapshotInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  include: Schema.optional(Schema.Array(PreviewAutomationSnapshotInclude)).annotate({
+    description:
+      "Optional extra snapshot slices. Default is screenshot, visible text, and interactive elements. Pass ax, console, and/or network when you need those heavier diagnostics.",
+  }),
+}).annotate({
+  description:
+    "Inspects the collaborative browser tab. Omit include for a slim snapshot; add ax, console, or network only when needed.",
+});
+export type PreviewAutomationSnapshotInput = typeof PreviewAutomationSnapshotInput.Type;
+
 export const PreviewAutomationSnapshot = Schema.Struct({
   url: Schema.String,
   title: Schema.String,
   loading: Schema.Boolean,
   visibleText: Schema.String,
   interactiveElements: Schema.Array(PreviewAutomationElement),
-  accessibilityTree: Schema.Unknown,
+  accessibilityTree: Schema.optional(Schema.Unknown),
   consoleEntries: Schema.Array(PreviewAutomationConsoleEntry),
   networkEntries: Schema.Array(PreviewAutomationNetworkEntry),
   actionTimeline: Schema.Array(PreviewAutomationActionEvent),

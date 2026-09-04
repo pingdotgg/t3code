@@ -27,6 +27,7 @@ import type {
   PreviewAutomationNetworkEntry,
   PreviewAutomationScrollInput,
   PreviewAutomationSnapshot,
+  PreviewAutomationSnapshotInclude,
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
@@ -445,12 +446,19 @@ interface BrowserControlSession {
   readonly debugger: Electron.Debugger;
   readonly semaphore: Semaphore.Semaphore;
   readonly scope: Scope.Closeable;
+  readonly diagnosticDomains: Ref.Ref<ReadonlySet<PreviewAutomationSnapshotInclude>>;
   readonly onMessage: (
     event: Electron.Event,
     method: string,
     params: Record<string, unknown>,
   ) => void;
 }
+
+const DIAGNOSTIC_ENABLE_METHODS = {
+  ax: "Accessibility.enable",
+  console: "Log.enable",
+  network: "Network.enable",
+} as const satisfies Record<PreviewAutomationSnapshotInclude, string>;
 
 interface BrowserDiagnostics {
   readonly consoleEntries: ReadonlyArray<PreviewAutomationConsoleEntry>;
@@ -1016,7 +1024,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     webContentsId: number,
     method: string,
     params: Record<string, unknown>,
+    diagnosticDomains: ReadonlySet<PreviewAutomationSnapshotInclude>,
   ) {
+    const capturesConsole =
+      diagnosticDomains.has("console") &&
+      (method === "Runtime.consoleAPICalled" ||
+        method === "Runtime.exceptionThrown" ||
+        method === "Log.entryAdded");
+    const capturesNetwork = diagnosticDomains.has("network") && method.startsWith("Network.");
+    if (!capturesConsole && !capturesNetwork) return;
     const timestamp = yield* currentIso;
     yield* Ref.update(diagnosticsRef, (allDiagnostics) => {
       const current = allDiagnostics.get(webContentsId);
@@ -1160,10 +1176,45 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  const enableDiagnosticDomains = Effect.fn("PreviewManager.enableDiagnosticDomains")(function* (
+    control: BrowserControlSession,
+    requested: ReadonlySet<PreviewAutomationSnapshotInclude>,
+  ) {
+    if (requested.size === 0) return;
+    yield* control.semaphore.withPermit(
+      Effect.gen(function* () {
+        const current = (yield* SynchronizedRef.get(controlSessionsRef)).get(control.webContentsId);
+        if (current !== control) return;
+        const enabled = yield* Ref.get(control.diagnosticDomains);
+        const missing = [...requested].filter((domain) => !enabled.has(domain));
+        if (missing.length === 0) return;
+        const currentWc = webContents.fromId(control.webContentsId);
+        if (!currentWc || currentWc.isDestroyed()) return;
+        yield* Effect.forEach(
+          missing,
+          (domain) =>
+            Effect.gen(function* () {
+              const method = DIAGNOSTIC_ENABLE_METHODS[domain];
+              yield* attemptPromise(
+                { operation: `enableDebugger.${method}`, webContentsId: currentWc.id },
+                () => control.debugger.sendCommand(method),
+              );
+              yield* Ref.update(
+                control.diagnosticDomains,
+                (current) => new Set([...current, domain]),
+              );
+            }),
+          { discard: true },
+        );
+      }),
+    );
+  });
+
   const ensureControlSession = Effect.fn("PreviewManager.ensureControlSession")(function* (
     wc: Electron.WebContents,
+    requestedDiagnosticDomains: ReadonlySet<PreviewAutomationSnapshotInclude> = new Set(),
   ) {
-    return yield* SynchronizedRef.modifyEffect(
+    const control = yield* SynchronizedRef.modifyEffect(
       controlSessionsRef,
       (
         sessions,
@@ -1172,7 +1223,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         PreviewManagerError
       > => {
         const existing = sessions.get(wc.id);
-        if (existing) return Effect.succeed([existing, sessions] as const);
+        if (existing) {
+          return Effect.succeed([existing, sessions] as const);
+        }
         if (wc.isDevToolsOpened()) {
           return Effect.fail(
             new PreviewAutomationDevToolsOpenError({
@@ -1189,6 +1242,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }
         const createControlSession = Effect.fn("PreviewManager.createControlSession")(function* () {
           const semaphore = yield* Semaphore.make(1);
+          const diagnosticDomains = yield* Ref.make<ReadonlySet<PreviewAutomationSnapshotInclude>>(
+            new Set(requestedDiagnosticDomains),
+          );
           const scope = yield* Scope.fork(parentScope, "sequential");
           const wcDebugger = wc.debugger;
           const handleDebuggerMessage = Effect.fnUntraced(function* (
@@ -1236,7 +1292,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 }
               }
             }
-            yield* captureDiagnosticMessage(wc.id, method, params);
+            const activeDiagnosticDomains = yield* Ref.get(diagnosticDomains);
+            yield* captureDiagnosticMessage(wc.id, method, params, activeDiagnosticDomains);
           });
           const onMessage: BrowserControlSession["onMessage"] = (_event, method, params) => {
             runFork(handleDebuggerMessage(method, params));
@@ -1263,6 +1320,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             debugger: wcDebugger,
             semaphore,
             scope,
+            diagnosticDomains,
             onMessage,
           };
           const initialize = Effect.fn("PreviewManager.initializeControlSession")(function* () {
@@ -1280,12 +1338,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               wcDebugger.attach("1.3");
             });
             yield* Effect.all(
-              ["Runtime.enable", "Accessibility.enable", "Network.enable", "Log.enable"].map(
-                (method) =>
-                  attemptPromise(
-                    { operation: `initializeDebugger.${method}`, webContentsId: wc.id },
-                    () => wcDebugger.sendCommand(method),
-                  ),
+              [
+                "Runtime.enable",
+                ...[...requestedDiagnosticDomains].map(
+                  (domain) => DIAGNOSTIC_ENABLE_METHODS[domain],
+                ),
+              ].map((method) =>
+                attemptPromise(
+                  { operation: `initializeDebugger.${method}`, webContentsId: wc.id },
+                  () => wcDebugger.sendCommand(method),
+                ),
               ),
               { concurrency: "unbounded", discard: true },
             );
@@ -1303,6 +1365,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         return createControlSession();
       },
     );
+    yield* enableDiagnosticDomains(control, requestedDiagnosticDomains);
+    return control;
   });
 
   const pushAction = (tabId: string, event: PreviewAutomationActionEvent) =>
@@ -1343,9 +1407,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const withControlSession = Effect.fn("PreviewManager.withControlSession")(function* <A>(
     tabId: string,
-    wc: Electron.WebContents,
     action: string,
-    use: (send: SendCommand, sendCleanup: SendCommand) => Effect.Effect<A, PreviewManagerError>,
+    use: (
+      wc: Electron.WebContents,
+      send: SendCommand,
+      sendCleanup: SendCommand,
+    ) => Effect.Effect<A, PreviewManagerError>,
+    requestedDiagnosticDomains: ReadonlySet<PreviewAutomationSnapshotInclude> = new Set(),
   ) {
     const sequence = yield* nextCounter(actionSequenceRef);
     const startedAt = yield* currentIso;
@@ -1358,8 +1426,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     };
     yield* pushAction(tabId, actionEvent);
     const epoch = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
-    const control = yield* ensureControlSession(wc);
-    const execute = Effect.fn("PreviewManager.executeControlAction")(function* () {
+    const execute = Effect.fn("PreviewManager.executeControlAction")(function* (
+      controlWc: Electron.WebContents,
+      control: BrowserControlSession,
+    ) {
       yield* update(tabId, { controller: "agent" });
       const send: SendCommand = Effect.fn("PreviewManager.sendCommand")(
         function* (method, commandParams) {
@@ -1368,11 +1438,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             return yield* new PreviewAutomationControlInterruptedError({
               operation: action,
               tabId,
-              webContentsId: wc.id,
+              webContentsId: controlWc.id,
             });
           }
           const result = yield* attemptPromise(
-            { operation: `${action}.${method}`, tabId, webContentsId: wc.id },
+            { operation: `${action}.${method}`, tabId, webContentsId: controlWc.id },
             () => control.debugger.sendCommand(method, commandParams),
           );
           const after = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
@@ -1380,7 +1450,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             return yield* new PreviewAutomationControlInterruptedError({
               operation: action,
               tabId,
-              webContentsId: wc.id,
+              webContentsId: controlWc.id,
             });
           }
           return result;
@@ -1395,13 +1465,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             {
               operation: `${action}.cleanup.${method}`,
               tabId,
-              webContentsId: wc.id,
+              webContentsId: controlWc.id,
             },
             () => control.debugger.sendCommand(method, commandParams),
           );
         },
       );
-      return yield* use(send, sendCleanup);
+      return yield* use(controlWc, send, sendCleanup);
     });
     const finalize = Effect.fn("PreviewManager.finalizeControlAction")(function* (
       exit: Exit.Exit<A, PreviewManagerError>,
@@ -1435,7 +1505,38 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       const tabs = yield* SynchronizedRef.get(tabsRef);
       if (tabs.has(tabId)) yield* update(tabId, { controller: "none" });
     });
-    return yield* control.semaphore.withPermit(execute().pipe(Effect.onExit(finalize)));
+    const finalized = yield* Ref.make(false);
+    const finalizeOnce = Effect.fn("PreviewManager.finalizeControlActionOnce")(function* (
+      exit: Exit.Exit<A, PreviewManagerError>,
+    ) {
+      const wasFinalized = yield* Ref.getAndSet(finalized, true);
+      if (!wasFinalized) yield* finalize(exit);
+    });
+    const acquireAndExecute = (remainingAttempts: number): Effect.Effect<A, PreviewManagerError> =>
+      Effect.gen(function* () {
+        const controlWc = yield* requireWebContents(tabId);
+        const control = yield* ensureControlSession(controlWc, requestedDiagnosticDomains);
+        const result = yield* control.semaphore.withPermit(
+          Effect.gen(function* () {
+            const liveWc = yield* requireWebContents(tabId);
+            const liveControl = (yield* SynchronizedRef.get(controlSessionsRef)).get(liveWc.id);
+            if (liveWc !== controlWc || liveControl !== control) return Option.none<A>();
+            return Option.some(
+              yield* execute(controlWc, control).pipe(Effect.onExit(finalizeOnce)),
+            );
+          }),
+        );
+        if (Option.isSome(result)) return result.value;
+        if (remainingAttempts > 1) {
+          return yield* Effect.suspend(() => acquireAndExecute(remainingAttempts - 1));
+        }
+        return yield* new PreviewAutomationControlInterruptedError({
+          operation: action,
+          tabId,
+          webContentsId: controlWc.id,
+        });
+      });
+    return yield* acquireAndExecute(3).pipe(Effect.onExit(finalizeOnce));
   });
 
   const evaluateWithDebugger = <A = unknown>(
@@ -3487,11 +3588,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   const captureAutomationSnapshot = Effect.fn("PreviewManager.captureAutomationSnapshot")(
-    function* (tabId: string, wc: Electron.WebContents, send: SendCommand) {
-      yield* Effect.all([send("Runtime.enable"), send("Accessibility.enable")], {
-        concurrency: 2,
-        discard: true,
-      });
+    function* (
+      tabId: string,
+      wc: Electron.WebContents,
+      send: SendCommand,
+      include: ReadonlyArray<PreviewAutomationSnapshotInclude> = [],
+    ) {
+      const includeAx = include.includes("ax");
+      const includeConsole = include.includes("console");
+      const includeNetwork = include.includes("network");
+      yield* send("Runtime.enable");
       const page = yield* evaluateWithDebugger<{
         url: string;
         title: string;
@@ -3529,14 +3635,40 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             const rect = element.getBoundingClientRect();
             return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
           };
+          const clickable = (element) => {
+            if (element.matches("a[href],button,input,textarea,select,[role],[tabindex]")) return true;
+            const role = element.getAttribute("role");
+            if (role === "row" || role === "gridcell" || role === "option") return true;
+            if (element.tagName !== "TR" && element.tagName !== "TD" && element.tagName !== "DIV") return false;
+            const style = getComputedStyle(element);
+            if (style.cursor !== "pointer") return false;
+            // Cursor inherits. Keep the outermost harvested layout node
+            // (div/td/tr) so nested boxes do not fill the cap, but still
+            // list this node when the pointer owner is an unharvested
+            // wrapper such as li, section, label, or table.
+            let ancestor = element.parentElement;
+            while (ancestor) {
+              const harvested =
+                ancestor.tagName === "TR" || ancestor.tagName === "TD" || ancestor.tagName === "DIV";
+              if (harvested && getComputedStyle(ancestor).cursor === "pointer") return false;
+              ancestor = ancestor.parentElement;
+            }
+            return true;
+          };
+          const seen = new Set();
           const elements = Array.from(document.querySelectorAll(
-            "a[href],button,input,textarea,select,[role],[tabindex]"
-          )).filter(visible).slice(0, ${MAX_INTERACTIVE_ELEMENTS}).map((element) => {
+            "a[href],button,input,textarea,select,[role],[tabindex],[role=row],tr,[role=gridcell],div,td"
+          )).filter((element) => {
+            if (!visible(element) || !clickable(element) || seen.has(element)) return false;
+            seen.add(element);
+            return true;
+          }).slice(0, ${MAX_INTERACTIVE_ELEMENTS}).map((element, index) => {
             const rect = element.getBoundingClientRect();
             return {
+              id: "e" + (index + 1),
               tag: element.tagName.toLowerCase(),
               role: element.getAttribute("role"),
-              name: element.getAttribute("aria-label") || element.innerText || element.getAttribute("name") || "",
+              name: (element.getAttribute("aria-label") || element.innerText || element.getAttribute("name") || "").slice(0, 160),
               selector: selectorFor(element),
               x: rect.x,
               y: rect.y,
@@ -3544,29 +3676,43 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               height: rect.height
             };
           });
+          const main = document.querySelector('main, [role="main"]');
           return {
             url: location.href,
             title: document.title,
             loading: document.readyState !== "complete",
-            visibleText: (document.body?.innerText || "").slice(0, ${MAX_VISIBLE_TEXT_LENGTH}),
+            visibleText: (main ? main.innerText : document.body?.innerText || "").slice(0, ${MAX_VISIBLE_TEXT_LENGTH}),
             interactiveElements: elements
           };
         })()`,
         true,
       );
-      const [accessibility, sourceImage, diagnostics, timelines] = yield* Effect.all([
-        send("Accessibility.getFullAXTree"),
-        attemptPromise(
-          {
-            operation: "automationSnapshot.capturePage",
-            tabId,
-            webContentsId: wc.id,
-          },
-          () => wc.capturePage(),
+      const accessibility = includeAx ? yield* send("Accessibility.getFullAXTree") : undefined;
+      const [diagnostics, timelines] = yield* Effect.all(
+        [Ref.get(diagnosticsRef), Ref.get(actionTimelineRef)],
+        { concurrency: 2 },
+      );
+      const sourceImage = yield* attemptPromise(
+        {
+          operation: "automationSnapshot.capturePage",
+          tabId,
+          webContentsId: wc.id,
+        },
+        () => wc.capturePage(),
+      ).pipe(
+        Effect.catch((captureFailure) =>
+          send("Page.captureScreenshot", { format: "png" }).pipe(
+            Effect.flatMap((result) =>
+              result !== null &&
+              typeof result === "object" &&
+              "data" in result &&
+              typeof result.data === "string"
+                ? Effect.succeed(nativeImage.createFromBuffer(Buffer.from(result.data, "base64")))
+                : Effect.fail(captureFailure),
+            ),
+          ),
         ),
-        Ref.get(diagnosticsRef),
-        Ref.get(actionTimelineRef),
-      ]);
+      );
       const sourceSize = sourceImage.getSize();
       const image =
         sourceSize.width > MAX_SCREENSHOT_WIDTH
@@ -3576,9 +3722,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       const browserDiagnostics = diagnostics.get(wc.id);
       return {
         ...page,
-        accessibilityTree: accessibility,
-        consoleEntries: [...(browserDiagnostics?.consoleEntries ?? [])],
-        networkEntries: [...(browserDiagnostics?.networkEntries ?? [])],
+        ...(includeAx ? { accessibilityTree: accessibility } : {}),
+        consoleEntries: includeConsole ? [...(browserDiagnostics?.consoleEntries ?? [])] : [],
+        networkEntries: includeNetwork ? [...(browserDiagnostics?.networkEntries ?? [])] : [],
         actionTimeline: [...(timelines.get(tabId) ?? [])],
         screenshot: {
           mimeType: "image/png" as const,
@@ -3592,10 +3738,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const automationSnapshot = Effect.fn("PreviewManager.automationSnapshot")(function* (
     tabId: string,
+    include: ReadonlyArray<PreviewAutomationSnapshotInclude> = [],
   ) {
-    const wc = yield* requireWebContents(tabId);
-    return yield* withControlSession(tabId, wc, "snapshot", (send) =>
-      captureAutomationSnapshot(tabId, wc, send),
+    return yield* withControlSession(
+      tabId,
+      "snapshot",
+      (wc, send) => captureAutomationSnapshot(tabId, wc, send, include),
+      new Set(include),
     );
   });
 
@@ -3727,8 +3876,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     input: PreviewAutomationClickInput,
   ) {
-    const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "click", (send) =>
+    yield* withControlSession(tabId, "click", (_wc, send) =>
       performAutomationClick(tabId, input, send),
     );
   });
@@ -3853,8 +4001,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     input: PreviewAutomationTypeInput,
   ) {
-    const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "type", (send) =>
+    yield* withControlSession(tabId, "type", (_wc, send) =>
       performAutomationType(tabId, input, send),
     );
   });
@@ -3915,8 +4062,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     input: PreviewAutomationPressInput,
   ) {
-    const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "press", (send, sendCleanup) =>
+    yield* withControlSession(tabId, "press", (wc, send, sendCleanup) =>
       performAutomationPress(tabId, wc, input, send, sendCleanup),
     );
   });
@@ -3971,8 +4117,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     input: PreviewAutomationScrollInput,
   ) {
-    const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "scroll", (send) =>
+    yield* withControlSession(tabId, "scroll", (_wc, send) =>
       performAutomationScroll(tabId, input, send),
     );
   });
@@ -4007,8 +4152,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     input: PreviewAutomationEvaluateInput,
   ) {
-    const wc = yield* requireWebContents(tabId);
-    return yield* withControlSession(tabId, wc, "evaluate", (send) =>
+    return yield* withControlSession(tabId, "evaluate", (_wc, send) =>
       performAutomationEvaluate(tabId, input, send),
     );
   });
@@ -4022,7 +4166,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* send("Runtime.enable");
     const locator = automationLocator(input);
     if (locator) yield* ensurePlaywrightInjected(tabId, send);
-    const [locatorJson, textJson, urlIncludesJson] = yield* Effect.all([
+    const [locatorJson, textJson, urlIncludesJson, scopeJson] = yield* Effect.all([
       locator
         ? encodeJson({ operation: "automationWaitFor.encodeLocator", tabId }, locator)
         : Effect.succeed(null),
@@ -4032,6 +4176,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       input.urlIncludes
         ? encodeJson({ operation: "automationWaitFor.encodeUrl", tabId }, input.urlIncludes)
         : Effect.succeed(null),
+      encodeJson({ operation: "automationWaitFor.encodeScope", tabId }, input.scope ?? "main"),
     ]);
     const deadline = (yield* currentMillis) + timeoutMs;
     while ((yield* currentMillis) <= deadline) {
@@ -4042,9 +4187,59 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         send,
         `(() => {
               try {
-                const selectorMatched = ${locatorJson ? `(() => { const injected = globalThis.__t3PlaywrightInjected; return injected.querySelector(injected.parseSelector(${locatorJson}), document, false) !== null; })()` : "true"};
+                const root = ${scopeJson} === "document"
+                  ? document.documentElement
+                  : (document.querySelector('main, [role="main"]') || document.documentElement);
+                const isWithinSearchRoot = (element, searchRoot) => {
+                  let current = element;
+                  while (current) {
+                    if (current === searchRoot) return true;
+                    if (current.parentElement) {
+                      current = current.parentElement;
+                      continue;
+                    }
+                    const rootNode = current.getRootNode();
+                    current = rootNode instanceof ShadowRoot ? rootNode.host : null;
+                  }
+                  return false;
+                };
+                const searchRoots = ${scopeJson} === "document"
+                  ? [root]
+                  : [
+                      root,
+                      ...Array.from(document.querySelectorAll(
+                        '[aria-modal="true"], [role="dialog"], [role="alertdialog"], [data-slot$="-popup"], [data-slot$="-positioner"], [data-slot$="-portal"], [data-radix-portal], [data-radix-popper-content-wrapper]'
+                      )),
+                    ];
+                const selectorMatched = ${
+                  locatorJson
+                    ? `(() => {
+                  const injected = globalThis.__t3PlaywrightInjected;
+                  const parsed = injected.parseSelector(${locatorJson});
+                  const elements = injected.querySelectorAll(parsed, document);
+                  return searchRoots.some((searchRoot) => {
+                    return elements.some((element) => {
+                      if (!isWithinSearchRoot(element, searchRoot)) return false;
+                      const visible = injected.elementState(element, "visible");
+                      if (!visible.matches) return false;
+                      const slot = element.getAttribute("data-slot") || "";
+                      if (
+                        slot === "dialog-trigger" ||
+                        slot === "alert-dialog-trigger" ||
+                        slot === "command-dialog-trigger"
+                      ) {
+                        return false;
+                      }
+                      return true;
+                    });
+                  });
+                })()`
+                    : "true"
+                };
                 const textMatched = ${
-                  textJson ? `(document.body?.innerText || "").includes(${textJson})` : "true"
+                  textJson
+                    ? `searchRoots.some((searchRoot) => (searchRoot.innerText || "").includes(${textJson}))`
+                    : "true"
                 };
                 const urlMatched = ${
                   urlIncludesJson ? `location.href.includes(${urlIncludesJson})` : "true"
@@ -4078,8 +4273,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     input: PreviewAutomationWaitForInput,
   ) {
-    const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "waitFor", (send) =>
+    yield* withControlSession(tabId, "waitFor", (_wc, send) =>
       performAutomationWaitFor(tabId, input, send),
     );
   });
@@ -4554,6 +4748,7 @@ export class PreviewManager extends Context.Service<
     ) => Effect.Effect<DesktopPreviewAutomationStatus, PreviewManagerError>;
     readonly automationSnapshot: (
       tabId: string,
+      include?: ReadonlyArray<PreviewAutomationSnapshotInclude>,
     ) => Effect.Effect<PreviewAutomationSnapshot, PreviewManagerError>;
     readonly automationClick: (
       tabId: string,
