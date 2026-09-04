@@ -2,7 +2,8 @@
 
 T3 Code selects a project icon automatically. It checks `t3.json`, common favicon and app icon
 paths, and icon links in project HTML files. If it does not find an image, it chooses a built-in
-icon from the project name.
+icon from the saved project name. In web and desktop, this icon stays the same when the sidebar
+shows a repository label such as `owner/repo`.
 
 To choose a different icon or emoji:
 
