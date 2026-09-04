@@ -26,6 +26,7 @@ import {
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
 import {
   decodeProviderReplayNdjson,
+  materializeReplayTranscriptRuntimeInstructions,
   materializeReplayTranscriptWorkspace,
 } from "./ReplayTranscriptNdjson.ts";
 
@@ -82,9 +83,9 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
   readonly enableLegacyTokenStreaming?: boolean;
 }) {
   const rawTranscript = yield* readTranscript(input.driver.transcriptFile);
-  const replayTranscript = transcriptEntriesThroughLabel(
-    rawTranscript,
-    input.driver.transcriptEntriesThroughLabel,
+  const replayTranscript = materializeReplayTranscriptRuntimeInstructions(
+    transcriptEntriesThroughLabel(rawTranscript, input.driver.transcriptEntriesThroughLabel),
+    { driver: input.driver.driver, model: input.driver.modelSelection.model },
   );
   const workspace = yield* checkpointWorkspace(input.fixtureName);
   const transcript = yield* input.harness.decodeTranscript(
