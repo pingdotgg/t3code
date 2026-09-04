@@ -784,6 +784,61 @@ it.effect("accepts a title seed in thread.turn.start", () =>
   }),
 );
 
+it.effect("decodes active reorder commands through client and orchestration boundaries", () =>
+  Effect.gen(function* () {
+    const input = {
+      type: "thread.active.reorder",
+      commandId: "cmd-active-reorder",
+      threadId: "thread-1",
+      orderKey: "gm",
+    };
+    const clientCommand = yield* decodeClientOrchestrationCommand(input);
+    const command = yield* decodeOrchestrationCommand(input);
+    for (const decoded of [clientCommand, command]) {
+      assert.strictEqual(decoded.type, "thread.active.reorder");
+      if (decoded.type === "thread.active.reorder") {
+        assert.strictEqual(decoded.threadId, "thread-1");
+        assert.strictEqual(decoded.orderKey, "gm");
+      }
+    }
+    const emptyKey = yield* Effect.exit(
+      decodeClientOrchestrationCommand({ ...input, orderKey: " " }),
+    );
+    assert.isTrue(Exit.isFailure(emptyKey));
+  }),
+);
+
+it.effect("decodes active placement on existing metadata events while accepting old payloads", () =>
+  Effect.gen(function* () {
+    const payload = { threadId: "thread-1", updatedAt: "2026-01-01T00:00:00.000Z" };
+    const oldPayload = yield* decodeThreadMetaUpdatedPayload(payload);
+    assert.strictEqual(oldPayload.activeOrderKey, undefined);
+    const resetPayload = yield* decodeThreadMetaUpdatedPayload({
+      ...payload,
+      activeOrderKey: null,
+    });
+    assert.strictEqual(resetPayload.activeOrderKey, null);
+    const event = yield* decodeOrchestrationEvent({
+      type: "thread.meta-updated",
+      sequence: 1,
+      eventId: "event-active-reorder",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      occurredAt: "2026-01-02T00:00:00.000Z",
+      commandId: "cmd-active-reorder",
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      payload: { ...payload, activeOrderKey: "gm" },
+    });
+    assert.strictEqual(event.type, "thread.meta-updated");
+    if (event.type === "thread.meta-updated") {
+      assert.strictEqual(event.payload.activeOrderKey, "gm");
+      assert.strictEqual(event.payload.updatedAt, payload.updatedAt);
+    }
+  }),
+);
+
 it.effect("accepts a title regeneration intent in thread.meta.update", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeOrchestrationCommand({

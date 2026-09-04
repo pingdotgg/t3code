@@ -110,6 +110,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           has_actionable_proposed_plan,
           pinned_at,
           pin_order_key,
+          active_order_key,
           created_at,
           updated_at,
           deleted_at
@@ -132,6 +133,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           0,
           '2026-02-24T00:00:01.000Z',
           'gm',
+          'hq',
           '2026-02-24T00:00:02.000Z',
           '2026-02-24T00:00:03.000Z',
           NULL
@@ -358,6 +360,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           snoozedAt: null,
           pinnedAt: "2026-02-24T00:00:01.000Z",
           pinOrderKey: "gm",
+          activeOrderKey: "hq",
           titleRegeneration: null,
           deletedAt: null,
           messages: [
@@ -417,6 +420,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       ]);
 
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
+      const commandSnapshot = yield* snapshotQuery.getCommandReadModel();
+      assert.equal(commandSnapshot.threads[0]?.activeOrderKey, "hq");
       assert.equal(shellSnapshot.snapshotSequence, 5);
       assert.deepEqual(shellSnapshot.projects, [
         {
@@ -487,6 +492,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           snoozedAt: null,
           pinnedAt: "2026-02-24T00:00:01.000Z",
           pinOrderKey: "gm",
+          activeOrderKey: "hq",
           titleRegeneration: null,
           session: {
             threadId: ThreadId.make("thread-1"),
@@ -560,6 +566,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       );
       assert.equal(detailWithoutActivities._tag, "Some");
       if (detailWithoutActivities._tag === "Some") {
+        assert.equal(detailWithoutActivities.value.activeOrderKey, "hq");
         assert.deepEqual(detailWithoutActivities.value.activities, []);
         assert.deepEqual(detailWithoutActivities.value.messages, snapshot.threads[0]?.messages);
         assert.deepEqual(
