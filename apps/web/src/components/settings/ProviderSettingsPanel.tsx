@@ -191,8 +191,10 @@ function ProviderSettingsPlaceholder({
   readonly children?: ReactNode;
 }) {
   return (
-    <SettingsSection {...searchableSetting("providers")} variant="plain">
-      {deviceTabs}
+    <SettingsSection {...searchableSetting("providers")} hideTitle variant="plain">
+      {deviceTabs ? (
+        <div className="flex min-h-11 min-w-0 items-center px-3 sm:px-4">{deviceTabs}</div>
+      ) : null}
       <div
         className={cn(
           providerCardClassName,
@@ -323,7 +325,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
     options.length === 1 && options[0]?.entry.target._tag === "PrimaryConnectionTarget";
   const deviceTabs =
     !onlyPrimaryDevice && options.length > 0 ? (
-      <ScrollArea hideScrollbars scrollFade className="mx-3 h-11 min-w-0 rounded-none sm:mx-4">
+      <ScrollArea hideScrollbars scrollFade className="h-11 min-w-0 flex-1 rounded-none">
         <div role="group" aria-label="Devices" className="flex h-full w-max min-w-full px-1">
           {options.map((environment) => {
             const machine = resolveEnvironmentMachineKind(environment.serverConfig);
@@ -977,11 +979,10 @@ export function EnvironmentProviderSettings({
 
   return (
     <>
-      <SettingsSection
-        {...searchableSetting("providers")}
-        variant="plain"
-        headerAction={
-          <div className="flex min-w-0 items-center gap-2">
+      <SettingsSection {...searchableSetting("providers")} hideTitle variant="plain">
+        <div className="flex min-h-11 min-w-0 items-center gap-2 px-3 sm:px-4">
+          {deviceTabs}
+          <div className="ml-auto flex min-w-0 shrink-0 items-center gap-2">
             {readOnly ? (
               <span className="min-w-0 truncate text-xs text-muted-foreground">
                 <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
@@ -1030,9 +1031,7 @@ export function EnvironmentProviderSettings({
               </>
             )}
           </div>
-        }
-      >
-        {deviceTabs}
+        </div>
         {readOnly ? (
           <div className={cn(providerCardClassName, "overflow-hidden")}>
             <SettingsRow
