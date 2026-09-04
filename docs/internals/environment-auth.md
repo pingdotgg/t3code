@@ -45,7 +45,7 @@ do not follow this replacement rule.
 ## The environment is the filesystem boundary
 
 Projects are organizational boundaries, not filesystem sandboxes.
-`orchestration:read` permits reading files the server account can read, including
+`filesystem:read` permits reading files the server account can read, including
 absolute paths outside a project. This lets clients display artifacts that an
 agent writes in a temporary directory. Relative paths and writes still follow
 the [workspace path rules](../../apps/server/src/workspace/WorkspaceFileSystem.ts).
