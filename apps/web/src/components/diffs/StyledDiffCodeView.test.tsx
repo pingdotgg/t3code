@@ -74,9 +74,7 @@ vi.mock("@pierre/diffs/worker/worker.js?worker", async () => {
 
       postMessage(message: WorkerRequest) {
         testState.requests.push(message);
-        // Worker messages have no target origin.
-        // oxlint-disable-next-line unicorn/require-post-message-target-origin
-        this.worker.postMessage(message);
+        this.worker.postMessage(message, []);
       }
 
       terminate() {
