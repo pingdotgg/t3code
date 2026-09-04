@@ -2,7 +2,7 @@
 
 ## Developer Setup
 
-See the [maintainer scripts guide](docs/internals/scripts.md#first-checkout) for the initial checkout,
+See the [development runbook](docs/operations/development.md#first-checkout) for the initial checkout,
 development commands, tests, and platform-specific desktop packaging prerequisites.
 
 ## Read This First
@@ -48,6 +48,10 @@ Keep it small.
 Explain exactly what changed.
 
 Explain exactly why the change should exist.
+
+Follow the [documentation rules](AGENTS.md#documentation). Keep internal docs for decisions and
+hard-to-discover constraints. Update user guides when how to use a feature changes; skip descriptions
+of obvious controls and cosmetic changes.
 
 Do not mix unrelated fixes together.
 
