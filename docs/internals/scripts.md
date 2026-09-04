@@ -74,6 +74,21 @@ authenticated.
 - `vp run dist:desktop:win`: Builds a Windows NSIS installer into `./release`. `:arm64` and `:x64`
   variants exist.
 
+### Tailcat runtime prerequisite
+
+Desktop artifacts and the published CLI bundle the pinned Tailcat binary from
+`native/tailcat/manifest.json`. Fetch it once per checkout before building:
+
+```bash
+node scripts/fetch-tailcat.ts                 # host platform, into native/tailcat/dist/<key>/
+node scripts/fetch-tailcat.ts --platform darwin-arm64   # macOS builds from the pinned source (needs Go)
+node scripts/fetch-tailcat.ts --verify        # re-check staged binaries against the manifest
+```
+
+`dist:desktop:*` fails with a `TailcatDistError` that names this command when the binary is
+missing. Dev servers do not need it unless you exercise Tailcat remote access; they also honor
+`T3CODE_TAILCAT_BINARY`. See `native/tailcat/README.md` for the pin-bump procedure.
+
 ### Linux AppImage prerequisites
 
 Linux AppImage packaging compiles the Rust resource monitor and the libsecret browser import

@@ -52,7 +52,7 @@ server-authored; it is local to a device or client profile. In the hosted web ap
 browser-local. A hosted pairing URL can create one, but it does not give the hosted app a server-side
 control plane or a copy of session state.
 
-[`connection/model.ts`][model] defines four target tags, which are the real access taxonomy:
+[`connection/model.ts`][model] defines five target tags, which are the real access taxonomy:
 
 | Target                    | Used for                                                                 |
 | ------------------------- | ------------------------------------------------------------------------ |
@@ -60,8 +60,11 @@ control plane or a copy of session state.
 | `BearerConnectionTarget`  | Any manually paired endpoint reached over direct HTTP/WebSocket.         |
 | `RelayConnectionTarget`   | Managed T3 Connect relay tunnels.                                        |
 | `SshConnectionTarget`     | Desktop-managed SSH environments.                                        |
+| `TailcatConnectionTarget` | Desktop-managed Tailcat tunnels to a server's loopback listener.         |
 
-Bearer, relay, and SSH are persisted; primary is platform-managed. Note that Tailscale is not a
+Bearer, relay, SSH, and Tailcat are persisted; primary is platform-managed. Tailcat persists the
+logical endpoint (Tailcat address plus the server's port), never the ephemeral local forward port;
+see [tailcat.md](./tailcat.md). Note that Tailscale is not a
 separate target kind. A Tailscale URL is paired through the ordinary bearer path in
 [`onboarding.ts`][onboarding] (`preparePairingRegistration`), which accepts either a pairing URL or a
 host plus pairing code. Tailscale is an endpoint provider and transport, not a distinct runtime

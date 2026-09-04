@@ -34,8 +34,9 @@ That gives you:
 
 ## Enabling Network Access
 
-There are three ways to reach your server from another device: expose the desktop app's backend,
-run a headless server from the CLI, or have the desktop app launch T3 Code over SSH.
+There are four ways to reach your server from another device: expose the desktop app's backend,
+run a headless server from the CLI, have the desktop app launch T3 Code over SSH, or connect
+through a Tailcat tunnel with a one-time connection code.
 
 ### Option 1: Desktop App
 
@@ -166,6 +167,14 @@ nvm alias default 24
 With mise, asdf, fnm, or nodenv, make sure the tool's shim directory is installed and resolves to a Node version satisfying the range above without an interactive shell.
 
 If reconnecting after an app update fails, retry the SSH launch once. The launcher now compares its generated runner script, stops stale launcher-managed remote servers, clears the SSH launch PID/port state, and starts a fresh remote server. You should not normally need to delete `~/.t3/ssh-launch` or kill `t3` processes manually.
+
+### Option 4: Tailcat Tunnel
+
+Use this when the machines are on different networks and you do not want a VPN or a tailnet.
+Turn on **Remote access via Tailcat** under **This environment** (or run `npx t3 serve --tailcat`),
+create a connection code, and paste it into **Add environment** → **Tailcat** on the other
+machine's desktop app. Devices are trusted individually and can be revoked from the same card.
+See [Tailcat remote access](./tailcat.md) for the full guide.
 
 ## Antigravity Google sign-in
 

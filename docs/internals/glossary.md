@@ -12,6 +12,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 - [Provider runtime](#provider-runtime)
 - [Checkpointing](#checkpointing)
 - [Appearance](#appearance)
+- [Remote transports](#remote-transports)
 
 ## Concepts
 
@@ -174,6 +175,32 @@ ships T3 Code already matching it.
 - [Provider architecture][16]
 - [Permission modes][18]
 - [Workspace layout][2]
+
+### Remote transports
+
+#### Tailcat
+
+The bundled point-to-point tunnel CLI that exposes a server's loopback listener to trusted devices. It is a transport only; T3 auth runs unchanged inside it. See [tailcat.md](./tailcat.md).
+
+#### Connection code
+
+A `t3c://tailcat/…` string a server issues so another device can add it as an environment. It carries the Tailcat address, the server port, and a single-use, five-minute pairing token; never a private key or reusable secret.
+
+#### Trusted peer
+
+A client Tailcat node key that redeemed a connection code. Trusted peers form the listener's allowlist; revoking one relocks the listener and revokes its linked sessions.
+
+#### Pairing window
+
+The interval during which a server's Tailcat listener accepts any node key: exactly while an unconsumed, unexpired connection code or peer code exists.
+
+#### Federation peer
+
+Another T3 environment paired for server-to-server work over Tailcat, with scopes each side granted the other. See [federation.md](./federation.md).
+
+#### Peer code
+
+A `t3c://peer/…` string that starts federation pairing; same token semantics as a connection code, plus the issuing environment's identity and offered scopes.
 
 [1]: ../../packages/contracts/src/orchestration.ts
 [2]: ./workspace-layout.md
