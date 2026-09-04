@@ -148,11 +148,13 @@ export const composerCloudDraftsAtom = Atom.make<ComposerCloudDraftState>({
 
 let loadPromise: Promise<void> | null = null;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let persistRetryNeeded = false;
 const persistenceQueue = new SerializedAsyncQueue();
 
 /** Resets module-level state between test runs. */
 export function resetComposerDraftsLoadState(): void {
   loadPromise = null;
+  persistRetryNeeded = false;
 }
 
 function normalizeDraft(draft: ComposerDraft | undefined): ComposerDraft {
@@ -265,20 +267,12 @@ async function loadPersistedComposerState(): Promise<
     operation = "decode";
     return decodePersistedComposerState(JSON.parse(raw) as unknown);
   } catch (cause) {
-    console.warn(
-      "[composer-drafts] ignored persisted draft failure",
-      new ComposerDraftPersistenceError({
-        operation,
-        directory: COMPOSER_DRAFTS_DIRECTORY,
-        fileName: COMPOSER_DRAFTS_FILE,
-        cause,
-      }),
-    );
-    return {
-      drafts: {},
-      stickyModelSelection: null,
-      cloudDrafts: { accountId: null, signedOut: {} },
-    };
+    throw new ComposerDraftPersistenceError({
+      operation,
+      directory: COMPOSER_DRAFTS_DIRECTORY,
+      fileName: COMPOSER_DRAFTS_FILE,
+      cause,
+    });
   }
 }
 
@@ -341,20 +335,26 @@ export async function flushComposerDrafts(): Promise<void> {
   // An edit during an awaited write schedules another debounced write, so
   // keep landing snapshots until no debounce is pending after a queue drain.
   do {
-    while (persistTimer !== null) {
-      clearTimeout(persistTimer);
+    while (persistTimer !== null || persistRetryNeeded) {
+      if (persistTimer !== null) clearTimeout(persistTimer);
       persistTimer = null;
-      await persistenceQueue.run(() =>
-        writePersistedComposerState(
-          appAtomRegistry.get(composerDraftsAtom),
-          appAtomRegistry.get(stickyComposerModelSelectionAtom),
-        ),
-      );
+      persistRetryNeeded = false;
+      try {
+        await persistenceQueue.run(() =>
+          writePersistedComposerState(
+            appAtomRegistry.get(composerDraftsAtom),
+            appAtomRegistry.get(stickyComposerModelSelectionAtom),
+          ),
+        );
+      } catch (error) {
+        persistRetryNeeded = true;
+        throw error;
+      }
     }
     // Draining also waits for an already-fired debounce whose write is still
     // gated behind its own hydration await inside the queue.
     await persistenceQueue.run(() => Promise.resolve());
-  } while (persistTimer !== null);
+  } while (persistTimer !== null || persistRetryNeeded);
 }
 
 function signedOutAttachmentOwners() {
@@ -534,19 +534,20 @@ function schedulePersistComposerState(): void {
   }
   persistTimer = setTimeout(() => {
     persistTimer = null;
-    ensureComposerDraftsLoaded();
     // The write enters the serialization queue before waiting on hydration,
     // so flushComposerDrafts' queue drain cannot resolve ahead of it.
     void persistenceQueue.run(async () => {
-      if (loadPromise !== null) {
-        await loadPromise;
-      }
       try {
+        await waitForComposerDraftsLoaded();
         await writePersistedComposerState(
           appAtomRegistry.get(composerDraftsAtom),
           appAtomRegistry.get(stickyComposerModelSelectionAtom),
         );
+        persistRetryNeeded = false;
       } catch (error) {
+        // A failed debounce has no timer left. A later final flush must retry
+        // these edits after persisted ownership can be read safely.
+        persistRetryNeeded = true;
         console.warn("[composer-drafts] failed to persist drafts", error);
         // Draft persistence is best-effort; in-memory drafts still keep working.
       }
@@ -558,35 +559,39 @@ export function ensureComposerDraftsLoaded(): void {
   if (loadPromise !== null) {
     return;
   }
-  loadPromise = loadPersistedComposerState()
-    .then((persisted) => {
-      appAtomRegistry.set(composerCloudDraftsAtom, persisted.cloudDrafts);
-      if (Object.keys(persisted.drafts).length > 0) {
-        const current = appAtomRegistry.get(composerDraftsAtom);
-        appAtomRegistry.set(composerDraftsAtom, {
-          ...persisted.drafts,
-          ...current,
-        });
-      }
-      if (
-        persisted.stickyModelSelection !== null &&
-        appAtomRegistry.get(stickyComposerModelSelectionAtom) === null
-      ) {
-        appAtomRegistry.set(stickyComposerModelSelectionAtom, persisted.stickyModelSelection);
-      }
-    })
-    .catch((cause) => {
-      console.warn(
-        "[composer-drafts] failed to hydrate drafts",
-        new ComposerDraftPersistenceError({
-          operation: "hydrate",
-          directory: COMPOSER_DRAFTS_DIRECTORY,
-          fileName: COMPOSER_DRAFTS_FILE,
-          cause,
-        }),
-      );
-      // Draft loading is best-effort; in-memory drafts still keep working.
-    });
+  const loading = loadPersistedComposerState().then((persisted) => {
+    appAtomRegistry.set(composerCloudDraftsAtom, persisted.cloudDrafts);
+    if (Object.keys(persisted.drafts).length > 0) {
+      const current = appAtomRegistry.get(composerDraftsAtom);
+      appAtomRegistry.set(composerDraftsAtom, {
+        ...persisted.drafts,
+        ...current,
+      });
+    }
+    if (
+      persisted.stickyModelSelection !== null &&
+      appAtomRegistry.get(stickyComposerModelSelectionAtom) === null
+    ) {
+      appAtomRegistry.set(stickyComposerModelSelectionAtom, persisted.stickyModelSelection);
+    }
+  });
+  loadPromise = loading;
+  // Handle fire-and-forget hook loads without swallowing failures from the
+  // write and cleanup callers that await this same promise. A later call retries.
+  void loading.catch((cause) => {
+    if (loadPromise === loading) loadPromise = null;
+    console.warn(
+      "[composer-drafts] failed to hydrate drafts",
+      cause instanceof ComposerDraftPersistenceError
+        ? cause
+        : new ComposerDraftPersistenceError({
+            operation: "hydrate",
+            directory: COMPOSER_DRAFTS_DIRECTORY,
+            fileName: COMPOSER_DRAFTS_FILE,
+            cause,
+          }),
+    );
+  });
 }
 
 /** Wait until persisted drafts have been merged into the in-memory composer state. */
