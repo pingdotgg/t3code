@@ -19,6 +19,7 @@ import {
   Trash2,
 } from "lucide-react";
 import {
+  AuthPreviewOperateScope,
   type ContextMenuItem,
   type ProviderInstanceId,
   type ResolvedKeybindingsConfig,
@@ -80,6 +81,7 @@ import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useAttachedTerminalSession } from "../state/terminalSessions";
 import { serverEnvironment } from "../state/server";
 import { previewEnvironment } from "../state/preview";
+import { readEnvironmentScope } from "../state/session";
 import { terminalEnvironment } from "../state/terminal";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -798,6 +800,10 @@ export function TerminalViewport({
               );
             });
           };
+          if (!readEnvironmentScope(environmentId, AuthPreviewOperateScope)) {
+            fallbackToBrowser();
+            return;
+          }
           void openTerminalLinkInPreview({
             url: text,
             threadRef,

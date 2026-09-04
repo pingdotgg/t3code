@@ -22,12 +22,13 @@ import {
   WrapTextIcon,
   type LucideIcon,
 } from "lucide-react";
-import type {
-  AssetResource,
-  EnvironmentId,
-  ScopedThreadRef,
-  ServerProviderSkill,
-  ThreadLinkedPullRequest,
+import {
+  AuthPreviewOperateScope,
+  type AssetResource,
+  type EnvironmentId,
+  type ScopedThreadRef,
+  type ServerProviderSkill,
+  type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import {
@@ -2164,6 +2165,7 @@ function useChatMarkdownState({
   });
   const environmentId = threadRef?.environmentId ?? explicitEnvironmentId ?? null;
   const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const remoteOpen = useRemoteOpenResolution(environmentId);
   const canUseShellActions =
     canOperateHost &&
@@ -2353,12 +2355,12 @@ function useChatMarkdownState({
   );
   const openExternalLinkInPreview = useCallback(
     (url: string) => {
-      if (!threadRef) {
+      if (!threadRef || !canOperatePreview) {
         return Promise.resolve(
           AsyncResult.failure<void, BrowserPreviewUnavailableError>(
             Cause.fail(
               new BrowserPreviewUnavailableError({
-                message: "Thread context is unavailable.",
+                message: "Preview access is unavailable for this client.",
               }),
             ),
           ),
@@ -2381,11 +2383,11 @@ function useChatMarkdownState({
         return result;
       });
     },
-    [openPreview, threadRef],
+    [canOperatePreview, openPreview, threadRef],
   );
   const openMarkdownFileInPreview = useCallback(
     (path: string) => {
-      if (!threadRef || preparedConnection._tag === "None") {
+      if (!threadRef || !canOperatePreview || preparedConnection._tag === "None") {
         return Promise.resolve(
           AsyncResult.failure<void, BrowserPreviewUnavailableError>(
             Cause.fail(
@@ -2405,7 +2407,7 @@ function useChatMarkdownState({
         openPreview,
       });
     },
-    [createAssetUrl, cwd, openPreview, preparedConnection, threadRef],
+    [canOperatePreview, createAssetUrl, cwd, openPreview, preparedConnection, threadRef],
   );
   const findWorkspaceBasenameMatch = useCallback(
     async (workspaceRelativePath: string) => {
@@ -2523,6 +2525,7 @@ function useChatMarkdownState({
           revealLabel={revealInFileManagerLabel}
           onOpenInBrowser={
             threadRef &&
+            canOperatePreview &&
             isPreviewSupportedInRuntime() &&
             isBrowserPreviewFile(fileLinkMeta.filePath)
               ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
@@ -2534,6 +2537,7 @@ function useChatMarkdownState({
     },
     [
       canUseShellActions,
+      canOperatePreview,
       fileLinkParentSuffixByPath,
       openFileInPanel,
       openInPreferredEditor,
@@ -2550,6 +2554,7 @@ function useChatMarkdownState({
   const componentState = useMemo(
     () => ({
       canOperateHost,
+      canOperatePreview,
       cwd,
       diffThemeName,
       environmentId,
@@ -2577,6 +2582,7 @@ function useChatMarkdownState({
     }),
     [
       canOperateHost,
+      canOperatePreview,
       cwd,
       diffThemeName,
       environmentId,
@@ -2701,6 +2707,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
   a: function MarkdownAnchor({ node, href, children, title: _title, ...props }) {
     const {
       canOperateHost,
+      canOperatePreview,
       cwd,
       environmentId,
       imageBaseDir,
@@ -2766,7 +2773,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
             };
       const isSameDocumentLink = href?.startsWith("#") ?? false;
       const onClick = props.onClick;
-      const canOpenInPreview = Boolean(threadRef) && isPreviewSupportedInRuntime();
+      const canOpenInPreview =
+        canOperatePreview && Boolean(threadRef) && isPreviewSupportedInRuntime();
       const linkChildren = <MarkdownLinkContext value>{children}</MarkdownLinkContext>;
       const link = (
         <a
