@@ -664,6 +664,8 @@ function normalizeClaudeTurnTokenUsage(
   const cachedInputTokens = finiteNonNegativeInteger(usage.cache_read_input_tokens);
   const cacheCreationTokens = finiteNonNegativeInteger(usage.cache_creation_input_tokens);
   const rawOutputTokens = finiteNonNegativeInteger(usage.output_tokens);
+  const outputDetails = usage.output_tokens_details as Record<string, unknown> | undefined;
+  const thinkingTokens = finiteNonNegativeInteger(outputDetails?.thinking_tokens);
   const cachedInputContribution = usage.cache_read_input_tokens == null ? 0 : cachedInputTokens;
   const cacheCreationContribution =
     usage.cache_creation_input_tokens == null ? 0 : cacheCreationTokens;
@@ -697,6 +699,9 @@ function normalizeClaudeTurnTokenUsage(
     usageScope: "main_agent",
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(cacheCreationTokens !== undefined ? { cacheCreationTokens } : {}),
+    ...(thinkingTokens !== undefined && rawOutputTokens !== undefined
+      ? { reasoningTokens: Math.min(rawOutputTokens, thinkingTokens) }
+      : {}),
     hasSubagents,
   } as const;
   if (

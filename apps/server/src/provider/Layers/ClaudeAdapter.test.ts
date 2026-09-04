@@ -2553,6 +2553,7 @@ describe("ClaudeAdapterLive", () => {
           cache_read_input_tokens: 90,
           cache_creation_input_tokens: 10,
           output_tokens: 50,
+          output_tokens_details: { thinking_tokens: 30 },
         },
         modelUsage: {
           [SYNTHETIC_CLAUDE_CAPABLE_MODEL]: {
@@ -2585,6 +2586,7 @@ describe("ClaudeAdapterLive", () => {
           inputTokens: 500,
           cachedInputTokens: 90,
           cacheCreationTokens: 10,
+          reasoningTokens: 30,
           outputTokens: 50,
           hasSubagents: false,
         });

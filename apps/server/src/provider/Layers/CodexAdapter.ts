@@ -119,7 +119,6 @@ interface CodexTurnTokenUsageAccumulator {
   outputTokens: number;
   reasoningTokens: number;
   observed: boolean;
-  complete: boolean;
   hasSubagents: boolean;
 }
 
@@ -456,31 +455,23 @@ function normalizeCodexTokenUsage(
   };
 }
 
-function codexCumulativeTokenUsage(
-  usage: EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification["tokenUsage"],
+function codexTokenUsageBreakdown(
+  usage: EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification__TokenUsageBreakdown,
 ): CodexCumulativeTokenUsage {
   return {
-    inputTokens: usage.total.inputTokens,
-    cachedInputTokens: usage.total.cachedInputTokens,
-    ...(usage.total.cacheWriteInputTokens !== undefined
-      ? { cacheCreationTokens: usage.total.cacheWriteInputTokens }
+    inputTokens: usage.inputTokens,
+    cachedInputTokens: usage.cachedInputTokens,
+    ...(usage.cacheWriteInputTokens !== undefined
+      ? { cacheCreationTokens: usage.cacheWriteInputTokens }
       : {}),
-    outputTokens: usage.total.outputTokens,
-    reasoningTokens: usage.total.reasoningOutputTokens,
+    outputTokens: usage.outputTokens,
+    reasoningTokens: usage.reasoningOutputTokens,
   };
 }
 
-function makeCodexTurnTokenUsageState(isResume: boolean): CodexTurnTokenUsageState {
+function makeCodexTurnTokenUsageState(): CodexTurnTokenUsageState {
   return {
-    baseline: isResume
-      ? undefined
-      : {
-          inputTokens: 0,
-          cachedInputTokens: 0,
-          cacheCreationTokens: 0,
-          outputTokens: 0,
-          reasoningTokens: 0,
-        },
+    baseline: undefined,
     activeTurnId: undefined,
     byTurnId: new Map(),
   };
@@ -499,11 +490,44 @@ function getCodexTurnAccumulator(
     outputTokens: 0,
     reasoningTokens: 0,
     observed: false,
-    complete: state.baseline !== undefined,
     hasSubagents: false,
   };
   state.byTurnId.set(turnId, created);
   return created;
+}
+
+/**
+ * Usage added by one `thread/tokenUsage/updated` notification. Codex reports a
+ * running `total` for the thread and `last`, the usage of the newest model
+ * response. Within a turn the growth of `total` equals `last`. Without a prior
+ * total (first update after resume or rollback), or when Codex reset the
+ * running total, `last` is the delta.
+ */
+function codexTurnTokenUsageDelta(
+  previous: CodexCumulativeTokenUsage | undefined,
+  current: CodexCumulativeTokenUsage,
+  last: CodexCumulativeTokenUsage,
+): CodexCumulativeTokenUsage {
+  if (
+    previous === undefined ||
+    current.inputTokens < previous.inputTokens ||
+    current.cachedInputTokens < previous.cachedInputTokens ||
+    current.outputTokens < previous.outputTokens ||
+    current.reasoningTokens < previous.reasoningTokens
+  ) {
+    return last;
+  }
+  return {
+    inputTokens: current.inputTokens - previous.inputTokens,
+    cachedInputTokens: current.cachedInputTokens - previous.cachedInputTokens,
+    ...(current.cacheCreationTokens !== undefined &&
+    previous.cacheCreationTokens !== undefined &&
+    current.cacheCreationTokens >= previous.cacheCreationTokens
+      ? { cacheCreationTokens: current.cacheCreationTokens - previous.cacheCreationTokens }
+      : {}),
+    outputTokens: current.outputTokens - previous.outputTokens,
+    reasoningTokens: current.reasoningTokens - previous.reasoningTokens,
+  };
 }
 
 function accumulateCodexTurnTokenUsage(
@@ -511,59 +535,38 @@ function accumulateCodexTurnTokenUsage(
   turnId: string,
   usage: EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification["tokenUsage"],
 ): void {
-  const current = codexCumulativeTokenUsage(usage);
-  const previous = state.baseline;
+  const current = codexTokenUsageBreakdown(usage.total);
   if (state.activeTurnId !== turnId) {
-    if (
-      state.activeTurnId === undefined &&
-      previous !== undefined &&
-      (current.inputTokens < previous.inputTokens ||
-        current.cachedInputTokens < previous.cachedInputTokens ||
-        current.outputTokens < previous.outputTokens ||
-        current.reasoningTokens < previous.reasoningTokens)
-    ) {
-      state.baseline = undefined;
-    } else if (state.activeTurnId === undefined) {
-      state.baseline = current;
-    }
+    // Updates outside a live turn only move the baseline. Late updates for a
+    // finished turn while another turn is live are dropped.
+    if (state.activeTurnId === undefined) state.baseline = current;
     return;
   }
 
   const accumulator = getCodexTurnAccumulator(state, turnId);
+  const delta = codexTurnTokenUsageDelta(
+    state.baseline,
+    current,
+    codexTokenUsageBreakdown(usage.last),
+  );
   state.baseline = current;
 
-  if (!previous) {
-    accumulator.complete = false;
-    return;
-  }
-
-  const requiredCounters = [
-    ["inputTokens", current.inputTokens, previous.inputTokens],
-    ["cachedInputTokens", current.cachedInputTokens, previous.cachedInputTokens],
-    ["outputTokens", current.outputTokens, previous.outputTokens],
-    ["reasoningTokens", current.reasoningTokens, previous.reasoningTokens],
-  ] as const;
-  if (requiredCounters.some(([, next, prior]) => next < prior)) {
-    accumulator.complete = false;
-    return;
-  }
-
-  if (requiredCounters.some(([, next, prior]) => next > prior)) {
+  if (
+    delta.inputTokens > 0 ||
+    delta.cachedInputTokens > 0 ||
+    delta.outputTokens > 0 ||
+    delta.reasoningTokens > 0
+  ) {
     accumulator.observed = true;
   }
-  for (const [field, next, prior] of requiredCounters) {
-    accumulator[field] += next - prior;
-  }
-
-  if (current.cacheCreationTokens !== undefined && previous.cacheCreationTokens !== undefined) {
-    if (current.cacheCreationTokens < previous.cacheCreationTokens) {
-      accumulator.complete = false;
-      accumulator.cacheCreationTokens = undefined;
-    } else if (accumulator.cacheCreationTokens !== undefined) {
-      accumulator.cacheCreationTokens += current.cacheCreationTokens - previous.cacheCreationTokens;
-    }
-  } else {
+  accumulator.inputTokens += delta.inputTokens;
+  accumulator.cachedInputTokens += delta.cachedInputTokens;
+  accumulator.outputTokens += delta.outputTokens;
+  accumulator.reasoningTokens += delta.reasoningTokens;
+  if (delta.cacheCreationTokens === undefined) {
     accumulator.cacheCreationTokens = undefined;
+  } else if (accumulator.cacheCreationTokens !== undefined) {
+    accumulator.cacheCreationTokens += delta.cacheCreationTokens;
   }
 }
 
@@ -592,7 +595,7 @@ function completeCodexTurnTokenUsage(
   }
 
   return {
-    usageStatus: usage.complete && completed ? "complete" : "partial",
+    usageStatus: completed ? "complete" : "partial",
     usageScope: "main_agent",
     inputTokens: usage.inputTokens,
     cachedInputTokens: usage.cachedInputTokens,
@@ -2239,9 +2242,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               }
             : {}),
         };
-        const turnTokenUsage = makeCodexTurnTokenUsageState(
-          isCodexResumeCursorSchema(input.resumeCursor),
-        );
+        const turnTokenUsage = makeCodexTurnTokenUsageState();
         const sessionScope = yield* Scope.make("sequential");
         let sessionScopeTransferred = false;
         yield* Effect.addFinalizer(() =>
