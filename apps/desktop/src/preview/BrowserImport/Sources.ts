@@ -68,10 +68,9 @@ const macApplicationSupport = (
 ) => context.path.join(context.home, "Library", "Application Support", ...segments);
 
 /**
- * One Chromium fork on macOS and Linux. The leaves differ per fork; omitting a
- * platform's segments marks the fork as unavailable there. Windows is left out
- * on purpose: since Chrome 127 those cookies are encrypted to the browser's own
- * identity (App-Bound Encryption), so no other process can read them.
+ * One Chromium fork. The leaves differ per fork; omitting a platform's
+ * segments marks the fork as unavailable there. Most Windows Chromium builds
+ * use App-Bound Encryption, but forks can retain the older DPAPI-backed store.
  */
 const chromiumSource = (input: {
   readonly id: BrowserImportSourceId;
@@ -81,6 +80,7 @@ const chromiumSource = (input: {
   readonly macSegments: ReadonlyArray<string>;
   readonly linuxSegments?: ReadonlyArray<string>;
   readonly linuxSecretApplication?: string;
+  readonly windowsSegments?: ReadonlyArray<string>;
 }): BrowserImportSourceDefinition => ({
   id: input.id,
   name: input.name,
@@ -88,6 +88,7 @@ const chromiumSource = (input: {
   platforms: [
     "darwin" as NodeJS.Platform,
     ...(input.linuxSegments ? ["linux" as NodeJS.Platform] : []),
+    ...(input.windowsSegments ? ["win32" as NodeJS.Platform] : []),
   ],
   keychainService: input.keychainService,
   keychainAccount: input.keychainAccount,
@@ -96,6 +97,11 @@ const chromiumSource = (input: {
     : { linuxSecretApplication: input.linuxSecretApplication }),
   userDataDirectory: (context) => {
     if (context.platform === "darwin") return macApplicationSupport(context, ...input.macSegments);
+    if (context.platform === "win32") {
+      return input.windowsSegments && context.localAppData
+        ? context.path.join(context.localAppData, ...input.windowsSegments)
+        : undefined;
+    }
     return input.linuxSegments
       ? context.path.join(context.home, ".config", ...input.linuxSegments)
       : undefined;
@@ -163,6 +169,7 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     keychainAccount: "Helium",
     macSegments: ["net.imput.helium"],
     linuxSegments: ["net.imput.helium"],
+    windowsSegments: ["imput", "Helium", "User Data"],
     // Helium retains Chromium's libsecret application name on Linux.
     linuxSecretApplication: "chromium",
   }),

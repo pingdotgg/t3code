@@ -135,6 +135,38 @@ describe("Helium on Linux", () => {
   );
 });
 
+describe("Helium on Windows", () => {
+  it.effect("uses Helium's local app-data profile while other Chromium forks stay disabled", () =>
+    run(
+      Effect.gen(function* () {
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcessEnvironment, {
+            USERPROFILE: "C:\\Users\\browser-user",
+            LOCALAPPDATA: "C:\\Users\\browser-user\\AppData\\Local",
+          }),
+          Effect.provideService(HostProcessPlatform, "win32"),
+        );
+
+        assert.include(helium.platforms, "win32");
+        assert.equal(
+          helium.userDataDirectory(context),
+          context.path.join(
+            "C:\\Users\\browser-user\\AppData\\Local",
+            "imput",
+            "Helium",
+            "User Data",
+          ),
+        );
+        for (const source of BROWSER_IMPORT_SOURCES) {
+          if (source.engine === "chromium" && source.id !== "helium") {
+            assert.notInclude(source.platforms, "win32");
+          }
+        }
+      }),
+    ),
+  );
+});
+
 describe("isSourceRunning", () => {
   it.effect("reads Chromium's dangling SingletonLock symlink as a running browser", () =>
     run(
