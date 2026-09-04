@@ -1,6 +1,6 @@
 import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
-import { AuthAdministrativeScopes, AuthRelayWriteScope, type AuthSessionState } from "@t3tools/contracts";
+import { AuthAdministrativeScopes, AuthRelayReadScope, AuthRelayWriteScope, type AuthSessionState } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useEffect, useRef, useState } from "react";
 
@@ -62,7 +62,9 @@ function ConfiguredConnectOnboardingDialog() {
       ? EMPTY_SESSION_STATE_ATOM
       : environmentSession.sessionStateAtom(primaryEnvironmentId),
   );
-  const canManageRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope);
+  const canReadRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope);
+  const canWriteRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope);
+  const canManageRelay = canReadRelay && canWriteRelay;
   // The publish step is only offered when we know the answer; opening the
   // wizard before the session state resolves would let the step set change
   // mid-flight. A failed session read still opens the wizard — it just means
@@ -191,11 +193,13 @@ function ConfiguredConnectOnboardingDialog() {
     if (isApplying) return;
     if (
       primaryEnvironmentId === null ||
+      !readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) ||
       !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
     ) {
       setStep("devices");
       return;
     }
+    if (linkStateData === null || controller.linkState.error !== null) return;
     // The wizard only ever enables — with both toggles off there is nothing to
     // apply, and an existing link must not be torn down from onboarding.
     if (!exposeEnvironment && !publishAgentActivity) {
@@ -245,7 +249,7 @@ function ConfiguredConnectOnboardingDialog() {
               isStepDisabled={() => isApplying}
               onStepChange={(index) => {
                 const next = steps[index];
-                if (next === "publish" && (primaryEnvironmentId === null || !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope))) return;
+                if (next === "publish" && (primaryEnvironmentId === null || !readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) || !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope))) return;
                 if (next) setStep(next);
               }}
             />
@@ -256,11 +260,12 @@ function ConfiguredConnectOnboardingDialog() {
             <PublishStep
               exposeEnvironment={exposeEnvironment}
               publishAgentActivity={publishAgentActivity}
-              disabled={isApplying || !canManageRelay}
-              operationError={controller.operationError}
+              disabled={isApplying || !canManageRelay || linkStateData === null}
+              operationError={controller.operationError ?? controller.linkState.error}
               onExposeEnvironmentChange={(enabled) => {
                 if (
                   primaryEnvironmentId !== null &&
+                  readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) &&
                   readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
                 )
                   setExposeEnvironment(enabled);
@@ -268,6 +273,7 @@ function ConfiguredConnectOnboardingDialog() {
               onPublishAgentActivityChange={(enabled) => {
                 if (
                   primaryEnvironmentId !== null &&
+                  readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) &&
                   readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
                 )
                   setPublishAgentActivity(enabled);
@@ -294,7 +300,7 @@ function ConfiguredConnectOnboardingDialog() {
                 Not now
               </Button>
               <Button
-                disabled={isApplying || !canManageRelay || (controller.linkState.isPending && linkStateData === null)}
+                disabled={isApplying || !canManageRelay || linkStateData === null}
                 onClick={() => void applyPublishSelection()}
               >
                 {isApplying ? "Enabling…" : "Continue"}
