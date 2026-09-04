@@ -368,7 +368,7 @@ importers:
         specifier: ~57.0.1
         version: 57.0.1(expo@57.0.18)(react@19.2.3)
       expo-notifications:
-        specifier: ~57.0.15
+        specifier: 57.0.15
         version: 57.0.15(patch_hash=f89252c2c08dc7b3acb8415f319ebbe15fff8c9f88a64ebe1830cd5ac5c9ac40)(expo@57.0.18)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(typescript@6.0.3)
       expo-paste-input:
         specifier: ^0.1.15
