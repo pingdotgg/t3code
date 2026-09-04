@@ -11,6 +11,7 @@ export interface EditorChoice {
   readonly id: string;
   readonly label: string;
   readonly isDefault: boolean;
+  readonly description?: string;
 }
 
 /** Editable mirror of a `ProviderOptionDescriptor`. `key` is only a React key. */
@@ -162,6 +163,7 @@ export function descriptorToEditor(descriptor: ProviderOptionDescriptor): Editor
       key: newEditorKey(),
       id: option.id,
       label: option.label,
+      ...(option.description !== undefined ? { description: option.description } : {}),
       isDefault: option === defaultChoice,
     })),
   };
@@ -231,6 +233,7 @@ export function definitionFromDraft(draft: CustomModelDraft): CustomModelDefinit
     const options = descriptor.choices.map((choice) => ({
       id: choice.id.trim(),
       label: choice.label.trim() || choice.id.trim(),
+      ...(choice.description !== undefined ? { description: choice.description } : {}),
       ...(choice.isDefault ? { isDefault: true } : {}),
     }));
     const currentValue = options.find((option) => option.isDefault)?.id;

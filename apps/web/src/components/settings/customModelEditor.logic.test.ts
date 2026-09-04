@@ -175,6 +175,38 @@ describe("customModelEditor.logic", () => {
     ).toMatchObject(capabilities.optionDescriptors![0]!);
   });
 
+  it("preserves choice descriptions when copying, renaming, and saving", () => {
+    const capabilities: ModelCapabilities = {
+      optionDescriptors: [
+        {
+          id: "effort",
+          label: "Reasoning",
+          type: "select",
+          options: [
+            { id: "high", label: "High", isDefault: true },
+            { id: "ultracode", label: "Ultracode", description: "Uses additional reasoning." },
+          ],
+        },
+      ],
+    };
+    const copied = definitionFromDraft(
+      draft({
+        descriptors: descriptorsFromCapabilities(
+          capabilities,
+          ProviderDriverKind.make("claudeAgent"),
+        ),
+      }),
+    );
+    const reopened = draftFromDefinition(copied);
+    const saved = definitionFromDraft({ ...reopened, name: "Renamed" });
+    expect(saved.capabilities?.optionDescriptors?.[0]).toMatchObject(
+      capabilities.optionDescriptors![0]!,
+    );
+    expect(copied.capabilities?.optionDescriptors?.[0]).toMatchObject(
+      capabilities.optionDescriptors![0]!,
+    );
+  });
+
   it("collapses a blank name and no options back to a bare definition", () => {
     expect(definitionFromDraft(draft({ name: "  " }))).toEqual({
       slug: "my-model",
