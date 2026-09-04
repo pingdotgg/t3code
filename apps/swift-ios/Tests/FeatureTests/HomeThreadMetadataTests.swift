@@ -326,6 +326,56 @@ struct HomeThreadMetadataTests {
     }
 
     @Test
+    func fallbackRowContextDoesNotOfferPlaceholderProjectCopy() {
+        let thread = FeatureThread(
+            id: "thread",
+            projectID: "missing-project",
+            title: "Unresolved project"
+        )
+
+        let actions = ThreadCopyModel.actions(
+            for: thread,
+            context: HomeThreadRowContext.fallback.copyContext
+        )
+
+        #expect(actions.contains { $0.kind == .project } == false)
+    }
+
+    @Test
+    func rowContextFallsBackToProjectEnvironmentForBlankThreadEnvironment() throws {
+        let thread = FeatureThread(
+            id: "thread",
+            projectID: "project",
+            environmentID: "  ",
+            title: "Blank environment"
+        )
+        let snapshot = FeatureSnapshot(
+            environments: [
+                FeatureEnvironment(
+                    id: "device",
+                    name: "Desk Mac",
+                    endpoint: "http://device",
+                    connectionState: .connected
+                ),
+            ],
+            projects: [
+                FeatureProject(
+                    id: "project",
+                    environmentID: "device",
+                    name: "t3code",
+                    path: "/work/t3code"
+                ),
+            ],
+            threads: [thread]
+        )
+
+        let context = try #require(HomeThreadRowContext.index(snapshot: snapshot)[thread.id])
+
+        #expect(context.environmentLabel == "Desk Mac")
+        #expect(context.copyContext.environmentID == "device")
+    }
+
+    @Test
     func pullRequestIndicatorsUseTheCurrentThreadBranchAndPreserveTheirState() {
         let thread = FeatureThread(
             id: "thread",
