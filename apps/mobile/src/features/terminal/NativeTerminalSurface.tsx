@@ -63,9 +63,11 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
   const inputRef = useRef<TextInput>(null);
   const { themeAppearance, themeId } = useAppearancePreferences();
   const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
-  const statusLabel = props.readOnly ? "Viewing terminal output." : props.isRunning
-    ? "Native terminal unavailable. Using text fallback."
-    : "Open terminal to start a shell.";
+  const statusLabel = props.readOnly
+    ? "Viewing terminal output."
+    : props.isRunning
+      ? "Native terminal unavailable. Using text fallback."
+      : "Open terminal to start a shell.";
 
   const handleLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
