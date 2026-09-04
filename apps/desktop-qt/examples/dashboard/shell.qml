@@ -32,12 +32,15 @@ ShellWindow {
     readonly property string dayKey: Qt.formatDate(now, "yyyy-MM-dd")
     readonly property var calendarCells: buildCalendar(dayKey)
 
-    readonly property color canvas: Theme.color("canvas", "#f3e6e1")
+    // The floor under the cards is the theme's chrome; its canvas is the
+    // page's own background and matches the cards, so the page sits flush in
+    // its card.
+    readonly property color canvas: Theme.color("chrome", "#ecd6cc")
     readonly property color card: Theme.color("surface", "#fbf1ed")
     readonly property color raised: Theme.color("surfaceRaised", "#f2dcd5")
-    readonly property color line: Theme.color("border", "#e9d3cb")
+    readonly property color line: Theme.color("border", "#dfc2b7")
     readonly property color ink: Theme.color("text", "#4a3733")
-    readonly property color muted: Theme.color("textMuted", "#a58b84")
+    readonly property color muted: Theme.color("textMuted", "#86655d")
     readonly property color accent: Theme.color("accent", "#9a3e33")
     readonly property color accentInk: Theme.color("accentForeground", "#fff4f0")
     readonly property color accentSoft: Theme.color("accentSurface", "#ecc9c1")
@@ -522,6 +525,7 @@ ShellWindow {
                     WebSurface {
                         anchors.fill: parent
                         url: Shell.pageUrl
+                        radius: surfaceCard.radius - surfaceCard.border.width
                     }
 
                     // The page dims under the drawer; clicking it closes the drawer.
@@ -529,7 +533,7 @@ ShellWindow {
                         anchors.fill: parent
                         visible: opacity > 0
                         opacity: root.drawerOpen ? 1 : 0
-                        color: Qt.rgba(root.canvas.r, root.canvas.g, root.canvas.b, 0.55)
+                        color: Qt.rgba(root.canvas.r, root.canvas.g, root.canvas.b, 0.5)
 
                         Behavior on opacity {
                             OpacityAnimator {
@@ -1057,34 +1061,35 @@ ShellWindow {
                     }
                 }
 
-                ShellCard {
+                // The composer draws its own card, so it floats on the floor
+                // between the page and the terminal like the page's does.
+                Composer {
+                    id: composer
+
                     Layout.fillWidth: true
-                    Layout.preferredHeight: composer.implicitHeight
-                    visible: composer.ready
-
-                    Composer {
-                        id: composer
-
-                        anchors.fill: parent
-                        color: "transparent"
-                    }
+                    visible: ready
+                    color: "transparent"
                 }
 
                 ShellCard {
+                    id: terminalCard
+
                     Layout.fillWidth: true
                     Layout.preferredHeight: terminal.implicitHeight
                     visible: terminal.open
-                    clip: true
 
                     TerminalDrawer {
                         id: terminal
 
                         anchors.fill: parent
+                        radius: terminalCard.radius - terminalCard.border.width
                     }
                 }
             }
 
             ShellCard {
+                id: panelCard
+
                 Layout.preferredWidth: panel.implicitWidth
                 Layout.fillHeight: true
                 visible: panel.available && panel.open
@@ -1094,6 +1099,7 @@ ShellWindow {
 
                     anchors.fill: parent
                     color: "transparent"
+                    radius: panelCard.radius - panelCard.border.width
                 }
             }
         }
