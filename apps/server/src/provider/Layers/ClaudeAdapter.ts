@@ -13,6 +13,7 @@ import {
   type PermissionMode,
   type PermissionResult,
   type PermissionUpdate,
+  type Query as ClaudeSdkQuery,
   type SDKMessage,
   type SDKResultMessage,
   type SettingSource,
@@ -93,6 +94,7 @@ import {
   isClaudeCatalogUltracodeEffort,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
+  resolveClaudeCatalogContextWindowEnv,
   resolveClaudeCatalogContextWindowTokens,
   resolveClaudeCatalogEffort,
   resolveClaudeModelSlug,
@@ -292,6 +294,7 @@ interface ClaudeSessionContext {
   readonly startedAt: string;
   readonly basePermissionMode: PermissionMode | undefined;
   currentApiModelId: string | undefined;
+  currentContextWindowEnv: Record<string, string> | undefined;
   /** Effective effort for the session's turns; subagents without an explicit
    * effort override inherit this. */
   currentEffort: string | undefined;
@@ -332,6 +335,7 @@ interface ClaudeSessionContext {
 
 interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly setModel: (model?: string) => Promise<void>;
+  readonly applyFlagSettings: ClaudeSdkQuery["applyFlagSettings"];
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
   readonly close: () => void;
@@ -519,6 +523,15 @@ function maxClaudeContextWindowFromModelUsage(
   }
 
   return maxContextWindow;
+}
+
+function sameContextWindowEnv(
+  left: Record<string, string> | undefined,
+  right: Record<string, string> | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  const keys = Object.keys(left);
+  return keys.length === Object.keys(right).length && keys.every((key) => left[key] === right[key]);
 }
 
 function selectedClaudeContextWindow(
@@ -4512,6 +4525,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const apiModelId = modelSelection
         ? resolveClaudeCatalogApiModelId(modelCatalog, modelSelection)
         : undefined;
+      const contextWindowEnv = resolveClaudeCatalogContextWindowEnv(modelCatalog, modelSelection);
       const initialContextWindow = selectedClaudeContextWindow(modelCatalog, modelSelection);
       const rawEffort = getModelSelectionStringOptionValue(modelSelection, "effort");
       const effort =
@@ -4547,6 +4561,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(claudeSettings.autoCompactWindow
           ? { autoCompactWindow: Number(claudeSettings.autoCompactWindow) }
           : {}),
+        // The context-window selection must be stated to the CLI (see
+        // `resolveClaudeCatalogContextWindowEnv`). Set it via flag settings
+        // rather than the process env: a user or project settings file's
+        // `env` block overrides the spawned process env, while flag settings
+        // outrank both (live-test finding; managed policy settings still win).
+        ...(contextWindowEnv ? { env: contextWindowEnv } : {}),
       };
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
       // The attachments dir grant lets the agent Read/copy pasted images at
@@ -4671,6 +4691,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         startedAt,
         basePermissionMode: permissionMode,
         currentApiModelId: apiModelId,
+        currentContextWindowEnv: contextWindowEnv,
         currentEffort: effectiveEffort ?? undefined,
         resumeSessionId: sessionId,
         pendingApprovals,
@@ -4791,6 +4812,39 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     if (modelSelection?.model) {
       const apiModelId = resolveClaudeCatalogApiModelId(modelCatalog, modelSelection);
+      const contextWindowEnv = resolveClaudeCatalogContextWindowEnv(modelCatalog, modelSelection);
+      const contextWindowTokens = selectedClaudeContextWindow(modelCatalog, modelSelection);
+      if (!sameContextWindowEnv(context.currentContextWindowEnv, contextWindowEnv)) {
+        // The context-window opt-out lives in the flag-settings layer, not in
+        // the model id, and it outranks an explicit `[1m]` suffix (live-test
+        // finding) — so it is restated whenever the resolved value changes,
+        // ahead of the model switch. `null` clears the key, leaving a model
+        // without catalog token data in the same state as a freshly started
+        // session. Successive calls replace the whole `env` object, so this
+        // helper must stay its only writer. A failure is logged instead of
+        // failing the turn: an older CLI that does not know the control
+        // request would otherwise lose the turn over a wrong context window,
+        // and the unchanged tracked value retries on the next turn.
+        const applied = yield* Effect.tryPromise({
+          try: () => context.query.applyFlagSettings({ env: contextWindowEnv ?? null }),
+          catch: (cause) => toRequestError(input.threadId, "turn/applyFlagSettings", cause),
+        }).pipe(
+          Effect.as(true),
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to apply Claude context-window flag settings.", {
+              cause,
+            }).pipe(Effect.as(false)),
+          ),
+        );
+        if (applied) {
+          context.currentContextWindowEnv = contextWindowEnv;
+          // Streaming usage snapshots read this cache until the turn's
+          // result message reports the model's real window (completeTurn);
+          // without updating it here, usage on the new window is clamped to
+          // the old one for the rest of this turn.
+          context.lastKnownContextWindow = contextWindowTokens ?? context.lastKnownContextWindow;
+        }
+      }
       if (context.currentApiModelId !== apiModelId) {
         yield* Effect.tryPromise({
           try: () => context.query.setModel(apiModelId),
