@@ -32,11 +32,13 @@ const TAB_OPTIONS = [
   { value: "limits", label: "Limits" },
 ] as const satisfies readonly { value: UsageTab; label: string }[];
 
+// Labels are abbreviated to share a row with the metric toggle; screen
+// readers get the full phrase.
 const WINDOW_OPTIONS = [
-  { days: 1, label: "24h" },
-  { days: 7, label: "7d" },
-  { days: 30, label: "30d" },
-  { days: 90, label: "90d" },
+  { value: 1, label: "24h", accessibilityLabel: "Past 24 hours" },
+  { value: 7, label: "7d", accessibilityLabel: "Past 7 days" },
+  { value: 30, label: "30d", accessibilityLabel: "Past 30 days" },
+  { value: 90, label: "90d", accessibilityLabel: "Past 90 days" },
 ] as const;
 
 const METRIC_OPTIONS = [
@@ -135,7 +137,7 @@ export function UsageRouteScreen() {
           />
         }
       >
-        <SegmentedControl options={TAB_OPTIONS} selected={tab} onSelect={setTab} />
+        <SegmentedControl options={TAB_OPTIONS} selected={tab} onSelect={setTab} role="tab" />
 
         {showingLimits ? (
           <UsageLimitsSection now={limits.now} />
@@ -145,10 +147,7 @@ export function UsageRouteScreen() {
                 both change every number below, so they share one bar. */}
             <View className="flex-row items-center gap-3">
               <SegmentedControl
-                options={WINDOW_OPTIONS.map((option) => ({
-                  value: option.days,
-                  label: option.label,
-                }))}
+                options={WINDOW_OPTIONS}
                 selected={windowDays}
                 onSelect={selectWindow}
                 size="compact"
@@ -200,16 +199,23 @@ export function UsageRouteScreen() {
 }
 
 function SegmentedControl<Value extends number | string>(props: {
-  readonly options: readonly { readonly value: Value; readonly label: string }[];
+  readonly options: readonly {
+    readonly value: Value;
+    readonly label: string;
+    readonly accessibilityLabel?: string;
+  }[];
   readonly selected: Value;
   readonly onSelect: (value: Value) => void;
   /** The tab bar is full height; filters under it are shorter so it stays primary. */
   readonly size?: "default" | "compact";
+  /** "tab" for the view switcher; filters stay plain buttons. */
+  readonly role?: "tab" | "button";
   readonly className?: string;
 }) {
   const compact = props.size === "compact";
   return (
     <View
+      accessibilityRole={props.role === "tab" ? "tablist" : undefined}
       className={cn(
         "flex-row overflow-hidden rounded-full border-continuous bg-card",
         props.className,
@@ -220,7 +226,8 @@ function SegmentedControl<Value extends number | string>(props: {
         return (
           <Pressable
             key={String(option.value)}
-            accessibilityRole="button"
+            accessibilityRole={props.role ?? "button"}
+            accessibilityLabel={option.accessibilityLabel}
             accessibilityState={{ selected: active }}
             onPress={() => props.onSelect(option.value)}
             className={cn(

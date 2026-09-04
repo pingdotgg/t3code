@@ -117,15 +117,19 @@ function AccountLimits(props: {
     <View className={props.first ? "gap-3 p-4" : "gap-3 border-t border-border-subtle p-4"}>
       <View className="flex-row items-center gap-2">
         <ProviderIcon provider={props.driver} size={16} />
-        <Text className="text-base font-t3-medium text-foreground">{props.label}</Text>
-        {props.instanceLabel !== props.label ? (
-          <Text className="text-xs text-foreground-tertiary">{props.instanceLabel}</Text>
-        ) : null}
-        {props.detail ? (
-          <Text className="min-w-0 flex-1 text-sm text-foreground-muted" numberOfLines={1}>
-            {props.detail}
-          </Text>
-        ) : null}
+        <View className="min-w-0 flex-1 flex-row items-baseline gap-2">
+          <Text className="text-base font-t3-medium text-foreground">{props.label}</Text>
+          {props.instanceLabel !== props.label ? (
+            <Text className="shrink text-xs text-foreground-tertiary" numberOfLines={1}>
+              · {props.instanceLabel}
+            </Text>
+          ) : null}
+          {props.detail ? (
+            <Text className="shrink text-sm text-foreground-muted" numberOfLines={1}>
+              · {props.detail}
+            </Text>
+          ) : null}
+        </View>
       </View>
       {notice ? (
         <Text className="text-sm text-foreground-muted">{notice}</Text>
