@@ -1,5 +1,5 @@
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
-import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import { AuthSourceControlWriteScope, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { LegendList } from "@legendapp/list/react-native";
 import {
   isAtomCommandInterrupted,
@@ -27,6 +27,7 @@ import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useServerConfigs } from "../../state/entities";
+import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
 import {
@@ -203,6 +204,10 @@ export function NewTaskEnvironmentPickerRouteScreen() {
 
 export function NewTaskBranchPickerRouteScreen() {
   const flow = useNewTaskFlow();
+  const canWriteSourceControl = useEnvironmentScope(
+    flow.selectedProject?.environmentId ?? null,
+    AuthSourceControlWriteScope,
+  );
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
@@ -250,7 +255,12 @@ export function NewTaskBranchPickerRouteScreen() {
 
   const selectBranch = useCallback(
     async (branch: VcsRef) => {
-      if (selectingBranchNameRef.current !== null) {
+      const needsCheckout = shouldCheckoutNewTaskBranch({
+        branchIsCurrent: branch.current,
+        branchWorktreePath: branch.worktreePath,
+        workspaceMode: flow.workspaceMode,
+      });
+      if (selectingBranchNameRef.current !== null || (needsCheckout && !canWriteSourceControl)) {
         return;
       }
       selectingBranchNameRef.current = branch.name;
@@ -258,11 +268,6 @@ export function NewTaskBranchPickerRouteScreen() {
 
       try {
         let selectedBranch = branch;
-        const needsCheckout = shouldCheckoutNewTaskBranch({
-          branchIsCurrent: branch.current,
-          branchWorktreePath: branch.worktreePath,
-          workspaceMode: flow.workspaceMode,
-        });
         if (needsCheckout && flow.selectedProject) {
           setSwitchingBranchName(branch.name);
           const result = await switchRef({
@@ -309,6 +314,7 @@ export function NewTaskBranchPickerRouteScreen() {
       }
     },
     [
+      canWriteSourceControl,
       flow.selectBranch,
       flow.selectedProject,
       flow.setBranchQuery,
@@ -323,7 +329,15 @@ export function NewTaskBranchPickerRouteScreen() {
       <BranchSelectionRow
         badge={branchBadgeLabel({ branch: item, project: flow.selectedProject })}
         branch={item}
-        disabled={switchingBranchName !== null}
+        disabled={
+          switchingBranchName !== null ||
+          (!canWriteSourceControl &&
+            shouldCheckoutNewTaskBranch({
+              branchIsCurrent: item.current,
+              branchWorktreePath: item.worktreePath,
+              workspaceMode: flow.workspaceMode,
+            }))
+        }
         isFirst={index === 0}
         isLast={index === flow.filteredBranches.length - 1}
         onSelect={selectBranch}
@@ -331,8 +345,10 @@ export function NewTaskBranchPickerRouteScreen() {
       />
     ),
     [
+      canWriteSourceControl,
       flow.filteredBranches.length,
       flow.selectedProject,
+      flow.workspaceMode,
       selectBranch,
       selectedBranchName,
       switchingBranchName,

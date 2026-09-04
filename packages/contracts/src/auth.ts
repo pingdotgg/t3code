@@ -84,6 +84,7 @@ export const AuthSettingsWriteScope = "settings:write" as const;
 export const AuthProvidersManageScope = "providers:manage" as const;
 export const AuthEnvironmentMaintainScope = "environment:maintain" as const;
 export const AuthTerminalOperateScope = "terminal:operate" as const;
+export const AuthSourceControlWriteScope = "source-control:write" as const;
 export const AuthReviewWriteScope = "review:write" as const;
 export const AuthAccessReadScope = "access:read" as const;
 export const AuthAccessWriteScope = "access:write" as const;
@@ -97,6 +98,7 @@ export const AuthEnvironmentScope = Schema.Literals([
   AuthEnvironmentMaintainScope,
   AuthTerminalOperateScope,
   AuthReviewWriteScope,
+  AuthSourceControlWriteScope,
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthRelayReadScope,
@@ -114,6 +116,7 @@ export const AuthStandardClientScopes = [
   AuthEnvironmentMaintainScope,
   AuthTerminalOperateScope,
   AuthReviewWriteScope,
+  AuthSourceControlWriteScope,
   AuthRelayReadScope,
 ] as const;
 export const AuthAdministrativeScopes = [

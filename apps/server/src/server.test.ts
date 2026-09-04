@@ -7,6 +7,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import {
   AuthAccessTokenType,
   AuthAdministrativeScopes,
+  AuthSourceControlWriteScope,
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
@@ -5830,6 +5831,130 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         failureMessage.includes("Unauthorized") ||
           failureMessage.includes("An error occurred during Open"),
       );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("requires source-control write scope for mutations while keeping repository reads available", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const cloneResult = {
+        cwd: "/tmp/scoped-repository",
+        remoteUrl: "https://example.com/owner/repository.git",
+        repository: null,
+      };
+      const actionResult = {
+        action: "push" as const,
+        branch: { status: "skipped_not_requested" as const },
+        commit: { status: "skipped_not_requested" as const },
+        push: { status: "skipped_up_to_date" as const },
+        pr: { status: "skipped_not_requested" as const },
+        toast: {
+          title: "Already up to date",
+          description: "No changes to push.",
+          cta: { kind: "none" as const },
+        },
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          sourceControlRepositoryService: {
+            cloneRepository: () =>
+              Effect.sync(() => {
+                calls.push("clone");
+                return cloneResult;
+              }),
+          },
+          gitManager: {
+            resolvePullRequest: () =>
+              Effect.succeed({
+                pullRequest: {
+                  number: 1,
+                  title: "A change",
+                  url: "https://example.com/owner/repository/pull/1",
+                  baseBranch: "main",
+                  headBranch: "feature",
+                  state: "open",
+                },
+              }),
+            runStackedAction: () =>
+              Effect.sync(() => {
+                calls.push("push");
+                return actionResult;
+              }),
+          },
+          vcsStatusBroadcaster: {
+            refreshStatus: () =>
+              Effect.succeed({
+                isRepo: true,
+                hasPrimaryRemote: true,
+                isDefaultRef: false,
+                refName: "feature",
+                hasWorkingTreeChanges: false,
+                workingTree: { files: [], insertions: 0, deletions: 0 },
+                hasUpstream: true,
+                aheadCount: 0,
+                behindCount: 0,
+                pr: null,
+              }),
+          },
+        },
+      });
+      for (const canWrite of [false, true]) {
+        const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+          scope: canWrite
+            ? `orchestration:read ${AuthSourceControlWriteScope}`
+            : "orchestration:read orchestration:operate",
+        });
+        assert.equal(token.response.status, 200);
+        const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+          headers: { authorization: `Bearer ${token.body.access_token ?? ""}` },
+        });
+        const { ticket } = yield* responseJsonEffect<{ readonly ticket: string }>(ticketResponse);
+        const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              const resolved = yield* client[WS_METHODS.gitResolvePullRequest]({
+                cwd: cloneResult.cwd,
+                reference: "1",
+              });
+              assert.equal(resolved.pullRequest.number, 1);
+              const clone = client[WS_METHODS.sourceControlCloneRepository]({
+                remoteUrl: cloneResult.remoteUrl,
+                destinationPath: cloneResult.cwd,
+              });
+              const push = client[WS_METHODS.gitRunStackedAction]({
+                cwd: cloneResult.cwd,
+                actionId: "scoped-push",
+                action: "push",
+              }).pipe(Stream.runDrain);
+              if (canWrite) {
+                assert.deepEqual(yield* clone, cloneResult);
+                yield* push;
+              } else {
+                const comment = client[WS_METHODS.pullRequestsComment]({
+                  projectId: ProjectId.make("scoped-project"),
+                  repository: "owner/repository",
+                  number: 1,
+                  body: "A comment",
+                });
+                const errors = [
+                  yield* clone.pipe(Effect.flip),
+                  yield* push.pipe(Effect.flip),
+                  yield* comment.pipe(Effect.flip),
+                ];
+                for (const error of errors) {
+                  assert.equal(error._tag, "EnvironmentAuthorizationError");
+                  if (error._tag === "EnvironmentAuthorizationError") {
+                    assert.equal(error.requiredScope, AuthSourceControlWriteScope);
+                  }
+                }
+                assert.deepEqual(calls, []);
+              }
+            }),
+          ),
+        );
+      }
+      assert.deepEqual(calls, ["clone", "push"]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

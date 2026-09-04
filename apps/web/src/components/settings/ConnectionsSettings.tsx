@@ -22,6 +22,7 @@ import {
   AuthRelayReadScope,
   AuthRelayWriteScope,
   AuthReviewWriteScope,
+  AuthSourceControlWriteScope,
   AuthStandardClientScopes,
   AuthTerminalOperateScope,
   type AuthClientSession,
@@ -219,6 +220,11 @@ const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
     scope: AuthTerminalOperateScope,
     title: "Use terminals",
     description: "Create terminals and send input to running shells.",
+  },
+  {
+    scope: AuthSourceControlWriteScope,
+    title: "Change source control",
+    description: "Commit, push, manage branches and repositories, and change pull requests.",
   },
   {
     scope: AuthReviewWriteScope,
