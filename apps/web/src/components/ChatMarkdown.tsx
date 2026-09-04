@@ -202,6 +202,9 @@ interface ChatMarkdownProps {
   imageBaseDir?: string | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+  resolveDirectImageAsset?: (
+    url: string,
+  ) => Extract<AssetResource, { readonly _tag: "github-user-attachment" }> | null;
 }
 
 export function canUseMarkdownFileShellActions(
@@ -1520,7 +1523,9 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly environmentId: EnvironmentId;
   readonly resource: Extract<
     AssetResource,
-    { readonly _tag: "attachment" | "workspace-file" | "media-file" }
+    {
+      readonly _tag: "attachment" | "workspace-file" | "media-file" | "github-user-attachment";
+    }
   >;
   readonly kind?: "image" | "video";
   readonly alt: string;
@@ -1543,8 +1548,13 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       : resource._tag === "workspace-file" && props.workspaceRoot
         ? `${props.workspaceRoot.replace(/[\\/]+$/, "")}/${resource.path}`
         : undefined;
-  const reference = path ? mediaFileReference(path, props.workspaceRoot) : undefined;
-  const relativePath = reference?.relativePath;
+  const reference =
+    resource._tag === "github-user-attachment"
+      ? mediaUrlReference(resource.url)
+      : path
+        ? mediaFileReference(path, props.workspaceRoot)
+        : undefined;
+  const relativePath = reference?.kind === "file" ? reference.relativePath : undefined;
   const src = assetUrl._tag === "Success" ? assetUrl.url + (props.srcFragment ?? "") : null;
   // The server reads the pixel size from the file header, so the slot can be
   // the image's final box instead of a 16:9 guess. An authored size wins; a
@@ -1564,7 +1574,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     src,
     asset: { environmentId: props.environmentId, resource },
     ...(reference ? { reference } : {}),
-    ...(relativePath && resource._tag !== "attachment"
+    ...(relativePath && (resource._tag === "workspace-file" || resource._tag === "media-file")
       ? {
           onOpenFile: () =>
             useRightPanelStore
@@ -2156,6 +2166,7 @@ function useChatMarkdownState({
   onUseArtifactTemplate,
   imageBaseDir,
   onImageExpand,
+  resolveDirectImageAsset,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
@@ -2573,6 +2584,7 @@ function useChatMarkdownState({
       openExternalLinkInPreview,
       openMarkdownMedia,
       projects,
+      resolveDirectImageAsset,
       resolveThreadPullRequest,
       resolvedTheme,
       serverConfig,
@@ -2599,6 +2611,7 @@ function useChatMarkdownState({
       openExternalLinkInPreview,
       openMarkdownMedia,
       projects,
+      resolveDirectImageAsset,
       resolveThreadPullRequest,
       resolvedTheme,
       serverConfig,
@@ -2968,7 +2981,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   img: function MarkdownImage({ node, title, src, alt, ...props }) {
-    const { expandMedia, cwd, imageBaseDir, threadRef } = use(ChatMarkdownRendererContext);
+    const { environmentId, expandMedia, cwd, imageBaseDir, resolveDirectImageAsset, threadRef } =
+      use(ChatMarkdownRendererContext);
     const imageExpand = use(MarkdownLinkContext) ? undefined : expandMedia;
     const localSrc = node?.properties?.dataLocalSrc;
     const markdownTitle = node?.properties?.dataMarkdownTitle;
@@ -2996,6 +3010,19 @@ const CHAT_MARKDOWN_COMPONENTS = {
         src: mediaSrc,
         ...(reference ? { reference } : {}),
       };
+      const directImageAsset = kind === "image" ? resolveDirectImageAsset?.(mediaSrc) : undefined;
+      if (directImageAsset && environmentId) {
+        return (
+          <ChatMarkdownAssetImage
+            environmentId={environmentId}
+            resource={directImageAsset}
+            alt={altText}
+            copyMarkdown={copyMarkdown}
+            style={authoredSizeStyle}
+            onImageExpand={imageExpand}
+          />
+        );
+      }
       if (kind === "video") {
         return (
           <ChatMarkdownVideo
