@@ -1,4 +1,6 @@
 import { ProcessSignalActions } from "./ProcessSignalActions";
+import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
+import { environmentSession } from "../../state/session";
 import { AuthDiagnosticsReadScope } from "@t3tools/contracts";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
@@ -720,7 +722,15 @@ export function DiagnosticsSettingsPanel() {
   const observability = environment?.serverConfig?.observability;
   const availableEditors = environment?.serverConfig?.availableEditors;
   const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
-  const canReadDiagnostics = useEnvironmentScope(environmentId, AuthDiagnosticsReadScope);
+  const session = useEnvironmentQuery(
+    environmentId === null ? null : environmentSession.sessionStateAtom(environmentId),
+  );
+  const diagnosticsAccess = resolveUsageAccess({
+    connectionPhase: primaryEnvironment?.connection.phase ?? "available",
+    session: session.data,
+    hasSessionError: session.error !== null,
+  });
+  const canReadDiagnostics = diagnosticsAccess.canReadDiagnostics;
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
     reportFailure: false,
   });
@@ -913,7 +923,11 @@ export function DiagnosticsSettingsPanel() {
     return (
       <SettingsPageContainer>
         <p className="text-sm text-muted-foreground">
-          This connection does not have access to diagnostics.
+          {environmentId === null
+            ? "Connect an environment to see diagnostics."
+            : diagnosticsAccess.isPending
+              ? "Checking diagnostics access…"
+              : diagnosticsAccess.error}
         </p>
       </SettingsPageContainer>
     );
