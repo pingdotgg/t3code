@@ -718,14 +718,11 @@ public struct NewThreadView: View {
     }
 
     private var submissionValidationMessage: String? {
-        if let project = model.snapshot.projects.first(where: { $0.id == projectID }),
-           let environment = model.snapshot.environments.first(where: {
-               $0.id == project.environmentID
-           }) {
-            guard environment.isEnabled else { return "Environment is off." }
-            guard DailyUXCreationContext.canCreateTask(in: environment) else {
-                return "Environment is unreachable."
-            }
+        if let environmentMessage = DailyUXCreationContext.projectEnvironmentValidationMessage(
+            projectID: projectID,
+            in: model.snapshot
+        ) {
+            return environmentMessage
         }
         guard selectedProject != nil else { return "Choose a project." }
         guard restoredDraftProjectID == projectID else { return "Project is loading." }

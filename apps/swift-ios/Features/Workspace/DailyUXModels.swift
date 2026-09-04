@@ -263,6 +263,18 @@ enum DailyUXCreationContext {
         environment.isEnabled && environment.connectionState != .disconnected
     }
 
+    static func projectEnvironmentValidationMessage(
+        projectID: String,
+        in snapshot: FeatureSnapshot
+    ) -> String? {
+        guard let project = snapshot.projects.first(where: { $0.id == projectID }),
+              let environment = snapshot.environments.first(where: {
+                  $0.id == project.environmentID
+              }) else { return nil }
+        guard environment.isEnabled else { return "Environment is off." }
+        return canCreateTask(in: environment) ? nil : "Environment is unreachable."
+    }
+
     static func unreachableEnvironments(in snapshot: FeatureSnapshot) -> [FeatureEnvironment] {
         unreachableEnvironments(in: snapshot.environments)
     }
