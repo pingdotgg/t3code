@@ -871,7 +871,7 @@ const buildAppUnderTest = (options?: {
         Layer.mock(TraceDiagnostics.TraceDiagnostics)({
           read: () =>
             Effect.succeed({
-              traceFilePath: "",
+              traceFilePath: config.serverTracePath,
               scannedFilePaths: [],
               readAt: TEST_EPOCH,
               recordCount: 0,
@@ -4286,23 +4286,23 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           withWsRpcClient(wsUrl, (client) =>
             Effect.gen(function* () {
               const diagnosticsReads = [
-                client[WS_METHODS.serverGetTraceDiagnostics]({}),
-                client[WS_METHODS.serverGetProcessDiagnostics]({}),
+                client[WS_METHODS.serverGetTraceDiagnostics]({}).pipe(Effect.asVoid),
+                client[WS_METHODS.serverGetProcessDiagnostics]({}).pipe(Effect.asVoid),
                 client[WS_METHODS.serverGetProcessResourceHistory]({
                   windowMs: 60_000,
                   bucketMs: 10_000,
-                }),
+                }).pipe(Effect.asVoid),
                 client[WS_METHODS.serverGetResourceTelemetryHistory]({
                   windowMs: 60_000,
                   bucketMs: 10_000,
-                }),
-                client[WS_METHODS.subscribeResourceTelemetry]({}).pipe(Stream.runHead),
+                }).pipe(Effect.asVoid),
+                client[WS_METHODS.subscribeResourceTelemetry]({}).pipe(Stream.runHead, Effect.asVoid),
                 client[WS_METHODS.serverGetUsageSummary]({
                   sinceDay: UsageDay.make("2026-09-01"),
                   untilDay: UsageDay.make("2026-09-01"),
                   timeZone: "UTC",
-                }),
-                client[WS_METHODS.serverRefreshUsageRates]({}),
+                }).pipe(Effect.asVoid),
+                client[WS_METHODS.serverRefreshUsageRates]({}).pipe(Effect.asVoid),
               ];
               for (const read of diagnosticsReads) {
                 if (scope === "diagnostics:read") {
