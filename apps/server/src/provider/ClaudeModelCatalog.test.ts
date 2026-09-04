@@ -5,11 +5,17 @@ import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import type { ModelManifestData } from "./ModelManifest.ts";
 import {
   formatClaudeVersionUpgradeMessage,
+  getClaudeCatalogModelCapabilities,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
+  resolveClaudeCatalogContextWindow,
+  resolveClaudeCatalogContextWindowTokens,
+  resolveClaudeCatalogEffort,
+  resolveClaudeCatalogTemplate,
   resolveClaudeModelCatalog,
   resolveClaudeModelsForVersion,
   resolveClaudeModelSlug,
+  scopeClaudeModelCatalog,
 } from "./ClaudeModelCatalog.ts";
 
 /**
@@ -46,6 +52,7 @@ const manifest = (): ModelManifestData => ({
             claudeCode: {
               effortMap: { extreme: "high" },
               modelSuffixes: { contextWindow: { large: "[large]" } },
+              contextWindowTokens: { large: 400_000 },
             },
           },
         },
@@ -133,5 +140,108 @@ describe("Claude model catalog", () => {
       },
     };
     assert.isFalse(hasValidClaudeManifestAdapters(malformed));
+  });
+});
+
+describe("Claude gateway-prefixed models", () => {
+  const catalog = () => resolveClaudeModelCatalog(manifest());
+  const selection = (model: string) => ({
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    model,
+  });
+
+  it("resolves the template a prefixed slug is modelled on, by slug or alias", () => {
+    const resolved = catalog();
+    assert.strictEqual(
+      resolveClaudeCatalogTemplate(resolved, "gateway/claude-synthetic-next")?.model.slug,
+      "claude-synthetic-next",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogTemplate(resolved, "gateway/SYNTHETIC")?.model.slug,
+      "claude-synthetic-next",
+    );
+  });
+
+  it("only treats a single leading segment as a gateway prefix", () => {
+    const resolved = catalog();
+    assert.isUndefined(resolveClaudeCatalogTemplate(resolved, "claude-synthetic-next"));
+    assert.isUndefined(
+      resolveClaudeCatalogTemplate(resolved, "gateway/team/claude-synthetic-next"),
+    );
+    assert.isUndefined(resolveClaudeCatalogTemplate(resolved, "/claude-synthetic-next"));
+    assert.isUndefined(resolveClaudeCatalogTemplate(resolved, "gateway/"));
+  });
+
+  it("borrows template capabilities and runtime mappings", () => {
+    const resolved = catalog();
+    const slug = "gateway/claude-synthetic-next";
+    assert.deepStrictEqual(
+      getClaudeCatalogModelCapabilities(resolved, slug).optionDescriptors?.map(
+        (descriptor) => descriptor.id,
+      ),
+      ["effort", "contextWindow"],
+    );
+    assert.strictEqual(resolveClaudeCatalogEffort(resolved, slug, "extreme"), "extreme");
+    assert.strictEqual(normalizeClaudeCatalogEffort(resolved, "extreme", slug), "high");
+    assert.strictEqual(resolveClaudeCatalogContextWindow(resolved, selection(slug)), "large");
+    assert.strictEqual(resolveClaudeCatalogContextWindowTokens(resolved, selection(slug)), 400_000);
+  });
+
+  it("keeps the prefixed slug on the wire and only appends the template suffix", () => {
+    const resolved = catalog();
+    assert.strictEqual(
+      resolveClaudeModelSlug(resolved, "gateway/claude-synthetic-next"),
+      "gateway/claude-synthetic-next",
+    );
+    assert.strictEqual(resolveClaudeModelSlug(resolved, "gateway/synthetic"), "gateway/synthetic");
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(resolved, selection("gateway/claude-synthetic-next")),
+      "gateway/claude-synthetic-next[large]",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(resolved, selection("gateway/synthetic")),
+      "gateway/synthetic[large]",
+    );
+  });
+
+  it("leaves slugs without a matching template opaque", () => {
+    const resolved = catalog();
+    assert.deepStrictEqual(
+      getClaudeCatalogModelCapabilities(resolved, "gateway/claude-unknown").optionDescriptors,
+      [],
+    );
+    assert.isUndefined(resolveClaudeCatalogEffort(resolved, "gateway/claude-unknown", "extreme"));
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(resolved, selection("gateway/claude-unknown")),
+      "gateway/claude-unknown",
+    );
+    assert.isUndefined(
+      resolveClaudeCatalogContextWindowTokens(resolved, selection("gateway/claude-unknown")),
+    );
+  });
+
+  it("stays resolvable when a custom model shadows an alias", () => {
+    const scoped = scopeClaudeModelCatalog(catalog(), [
+      "synthetic",
+      "gateway/claude-synthetic-next",
+    ]);
+    assert.deepStrictEqual(
+      getClaudeCatalogModelCapabilities(scoped, "synthetic").optionDescriptors,
+      [],
+      "a custom slug shadows the alias it collides with",
+    );
+    assert.isUndefined(
+      resolveClaudeCatalogTemplate(scoped, "gateway/synthetic"),
+      "a prefixed slug built on a shadowed alias stays opaque",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogTemplate(scoped, "gateway/claude-synthetic-next")?.model.slug,
+      "claude-synthetic-next",
+      "a prefixed slug built on a canonical slug keeps its template",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(scoped, selection("gateway/claude-synthetic-next")),
+      "gateway/claude-synthetic-next[large]",
+    );
   });
 });

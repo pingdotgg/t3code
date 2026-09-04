@@ -1,6 +1,7 @@
 import {
   type ClaudeSettings,
   type ModelCapabilities,
+  type ServerProviderModel,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -45,12 +46,38 @@ import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
   formatClaudeVersionUpgradeMessage,
+  resolveClaudeCatalogTemplate,
   resolveClaudeModelsForVersion,
+  scopeClaudeModelCatalog,
 } from "../ClaudeModelCatalog.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
+
+/**
+ * Custom models stay opaque unless their slug is gateway-prefixed, in which
+ * case they present the options of the built-in model they route to. The slug
+ * itself is never rewritten: that is what the gateway answers to. Templates
+ * resolve against the scoped catalog the adapter and text generation use, so
+ * the snapshot agrees with what those paths send.
+ */
+function claudeModelsFromSettings(
+  catalog: ClaudeModelCatalog,
+  builtInModels: ReadonlyArray<ServerProviderModel>,
+  customModels: ReadonlyArray<string>,
+): ReadonlyArray<ServerProviderModel> {
+  const scoped = scopeClaudeModelCatalog(catalog, customModels);
+  return providerModelsFromSettings(
+    builtInModels,
+    customModels,
+    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+  ).map((model) => {
+    if (!model.isCustom) return model;
+    const capabilities = resolveClaudeCatalogTemplate(scoped, model.slug)?.model.capabilities;
+    return capabilities ? { ...model, capabilities } : model;
+  });
+}
 
 const CLAUDE_PRESENTATION = {
   displayName: "Claude",
@@ -429,10 +456,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const allModels = providerModelsFromSettings(
+  const allModels = claudeModelsFromSettings(
+    modelCatalog,
     modelCatalog.models.map((entry) => entry.model),
     claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
 
   if (!claudeSettings.enabled) {
@@ -519,10 +546,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const models = providerModelsFromSettings(
+  const models = claudeModelsFromSettings(
+    modelCatalog,
     resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
     claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
   const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
@@ -594,10 +621,10 @@ export const makePendingClaudeProvider = (
 ): Effect.Effect<ServerProviderDraft> =>
   Effect.gen(function* () {
     const checkedAt = yield* nowIso;
-    const models = providerModelsFromSettings(
+    const models = claudeModelsFromSettings(
+      modelCatalog,
       modelCatalog.models.map((entry) => entry.model),
       claudeSettings.customModels,
-      DEFAULT_CLAUDE_MODEL_CAPABILITIES,
     );
 
     if (!claudeSettings.enabled) {

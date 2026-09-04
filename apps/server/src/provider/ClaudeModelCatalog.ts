@@ -21,6 +21,7 @@ import {
 } from "./ClaudeModelManifest.ts";
 import {
   BUNDLED_MODEL_MANIFEST,
+  gatewayModelBaseSlug,
   type ModelManifestData,
   resolveProviderCatalog,
 } from "./ModelManifest.ts";
@@ -70,7 +71,11 @@ export function resolveClaudeModelCatalog(manifest: ModelManifestData): ClaudeMo
 
 export const BUNDLED_CLAUDE_MODEL_CATALOG = resolveClaudeModelCatalog(BUNDLED_MODEL_MANIFEST);
 
-/** Keeps custom model aliases opaque while preserving canonical built-in models and capabilities. */
+/**
+ * Keeps custom model aliases opaque while preserving canonical built-in models
+ * and capabilities. Custom slugs shadow the aliases they collide with, so a
+ * gateway-prefixed slug built on a shadowed alias stays opaque too.
+ */
 export function scopeClaudeModelCatalog(
   catalog: ClaudeModelCatalog,
   customModels: ReadonlyArray<string>,
@@ -113,6 +118,29 @@ export function resolveClaudeCatalogModel(
   );
 }
 
+/**
+ * Built-in entry a gateway-prefixed slug such as `claude/claude-opus-5` is
+ * modelled on. Users routing Claude Code through an Anthropic-compatible
+ * gateway list those slugs as custom models; the template supplies their
+ * metadata while the prefixed slug stays on the wire.
+ */
+export function resolveClaudeCatalogTemplate(
+  catalog: ClaudeModelCatalog,
+  slug: string | null | undefined,
+): ClaudeCatalogModel | undefined {
+  const base = gatewayModelBaseSlug(slug?.trim() ?? "");
+  return base ? resolveClaudeCatalogModel(catalog, base) : undefined;
+}
+
+/** Direct catalog hit, else the template a gateway-prefixed slug maps to. */
+function resolveClaudeCatalogModelOrTemplate(
+  catalog: ClaudeModelCatalog,
+  slug: string | null | undefined,
+): ClaudeCatalogModel | undefined {
+  return resolveClaudeCatalogModel(catalog, slug) ?? resolveClaudeCatalogTemplate(catalog, slug);
+}
+
+/** Canonical slug for the wire. Gateway-prefixed slugs are never rewritten. */
 export function resolveClaudeModelSlug(catalog: ClaudeModelCatalog, slugOrAlias: string): string {
   return resolveClaudeCatalogModel(catalog, slugOrAlias)?.model.slug ?? slugOrAlias;
 }
@@ -121,7 +149,10 @@ export function getClaudeCatalogModelCapabilities(
   catalog: ClaudeModelCatalog,
   slugOrAlias: string | null | undefined,
 ): ModelCapabilities {
-  return resolveClaudeCatalogModel(catalog, slugOrAlias)?.model.capabilities ?? EMPTY_CAPABILITIES;
+  return (
+    resolveClaudeCatalogModelOrTemplate(catalog, slugOrAlias)?.model.capabilities ??
+    EMPTY_CAPABILITIES
+  );
 }
 
 function isVersionSupported(
@@ -187,7 +218,7 @@ export function normalizeClaudeCatalogEffort(
   model: string | null | undefined,
 ): string | undefined {
   if (!effort) return undefined;
-  const effortMap = resolveClaudeCatalogModel(catalog, model)?.runtime.effortMap;
+  const effortMap = resolveClaudeCatalogModelOrTemplate(catalog, model)?.runtime.effortMap;
   if (!effortMap || !Object.prototype.hasOwnProperty.call(effortMap, effort)) return effort;
   return effortMap[effort] ?? undefined;
 }
@@ -211,17 +242,22 @@ export function resolveClaudeCatalogContextWindow(
   return typeof value === "string" ? value : undefined;
 }
 
+/**
+ * Wire model id. A gateway-prefixed slug borrows its template's suffixes but
+ * keeps its own slug: the gateway only serves the model under the prefixed id.
+ */
 export function resolveClaudeCatalogApiModelId(
   catalog: ClaudeModelCatalog,
   modelSelection: ModelSelection,
 ): string {
   const entry = resolveClaudeCatalogModel(catalog, modelSelection.model);
+  const template = entry ?? resolveClaudeCatalogTemplate(catalog, modelSelection.model);
   const slug = entry?.model.slug ?? modelSelection.model;
   const descriptors = getProviderOptionDescriptors({
-    caps: entry?.model.capabilities ?? EMPTY_CAPABILITIES,
+    caps: template?.model.capabilities ?? EMPTY_CAPABILITIES,
     selections: modelSelection.options,
   });
-  for (const [optionId, suffixes] of Object.entries(entry?.runtime.modelSuffixes ?? {})) {
+  for (const [optionId, suffixes] of Object.entries(template?.runtime.modelSuffixes ?? {})) {
     const value = getProviderOptionCurrentValue(
       descriptors.find((descriptor) => descriptor.id === optionId),
     );
@@ -234,7 +270,7 @@ export function resolveClaudeCatalogContextWindowTokens(
   catalog: ClaudeModelCatalog,
   modelSelection: ModelSelection | undefined,
 ): number | undefined {
-  const entry = resolveClaudeCatalogModel(catalog, modelSelection?.model);
+  const entry = resolveClaudeCatalogModelOrTemplate(catalog, modelSelection?.model);
   if (!entry) return undefined;
   if (entry.runtime.fixedContextWindowTokens) return entry.runtime.fixedContextWindowTokens;
   const contextWindow = resolveClaudeCatalogContextWindow(catalog, modelSelection);

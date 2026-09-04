@@ -175,6 +175,10 @@ CLAUDE_CODE_SUBAGENT_MODEL      anthropic/claude-sonnet-4.6
 
 Add those to the same provider's Environment variables section if you want stable model choices.
 
+If you add one of these IDs as a custom model on the provider, T3 Code recognizes the part after the
+prefix. `anthropic/claude-opus-4.6` gets the same Reasoning and Context Window choices as Claude Opus
+4.6, and T3 Code still sends the full prefixed ID your gateway expects.
+
 ### Verify OpenRouter Is Being Used
 
 Open a Claude session and run:
