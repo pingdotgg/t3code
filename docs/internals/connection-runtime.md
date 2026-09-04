@@ -76,10 +76,19 @@ Wakeup handling differs by phase, in [supervisor.ts][supervisor]:
   foregrounded app reconnects immediately instead of serving the remaining
   delay.
 - Once connected, `monitorConnectedLease` handles plain activation by probing
-  the existing session (`lease.session.probe`, with a shorter timeout for
-  mobile's `application-active-probe`) rather than reconnecting; a healthy
-  session survives foregrounding. `application-active-reconnect` skips the probe
-  and replaces the lease outright.
+  the existing session (`lease.session.probe`) rather than reconnecting; a
+  healthy session survives foregrounding. `application-active-reconnect` skips
+  the probe and replaces the lease outright.
+- A desktop or web probe that misses its 15s deadline does not replace the
+  lease. The socket is still open and no close arrived, so a missed deadline
+  says the backend is busy, not gone, and tearing the lease down would disable
+  the composer over a stall. The supervisor waits 5s and probes once more; only
+  a second miss is treated as a failure. A definite probe failure still acts
+  immediately, and a genuinely dead transport is caught independently by the RPC
+  pinger through `session.closed`.
+- Mobile's `application-active-probe` keeps its short 3s deadline and does not
+  retry. After a background suspension the socket usually is dead, so waiting
+  longer would only delay recovery.
 
 The UI derives `available`, `offline`, `connecting`, `reconnecting`,
 `connected`, and `error` from supervisor state plus explicit data-sync state.
