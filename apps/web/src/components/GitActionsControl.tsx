@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { AuthSourceControlWriteScope, type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -89,7 +93,7 @@ import {
 } from "~/lib/sourceControlActions";
 import { useThreadShell } from "~/state/entities";
 import { useThread } from "~/state/entities";
-import { useEnvironmentScope } from "~/state/session";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { sourceControlEnvironment } from "~/state/sourceControl";
@@ -943,6 +947,7 @@ export default function GitActionsControl({
     activeEnvironmentId,
     AuthSourceControlWriteScope,
   );
+  const canOperateThread = useEnvironmentScope(activeEnvironmentId, AuthOrchestrationOperateScope);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(activeEnvironmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
     activeEnvironmentId,
@@ -962,6 +967,7 @@ export default function GitActionsControl({
         : null,
   );
   const activeServerThread = useThreadShell(activeThreadRef);
+  const canChangeThreadBranch = canWriteSourceControl && (activeServerThread === null || canOperateThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
@@ -998,7 +1004,7 @@ export default function GitActionsControl({
       }
 
       if (activeServerThread) {
-        if (activeServerThread.branch === branch) {
+        if (!canOperateThread || activeServerThread.branch === branch) {
           return;
         }
 
@@ -1027,6 +1033,7 @@ export default function GitActionsControl({
       });
     },
     [
+      canOperateThread,
       activeDraftThread,
       activeServerThread,
       activeThreadRef,
@@ -1226,7 +1233,14 @@ export default function GitActionsControl({
       progressToastId,
       filePaths,
     }: RunGitActionWithToastInput) => {
-      if (!canWriteSourceControl) return;
+      if (
+        activeEnvironmentId === null ||
+        !readEnvironmentScope(activeEnvironmentId, AuthSourceControlWriteScope) ||
+        (featureBranch &&
+          activeServerThread &&
+          !readEnvironmentScope(activeEnvironmentId, AuthOrchestrationOperateScope))
+      )
+        return;
       const actionStatus = statusOverride ?? gitStatusForActions;
       const actionBranch = actionStatus?.refName ?? null;
       const actionIsDefaultBranch = featureBranch ? false : isDefaultRef;
@@ -1466,7 +1480,7 @@ export default function GitActionsControl({
   };
 
   const checkoutFeatureBranchAndContinuePendingAction = () => {
-    if (!pendingDefaultBranchAction) return;
+    if (!canChangeThreadBranch || !pendingDefaultBranchAction) return;
     const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     void runGitActionWithToast({
@@ -1480,7 +1494,7 @@ export default function GitActionsControl({
   };
 
   const runDialogActionOnNewBranch = () => {
-    if (!isCommitDialogOpen) return;
+    if (!canChangeThreadBranch || !isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
 
     setIsCommitDialogOpen(false);
@@ -1949,7 +1963,7 @@ export default function GitActionsControl({
             <Button
               variant="outline"
               size="sm"
-              disabled={!canWriteSourceControl || noneSelected}
+              disabled={!canChangeThreadBranch || noneSelected}
               onClick={runDialogActionOnNewBranch}
             >
               Commit on new refName
@@ -2010,7 +2024,7 @@ export default function GitActionsControl({
               className="min-h-8 w-full max-w-full whitespace-normal py-1.5 leading-snug sm:min-h-7 sm:w-auto"
               size="sm"
               onClick={checkoutFeatureBranchAndContinuePendingAction}
-              disabled={!canWriteSourceControl}
+              disabled={!canChangeThreadBranch}
             >
               Checkout feature branch & continue
             </Button>
