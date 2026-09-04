@@ -353,7 +353,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                             <SidebarMenuSubButton
                               render={<button type="button" />}
                               size="sm"
-                              className="text-sidebar-muted-foreground/65"
+                              className="w-full text-sidebar-muted-foreground/65"
                               onClick={() => handlePageSectionClick(item.to, section.targetId)}
                             >
                               <span className="ms-0.5">{section.label}</span>
