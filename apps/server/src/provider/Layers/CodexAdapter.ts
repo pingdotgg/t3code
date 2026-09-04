@@ -594,13 +594,16 @@ function completeCodexTurnTokenUsage(
     };
   }
 
+  // Codex counts cache reads and writes inside inputTokens. Clamp the
+  // subsets so the record keeps the documented relationships even if a
+  // counter drifts.
   return {
     usageStatus: completed ? "complete" : "partial",
     usageScope: "main_agent",
     inputTokens: usage.inputTokens,
-    cachedInputTokens: usage.cachedInputTokens,
+    cachedInputTokens: Math.min(usage.inputTokens, usage.cachedInputTokens),
     ...(usage.cacheCreationTokens !== undefined
-      ? { cacheCreationTokens: usage.cacheCreationTokens }
+      ? { cacheCreationTokens: Math.min(usage.inputTokens, usage.cacheCreationTokens) }
       : {}),
     outputTokens: usage.outputTokens,
     reasoningTokens: Math.min(usage.outputTokens, usage.reasoningTokens),

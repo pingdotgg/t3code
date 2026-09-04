@@ -746,6 +746,46 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("clamps Codex cache and reasoning subsets to their totals", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.completed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit(codexTurnEvent("turn/started", "turn-clamp"));
+      yield* runtime.emit(
+        codexTokenUsageEvent({
+          id: "evt-clamp-1",
+          turnId: "turn-clamp",
+          inputTokens: 100,
+          cachedInputTokens: 140,
+          cacheCreationTokens: 120,
+          outputTokens: 20,
+          reasoningTokens: 30,
+        }),
+      );
+      yield* runtime.emit(codexTurnEvent("turn/completed", "turn-clamp"));
+
+      const completed = yield* Fiber.join(completedFiber);
+      NodeAssert.equal(completed._tag, "Some");
+      if (completed._tag === "Some" && completed.value.type === "turn.completed") {
+        NodeAssert.deepStrictEqual(completed.value.payload.tokenUsage, {
+          usageStatus: "complete",
+          usageScope: "main_agent",
+          inputTokens: 100,
+          cachedInputTokens: 100,
+          cacheCreationTokens: 100,
+          outputTokens: 20,
+          reasoningTokens: 20,
+          hasSubagents: false,
+        });
+      }
+    }),
+  );
+
   it.effect("counts the last response when Codex resets its running total mid-turn", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
