@@ -251,12 +251,14 @@ const COMPOSER_RESTING_CONTROLS_ARRIVAL_DRIFT_PX = 4;
 
 function useComposerRestingTransition(
   isCollapsed: boolean,
+  isResting: boolean,
   restingControlsRef: React.RefObject<HTMLDivElement | null>,
   onOverlayHeightChange: (height: number) => void,
 ) {
   const elementRef = useRef<HTMLDivElement>(null);
   const isCollapsedRef = useRef(isCollapsed);
   const previousCollapsedRef = useRef(isCollapsed);
+  const previousRestingRef = useRef(isResting);
   const previousHeightRef = useRef<number | null>(null);
   const previousContentOffsetsRef = useRef<{
     promptFromTop: number | null;
@@ -610,6 +612,18 @@ function useComposerRestingTransition(
       }
     };
   }, [isCollapsed, transitionToCurrentGeometry]);
+
+  // The resting flag can change while the collapsed layout stays the same,
+  // for example when an unfocused thread crosses the phone breakpoint. The
+  // chat view pairs overlay heights with that flag, so republish the natural
+  // height for the new flag. A transition in flight publishes its own.
+  useLayoutEffect(() => {
+    if (previousRestingRef.current === isResting) return;
+    previousRestingRef.current = isResting;
+    if (animationRef.current) return;
+    const overlay = elementRef.current?.closest<HTMLElement>('[data-chat-composer-overlay="true"]');
+    if (overlay) onOverlayHeightChange(overlay.getBoundingClientRect().height);
+  }, [isResting, onOverlayHeightChange]);
 
   useLayoutEffect(() => {
     const element = elementRef.current;
@@ -3647,6 +3661,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ) : null;
   const composerMainSurfaceRef = useComposerRestingTransition(
     composerControlsInStrip,
+    isComposerResting,
     restingComposerControlsRef,
     onComposerOverlayHeightChange,
   );

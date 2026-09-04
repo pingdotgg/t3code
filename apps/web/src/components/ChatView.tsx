@@ -4987,17 +4987,12 @@ function ChatViewContent(props: ChatViewProps) {
   // The composer reports its resting flag from a layout effect, which runs
   // before this component's own layout effects and before any resize
   // observation, so every measurement below sees the flag for its layout.
-  // A flag change with no height change still recomputes the reservation.
-  const onComposerRestingChange = useCallback(
-    (resting: boolean) => {
-      if (composerRestingRef.current === resting) return;
-      composerRestingRef.current = resting;
-      if (composerOverlayHeightRef.current > 0) {
-        publishComposerOverlayHeight(composerOverlayHeightRef.current);
-      }
-    },
-    [publishComposerOverlayHeight],
-  );
+  // Only the flag is stored here: the stored height still belongs to the
+  // previous layout, and the composer publishes the new layout's height
+  // itself once it has measured it.
+  const onComposerRestingChange = useCallback((resting: boolean) => {
+    composerRestingRef.current = resting;
+  }, []);
   // A held reservation belongs to the previous thread's draft. Rebuild it from
   // this thread's overlay so a tall draft elsewhere does not pad this one.
   useLayoutEffect(() => {
