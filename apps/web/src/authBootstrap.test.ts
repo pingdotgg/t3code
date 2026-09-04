@@ -286,6 +286,96 @@ describe("resolveInitialServerAuthGateState", () => {
     expect(testWindow.location.searchParams.get("token")).toBeNull();
   });
 
+  it.each([
+    { suffix: "#token=replacement-token", cached: false },
+    { suffix: "#token=replacement-token", cached: true },
+    { suffix: "?token=replacement-token", cached: true },
+  ])(
+    "re-pairs an authenticated browser with $suffix when cached=$cached",
+    async ({ suffix, cached }) => {
+      let scopes: AuthBrowserSessionResult["scopes"] = ["orchestration:read"];
+      const testApi = await installAuthApi({
+        session: () => ({ ...authenticatedSession(LOOPBACK_AUTH), scopes }),
+        browserSession: () =>
+          Effect.sync(() => {
+            scopes = ["orchestration:read", "orchestration:operate"];
+            return browserSession(scopes);
+          }),
+      });
+      const testWindow = installTestBrowser("http://localhost/");
+      const {
+        fetchSessionState,
+        resolveInitialServerAuthGateState,
+        submitServerAuthCredential,
+        takePairingTokenFromUrl,
+      } = await import("./environments/primary");
+
+      if (cached) {
+        await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+          status: "authenticated",
+        });
+      }
+
+      testWindow.location = new URL(`http://localhost/pair${suffix}`);
+      await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+        status: "requires-auth",
+        auth: LOOPBACK_AUTH,
+      });
+      expect(testApi.calls.browserSession).toEqual([]);
+
+      const token = takePairingTokenFromUrl();
+      expect(token).toBe("replacement-token");
+      await submitServerAuthCredential(token!);
+
+      expect(testApi.calls.browserSession).toEqual([{ credential: "replacement-token" }]);
+      await expect(fetchSessionState()).resolves.toMatchObject({
+        authenticated: true,
+        scopes: ["orchestration:read", "orchestration:operate"],
+      });
+      await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+        status: "authenticated",
+      });
+    },
+  );
+
+  it("keeps the existing grant when a replacement pairing token is rejected", async () => {
+    const existingSession = {
+      ...authenticatedSession(LOOPBACK_AUTH),
+      scopes: ["orchestration:read"] as const,
+    };
+    const testApi = await installAuthApi({
+      session: () => existingSession,
+      browserSession: () =>
+        Effect.fail(
+          new EnvironmentAuthInvalidError({
+            code: "auth_invalid",
+            reason: "invalid_credential",
+            traceId: "trace-invalid-replacement",
+          }),
+        ),
+    });
+    const testWindow = installTestBrowser("http://localhost/");
+    const {
+      fetchSessionState,
+      resolveInitialServerAuthGateState,
+      submitServerAuthCredential,
+      takePairingTokenFromUrl,
+    } = await import("./environments/primary");
+    await resolveInitialServerAuthGateState();
+    testWindow.location = new URL("http://localhost/pair#token=invalid-replacement");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "requires-auth",
+      auth: LOOPBACK_AUTH,
+    });
+    await expect(submitServerAuthCredential(takePairingTokenFromUrl()!)).rejects.toMatchObject({
+      _tag: "PrimaryEnvironmentPairingCredentialRejectedError",
+      message: "Invalid pairing token. Check the token and try again.",
+    });
+    expect(testApi.calls.browserSession).toEqual([{ credential: "invalid-replacement" }]);
+    await expect(fetchSessionState()).resolves.toEqual(existingSession);
+  });
+
   it("allows manual token submission after the initial auth check requires pairing", async () => {
     const nextSession = sequence(
       unauthenticatedSession(LOOPBACK_AUTH),

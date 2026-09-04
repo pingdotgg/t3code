@@ -147,6 +147,13 @@ The selected scopes replace the default permissions. The same option works with
 standard client permissions and issued bearer sessions retain administrative
 permissions.
 
+To change an existing client's permissions, create a fresh pairing link with the
+scopes it needs. In a browser opened directly on the environment, open that link
+to replace the browser's current grant. For mobile or a saved remote environment
+in web or desktop, use **Add Environment** with the fresh link or code; pairing
+the same environment replaces its saved grant. Reconnecting alone does not change
+permissions.
+
 To remove an environment from T3 Connect, open your account menu's **T3 Connect**
 page, or **Settings → T3 Connect** on mobile, and choose **Deregister**. This
 revokes its cloud access and frees its host space even when the environment is

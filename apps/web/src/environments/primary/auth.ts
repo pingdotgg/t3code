@@ -507,6 +507,16 @@ export async function revokeOtherServerClientSessions(): Promise<number> {
 }
 
 export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGateState> {
+  // An explicit pairing link replaces this browser's grant, even when the
+  // current cookie or a cached gate already authenticates it.
+  if (window.location.pathname === "/pair" && peekPairingTokenFromUrl()) {
+    const currentSession = await fetchSessionState();
+    return {
+      status: "requires-auth",
+      auth: currentSession.auth,
+    };
+  }
+
   if (resolvedAuthenticatedGateState?.status === "authenticated") {
     return resolvedAuthenticatedGateState;
   }
