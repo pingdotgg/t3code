@@ -1,0 +1,11 @@
+{
+  "branch": "t3code/codex-turn-mapping",
+  "head": "d2f1f511f4cc833bc930d6c355cd0f9b61e835a0",
+  "main": "57a66608b918d673eeec7e6c94ea5906b756fcd0",
+  "merge_base": "57a66608b918d673eeec7e6c94ea5906b756fcd0",
+  "prior_review": "47f5b100440591d2f49aa30cf3bb69eacae07f52",
+  "rebased_prior_review_tip": "c1791ab2637",
+  "date": "2026-09-02",
+  "initial_status": "clean",
+  "mode": "read-only audit; no fixes, commits, browsers, servers or live provider tests"
+}

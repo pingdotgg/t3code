@@ -1,0 +1,44 @@
+ 1:  1a5dc7e5d6 =  1:  34a4d026a5 fix(server): keep Claude session approvals ephemeral
+ 2:  d853e44391 <  -:  ---------- fix(web): keep project picker popup inside the sidebar
+ 3:  1b7221098f <  -:  ---------- fix(mobile): prevent header overflow and back-button artifacts
+ 4:  f5fb255599 =  2:  7e71ff8a80 fix(orchestration): reanchor unsettled threads
+ 5:  5f4cd75874 =  3:  6b3690e063 fix(server): observe pre-aborted Claude approvals
+ 6:  a0e7fa2f3e =  4:  feedc3f6bb fix(server): include service launcher in bundle build
+ 7:  893b1c947a =  5:  82e1b8ed60 fix(orchestration): preserve legacy thread metadata
+ 8:  d7fa7f7133 !  6:  930dd22e72 fix(web): honor disabled legacy plan mode
+ 9:  e127cf7480 =  7:  2cfe234e46 fix(server): preserve Claude subagent models
+10:  1340b474d6 =  8:  eacc09d40a fix(orchestration): honor migrated thread visibility in search
+11:  0090064448 =  9:  dcff638944 fix(orchestration): recreate missing worktrees before turns
+12:  1b0437897c ! 10:  e44588afa4 fix(clients): restore Codex feedback submission
+13:  33607d9bcb = 11:  8bbf7f50c8 fix(server): preserve generic provider attachments
+14:  532feb8b88 ! 12:  53c6857ec9 fix(web): load workspace markdown images through assets
+15:  cfa734416d <  -:  ---------- fix(web): preserve Windows markdown paths
+ -:  ---------- > 13:  7fca26e6fb fix(web): preserve Windows markdown paths
+16:  201dfc6c7e = 14:  642056fdd9 fix(server): keep current provider context usage
+17:  3a846888a8 <  -:  ---------- fix(web): restore markdown file chip actions
+ -:  ---------- > 15:  5f19d550ae fix(web): restore markdown file chip actions
+18:  0bb0d2d36e ! 16:  44f2004810 fix(web): scope markdown actions to their environment
+19:  37cfa6296d <  -:  ---------- fix(web): restore pull request markdown actions
+20:  ae6d09b0a8 = 17:  995f4e7e5a fix(protocol): reject incompatible orchestration peers
+21:  1677769660 ! 18:  3e1ff1531d docs: explain legacy thread migration
+22:  14b4b8966d = 19:  19a30d03be docs: state portable handoff limits
+23:  335bad52e0 = 20:  68104a497e chore(repo): remove tracked audit scratch files
+24:  6db9f290b2 = 21:  98670f337e fix(server): guard OpenCode prompt admission races
+25:  686fd94e5d = 22:  ecf3dd2c9a fix(server): restore Claude structured questions
+26:  cb8b2b5125 = 23:  ff9f875f17 fix(server): project Claude plans and todos
+27:  d9cc96b47b = 24:  9a4734af8e perf(orchestration): bound history reads in SQL
+28:  e05e23f1e4 = 25:  0921786018 perf(orchestration): bound complete thread snapshots
+29:  b0a77b042e = 26:  3d5bab73d8 fix(server): restore Claude resume compaction
+30:  825b95aed9 <  -:  ---------- fix(server): allow protocol negotiation in CORS
+ -:  ---------- > 27:  733db7269f fix(server): allow protocol negotiation in CORS
+31:  63d9e93e62 = 28:  26dfbc2984 fix(server): preserve provider usage in persisted turns
+32:  3cd9445411 = 29:  70f82caaa0 fix(server): preserve Claude planning lifecycle
+33:  48e2ea9892 = 30:  dbb6021f84 fix(server): normalize Claude question answers
+34:  b8b10b3f9f = 31:  de79f44221 fix(server): correlate OpenCode prompt admission
+35:  06483fbdfa = 32:  be7b07634b fix(clients): anchor feedback in conversation order
+36:  52de095cf3 = 33:  051565fc96 fix(web): retain markdown workspace ownership
+37:  25b367a4c8 = 34:  870014496f fix(orchestration): page history through its true end
+38:  d6a5a888bc = 35:  07889933e3 fix(server): cancel pending OpenCode prompts safely
+39:  677dd4f4e5 = 36:  0fc565db8a fix(orchestration): retain nested fork history when paging
+40:  0079d8b918 = 37:  47ae99f517 fix(server): recover OpenCode status reconciliation
+41:  47f5b10044 = 38:  c1791ab263 fix(orchestration): select visible history before limiting SQL

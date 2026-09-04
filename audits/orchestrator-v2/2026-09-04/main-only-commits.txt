@@ -1,0 +1,8 @@
+d7cf8aaa8d4fbcbdd523b4f4bc86fda5c47b4a70 perf(client): stop thread streams when unused (#9740)
+0de956ed2f92b8a6ead56e1566801db232d365dc fix(web): refine server update notice (#9744)
+a76b898b3aa4fd4081104b06a3b2c942bd4fecb7 feat(web): link pull request authors to profiles (#9627)
+cf9729d5ee9660c08556e823080d3bb19648ed28 perf(server): bound terminal history by bytes (#9748)
+fec606f9ae524277ef1f6886e614f32d9e15e36e perf(web): avoid repeated terminal metadata scans (#9747)
+d6e29dc9dee943b34d6b0d11441fa944c7bff7c9 perf(mobile): bound the parsed review cache (#9749)
+cbe93e8dfba68ff6fbe8c69e43a633fdc79db62d fix(web): show project settings for new threads (#9743)
+cfc9bf34156ddcc4a98b7f5c67193adb5aedce06 fix(web): fold single trailing activity (#9739)
