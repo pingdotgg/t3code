@@ -109,6 +109,8 @@ import {
 } from "../WorkspaceBreadcrumb";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import {
+  SETTINGS_MODEL_CONTROLS_CLASSNAME,
+  SETTINGS_MODEL_PICKER_TRIGGER_CLASSNAME,
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
   SettingsPageContainer,
@@ -898,7 +900,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             }
             control={
               resolvedSelection && activeEntry ? (
-                <div className="flex max-w-full flex-wrap items-center justify-end gap-1.5 sm:max-w-[26rem]">
+                <div className={`${SETTINGS_MODEL_CONTROLS_CLASSNAME} gap-1.5`}>
                   <ProviderModelPicker
                     activeInstanceId={resolvedSelection.instanceId}
                     model={resolvedSelection.model}
@@ -906,7 +908,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                     instanceEntries={instanceEntries}
                     modelOptionsByInstance={modelOptionsByInstance}
                     triggerVariant="outline"
-                    triggerClassName="min-w-0 max-w-full shrink-0 text-foreground/90 hover:text-foreground"
+                    triggerClassName={SETTINGS_MODEL_PICKER_TRIGGER_CLASSNAME}
                     onOpenProviderSetup={(instanceId) => {
                       void navigate({
                         to: "/settings/providers",
