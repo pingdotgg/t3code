@@ -59,8 +59,8 @@ struct FeatureRootModelTests {
         client.finishEvents()
         await run.value
         changes.continuation.finish()
-        let change = await changes.stream.first { _ in true }
-        #expect(change == nil)
+        let didChange = await changes.stream.contains { _ in true }
+        #expect(!didChange)
         #expect(model.threadSyncStates["thread"] == .catchingUp)
     }
 

@@ -384,7 +384,7 @@ final class NativeThreadCatchUpTests: XCTestCase {
             case let .detail(detail), let .detailDelta(detail, _):
                 if detail.thread.id == threadID { messages = detail.messages.map(\.text) }
             case .threadSync(threadID, .live): return messages
-            case let .threadSync(threadID, .failed(error)):
+            case let .threadSync(id, .failed(error)) where id == threadID:
                 XCTFail("The thread failed synchronization: \(error)")
                 return messages
             default: break
