@@ -1,0 +1,261 @@
+{
+  "baseRefName": "main",
+  "body": "## Summary\n- wire orchestration V2 provider adapter registry/factory flow for Codex and Claude provider instances\n- add Claude replay/query primitives, native fork/rollback fixtures, subagent fixture coverage, and provider replay harness updates\n- update debugger model/provider picker and improve user-facing orchestration errors\n\n## Validation\n- bun fmt\n- bun lint\n- bun typecheck\n- bun run test -- src/orchestration-v2/testkit/OrchestratorReplayFixtures.integration.test.ts -t claudeAgent\n- bun run test -- src/orchestration-v2/testkit/ClaudeReplayFixtures.integration.test.ts\n- bun run test -- src/orchestration-v2/testkit/ThreadFork.integration.test.ts -t Claude\n\n## Notes\n- Draft PR for review of current branch state. Codex all-provider replay still needs schema alignment with latest app-server behavior before it can be treated as a full-suite signal.\n\n## Closes\n\nVerified against the branch with code/commit evidence.\n\n### High confidence\nCloses #4952\nCloses #4873\nCloses #4775\nCloses #4795\nCloses #4710\nCloses #4668\nCloses #4619\nCloses #4584\nCloses #4561\nCloses #4713\nCloses #4198\nCloses #4452\nCloses #3797\nCloses #4232\nCloses #3666\nCloses #3580\nCloses #2785\nCloses #2789\nCloses #3138\nCloses #1404\nCloses #231\nCloses #216\n\n### Medium confidence (under review)\nCloses #4568\nCloses #4766\nCloses #4495\nCloses #4456\nCloses #4399\nCloses #3744\nCloses #2921\nCloses #3624\nCloses #3149\nCloses #2336\nCloses #538\nCloses #2173\nCloses #2065\n\n<!-- Macroscope's pull request summary starts here -->\n<!-- Macroscope will only edit the content between these invisible markers, and the markers themselves will not be visible in the GitHub rendered markdown. -->\n<!-- If you delete either of the start / end markers from your PR's description, Macroscope will append its summary at the bottom of the description. -->\n> [!NOTE]\n> ### Introduce orchestration V2 runtime, provider adapters, MCP toolkits, and scheduled tasks\n> - Adds a complete orchestration V2 runtime: event store, projection store, effect outbox/worker, run execution, checkpoint capture/rollback, context handoff, thread launch/lifecycle/fork services, runtime policy, provider session management, and runtime recovery\n> - Adds V2 provider adapter framework with built-in adapters for Claude, Codex, Cursor, Grok, OpenCode, Antigravity, and ACP Registry, all sharing a common ACP or SDK integration layer\n> - Adds orchestrator and worktree MCP toolkits with typed tool definitions, handlers, and HTTP registration\n> - Adds a scheduled-task service with interval and fixed-time schedules, persistence, live subscriptions, and CRUD operations\n> - Adds database migrations 048–058 for V2 event/projection schema, subagents, provider-session bindings, thread-launch workflows, application event sourcing, effect cancellation, scheduled tasks, legacy import state, and recovery indexes\n> - Adds a legacy V1 thread importer for one-way migration of existing thread shells and transcripts into V2\n> - Migrates web and mobile clients, shared packages, and client-runtime state to consume V2 projections, shells, and runtime models instead of the legacy session/turn model\n> - Risk: replaces the legacy orchestration engine's thread handling with V2; the old `OrchestrationEngine` now handles project commands only and no longer performs thread auto-settlement, user-input activity lookup, or thread replay. Cursor settings no longer define `binaryPath` or `apiEndpoint`. Provider instances expose `orchestrationAdapter` instead of `adapter`.\n>\n> <!-- Macroscope's review summary starts here -->\n>\n> <sup><a href=\"https://app.macroscope.com\">Macroscope</a> summarized 8af5734.</sup>\n> <!-- Macroscope's review summary ends here -->\n>\n<!-- Macroscope's pull request summary ends here -->\n\n<!-- CURSOR_SUMMARY -->\n---\n\n> [!NOTE]\n> **Medium Risk**\n> Mobile thread persistence and list/archive/stop behavior change with V2 runtime semantics; removing the thread-transfer report workflow reduces PR visibility into transfer budget regressions.\n> \n> **Overview**\n> This slice of the orchestration V2 rollout **retires the thread-transfer PR comment pipeline** (trusted publisher script, tests, and `workflow_run` workflow) while CI can still emit transfer artifacts; it also **installs `build-essential` in CI** so ACP process-tree fixtures compile instead of soft-skipping.\n> \n> **Mobile** moves onto shared V2 client-runtime pieces: SQLite cache uses `ORCHESTRATION_CACHE_SCHEMA_VERSION` and stored V2 shell/thread snapshots, runtime wiring swaps in bounded thread snapshot loading and history control, and thread detail/review/archive flows read **projections** (`runtime`, `RuntimeRequestId`, checkpoint summaries from `runId`) instead of V1 session/turn shapes. UX additions include **activity inspector**, **queue control**, **relationships banner**, progressive **history controls**, server **visit** watermarking, stricter **archive** rules via `threadCanArchive`, and approval/user-input cards that honor **live vs dead** provider `responseCapability`.\n> \n> Smaller touches: shared **brand mark** module, new **uniwind adaptive color** tokens, desktop env test for user-data dir names, README link to appearance docs, and marketing copy for Cursor harness.\n> \n> <sup>Reviewed by [Cursor Bugbot](https://cursor.com/bugbot) for commit 9eeed8c17109be3752d2f8e1643583d1f579ea2d. Bugbot is set up for automated code reviews on this repo. Configure [here](https://www.cursor.com/dashboard/bugbot).</sup>\n<!-- /CURSOR_SUMMARY -->\n\n",
+  "headRefName": "t3code/codex-turn-mapping",
+  "headRefOid": "8af5734365f7c45bc08b57066dbae42f9f7d4235",
+  "isDraft": false,
+  "number": 2829,
+  "state": "OPEN",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:25:05Z",
+      "conclusion": "FAILURE",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905624991/job/101129744766",
+      "name": "Check",
+      "startedAt": "2026-09-04T18:23:36Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:23:27Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905624915/job/101129746493",
+      "name": "Build macOS Apple Silicon preview",
+      "startedAt": "2026-09-04T18:23:27Z",
+      "status": "COMPLETED",
+      "workflowName": "Desktop macOS Preview"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:23:27Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905624962/job/101129746252",
+      "name": "EAS Preview",
+      "startedAt": "2026-09-04T18:23:27Z",
+      "status": "COMPLETED",
+      "workflowName": "Mobile EAS Preview"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:23:27Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905624883/job/101129745113",
+      "name": "Deploy web preview",
+      "startedAt": "2026-09-04T18:23:27Z",
+      "status": "COMPLETED",
+      "workflowName": "Web Preview"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:24:30Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905624996/job/101129747755",
+      "name": "Native fingerprint diff",
+      "startedAt": "2026-09-04T18:23:36Z",
+      "status": "COMPLETED",
+      "workflowName": "Mobile Fingerprint Check"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:23:33Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905622732/job/101129737618",
+      "name": "Prepare PR size config",
+      "startedAt": "2026-09-04T18:23:28Z",
+      "status": "COMPLETED",
+      "workflowName": "PR Size"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:23:29Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905622705/job/101129737077",
+      "name": "Collect PR targets",
+      "startedAt": "2026-09-04T18:23:27Z",
+      "status": "COMPLETED",
+      "workflowName": "PR Vouch"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:23:27Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905624915/job/101129745554",
+      "name": "Remove preview download",
+      "startedAt": "2026-09-04T18:23:27Z",
+      "status": "COMPLETED",
+      "workflowName": "Desktop macOS Preview"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:23:33Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905622732/job/101129775867",
+      "name": "Sync PR size label definitions",
+      "startedAt": "2026-09-04T18:23:34Z",
+      "status": "COMPLETED",
+      "workflowName": "PR Size"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:25:06Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905624991/job/101129744778",
+      "name": "Test",
+      "startedAt": "2026-09-04T18:23:37Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:23:43Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905622705/job/101129757508",
+      "name": "Label PR 2829",
+      "startedAt": "2026-09-04T18:23:32Z",
+      "status": "COMPLETED",
+      "workflowName": "PR Vouch"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:23:27Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905624915/job/101129746083",
+      "name": "Publish anonymous download",
+      "startedAt": "2026-09-04T18:23:27Z",
+      "status": "COMPLETED",
+      "workflowName": "Desktop macOS Preview"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:26:43Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905624991/job/101129744870",
+      "name": "Test Server 1",
+      "startedAt": "2026-09-04T18:23:35Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:23:54Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905622732/job/101129772818",
+      "name": "Label PR size",
+      "startedAt": "2026-09-04T18:23:36Z",
+      "status": "COMPLETED",
+      "workflowName": "PR Size"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:26:01Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905624991/job/101129744788",
+      "name": "Test Server 2",
+      "startedAt": "2026-09-04T18:23:36Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:33:55Z",
+      "conclusion": "CANCELLED",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905624991/job/101129744689",
+      "name": "Test Server 3",
+      "startedAt": "2026-09-04T18:23:34Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:24:03Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905624991/job/101129744861",
+      "name": "Rust",
+      "startedAt": "2026-09-04T18:23:36Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:23:45Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905624991/job/101129744696",
+      "name": "Mobile Native Changes",
+      "startedAt": "2026-09-04T18:23:35Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:24:57Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905624991/job/101129744508",
+      "name": "Release Smoke",
+      "startedAt": "2026-09-04T18:23:34Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:25:00Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/actions/runs/33905624991/job/101129836308",
+      "name": "Mobile Native Static Analysis",
+      "startedAt": "2026-09-04T18:24:05Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:26:19Z",
+      "conclusion": "NEUTRAL",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/pull/2829/checks?check_run_id=101129651357",
+      "name": "Macroscope - Approvability Check",
+      "startedAt": "2026-09-04T18:23:08Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:23:46Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/pull/2829/checks?check_run_id=101129648791",
+      "name": "Macroscope - Correctness Check",
+      "startedAt": "2026-09-04T18:23:07Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:23:39Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/pull/2829/checks?check_run_id=101129783475",
+      "name": "Macroscope - Effect Service Conventions",
+      "startedAt": "2026-09-04T18:23:35Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T18:23:40Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/pingdotgg/t3code/pull/2829/checks?check_run_id=101129786339",
+      "name": "Macroscope - UI Consistency",
+      "startedAt": "2026-09-04T18:23:36Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "CodeRabbit",
+      "startedAt": "2026-09-04T18:23:29Z",
+      "state": "SUCCESS",
+      "targetUrl": ""
+    }
+  ],
+  "title": "feat(orchestrator): introduce new orchestrator",
+  "updatedAt": "2026-09-04T18:52:35Z",
+  "url": "https://github.com/pingdotgg/t3code/pull/2829"
+}

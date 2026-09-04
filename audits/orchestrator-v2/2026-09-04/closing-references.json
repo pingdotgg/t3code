@@ -1,0 +1,15 @@
+{
+  "capturedAt": "2026-09-04T19:30:28.136740+00:00",
+  "head": "8af5734365f7c45bc08b57066dbae42f9f7d4235",
+  "initialMain": "d7cf8aaa8d4fbcbdd523b4f4bc86fda5c47b4a70",
+  "reviewedMainAtClose": "f6db4206258b0ef30e8dd8949627acfd209bf338",
+  "mainOnlyCommits": 15,
+  "branchOnlyCommits": 333,
+  "initialTreeChangedFiles": 991,
+  "closingTreeChangedFiles": 999,
+  "incomingMainCommitsSincePreviousAudit": 247,
+  "dirtyFiles": 59,
+  "dirtyFilesChangedSinceFinalManifest": [],
+  "noLongerDirty": [],
+  "cutoffNote": "Main revisions after reviewedMainAtClose are outside this audit."
+}

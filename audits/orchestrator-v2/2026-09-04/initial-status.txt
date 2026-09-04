@@ -1,0 +1,57 @@
+ M apps/server/src/git/GitManager.ts
+ M apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts
+ M apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
+ M apps/server/src/orchestration-v2/Orchestrator.ts
+ M apps/server/src/orchestration-v2/ProjectionStore.ts
+ M apps/server/src/orchestration-v2/ProviderTurnControlService.test.ts
+ M apps/server/src/orchestration-v2/ThreadSettlementService.test.ts
+ M apps/server/src/orchestration-v2/ThreadSettlementService.ts
+ M apps/server/src/orchestration-v2/runtimeLayer.test.ts
+ M apps/server/src/orchestration-v2/testkit/fixtures/message_steering/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/multi_turn/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/plan_questions/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/proposed_plan/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/provider_thread_resume/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/queued_turn/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/simple/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/subagent/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/subagent_continue/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2_nested/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_continue/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_prior_turn/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_siblings/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/thread_merge_back_continue/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/thread_merge_back_siblings/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/todo_list/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only_on_request/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/tool_call_restricted_granular/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/tool_call_workspace_never/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt_mid_tool/codex_transcript.ndjson
+ M apps/server/src/orchestration-v2/testkit/fixtures/web_search/codex_transcript.ndjson
+ M apps/server/src/persistence/Migrations.ts
+ M apps/server/src/provider/Layers/EventNdjsonLogger.test.ts
+ M apps/server/src/provider/Layers/EventNdjsonLogger.ts
+ M apps/server/src/relay/AgentAwarenessRelay.ts
+ M apps/server/src/server.ts
+ M apps/server/src/vcs/GitVcsDriver.ts
+ M apps/server/src/vcs/GitVcsDriverCore.test.ts
+ M apps/server/src/vcs/GitVcsDriverCore.ts
+ M apps/web/src/components/CommandPalette.tsx
+ M apps/web/src/components/ThreadStatusIndicators.test.ts
+ M apps/web/src/components/ThreadStatusIndicators.tsx
+ M apps/web/src/connection/desktopLocal.test.ts
+ M apps/web/src/connection/desktopLocal.ts
+ M pnpm-lock.yaml
+ M pnpm-workspace.yaml
+?? apps/mobile/scripts/fixtures/
+?? apps/mobile/scripts/notification-center-manager.test.ts
+?? apps/server/src/orchestration-v2/ProjectionSettlement.test.ts
+?? apps/server/src/persistence/Migrations/059_OrchestrationV2ShellIndexes.ts
+?? apps/server/src/relay/AgentAwarenessRelay.test.ts
+?? apps/web/src/components/ThreadStatusIndicators.subscriptions.test.tsx
+?? audits/
+?? patches/expo-notifications@57.0.15.patch
