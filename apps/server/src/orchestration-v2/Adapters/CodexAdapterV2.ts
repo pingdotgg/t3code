@@ -799,6 +799,26 @@ const resolveCodexForkRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveForkR
   },
 );
 
+export const resolveCodexForkBoundary = Effect.fn("CodexAdapterV2.resolveForkBoundary")(function* (
+  input: ProviderAdapterV2ForkThreadInput,
+) {
+  const rollbackTurnCount = yield* resolveCodexForkRollbackTurnCount(input);
+  if (input.providerTurnId === undefined || input.sourceProviderTurns === undefined) {
+    return { rollbackTurnCount };
+  }
+
+  const boundaryTurn = providerTurnsForThread(
+    input.sourceProviderTurns,
+    input.sourceProviderThread,
+  ).find((turn) => turn.id === input.providerTurnId);
+  const nativeTurnId = boundaryTurn?.nativeTurnRef?.nativeId;
+  if (nativeTurnId === null || nativeTurnId === undefined) {
+    return { rollbackTurnCount };
+  }
+
+  return { lastTurnId: nativeTurnId, rollbackTurnCount: 0 };
+});
+
 export const resolveCodexRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveRollbackTurnCount")(
   function* (input: ProviderAdapterV2RollbackThreadInput) {
     const providerTurns = input.providerThreadTurns;
@@ -5380,10 +5400,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           forkThread: (threadInput) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(threadInput.sourceProviderThread);
+              const forkBoundary = yield* resolveCodexForkBoundary(threadInput);
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(
                   client.request("thread/fork", {
                     threadId,
+                    ...(forkBoundary.lastTurnId === undefined
+                      ? {}
+                      : { lastTurnId: forkBoundary.lastTurnId }),
                     ...codexThreadRuntimeParams({
                       threadId: threadInput.targetThreadId,
                       ...(threadInput.modelSelection === undefined
@@ -5404,7 +5428,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     }),
                 ),
               );
-              const rollbackTurnCount = yield* resolveCodexForkRollbackTurnCount(threadInput);
+              const { rollbackTurnCount } = forkBoundary;
               const forkedThread =
                 rollbackTurnCount === 0
                   ? response.thread

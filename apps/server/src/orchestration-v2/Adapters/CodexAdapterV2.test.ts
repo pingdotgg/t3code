@@ -59,6 +59,7 @@ import {
   makeCodexAppServerProtocolLogger,
   makeCodexAppServerSpawnCommand,
   projectCodexDynamicToolItem,
+  resolveCodexForkBoundary,
   resolveCodexRollbackTurnCount,
 } from "./CodexAdapterV2.ts";
 import { makeReplayServerConfig } from "./CodexAdapterV2.testkit.ts";
@@ -937,6 +938,86 @@ describe("CodexAdapterV2 rollback mapping", () => {
       });
 
       assert.equal(numTurns, 2);
+    }),
+  );
+});
+
+describe("CodexAdapterV2 fork mapping", () => {
+  it.effect("uses the native turn id as the fork boundary", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const providerThreadId = ProviderThreadId.make("provider-thread-codex-fork");
+      const sourceProviderThread: OrchestrationV2ProviderThread = {
+        id: providerThreadId,
+        driver: CODEX_DRIVER_KIND,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerSessionId: ProviderSessionId.make("provider-session-codex-fork"),
+        appThreadId: ThreadId.make("thread-codex-source"),
+        ownerNodeId: null,
+        nativeThreadRef: {
+          driver: CODEX_DRIVER_KIND,
+          nativeId: "native-thread-codex-fork",
+          strength: "strong",
+        },
+        nativeConversationHeadRef: null,
+        status: "idle",
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 2,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const providerTurn = (id: string, ordinal: number): OrchestrationV2ProviderTurn => ({
+        id: ProviderTurnId.make(id),
+        providerThreadId,
+        nodeId: NodeId.make(`node-${id}`),
+        runAttemptId: RunAttemptId.make(`run-attempt-${id}`),
+        nativeTurnRef: {
+          driver: CODEX_DRIVER_KIND,
+          nativeId: `native-${id}`,
+          strength: "strong",
+        },
+        ordinal,
+        status: "completed",
+        startedAt: now,
+        completedAt: now,
+      });
+      const boundaryTurn = providerTurn("provider-turn-boundary", 1);
+      const laterTurn = providerTurn("provider-turn-later", 2);
+
+      const boundary = yield* resolveCodexForkBoundary({
+        sourceProviderThread,
+        sourceProviderTurns: [boundaryTurn, laterTurn],
+        providerTurnId: boundaryTurn.id,
+        targetThreadId: ThreadId.make("thread-codex-fork"),
+      });
+
+      assert.deepEqual(boundary, {
+        lastTurnId: "native-provider-turn-boundary",
+        rollbackTurnCount: 0,
+      });
+
+      const identitylessBoundary = yield* resolveCodexForkBoundary({
+        sourceProviderThread,
+        sourceProviderTurns: [
+          {
+            ...boundaryTurn,
+            nativeTurnRef: {
+              driver: CODEX_DRIVER_KIND,
+              nativeId: null,
+              strength: "none",
+            },
+          },
+          laterTurn,
+        ],
+        providerTurnId: boundaryTurn.id,
+        targetThreadId: ThreadId.make("thread-codex-fork"),
+      });
+
+      assert.deepEqual(identitylessBoundary, {
+        rollbackTurnCount: 1,
+      });
     }),
   );
 });
