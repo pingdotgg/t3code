@@ -203,6 +203,54 @@ self-hosted.example.test
   }),
 );
 
+it.effect("routes authenticated GitHub Enterprise remotes without relying on host naming", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "https://git.example.edu/org/repo.git" }],
+      process: {
+        run: () =>
+          Effect.succeed(
+            processOutput(
+              JSON.stringify({
+                hosts: {
+                  "github.com": [
+                    {
+                      state: "success",
+                      active: true,
+                      host: "github.com",
+                      login: "active-user",
+                      tokenSource: "keyring",
+                      gitProtocol: "https",
+                    },
+                  ],
+                  "git.example.edu": [
+                    {
+                      state: "success",
+                      active: false,
+                      host: "git.example.edu",
+                      login: "enterprise-user",
+                      tokenSource: "keyring",
+                      gitProtocol: "https",
+                    },
+                  ],
+                },
+              }),
+            ),
+          ),
+      },
+    });
+
+    const handle = yield* registry.resolveHandle({ cwd: "/repo" });
+
+    assert.strictEqual(handle.provider.kind, "github");
+    assert.deepStrictEqual(handle.context?.provider, {
+      kind: "github",
+      name: "GitHub Self-Hosted",
+      baseUrl: "https://git.example.edu",
+    });
+  }),
+);
+
 it.effect("refines the caller-selected remote instead of choosing another configured remote", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry({

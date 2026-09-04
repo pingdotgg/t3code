@@ -122,6 +122,18 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     ).toBe("unknown");
   });
 
+  it("leaves enterprise hosts without a provider label unknown for CLI refinement", () => {
+    // GitHub Enterprise hosts are named by the customer, so hostname matching cannot see
+    // them. Detection reports `unknown` and the provider CLIs settle it during refinement.
+    const remoteUrl = "https://git.example.edu/org/repo.git";
+
+    expect(detectSourceControlProviderFromRemoteUrl(remoteUrl)).toEqual({
+      kind: "unknown",
+      name: "git.example.edu",
+      baseUrl: "https://git.example.edu",
+    });
+  });
+
   it("detects SSH remotes with non-git SSH users (e.g. gitlab@, deploy@)", () => {
     expect(
       detectSourceControlProviderFromRemoteUrl("gitlab@gitlab.example.com:group/project.git")?.kind,
