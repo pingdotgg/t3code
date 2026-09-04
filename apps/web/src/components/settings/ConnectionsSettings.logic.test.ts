@@ -2,6 +2,7 @@ import type { AdvertisedEndpoint, DesktopWslState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  canRevokeOtherClients,
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
   selectQrEndpointOption,
@@ -181,5 +182,17 @@ describe("selectQrEndpointOption", () => {
     const loopbackOnly = options.slice(0, 1);
     expect(selectQrEndpointOption(loopbackOnly, null, null)?.id).toBe("desktop-loopback:4780");
     expect(selectQrEndpointOption([], "anything", "anything")).toBeNull();
+  });
+});
+
+describe("canRevokeOtherClients", () => {
+  it("permits revocation when a write-only grant cannot list clients", () => {
+    expect(canRevokeOtherClients(null)).toBe(true);
+  });
+
+  it("disables revocation only when a loaded list has no other clients", () => {
+    expect(canRevokeOtherClients([])).toBe(false);
+    expect(canRevokeOtherClients([{ current: true }])).toBe(false);
+    expect(canRevokeOtherClients([{ current: true }, { current: false }])).toBe(true);
   });
 });
