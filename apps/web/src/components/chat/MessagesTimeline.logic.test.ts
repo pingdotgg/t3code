@@ -470,6 +470,59 @@ describe("resolveAssistantMessageCopyState", () => {
       visible: true,
     });
   });
+
+  it("copies readable source references while preserving citation examples in code", () => {
+    const citation = "\uE200cite\uE202turn0view0\uE201";
+    expect(
+      resolveAssistantMessageCopyState({
+        showCopyButton: true,
+        text: `The report supports this. ${citation}\n\nExample: \`${citation}\``,
+        streaming: false,
+      }),
+    ).toEqual({
+      text: `The report supports this. \\[Source 1: turn0view0\\]\n\nExample: \`${citation}\``,
+      visible: true,
+    });
+  });
+
+  it("keeps artifact names literal without shifting copied source numbers", () => {
+    const artifactName = "\uE200cite\uE202turn0view0\uE201";
+    const citation = "\uE200cite\uE202turn1search2\uE201";
+    expect(
+      resolveAssistantMessageCopyState({
+        showCopyButton: true,
+        text: [
+          `::artifact-template{skill_name="artifact-template-hello-world" skill_directory="/Users/test/.codex/skills/artifact-template-hello-world" display_name="${artifactName}" artifact_kind="document"}`,
+          "",
+          `The report supports this. ${citation}`,
+        ].join("\n"),
+        streaming: false,
+      }),
+    ).toEqual({
+      text: `${artifactName} (Document template)\n\nThe report supports this. \\[Source 1: turn1search2\\]`,
+      visible: true,
+    });
+  });
+
+  it("does not rewrite an unfinished response for a hidden copy button", () => {
+    const text = "The report supports this. \uE200cite\uE202turn0view0";
+    expect(
+      resolveAssistantMessageCopyState({ showCopyButton: true, text, streaming: true }),
+    ).toEqual({ text, visible: false });
+  });
+
+  it("keeps citation numbering consistent when copying recovered list content", () => {
+    expect(
+      resolveAssistantMessageCopyState({
+        showCopyButton: true,
+        text: "-       First. \uE200cite\uE202turn0view0\uE201\n\nSecond. \uE200cite\uE202turn1view0\uE201",
+        streaming: false,
+      }),
+    ).toEqual({
+      text: "-       First. \\[Source 1: turn0view0\\]\n\nSecond. \\[Source 2: turn1view0\\]",
+      visible: true,
+    });
+  });
 });
 
 describe("workEntryIsVisibleInGroup", () => {

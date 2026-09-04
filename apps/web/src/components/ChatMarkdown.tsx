@@ -39,6 +39,11 @@ import {
   type CodexArtifactTemplateKind,
 } from "@t3tools/client-runtime/codex-artifact-templates";
 import {
+  CODEX_CITATION_HAST_PROPERTIES,
+  codexCitationFromHastProperties,
+  remarkCodexCitations,
+} from "@t3tools/client-runtime/codex-citations";
+import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
@@ -72,6 +77,7 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
+import { CodexCitationChip } from "./chat/CodexCitationChip";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
 import {
@@ -381,6 +387,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
     div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
+    span: [...(defaultSchema.attributes?.span ?? []), ...CODEX_CITATION_HAST_PROPERTIES],
     a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink"],
     img: [...(defaultSchema.attributes?.img ?? []), "dataLocalSrc", "dataMarkdownTitle"],
   },
@@ -390,25 +397,6 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     src: [...(defaultSchema.protocols?.src ?? []), "file"],
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
-
-const CHAT_MARKDOWN_REMARK_PLUGINS = [
-  remarkGfm,
-  remarkGithubAlerts,
-  remarkNormalizeListItemIndentation,
-  remarkCodexDirectives,
-  remarkPreserveCodeMeta,
-  remarkNormalizeLinksAndTagInlineCode,
-] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
-
-const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
-  remarkGfm,
-  remarkGithubAlerts,
-  remarkNormalizeListItemIndentation,
-  remarkCodexDirectives,
-  remarkBreaks,
-  remarkPreserveCodeMeta,
-  remarkNormalizeLinksAndTagInlineCode,
-] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
@@ -2342,6 +2330,14 @@ function ChatMarkdown({
     };
 
     return {
+      span({ node, children, ...props }) {
+        const citation = codexCitationFromHastProperties(node?.properties);
+        return citation ? (
+          <CodexCitationChip citation={citation} />
+        ) : (
+          <span {...props}>{children}</span>
+        );
+      },
       div({ node, children, ...props }) {
         const artifactTemplate = artifactTemplateFromHastProperties(node?.properties);
         if (artifactTemplate) {
@@ -2766,12 +2762,19 @@ function ChatMarkdown({
   ]);
   /* eslint-enable react/no-unstable-nested-components */
 
-  const remarkPlugins = useMemo(
+  const remarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
     () => [
-      ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
+      remarkGfm,
+      remarkGithubAlerts,
+      remarkNormalizeListItemIndentation,
+      remarkCodexDirectives,
+      [remarkCodexCitations, { isStreaming }],
+      ...(lineBreaks ? [remarkBreaks] : []),
+      remarkPreserveCodeMeta,
+      remarkNormalizeLinksAndTagInlineCode,
       ...extraRemarkPlugins,
     ],
-    [extraRemarkPlugins, lineBreaks],
+    [extraRemarkPlugins, isStreaming, lineBreaks],
   );
 
   // react-markdown converts unparsed HTML nodes to text when skipHtml is false.

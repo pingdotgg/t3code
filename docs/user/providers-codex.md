@@ -49,6 +49,15 @@ The web and desktop Agents panel shows each sub-agent's model and reasoning effo
 reports them. If Codex does not report either value, T3 Code leaves it out instead of using the
 parent agent's settings.
 
+## Source citations
+
+Codex research responses can include numbered source citations. On web and desktop, select a
+citation to inspect its source IDs and any cited line ranges. When Codex supplies only source
+IDs, the details explain that the source URL is unavailable. There is no destination link to open.
+
+Mobile and copied responses show readable source references. These citations are separate from
+quoting an assistant response in the composer.
+
 ## Browser and computer activity
 
 Browser and Computer Use calls show their user-facing task title when Codex provides one. Expanded

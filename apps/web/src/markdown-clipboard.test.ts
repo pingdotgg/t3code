@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { serializeRenderedMarkdownFragment } from "./markdown-clipboard";
+import {
+  chatMarkdownClipboardPayload,
+  serializeRenderedMarkdownFragment,
+} from "./markdown-clipboard";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import {
   collectAssistantCitations,
@@ -13,13 +16,27 @@ const ELEMENT_NODE = 1;
 class FakeText {
   readonly nodeType = TEXT_NODE;
   readonly childNodes: ReadonlyArray<never> = [];
+  parentElement: FakeElement | null = null;
 
   constructor(readonly textContent: string) {}
+}
+
+class FakeDocumentFragment {
+  constructor(readonly childNodes: ReadonlyArray<FakeElement | FakeText>) {}
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 class FakeElement {
   readonly nodeType = ELEMENT_NODE;
   readonly childNodes: Array<FakeElement | FakeText> = [];
+  parentElement: FakeElement | null = null;
   readonly classList = {
     contains: (name: string) => this.classNames.includes(name),
   };
@@ -38,13 +55,49 @@ class FakeElement {
     return this.childNodes.map((child) => child.textContent).join("");
   }
 
+  set textContent(text: string) {
+    for (const child of this.childNodes) child.parentElement = null;
+    this.childNodes.length = 0;
+    this.append(new FakeText(text));
+  }
+
+  get innerHTML(): string {
+    return this.childNodes
+      .map((child) => (child instanceof FakeText ? escapeHtml(child.textContent) : child.outerHTML))
+      .join("");
+  }
+
+  get outerHTML(): string {
+    const attributes = Object.entries(this.attributes)
+      .map(([name, value]) => ` ${name}="${escapeHtml(value)}"`)
+      .join("");
+    return `<${this.localName}${attributes}>${this.innerHTML}</${this.localName}>`;
+  }
+
   get children(): ReadonlyArray<FakeElement> {
     return this.childNodes.filter((child): child is FakeElement => child instanceof FakeElement);
   }
 
   append(...children: Array<FakeElement | FakeText>): this {
+    for (const child of children) child.parentElement = this;
     this.childNodes.push(...children);
     return this;
+  }
+
+  appendChild(child: FakeElement | FakeText | FakeDocumentFragment) {
+    if (child instanceof FakeDocumentFragment) this.append(...child.childNodes);
+    else this.append(child);
+    return child;
+  }
+
+  cloneNode(): FakeElement {
+    return new FakeElement(this.tagName, this.classNames, this.attributes);
+  }
+
+  remove() {
+    const siblings = this.parentElement?.childNodes;
+    if (siblings) siblings.splice(siblings.indexOf(this), 1);
+    this.parentElement = null;
   }
 
   getAttribute(name: string): string | null {
@@ -55,8 +108,29 @@ class FakeElement {
     return Object.hasOwn(this.attributes, name);
   }
 
-  closest(): FakeElement | null {
-    return null;
+  private matches(selector: string): boolean {
+    if (selector.startsWith(".")) return this.classList.contains(selector.slice(1));
+    if (selector.startsWith("[")) {
+      return [...selector.matchAll(/\[([^\]=]+)(?:="([^"]*)")?\]/g)].every(
+        ([, attribute, value]) =>
+          attribute !== undefined &&
+          this.hasAttribute(attribute) &&
+          (value === undefined || this.getAttribute(attribute) === value),
+      );
+    }
+    return this.tagName === selector.toUpperCase();
+  }
+
+  closest(selector: string): FakeElement | null {
+    return this.matches(selector) ? this : (this.parentElement?.closest(selector) ?? null);
+  }
+
+  querySelectorAll(selector: string): FakeElement[] {
+    const selectors = selector.split(",").map((part) => part.trim());
+    return this.children.flatMap((child) => [
+      ...(selectors.some((part) => child.matches(part)) ? [child] : []),
+      ...child.querySelectorAll(selector),
+    ]);
   }
 
   /** Supports only the selectors markdown-clipboard actually asks for. */
@@ -152,6 +226,17 @@ describe("serializeRenderedMarkdownFragment", () => {
     const copied = serializeRenderedMarkdownFragment(asNode(container));
     expect(copied).toBe(`Explain ${serializeAssistantCitation(citation)}`);
     expect(collectAssistantCitations(copied).map((entry) => entry.citation)).toEqual([citation]);
+  });
+
+  it("keeps source references when copying a paragraph containing numbered citation controls", () => {
+    const chip = new FakeElement("SPAN", [], {
+      "data-markdown-copy": "\\[Source 1: turn0view0\\]",
+    }).append(new FakeElement("BUTTON").append(new FakeText("1")));
+    const paragraph = new FakeElement("P").append(new FakeText("The report supports this. "), chip);
+
+    expect(serializeRenderedMarkdownFragment(asNode(paragraph))).toBe(
+      "The report supports this. \\[Source 1: turn0view0\\]",
+    );
   });
 
   it("keeps a highlighted block code selection plain when its pre wrapper is outside the range", () => {
@@ -261,5 +346,91 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
       "Hello World (Document template)",
     );
+  });
+});
+
+/** A native range clones its selected descendants, not their surrounding elements. */
+function selectionFragment(
+  commonAncestorContainer: FakeElement | FakeText,
+  ...selectedNodes: Array<FakeElement | FakeText>
+): Selection {
+  return {
+    rangeCount: 1,
+    getRangeAt: () => ({
+      collapsed: false,
+      commonAncestorContainer,
+      cloneContents: () => new FakeDocumentFragment(selectedNodes),
+      toString: () => selectedNodes.map((node) => node.textContent).join(""),
+    }),
+  } as unknown as Selection;
+}
+
+describe("chatMarkdownClipboardPayload", () => {
+  beforeEach(() => {
+    vi.stubGlobal("Node", { TEXT_NODE, ELEMENT_NODE });
+    vi.stubGlobal("document", {
+      createElement: (tagName: string) => new FakeElement(tagName.toUpperCase()),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    {
+      name: "single source",
+      numbers: "1",
+      markdown: "\\[Source 1: turn0view0\\]",
+      plainText: "[Source 1: turn0view0]",
+    },
+    {
+      name: "grouped sources with a line range",
+      numbers: "1, 2",
+      markdown: "\\[Source 1: turn0view0; Source 2: turn1search2; L8-L13\\]",
+      plainText: "[Source 1: turn0view0; Source 2: turn1search2; L8-L13]",
+    },
+  ])("copies source details when only $name numbers are selected", (citation) => {
+    const numbers = new FakeText(citation.numbers);
+    const chip = new FakeElement("SPAN", [], {
+      "data-markdown-copy": citation.markdown,
+      "data-markdown-copy-text": citation.plainText,
+    }).append(new FakeElement("BUTTON").append(new FakeElement("SPAN").append(numbers)));
+    new FakeElement("P").append(new FakeText("Before "), chip, new FakeText(" after."));
+
+    const payload = chatMarkdownClipboardPayload(
+      selectionFragment(numbers, new FakeText(citation.numbers)),
+    );
+
+    expect(payload?.text).toBe(citation.markdown);
+    expect(payload?.html.replace(/<[^>]*>/g, "")).toBe(citation.plainText);
+    expect(payload?.html.includes("<button")).toBe(false);
+    expect(chip.textContent).toBe(citation.numbers);
+  });
+
+  it("keeps a prose selection beside a citation clipped to the selected text", () => {
+    const prose = new FakeText("The report supports this. ");
+    const chip = new FakeElement("SPAN", [], {
+      "data-markdown-copy": "\\[Source 1: turn0view0\\]",
+      "data-markdown-copy-text": "[Source 1: turn0view0]",
+    }).append(new FakeElement("BUTTON").append(new FakeText("1")));
+    new FakeElement("P").append(prose, chip);
+
+    const payload = chatMarkdownClipboardPayload(
+      selectionFragment(prose, new FakeText("supports")),
+    );
+
+    expect(payload).toEqual({ text: "supports", html: '<meta charset="utf-8">supports' });
+  });
+
+  it("does not expand a title selection to an unrelated card's full copy representation", () => {
+    const title = new FakeText("Quarterly Report");
+    new FakeElement("DIV", [], {
+      "data-markdown-copy": "Quarterly Report (Document template)",
+    }).append(new FakeElement("SPAN").append(title));
+
+    const payload = chatMarkdownClipboardPayload(selectionFragment(title, new FakeText("Report")));
+
+    expect(payload).toEqual({ text: "Report", html: '<meta charset="utf-8">Report' });
   });
 });

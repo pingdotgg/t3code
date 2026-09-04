@@ -15,6 +15,7 @@ import {
   codexArtifactTemplatePresentationLabel,
   type CodexArtifactTemplate,
 } from "@t3tools/client-runtime/codex-artifact-templates";
+import { renderCodexCitationsAsMarkdown } from "@t3tools/client-runtime/codex-citations";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -726,6 +727,7 @@ interface MarkdownLinkHandlers {
 
 const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly markdown: string;
+  readonly isStreaming: boolean;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
@@ -733,8 +735,11 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
   const segments = useMemo(
-    () => splitCodexArtifactTemplateMarkdown(props.markdown),
-    [props.markdown],
+    () =>
+      splitCodexArtifactTemplateMarkdown(
+        renderCodexCitationsAsMarkdown(props.markdown, { isStreaming: props.isStreaming }),
+      ),
+    [props.markdown, props.isStreaming],
   );
 
   return segments.map((segment) => {
@@ -1514,6 +1519,7 @@ function renderFeedEntry(
         {renderedText.trim().length > 0 ? (
           <AssistantMarkdownContent
             markdown={renderedText}
+            isStreaming={message.streaming}
             markdownStyles={styles}
             linkHandlers={props.markdownLinkHandlers}
             onUseArtifactTemplate={props.onUseArtifactTemplate}
@@ -1548,7 +1554,7 @@ function renderFeedEntry(
           <View className="mt-1 flex-row items-center gap-1">
             <CopyTextButton
               accessibilityLabel="Copy message"
-              text={renderedText}
+              text={renderCodexCitationsAsMarkdown(renderedText)}
               tintColor={iconSubtleColor}
               buttonSize={28}
               iconSize={13}
