@@ -123,6 +123,7 @@ internal class TerminalCanvasView(context: Context) : View(context) {
   var onScrollRows: ((Int) -> Unit)? = null
   var onRequestKeyboard: (() -> Unit)? = null
   var onCellMetricsChanged: (() -> Unit)? = null
+  var onTapCell: ((Int, Int) -> Unit)? = null
   var selectionDelegate: TerminalSelectionDelegate? = null
 
   private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -351,6 +352,23 @@ internal class TerminalCanvasView(context: Context) : View(context) {
   private fun rowAt(py: Float): Int {
     val rows = frame?.rows ?: return 0
     return ((py - contentPadding) / cellHeightPx).toInt().coerceIn(0, max(rows - 1, 0))
+  }
+
+  /**
+   * Reports the tapped cell for link detection. Blank cells are skipped: they
+   * can't carry a link, and the terminal's text dump drops trailing blanks, so
+   * a tap on empty space would otherwise resolve onto the last printed
+   * character of the line.
+   */
+  private fun tapCellAt(px: Float, py: Float) {
+    frame?.let { currentFrame ->
+      val col = columnAt(px)
+      val row = rowAt(py)
+      val index = row * currentFrame.cols + col
+      if (index in currentFrame.cellText.indices && currentFrame.cellText[index].isNotBlank()) {
+        onTapCell?.invoke(col, row)
+      }
+    }
   }
 
   private fun startWordSelection(px: Float, py: Float) {
@@ -590,6 +608,7 @@ internal class TerminalCanvasView(context: Context) : View(context) {
         clearSelection()
       } else {
         performClick()
+        tapCellAt(event.x, event.y)
       }
       return true
     }

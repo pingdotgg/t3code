@@ -372,6 +372,89 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeGetSelectionText(JNIEnv* env, j
   return result;
 }
 
+// Encodes the link context at a viewport cell for JS-side link detection.
+// Layout (little endian): [u8 kind] then either the OSC 8 URI bytes (kind 1)
+// or [u32 prefix byte length][prefix bytes][line bytes] (kind 2). The prefix
+// spans the logical line start through the tapped cell inclusive so the
+// caller can derive the tapped character index; both dumps unwrap soft wraps.
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_expo_modules_t3terminal_GhosttyBridge_nativeLinkAt(JNIEnv* env, jclass,
+                                                         jlong handle, jint col,
+                                                         jint row) {
+  auto* session = FromHandle(handle);
+  if (session == nullptr) return nullptr;
+  std::lock_guard<std::mutex> lock(session->mutex);
+
+  GhosttyGridRef ref{};
+  if (!ViewportGridRef(session, col, row, &ref)) return nullptr;
+
+  // OSC 8 hyperlinks resolve directly from the tapped cell.
+  size_t uri_len = 0;
+  if (ghostty_grid_ref_hyperlink_uri(&ref, nullptr, 0, &uri_len) ==
+          GHOSTTY_OUT_OF_SPACE &&
+      uri_len > 0) {
+    std::vector<uint8_t> uri(uri_len);
+    if (ghostty_grid_ref_hyperlink_uri(&ref, uri.data(), uri.size(), &uri_len) ==
+        GHOSTTY_SUCCESS) {
+      uri.resize(uri_len);
+      ByteWriter writer(1 + uri.size());
+      writer.U8(1);
+      writer.Bytes(uri);
+      return ToJavaBytes(env, writer.Take());
+    }
+  }
+
+  GhosttyTerminalSelectLineOptions line_options{};
+  line_options.size = sizeof(line_options);
+  line_options.ref = ref;
+  GhosttySelection line_selection{};
+  line_selection.size = sizeof(line_selection);
+  if (ghostty_terminal_select_line(session->terminal, &line_options,
+                                   &line_selection) != GHOSTTY_SUCCESS) {
+    return nullptr;
+  }
+
+  GhosttySelection prefix_selection = line_selection;
+  prefix_selection.end = ref;
+
+  const auto format = [session](const GhosttySelection& selection, bool trim,
+                                std::vector<uint8_t>* output) {
+    GhosttyTerminalSelectionFormatOptions options{};
+    options.size = sizeof(options);
+    options.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN;
+    options.unwrap = true;
+    options.trim = trim;
+    options.selection = &selection;
+    uint8_t* bytes = nullptr;
+    size_t len = 0;
+    if (ghostty_terminal_selection_format_alloc(session->terminal, nullptr,
+                                                options, &bytes,
+                                                &len) != GHOSTTY_SUCCESS ||
+        bytes == nullptr) {
+      return false;
+    }
+    output->assign(bytes, bytes + len);
+    ghostty_free(nullptr, bytes, len);
+    return true;
+  };
+
+  std::vector<uint8_t> prefix;
+  std::vector<uint8_t> line;
+  // trim=false on the prefix keeps its full length through the tapped cell so
+  // the derived index stays aligned with the trimmed line text.
+  if (!format(prefix_selection, false, &prefix) ||
+      !format(line_selection, true, &line) || prefix.empty() || line.empty()) {
+    return nullptr;
+  }
+
+  ByteWriter writer(5 + prefix.size() + line.size());
+  writer.U8(2);
+  writer.U32(static_cast<uint32_t>(prefix.size()));
+  writer.Bytes(prefix);
+  writer.Bytes(line);
+  return ToJavaBytes(env, writer.Take());
+}
+
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_expo_modules_t3terminal_GhosttyBridge_nativeSnapshot(JNIEnv* env, jclass,
                                                            jlong handle) {

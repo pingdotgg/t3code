@@ -21,6 +21,11 @@ selection, and OSC 8 hyperlink metadata to the official ABI. Browser conventions
 holding Shift bypasses application mouse capture, and the platform link modifier opens hyperlinks.
 React does not participate in terminal frames.
 
+Tapping a link in the mobile terminals resolves the tapped cell natively — Android through line
+selection and OSC 8 hyperlink metadata in the JNI layer, iOS through the full libghostty text dump —
+and both emit the tapped logical line to JS, where `@t3tools/shared/terminalLinks` (the same
+detector the web terminal uses) decides whether a URL was tapped.
+
 The web runtime is singleton-scoped per browser tab so split terminals share one compiled module
 and memory. Each visible terminal owns and frees its own terminal, render state, row iterator, cell
 iterator, key and mouse encoder, and input event handles. Restoring captured scrollback temporarily

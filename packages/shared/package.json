@@ -191,6 +191,10 @@
       "types": "./src/terminalLabels.ts",
       "import": "./src/terminalLabels.ts"
     },
+    "./terminalLinks": {
+      "types": "./src/terminalLinks.ts",
+      "import": "./src/terminalLinks.ts"
+    },
     "./relayClient": {
       "types": "./src/relayClient.ts",
       "import": "./src/relayClient.ts"
