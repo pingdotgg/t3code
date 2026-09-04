@@ -509,15 +509,24 @@ export function UsageLimitsSection() {
     updateSettings({ usageLimitSources: { [id]: null } });
   };
 
-  const addHubButton = canEditSources ? (
-    <Button size="xs" variant="outline" onClick={() => setAdding(true)}>
-      <PlusIcon className="size-3" aria-hidden />
-      Add CLIProxyAPI hub
-    </Button>
-  ) : null;
-
   return (
     <div className="flex flex-col gap-8">
+      {/* Sources first: they are the thing a user configures here, so the
+          control to add one sits at the top rather than after every row. */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-sm font-medium text-foreground">Usage sources</h2>
+          <p className="text-xs text-muted-foreground">
+            Quota from a CLIProxyAPI hub shows beside the providers signed in on this machine.
+          </p>
+        </div>
+        {canEditSources ? (
+          <Button size="xs" variant="outline" onClick={() => setAdding(true)}>
+            <PlusIcon className="size-3" aria-hidden />
+            Add hub
+          </Button>
+        ) : null}
+      </div>
       {groups.length === 0 && sources.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           No provider on a connected environment reports subscription limits.
@@ -556,7 +565,6 @@ export function UsageLimitsSection() {
           ))}
         </div>
       ))}
-      {addHubButton ? <div>{addHubButton}</div> : null}
       <AddUsageLimitSourceDialog open={adding} onOpenChange={setAdding} />
     </div>
   );
