@@ -93,6 +93,7 @@ import {
   parseStandaloneComposerSlashCommand,
 } from "../composer-logic";
 import {
+  createMessageAttachmentPreviewProjector,
   derivePendingApprovals,
   derivePendingUserInputs,
   derivePhase,
@@ -2707,6 +2708,8 @@ export default function ChatView(props: ChatViewProps) {
     });
   }, []);
   const serverMessages = activeThread?.messages;
+  const [projectServerMessagePreviews] = useState(createMessageAttachmentPreviewProjector);
+  const [projectHandoffMessagePreviews] = useState(createMessageAttachmentPreviewProjector);
   const downloadFileAttachment = useCallback(
     async (attachment: ChatFileAttachment) => {
       const connection = readPreparedConnection(environmentId);
@@ -2778,19 +2781,12 @@ export default function ChatView(props: ChatViewProps) {
   );
   const displayServerMessages = useMemo<ReadonlyArray<ChatMessage>>(() => {
     if (!serverMessages) return [];
-    return serverMessages.map((message) => {
-      if (!message.attachments || message.attachments.length === 0) {
-        return message;
-      }
-      return {
-        ...message,
-        attachments: message.attachments.map((attachment) => {
-          const previewUrl = serverAttachmentUrlById.get(attachment.id);
-          return previewUrl ? { ...attachment, previewUrl } : attachment;
-        }),
-      };
-    });
-  }, [serverAttachmentUrlById, serverMessages]);
+    return serverMessages.map((message) =>
+      projectServerMessagePreviews(message, (attachment) =>
+        serverAttachmentUrlById.get(attachment.id),
+      ),
+    );
+  }, [projectServerMessagePreviews, serverAttachmentUrlById, serverMessages]);
   useEffect(() => {
     if (typeof Image === "undefined" || displayServerMessages.length === 0) {
       return;
@@ -2880,10 +2876,7 @@ export default function ChatView(props: ChatViewProps) {
     const serverMessagesWithPreviewHandoff =
       Object.keys(attachmentPreviewHandoffByMessageId).length === 0
         ? messages
-        : // Spread only fires for the few messages that actually changed;
-          // unchanged ones early-return their original reference.
-          // In-place mutation would break React's immutable state contract.
-          messages.map((message) => {
+        : messages.map((message) => {
             if (
               message.role !== "user" ||
               !message.attachments ||
@@ -2896,25 +2889,15 @@ export default function ChatView(props: ChatViewProps) {
               return message;
             }
 
-            let changed = false;
             let imageIndex = 0;
-            const attachments = message.attachments.map((attachment) => {
+            return projectHandoffMessagePreviews(message, (attachment) => {
               if (!isImageAttachment(attachment)) {
-                return attachment;
+                return undefined;
               }
               const handoffPreviewUrl = handoffPreviewUrls[imageIndex];
               imageIndex += 1;
-              if (!handoffPreviewUrl || attachment.previewUrl === handoffPreviewUrl) {
-                return attachment;
-              }
-              changed = true;
-              return {
-                ...attachment,
-                previewUrl: handoffPreviewUrl,
-              };
+              return handoffPreviewUrl;
             });
-
-            return changed ? { ...message, attachments } : message;
           });
 
     const localMessages = [
@@ -2939,6 +2922,7 @@ export default function ChatView(props: ChatViewProps) {
     displayServerMessages,
     feedbackSubmissions,
     optimisticUserMessages,
+    projectHandoffMessagePreviews,
   ]);
   const timelineProjectionRef = useRef<{
     threadKey: string | null;

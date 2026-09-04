@@ -15,11 +15,12 @@ import {
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
 import {
+  createMessageAttachmentPreviewProjector,
   deriveTimelineEntries,
   deriveTimelineEntriesWithState,
   type WorkLogEntry,
 } from "../../session-logic";
-import type { ChatMessage, TurnDiffSummary } from "../../types";
+import { isImageAttachment, type ChatMessage, type TurnDiffSummary } from "../../types";
 
 describe("streaming row projection", () => {
   function fixture(text = "") {
@@ -155,6 +156,91 @@ describe("streaming row projection", () => {
     expect(first.rows).toEqual(savedFirst);
     expect(previous.rows).toEqual(deriveMessagesTimelineRows(initial.input));
   });
+
+  it.each(["file", "image", "handoff", "streaming-image"] as const)(
+    "preserves stream reuse through the real %s preview materializer",
+    (kind) => {
+      const initial = fixture("Partial");
+      const image = {
+        type: "image" as const,
+        id: "image",
+        name: "image.png",
+        mimeType: "image/png",
+        sizeBytes: 42,
+      };
+      const file = {
+        type: "file" as const,
+        id: "file",
+        name: "file.txt",
+        mimeType: "text/plain",
+        sizeBytes: 8,
+      };
+      const source = initial.messages.map((message, index) =>
+        index === 0 || (kind === "streaming-image" && index === initial.messages.length - 1)
+          ? { ...message, attachments: kind === "file" ? [file] : [image, file] }
+          : message,
+      );
+      const server = createMessageAttachmentPreviewProjector();
+      const handoff = createMessageAttachmentPreviewProjector();
+      const materialize = (messages: ReadonlyArray<ChatMessage>, url: string) => {
+        const urls = new Map(kind === "handoff" ? [] : [[image.id, url]]);
+        return messages.map((message) => {
+          const displayed = server(message, (attachment) => urls.get(attachment.id));
+          return kind === "handoff" && message.role === "user"
+            ? handoff(displayed, (attachment) =>
+                isImageAttachment(attachment) ? "blob:handoff" : undefined,
+              )
+            : displayed;
+        });
+      };
+      const firstMessages = materialize(source, "https://first.test/image");
+      const firstTimeline = deriveTimelineEntriesWithState(firstMessages, [], initial.work);
+      const input = { ...initial.input, timelineEntries: firstTimeline.entries };
+      const previous = deriveMessagesTimelineRowsWithState(input);
+      const saved = structuredClone(previous.rows);
+      const nextSource = [...source.slice(0, -1), { ...source.at(-1)!, text: "Next token" }];
+      const nextMessages = materialize(nextSource, "https://first.test/image");
+      const nextTimeline = deriveTimelineEntriesWithState(
+        nextMessages,
+        [],
+        initial.work,
+        firstTimeline,
+      );
+      const nextInput = { ...input, timelineEntries: nextTimeline.entries };
+      const next = deriveMessagesTimelineRowsWithState(nextInput, previous);
+
+      expect(nextMessages[0]).toBe(firstMessages[0]);
+      expect(next.rows).toEqual(deriveMessagesTimelineRows(nextInput));
+      for (const [index, row] of previous.rows.entries()) {
+        if (
+          (row.kind === "message" || row.kind === "assistant-meta") &&
+          row.message.id === source.at(-1)?.id
+        )
+          continue;
+        expect(next.rows[index]).toBe(row);
+      }
+      expect(previous.rows).toEqual(saved);
+
+      if (kind === "image" || kind === "streaming-image") {
+        const renewed = materialize(nextSource, "https://renewed.test/image");
+        const renewedTimeline = deriveTimelineEntriesWithState(
+          renewed,
+          [],
+          initial.work,
+          nextTimeline,
+        );
+        const renewedInput = { ...input, timelineEntries: renewedTimeline.entries };
+        const renewedRows = deriveMessagesTimelineRowsWithState(renewedInput, next);
+        expect(renewedRows.rows).toEqual(deriveMessagesTimelineRows(renewedInput));
+        expect(renewed[0]?.attachments?.[0]).toMatchObject({
+          previewUrl: "https://renewed.test/image",
+        });
+        expect(firstMessages[0]?.attachments?.[0]).toMatchObject({
+          previewUrl: "https://first.test/image",
+        });
+      }
+    },
+  );
 
   it.each(["completion", "turn", "role", "ordering"] as const)(
     "rebuilds row structure for a %s change with otherwise unchanged controls",

@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveWorkEntryToolPresentation } from "@t3tools/client-runtime/work-log/presentation";
 
 import {
+  createMessageAttachmentPreviewProjector,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
   derivePendingApprovals,
@@ -2084,6 +2085,84 @@ describe("deriveTimelineEntries", () => {
     updatedAt: "2026-02-23T00:00:03.000Z",
     streaming: true,
   };
+
+  it("reuses preview objects while preserving URL and attachment metadata changes", () => {
+    const image = {
+      type: "image" as const,
+      id: "image",
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 42,
+    };
+    const file = {
+      type: "file" as const,
+      id: "file",
+      name: "file.txt",
+      mimeType: "text/plain",
+      sizeBytes: 8,
+    };
+    const message = { ...streamingMessage, attachments: Object.freeze([image, file]) };
+    const project = createMessageAttachmentPreviewProjector();
+    const urls = new Map([[image.id, "https://first.test/image"]]);
+    const first = project(message, (attachment) => urls.get(attachment.id));
+    Object.freeze(first.attachments);
+    expect(project(message, (attachment) => new Map(urls).get(attachment.id))).toBe(first);
+    const streamed = project({ ...message, text: "Next" }, (attachment) => urls.get(attachment.id));
+    expect(streamed.attachments).toBe(first.attachments);
+    expect(streamed.text).toBe("Next");
+    expect(first.text).toBe("");
+    expect(first.attachments?.[1]).toBe(file);
+
+    urls.set(image.id, "https://second.test/image");
+    const renewed = project(message, (attachment) => urls.get(attachment.id));
+    expect(renewed.attachments?.[0]).toMatchObject({ previewUrl: "https://second.test/image" });
+    expect(first.attachments?.[0]).toMatchObject({ previewUrl: "https://first.test/image" });
+    const renamed = project(
+      { ...message, attachments: [{ ...image, name: "renamed.png" }, file] },
+      (attachment) => urls.get(attachment.id),
+    );
+    expect(renamed.attachments?.[0]).toMatchObject({
+      name: "renamed.png",
+      previewUrl: "https://second.test/image",
+    });
+    expect(project(message, () => undefined)).toBe(message);
+  });
+
+  it("keeps pending preview handoffs stable and restores the current server URL", () => {
+    const message = {
+      ...streamingMessage,
+      role: "user" as const,
+      streaming: false,
+      attachments: [
+        {
+          type: "image" as const,
+          id: "image",
+          name: "image.png",
+          mimeType: "image/png",
+          sizeBytes: 42,
+        },
+      ],
+    };
+    const server = createMessageAttachmentPreviewProjector();
+    const handoff = createMessageAttachmentPreviewProjector();
+    const first = handoff(
+      server(message, () => undefined),
+      () => "blob:handoff",
+    );
+    expect(
+      handoff(
+        server(message, () => undefined),
+        () => "blob:handoff",
+      ),
+    ).toBe(first);
+    const ready = server(message, () => "https://server.test/image");
+    expect(handoff(ready, () => "blob:handoff").attachments?.[0]).toMatchObject({
+      previewUrl: "blob:handoff",
+    });
+    expect(handoff(ready, () => undefined)).toBe(ready);
+    expect(ready.attachments?.[0]).toMatchObject({ previewUrl: "https://server.test/image" });
+    expect(first.attachments?.[0]).toMatchObject({ previewUrl: "blob:handoff" });
+  });
 
   it("reuses ordered history without changing an earlier projection", () => {
     const history = { ...streamingMessage, id: MessageId.make("history"), streaming: false };

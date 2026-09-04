@@ -25,6 +25,7 @@ import {
 } from "@t3tools/contracts";
 
 import type {
+  ChatAttachment,
   ChatMessage,
   ProposedPlan,
   SessionPhase,
@@ -1880,6 +1881,54 @@ function mergeTimelineEntrySuffix(
     }
   }
   return merged;
+}
+
+/** Own one mapper per preview stage. Immutable messages retain unchanged preview objects. */
+export function createMessageAttachmentPreviewProjector() {
+  const attachmentsBySource = new WeakMap<
+    ReadonlyArray<ChatAttachment>,
+    ReadonlyArray<ChatAttachment>
+  >();
+  const messagesBySource = new WeakMap<ChatMessage, ChatMessage>();
+  return (
+    message: ChatMessage,
+    previewUrlFor: (attachment: ChatAttachment) => string | undefined,
+  ): ChatMessage => {
+    const source = message.attachments;
+    if (!source || source.length === 0) return message;
+    const previous = attachmentsBySource.get(source) ?? source;
+    let changed: ChatAttachment[] | undefined;
+    let hasOverrides = false;
+    for (const [index, attachment] of source.entries()) {
+      const previewUrl = previewUrlFor(attachment);
+      const sourceUrl = "previewUrl" in attachment ? attachment.previewUrl : undefined;
+      const previousAttachment = previous[index]!;
+      const previousUrl =
+        "previewUrl" in previousAttachment ? previousAttachment.previewUrl : undefined;
+      const next =
+        !previewUrl || previewUrl === sourceUrl
+          ? attachment
+          : previewUrl === previousUrl
+            ? previousAttachment
+            : { ...attachment, previewUrl };
+      hasOverrides ||= next !== attachment;
+      if (next !== previousAttachment) {
+        changed ??= previous.slice();
+        changed[index] = next;
+      }
+    }
+    const attachments = hasOverrides ? (changed ?? previous) : source;
+    attachmentsBySource.set(source, attachments);
+    if (attachments === source) {
+      messagesBySource.delete(message);
+      return message;
+    }
+    const previousMessage = messagesBySource.get(message);
+    if (previousMessage?.attachments === attachments) return previousMessage;
+    const result = { ...message, attachments };
+    messagesBySource.set(message, result);
+    return result;
+  };
 }
 
 /** Text and update time do not change a streaming assistant message's timeline structure. */
