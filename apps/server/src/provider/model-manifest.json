@@ -1,8 +1,9 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-03T09:58:00Z",
+  "updatedAt": "2026-09-04T19:10:48Z",
   "currentModels": {
     "codex": [
+      "gpt-6-astra",
       "gpt-5.6-luna",
       "gpt-5.6-terra",
       "gpt-5.6-sol",
