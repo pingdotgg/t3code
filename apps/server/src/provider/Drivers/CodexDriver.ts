@@ -22,12 +22,8 @@
  * @module provider/Drivers/CodexDriver
  */
 import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
-import * as NodeCrypto from "node:crypto";
-
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Ref from "effect/Ref";
-import * as Semaphore from "effect/Semaphore";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -40,6 +36,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
+import { CODEX_RESET_CREDIT_TIMEOUT, redeemCodexResetCredit } from "../Layers/codexResetCredit.ts";
 import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
@@ -106,6 +103,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
@@ -234,19 +232,13 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
               ),
             );
 
-      // Redemption spends something on the user's account, so it is
-      // single-flight per instance and keeps one idempotency key until Codex
-      // reports an outcome: a retry after a timeout re-sends the same
-      // attempt instead of opening a second one.
-      const consumeResetLock = yield* Semaphore.make(1);
-      const pendingResetKey = yield* Ref.make<string | null>(null);
+      // Redemption spends something on the user's account. It serialises on
+      // the account (instances sharing a Codex home share the credit), keeps
+      // one idempotency key until Codex reports an outcome, and is bounded so
+      // a hung app-server cannot hold the account lock.
       const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = () =>
-        consumeResetLock.withPermits(1)(
+        redeemCodexResetCredit(continuationIdentity.continuationKey, (idempotencyKey) =>
           Effect.gen(function* () {
-            const idempotencyKey = yield* Ref.modify(pendingResetKey, (existing) => {
-              const key = existing ?? NodeCrypto.randomUUID();
-              return [key, key] as const;
-            });
             const { client } = yield* withCodexAppServerClient({
               binaryPath: effectiveConfig.binaryPath,
               homePath: effectiveConfig.homePath,
@@ -258,22 +250,36 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
             const response = yield* client.request("account/rateLimitResetCredit/consume", {
               idempotencyKey,
             });
-            yield* Ref.set(pendingResetKey, null);
             return response.outcome;
-          }).pipe(
-            Effect.scoped,
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            Effect.mapError(
-              (cause) =>
-                new ProviderDriverError({
-                  driver: DRIVER_KIND,
-                  instanceId,
-                  detail: "Codex could not redeem the reset credit.",
-                  cause,
-                }),
+          }).pipe(Effect.scoped, Effect.timeout(CODEX_RESET_CREDIT_TIMEOUT)),
+        ).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.mapError(
+            (cause) =>
+              new ProviderDriverError({
+                driver: DRIVER_KIND,
+                instanceId,
+                detail: "Codex could not redeem the reset credit.",
+                cause,
+              }),
+          ),
+          // The windows just changed; re-probe so the snapshot says so. A
+          // refresh that fails keeps the pre-redemption snapshot, credit
+          // count included, so the refresh's own failure is surfaced.
+          Effect.tap(() =>
+            snapshot.refresh.pipe(
+              Effect.flatMap((refreshed) =>
+                refreshed.usageLimits?.unavailable?.reason === "probeFailed"
+                  ? new ProviderDriverError({
+                      driver: DRIVER_KIND,
+                      instanceId,
+                      detail:
+                        "The reset was applied, but Codex could not confirm the new limits. Refresh to check.",
+                    })
+                  : Effect.void,
+              ),
             ),
-            // The windows just changed; re-probe so the snapshot says so.
-            Effect.tap(() => snapshot.refresh),
           ),
         );
 

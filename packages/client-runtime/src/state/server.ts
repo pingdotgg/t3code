@@ -907,7 +907,8 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.providerConsumeResetCredit,
       concurrency: {
         mode: "singleFlight",
-        key: ({ environmentId, input }) => `${environmentId}:${input.instanceId}`,
+        // Both ids are free-form strings; a delimiter could collide.
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
       },
     }),
     refreshProviders: createEnvironmentRpcCommand(runtime, {

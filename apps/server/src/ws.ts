@@ -1751,13 +1751,19 @@ const makeWsRpcLayer = (
             WS_METHODS.providerConsumeResetCredit,
             Effect.gen(function* () {
               const instance = yield* providerInstances.getInstance(input.instanceId);
-              if (instance?.consumeResetCredit === undefined) {
+              // A disabled instance must not spend anything on its account.
+              if (instance === undefined || !instance.enabled) {
                 return yield* new ProviderSetupError({
                   instanceId: input.instanceId,
                   operation: "consume-reset-credit",
-                  detail: instance
-                    ? "This provider does not bank reset credits."
-                    : "Provider instance not found.",
+                  detail: instance ? "This provider is disabled." : "Provider instance not found.",
+                });
+              }
+              if (instance.consumeResetCredit === undefined) {
+                return yield* new ProviderSetupError({
+                  instanceId: input.instanceId,
+                  operation: "consume-reset-credit",
+                  detail: "This provider does not bank reset credits.",
                 });
               }
               const outcome = yield* instance.consumeResetCredit().pipe(
@@ -1767,6 +1773,7 @@ const makeWsRpcLayer = (
                       instanceId: input.instanceId,
                       operation: "consume-reset-credit",
                       detail: error.detail,
+                      cause: error,
                     }),
                 ),
               );
