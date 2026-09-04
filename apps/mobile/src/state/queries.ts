@@ -257,7 +257,8 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
   const debouncedTarget = useDebouncedValue(normalizedTarget, COMPOSER_PATH_SEARCH_DEBOUNCE_MS);
   const canReadFiles = useEnvironmentScope(debouncedTarget.environmentId, AuthFilesystemReadScope);
   const result = useEnvironmentQuery(
-    canReadFiles && debouncedTarget.environmentId !== null &&
+    canReadFiles &&
+      debouncedTarget.environmentId !== null &&
       debouncedTarget.cwd !== null &&
       debouncedTarget.query.length > 0
       ? projectEnvironment.searchEntries({

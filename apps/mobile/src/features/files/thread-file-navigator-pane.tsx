@@ -39,10 +39,12 @@ export function ThreadFileNavigatorPane(props: {
   const headerScrollEdgeEffects = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
   const canReadFiles = useEnvironmentScope(props.environmentId, AuthFilesystemReadScope);
   const entriesQuery = useEnvironmentQuery(
-    canReadFiles ? projectEnvironment.listEntries({
-      environmentId: props.environmentId,
-      input: { cwd: props.cwd },
-    }) : null,
+    canReadFiles
+      ? projectEnvironment.listEntries({
+          environmentId: props.environmentId,
+          input: { cwd: props.cwd },
+        })
+      : null,
   );
   const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
   const handlePreviewFile = useCallback(
