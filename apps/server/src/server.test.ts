@@ -1905,6 +1905,38 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("replaces the local desktop credential on repeated bootstrap exchanges", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const first = yield* exchangeAccessToken();
+      const second = yield* exchangeAccessToken();
+      const third = yield* exchangeAccessToken();
+      assert.equal(first.response.status, 200);
+      assert.equal(second.response.status, 200);
+      assert.equal(third.response.status, 200);
+
+      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
+        headers: { authorization: `Bearer ${third.body.access_token}` },
+      });
+      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
+        readonly current: boolean;
+        readonly subject: string;
+      }>;
+      assert.equal(clientsResponse.status, 200);
+      assert.equal(clients.length, 1);
+      assert.equal(clients[0]?.current, true);
+      assert.equal(clients[0]?.subject, "desktop-bootstrap");
+
+      for (const previous of [first, second]) {
+        const response = yield* HttpClient.get("/api/auth/session", {
+          headers: { authorization: `Bearer ${previous.body.access_token}` },
+        });
+        const state = (yield* response.json) as { readonly authenticated: boolean };
+        assert.equal(state.authenticated, false);
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("persists token exchange client display metadata for authorized-client listings", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({

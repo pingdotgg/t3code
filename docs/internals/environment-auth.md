@@ -121,6 +121,12 @@ Sessions issued from a plain bearer exchange use the store's
 only to DPoP-bound exchanges, where the token is additionally constrained by a
 proof key. See `SessionStore.ts` and `EnvironmentAuth.ts`.
 
+The reusable `desktop-bootstrap` grant replaces active sessions with the same
+subject and authentication method. Revocation and insertion share one database
+transaction, so a failed insertion preserves the previous credential. This also
+removes stale local desktop entries from earlier launches. Browser-cookie sessions
+and sessions issued through pairing links are not replaced.
+
 Requested scopes must be a subset of the one-time bootstrap credential grant.
 An ordinary paired client therefore cannot exchange its grant for
 `access:read`, `access:write`, or `relay:write`.

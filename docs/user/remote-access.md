@@ -80,6 +80,10 @@ and expiry, and can revoke it if they have access management permission.
 
 The default endpoint controls the QR code and primary copy action for pairing links. You can change it from the expanded endpoint list. The preference is stored by endpoint type, so choosing the local LAN endpoint survives normal IP address changes when you move between networks.
 
+After an app restart, the desktop app replaces its previous
+local credential. Old local desktop entries are removed from **Authorized clients**
+automatically. Paired phones, browsers, and remote desktop clients keep their access.
+
 When no user default is saved, the app uses the built-in LAN endpoint for pairing links when
 available. You can set another endpoint as the default from the expanded endpoint list.
 
