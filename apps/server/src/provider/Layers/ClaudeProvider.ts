@@ -170,6 +170,7 @@ function apiProviderAuthMetadata(
 // account info. The previous 8s budget expired mid-init, so the probe returned
 // `undefined` and left the provider unverified and unselectable in the picker.
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
+const VERSION_PROBE_TIMEOUT_MS = 60_000;
 
 /**
  * Keep workspace-scoped command discovery intact while isolating the periodic
@@ -459,7 +460,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     claudeSettings,
     ["--version"],
     resolvedEnvironment,
-  ).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+  ).pipe(Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS), Effect.result);
 
   if (Result.isFailure(versionProbe)) {
     const error = versionProbe.failure;
