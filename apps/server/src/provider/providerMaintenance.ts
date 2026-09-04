@@ -171,7 +171,12 @@ function makePnpmGlobalProviderMaintenanceCapabilities(
     provider: definition.provider,
     packageName: definition.npmPackageName,
     updateExecutable: "pnpm",
-    updateArgs: ["add", "-g", `${definition.npmPackageName}@latest`],
+    updateArgs: [
+      "add",
+      "-g",
+      `--allow-build=${definition.npmPackageName}`,
+      `${definition.npmPackageName}@latest`,
+    ],
     updateLockKey: "pnpm-global",
   });
 }

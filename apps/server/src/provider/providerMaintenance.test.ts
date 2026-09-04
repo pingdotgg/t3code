@@ -297,11 +297,17 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           provider: driver("scopedPackageTool"),
           packageName: "@example/scoped-package-tool",
           update: {
-            command: "pnpm add -g @example/scoped-package-tool@latest",
+            command:
+              "pnpm add -g --allow-build=@example/scoped-package-tool @example/scoped-package-tool@latest",
 
             executable: "pnpm",
 
-            args: ["add", "-g", "@example/scoped-package-tool@latest"],
+            args: [
+              "add",
+              "-g",
+              "--allow-build=@example/scoped-package-tool",
+              "@example/scoped-package-tool@latest",
+            ],
 
             lockKey: "pnpm-global",
           },
@@ -536,11 +542,16 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         provider: driver("packageTool"),
         packageName: "@example/package-tool",
         update: {
-          command: "pnpm add -g @example/package-tool@latest",
+          command: "pnpm add -g --allow-build=@example/package-tool @example/package-tool@latest",
 
           executable: "pnpm",
 
-          args: ["add", "-g", "@example/package-tool@latest"],
+          args: [
+            "add",
+            "-g",
+            "--allow-build=@example/package-tool",
+            "@example/package-tool@latest",
+          ],
 
           lockKey: "pnpm-global",
         },
