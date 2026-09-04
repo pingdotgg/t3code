@@ -1,4 +1,6 @@
 ---
+import { getImage } from "astro:assets";
+import desktopScreenshot from "../assets/app-desktop.webp";
 import Layout from "../layouts/Layout.astro";
 import {
   ANDROID_PLAY_STORE_URL,
@@ -7,6 +9,13 @@ import {
   MARKETING_STATS,
 } from "../lib/site";
 import { tweets } from "../lib/tweets";
+
+const screenshot = await getImage({
+  src: desktopScreenshot,
+  widths: [864, 1180, 1728, 2360],
+  format: "webp",
+  quality: 90,
+});
 
 const desktopEndorsementRows = [
   tweets.filter((_, index) => index % 2 === 0),
@@ -80,14 +89,23 @@ const mobileEndorsementRows = [
       <div data-rise style="--d:520ms">
         <div class="hero-preview">
           <figure class="hero-screenshot-frame">
-            <img
-              src="/app-desktop.webp"
-              alt="T3 Code with a settled thread beside its pull request diff"
-              width="2880"
-              height="1800"
-              loading="eager"
-              decoding="async"
-            />
+            <picture>
+              <!-- Match the hidden mobile layout without requesting a screenshot. -->
+              <source
+                media="(max-width: 820px)"
+                srcset="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+              />
+              <img
+                src={desktopScreenshot.src}
+                srcset={`${screenshot.srcSet.attribute}, ${desktopScreenshot.src} ${desktopScreenshot.width}w`}
+                sizes="(max-width: 960px) min(864px, calc(100vw - 20px)), min(1180px, calc(100vw - 60px))"
+                alt="T3 Code with a settled thread beside its pull request diff"
+                width={desktopScreenshot.width}
+                height={desktopScreenshot.height}
+                loading="eager"
+                decoding="async"
+              />
+            </picture>
           </figure>
         </div>
       </div>

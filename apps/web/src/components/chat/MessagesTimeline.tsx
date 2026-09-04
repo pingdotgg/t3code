@@ -639,10 +639,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       listRef,
       timestampFormat,
       routeThreadKey,
-      // Must be referentially stable: ChatMarkdown keys its react-markdown
-      // component map on threadRef, and a fresh object here remounts every
-      // rendered markdown node whenever this memo recomputes (e.g. on each
-      // activity delta while the thread is working).
+      // Keep Markdown callbacks memoized during unrelated activity updates.
       threadRef: citationThreadRef,
       markdownCwd,
       resolvedTheme,
