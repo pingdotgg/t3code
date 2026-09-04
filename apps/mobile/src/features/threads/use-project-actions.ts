@@ -118,7 +118,7 @@ export function useCreateProjectThread() {
       const providerError = !serverConfig
         ? "Provider settings are still loading. Try again."
         : isModelSelectionUnavailable(serverConfig, input.modelSelection)
-          ? "Antigravity model unavailable. Open model settings to finish setup or choose another model."
+          ? "Antigravity model unavailable. Set it up on web or desktop, or choose another model."
           : null;
       if (providerError !== null) {
         setPendingConnectionError(providerError);

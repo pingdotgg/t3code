@@ -12,16 +12,13 @@ not sign in this T3 Code provider.
 ## Set up Antigravity
 
 On web or desktop, open **Settings** > **Providers**, select the device that runs your project,
-then select **Antigravity**. On mobile, open **Settings** > **Environments**, expand the
-environment, then choose **Set up Antigravity**. An existing setup shows **Manage Antigravity**.
-The model picker can open setup for the selected environment too.
+then select **Antigravity**. Provider setup is not available in the mobile app.
 
 1. Choose **Enable Antigravity**. Antigravity is off by default.
 2. Choose **Install Antigravity**. T3 Code downloads the official runtime from Google to that
    environment. Installation continues if you leave the page or reconnect.
 3. Choose **Sign in with Google**.
-4. Choose **Open sign-in page** on web or desktop, or **Open Google sign-in** on mobile. You can
-   use **Copy sign-in link** to open it in another browser.
+4. Choose **Open sign-in page**. You can use **Copy sign-in link** to open it in another browser.
 5. Complete Google sign-in. Use the account you use for Antigravity.
 6. Wait for T3 Code to confirm sign-in and load the model choices. Select an Antigravity model
    in the thread's model picker.
@@ -36,8 +33,8 @@ machine as the T3 Code environment, sign-in can finish directly.
 
 On a phone or another computer, the final page will usually fail to load. This is expected.
 Copy the full address from the browser, including everything after `?`, and paste it into the
-return URL field in T3 Code. Choose **Continue** on web or desktop, or **Complete sign-in** on
-mobile. Do not change the address to your server's hostname.
+return URL field in the web or desktop client where you started setup. Choose **Continue**. Do not
+change the address to your server's hostname.
 
 Return to the same T3 Code client and environment where you started sign-in. Another client
 can see that sign-in is in progress, but cannot complete that attempt. The setup screen shows
@@ -50,7 +47,7 @@ callback page alone does not prove account access.
 ### Other sign-in methods
 
 **Sign-in method** in the Antigravity provider settings on web or desktop selects how the
-agent authenticates. Mobile shows the selected method and its connect controls.
+agent authenticates.
 
 | Method                     | What you enter                           | How it signs in                 |
 | -------------------------- | ---------------------------------------- | ------------------------------- |
@@ -159,11 +156,11 @@ Each Antigravity provider instance has its own Google sign-in on its environment
 **Add provider** in web or desktop provider settings to create a separate instance for another
 account. To replace an instance's account, sign out first, then sign in again.
 
-| Action                                                                           | Result                                                                                                                        |
-| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Disable Antigravity                                                              | Stops the instance's sessions. Keeps Google sign-in, thread history, and files.                                               |
-| Sign out of Google                                                               | Stops the instance's sessions and removes its saved Google credentials. Keeps thread history and files.                       |
-| Remove downloaded runtime on web or desktop, or Remove managed install on mobile | Removes the runtime shared by Antigravity instances on that environment. Keeps Google credentials, thread history, and files. |
+| Action                    | Result                                                                                                                        |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Disable Antigravity       | Stops the instance's sessions. Keeps Google sign-in, thread history, and files.                                               |
+| Sign out of Google        | Stops the instance's sessions and removes its saved Google credentials. Keeps thread history and files.                       |
+| Remove downloaded runtime | Removes the runtime shared by Antigravity instances on that environment. Keeps Google credentials, thread history, and files. |
 
 Send `/logout` by itself in an Antigravity thread to sign out that provider instance. This has
 the same effect as **Sign out of Google**, including stopping its other sessions.
@@ -186,7 +183,8 @@ To check account access and reload models on web or desktop, open **Settings** >
 and select the circular arrow beside **Checked** at the top of the page. Its tooltip says
 **Refresh provider status**. On mobile, use **Refresh models** in the model picker.
 Refresh uses saved Google sign-in and does not open a login page. If sign-in is required,
-use the provider's setup controls. Automatic status checks verify the installation only.
+use the provider's setup controls on web or desktop. Automatic status checks verify the
+installation only.
 
 The packaged runtime can be slow to start, especially on Windows. Health checks, model refresh,
 and sign-out each allow up to 90 seconds before reporting a timeout.

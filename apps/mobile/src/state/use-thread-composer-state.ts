@@ -276,7 +276,7 @@ export function useThreadComposerState() {
     ) {
       Alert.alert(
         "Antigravity model unavailable",
-        "Open model settings to finish setup or choose another model.",
+        "Set up Antigravity on web or desktop, or choose another model.",
       );
       return null;
     }
