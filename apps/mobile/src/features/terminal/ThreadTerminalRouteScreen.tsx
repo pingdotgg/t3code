@@ -1,4 +1,10 @@
-import { AuthTerminalReadScope, AuthTerminalOperateScope, DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  AuthTerminalReadScope,
+  AuthTerminalOperateScope,
+  DEFAULT_TERMINAL_ID,
+  EnvironmentId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "../../components/AppSymbol";
@@ -201,7 +207,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     threadId: selectedThread?.id ?? null,
   });
   const runningSession = useMemo(
-    () => pickRunningTerminalSessionForBootstrap(knownSessions) ?? (canOperateTerminal ? null : knownSessions[0] ?? null),
+    () =>
+      pickRunningTerminalSessionForBootstrap(knownSessions) ??
+      (canOperateTerminal ? null : (knownSessions[0] ?? null)),
     [canOperateTerminal, knownSessions],
   );
   const activeKnownSession = useMemo(
@@ -333,9 +341,11 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   );
   const terminal = useAttachedTerminalSession({
     environmentId: selectedThread?.environmentId ?? null,
-    terminal: canOperateTerminal ? terminalAttachInput : canReadTerminal && selectedThread && activeKnownSession
-      ? { threadId: selectedThread.id, terminalId }
-      : null,
+    terminal: canOperateTerminal
+      ? terminalAttachInput
+      : canReadTerminal && selectedThread && activeKnownSession
+        ? { threadId: selectedThread.id, terminalId }
+        : null,
   });
   const terminalKey = selectedThread
     ? `${selectedThread.environmentId}:${selectedThread.id}:${terminalId}`
@@ -1020,7 +1030,13 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         subtitle: `Start another shell in ${basename(selectedThreadProject?.workspaceRoot ?? null) ?? "this workspace"}`,
       },
     ],
-    [canOperateTerminal, fontSize, selectedThreadProject?.workspaceRoot, terminalId, terminalMenuSessions],
+    [
+      canOperateTerminal,
+      fontSize,
+      selectedThreadProject?.workspaceRoot,
+      terminalId,
+      terminalMenuSessions,
+    ],
   );
 
   const handleAndroidTerminalMenuAction = useCallback(
@@ -1272,9 +1288,15 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
             onRetry={handleRetryEnvironment}
           />
         ) : !canReadTerminal && !canOperateTerminal ? (
-          <EmptyState title="Terminal access unavailable" detail="This connection does not have permission to view terminals." />
+          <EmptyState
+            title="Terminal access unavailable"
+            detail="This connection does not have permission to view terminals."
+          />
         ) : !canOperateTerminal && activeKnownSession === null ? (
-          <EmptyState title="No terminal sessions" detail="Existing terminals will appear here when another client opens one." />
+          <EmptyState
+            title="No terminal sessions"
+            detail="Existing terminals will appear here when another client opens one."
+          />
         ) : (
           <>
             <View className="flex-1" style={{ paddingBottom: terminalBottomInset }}>
