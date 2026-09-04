@@ -103,6 +103,52 @@ describe("t3code/require-bottom-safe-area-inset", () => {
     `,
   );
 
+  rule.valid(
+    "allows a style array whose last element resets the anchor to the edge",
+    `
+      import { View } from "react-native";
+
+      export function Overlay() {
+        return <View style={[{ position: "absolute", bottom: 16 }, { bottom: 0 }]} />;
+      }
+    `,
+  );
+
+  rule.invalid(
+    "reports an anchor split across style array elements",
+    `
+      import { Pressable } from "react-native";
+
+      export function ShowKeyboardButton() {
+        return <Pressable style={[{ position: "absolute" }, { bottom: 16, right: 16 }]} />;
+      }
+    `,
+    (output) => {
+      assert.match(output, /safe-area inset/);
+    },
+  );
+
+  rule.invalid(
+    "reports a screen-filling list sized with a percentage height",
+    `
+      import { FlatList } from "react-native";
+
+      export function FileList() {
+        return (
+          <FlatList
+            data={[]}
+            renderItem={() => null}
+            style={{ height: "100%" }}
+            contentContainerStyle={{ paddingBottom: 8 }}
+          />
+        );
+      }
+    `,
+    (output) => {
+      assert.match(output, /safe-area inset/);
+    },
+  );
+
   rule.invalid(
     "reports a component that ignores the inset even when a sibling component reads it",
     `

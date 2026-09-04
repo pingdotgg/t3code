@@ -19,7 +19,8 @@ const SCROLL_CONTENT_ATTRIBUTES = new Set(["contentContainerStyle", "contentInse
 const SCROLL_BOTTOM_PROPERTIES = new Set(["bottom", "paddingBottom"]);
 // A scroll view sized inline (`style={{ maxHeight: 88 }}`) is a widget inside
 // the layout, not the screen's primary scroller, so its bottom padding is
-// internal spacing and never meets the screen edge.
+// internal spacing and never meets the screen edge. Only a numeric size
+// counts: `height: "100%"` still fills the screen.
 const INLINE_SCROLL_SIZE_PROPERTIES = new Set(["height", "maxHeight"]);
 
 const getLiteralValue = (node: unknown): Option.Option<string | number> => {
@@ -48,21 +49,25 @@ const getObjectProperties = (node: unknown): ReadonlyArray<unknown> => {
   return Array.isArray(properties) ? properties : [];
 };
 
+// React Native merges style arrays left to right, so the last declaration
+// of a property wins; the lookup mirrors that so `[{ bottom: 16 }, { bottom: 0 }]`
+// resolves to `bottom: 0`.
 const findProperty = (
   properties: ReadonlyArray<unknown>,
   name: string,
 ): Option.Option<{ readonly value: unknown }> => {
+  let match: Option.Option<{ readonly value: unknown }> = Option.none();
   for (const property of properties) {
     if (typeof property !== "object" || property === null) continue;
     if (!("key" in property) || !("value" in property)) continue;
 
     const key = getPropertyName(property.key);
     if (Option.isSome(key) && key.value === name) {
-      return Option.some(property as { readonly value: unknown });
+      match = Option.some(property as { readonly value: unknown });
     }
   }
 
-  return Option.none();
+  return match;
 };
 
 const isAbsolutelyPositioned = (properties: ReadonlyArray<unknown>): boolean =>
@@ -110,12 +115,16 @@ export default defineRule({
     let functionDepth = 0;
     let lastComponentId = 0;
     let currentComponentId = 0;
+    // Style arrays are judged once, merged, so an element never speaks for
+    // itself: `[{ position: "absolute" }, { bottom: 16 }]` is one anchor.
+    let arrayDepth = 0;
     const componentsReadingInset = new Set<number>();
     const candidates: Array<{ readonly node: unknown; readonly componentId: number }> = [];
 
     const reset = () => {
       isReactNativeFile = false;
       functionDepth = 0;
+      arrayDepth = 0;
       lastComponentId = 0;
       currentComponentId = 0;
       componentsReadingInset.clear();
@@ -136,6 +145,22 @@ export default defineRule({
         // Module scope shares id 0: a style object declared there belongs to
         // no component and can never be excused by a component's inset read.
         currentComponentId = 0;
+      }
+    };
+
+    const checkAbsoluteAnchor = (node: unknown) => {
+      const properties = getObjectProperties(node);
+      if (!isAbsolutelyPositioned(properties)) return;
+
+      const bottom = findProperty(properties, "bottom");
+      if (Option.isNone(bottom)) return;
+
+      // `bottom: 0` is how a keyboard-synced overlay attaches to the very
+      // edge while its child owns the padding; only a fixed non-zero gap
+      // claims to have measured the bottom edge itself.
+      const value = getLiteralValue(bottom.value.value);
+      if (Option.exists(value, (literal) => typeof literal === "number" && literal !== 0)) {
+        candidates.push({ node: bottom.value, componentId: currentComponentId });
       }
     };
 
@@ -174,20 +199,15 @@ export default defineRule({
           componentsReadingInset.add(currentComponentId);
         }
       },
+      ArrayExpression(node) {
+        arrayDepth += 1;
+        if (arrayDepth === 1) checkAbsoluteAnchor(node);
+      },
+      "ArrayExpression:exit"() {
+        arrayDepth -= 1;
+      },
       ObjectExpression(node) {
-        const properties = getObjectProperties(node);
-        if (!isAbsolutelyPositioned(properties)) return;
-
-        const bottom = findProperty(properties, "bottom");
-        if (Option.isNone(bottom)) return;
-
-        // `bottom: 0` is how a keyboard-synced overlay attaches to the very
-        // edge while its child owns the padding; only a fixed non-zero gap
-        // claims to have measured the bottom edge itself.
-        const value = getLiteralValue(bottom.value.value);
-        if (Option.exists(value, (literal) => typeof literal === "number" && literal !== 0)) {
-          candidates.push({ node: bottom.value, componentId: currentComponentId });
-        }
+        if (arrayDepth === 0) checkAbsoluteAnchor(node);
       },
       JSXOpeningElement(node) {
         const attributes = Array.isArray(node.attributes) ? node.attributes : [];
@@ -203,10 +223,10 @@ export default defineRule({
 
         const style = attributeProperties.get("style") ?? [];
         for (const propertyName of INLINE_SCROLL_SIZE_PROPERTIES) {
-          const property = findProperty(style, propertyName);
-          if (Option.isSome(property) && Option.isSome(getLiteralValue(property.value.value))) {
-            return;
-          }
+          const size = findProperty(style, propertyName);
+          if (Option.isNone(size)) continue;
+          const value = getLiteralValue(size.value.value);
+          if (Option.exists(value, (literal) => typeof literal === "number")) return;
         }
 
         for (const attributeName of SCROLL_CONTENT_ATTRIBUTES) {
