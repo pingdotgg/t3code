@@ -262,6 +262,20 @@ describe("hasMarkdownFilePrimaryAction", () => {
   });
 });
 
+describe("ChatMarkdown emphasis", () => {
+  it.each([false, true])(
+    "renders bold text ending in CJK punctuation with lineBreaks=%s",
+    (lineBreaks) => {
+      const html = renderToStaticMarkup(
+        <ChatMarkdown cwd="/tmp/project" text="**都没修。**Fetch" lineBreaks={lineBreaks} />,
+      );
+
+      expect(html).toContain("<strong>都没修。</strong>Fetch");
+      expect(html).not.toContain("**都没修。**");
+    },
+  );
+});
+
 describe("ChatMarkdown file option chips", () => {
   it("keeps the fallback button text selectable", () => {
     const html = renderToStaticMarkup(
