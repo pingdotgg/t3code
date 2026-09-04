@@ -176,9 +176,9 @@ describe("Cursor SDK model discovery", () => {
 });
 
 describe("checkCursorProviderStatus", () => {
-  it("uses the SDK catalog when CURSOR_API_KEY is configured", async () => {
-    const provider = await Effect.runPromise(
-      checkCursorProviderStatus(
+  it.effect("uses the SDK catalog when CURSOR_API_KEY is configured", () =>
+    Effect.gen(function* () {
+      const provider = yield* checkCursorProviderStatus(
         {
           ...baseCursorSettings,
           customModels: ["internal/cursor-model"],
@@ -198,27 +198,27 @@ describe("checkCursorProviderStatus", () => {
             });
           }),
         ),
-      ),
-    );
+      );
 
-    expect(provider).toMatchObject({
-      status: "ready",
-      auth: {
-        status: "authenticated",
-        type: "api-key",
-        label: "Cursor API key (test-key)",
-        email: "cursor@example.com",
-      },
-      models: [
-        { slug: "claude-opus-4-8", isCustom: false },
-        { slug: "internal/cursor-model", isCustom: true },
-      ],
-    });
-  });
+      expect(provider).toMatchObject({
+        status: "ready",
+        auth: {
+          status: "authenticated",
+          type: "api-key",
+          label: "Cursor API key (test-key)",
+          email: "cursor@example.com",
+        },
+        models: [
+          { slug: "claude-opus-4-8", isCustom: false },
+          { slug: "internal/cursor-model", isCustom: true },
+        ],
+      });
+    }),
+  );
 
-  it("surfaces SDK authentication failures", async () => {
-    const provider = await Effect.runPromise(
-      checkCursorProviderStatus(baseCursorSettings, {
+  it.effect("surfaces SDK authentication failures", () =>
+    Effect.gen(function* () {
+      const provider = yield* checkCursorProviderStatus(baseCursorSettings, {
         CURSOR_API_KEY: "invalid-test-key",
       }).pipe(
         Effect.provide(
@@ -231,32 +231,32 @@ describe("checkCursorProviderStatus", () => {
             ),
           ),
         ),
-      ),
-    );
+      );
 
-    expect(provider).toMatchObject({
-      status: "error",
-      auth: { status: "unauthenticated" },
-      message: "Cursor SDK authentication failed. Check CURSOR_API_KEY.",
-    });
-  });
+      expect(provider).toMatchObject({
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Cursor SDK authentication failed. Check CURSOR_API_KEY.",
+      });
+    }),
+  );
 
-  it("requires a Cursor API key without probing any external Cursor binary", async () => {
-    const provider = await Effect.runPromise(
-      checkCursorProviderStatus(baseCursorSettings).pipe(
+  it.effect("requires a Cursor API key without probing any external Cursor binary", () =>
+    Effect.gen(function* () {
+      const provider = yield* checkCursorProviderStatus(baseCursorSettings).pipe(
         Effect.provide(
           makeCursorSdkCatalogTestLayer(() =>
             Effect.die("SDK catalog must not be used without CURSOR_API_KEY"),
           ),
         ),
-      ),
-    );
+      );
 
-    expect(provider).toMatchObject({
-      installed: true,
-      status: "error",
-      auth: { status: "unauthenticated" },
-      message: "Cursor API key is required. Add CURSOR_API_KEY in provider settings.",
-    });
-  });
+      expect(provider).toMatchObject({
+        installed: true,
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Cursor API key is required. Add CURSOR_API_KEY in provider settings.",
+      });
+    }),
+  );
 });
