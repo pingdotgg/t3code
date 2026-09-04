@@ -5,6 +5,7 @@ import {
   type AuthSessionState,
   type DesktopBridge,
 } from "@t3tools/contracts";
+import { createBrowserHistory } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
@@ -16,7 +17,8 @@ import { __setPrimaryHttpRunnerForTests, type PrimaryHttpEffectRunner } from "./
 type TestWindow = {
   location: URL;
   history: {
-    replaceState: (_data: unknown, _unused: string, url: string) => void;
+    state: unknown;
+    replaceState: (_data: unknown, _unused: string, url?: string) => void;
   };
   desktopBridge?: DesktopBridge;
 };
@@ -59,8 +61,12 @@ function installTestBrowser(url: string) {
   const testWindow: TestWindow = {
     location: new URL(url),
     history: {
-      replaceState: (_data, _unused, nextUrl) => {
-        testWindow.location = new URL(nextUrl, testWindow.location.href);
+      state: null,
+      replaceState: (data, _unused, nextUrl) => {
+        testWindow.history.state = data;
+        if (nextUrl !== undefined) {
+          testWindow.location = new URL(nextUrl, testWindow.location.href);
+        }
       },
     },
   };
@@ -89,6 +95,14 @@ function installDesktopBootstrap() {
 function sequence<A>(...values: ReadonlyArray<A>) {
   let index = 0;
   return () => values[Math.min(index++, values.length - 1)]!;
+}
+
+function createSignal() {
+  let resolve = () => {};
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 let disposeHttpTest: (() => Promise<void>) | undefined;
@@ -338,43 +352,85 @@ describe("resolveInitialServerAuthGateState", () => {
     },
   );
 
-  it("keeps the existing grant when a replacement pairing token is rejected", async () => {
-    const existingSession = {
-      ...authenticatedSession(LOOPBACK_AUTH),
-      scopes: ["orchestration:read"] as const,
-    };
-    const testApi = await installAuthApi({
-      session: () => existingSession,
-      browserSession: () =>
-        Effect.fail(
-          new EnvironmentAuthInvalidError({
-            code: "auth_invalid",
-            reason: "invalid_credential",
-            traceId: "trace-invalid-replacement",
+  it.each([false, true])(
+    "keeps rejected replacement pairing open when cached=%s",
+    async (cached) => {
+      const existingSession = {
+        ...authenticatedSession(LOOPBACK_AUTH),
+        scopes: ["orchestration:read"] as const,
+      };
+      const exchangeStarted = createSignal();
+      const finishExchange = createSignal();
+      const testApi = await installAuthApi({
+        session: () => existingSession,
+        browserSession: () =>
+          Effect.gen(function* () {
+            exchangeStarted.resolve();
+            yield* Effect.promise(() => finishExchange.promise);
+            return yield* new EnvironmentAuthInvalidError({
+              code: "auth_invalid",
+              reason: "invalid_credential",
+              traceId: "trace-invalid-replacement",
+            });
           }),
-        ),
-    });
-    const testWindow = installTestBrowser("http://localhost/");
-    const {
-      fetchSessionState,
-      resolveInitialServerAuthGateState,
-      submitServerAuthCredential,
-      takePairingTokenFromUrl,
-    } = await import("./environments/primary");
-    await resolveInitialServerAuthGateState();
-    testWindow.location = new URL("http://localhost/pair#token=invalid-replacement");
+      });
+      const testWindow = installTestBrowser("http://localhost/");
+      const {
+        fetchSessionState,
+        resolveInitialServerAuthGateState,
+        submitServerAuthCredential,
+        takePairingTokenFromUrl,
+      } = await import("./environments/primary");
+      if (cached) {
+        await resolveInitialServerAuthGateState();
+      }
+      testWindow.location = new URL("http://localhost/pair#token=invalid-replacement");
+      const history = createBrowserHistory({
+        window: {
+          get location() {
+            return testWindow.location;
+          },
+          history: testWindow.history,
+          addEventListener() {},
+          removeEventListener() {},
+        },
+      });
+      const gateLoads: Array<ReturnType<typeof resolveInitialServerAuthGateState>> = [];
+      const unsubscribe = history.subscribe(() => {
+        gateLoads.push(resolveInitialServerAuthGateState());
+      });
+      try {
+        const requiresAuth = { status: "requires-auth", auth: LOOPBACK_AUTH };
+        await expect(resolveInitialServerAuthGateState()).resolves.toEqual(requiresAuth);
 
-    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
-      status: "requires-auth",
-      auth: LOOPBACK_AUTH,
-    });
-    await expect(submitServerAuthCredential(takePairingTokenFromUrl()!)).rejects.toMatchObject({
-      _tag: "PrimaryEnvironmentPairingCredentialRejectedError",
-      message: "Invalid pairing token. Check the token and try again.",
-    });
-    expect(testApi.calls.browserSession).toEqual([{ credential: "invalid-replacement" }]);
-    await expect(fetchSessionState()).resolves.toEqual(existingSession);
-  });
+        // The pairing form strips the token before submitting. TanStack history
+        // reloads the auth gate synchronously when replaceState runs.
+        const token = takePairingTokenFromUrl();
+        expect(gateLoads).toHaveLength(1);
+        await expect(gateLoads[0]).resolves.toEqual(requiresAuth);
+        const rejected = expect(submitServerAuthCredential(token!)).rejects.toMatchObject({
+          _tag: "PrimaryEnvironmentPairingCredentialRejectedError",
+          message: "Invalid pairing token. Check the token and try again.",
+        });
+        await exchangeStarted.promise;
+        await expect(resolveInitialServerAuthGateState()).resolves.toEqual(requiresAuth);
+        finishExchange.resolve();
+        await rejected;
+        await expect(resolveInitialServerAuthGateState()).resolves.toEqual(requiresAuth);
+        expect(testApi.calls.browserSession).toEqual([{ credential: "invalid-replacement" }]);
+        await expect(fetchSessionState()).resolves.toEqual(existingSession);
+
+        testWindow.history.replaceState({}, "", "/");
+        await expect(gateLoads[1]).resolves.toEqual({ status: "authenticated" });
+        testWindow.history.replaceState({}, "", "/pair");
+        await expect(gateLoads[2]).resolves.toEqual({ status: "authenticated" });
+      } finally {
+        finishExchange.resolve();
+        unsubscribe();
+        history.destroy();
+      }
+    },
+  );
 
   it("allows manual token submission after the initial auth check requires pairing", async () => {
     const nextSession = sequence(
