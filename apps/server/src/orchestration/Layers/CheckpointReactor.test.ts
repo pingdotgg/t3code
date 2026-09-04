@@ -295,6 +295,7 @@ describe("CheckpointReactor", () => {
     readonly threadWorktreePath?: string | null;
     readonly threadBranch?: string | null;
     readonly secondThreadSharingWorktree?: boolean;
+    readonly secondThreadArchived?: boolean;
     readonly localStatusRefName?: string | null;
     readonly providerSessionCwd?: string;
     readonly providerName?: ProviderDriverKind;
@@ -436,22 +437,34 @@ describe("CheckpointReactor", () => {
         .pipe(
           options?.secondThreadSharingWorktree
             ? Effect.andThen(
-                engine.dispatch({
-                  type: "thread.create",
-                  commandId: CommandId.make("cmd-thread-create-2"),
-                  threadId: ThreadId.make("thread-2"),
-                  projectId: asProjectId("project-1"),
-                  title: "Thread 2",
-                  modelSelection: {
-                    instanceId: ProviderInstanceId.make("codex"),
-                    model: "gpt-5-codex",
-                  },
-                  interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-                  runtimeMode: "approval-required",
-                  branch: null,
-                  worktreePath: options?.threadWorktreePath ?? cwd,
-                  createdAt,
-                }),
+                engine
+                  .dispatch({
+                    type: "thread.create",
+                    commandId: CommandId.make("cmd-thread-create-2"),
+                    threadId: ThreadId.make("thread-2"),
+                    projectId: asProjectId("project-1"),
+                    title: "Thread 2",
+                    modelSelection: {
+                      instanceId: ProviderInstanceId.make("codex"),
+                      model: "gpt-5-codex",
+                    },
+                    interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+                    runtimeMode: "approval-required",
+                    branch: null,
+                    worktreePath: options?.threadWorktreePath ?? cwd,
+                    createdAt,
+                  })
+                  .pipe(
+                    options?.secondThreadArchived
+                      ? Effect.andThen(
+                          engine.dispatch({
+                            type: "thread.archive",
+                            commandId: CommandId.make("cmd-thread-archive-2"),
+                            threadId: ThreadId.make("thread-2"),
+                          }),
+                        )
+                      : Effect.asVoid,
+                  ),
               )
             : Effect.asVoid,
         ),
@@ -818,6 +831,32 @@ describe("CheckpointReactor", () => {
     const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.branch).toBe("t3code/original-branch");
     expect(pullRequestRefreshCalls).toEqual([]);
+  });
+
+  it("does not adopt a drifted checkout when the worktree is shared by an archived thread", async () => {
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      threadBranch: "t3code/original-branch",
+      localStatusRefName: "t3code/renamed-by-agent",
+      secondThreadSharingWorktree: true,
+      secondThreadArchived: true,
+    });
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-branch-drift-archived"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-branch-drift-archived"),
+      payload: { state: "completed" },
+    });
+
+    await harness.drain();
+
+    const snapshot = await harness.readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.branch).toBe("t3code/original-branch");
   });
 
   it("does not adopt a temporary placeholder checkout as the thread branch", async () => {

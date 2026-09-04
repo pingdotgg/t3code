@@ -123,6 +123,9 @@ const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
   }),
 );
+const WorktreePathLookupInput = Schema.Struct({
+  worktreePath: Schema.String,
+});
 const ProjectionLatestTurnDbRowSchema = Schema.Struct({
   threadId: ProjectionThread.fields.threadId,
   turnId: TurnId,
@@ -1337,6 +1340,21 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         WHERE thread_id = ${threadId}
           AND checkpoint_turn_count IS NOT NULL
         ORDER BY checkpoint_turn_count ASC
+      `,
+  });
+
+  // Includes archived threads: any non-deleted row keeps its worktree alive.
+  const listThreadIdRowsByWorktreePath = SqlSchema.findAll({
+    Request: WorktreePathLookupInput,
+    Result: ProjectionThreadIdLookupRowSchema,
+    execute: ({ worktreePath }) =>
+      sql`
+        SELECT
+          thread_id AS "threadId"
+        FROM projection_threads
+        WHERE worktree_path = ${worktreePath}
+          AND deleted_at IS NULL
+        ORDER BY created_at ASC, thread_id ASC
       `,
   });
 
@@ -3240,6 +3258,19 @@ pending_approval_requests AS (
         ),
       );
 
+  const listThreadIdsByWorktreePath: ProjectionSnapshotQueryShape["listThreadIdsByWorktreePath"] = (
+    worktreePath,
+  ) =>
+    listThreadIdRowsByWorktreePath({ worktreePath }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listThreadIdsByWorktreePath:query",
+          "ProjectionSnapshotQuery.listThreadIdsByWorktreePath:decodeRows",
+        ),
+      ),
+      Effect.map((rows) => rows.map((row) => row.threadId)),
+    );
+
   return {
     getCommandReadModel,
     getUserInputActivity,
@@ -3259,6 +3290,7 @@ pending_approval_requests AS (
     getThreadRuntimeContext,
     getThreadDetailById,
     getThreadDetailSnapshot,
+    listThreadIdsByWorktreePath,
   } satisfies ProjectionSnapshotQueryShape;
 });
 

@@ -625,10 +625,13 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      const shell = yield* projectionSnapshotQuery.getShellSnapshot();
-      const worktreeIsShared = shell.threads.some(
-        (other) => other.id !== thread.id && other.worktreePath === thread.worktreePath,
+      // Archived threads keep their worktree reference, so the check reads
+      // every non-deleted thread — the shell snapshot would miss an archived
+      // sibling sharing the path.
+      const worktreeThreadIds = yield* projectionSnapshotQuery.listThreadIdsByWorktreePath(
+        thread.worktreePath,
       );
+      const worktreeIsShared = worktreeThreadIds.some((id) => id !== thread.id);
       if (worktreeIsShared) {
         return;
       }

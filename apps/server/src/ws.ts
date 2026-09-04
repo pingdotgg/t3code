@@ -15,6 +15,7 @@ import {
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
   AuthSessionId,
+  GitCommandError,
   ClientConnectionMethod,
   ClientDeviceType,
   ClientOs,
@@ -2471,7 +2472,36 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRemoveWorktree,
-            gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            // Clients remove a worktree only after deleting its owning thread,
+            // so that row is already soft-deleted and never matches here — any
+            // remaining id belongs to another thread (archived included) that
+            // still works in the directory.
+            projectionSnapshotQuery.listThreadIdsByWorktreePath(input.path).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new GitCommandError({
+                    operation: "ws.vcsRemoveWorktree",
+                    command: "git",
+                    cwd: input.cwd,
+                    detail: `failed to check which threads reference worktree ${input.path}`,
+                    cause,
+                  }),
+              ),
+              Effect.flatMap((referencingThreadIds) =>
+                referencingThreadIds.length === 0
+                  ? gitWorkflow
+                      .removeWorktree(input)
+                      .pipe(Effect.tap(() => refreshGitStatus(input.cwd)))
+                  : Effect.fail(
+                      new GitCommandError({
+                        operation: "ws.vcsRemoveWorktree",
+                        command: "git",
+                        cwd: input.cwd,
+                        detail: `refused to remove worktree ${input.path}: ${referencingThreadIds.length} thread(s) still reference it`,
+                      }),
+                    ),
+              ),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsCreateRef]: (input) =>
