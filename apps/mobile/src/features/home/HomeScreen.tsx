@@ -1,3 +1,4 @@
+import { createThreadMovePlanner } from "../threads/threadOrder";
 import {
   LegendList,
   type LegendListRef,
@@ -646,18 +647,31 @@ export function HomeScreen(props: HomeScreenProps) {
     [serverConfigs],
   );
   const pendingOrder = usePendingThreadOrder(nowMinute, snoozeWakeTick);
-  const arrangedThreadKeys = useMemo(() => {
-    const sectionKeys = (section: "pinned" | "active") =>
-      getThreadListV2OrderedSection({
-        threads: props.threads,
+  const threadMovePlanners = useMemo(() => {
+    const sectionPlanner = (section: "pinned" | "active") =>
+      createThreadMovePlanner({
         section,
-        pendingOrder,
-        now: new Date().toISOString(),
-        settlementEnvironmentIds,
-        snoozeEnvironmentIds,
-      }).map((thread) => `${thread.environmentId}:${thread.id}`);
-    return { pinned: sectionKeys("pinned"), active: sectionKeys("active") };
+        reorderableEnvironmentIds: new Set(
+          [...serverConfigs].flatMap(([id, config]) =>
+            (section === "pinned"
+              ? config.environment.capabilities.threadPinReorder
+              : config.environment.capabilities.threadActiveReorder) === true
+              ? [id]
+              : [],
+          ),
+        ),
+        ordered: getThreadListV2OrderedSection({
+          threads: props.threads,
+          section,
+          pendingOrder,
+          now: new Date().toISOString(),
+          settlementEnvironmentIds,
+          snoozeEnvironmentIds,
+        }),
+      });
+    return { pinned: sectionPlanner("pinned"), active: sectionPlanner("active") };
   }, [
+    serverConfigs,
     props.threads,
     pendingOrder,
     settlementEnvironmentIds,
@@ -810,8 +824,8 @@ export function HomeScreen(props: HomeScreenProps) {
         );
       }
       const thread = item.item.thread;
-      const sectionKeys = item.item.pinned ? arrangedThreadKeys.pinned : arrangedThreadKeys.active;
-      const sectionIndex = sectionKeys.indexOf(`${thread.environmentId}:${thread.id}`);
+      const movePlanner = item.item.pinned ? threadMovePlanners.pinned : threadMovePlanners.active;
+      const movedId = `${thread.environmentId}:${thread.id}`;
       return (
         <ThreadListV2Row
           thread={thread}
@@ -863,10 +877,8 @@ export function HomeScreen(props: HomeScreenProps) {
               ? pinReorderEnvironmentIds.has(thread.environmentId)
               : activeReorderEnvironmentIds.has(thread.environmentId)
           }
-          canMoveUp={pendingOrder === null && sectionIndex > 0}
-          canMoveDown={
-            pendingOrder === null && sectionIndex !== -1 && sectionIndex < sectionKeys.length - 1
-          }
+          canMoveUp={pendingOrder === null && movePlanner(movedId, "up") !== null}
+          canMoveDown={pendingOrder === null && movePlanner(movedId, "down") !== null}
           onSnoozeThread={handleSnoozeThread}
           onUnsnoozeThread={handleUnsnoozeThread}
           onUnsettleThread={handleUnsettleThread}
@@ -884,7 +896,7 @@ export function HomeScreen(props: HomeScreenProps) {
     [
       handleDeleteThread,
       activeReorderEnvironmentIds,
-      arrangedThreadKeys,
+      threadMovePlanners,
       pendingOrder,
       handleMoveThread,
       handlePinThread,

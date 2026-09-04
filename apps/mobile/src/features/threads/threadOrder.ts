@@ -1,4 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { planPinnedMove } from "@t3tools/client-runtime/state/thread-sort";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 type OrderRow = Pick<
   EnvironmentThreadShell,
@@ -28,6 +30,33 @@ function rowOrder(row: OrderRow, section: PendingThreadOrder["section"]) {
   return {
     key: (section === "pinned" ? row.pinOrderKey : row.activeOrderKey) ?? null,
     anchor: section === "pinned" ? (row.pinnedAt ?? "") : (row.unsettledAt ?? row.createdAt),
+  };
+}
+
+/** Keep every visible row as an anchor, but only offer plans whose key writes
+ * are supported. Menu availability and execution use this same planner. */
+export function createThreadMovePlanner(input: {
+  readonly ordered: readonly OrderRow[];
+  readonly section: PendingThreadOrder["section"];
+  readonly reorderableEnvironmentIds: ReadonlySet<EnvironmentId>;
+}) {
+  const orderedIds = input.ordered.map(rowId);
+  const keysById = new Map(
+    input.ordered.map((row) => [rowId(row), rowOrder(row, input.section).key]),
+  );
+  const writableIds = new Set(
+    input.ordered
+      .filter((row) => input.reorderableEnvironmentIds.has(row.environmentId))
+      .map(rowId),
+  );
+  return (movedId: string, direction: "up" | "down") => {
+    if (!writableIds.has(movedId)) return null;
+    const assignments = planPinnedMove({ orderedIds, keysById, movedId, direction });
+    return assignments === null ||
+      assignments.length === 0 ||
+      assignments.some((assignment) => !writableIds.has(assignment.id))
+      ? null
+      : assignments;
   };
 }
 

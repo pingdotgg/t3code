@@ -1,3 +1,4 @@
+import { createThreadMovePlanner } from "./threadOrder";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -474,18 +475,31 @@ function ThreadNavigationSidebarPane(
     [serverConfigs],
   );
   const pendingOrder = usePendingThreadOrder(nowMinute, snoozeWakeTick);
-  const arrangedThreadKeys = useMemo(() => {
-    const sectionKeys = (section: "pinned" | "active") =>
-      getThreadListV2OrderedSection({
-        threads,
+  const threadMovePlanners = useMemo(() => {
+    const sectionPlanner = (section: "pinned" | "active") =>
+      createThreadMovePlanner({
         section,
-        pendingOrder,
-        now: new Date().toISOString(),
-        settlementEnvironmentIds,
-        snoozeEnvironmentIds,
-      }).map((thread) => `${thread.environmentId}:${thread.id}`);
-    return { pinned: sectionKeys("pinned"), active: sectionKeys("active") };
+        reorderableEnvironmentIds: new Set(
+          [...serverConfigs].flatMap(([id, config]) =>
+            (section === "pinned"
+              ? config.environment.capabilities.threadPinReorder
+              : config.environment.capabilities.threadActiveReorder) === true
+              ? [id]
+              : [],
+          ),
+        ),
+        ordered: getThreadListV2OrderedSection({
+          threads,
+          section,
+          pendingOrder,
+          now: new Date().toISOString(),
+          settlementEnvironmentIds,
+          snoozeEnvironmentIds,
+        }),
+      });
+    return { pinned: sectionPlanner("pinned"), active: sectionPlanner("active") };
   }, [
+    serverConfigs,
     threads,
     pendingOrder,
     settlementEnvironmentIds,
@@ -872,10 +886,10 @@ function ThreadNavigationSidebarPane(
         }
         case "v2-thread": {
           const thread = item.item.thread;
-          const sectionKeys = item.item.pinned
-            ? arrangedThreadKeys.pinned
-            : arrangedThreadKeys.active;
-          const sectionIndex = sectionKeys.indexOf(`${thread.environmentId}:${thread.id}`);
+          const movePlanner = item.item.pinned
+            ? threadMovePlanners.pinned
+            : threadMovePlanners.active;
+          const movedId = `${thread.environmentId}:${thread.id}`;
           const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
           return (
             <ThreadListV2Row
@@ -928,12 +942,8 @@ function ThreadNavigationSidebarPane(
                   ? pinReorderEnvironmentIds.has(thread.environmentId)
                   : activeReorderEnvironmentIds.has(thread.environmentId)
               }
-              canMoveUp={pendingOrder === null && sectionIndex > 0}
-              canMoveDown={
-                pendingOrder === null &&
-                sectionIndex !== -1 &&
-                sectionIndex < sectionKeys.length - 1
-              }
+              canMoveUp={pendingOrder === null && movePlanner(movedId, "up") !== null}
+              canMoveDown={pendingOrder === null && movePlanner(movedId, "down") !== null}
               onSnoozeThread={snoozeThread}
               onUnsnoozeThread={unsnoozeThread}
               onUnsettleThread={unsettleThread}
@@ -1068,7 +1078,7 @@ function ThreadNavigationSidebarPane(
     [
       archiveThread,
       activeReorderEnvironmentIds,
-      arrangedThreadKeys,
+      threadMovePlanners,
       pendingOrder,
       confirmDeletePendingTask,
       confirmDeleteThread,

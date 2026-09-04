@@ -1,6 +1,7 @@
 import { planPinnedMove } from "@t3tools/client-runtime/state/thread-sort";
 import {
   createPendingThreadOrder,
+  createThreadMovePlanner,
   reconcilePendingThreadOrder,
   type PendingThreadOrder,
 } from "./threadOrder";
@@ -1133,5 +1134,74 @@ describe("pending mobile thread moves", () => {
         rows.map((row, index) => (index === 0 ? { ...row, unsettledAt: NOW } : row)),
       ),
     ).toBeNull();
+  });
+});
+
+describe("mobile move availability", () => {
+  const oldEnvironment = EnvironmentId.make("older-server");
+  function rows(section: "active" | "pinned", keys: readonly (string | null)[]) {
+    return keys.map((key, index) =>
+      makeThread({
+        id: ThreadId.make(`move-${index}`),
+        title: `Move ${index}`,
+        environmentId: index === 1 ? oldEnvironment : environmentId,
+        activeOrderKey: section === "active" ? key : null,
+        pinOrderKey: section === "pinned" ? key : null,
+        pinnedAt: section === "pinned" ? NOW : null,
+      }),
+    );
+  }
+
+  it.each(["active", "pinned"] as const)(
+    "keeps unsupported keyed %s neighbors as usable anchors",
+    (section) => {
+      const ordered = rows(section, ["bb", "dd", "ff"]);
+      const plan = createThreadMovePlanner({
+        ordered,
+        section,
+        reorderableEnvironmentIds: new Set([environmentId]),
+      });
+      const assignments = plan(`${environmentId}:move-0`, "down");
+      expect(assignments).toHaveLength(1);
+      expect(assignments![0]!.id).toBe(`${environmentId}:move-0`);
+      expect(assignments![0]!.orderKey > "dd").toBe(true);
+      expect(assignments![0]!.orderKey < "ff").toBe(true);
+      expect(plan(`${oldEnvironment}:move-1`, "up")).toBeNull();
+      expect(plan(`${environmentId}:move-0`, "up")).toBeNull();
+    },
+  );
+
+  it.each(["active", "pinned"] as const)(
+    "disables %s moves requiring unsupported keyless materialization",
+    (section) => {
+      const ordered = rows(section, [null, null, null]);
+      const plan = createThreadMovePlanner({
+        ordered,
+        section,
+        reorderableEnvironmentIds: new Set([environmentId]),
+      });
+      expect(plan(`${environmentId}:move-0`, "down")).toBeNull();
+      expect(plan(`${environmentId}:move-2`, "up")).toBeNull();
+      const supported = createThreadMovePlanner({
+        ordered,
+        section,
+        reorderableEnvironmentIds: new Set([environmentId, oldEnvironment]),
+      });
+      expect(supported(`${environmentId}:move-0`, "down")).toHaveLength(3);
+    },
+  );
+
+  it("allows an independent keyed move despite an unsupported keyless row elsewhere", () => {
+    const ordered = rows("active", [null, null, "bb", "dd", "ff"]);
+    const plan = createThreadMovePlanner({
+      ordered,
+      section: "active",
+      reorderableEnvironmentIds: new Set([environmentId]),
+    });
+    const assignments = plan(`${environmentId}:move-4`, "up");
+    expect(assignments).toHaveLength(1);
+    expect(assignments![0]!.id).toBe(`${environmentId}:move-4`);
+    expect(assignments![0]!.orderKey > "bb").toBe(true);
+    expect(assignments![0]!.orderKey < "dd").toBe(true);
   });
 });
