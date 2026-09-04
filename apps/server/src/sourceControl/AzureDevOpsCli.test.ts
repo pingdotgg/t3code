@@ -63,6 +63,48 @@ describe("AzureDevOpsCli.layer", () => {
     ),
   );
 
+  it.effect("reports the configured Azure CLI path when spawning fails", () =>
+    Effect.gen(function* () {
+      const binaryPath = "/opt/tools/az";
+      mockRun.mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessSpawnError({
+            operation: "AzureDevOpsCli.execute",
+            command: binaryPath,
+            cwd: "/repo",
+            argumentCount: 1,
+            cause: PlatformError.systemError({
+              _tag: "NotFound",
+              module: "ChildProcess",
+              method: "spawn",
+              pathOrDescriptor: binaryPath,
+            }),
+          }),
+        ),
+      );
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const error = yield* az.execute({ cwd: "/repo", args: ["--version"] }).pipe(Effect.flip);
+
+      assert.equal(error._tag, "AzureDevOpsCliUnavailableError");
+      assert.strictEqual(error.command, binaryPath);
+      assert.match(error.message, /`\/opt\/tools\/az`/);
+    }).pipe(
+      Effect.provide(
+        AzureDevOpsCli.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.mock(VcsProcess.VcsProcess)({ run: mockRun }),
+              ServerSettings.layerTest({
+                sourceControlProviders: { azureDevOps: { binaryPath: "/opt/tools/az" } },
+              }),
+              NodeServices.layer,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("parses pull request view output", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

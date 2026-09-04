@@ -61,6 +61,46 @@ describe("GitHubCli.layer", () => {
     ),
   );
 
+  it.effect("reports the configured GitHub CLI path when spawning fails", () =>
+    Effect.gen(function* () {
+      const binaryPath = "/opt/tools/gh";
+      mockRun.mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessSpawnError({
+            operation: "GitHubCli.execute",
+            command: binaryPath,
+            cwd: "/repo",
+            cause: PlatformError.systemError({
+              _tag: "NotFound",
+              module: "ChildProcess",
+              method: "spawn",
+              pathOrDescriptor: binaryPath,
+            }),
+          }),
+        ),
+      );
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh.execute({ cwd: "/repo", args: ["--version"] }).pipe(Effect.flip);
+
+      assert.equal(error._tag, "GitHubCliUnavailableError");
+      assert.strictEqual(error.command, binaryPath);
+      assert.match(error.message, /`\/opt\/tools\/gh`/);
+    }).pipe(
+      Effect.provide(
+        GitHubCli.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.mock(VcsProcess.VcsProcess)({ run: mockRun }),
+              ServerSettings.layerTest({
+                sourceControlProviders: { github: { binaryPath: "/opt/tools/gh" } },
+              }),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
   it("does not classify a missing cwd as an unavailable gh executable", () => {
     const context = { command: "gh", cwd: "/repo" } as const;
     const missingCwd = new VcsProcessSpawnError({

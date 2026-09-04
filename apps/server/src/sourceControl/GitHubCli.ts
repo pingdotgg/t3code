@@ -24,7 +24,7 @@ import {
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 const gitHubCliFailureFields = {
-  command: Schema.Literal("gh"),
+  command: Schema.String,
   cwd: Schema.String,
   cause: Schema.Defect(),
 } as const;
@@ -34,7 +34,7 @@ export class GitHubCliUnavailableError extends Schema.TaggedErrorClass<GitHubCli
   gitHubCliFailureFields,
 ) {
   get detail(): string {
-    return "GitHub CLI (`gh`) is required but not available on PATH.";
+    return `GitHub CLI executable \`${this.command}\` is required but not available.`;
   }
 
   override get message(): string {
@@ -169,7 +169,7 @@ export const isGitHubCliError = Schema.is(GitHubCliError);
 
 export function fromVcsError(
   context: {
-    readonly command: "gh";
+    readonly command: string;
     readonly cwd: string;
   },
   error: VcsError,
@@ -346,17 +346,22 @@ export const make = Effect.gen(function* () {
       Effect.map((current) => current.sourceControlProviders.github.binaryPath),
       Effect.orElseSucceed(() => "gh"),
       Effect.flatMap((binaryPath) =>
-        process.run({
-          operation: "GitHubCli.execute",
-          command: binaryPath,
-          args: input.args,
-          cwd: input.cwd,
-          timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-          ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
-          ...(input.maxOutputBytes !== undefined ? { maxOutputBytes: input.maxOutputBytes } : {}),
-        }),
+        process
+          .run({
+            operation: "GitHubCli.execute",
+            command: binaryPath,
+            args: input.args,
+            cwd: input.cwd,
+            timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+            ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+            ...(input.maxOutputBytes !== undefined ? { maxOutputBytes: input.maxOutputBytes } : {}),
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              fromVcsError({ command: binaryPath, cwd: input.cwd }, error),
+            ),
+          ),
       ),
-      Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)),
     );
 
   return GitHubCli.of({
