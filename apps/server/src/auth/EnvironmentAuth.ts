@@ -731,65 +731,67 @@ export const make = Effect.gen(function* () {
 
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) =>
-      bootstrapCredentials.consume(credential, {
-        ...input,
-        ...(requestedScopes !== undefined ? { requestedScopes } : {}),
-      }).pipe(
-        Effect.mapError((cause) =>
-          cause._tag === "BootstrapCredentialScopeNotGrantedError"
-            ? new ServerAuthScopeNotGrantedError({})
-            : toBootstrapExchangeError(cause),
-        ),
-        Effect.flatMap((grant) =>
-          Effect.gen(function* () {
-            const grantedScopes = requestedScopes ?? grant.scopes;
-            return yield* sessions
-              .issue({
-                method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
-                subject: grant.subject,
-                scopes: grantedScopes,
-                ...(input?.proofKeyThumbprint
-                  ? {
-                      proofKeyThumbprint: input.proofKeyThumbprint,
-                      ttl: Duration.hours(1),
-                    }
-                  : {}),
-                // Desktop restarts forget the previous bearer token. Replace
-                // its session, including stale entries left by older versions.
-                replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
-                client: {
-                  ...requestMetadata,
-                  ...(grant.label ? { label: grant.label } : {}),
-                },
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
-                ),
-              );
-          }),
-        ),
-        Effect.flatMap((session) =>
-          DateTime.now.pipe(
-            Effect.map(
-              (now) =>
-                ({
-                  access_token: session.token,
-                  issued_token_type: AuthAccessTokenType,
-                  token_type: input?.proofKeyThumbprint ? "DPoP" : "Bearer",
-                  expires_in: Math.max(
-                    0,
-                    Math.floor(
-                      (session.expiresAt.epochMilliseconds - now.epochMilliseconds) / 1000,
-                    ),
+      bootstrapCredentials
+        .consume(credential, {
+          ...input,
+          ...(requestedScopes !== undefined ? { requestedScopes } : {}),
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            cause._tag === "BootstrapCredentialScopeNotGrantedError"
+              ? new ServerAuthScopeNotGrantedError({})
+              : toBootstrapExchangeError(cause),
+          ),
+          Effect.flatMap((grant) =>
+            Effect.gen(function* () {
+              const grantedScopes = requestedScopes ?? grant.scopes;
+              return yield* sessions
+                .issue({
+                  method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
+                  subject: grant.subject,
+                  scopes: grantedScopes,
+                  ...(input?.proofKeyThumbprint
+                    ? {
+                        proofKeyThumbprint: input.proofKeyThumbprint,
+                        ttl: Duration.hours(1),
+                      }
+                    : {}),
+                  // Desktop restarts forget the previous bearer token. Replace
+                  // its session, including stale entries left by older versions.
+                  replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
+                  client: {
+                    ...requestMetadata,
+                    ...(grant.label ? { label: grant.label } : {}),
+                  },
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
                   ),
-                  scope: encodeOAuthScope(session.scopes),
-                }) satisfies AuthAccessTokenResult,
+                );
+            }),
+          ),
+          Effect.flatMap((session) =>
+            DateTime.now.pipe(
+              Effect.map(
+                (now) =>
+                  ({
+                    access_token: session.token,
+                    issued_token_type: AuthAccessTokenType,
+                    token_type: input?.proofKeyThumbprint ? "DPoP" : "Bearer",
+                    expires_in: Math.max(
+                      0,
+                      Math.floor(
+                        (session.expiresAt.epochMilliseconds - now.epochMilliseconds) / 1000,
+                      ),
+                    ),
+                    scope: encodeOAuthScope(session.scopes),
+                  }) satisfies AuthAccessTokenResult,
+              ),
             ),
           ),
-        ),
-        Effect.withSpan("EnvironmentAuth.exchangeBootstrapCredentialForAccessToken"),
-      );
+          Effect.withSpan("EnvironmentAuth.exchangeBootstrapCredentialForAccessToken"),
+        );
 
   const issuePairingCredentialForSubject = (input: {
     readonly scopes: ReadonlyArray<AuthEnvironmentScope>;

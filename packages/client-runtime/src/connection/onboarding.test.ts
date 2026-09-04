@@ -68,9 +68,7 @@ function pairingHttpLayer(
 
     if (url.endsWith("/oauth/token")) {
       const body =
-        init.body instanceof Uint8Array
-          ? new TextDecoder().decode(init.body)
-          : String(init.body);
+        init.body instanceof Uint8Array ? new TextDecoder().decode(init.body) : String(init.body);
       const requestedScope = new URLSearchParams(body).get("scope");
       sessionScopes = requestedScope === null ? grantScopes : requestedScope.split(" ");
       if (!sessionScopes.every((scope) => grantScopes.some((granted) => granted === scope))) {
