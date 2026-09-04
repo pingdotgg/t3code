@@ -582,6 +582,95 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
+  const miseCapabilities = (tool: string) => ({
+    provider: driver("packageTool"),
+    packageName: "@example/package-tool",
+    update: {
+      command: `mise upgrade --bump ${tool}`,
+      executable: "mise",
+      args: ["upgrade", "--bump", tool],
+      lockKey: "mise",
+    },
+  });
+
+  it.effect("switches to mise upgrades when the binary lives in mise's install tree", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-mise-capabilities");
+      const installDir = NodePath.join(tempDir, "mise", "installs", "package-tool");
+      const versionBinDir = NodePath.join(installDir, "1.0.0", "bin");
+      NodeFS.mkdirSync(versionBinDir, { recursive: true });
+      const packageToolPath = NodePath.join(versionBinDir, "package-tool");
+      NodeFS.writeFileSync(packageToolPath, "ELF");
+      NodeFS.chmodSync(packageToolPath, 0o755);
+      NodeFS.symlinkSync("1.0.0", NodePath.join(installDir, "latest"));
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: NodePath.join(installDir, "latest", "bin", "package-tool"),
+        env: { PATH: "" },
+      });
+
+      expect(capabilities).toEqual(miseCapabilities("package-tool"));
+    }),
+  );
+
+  it("maps mise's npm backend install directory back to the npm package", () => {
+    expect(
+      packageToolUpdate.resolve({
+        binaryPath:
+          "/home/u/.local/share/mise/installs/npm-example-package-tool/1.0.0/lib/node_modules/@example/package-tool/bin/package-tool.js",
+        env: { PATH: "" },
+      }),
+    ).toEqual(miseCapabilities("npm:@example/package-tool"));
+  });
+
+  it("keeps npm updates for globals installed under a mise-managed node", () => {
+    expect(
+      packageToolUpdate.resolve({
+        binaryPath:
+          "/home/u/.local/share/mise/installs/node/26.7.0/lib/node_modules/@example/package-tool/bin/package-tool.js",
+        env: { PATH: "" },
+      }).update?.executable,
+    ).toBe("npm");
+  });
+
+  it("names the tool by its bin name for mise shims", () => {
+    expect(
+      packageToolUpdate.resolve({
+        binaryPath: "C:\\Users\\u\\AppData\\Local\\mise\\shims\\package-tool.exe",
+        env: { PATH: "" },
+      }),
+    ).toEqual(miseCapabilities("package-tool"));
+  });
+
+  it.effect("prefers mise over native updates for wrapper scripts that exec through mise", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-mise-wrapper-capabilities");
+      const nativeBinDir = NodePath.join(tempDir, ".local", "bin");
+      NodeFS.mkdirSync(nativeBinDir, { recursive: true });
+      const wrapperPath = NodePath.join(nativeBinDir, "native-package-tool");
+      NodeFS.writeFileSync(
+        wrapperPath,
+        '#!/bin/bash\nexport MISE_MINIMUM_RELEASE_AGE=0\nmise use -g --quiet "native-package-tool" || exit 1\nexec mise x "native-package-tool" -- "native-package-tool" "$@"\n',
+      );
+      NodeFS.chmodSync(wrapperPath, 0o755);
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+        nativePackageToolUpdate,
+        {
+          binaryPath: "native-package-tool",
+          env: { PATH: nativeBinDir },
+        },
+      ).pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+
+      expect(capabilities.update).toEqual({
+        command: "mise upgrade --bump native-package-tool",
+        executable: "mise",
+        args: ["upgrade", "--bump", "native-package-tool"],
+        lockKey: "mise",
+      });
+    }),
+  );
+
   it("disables one-click updates for explicit custom binary paths it cannot safely map", () => {
     expect(
       packageToolUpdate.resolve({
