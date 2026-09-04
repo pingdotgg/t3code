@@ -2,7 +2,9 @@ import {
   type EnvironmentId,
   type EditorId,
   type ProjectScript,
+  type ProviderInstanceId,
   type ResolvedKeybindingsConfig,
+  type ServerProvider,
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -45,6 +47,7 @@ import {
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
 import { cn } from "~/lib/utils";
+import { ProviderUsagePill } from "./ProviderUsagePill";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -64,6 +67,8 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
   gitCwd: string | null;
+  providers: readonly ServerProvider[];
+  activeProviderInstanceId: ProviderInstanceId | null;
   readonly onOpenPullRequest?: ((number: number) => void) | undefined;
   onNewThreadInProject: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
@@ -135,6 +140,8 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   rightPanelOpen,
   gitCwd,
+  providers,
+  activeProviderInstanceId,
   onOpenPullRequest,
   onNewThreadInProject,
   onRunProjectScript,
@@ -402,6 +409,10 @@ export const ChatHeader = memo(function ChatHeader({
           "[[data-panel-animations=true]_&]:motion-safe:transition-[padding-right] [[data-panel-animations=true]_&]:motion-safe:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:motion-safe:ease-out",
         )}
       >
+        <ProviderUsagePill
+          providers={providers}
+          activeProviderInstanceId={activeProviderInstanceId}
+        />
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}

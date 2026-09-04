@@ -41,6 +41,7 @@ import {
   useSidebarVisibility,
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { ProviderUsageBootstrap } from "./ProviderUsageBootstrap";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "90px";
 
@@ -249,6 +250,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       </Sidebar>
       {children}
       <SidebarControl />
+      <ProviderUsageBootstrap />
     </SidebarProvider>
   );
 }

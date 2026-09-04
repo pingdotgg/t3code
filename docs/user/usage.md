@@ -18,6 +18,14 @@ provider health-check interval and update live while a turn runs. API-key accoun
 subscription windows and say so; that includes a Claude Code that reaches Anthropic through a proxy
 via `ANTHROPIC_AUTH_TOKEN`, since the CLI then treats itself as an API-key client.
 
+The thread title bar shows a compact limits pill beside the project actions as soon as a connected
+provider reports usage. The pill follows the provider running that thread, and its percentage is
+the provider's fullest reported window. Select the pill to inspect every window and switch between
+other connected providers that report limits. If the thread's provider does not report subscription
+limits, the pill falls back to the connected provider with the fullest window; providers without
+reported windows stay hidden. Snapshots refresh on connection, every minute while the app is open,
+and when the app regains focus.
+
 If you pool accounts behind a CLIProxyAPI hub, open **Settings → Providers → Usage providers**
 and choose **Add hub**. Select the device that should connect to the hub; its accounts appear on
 the Limits view. Remove hubs from the same settings section. Each limits row shows its provider
