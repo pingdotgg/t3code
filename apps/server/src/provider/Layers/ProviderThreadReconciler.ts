@@ -39,6 +39,7 @@ const ResumeCursor = Schema.Struct({ threadId: Schema.String });
 const isResumeCursor = Schema.is(ResumeCursor);
 const ImportedRuntimePayload = Schema.Struct({
   continuationKey: Schema.optional(Schema.String),
+  cwd: Schema.optional(Schema.String),
   providerUpdatedAt: Schema.optional(Schema.String),
   providerDiscoveryCursor: Schema.optional(Schema.String),
 });
@@ -178,9 +179,12 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
       }),
     );
     const projectWorkspaceRoots = new Set(
-      shellSnapshot.projects.map((project) =>
-        normalizeProjectPathForComparison(project.workspaceRoot),
-      ),
+      shellSnapshot.projects
+        .filter((project) => project.id !== UNASSIGNED_CODEX_PROJECT_ID)
+        .map((project) => normalizeProjectPathForComparison(project.workspaceRoot)),
+    );
+    const projectIdByThreadId = new Map(
+      shellSnapshot.threads.map((thread) => [thread.id, thread.projectId] as const),
     );
     const discoveryCandidateGroups = groupPersistedThreadDiscoveryCandidates(instances);
     const continuationKeyByInstanceId = new Map(
@@ -194,7 +198,7 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
     const threadByProviderIdentity = new Map<string, ThreadId>();
     const excludedThreadIdsByContinuation = new Map<string, Set<string>>();
     const cursorByThreadIdByContinuation = new Map<string, Map<string, string>>();
-    const importedOwnerInstanceIdsByContinuation = new Map<string, Set<string>>();
+    const forceReadProviderThreadIdsByContinuation = new Map<string, Set<string>>();
     const unresolvedNativeProviderThreadIds = new Set<string>();
 
     for (const binding of bindings) {
@@ -226,16 +230,21 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
         const excluded = excludedThreadIdsByContinuation.get(continuationKey) ?? new Set();
         excluded.add(binding.resumeCursor.threadId);
         excludedThreadIdsByContinuation.set(continuationKey, excluded);
-      } else {
-        const importedOwners =
-          importedOwnerInstanceIdsByContinuation.get(continuationKey) ?? new Set();
-        importedOwners.add(binding.providerInstanceId);
-        importedOwnerInstanceIdsByContinuation.set(continuationKey, importedOwners);
       }
       if (
         binding.threadId === expectedImportedId &&
         isImportedRuntimePayload(binding.runtimePayload)
       ) {
+        if (
+          binding.runtimePayload.cwd &&
+          projectIdByThreadId.get(binding.threadId) === UNASSIGNED_CODEX_PROJECT_ID &&
+          projectWorkspaceRoots.has(normalizeProjectPathForComparison(binding.runtimePayload.cwd))
+        ) {
+          const forceRead =
+            forceReadProviderThreadIdsByContinuation.get(continuationKey) ?? new Set();
+          forceRead.add(binding.resumeCursor.threadId);
+          forceReadProviderThreadIdsByContinuation.set(continuationKey, forceRead);
+        }
         const providerCursor =
           binding.runtimePayload.providerDiscoveryCursor ??
           binding.runtimePayload.providerUpdatedAt;
@@ -269,20 +278,16 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
                 DEFAULT_MODEL_BY_PROVIDER[CODEX] ??
                 "default";
               const continuationKey = instance.continuationIdentity.continuationKey;
-              const importedOwners = importedOwnerInstanceIdsByContinuation.get(continuationKey);
-              const ownerChanged =
-                importedOwners !== undefined &&
-                Array.from(importedOwners).some(
-                  (ownerInstanceId) => ownerInstanceId !== instance.instanceId,
-                );
+              const forceReadProviderThreadIds =
+                forceReadProviderThreadIdsByContinuation.get(continuationKey);
               const discovered = yield* discover({
                 excludeProviderThreadIds: providerThreadDiscoveryExclusions(
                   unresolvedNativeProviderThreadIds,
                   excludedThreadIdsByContinuation.get(continuationKey),
                 ),
-                cursorByProviderThreadId: ownerChanged
-                  ? new Map()
-                  : (cursorByThreadIdByContinuation.get(continuationKey) ?? new Map()),
+                cursorByProviderThreadId:
+                  cursorByThreadIdByContinuation.get(continuationKey) ?? new Map(),
+                ...(forceReadProviderThreadIds ? { forceReadProviderThreadIds } : {}),
               });
               return { instance, model, discovered } as const;
             }).pipe(
@@ -304,6 +309,30 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
           }
           if (!selected) return 0;
           const { instance, model, discovered } = selected;
+          const continuationKey = instance.continuationIdentity.continuationKey;
+
+          yield* Effect.forEach(
+            bindings.filter(
+              (binding) =>
+                binding.provider === CODEX &&
+                binding.providerInstanceId !== undefined &&
+                binding.providerInstanceId !== instance.instanceId &&
+                isResumeCursor(binding.resumeCursor) &&
+                binding.threadId ===
+                  importedThreadIdFor(continuationKey, binding.resumeCursor.threadId) &&
+                resolvePersistedContinuationKey(
+                  binding.providerInstanceId,
+                  binding.runtimePayload,
+                  continuationKeyByInstanceId,
+                ) === continuationKey,
+            ),
+            (binding) =>
+              directory.upsert({
+                ...binding,
+                providerInstanceId: instance.instanceId,
+              }),
+            { concurrency: 1, discard: true },
+          );
 
           yield* Effect.forEach(
             discovered,
@@ -561,18 +590,19 @@ export const ProviderThreadReconcilerLive = Layer.effect(
     const config = yield* ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const reconcileSemaphore = yield* Semaphore.make(1);
+    const runReconciliation = reconcilePersistedProviderThreads().pipe(
+      Effect.provideService(ProviderInstanceRegistry, registry),
+      Effect.provideService(ProviderSessionDirectory, directory),
+      Effect.provideService(ProjectionSnapshotQuery, snapshots),
+      Effect.provideService(OrchestrationEngineService, engine),
+      Effect.provideService(ServerConfig, config),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
 
     return ProviderThreadReconciler.of({
-      reconcile: () =>
-        reconcilePersistedProviderThreads().pipe(
-          Effect.provideService(ProviderInstanceRegistry, registry),
-          Effect.provideService(ProviderSessionDirectory, directory),
-          Effect.provideService(ProjectionSnapshotQuery, snapshots),
-          Effect.provideService(OrchestrationEngineService, engine),
-          Effect.provideService(ServerConfig, config),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-        ),
+      reconcile: () => reconcileSemaphore.withPermits(1)(runReconciliation),
     });
   }),
 );

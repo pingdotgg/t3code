@@ -73,6 +73,8 @@ export interface ProviderPersistedThread {
 export interface ProviderPersistedThreadDiscoveryInput {
   readonly excludeProviderThreadIds: ReadonlySet<string>;
   readonly cursorByProviderThreadId: ReadonlyMap<string, string>;
+  /** Re-read selected known threads when their project assignment may have changed. */
+  readonly forceReadProviderThreadIds?: ReadonlySet<string>;
 }
 
 export interface ProviderAdapterShape<TError> {

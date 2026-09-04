@@ -228,6 +228,19 @@ it("does not read an unchanged imported thread", () => {
   expect(selected).toEqual([]);
 });
 
+it("reads an unchanged imported thread when its project may have changed", () => {
+  const selected = selectCodexThreadsForRead(
+    [makeListedThread("known", { cwd: "/work/project" })],
+    {
+      excludeProviderThreadIds: new Set(),
+      cursorByProviderThreadId: new Map([["known", discoveryCursor()]]),
+      forceReadProviderThreadIds: new Set(["known"]),
+    },
+  );
+
+  expect(selected.map((thread) => thread.id)).toEqual(["known"]);
+});
+
 it.effect("keeps readable threads when a sibling disappears between list and read", () =>
   Effect.gen(function* () {
     const threads = [makeListedThread("deleted"), makeListedThread("healthy")];

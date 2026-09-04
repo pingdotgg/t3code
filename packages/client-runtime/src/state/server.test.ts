@@ -121,6 +121,29 @@ describe("persisted thread discovery session", () => {
 
     expect(calls).toEqual([environmentId]);
   });
+
+  it("allows a retry when discovery fails", async () => {
+    const environmentId = EnvironmentId.make("environment-discovery-retry");
+    const calls: EnvironmentId[] = [];
+    let shouldFail = true;
+    const session = createPersistedThreadDiscoverySession();
+
+    const discover = async (id: EnvironmentId) => {
+      calls.push(id);
+      if (shouldFail) {
+        shouldFail = false;
+        throw new Error("temporary connection failure");
+      }
+    };
+
+    session.check([{ environmentId, connected: true }], discover);
+    await Promise.resolve();
+    await Promise.resolve();
+    session.check([{ environmentId, connected: true }], discover);
+    await Promise.resolve();
+
+    expect(calls).toEqual([environmentId, environmentId]);
+  });
 });
 
 function session(client: WsRpcProtocolClient): RpcSession {

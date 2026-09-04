@@ -512,7 +512,9 @@ export function createPersistedThreadDiscoverySession() {
           continue;
         }
         requestedEnvironmentIds.add(environment.environmentId);
-        void discover(environment.environmentId).catch(() => undefined);
+        void discover(environment.environmentId).catch(() => {
+          requestedEnvironmentIds.delete(environment.environmentId);
+        });
       }
     },
   };
