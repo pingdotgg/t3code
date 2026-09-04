@@ -122,6 +122,7 @@ const DIAGNOSTIC_BUFFER_LIMIT = 200;
 const MAX_ARTIFACT_SITE_SLUG_LENGTH = 80;
 const AGENT_CURSOR_MOVE_MS = 160;
 const AGENT_CURSOR_CLICK_LEAD_MS = 40;
+const AGENT_KEY_RECEIPT_TIMEOUT_MS = 1_000;
 const requestRecordingCaptureExpression = (tabId: string): string =>
   `globalThis[${JSON.stringify(DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER)}]?.(${JSON.stringify(tabId)}) === true`;
 const encodeUnknownJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
@@ -396,15 +397,32 @@ const nextZoomLevel = (current: number, direction: "in" | "out"): number => {
 type Listener = (tabId: string, state: PreviewTabState) => Effect.Effect<void>;
 type RecordingFrameListener = (frame: DesktopPreviewRecordingFrame) => Effect.Effect<void>;
 
+interface PreviewKeyIdentity {
+  readonly kind: "key";
+  readonly key: string;
+  readonly code: string;
+  readonly meta: boolean;
+  readonly shift: boolean;
+  readonly control: boolean;
+  readonly alt: boolean;
+}
+
 type PreviewInputSignal =
   | { readonly kind: "pointer"; readonly x: number; readonly y: number; readonly button: number }
-  | { readonly kind: "key"; readonly key: string; readonly code: string };
+  | (PreviewKeyIdentity & { readonly phase: "down" | "up" });
 
 interface ManagedListeners {
   readonly attachmentId: symbol;
   readonly cancelFaviconCapture: () => void;
+  readonly pendingAgentKeys: Set<ActiveAgentKey>;
+  readonly pendingKeyInputs: Array<PendingKeyInput>;
   readonly scope: Scope.Closeable;
+  readonly tabId: string;
   readonly webContents: Electron.WebContents;
+  active: boolean;
+  documentGeneration: number;
+  keyboardDeliveryUncertainGeneration: number | undefined;
+  menuShortcutLease: symbol | undefined;
 }
 
 type FrameCaptureConsumer = "picture-in-picture" | "recording";
@@ -437,8 +455,12 @@ interface PickSession {
 
 interface BrowserControlSession {
   readonly webContentsId: number;
+  readonly webContents: Electron.WebContents;
+  readonly attachmentId: symbol;
+  readonly tabId: string;
   readonly semaphore: Semaphore.Semaphore;
   readonly scope: Scope.Closeable;
+  active: boolean;
   readonly onMessage: (
     event: Electron.Event,
     method: string,
@@ -455,8 +477,36 @@ interface BrowserDiagnostics {
 type PointerEventListener = (event: DesktopPreviewPointerEvent) => Effect.Effect<void>;
 
 interface ExpectedAgentInput {
+  readonly id: symbol;
   readonly signal: PreviewInputSignal;
   readonly expiresAt: number;
+  readonly attachmentId?: symbol;
+  readonly nativeKey?: ActiveAgentKey;
+  readonly receipt?: Deferred.Deferred<void>;
+}
+
+interface KeyboardDocumentIdentity {
+  readonly frame: Electron.WebFrameMain;
+  readonly frameId: number;
+  readonly generation: number;
+  readonly processId: number;
+}
+
+interface ActiveAgentKey {
+  readonly attachmentId: symbol;
+  readonly document: KeyboardDocumentIdentity;
+  readonly id: symbol;
+  readonly phase: "down" | "up";
+  readonly signal: PreviewKeyIdentity;
+  readonly webContents: Electron.WebContents;
+  accepted: boolean;
+  valid: boolean;
+}
+
+interface PendingKeyInput {
+  readonly document: KeyboardDocumentIdentity;
+  readonly nativeKey?: ActiveAgentKey;
+  readonly signal: PreviewInputSignal & { readonly kind: "key" };
 }
 
 const APP_FORWARDED_SHORTCUTS: ReadonlyArray<{
@@ -464,15 +514,16 @@ const APP_FORWARDED_SHORTCUTS: ReadonlyArray<{
   meta: boolean;
   shift: boolean;
   control: boolean;
+  alt: boolean;
 }> = Object.freeze([
   // mod+shift+J → preview.toggle
-  { key: "j", meta: true, shift: true, control: false },
+  { key: "j", meta: true, shift: true, control: false, alt: false },
   // mod+K → command palette
-  { key: "k", meta: true, shift: false, control: false },
+  { key: "k", meta: true, shift: false, control: false, alt: false },
   // mod+, → settings (macOS convention)
-  { key: ",", meta: true, shift: false, control: false },
+  { key: ",", meta: true, shift: false, control: false, alt: false },
   // mod+W → close tab/panel
-  { key: "w", meta: true, shift: false, control: false },
+  { key: "w", meta: true, shift: false, control: false, alt: false },
 ]);
 
 /**
@@ -554,7 +605,17 @@ const isPreviewInputSignal = (value: unknown): value is PreviewInputSignal => {
     "key" in value &&
     typeof value.key === "string" &&
     "code" in value &&
-    typeof value.code === "string"
+    typeof value.code === "string" &&
+    "meta" in value &&
+    typeof value.meta === "boolean" &&
+    "shift" in value &&
+    typeof value.shift === "boolean" &&
+    "control" in value &&
+    typeof value.control === "boolean" &&
+    "alt" in value &&
+    typeof value.alt === "boolean" &&
+    "phase" in value &&
+    (value.phase === "down" || value.phase === "up")
   );
 };
 
@@ -571,9 +632,67 @@ const inputSignalsMatch = (left: PreviewInputSignal, right: PreviewInputSignal):
     left.kind === "key" &&
     right.kind === "key" &&
     left.key === right.key &&
-    left.code === right.code
+    left.code === right.code &&
+    left.meta === right.meta &&
+    left.shift === right.shift &&
+    left.control === right.control &&
+    left.alt === right.alt &&
+    left.phase === right.phase
   );
 };
+
+const inputMatchesActiveAgentKey = (expected: ActiveAgentKey, input: Electron.Input): boolean =>
+  input.type === (expected.phase === "down" ? "keyDown" : "keyUp") &&
+  input.key === expected.signal.key &&
+  input.code === expected.signal.code &&
+  input.meta === expected.signal.meta &&
+  input.shift === expected.signal.shift &&
+  input.control === expected.signal.control &&
+  input.alt === expected.signal.alt;
+
+const keySignalFromInput = (
+  input: Electron.Input & { readonly type: "keyDown" | "keyUp" },
+): PreviewInputSignal & { readonly kind: "key" } => ({
+  kind: "key",
+  phase: input.type === "keyDown" ? "down" : "up",
+  key: input.key,
+  code: input.code,
+  meta: input.meta,
+  shift: input.shift,
+  control: input.control,
+  alt: input.alt,
+});
+
+const captureKeyboardDocument = (
+  attachment: ManagedListeners,
+  wc: Electron.WebContents,
+): KeyboardDocumentIdentity => {
+  const frame = wc.mainFrame;
+  return {
+    frame,
+    frameId: frame.routingId,
+    generation: attachment.documentGeneration,
+    processId: frame.processId,
+  };
+};
+
+const isKeyboardDocumentCurrent = (
+  attachment: ManagedListeners,
+  wc: Electron.WebContents,
+  document: KeyboardDocumentIdentity,
+): boolean =>
+  attachment.documentGeneration === document.generation &&
+  isKeyboardDocumentFrameCurrent(wc, document);
+
+const isKeyboardDocumentFrameCurrent = (
+  wc: Electron.WebContents,
+  document: KeyboardDocumentIdentity,
+): boolean =>
+  !wc.isDestroyed() &&
+  wc.mainFrame === document.frame &&
+  !document.frame.detached &&
+  document.frame.processId === document.processId &&
+  document.frame.routingId === document.frameId;
 
 const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function* (
   artifactDirectory: string,
@@ -621,7 +740,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   >(new Map());
   const pictureInPictureAspectRatiosRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   const pictureInPictureMutationSemaphore = yield* Semaphore.make(1);
+  const webviewRegistrationSemaphore = yield* Semaphore.make(1);
   const closingTabIdsRef = yield* Ref.make<ReadonlySet<string>>(new Set());
+  const activeAgentKeys = new Map<symbol, ActiveAgentKey>();
+  const uncertainKeyboardDocuments = new WeakMap<Electron.WebContents, KeyboardDocumentIdentity>();
   // Tab recording uses `setDisplayMediaRequestHandler` because Electron's legacy
   // `getMediaSourceId` + `chromeMediaSource: "tab"` capture path was removed upstream
   // (electron#44618) and now always rejects with NotAllowedError.
@@ -649,6 +771,27 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       try: evaluate,
       catch: (cause) => new PreviewOperationError({ ...errorContext, cause }),
     });
+  const releaseMenuShortcutLease = (
+    attachment: ManagedListeners,
+    wc: Electron.WebContents,
+    expectedLease?: symbol,
+  ): void => {
+    const lease = attachment.menuShortcutLease;
+    if (lease === undefined || (expectedLease !== undefined && lease !== expectedLease)) return;
+    attachment.menuShortcutLease = undefined;
+    if (wc.isDestroyed()) return;
+    try {
+      wc.setIgnoreMenuShortcuts(false);
+    } catch (cause) {
+      runFork(
+        Effect.logDebug("Failed to restore preview menu shortcuts.", {
+          cause,
+          tabId: attachment.tabId,
+          webContentsId: wc.id,
+        }),
+      );
+    }
+  };
   const currentIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const currentMillis = Clock.currentTimeMillis;
   const encodeJson = (errorContext: PreviewOperationContext, value: unknown) =>
@@ -961,7 +1104,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       return yield* new PreviewWebviewNotInitializedError({ tabId });
     }
     const wc = webContents.fromId(tab.webContentsId);
-    if (!wc) {
+    const attachment = (yield* Ref.get(attachedRef)).get(tab.webContentsId);
+    if (
+      !wc ||
+      wc.isDestroyed() ||
+      !attachment?.active ||
+      attachment.tabId !== tabId ||
+      attachment.webContents !== wc
+    ) {
       return yield* new PreviewWebContentsNotFoundError({
         tabId,
         webContentsId: tab.webContentsId,
@@ -997,10 +1147,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
 
   const tabIdForWebContents = Effect.fnUntraced(function* (webContentsId: number) {
-    const tabs = yield* SynchronizedRef.get(tabsRef);
-    return (
-      Array.from(tabs.entries()).find(([, tab]) => tab.webContentsId === webContentsId)?.[0] ?? null
-    );
+    const attachment = (yield* Ref.get(attachedRef)).get(webContentsId);
+    return attachment?.active ? attachment.tabId : null;
   });
 
   const pushBounded = <A>(buffer: ReadonlyArray<A>, entry: A): ReadonlyArray<A> =>
@@ -1136,17 +1284,35 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const detachControlSession = Effect.fn("PreviewManager.detachControlSession")(function* (
     webContentsId: number,
+    expected?: {
+      readonly attachmentId: symbol;
+      readonly tabId: string;
+      readonly webContents: Electron.WebContents;
+    },
   ) {
-    const control = yield* SynchronizedRef.modify(controlSessionsRef, (sessions) => [
-      sessions.get(webContentsId),
-      replaceMap(sessions, (copy) => {
-        copy.delete(webContentsId);
-      }),
-    ]);
+    const control = yield* SynchronizedRef.modify(controlSessionsRef, (sessions) => {
+      const current = sessions.get(webContentsId);
+      if (
+        expected &&
+        (current?.attachmentId !== expected.attachmentId ||
+          current.tabId !== expected.tabId ||
+          current.webContents !== expected.webContents)
+      ) {
+        return [undefined, sessions] as const;
+      }
+      if (current) current.active = false;
+      return [
+        current,
+        replaceMap(sessions, (copy) => {
+          copy.delete(webContentsId);
+        }),
+      ];
+    });
     if (control) {
       yield* Scope.close(control.scope, Exit.void).pipe(Effect.ignore);
       return;
     }
+    if (expected) return;
     yield* Ref.update(diagnosticsRef, (diagnostics) =>
       replaceMap(diagnostics, (copy) => {
         copy.delete(webContentsId);
@@ -1156,7 +1322,27 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const ensureControlSession = Effect.fn("PreviewManager.ensureControlSession")(function* (
     wc: Electron.WebContents,
+    tabId: string,
+    operation: string,
+    expectedAttachment?: ManagedListeners,
   ) {
+    const attachment = expectedAttachment ?? (yield* Ref.get(attachedRef)).get(wc.id);
+    const currentAttachment = (yield* Ref.get(attachedRef)).get(wc.id);
+    if (
+      !attachment ||
+      !attachment.active ||
+      attachment.webContents !== wc ||
+      attachment.tabId !== tabId ||
+      currentAttachment?.attachmentId !== attachment.attachmentId ||
+      currentAttachment?.tabId !== tabId ||
+      currentAttachment?.webContents !== wc
+    ) {
+      return yield* new PreviewAutomationTargetChangedError({
+        operation,
+        tabId,
+        webContentsId: wc.id,
+      });
+    }
     return yield* SynchronizedRef.modifyEffect(
       controlSessionsRef,
       (
@@ -1166,7 +1352,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         PreviewManagerError
       > => {
         const existing = sessions.get(wc.id);
-        if (existing) return Effect.succeed([existing, sessions] as const);
+        if (
+          attachment.active &&
+          existing?.active &&
+          existing.webContents === wc &&
+          existing.attachmentId === attachment.attachmentId &&
+          existing.tabId === tabId
+        ) {
+          return Effect.succeed([existing, sessions] as const);
+        }
+        const currentSessions = existing
+          ? replaceMap(sessions, (copy) => {
+              copy.delete(wc.id);
+            })
+          : sessions;
         if (wc.isDevToolsOpened()) {
           return Effect.fail(
             new PreviewAutomationDevToolsOpenError({
@@ -1182,6 +1381,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           );
         }
         const createControlSession = Effect.fn("PreviewManager.createControlSession")(function* () {
+          if (existing) {
+            existing.active = false;
+            yield* Scope.close(existing.scope, Exit.void).pipe(Effect.ignore);
+          }
           const semaphore = yield* Semaphore.make(1);
           const scope = yield* Scope.fork(parentScope, "sequential");
           const handleDebuggerMessage = Effect.fnUntraced(function* (
@@ -1253,8 +1456,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           );
           const control: BrowserControlSession = {
             webContentsId: wc.id,
+            webContents: wc,
+            attachmentId: attachment.attachmentId,
+            tabId,
             semaphore,
             scope,
+            active: true,
             onMessage,
           };
           const initialize = Effect.fn("PreviewManager.initializeControlSession")(function* () {
@@ -1281,12 +1488,35 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               ),
               { concurrency: "unbounded", discard: true },
             );
-            return [
-              control,
-              replaceMap(sessions, (copy) => {
-                copy.set(wc.id, control);
-              }),
-            ] as const;
+            const [tabs, attachments] = yield* Effect.all([
+              SynchronizedRef.get(tabsRef),
+              Ref.get(attachedRef),
+            ]);
+            return yield* Effect.suspend(() => {
+              if (
+                !attachment.active ||
+                !control.active ||
+                wc.isDestroyed() ||
+                webContents.fromId(wc.id) !== wc ||
+                tabs.get(tabId)?.webContentsId !== wc.id ||
+                attachments.get(wc.id) !== attachment ||
+                attachment.tabId !== tabId
+              ) {
+                return Effect.fail(
+                  new PreviewAutomationTargetChangedError({
+                    operation,
+                    tabId,
+                    webContentsId: wc.id,
+                  }),
+                );
+              }
+              return Effect.succeed([
+                control,
+                replaceMap(currentSessions, (copy) => {
+                  copy.set(wc.id, control);
+                }),
+              ] as const);
+            });
           });
           return yield* initialize().pipe(
             Effect.onError(() => Scope.close(scope, Exit.void).pipe(Effect.ignore)),
@@ -1337,7 +1567,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     wc: Electron.WebContents,
     action: string,
-    use: (send: SendCommand, sendCleanup: SendCommand) => Effect.Effect<A, PreviewManagerError>,
+    use: (
+      send: SendCommand,
+      assertCurrent: Effect.Effect<void, PreviewManagerError>,
+      attachment: ManagedListeners,
+      isNativeTargetCurrent: () => boolean,
+    ) => Effect.Effect<A, PreviewManagerError>,
   ) {
     const sequence = yield* nextCounter(actionSequenceRef);
     const startedAt = yield* currentIso;
@@ -1349,55 +1584,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       startedAt,
     };
     yield* pushAction(tabId, actionEvent);
-    const epoch = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
-    const control = yield* ensureControlSession(wc);
-    const execute = Effect.fn("PreviewManager.executeControlAction")(function* () {
-      yield* update(tabId, { controller: "agent" });
-      const send: SendCommand = Effect.fn("PreviewManager.sendCommand")(
-        function* (method, commandParams) {
-          const before = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
-          if (before !== epoch) {
-            return yield* new PreviewAutomationControlInterruptedError({
-              operation: action,
-              tabId,
-              webContentsId: wc.id,
-            });
-          }
-          const result = yield* attemptPromise(
-            { operation: `${action}.${method}`, tabId, webContentsId: wc.id },
-            () => wc.debugger.sendCommand(method, commandParams),
-          );
-          const after = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
-          if (after !== epoch) {
-            return yield* new PreviewAutomationControlInterruptedError({
-              operation: action,
-              tabId,
-              webContentsId: wc.id,
-            });
-          }
-          return result;
-        },
-      );
-      // Cleanup commands must still run after human input invalidates the action's
-      // control epoch. Otherwise a partially dispatched input can leave Chromium
-      // with a held key or focus emulation enabled for subsequent actions.
-      const sendCleanup: SendCommand = Effect.fn("PreviewManager.sendCleanupCommand")(
-        function* (method, commandParams) {
-          return yield* attemptPromise(
-            {
-              operation: `${action}.cleanup.${method}`,
-              tabId,
-              webContentsId: wc.id,
-            },
-            () => wc.debugger.sendCommand(method, commandParams),
-          );
-        },
-      );
-      return yield* use(send, sendCleanup);
-    });
+    let controllerClaimed = false;
+    let finalized = false;
     const finalize = Effect.fn("PreviewManager.finalizeControlAction")(function* (
       exit: Exit.Exit<A, PreviewManagerError>,
     ) {
+      if (finalized) return;
+      finalized = true;
       const completedAt = yield* currentIso;
       if (exit._tag === "Success") {
         yield* replaceAction(tabId, {
@@ -1425,9 +1618,81 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         });
       }
       const tabs = yield* SynchronizedRef.get(tabsRef);
-      if (tabs.has(tabId)) yield* update(tabId, { controller: "none" });
+      if (controllerClaimed && tabs.get(tabId)?.controller === "agent") {
+        yield* update(tabId, { controller: "none" });
+      }
     });
-    return yield* control.semaphore.withPermit(execute().pipe(Effect.onExit(finalize)));
+    const run = Effect.gen(function* () {
+      const epoch = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
+      const attachment = (yield* Ref.get(attachedRef)).get(wc.id);
+      if (!attachment || !attachment.active || attachment.webContents !== wc) {
+        return yield* new PreviewAutomationTargetChangedError({
+          operation: action,
+          tabId,
+          webContentsId: wc.id,
+        });
+      }
+      const control = yield* ensureControlSession(wc, tabId, action, attachment);
+      const assertCurrent = Effect.fn("PreviewManager.assertCurrentControlTarget")(function* () {
+        const [tabs, attachments, controls, epochs] = yield* Effect.all([
+          SynchronizedRef.get(tabsRef),
+          Ref.get(attachedRef),
+          SynchronizedRef.get(controlSessionsRef),
+          Ref.get(controlEpochRef),
+        ]);
+        if ((epochs.get(tabId) ?? 0) !== epoch) {
+          return yield* new PreviewAutomationControlInterruptedError({
+            operation: action,
+            tabId,
+            webContentsId: wc.id,
+          });
+        }
+        if (
+          wc.isDestroyed() ||
+          tabs.get(tabId)?.webContentsId !== wc.id ||
+          webContents.fromId(wc.id) !== wc ||
+          attachments.get(wc.id)?.attachmentId !== attachment.attachmentId ||
+          attachments.get(wc.id)?.tabId !== tabId ||
+          attachments.get(wc.id)?.webContents !== wc ||
+          !attachment.active ||
+          controls.get(wc.id) !== control ||
+          !control.active ||
+          control.webContents !== wc ||
+          control.attachmentId !== attachment.attachmentId ||
+          control.tabId !== tabId
+        ) {
+          return yield* new PreviewAutomationTargetChangedError({
+            operation: action,
+            tabId,
+            webContentsId: wc.id,
+          });
+        }
+      });
+      const execute = Effect.fn("PreviewManager.executeControlAction")(function* () {
+        yield* assertCurrent();
+        yield* update(tabId, { controller: "agent" });
+        controllerClaimed = true;
+        const send: SendCommand = Effect.fn("PreviewManager.sendCommand")(
+          function* (method, commandParams) {
+            yield* assertCurrent();
+            const result = yield* attemptPromise(
+              { operation: `${action}.${method}`, tabId, webContentsId: wc.id },
+              () => wc.debugger.sendCommand(method, commandParams),
+            );
+            yield* assertCurrent();
+            return result;
+          },
+        );
+        const isNativeTargetCurrent = () =>
+          attachment.active &&
+          control.active &&
+          !wc.isDestroyed() &&
+          webContents.fromId(wc.id) === wc;
+        return yield* use(send, assertCurrent(), attachment, isNativeTargetCurrent);
+      });
+      return yield* control.semaphore.withPermit(execute().pipe(Effect.onExit(finalize)));
+    });
+    return yield* run.pipe(Effect.onExit((exit) => (finalized ? Effect.void : finalize(exit))));
   });
 
   const evaluateWithDebugger = <A = unknown>(
@@ -1512,15 +1777,60 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (session) yield* session.cancel;
   });
 
+  const rememberKeyboardDeliveryHazard = (attachment: ManagedListeners): void => {
+    const wc = attachment.webContents;
+    const hasPotentialHazard =
+      attachment.keyboardDeliveryUncertainGeneration === attachment.documentGeneration ||
+      attachment.menuShortcutLease !== undefined ||
+      attachment.pendingKeyInputs.length > 0 ||
+      Array.from(attachment.pendingAgentKeys).some((pending) => pending.accepted);
+    if (!hasPotentialHazard || wc.isDestroyed()) return;
+    const document = captureKeyboardDocument(attachment, wc);
+    const hasCurrentPendingInput = attachment.pendingKeyInputs.some((pending) =>
+      isKeyboardDocumentCurrent(attachment, wc, pending.document),
+    );
+    const hasAcceptedAgentKey = Array.from(attachment.pendingAgentKeys).some(
+      (pending) => pending.accepted && isKeyboardDocumentCurrent(attachment, wc, pending.document),
+    );
+    if (
+      attachment.keyboardDeliveryUncertainGeneration === attachment.documentGeneration ||
+      attachment.menuShortcutLease !== undefined ||
+      hasCurrentPendingInput ||
+      hasAcceptedAgentKey
+    ) {
+      uncertainKeyboardDocuments.set(wc, document);
+    }
+  };
+
+  const markKeyboardDeliveryUncertain = (
+    attachment: ManagedListeners,
+    wc: Electron.WebContents,
+    document: KeyboardDocumentIdentity,
+  ): void => {
+    if (!isKeyboardDocumentCurrent(attachment, wc, document)) return;
+    attachment.keyboardDeliveryUncertainGeneration = document.generation;
+    if (attachment.active) uncertainKeyboardDocuments.set(wc, document);
+    for (const pending of attachment.pendingAgentKeys) pending.valid = false;
+  };
+
   const detachListeners = Effect.fn("PreviewManager.detachListeners")(function* (
     webContentsId: number,
+    expected?: ManagedListeners,
   ) {
-    const managed = yield* Ref.modify(attachedRef, (attached) => [
-      attached.get(webContentsId),
-      replaceMap(attached, (copy) => {
-        copy.delete(webContentsId);
-      }),
-    ]);
+    const managed = yield* Ref.modify(attachedRef, (attached) => {
+      const current = attached.get(webContentsId);
+      if (expected && current !== expected) return [undefined, attached] as const;
+      if (current) {
+        current.active = false;
+        rememberKeyboardDeliveryHazard(current);
+      }
+      return [
+        current,
+        replaceMap(attached, (copy) => {
+          copy.delete(webContentsId);
+        }),
+      ];
+    });
     if (managed) {
       managed.cancelFaviconCapture();
       yield* Scope.close(managed.scope, Exit.void).pipe(Effect.ignore);
@@ -1534,7 +1844,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         shortcut.key.toLowerCase() === input.key.toLowerCase() &&
         shortcut.meta === input.meta &&
         shortcut.shift === input.shift &&
-        shortcut.control === input.control,
+        shortcut.control === input.control &&
+        shortcut.alt === input.alt,
     );
 
   const computeNavStatus = (wc: Electron.WebContents): PreviewNavStatus => {
@@ -1546,39 +1857,80 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   };
 
   const consumeExpectedAgentInput = Effect.fn("PreviewManager.consumeExpectedAgentInput")(
-    function* (tabId: string, signal: PreviewInputSignal) {
+    function* (
+      tabId: string,
+      attachmentId: symbol,
+      signal: PreviewInputSignal,
+      nativeKey?: ActiveAgentKey,
+    ) {
       const now = yield* currentMillis;
-      return yield* Ref.modify(expectedAgentInputsRef, (allExpected) => {
+      const matched = yield* Ref.modify(expectedAgentInputsRef, (allExpected) => {
         const pending = (allExpected.get(tabId) ?? []).filter(
           (expected) => expected.expiresAt > now,
         );
-        const index = pending.findIndex((expected) => inputSignalsMatch(expected.signal, signal));
-        const matched = index >= 0;
-        const nextPending = matched
+        const index = pending.findIndex(
+          (expected) =>
+            (expected.attachmentId === undefined || expected.attachmentId === attachmentId) &&
+            expected.nativeKey === nativeKey &&
+            (nativeKey === undefined || (nativeKey.valid && nativeKey.accepted)) &&
+            inputSignalsMatch(expected.signal, signal),
+        );
+        const match = pending[index];
+        const nextPending = match
           ? pending.filter((_, pendingIndex) => pendingIndex !== index)
           : pending;
         return [
-          matched,
+          match,
           replaceMap(allExpected, (copy) => {
             if (nextPending.length === 0) copy.delete(tabId);
             else copy.set(tabId, nextPending);
           }),
         ] as const;
       });
+      if (matched?.receipt) yield* Deferred.succeed(matched.receipt, undefined).pipe(Effect.ignore);
+      return matched !== undefined;
     },
   );
 
   const expectAgentInput = Effect.fn("PreviewManager.expectAgentInput")(function* (
     tabId: string,
     signal: PreviewInputSignal,
+    options?: {
+      readonly attachmentId?: symbol;
+      readonly nativeKey?: ActiveAgentKey;
+      readonly receipt?: Deferred.Deferred<void>;
+    },
   ) {
     const now = yield* currentMillis;
+    const id = Symbol();
     yield* Ref.update(expectedAgentInputsRef, (allExpected) =>
       replaceMap(allExpected, (copy) => {
         const pending = (allExpected.get(tabId) ?? []).filter(
           (expected) => expected.expiresAt > now,
         );
-        copy.set(tabId, [...pending, { signal, expiresAt: now + 1_000 }]);
+        copy.set(tabId, [
+          ...pending,
+          {
+            id,
+            signal,
+            expiresAt: now + AGENT_KEY_RECEIPT_TIMEOUT_MS,
+            ...options,
+          },
+        ]);
+      }),
+    );
+    return id;
+  });
+
+  const removeExpectedAgentInput = Effect.fn("PreviewManager.removeExpectedAgentInput")(function* (
+    tabId: string,
+    id: symbol,
+  ) {
+    yield* Ref.update(expectedAgentInputsRef, (allExpected) =>
+      replaceMap(allExpected, (copy) => {
+        const pending = (allExpected.get(tabId) ?? []).filter((expected) => expected.id !== id);
+        if (pending.length === 0) copy.delete(tabId);
+        else copy.set(tabId, pending);
       }),
     );
   });
@@ -1601,6 +1953,26 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       documentId += 1;
       activeCapture?.controller.abort();
       activeCapture = null;
+    };
+    const uncertainKeyboardDocument = uncertainKeyboardDocuments.get(wc);
+    const inheritsKeyboardDeliveryHazard =
+      uncertainKeyboardDocument !== undefined &&
+      isKeyboardDocumentFrameCurrent(wc, uncertainKeyboardDocument);
+    if (uncertainKeyboardDocument && !inheritsKeyboardDeliveryHazard) {
+      uncertainKeyboardDocuments.delete(wc);
+    }
+    const attachment: ManagedListeners = {
+      attachmentId,
+      cancelFaviconCapture,
+      pendingAgentKeys: new Set(),
+      pendingKeyInputs: [],
+      scope,
+      tabId,
+      webContents: wc,
+      active: true,
+      documentGeneration: 0,
+      keyboardDeliveryUncertainGeneration: inheritsKeyboardDeliveryHazard ? 0 : undefined,
+      menuShortcutLease: undefined,
     };
     const syncState = Effect.fn("PreviewManager.syncWebContentsState")(function* (
       preserveLoadFailure: boolean,
@@ -1651,7 +2023,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       if (Option.isSome(next)) yield* emitIfCurrent(tabId, next.value);
     });
     const sync = () => runFork(syncState(true));
-    const syncNavigation = () => runFork(syncState(false, true));
+    const syncNavigation = () => {
+      if (!attachment.active) return;
+      releaseMenuShortcutLease(attachment, wc);
+      uncertainKeyboardDocuments.delete(wc);
+      attachment.documentGeneration += 1;
+      attachment.pendingKeyInputs.length = 0;
+      for (const pending of attachment.pendingAgentKeys) pending.valid = false;
+      runFork(syncState(false, true));
+    };
     const syncInPageNavigation = () => runFork(syncState(false));
     const navigationStarted = (
       event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
@@ -1774,12 +2154,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }),
       );
     };
-    const handleHumanInput = Effect.fn("PreviewManager.handleHumanInput")(function* (
-      rawSignal?: unknown,
-    ) {
-      if (isPreviewInputSignal(rawSignal) && (yield* consumeExpectedAgentInput(tabId, rawSignal))) {
-        return;
-      }
+    const claimHumanControl = Effect.fn("PreviewManager.claimHumanControl")(function* () {
+      for (const pending of attachment.pendingAgentKeys) pending.valid = false;
       yield* Ref.update(controlEpochRef, (epochs) =>
         replaceMap(epochs, (copy) => {
           copy.set(tabId, (epochs.get(tabId) ?? 0) + 1);
@@ -1792,8 +2168,81 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         yield* update(tabId, { controller: "none" });
       }
     });
-    const humanInput = (_event: unknown, rawSignal?: unknown): void => {
-      runFork(handleHumanInput(rawSignal));
+    const handleHumanInput = Effect.fn("PreviewManager.handleHumanInput")(function* (
+      rawSignal?: unknown,
+    ) {
+      if (isPreviewInputSignal(rawSignal)) {
+        if (yield* consumeExpectedAgentInput(tabId, attachmentId, rawSignal)) return;
+        if (rawSignal.kind === "key" && rawSignal.phase === "up") return;
+      }
+      yield* claimHumanControl();
+    });
+    const humanInput = (event: Electron.IpcMainEvent, rawSignal?: unknown): void => {
+      const senderFrame = event.senderFrame;
+      const processId = event.processId;
+      const frameId = event.frameId;
+      if (
+        event.sender !== wc ||
+        !senderFrame ||
+        senderFrame.detached ||
+        senderFrame !== wc.mainFrame ||
+        processId !== senderFrame.processId ||
+        frameId !== senderFrame.routingId ||
+        !isPreviewInputSignal(rawSignal)
+      ) {
+        return;
+      }
+      if (rawSignal.kind === "pointer") {
+        runFork(handleHumanInput(rawSignal));
+        return;
+      }
+      const matchesReceipt = (pending: PendingKeyInput): boolean =>
+        isKeyboardDocumentCurrent(attachment, wc, pending.document) &&
+        pending.document.processId === processId &&
+        pending.document.frameId === frameId &&
+        inputSignalsMatch(pending.signal, rawSignal);
+      const pending = attachment.pendingKeyInputs[0];
+      if (!pending || !matchesReceipt(pending)) {
+        if (rawSignal.phase === "up") {
+          const physicalMatchIndex = attachment.pendingKeyInputs.findIndex((candidate) => {
+            if (candidate.nativeKey) return false;
+            return matchesReceipt(candidate);
+          });
+          const agentIndex = attachment.pendingKeyInputs.findIndex(
+            (candidate) => candidate.nativeKey !== undefined,
+          );
+          if (physicalMatchIndex >= 0 && (agentIndex === -1 || physicalMatchIndex < agentIndex)) {
+            attachment.pendingKeyInputs.splice(0, physicalMatchIndex + 1);
+            return;
+          }
+        }
+        const pendingAgentDocument =
+          attachment.pendingKeyInputs.find(
+            (candidate) =>
+              candidate.nativeKey !== undefined &&
+              isKeyboardDocumentCurrent(attachment, wc, candidate.document),
+          )?.document ??
+          Array.from(attachment.pendingAgentKeys).find((candidate) =>
+            isKeyboardDocumentCurrent(attachment, wc, candidate.document),
+          )?.document;
+        if (pendingAgentDocument) {
+          markKeyboardDeliveryUncertain(attachment, wc, pendingAgentDocument);
+        }
+        attachment.pendingKeyInputs.length = 0;
+        if (rawSignal.phase === "down") runFork(claimHumanControl());
+        return;
+      }
+      attachment.pendingKeyInputs.shift();
+      if (!pending.nativeKey) return;
+      runFork(
+        consumeExpectedAgentInput(tabId, attachmentId, rawSignal, pending.nativeKey).pipe(
+          Effect.tap((matched) =>
+            matched
+              ? Effect.void
+              : Effect.sync(() => markKeyboardDeliveryUncertain(attachment, wc, pending.document)),
+          ),
+        ),
+      );
     };
     const mouseNavigate = (_event: unknown, payload?: unknown): void => {
       const direction =
@@ -1811,16 +2260,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }).pipe(Effect.ignore),
       );
     };
-    const forwardShortcut = Effect.fn("PreviewManager.forwardShortcut")(function* (
-      event: Electron.Event,
-      input: Electron.Input,
-    ) {
-      const mainWindow = yield* Ref.get(mainWindowRef);
-      if (!isAppShortcut(input) || Option.isNone(mainWindow) || mainWindow.value.isDestroyed()) {
-        return;
+    const forwardShortcut = (event: Electron.Event, input: Electron.Input): boolean => {
+      const mainWindow = currentMainWindow;
+      if (!isAppShortcut(input) || !mainWindow || mainWindow.isDestroyed()) {
+        return false;
       }
       event.preventDefault();
-      mainWindow.value.webContents.sendInputEvent({
+      mainWindow.webContents.sendInputEvent({
         type: "keyDown",
         keyCode: input.key,
         modifiers: [
@@ -1830,7 +2276,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           ...(input.alt ? (["alt"] as const) : []),
         ],
       });
-    });
+      return true;
+    };
     // A popup opens with Electron's default handler, so the page inside it could
     // otherwise spawn native windows without limit. Nothing in an OAuth flow
     // opens a second popup, so the chain stops at the first one.
@@ -1838,6 +2285,36 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     };
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
+      const activeAgentKey = activeAgentKeys.get(attachmentId);
+      if (
+        activeAgentKey &&
+        activeAgentKey.attachmentId === attachmentId &&
+        activeAgentKey.webContents === wc &&
+        isKeyboardDocumentCurrent(attachment, wc, activeAgentKey.document) &&
+        inputMatchesActiveAgentKey(activeAgentKey, input)
+      ) {
+        if (activeAgentKey.valid) {
+          activeAgentKey.accepted = true;
+          attachment.pendingKeyInputs.push({
+            document: activeAgentKey.document,
+            nativeKey: activeAgentKey,
+            signal: keySignalFromInput(input as Electron.Input & { type: "keyDown" | "keyUp" }),
+          });
+        }
+        return;
+      }
+      if (activeAgentKey) {
+        activeAgentKey.valid = false;
+        event.preventDefault();
+        releaseMenuShortcutLease(attachment, wc);
+        if (input.type === "keyDown") runFork(claimHumanControl());
+        return;
+      }
+      if (input.type === "keyDown" || input.type === "keyUp") {
+        for (const pending of attachment.pendingAgentKeys) pending.valid = false;
+        if (input.type === "keyDown") runFork(claimHumanControl());
+      }
+      releaseMenuShortcutLease(attachment, wc);
       if (isPreviewRefreshShortcut(input)) {
         event.preventDefault();
         runFork(
@@ -1847,12 +2324,29 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         );
         return;
       }
-      runFork(forwardShortcut(event, input));
+      if (forwardShortcut(event, input)) return;
+      if (
+        (input.type === "keyDown" || input.type === "keyUp") &&
+        wc.focusedFrame === wc.mainFrame
+      ) {
+        const signal = keySignalFromInput(
+          input as Electron.Input & { readonly type: "keyDown" | "keyUp" },
+        );
+        attachment.pendingKeyInputs.push({
+          document: captureKeyboardDocument(attachment, wc),
+          signal,
+        });
+        if (attachment.pendingKeyInputs.length > 20) {
+          attachment.pendingKeyInputs.length = 0;
+          markKeyboardDeliveryUncertain(attachment, wc, captureKeyboardDocument(attachment, wc));
+        }
+      }
     };
     yield* Scope.addFinalizer(
       scope,
       attempt({ operation: "detachListeners", tabId, webContentsId: wc.id }, () => {
         cancelFaviconCapture();
+        releaseMenuShortcutLease(attachment, wc);
         wc.off("did-start-navigation", navigationStarted);
         wc.off("did-navigate", syncNavigation);
         wc.off("did-navigate-in-page", syncInPageNavigation);
@@ -1897,11 +2391,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       });
       yield* Ref.update(attachedRef, (attached) =>
         replaceMap(attached, (copy) => {
-          copy.set(wc.id, { attachmentId, cancelFaviconCapture, scope, webContents: wc });
+          copy.set(wc.id, attachment);
         }),
       );
     });
     yield* install().pipe(Effect.onError(() => Scope.close(scope, Exit.void).pipe(Effect.ignore)));
+    return attachment;
   });
 
   const setMainWindow = Effect.fn("PreviewManager.setMainWindow")(function* (
@@ -2000,6 +2495,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         discard: true,
       },
     );
+    const currentTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    if (!currentTab) return;
+    if (currentTab.webContentsId != null) {
+      const attachment = (yield* Ref.get(attachedRef)).get(currentTab.webContentsId);
+      if (attachment?.tabId === tabId) {
+        yield* Effect.all(
+          [
+            detachControlSession(currentTab.webContentsId, attachment),
+            detachListeners(currentTab.webContentsId, attachment),
+          ],
+          { concurrency: 2, discard: true },
+        );
+      }
+    }
     const tab = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
       const current = tabs.get(tabId);
       if (!current) return [Option.none<PreviewTabState>(), tabs] as const;
@@ -2012,12 +2521,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
     if (Option.isNone(tab)) return;
     const closedTab = tab.value;
-    if (closedTab.webContentsId != null) {
-      yield* Effect.all(
-        [detachControlSession(closedTab.webContentsId), detachListeners(closedTab.webContentsId)],
-        { concurrency: 2, discard: true },
-      );
-    }
     const updatedAt = yield* currentIso;
     const closed: PreviewTabState = {
       ...closedTab,
@@ -2081,7 +2584,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const annotationTheme = yield* Ref.get(annotationThemeRef);
     const currentAttachment = attached.get(webContentsId);
     yield* keepFrameCaptureWebContentsUnthrottled(tabId, wc);
-    if (tab.webContentsId === webContentsId && currentAttachment?.webContents === wc) {
+    if (
+      tab.webContentsId === webContentsId &&
+      currentAttachment?.active &&
+      currentAttachment.tabId === tabId &&
+      currentAttachment.webContents === wc
+    ) {
       // The guest we already own re-announced itself, so nothing about the tab
       // changed. Only push its zoom back down — Chromium may have just handed
       // this guest the app window's zoom level.
@@ -2091,23 +2599,38 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       return;
     }
-    const replacedWebContentsId =
-      tab.webContentsId != null &&
-      (tab.webContentsId !== webContentsId || currentAttachment?.webContents !== wc)
-        ? tab.webContentsId
-        : null;
-    if (replacedWebContentsId !== null) {
-      // The replaced guest can no longer redeem a display-media grant.
-      clearPendingRecording(tabId);
-      yield* Effect.all(
-        [
-          detachControlSession(replacedWebContentsId),
-          detachListeners(replacedWebContentsId),
-          cancelPickElement(tabId),
-        ],
-        { concurrency: 3, discard: true },
-      );
+    const replacedAttachments = new Set<ManagedListeners>();
+    if (tab.webContentsId != null) {
+      const tabAttachment = attached.get(tab.webContentsId);
+      if (tabAttachment?.tabId === tabId) replacedAttachments.add(tabAttachment);
     }
+    if (
+      currentAttachment &&
+      (currentAttachment.tabId !== tabId || currentAttachment.webContents !== wc)
+    ) {
+      replacedAttachments.add(currentAttachment);
+    }
+    if (replacedAttachments.size > 0) {
+      for (const displacedTabId of new Set([
+        tabId,
+        ...Array.from(replacedAttachments, (attachment) => attachment.tabId),
+      ])) {
+        clearPendingRecording(displacedTabId);
+      }
+    }
+    yield* Effect.forEach(
+      replacedAttachments,
+      (replacedAttachment) =>
+        Effect.all(
+          [
+            detachControlSession(replacedAttachment.webContents.id, replacedAttachment),
+            detachListeners(replacedAttachment.webContents.id, replacedAttachment),
+            cancelPickElement(replacedAttachment.tabId),
+          ],
+          { concurrency: 3, discard: true },
+        ),
+      { concurrency: "unbounded", discard: true },
+    );
     const currentTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
     if (
       !currentTab ||
@@ -2129,7 +2652,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* attempt({ operation: "registerWebview.restoreAudioMuted", tabId, webContentsId }, () =>
       wc.setAudioMuted(currentTab.audioMuted),
     );
-    yield* attachListeners(tabId, wc);
+    const registeredAttachment = yield* attachListeners(tabId, wc);
     const readAudible = attempt(
       { operation: "registerWebview.readAudible", tabId, webContentsId },
       () => wc.isCurrentlyAudible(),
@@ -2145,7 +2668,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           (yield* Ref.get(closingTabIdsRef)).has(tabId)
         ) {
           return [
-            Option.none<{ readonly state: PreviewTabState; readonly pendingUrl: string | null }>(),
+            Option.none<{
+              readonly state: PreviewTabState;
+              readonly pendingUrl: string | null;
+              readonly displaced: ReadonlyArray<readonly [string, PreviewTabState]>;
+            }>(),
             tabs,
           ] as const;
         }
@@ -2160,25 +2687,47 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           audible: attachedAudible,
           updatedAt: registeredAt,
         };
+        const displaced = Array.from(tabs.entries()).flatMap(([ownerTabId, owner]) => {
+          if (ownerTabId === tabId || owner.webContentsId !== webContentsId) return [];
+          return [
+            [
+              ownerTabId,
+              {
+                ...owner,
+                webContentsId: null,
+                controller: "none" as const,
+                updatedAt: registeredAt,
+              },
+            ] as const,
+          ];
+        });
         return [
           Option.some({
             state: next,
             pendingUrl,
+            displaced,
           }),
           replaceMap(tabs, (copy) => {
+            for (const [ownerTabId, owner] of displaced) copy.set(ownerTabId, owner);
             copy.set(tabId, next);
           }),
         ] as const;
       }),
     );
     if (Option.isNone(registration)) {
-      yield* Effect.all([detachControlSession(webContentsId), detachListeners(webContentsId)], {
-        concurrency: 2,
-        discard: true,
-      });
+      yield* Effect.all(
+        [
+          detachControlSession(webContentsId, registeredAttachment),
+          detachListeners(webContentsId, registeredAttachment),
+        ],
+        { concurrency: 2, discard: true },
+      );
       return yield* new PreviewTabNotFoundError({ tabId });
     }
-    const { state: registered, pendingUrl } = registration.value;
+    const { state: registered, pendingUrl, displaced } = registration.value;
+    yield* Effect.forEach(displaced, ([ownerTabId, owner]) => emitIfCurrent(ownerTabId, owner), {
+      discard: true,
+    });
     // A zoom or mute action that landed while this attach was in flight
     // addressed the guest this one replaced, so settle the new guest on the
     // committed values.
@@ -2218,9 +2767,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     webContentsId: number,
   ) {
     const expectedGeneration = tabLifecycleGenerations.get(tabId);
-    return yield* withTabLifecycleLock(
-      tabId,
-      registerWebviewUnlocked(tabId, webContentsId, expectedGeneration),
+    return yield* webviewRegistrationSemaphore.withPermit(
+      withTabLifecycleLock(
+        tabId,
+        registerWebviewUnlocked(tabId, webContentsId, expectedGeneration),
+      ),
     );
   });
 
@@ -2283,14 +2834,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           ) {
             return;
           }
-          yield* Effect.all(
-            [
-              detachControlSession(webContentsId),
-              detachListeners(webContentsId),
-              cancelPickElement(tabId),
-            ],
-            { concurrency: 3, discard: true },
-          );
+          if (expectedAttachment?.tabId === tabId) {
+            yield* Effect.all(
+              [
+                detachControlSession(webContentsId, expectedAttachment),
+                detachListeners(webContentsId, expectedAttachment),
+                cancelPickElement(tabId),
+              ],
+              { concurrency: 3, discard: true },
+            );
+          }
           const detached = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
             const current = tabs.get(tabId);
             if (current?.webContentsId !== webContentsId) {
@@ -2342,22 +2895,55 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const hardReload = (tabId: string) =>
     withWebContents("hardReload", tabId, (wc) => wc.reloadIgnoringCache());
 
-  const openDevTools = Effect.fn("PreviewManager.openDevTools")(function* (tabId: string) {
+  const openDevToolsUnlocked = Effect.fn("PreviewManager.openDevToolsUnlocked")(function* (
+    tabId: string,
+  ) {
     const wc = yield* requireWebContents(tabId);
+    const attachment = (yield* Ref.get(attachedRef)).get(wc.id);
+    if (!attachment?.active || attachment.tabId !== tabId || attachment.webContents !== wc) {
+      return yield* new PreviewAutomationTargetChangedError({
+        operation: "openDevTools",
+        tabId,
+        webContentsId: wc.id,
+      });
+    }
+    let targetChanged = false;
+    const withExactTarget = (use: () => void) =>
+      attempt({ operation: "openDevTools", tabId, webContentsId: wc.id }, () => {
+        if (!attachment.active || webContents.fromId(wc.id) !== wc) {
+          targetChanged = true;
+          return;
+        }
+        use();
+      });
     if (wc.isDevToolsOpened()) {
-      yield* attempt({ operation: "openDevTools.focus", tabId, webContentsId: wc.id }, () =>
-        wc.devToolsWebContents?.focus(),
-      );
+      yield* withExactTarget(() => wc.devToolsWebContents?.focus());
+      if (targetChanged) {
+        return yield* new PreviewAutomationTargetChangedError({
+          operation: "openDevTools",
+          tabId,
+          webContentsId: wc.id,
+        });
+      }
       return;
     }
-    yield* detachControlSession(wc.id);
-    yield* attempt({ operation: "openDevTools", tabId, webContentsId: wc.id }, () => {
+    yield* detachControlSession(wc.id, attachment);
+    yield* withExactTarget(() => {
       wc.once("devtools-closed", () => {
         if (!wc.isDestroyed()) runFork(restoreControlSession(tabId, wc));
       });
       wc.openDevTools({ mode: "detach" });
     });
+    if (targetChanged) {
+      return yield* new PreviewAutomationTargetChangedError({
+        operation: "openDevTools",
+        tabId,
+        webContentsId: wc.id,
+      });
+    }
   });
+
+  const openDevTools = (tabId: string) => withTabLifecycleLock(tabId, openDevToolsUnlocked(tabId));
 
   const setAnnotationTheme = Effect.fn("PreviewManager.setAnnotationTheme")(function* (
     theme: DesktopPreviewAnnotationTheme,
@@ -2578,7 +3164,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     wc: Electron.WebContents,
     colorScheme: DesktopPreviewColorScheme,
   ) {
-    yield* ensureControlSession(wc);
+    yield* ensureControlSession(wc, tabId, "setColorScheme");
     yield* attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>
       wc.debugger.sendCommand("Emulation.setEmulatedMedia", {
         features: [
@@ -2600,10 +3186,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     Effect.gen(function* () {
       const beforeAttach = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
       if (beforeAttach?.webContentsId !== wc.id) return;
-      yield* ensureControlSession(wc);
+      const attachment = (yield* Ref.get(attachedRef)).get(wc.id);
+      const control = yield* ensureControlSession(wc, tabId, "restoreControlSession", attachment);
       const afterAttach = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
-      if (afterAttach?.webContentsId !== wc.id) {
-        yield* detachControlSession(wc.id);
+      if (
+        afterAttach?.webContentsId !== wc.id ||
+        (yield* Ref.get(attachedRef)).get(wc.id) !== attachment
+      ) {
+        yield* detachControlSession(wc.id, control);
         return;
       }
       if (afterAttach.colorScheme !== "system") {
@@ -3856,51 +4446,298 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     wc: Electron.WebContents,
     input: PreviewAutomationPressInput,
     send: SendCommand,
-    sendCleanup: SendCommand,
+    assertCurrent: Effect.Effect<void, PreviewManagerError>,
+    attachment: ManagedListeners,
+    isNativeTargetCurrent: () => boolean,
   ) {
+    yield* assertCurrent;
+    if (attachment.keyboardDeliveryUncertainGeneration === attachment.documentGeneration) {
+      return yield* new PreviewAutomationKeyboardDeliveryNotConfirmedError({
+        tabId,
+        webContentsId: wc.id,
+      });
+    }
+    const mainWindow = currentMainWindow;
+    // Electron only routes native WebContents keyboard packets reliably while
+    // their containing BrowserWindow is active. Never focus either target
+    // here: doing so would steal the user's composer focus. Background/remote
+    // callers get a typed failure and can retry after the window is active.
+    if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isFocused()) {
+      return yield* new PreviewAutomationKeyboardWindowNotFocusedError({
+        tabId,
+        webContentsId: wc.id,
+      });
+    }
+    if (wc.hostWebContents !== mainWindow.webContents) {
+      return yield* new PreviewAutomationTargetChangedError({
+        operation: "press",
+        tabId,
+        webContentsId: wc.id,
+      });
+    }
     yield* prepareAutomationInput(send, false);
-    const keySequence = makePreviewAutomationKeySequence(input, {
-      isMac: hostPlatform === "darwin",
-    });
-    const previouslyFocused = yield* attempt(
-      { operation: "automationPress.getFocusedWebContents", tabId, webContentsId: wc.id },
-      () => webContents.getFocusedWebContents(),
+    yield* assertCurrent;
+    const focusedFrame = yield* evaluateWithDebugger<boolean>(
+      tabId,
+      send,
+      `(() => {
+        const tagName = document.activeElement?.tagName;
+        return tagName === "IFRAME" || tagName === "FRAME";
+      })()`,
+      true,
     );
-    let keyDownAttempted = false;
-    const releaseInput = Effect.gen(function* () {
-      if (keyDownAttempted) {
-        yield* sendCleanup("Input.dispatchKeyEvent", keySequence.keyUp).pipe(Effect.ignore);
-      }
-      yield* sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false }).pipe(
-        Effect.ignore,
-      );
-      if (previouslyFocused && previouslyFocused.id !== wc.id && !previouslyFocused.isDestroyed()) {
-        yield* attempt(
-          {
-            operation: "automationPress.restoreFocusedWebContents",
-            tabId,
-            webContentsId: previouslyFocused.id,
-          },
-          () => previouslyFocused.focus(),
-        ).pipe(Effect.ignore);
-      }
-    });
+    if (focusedFrame) {
+      return yield* new PreviewAutomationKeyboardFocusedFrameUnsupportedError({
+        tabId,
+        webContentsId: wc.id,
+      });
+    }
 
-    // Focus the guest WebContents itself, not its containing BrowserWindow. This
-    // activates native keyboard behavior for hidden/background previews without
-    // changing which thread is mounted in the UI. Restore the previous renderer
-    // after dispatch so automation never leaves the app's input focus behind.
+    const receiptDocument = captureKeyboardDocument(attachment, wc);
+    if (receiptDocument.frame.detached) {
+      return yield* new PreviewAutomationTargetChangedError({
+        operation: "press",
+        tabId,
+        webContentsId: wc.id,
+      });
+    }
+    const keySequence = makePreviewAutomationKeySequence(input);
+    const makeActiveKey = (
+      phase: "down" | "up",
+      signal: typeof keySequence.keyDownSignal,
+    ): ActiveAgentKey => ({
+      attachmentId: attachment.attachmentId,
+      document: receiptDocument,
+      id: Symbol(),
+      phase,
+      signal,
+      webContents: wc,
+      accepted: false,
+      valid: true,
+    });
+    const keyDownMarker = makeActiveKey("down", keySequence.keyDownSignal);
+    const keyUpMarker = makeActiveKey("up", keySequence.keyUpSignal);
+    attachment.pendingAgentKeys.add(keyDownMarker);
+    attachment.pendingAgentKeys.add(keyUpMarker);
+    const keyDownReceipt = yield* Deferred.make<void>();
+    const keyUpReceipt = yield* Deferred.make<void>();
+    const keyDownExpectationId = yield* expectAgentInput(
+      tabId,
+      { ...keySequence.keyDownSignal, phase: "down" },
+      {
+        attachmentId: attachment.attachmentId,
+        nativeKey: keyDownMarker,
+        receipt: keyDownReceipt,
+      },
+    );
+    const keyUpExpectationId = yield* expectAgentInput(
+      tabId,
+      { ...keySequence.keyUpSignal, phase: "up" },
+      {
+        attachmentId: attachment.attachmentId,
+        nativeKey: keyUpMarker,
+        receipt: keyUpReceipt,
+      },
+    );
+    const sendNativeKey = (marker: ActiveAgentKey, event: Electron.KeyboardInputEvent): void => {
+      activeAgentKeys.set(attachment.attachmentId, marker);
+      try {
+        wc.sendInputEvent(event);
+      } finally {
+        if (activeAgentKeys.get(attachment.attachmentId) === marker) {
+          activeAgentKeys.delete(attachment.attachmentId);
+        }
+      }
+    };
+    let keyDownAttempted = false;
+    let nativeKeyDispatched = false;
+    let nativePhaseReceiptsComplete = false;
+    const menuShortcutLease = Symbol();
+    const restoreMenuShortcuts = attempt(
+      { operation: "automationPress.restoreMenuShortcuts", tabId, webContentsId: wc.id },
+      () => {
+        if (
+          !attachment.active ||
+          attachment.menuShortcutLease !== menuShortcutLease ||
+          !isKeyboardDocumentCurrent(attachment, wc, receiptDocument)
+        ) {
+          return;
+        }
+        releaseMenuShortcutLease(attachment, wc, menuShortcutLease);
+      },
+    ).pipe(Effect.ignore);
+    const releaseInput = attempt(
+      { operation: "automationPress.releaseNativeKey", tabId, webContentsId: wc.id },
+      () => {
+        if (
+          !keyDownAttempted ||
+          wc.isDestroyed() ||
+          !isNativeTargetCurrent() ||
+          !isKeyboardDocumentCurrent(attachment, wc, receiptDocument)
+        ) {
+          return;
+        }
+        attachment.menuShortcutLease = menuShortcutLease;
+        wc.setIgnoreMenuShortcuts(true);
+        sendNativeKey(keyUpMarker, keySequence.keyUp);
+      },
+    ).pipe(Effect.ignore);
+    let preflightError: PreviewManagerError | undefined;
+    const dispatch = attempt(
+      { operation: "automationPress.dispatchNativeKey", tabId, webContentsId: wc.id },
+      () => {
+        if (
+          !isNativeTargetCurrent() ||
+          currentMainWindow !== mainWindow ||
+          mainWindow.isDestroyed() ||
+          wc.hostWebContents !== mainWindow.webContents ||
+          !isKeyboardDocumentCurrent(attachment, wc, receiptDocument)
+        ) {
+          preflightError = new PreviewAutomationTargetChangedError({
+            operation: "press",
+            tabId,
+            webContentsId: wc.id,
+          });
+          return;
+        }
+        if (!mainWindow.isFocused()) {
+          preflightError = new PreviewAutomationKeyboardWindowNotFocusedError({
+            tabId,
+            webContentsId: wc.id,
+          });
+          return;
+        }
+        // Keep native menu routing disabled until the page's key-up receipt.
+        // Chromium cannot deliver key-up before it handles the key-down ACK.
+        attachment.menuShortcutLease = menuShortcutLease;
+        wc.setIgnoreMenuShortcuts(true);
+        if (!keyDownMarker.valid || !keyUpMarker.valid) {
+          releaseMenuShortcutLease(attachment, wc, menuShortcutLease);
+          preflightError = new PreviewAutomationControlInterruptedError({
+            operation: "press",
+            tabId,
+            webContentsId: wc.id,
+          });
+          return;
+        }
+        if (
+          !isNativeTargetCurrent() ||
+          currentMainWindow !== mainWindow ||
+          mainWindow.isDestroyed() ||
+          wc.hostWebContents !== mainWindow.webContents ||
+          !isKeyboardDocumentCurrent(attachment, wc, receiptDocument)
+        ) {
+          releaseMenuShortcutLease(attachment, wc, menuShortcutLease);
+          preflightError = new PreviewAutomationTargetChangedError({
+            operation: "press",
+            tabId,
+            webContentsId: wc.id,
+          });
+          return;
+        }
+        const nativeFocusedFrame = wc.focusedFrame;
+        if (nativeFocusedFrame != null && nativeFocusedFrame !== wc.mainFrame) {
+          releaseMenuShortcutLease(attachment, wc, menuShortcutLease);
+          preflightError = new PreviewAutomationKeyboardFocusedFrameUnsupportedError({
+            tabId,
+            webContentsId: wc.id,
+          });
+          return;
+        }
+        sendNativeKey(keyDownMarker, keySequence.keyDown);
+        keyDownAttempted = true;
+        nativeKeyDispatched = true;
+        if (!keyDownMarker.accepted || !keyDownMarker.valid) {
+          preflightError = new PreviewAutomationKeyboardDeliveryNotConfirmedError({
+            tabId,
+            webContentsId: wc.id,
+          });
+          return;
+        }
+        if (keySequence.char) sendNativeKey(keyDownMarker, keySequence.char);
+        if (!keyDownMarker.valid || !keyUpMarker.valid) {
+          preflightError = new PreviewAutomationControlInterruptedError({
+            operation: "press",
+            tabId,
+            webContentsId: wc.id,
+          });
+          return;
+        }
+        sendNativeKey(keyUpMarker, keySequence.keyUp);
+        keyDownAttempted = false;
+        if (!keyUpMarker.accepted || !keyUpMarker.valid) {
+          preflightError = new PreviewAutomationKeyboardDeliveryNotConfirmedError({
+            tabId,
+            webContentsId: wc.id,
+          });
+        }
+      },
+    ).pipe(
+      Effect.flatMap(() => (preflightError ? Effect.fail(preflightError) : Effect.void)),
+      Effect.ensuring(releaseInput),
+    );
     yield* Effect.gen(function* () {
-      yield* attempt(
-        { operation: "automationPress.focusWebContents", tabId, webContentsId: wc.id },
-        () => wc.focus(),
-      );
-      yield* send("Page.bringToFront");
-      yield* send("Emulation.setFocusEmulationEnabled", { enabled: true });
-      yield* expectAgentInput(tabId, keySequence.signal);
-      keyDownAttempted = true;
-      yield* send("Input.dispatchKeyEvent", keySequence.keyDown);
-    }).pipe(Effect.ensuring(releaseInput));
+      yield* assertCurrent;
+      yield* dispatch;
+      const received = yield* Effect.all(
+        [Deferred.await(keyDownReceipt), Deferred.await(keyUpReceipt)],
+        { discard: true },
+      ).pipe(Effect.timeoutOption(AGENT_KEY_RECEIPT_TIMEOUT_MS));
+      if (Option.isNone(received)) {
+        if (!keyDownMarker.valid || !keyUpMarker.valid) {
+          return yield* new PreviewAutomationControlInterruptedError({
+            operation: "press",
+            tabId,
+            webContentsId: wc.id,
+          });
+        }
+        return yield* new PreviewAutomationKeyboardDeliveryNotConfirmedError({
+          tabId,
+          webContentsId: wc.id,
+        });
+      }
+      // Receipt completion is a delivery fact, independent of whether human
+      // input claims control before this action finishes its final checks.
+      nativePhaseReceiptsComplete = true;
+      yield* assertCurrent;
+      const interrupted = !keyDownMarker.valid || !keyUpMarker.valid;
+      if (interrupted) {
+        return yield* new PreviewAutomationControlInterruptedError({
+          operation: "press",
+          tabId,
+          webContentsId: wc.id,
+        });
+      }
+    }).pipe(
+      Effect.ensuring(
+        Effect.all(
+          [
+            removeExpectedAgentInput(tabId, keyDownExpectationId),
+            removeExpectedAgentInput(tabId, keyUpExpectationId),
+            Effect.sync(() => {
+              attachment.pendingAgentKeys.delete(keyDownMarker);
+              attachment.pendingAgentKeys.delete(keyUpMarker);
+              if (
+                nativeKeyDispatched &&
+                !nativePhaseReceiptsComplete &&
+                isKeyboardDocumentCurrent(attachment, wc, receiptDocument)
+              ) {
+                markKeyboardDeliveryUncertain(attachment, wc, receiptDocument);
+              }
+            }),
+          ],
+          { discard: true },
+        ).pipe(
+          Effect.andThen(
+            Effect.suspend(() =>
+              nativePhaseReceiptsComplete || !nativeKeyDispatched
+                ? restoreMenuShortcuts
+                : Effect.void,
+            ),
+          ),
+        ),
+      ),
+    );
   });
 
   const automationPress = Effect.fn("PreviewManager.automationPress")(function* (
@@ -3908,8 +4745,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationPressInput,
   ) {
     const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "press", (send, sendCleanup) =>
-      performAutomationPress(tabId, wc, input, send, sendCleanup),
+    yield* withControlSession(
+      tabId,
+      wc,
+      "press",
+      (send, assertCurrent, attachment, isNativeTargetCurrent) =>
+        performAutomationPress(
+          tabId,
+          wc,
+          input,
+          send,
+          assertCurrent,
+          attachment,
+          isNativeTargetCurrent,
+        ),
     );
   });
 
@@ -4425,6 +5274,63 @@ export class PreviewAutomationTimeoutError extends Schema.TaggedErrorClass<Previ
   }
 }
 
+export class PreviewAutomationKeyboardWindowNotFocusedError extends Schema.TaggedErrorClass<PreviewAutomationKeyboardWindowNotFocusedError>()(
+  "PreviewAutomationKeyboardWindowNotFocusedError",
+  {
+    tabId: Schema.String,
+    webContentsId: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Preview tab ${this.tabId} cannot receive keyboard input while its desktop window is unfocused`;
+  }
+}
+
+export class PreviewAutomationKeyboardFocusedFrameUnsupportedError extends Schema.TaggedErrorClass<PreviewAutomationKeyboardFocusedFrameUnsupportedError>()(
+  "PreviewAutomationKeyboardFocusedFrameUnsupportedError",
+  {
+    tabId: Schema.String,
+    webContentsId: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Preview tab ${this.tabId} cannot receive keyboard input while a frame is focused`;
+  }
+}
+
+export class PreviewAutomationKeyboardDeliveryNotConfirmedError extends Schema.TaggedErrorClass<PreviewAutomationKeyboardDeliveryNotConfirmedError>()(
+  "PreviewAutomationKeyboardDeliveryNotConfirmedError",
+  {
+    tabId: Schema.String,
+    webContentsId: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Preview tab ${this.tabId} did not confirm keyboard input delivery`;
+  }
+}
+
+export const PreviewAutomationKeyboardError = Schema.Union([
+  PreviewAutomationKeyboardWindowNotFocusedError,
+  PreviewAutomationKeyboardFocusedFrameUnsupportedError,
+  PreviewAutomationKeyboardDeliveryNotConfirmedError,
+]);
+export type PreviewAutomationKeyboardError = typeof PreviewAutomationKeyboardError.Type;
+export const isPreviewAutomationKeyboardError = Schema.is(PreviewAutomationKeyboardError);
+
+export class PreviewAutomationTargetChangedError extends Schema.TaggedErrorClass<PreviewAutomationTargetChangedError>()(
+  "PreviewAutomationTargetChangedError",
+  {
+    operation: Schema.String,
+    tabId: Schema.String,
+    webContentsId: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Preview automation ${this.operation} stopped because tab ${this.tabId} changed targets`;
+  }
+}
+
 export class PreviewAutomationControlInterruptedError extends Schema.TaggedErrorClass<PreviewAutomationControlInterruptedError>()(
   "PreviewAutomationControlInterruptedError",
   {
@@ -4457,6 +5363,8 @@ export const PreviewManagerError = Schema.Union([
   PreviewAutomationInvalidSelectorError,
   PreviewAutomationResultTooLargeError,
   PreviewAutomationTimeoutError,
+  PreviewAutomationKeyboardError,
+  PreviewAutomationTargetChangedError,
   PreviewAutomationControlInterruptedError,
 ]);
 export type PreviewManagerError = typeof PreviewManagerError.Type;
