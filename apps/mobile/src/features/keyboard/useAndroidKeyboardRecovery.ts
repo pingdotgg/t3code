@@ -12,6 +12,9 @@ export function useAndroidKeyboardRecovery(): {
   readonly isQuarantined: boolean;
   readonly markInputFocused: () => void;
 } {
+  // A surface mounted while the app is already active has no future resume
+  // transition to observe, so it starts quarantined. Re-applying "resume" in
+  // the mount effect would clobber an autoFocus release that landed first.
   const [recoveryState, setRecoveryState] = useState<AndroidKeyboardRecoveryState>(() =>
     getInitialAndroidKeyboardRecoveryState({
       isAndroid: Platform.OS === "android",
@@ -32,12 +35,6 @@ export function useAndroidKeyboardRecovery(): {
     const keyboardShowSubscription = KeyboardEvents.addListener("keyboardWillShow", () => {
       setRecoveryState((current) => reduceAndroidKeyboardRecovery(current, "keyboard-show"));
     });
-
-    // The screen may mount after the app has already resumed. In that case
-    // there is no future active transition for this instance to observe.
-    if (AppState.currentState === "active") {
-      setRecoveryState((current) => reduceAndroidKeyboardRecovery(current, "resume"));
-    }
 
     return () => {
       appStateSubscription.remove();
