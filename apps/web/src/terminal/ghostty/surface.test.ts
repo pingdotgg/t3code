@@ -210,6 +210,56 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.restoreAllMocks();
   });
 
+  it("resends an unchanged grid when authorization and attachment become ready", async () => {
+    const harness = createHarness();
+    let canOperate = false;
+    let attached = false;
+    const resizePty = vi.fn<(cols: number, rows: number) => void>();
+    const surface = await harness.create({
+      onResize: (cols, rows) => {
+        if (canOperate && attached) resizePty(cols, rows);
+      },
+    });
+    vi.advanceTimersByTime(150);
+    expect(resizePty).not.toHaveBeenCalled();
+
+    canOperate = true;
+    surface.resendSize();
+    vi.advanceTimersByTime(150);
+    expect(resizePty).not.toHaveBeenCalled();
+
+    attached = true;
+    surface.resendSize();
+    vi.advanceTimersByTime(150);
+    expect(resizePty).toHaveBeenCalledExactlyOnceWith(20, 6);
+    surface.fit();
+    vi.advanceTimersByTime(150);
+    expect(resizePty).toHaveBeenCalledOnce();
+
+    canOperate = false;
+    harness.mount.clientWidth = 248;
+    surface.fit();
+    vi.advanceTimersByTime(150);
+    expect(resizePty).toHaveBeenCalledOnce();
+  });
+
+  it("replays the current grid on reveal when a hidden host becomes ready", async () => {
+    const harness = createHarness();
+    const onResize = vi.fn<(cols: number, rows: number) => void>();
+    const surface = await harness.create({ onResize });
+    vi.advanceTimersByTime(150);
+    onResize.mockClear();
+
+    surface.setVisible(false);
+    surface.resendSize();
+    vi.advanceTimersByTime(150);
+    expect(onResize).not.toHaveBeenCalled();
+
+    surface.setVisible(true);
+    vi.advanceTimersByTime(150);
+    expect(onResize).toHaveBeenCalledExactlyOnceWith(20, 6);
+  });
+
   it("stops hidden snapshots and paint while preserving live VT replies and the next cursor", async () => {
     const harness = createHarness();
     const surface = await harness.create();

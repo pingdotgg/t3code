@@ -8029,6 +8029,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (command === "terminal.split") {
+        if (!canOperateTerminal) return;
         event.preventDefault();
         event.stopPropagation();
         if (terminalFocusOwner === "right-panel") {
@@ -8043,6 +8044,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (command === "terminal.splitVertical") {
+        if (!canOperateTerminal) return;
         event.preventDefault();
         event.stopPropagation();
         if (terminalFocusOwner === "right-panel") {
@@ -8057,6 +8059,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (command === "terminal.close") {
+        if (!canOperateTerminal) return;
         event.preventDefault();
         event.stopPropagation();
         if (terminalFocusOwner === "right-panel" && activeRightPanelSurface?.kind === "terminal") {
@@ -8069,6 +8072,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (command === "terminal.new") {
+        if (!canOperateTerminal) return;
         event.preventDefault();
         event.stopPropagation();
         if (terminalFocusOwner === "right-panel") {
@@ -8167,7 +8171,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       const scriptId = projectScriptIdFromCommand(command);
-      if (!scriptId || !activeProject) return;
+      if (!scriptId || !activeProject || !canOperateTerminal) return;
       const script = activeProjectScripts.find((entry) => entry.id === scriptId);
       if (!script) return;
       event.preventDefault();
@@ -8180,6 +8184,7 @@ export default function ChatView(props: ChatViewProps) {
     activeProject,
     activeRightPanelSurface,
     activeProjectScripts,
+    canOperateTerminal,
     addTerminalSurface,
     activeThreadRef,
     activeThreadPinned,
