@@ -1884,7 +1884,7 @@ function ChatViewContent(props: ChatViewProps) {
     panelAnimationDurationMs,
   );
   const rightPanelPresent = rightPanelPresence.present;
-  const rightPanelControlsInPanel = rightPanelPresent && rightPanelOpen;
+  const rightPanelControlsInPanel = shouldUseRightPanelSheet && rightPanelPresent && rightPanelOpen;
   const renderedRightPanelSurface = rightPanelPresence.value?.activeSurface ?? null;
   const renderedRightPanelSurfaces = rightPanelPresence.value?.surfaces ?? [];
   const previewMiniPlayerVisible = shouldRenderPreviewMiniPlayer(
@@ -7526,15 +7526,6 @@ function ChatViewContent(props: ChatViewProps) {
       <div className="pointer-events-auto flex h-full items-center">{panelToggleControls}</div>
     </div>
   );
-  const inlineRightPanelControls = (
-    <div className="mr-px flex h-full items-center gap-1 [-webkit-app-region:no-drag]">
-      <RightPanelMaximizeControl
-        maximized={rightPanelMaximized}
-        onToggle={toggleRightPanelMaximized}
-      />
-      {panelToggleControls}
-    </div>
-  );
   const rightPanelContent = activeThreadRef ? (
     renderedRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
@@ -7681,6 +7672,7 @@ function ChatViewContent(props: ChatViewProps) {
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+      {!rightPanelControlsInPanel ? panelLayoutControls : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
@@ -7695,7 +7687,6 @@ function ChatViewContent(props: ChatViewProps) {
           reserveNativeControls={reserveTitleBarControlInset && !inlineRightPanelOwnsTitleBar}
           className="relative bg-background"
         >
-          {!rightPanelControlsInPanel ? panelLayoutControls : null}
           <ChatHeader
             {...(!supportsPullRequests || activeProjectRepository === null
               ? {}
@@ -8126,7 +8117,6 @@ function ChatViewContent(props: ChatViewProps) {
           mode="inline"
           open={rightPanelOpen}
           maximized={rightPanelMaximized}
-          layoutControls={rightPanelOpen ? inlineRightPanelControls : null}
           surfaces={renderedRightPanelSurfaces}
           environmentId={activeThreadRef.environmentId}
           activeSurfaceId={renderedRightPanelSurface?.id ?? null}

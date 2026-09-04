@@ -68,10 +68,11 @@ export function PreviewPanelShell(props: {
   const isInline = props.mode === "inline";
   const collapsible = isInline && props.open !== undefined;
   const open = props.open ?? true;
+  const maximized = props.maximized ?? false;
   const hostRef = useRef<HTMLDivElement | null>(null);
   // Only inline non-maximized mode applies `width`/`maxWidth`; skip the
   // container measurement (and its re-renders) everywhere else.
-  const maxWidth = useClampedMaxWidth(hostRef, isInline && !props.maximized);
+  const maxWidth = useClampedMaxWidth(hostRef, isInline && !maximized);
   const { width, handlers } = useResizableWidth({
     storageKey: props.widthStorageKey ?? PREVIEW_PANEL_WIDTH_STORAGE_KEY,
     defaultWidth: props.defaultWidth ?? PREVIEW_PANEL_DEFAULT_WIDTH,
@@ -79,33 +80,50 @@ export function PreviewPanelShell(props: {
     maxWidth,
     edge: "left",
   });
-  const previousLayoutRef = useRef({ open, width });
+  // Derive suppression before the layout commits so the browser never creates
+  // a width transition for resize or maximize changes.
+  const [layoutTransition, setLayoutTransition] = useState(() => ({
+    open,
+    width,
+    maximized,
+    suppressed: false,
+  }));
+  if (
+    layoutTransition.open !== open ||
+    layoutTransition.width !== width ||
+    layoutTransition.maximized !== maximized
+  ) {
+    setLayoutTransition({
+      open,
+      width,
+      maximized,
+      suppressed:
+        collapsible &&
+        layoutTransition.open === open &&
+        (layoutTransition.width !== width || layoutTransition.maximized !== maximized),
+    });
+  }
+  const suppressWidthTransition = layoutTransition.suppressed;
   useLayoutEffect(() => {
-    const previous = previousLayoutRef.current;
-    previousLayoutRef.current = { open, width };
-    if (!collapsible || previous.open !== open || previous.width === width) return;
-    const host = hostRef.current;
-    if (!host?.closest("[data-panel-animations=true]")) return;
-    host.style.setProperty("transition-duration", "0ms");
+    if (!suppressWidthTransition) return;
     let restoreFrame = 0;
     const paintFrame = window.requestAnimationFrame(() => {
       restoreFrame = window.requestAnimationFrame(() => {
-        host.style.removeProperty("transition-duration");
+        setLayoutTransition((current) => ({ ...current, suppressed: false }));
       });
     });
     return () => {
       window.cancelAnimationFrame(paintFrame);
       window.cancelAnimationFrame(restoreFrame);
-      host.style.removeProperty("transition-duration");
     };
-  }, [collapsible, open, width]);
+  }, [suppressWidthTransition]);
   return (
     <div
       ref={hostRef}
       className={cn(
         "relative flex h-full min-h-0 min-w-0 max-w-full flex-col self-stretch bg-background",
         isInline
-          ? props.maximized
+          ? maximized
             ? "flex-1 border-l border-border"
             : "shrink-0 border-l border-border"
           : "w-full",
@@ -116,17 +134,20 @@ export function PreviewPanelShell(props: {
       )}
       style={
         isInline
-          ? { width: props.maximized ? "100%" : collapsible && !open ? "0px" : `${width}px` }
+          ? {
+              width: maximized ? "100%" : collapsible && !open ? "0px" : `${width}px`,
+              transitionDuration: suppressWidthTransition ? "0ms" : undefined,
+            }
           : undefined
       }
       data-preview-panel-mode={props.mode}
-      data-preview-panel-maximized={props.maximized ? "true" : "false"}
+      data-preview-panel-maximized={maximized ? "true" : "false"}
     >
-      {isInline && !props.maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
+      {isInline && !maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
       <div className={cn("h-full min-h-0 w-full", collapsible && "overflow-clip")}>
         <div
           className="flex h-full min-h-0 min-w-0 flex-col"
-          style={collapsible && !props.maximized ? { width: `calc(${width}px - 1px)` } : undefined}
+          style={collapsible && !maximized ? { width: `calc(${width}px - 1px)` } : undefined}
         >
           {useDragRegion ? <div className="electron-drag-region h-0 w-full" aria-hidden /> : null}
           {props.children}
