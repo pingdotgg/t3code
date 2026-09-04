@@ -141,6 +141,16 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       desktop servers whose app predates the remote trigger, where clients
       must keep telling the user to update the app on that machine. */
   desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
+  /** Server can expose itself over Tailcat and manage trusted Tailcat peers.
+      Absent on older servers, where clients hide the Tailcat controls. */
+  tailcatRemoteAccess: Schema.optionalKey(Schema.Boolean),
+  /** Server speaks the T3 federation protocol at this version. Absent on
+      older servers, where clients hide federation entirely. */
+  federation: Schema.optionalKey(
+    Schema.Struct({
+      protocolVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+    }),
+  ),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

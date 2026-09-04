@@ -45,6 +45,11 @@ jobs:
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
 
+      # Schema and per-platform pin check only; no download. Release builds
+      # fetch the binaries this manifest describes.
+      - name: Verify Tailcat manifest
+        run: node scripts/fetch-tailcat.ts --verify --manifest-only
+
       - name: Check
         run: vp check
 

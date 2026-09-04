@@ -59,6 +59,7 @@ import {
   AssetWorkspaceContextResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  AuthFederationPeerScope,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -111,6 +112,8 @@ import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/Atta
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as FederationService from "./federation/FederationService.ts";
+import * as TailcatRemoteAccess from "./tailcat/TailcatRemoteAccess.ts";
 import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
@@ -525,6 +528,8 @@ const makeWsRpcLayer = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const tailcatRemoteAccess = yield* TailcatRemoteAccess.TailcatRemoteAccess;
+      const federation = yield* FederationService.FederationService;
       const canReplayPersistedRange = Effect.fnUntraced(function* (
         afterSequence: number,
         headSequence: number,
@@ -2695,6 +2700,114 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "server" },
           ),
+        // Tailcat remote access: the Tailcat listener this environment exposes.
+        [WS_METHODS.tailcatSubscribeRemoteAccess]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.tailcatSubscribeRemoteAccess,
+            Stream.unwrap(
+              Effect.map(tailcatRemoteAccess.state, (latest) =>
+                Stream.concat(Stream.make(latest), tailcatRemoteAccess.changes),
+              ),
+            ),
+            { "rpc.aggregate": "tailcat" },
+          ),
+        [WS_METHODS.tailcatSetRemoteAccessEnabled]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.tailcatSetRemoteAccessEnabled,
+            tailcatRemoteAccess.setEnabled(input.enabled),
+            { "rpc.aggregate": "tailcat" },
+          ),
+        [WS_METHODS.tailcatCreateConnectionCode]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.tailcatCreateConnectionCode,
+            tailcatRemoteAccess.createConnectionCode(input),
+            { "rpc.aggregate": "tailcat" },
+          ),
+        [WS_METHODS.tailcatRevokeTrustedPeer]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.tailcatRevokeTrustedPeer,
+            tailcatRemoteAccess.revokeTrustedPeer(input.peerId),
+            { "rpc.aggregate": "tailcat" },
+          ),
+        [WS_METHODS.tailcatRenameTrustedPeer]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.tailcatRenameTrustedPeer,
+            tailcatRemoteAccess.renameTrustedPeer(input),
+            { "rpc.aggregate": "tailcat" },
+          ),
+        [WS_METHODS.tailcatRegenerateIdentity]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.tailcatRegenerateIdentity,
+            tailcatRemoteAccess.regenerateIdentity,
+            { "rpc.aggregate": "tailcat" },
+          ),
+        // Federation: peers this environment trusts and runs it delegated to them.
+        [WS_METHODS.federationSubscribePeers]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.federationSubscribePeers,
+            Stream.unwrap(
+              Effect.map(federation.snapshot, (latest) =>
+                Stream.concat(Stream.make(latest), federation.changes),
+              ),
+            ),
+            { "rpc.aggregate": "federation" },
+          ),
+        [WS_METHODS.federationCreatePeerCode]: (input) =>
+          observeRpcEffect(WS_METHODS.federationCreatePeerCode, federation.createPeerCode(input), {
+            "rpc.aggregate": "federation",
+          }),
+        [WS_METHODS.federationAddPeer]: (input) =>
+          observeRpcEffect(WS_METHODS.federationAddPeer, federation.addPeer(input), {
+            "rpc.aggregate": "federation",
+          }),
+        [WS_METHODS.federationRemovePeer]: (input) =>
+          observeRpcEffect(WS_METHODS.federationRemovePeer, federation.removePeer(input.peerId), {
+            "rpc.aggregate": "federation",
+          }),
+        [WS_METHODS.federationRefreshPeer]: (input) =>
+          observeRpcEffect(WS_METHODS.federationRefreshPeer, federation.refreshPeer(input.peerId), {
+            "rpc.aggregate": "federation",
+          }),
+        [WS_METHODS.federationListRemoteProjects]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.federationListRemoteProjects,
+            federation.listRemoteProjects(input.peerId),
+            { "rpc.aggregate": "federation" },
+          ),
+        [WS_METHODS.federationStartRemoteRun]: (input) =>
+          observeRpcEffect(WS_METHODS.federationStartRemoteRun, federation.startRemoteRun(input), {
+            "rpc.aggregate": "federation",
+          }),
+        [WS_METHODS.federationCancelRemoteRun]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.federationCancelRemoteRun,
+            federation.cancelRemoteRun(input),
+            {
+              "rpc.aggregate": "federation",
+            },
+          ),
+        [WS_METHODS.federationSubscribeRemoteRuns]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.federationSubscribeRemoteRuns,
+            Stream.unwrap(
+              Effect.map(federation.remoteRuns, (latest) =>
+                Stream.concat(Stream.make(latest), federation.remoteRunChanges),
+              ),
+            ),
+            { "rpc.aggregate": "federation" },
+          ),
+        [WS_METHODS.federationDescribeRemoteArtifacts]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.federationDescribeRemoteArtifacts,
+            federation.describeRemoteArtifacts(input),
+            { "rpc.aggregate": "federation" },
+          ),
+        [WS_METHODS.federationFetchRemoteArtifact]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.federationFetchRemoteArtifact,
+            federation.fetchRemoteArtifact(input),
+            { "rpc.aggregate": "federation" },
+          ),
       });
     }),
   );
@@ -2748,6 +2861,11 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             failEnvironmentInternal("internal_error", error),
           ),
         );
+        if (session.scopes.includes(AuthFederationPeerScope)) {
+          // Federation peers speak the versioned HTTP protocol only; the RPC
+          // surface is for this environment's own clients.
+          return yield* failEnvironmentAuthInvalid("invalid_credential");
+        }
         const clientOrigin = readClientConnectionOrigin(request);
         const clientAnalyticsProps = readClientAnalyticsProps(request);
         yield* sessions.recordClientConnection(session.sessionId, clientOrigin);

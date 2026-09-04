@@ -1,0 +1,50 @@
+{
+  "$comment": "Pinned Tailcat runtime. Update with `node scripts/fetch-tailcat.ts --update <version>`; see native/tailcat/README.md.",
+  "name": "tailcat",
+  "repository": "https://github.com/tailscale/tailcat",
+  "license": "BSD-3-Clause",
+  "version": "0.5.0",
+  "releaseBaseUrl": "https://github.com/tailscale/tailcat/releases/download/v0.5.0",
+  "assets": {
+    "linux-x64": {
+      "file": "tailcat_0.5.0_linux_amd64.tar.gz",
+      "sha256": "62954edcabbf360171a921bb4446eb03ed3b95ad529a4884671abb902e232bf4",
+      "executable": "tailcat"
+    },
+    "linux-arm64": {
+      "file": "tailcat_0.5.0_linux_arm64.tar.gz",
+      "sha256": "020be04b7136df7660c1aa5edf38b6bcf82854349383ed19c4b386290bc2ed4f",
+      "executable": "tailcat"
+    },
+    "win32-x64": {
+      "file": "tailcat_0.5.0_windows_amd64.zip",
+      "sha256": "47c2a22eff596dc184642779b8ba9988ca554b0f177ee1188bc4913253b18430",
+      "executable": "tailcat.exe"
+    },
+    "win32-arm64": {
+      "file": "tailcat_0.5.0_windows_arm64.zip",
+      "sha256": "27601f743dc8e2332b82022b0e1d54a8ba73c8e0eaa12e0ad0d810f026341c25",
+      "executable": "tailcat.exe"
+    }
+  },
+  "source": {
+    "$comment": "macOS has no upstream binaries; darwin builds clone tag v<version>, verify HEAD is `commit`, and compile with Go and the upstream build tags. `url`/`sha256` describe the matching GitHub source tarball.",
+    "url": "https://github.com/tailscale/tailcat/archive/refs/tags/v0.5.0.tar.gz",
+    "sha256": "a2177d257ac7a02d8ba0fdfcfa341113d97ea0cf7597dbb0fff851d8c341d8e9",
+    "commit": "cc6db4948e324e2c3434155a13d0d787ec9df7a4",
+    "goVersion": "1.27",
+    "package": "./cmd/tailcat",
+    "buildTagsFile": "build-tags.txt",
+    "ldflags": "-s -w -X main.version=v0.5.0"
+  },
+  "darwinTargets": {
+    "darwin-arm64": {
+      "goarch": "arm64",
+      "executable": "tailcat"
+    },
+    "darwin-x64": {
+      "goarch": "amd64",
+      "executable": "tailcat"
+    }
+  }
+}

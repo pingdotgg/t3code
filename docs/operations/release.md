@@ -13,6 +13,8 @@ This document covers the unified release workflow for stable and nightly desktop
   - manual `workflow_dispatch` for either channel
 - Runs lint, typecheck, and tests alongside artifact builds. Publishing waits for every check.
 - Reads the shared production T3 Connect relay URL and Clerk client configuration before packaging clients.
+- Stages the pinned Tailcat runtime (`native/tailcat/manifest.json`) on every build runner before
+  packaging; see [Tailcat runtime pin](#tailcat-runtime-pin).
 - Builds four artifacts in parallel for both channels:
   - macOS `arm64` DMG
   - macOS `x64` DMG
@@ -244,6 +246,7 @@ break:
 - The emitted WSL archive contains Windows/Darwin node-pty payloads, ConPTY,
   pnpm install metadata, or Windows-only FFF, ffi-rs, or msgpackr bindings.
 - The external Windows resource monitor is absent.
+- The external Windows Tailcat runtime (`resources/tailcat/win32-<arch>/tailcat.exe`) is absent.
 - The unpacked Windows application contains more than 80 files.
 
 Cross-architecture Windows builds retain every structural and extracted-sidecar
@@ -253,6 +256,45 @@ for each release target must exercise the primary native-load probe.
 NSIS differential packaging remains enabled. A sidecar layout transition can
 produce a larger one-time download; subsequent small releases retain their
 blockmaps, with a 60 MB maximum for a representative sidecar-to-sidecar update.
+
+## Tailcat runtime pin
+
+T3 Code bundles the Tailcat CLI pinned by `native/tailcat/manifest.json`; `native/tailcat/README.md`
+covers provenance and the staged layout. The release workflow never resolves a "latest" Tailcat:
+
+- Every desktop matrix job runs `node scripts/fetch-tailcat.ts --platform <key>` before the artifact
+  build. Linux and Windows download the pinned release archive and verify its SHA-256 against the
+  manifest before opening it. The macOS jobs pass `--build-from-source`: upstream publishes no macOS
+  archive, so the script clones the pinned tag, refuses to build unless the commit matches the
+  manifest, and compiles with the Go version the manifest names (`actions/setup-go`). The staged
+  directory is cached on the manifest hash, and the script re-verifies a cached binary instead of
+  trusting it.
+- `publish_cli` runs `node scripts/fetch-tailcat.ts --all`, cross-compiling both darwin keys on
+  Linux, and `apps/server/scripts/cli.ts publish` stages every pinned platform into
+  `dist/tailcat/<platform-key>/`. The npm package is platform-independent, so this mirrors the
+  resource monitor: one package, every platform. Each Tailcat binary is roughly 16-18 MB
+  uncompressed (about 7 MB compressed), so the six platform keys add about 105 MB unpacked (about
+  40 MB in the tarball) to a package that was about 100 MB unpacked before. The publish step stages
+  every key the manifest pins (the manifest must pin all six, because the runtime resolver knows
+  all six); shipping fewer in npm would need an explicit allowlist in `apps/server/scripts/cli.ts`.
+- CI validates the manifest on every pull request (`node scripts/fetch-tailcat.ts --verify
+--manifest-only`): schema, one pin per platform key, and version-consistent URLs.
+
+To bump the pin:
+
+1. `node scripts/fetch-tailcat.ts --update <version>` downloads the new archives, records their
+   digests (cross-checked against upstream's `checksums.txt`), resolves the tag's commit, refreshes
+   `native/tailcat/LICENSE`, rewrites the manifest, and prints a field-by-field summary. Review it
+   against the upstream release notes.
+2. Check `TAILCAT_COMPATIBLE_RANGE` in `packages/tailcat/src/manifest.ts` and run the opt-in
+   `T3CODE_TAILCAT_E2E=1 vp test run packages/tailcat/src/runtime.e2e.test.ts`.
+3. Open a PR with `native/tailcat/manifest.json` (and `LICENSE` if it changed). The next release
+   fetches the new version; no workflow edits are needed.
+
+Troubleshooting: a `TailcatDistError` in a build log means a runner staged a binary that does not
+match the manifest (usually a stale cache after a pin bump); the message names the platform key and
+the fetch command. `TailcatSourceBuildError: commit-mismatch` means upstream moved the tag; re-pin
+with `--update` only after understanding why.
 
 ## 0) npm OIDC trusted publishing setup (CLI)
 

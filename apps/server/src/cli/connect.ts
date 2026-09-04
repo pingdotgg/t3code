@@ -47,18 +47,13 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ExternalLauncher from "../process/externalLauncher.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
-import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { projectLocationFlags, resolveCliAuthConfig, jsonFlag } from "./config.ts";
 import { resolveCliCommand } from "./invocation.ts";
 import {
   bootServiceLayer,
   offerServiceDuringOnboarding,
   recoverServiceOnboardingOffer,
 } from "./service.ts";
-
-const jsonFlag = Flag.boolean("json").pipe(
-  Flag.withDescription("Emit JSON instead of human-readable output."),
-  Flag.withDefault(false),
-);
 
 const isCloudCliTokenManagerError = Schema.is(CliTokenManager.CloudCliTokenManagerError);
 

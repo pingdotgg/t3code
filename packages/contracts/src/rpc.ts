@@ -14,6 +14,32 @@ import {
 
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
+  FederationAddPeerInput,
+  FederationArtifactFetchResponse,
+  FederationArtifactsResponse,
+  FederationCreatePeerCodeInput,
+  FederationError,
+  FederationPeer,
+  FederationPeerCodeResult,
+  FederationPeerIdInput,
+  FederationProjectsResponse,
+  FederationRemoteArtifactInput,
+  FederationRemoteRun,
+  FederationRemoteRunInput,
+  FederationRemoteRunsSnapshot,
+  FederationSnapshot,
+  FederationStartRemoteRunInput,
+} from "./federation.ts";
+import {
+  TailcatConnectionCodeResult,
+  TailcatCreateConnectionCodeInput,
+  TailcatRemoteAccessError,
+  TailcatRemoteAccessState,
+  TailcatRenameTrustedPeerInput,
+  TailcatSetRemoteAccessEnabledInput,
+  TailcatTrustedPeerIdInput,
+} from "./tailcat.ts";
+import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
   EnvironmentAuthorizationError,
@@ -347,6 +373,27 @@ export const WS_METHODS = {
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
+
+  // Tailcat remote access (this environment serving itself over Tailcat)
+  tailcatSubscribeRemoteAccess: "tailcat.subscribeRemoteAccess",
+  tailcatSetRemoteAccessEnabled: "tailcat.setRemoteAccessEnabled",
+  tailcatCreateConnectionCode: "tailcat.createConnectionCode",
+  tailcatRevokeTrustedPeer: "tailcat.revokeTrustedPeer",
+  tailcatRenameTrustedPeer: "tailcat.renameTrustedPeer",
+  tailcatRegenerateIdentity: "tailcat.regenerateIdentity",
+
+  // Federation (explicit server-to-server coordination)
+  federationSubscribePeers: "federation.subscribePeers",
+  federationCreatePeerCode: "federation.createPeerCode",
+  federationAddPeer: "federation.addPeer",
+  federationRemovePeer: "federation.removePeer",
+  federationRefreshPeer: "federation.refreshPeer",
+  federationListRemoteProjects: "federation.listRemoteProjects",
+  federationStartRemoteRun: "federation.startRemoteRun",
+  federationCancelRemoteRun: "federation.cancelRemoteRun",
+  federationSubscribeRemoteRuns: "federation.subscribeRemoteRuns",
+  federationDescribeRemoteArtifacts: "federation.describeRemoteArtifacts",
+  federationFetchRemoteArtifact: "federation.fetchRemoteArtifact",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -1152,6 +1199,127 @@ export const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeReso
   stream: true,
 });
 
+const TailcatRpcError = Schema.Union([TailcatRemoteAccessError, EnvironmentAuthorizationError]);
+
+export const WsTailcatSubscribeRemoteAccessRpc = Rpc.make(WS_METHODS.tailcatSubscribeRemoteAccess, {
+  payload: Schema.Struct({}),
+  success: TailcatRemoteAccessState,
+  error: TailcatRpcError,
+  stream: true,
+});
+
+export const WsTailcatSetRemoteAccessEnabledRpc = Rpc.make(
+  WS_METHODS.tailcatSetRemoteAccessEnabled,
+  {
+    payload: TailcatSetRemoteAccessEnabledInput,
+    success: TailcatRemoteAccessState,
+    error: TailcatRpcError,
+  },
+);
+
+export const WsTailcatCreateConnectionCodeRpc = Rpc.make(WS_METHODS.tailcatCreateConnectionCode, {
+  payload: TailcatCreateConnectionCodeInput,
+  success: TailcatConnectionCodeResult,
+  error: TailcatRpcError,
+});
+
+export const WsTailcatRevokeTrustedPeerRpc = Rpc.make(WS_METHODS.tailcatRevokeTrustedPeer, {
+  payload: TailcatTrustedPeerIdInput,
+  success: TailcatRemoteAccessState,
+  error: TailcatRpcError,
+});
+
+export const WsTailcatRenameTrustedPeerRpc = Rpc.make(WS_METHODS.tailcatRenameTrustedPeer, {
+  payload: TailcatRenameTrustedPeerInput,
+  success: TailcatRemoteAccessState,
+  error: TailcatRpcError,
+});
+
+export const WsTailcatRegenerateIdentityRpc = Rpc.make(WS_METHODS.tailcatRegenerateIdentity, {
+  payload: Schema.Struct({}),
+  success: TailcatRemoteAccessState,
+  error: TailcatRpcError,
+});
+
+const FederationRpcError = Schema.Union([FederationError, EnvironmentAuthorizationError]);
+
+export const WsFederationSubscribePeersRpc = Rpc.make(WS_METHODS.federationSubscribePeers, {
+  payload: Schema.Struct({}),
+  success: FederationSnapshot,
+  error: FederationRpcError,
+  stream: true,
+});
+
+export const WsFederationCreatePeerCodeRpc = Rpc.make(WS_METHODS.federationCreatePeerCode, {
+  payload: FederationCreatePeerCodeInput,
+  success: FederationPeerCodeResult,
+  error: FederationRpcError,
+});
+
+export const WsFederationAddPeerRpc = Rpc.make(WS_METHODS.federationAddPeer, {
+  payload: FederationAddPeerInput,
+  success: FederationPeer,
+  error: FederationRpcError,
+});
+
+export const WsFederationRemovePeerRpc = Rpc.make(WS_METHODS.federationRemovePeer, {
+  payload: FederationPeerIdInput,
+  success: Schema.Void,
+  error: FederationRpcError,
+});
+
+export const WsFederationRefreshPeerRpc = Rpc.make(WS_METHODS.federationRefreshPeer, {
+  payload: FederationPeerIdInput,
+  success: FederationPeer,
+  error: FederationRpcError,
+});
+
+export const WsFederationListRemoteProjectsRpc = Rpc.make(WS_METHODS.federationListRemoteProjects, {
+  payload: FederationPeerIdInput,
+  success: FederationProjectsResponse,
+  error: FederationRpcError,
+});
+
+export const WsFederationStartRemoteRunRpc = Rpc.make(WS_METHODS.federationStartRemoteRun, {
+  payload: FederationStartRemoteRunInput,
+  success: FederationRemoteRun,
+  error: FederationRpcError,
+});
+
+export const WsFederationCancelRemoteRunRpc = Rpc.make(WS_METHODS.federationCancelRemoteRun, {
+  payload: FederationRemoteRunInput,
+  success: FederationRemoteRun,
+  error: FederationRpcError,
+});
+
+export const WsFederationSubscribeRemoteRunsRpc = Rpc.make(
+  WS_METHODS.federationSubscribeRemoteRuns,
+  {
+    payload: Schema.Struct({}),
+    success: FederationRemoteRunsSnapshot,
+    error: FederationRpcError,
+    stream: true,
+  },
+);
+
+export const WsFederationDescribeRemoteArtifactsRpc = Rpc.make(
+  WS_METHODS.federationDescribeRemoteArtifacts,
+  {
+    payload: FederationRemoteRunInput,
+    success: FederationArtifactsResponse,
+    error: FederationRpcError,
+  },
+);
+
+export const WsFederationFetchRemoteArtifactRpc = Rpc.make(
+  WS_METHODS.federationFetchRemoteArtifact,
+  {
+    payload: FederationRemoteArtifactInput,
+    success: FederationArtifactFetchResponse,
+    error: FederationRpcError,
+  },
+);
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -1269,4 +1437,21 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsTailcatSubscribeRemoteAccessRpc,
+  WsTailcatSetRemoteAccessEnabledRpc,
+  WsTailcatCreateConnectionCodeRpc,
+  WsTailcatRevokeTrustedPeerRpc,
+  WsTailcatRenameTrustedPeerRpc,
+  WsTailcatRegenerateIdentityRpc,
+  WsFederationSubscribePeersRpc,
+  WsFederationCreatePeerCodeRpc,
+  WsFederationAddPeerRpc,
+  WsFederationRemovePeerRpc,
+  WsFederationRefreshPeerRpc,
+  WsFederationListRemoteProjectsRpc,
+  WsFederationStartRemoteRunRpc,
+  WsFederationCancelRemoteRunRpc,
+  WsFederationSubscribeRemoteRunsRpc,
+  WsFederationDescribeRemoteArtifactsRpc,
+  WsFederationFetchRemoteArtifactRpc,
 );

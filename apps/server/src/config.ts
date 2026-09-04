@@ -88,6 +88,10 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    /** Enable Tailcat remote access at startup (`t3 serve --tailcat`). */
+    readonly tailcatEnabled: boolean | undefined;
+    /** Tailcat executable handed over by the desktop app's bootstrap. */
+    readonly tailcatBinaryPath: string | undefined;
   }
 >()("t3/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */
@@ -200,6 +204,8 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     logWebSocketEvents: false,
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
+    tailcatEnabled: undefined,
+    tailcatBinaryPath: undefined,
     port: 0,
     host: undefined,
     desktopBootstrapToken: undefined,

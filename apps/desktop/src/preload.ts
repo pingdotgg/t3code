@@ -94,6 +94,16 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   },
   resolveSshPasswordPrompt: (requestId, password) =>
     ipcRenderer.invoke(IpcChannels.RESOLVE_SSH_PASSWORD_PROMPT_CHANNEL, { requestId, password }),
+  ensureTailcatEnvironment: (input) =>
+    ipcRenderer.invoke(IpcChannels.ENSURE_TAILCAT_ENVIRONMENT_CHANNEL, input),
+  restartTailcatEnvironment: (connectionId) =>
+    ipcRenderer.invoke(IpcChannels.RESTART_TAILCAT_ENVIRONMENT_CHANNEL, { connectionId }),
+  disconnectTailcatEnvironment: (connectionId) =>
+    ipcRenderer.invoke(IpcChannels.DISCONNECT_TAILCAT_ENVIRONMENT_CHANNEL, { connectionId }),
+  getTailcatConnectionDiagnostics: (connectionId) =>
+    ipcRenderer.invoke(IpcChannels.GET_TAILCAT_CONNECTION_DIAGNOSTICS_CHANNEL, { connectionId }),
+  probeTailcatConnectionPath: (connectionId) =>
+    ipcRenderer.invoke(IpcChannels.PROBE_TAILCAT_CONNECTION_PATH_CHANNEL, { connectionId }),
   getServerExposureState: () => ipcRenderer.invoke(IpcChannels.GET_SERVER_EXPOSURE_STATE_CHANNEL),
   setServerExposureMode: (mode) =>
     ipcRenderer.invoke(IpcChannels.SET_SERVER_EXPOSURE_MODE_CHANNEL, mode),

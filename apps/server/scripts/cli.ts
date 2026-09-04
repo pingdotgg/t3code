@@ -16,6 +16,13 @@ import {
   resolveWebIconOverrides,
 } from "../../../scripts/lib/brand-assets.ts";
 import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
+import { stageTailcatDist } from "../../../scripts/lib/tailcat-dist.ts";
+import {
+  TAILCAT_DIST_RELATIVE_PATH,
+  TAILCAT_MANIFEST_RELATIVE_PATH,
+  readTailcatManifest,
+  tailcatManifestPlatformKeys,
+} from "../../../scripts/lib/tailcat-manifest.ts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -134,6 +141,34 @@ const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")
   }
 
   yield* Effect.log("[cli] Applied development icon overrides to dist/client");
+});
+
+/**
+ * The npm package is platform-independent, so it carries the Tailcat runtime
+ * for every platform key the manifest pins under dist/tailcat/<platform-key>/,
+ * the same decision the resource monitor makes. Binaries come from
+ * native/tailcat/dist (`node scripts/fetch-tailcat.ts --all`) and are verified
+ * against native/tailcat/manifest.json before they are copied, so publishing
+ * with a missing or stale runtime fails here instead of shipping.
+ */
+const stageTailcatRuntimes = Effect.fn("stageTailcatRuntimes")(function* (
+  repoRoot: string,
+  serverDir: string,
+) {
+  const path = yield* Path.Path;
+  const manifest = yield* readTailcatManifest(path.join(repoRoot, TAILCAT_MANIFEST_RELATIVE_PATH));
+  const platformKeys = tailcatManifestPlatformKeys(manifest);
+  for (const platformKey of platformKeys) {
+    yield* stageTailcatDist({
+      distRoot: path.join(repoRoot, TAILCAT_DIST_RELATIVE_PATH),
+      platformKey,
+      manifest,
+      destinationRoot: path.join(serverDir, "dist/tailcat"),
+    });
+  }
+  yield* Effect.log(
+    `[cli] Staged tailcat ${manifest.version} into dist/tailcat for ${platformKeys.join(", ")}`,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -271,6 +306,7 @@ const publishCmd = Command.make(
         // config, including override selectors, is interpreted correctly.
         (resource) =>
           Effect.gen(function* () {
+            yield* stageTailcatRuntimes(repoRoot, serverDir);
             yield* fs.writeFileString(packageJsonPath, `${resource.packageJsonString}\n`);
             for (const icon of resource.icons) {
               yield* fs.writeFile(icon.targetPath, icon.publish);
@@ -297,6 +333,11 @@ const publishCmd = Command.make(
             for (const icon of resource.icons) {
               yield* fs.writeFile(icon.targetPath, icon.original);
             }
+            // dist/ is the build output; the staged runtimes are publish-only.
+            yield* fs.remove(path.join(serverDir, "dist/tailcat"), {
+              recursive: true,
+              force: true,
+            });
             if (config.verbose) yield* Effect.log("[cli] Restored original publish assets");
           }),
       );

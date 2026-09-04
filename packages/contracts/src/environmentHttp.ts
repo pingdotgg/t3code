@@ -29,6 +29,7 @@ import {
   AuthSessionId,
   ThreadId,
   TrimmedNonEmptyString,
+  TurnId,
 } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
@@ -44,6 +45,30 @@ import {
   PullRequestOperationError,
   PullRequestUnavailableError,
 } from "./pullRequest.ts";
+import {
+  FederationArtifactFetchResponse,
+  FederationArtifactsResponse,
+  FederationChallengeRequest,
+  FederationChallengeResponse,
+  FederationError,
+  FederationHello,
+  FederationPairRequest,
+  FederationPairResponse,
+  FederationProjectsResponse,
+  FederationRun,
+  FederationRunEventsResponse,
+  FederationRunStartRequest,
+  FederationTokenRequest,
+  FederationTokenResponse,
+} from "./federation.ts";
+import {
+  TailcatConnectionCodeResult,
+  TailcatCreateConnectionCodeInput,
+  TailcatRemoteAccessError,
+  TailcatRemoteAccessState,
+  TailcatSetRemoteAccessEnabledInput,
+  TailcatTrustedPeerIdInput,
+} from "./tailcat.ts";
 import {
   RelayCloudEnvironmentHealthRequest,
   RelayCloudMintCredentialRequest,
@@ -614,9 +639,168 @@ export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
+const EnvironmentTailcatErrors = [
+  TailcatRemoteAccessError,
+  EnvironmentScopeRequiredError,
+  EnvironmentInternalError,
+] as const;
+
+const FederationTurnIdParams = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+});
+
+const FederationThreadParams = Schema.Struct({
+  threadId: ThreadId,
+});
+
+const FederationEventsQuery = {
+  afterSequence: Schema.optional(
+    Schema.FiniteFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+  ),
+};
+
+/**
+ * Tailcat remote-access management for command-line clients. The desktop and
+ * web UIs drive the same service over RPC; the CLI has no socket, so it uses
+ * these with a short-lived administrative session.
+ */
+export class EnvironmentTailcatHttpApi extends HttpApiGroup.make("tailcat")
+  .add(
+    HttpApiEndpoint.get("remoteAccess", "/api/tailcat/remote-access", {
+      headers: OptionalBearerHeaders,
+      success: TailcatRemoteAccessState,
+      error: EnvironmentTailcatErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("setRemoteAccess", "/api/tailcat/remote-access", {
+      headers: OptionalBearerHeaders,
+      payload: TailcatSetRemoteAccessEnabledInput,
+      success: TailcatRemoteAccessState,
+      error: EnvironmentTailcatErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("createConnectionCode", "/api/tailcat/connection-code", {
+      headers: OptionalBearerHeaders,
+      payload: TailcatCreateConnectionCodeInput,
+      success: TailcatConnectionCodeResult,
+      error: EnvironmentTailcatErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("revokeTrustedPeer", "/api/tailcat/trusted-peers/revoke", {
+      headers: OptionalBearerHeaders,
+      payload: TailcatTrustedPeerIdInput,
+      success: TailcatRemoteAccessState,
+      error: EnvironmentTailcatErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
+const FederationPublicErrors = [FederationError, EnvironmentInternalError] as const;
+const FederationAuthenticatedErrors = [
+  FederationError,
+  EnvironmentScopeRequiredError,
+  EnvironmentInternalError,
+] as const;
+
+/**
+ * The peer-facing federation protocol. Pairing and authentication endpoints
+ * are unauthenticated by design (they establish the session); everything else
+ * requires a federation session and checks the peer's granted scopes.
+ */
+export class EnvironmentFederationHttpApi extends HttpApiGroup.make("federation")
+  .add(
+    HttpApiEndpoint.post("pair", "/api/federation/pair", {
+      payload: FederationPairRequest,
+      success: FederationPairResponse,
+      error: FederationPublicErrors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("challenge", "/api/federation/challenge", {
+      payload: FederationChallengeRequest,
+      success: FederationChallengeResponse,
+      error: FederationPublicErrors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("token", "/api/federation/token", {
+      payload: FederationTokenRequest,
+      success: FederationTokenResponse,
+      error: FederationPublicErrors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.get("hello", "/api/federation/hello", {
+      headers: OptionalBearerHeaders,
+      success: FederationHello,
+      error: FederationAuthenticatedErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("projects", "/api/federation/projects", {
+      headers: OptionalBearerHeaders,
+      success: FederationProjectsResponse,
+      error: FederationAuthenticatedErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("startRun", "/api/federation/runs", {
+      headers: OptionalBearerHeaders,
+      payload: FederationRunStartRequest,
+      success: FederationRun,
+      error: FederationAuthenticatedErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("runStatus", "/api/federation/runs/:threadId", {
+      headers: OptionalBearerHeaders,
+      params: FederationThreadParams,
+      success: FederationRun,
+      error: FederationAuthenticatedErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("cancelRun", "/api/federation/runs/:threadId/cancel", {
+      headers: OptionalBearerHeaders,
+      params: FederationThreadParams,
+      success: FederationRun,
+      error: FederationAuthenticatedErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("runEvents", "/api/federation/runs/:threadId/events", {
+      headers: OptionalBearerHeaders,
+      params: FederationThreadParams,
+      payload: FederationEventsQuery,
+      success: FederationRunEventsResponse,
+      error: FederationAuthenticatedErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("runArtifacts", "/api/federation/runs/:threadId/artifacts", {
+      headers: OptionalBearerHeaders,
+      params: FederationThreadParams,
+      success: FederationArtifactsResponse,
+      error: FederationAuthenticatedErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("fetchArtifact", "/api/federation/runs/:threadId/artifacts/:turnId/diff", {
+      headers: OptionalBearerHeaders,
+      params: FederationTurnIdParams,
+      success: FederationArtifactFetchResponse,
+      error: FederationAuthenticatedErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
-  .add(EnvironmentConnectHttpApi) {}
+  .add(EnvironmentConnectHttpApi)
+  .add(EnvironmentTailcatHttpApi)
+  .add(EnvironmentFederationHttpApi) {}

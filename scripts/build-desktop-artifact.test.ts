@@ -52,6 +52,7 @@ import {
   resolveDesktopUpdateChannel,
   resolveDesktopWebAssetBrand,
   resolveResourceMonitorRustTargets,
+  resolveTailcatPlatformKeys,
   resolveWindowsServerAsarIgnoreGlobs,
   resourceMonitorExecutableName,
   resolveGitHubPublishConfig,
@@ -184,6 +185,17 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
     path.join(resourcesDir, "resource-monitor/t3-resource-monitor.exe"),
     "monitor",
   );
+  // Validation resolves the tailcat path from the target arch, and the suite
+  // validates both Windows arches against this one fixture.
+  for (const tailcatPlatformKey of ["win32-x64", "win32-arm64"]) {
+    yield* fs.makeDirectory(path.join(resourcesDir, "tailcat", tailcatPlatformKey), {
+      recursive: true,
+    });
+    yield* fs.writeFileString(
+      path.join(resourcesDir, "tailcat", tailcatPlatformKey, "tailcat.exe"),
+      "tailcat",
+    );
+  }
   const appExecutableName = "t3code.exe";
   yield* fs.writeFileString(path.join(packagedAppDir, appExecutableName), "electron");
   yield* fs.writeFileString(path.join(packagedAppDir, "chrome_crashpad_handler.exe"), "crashpad");
@@ -630,6 +642,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           from: "apps/desktop/prod-resources/resource-monitor",
           to: "resource-monitor",
         },
+        {
+          from: "apps/desktop/prod-resources/tailcat",
+          to: "tailcat",
+        },
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
         ...WSL_RUNTIME_EXTRA_RESOURCES,
       ]);
@@ -639,6 +655,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         {
           from: "apps/desktop/prod-resources/resource-monitor",
           to: "resource-monitor",
+        },
+        {
+          from: "apps/desktop/prod-resources/tailcat",
+          to: "tailcat",
         },
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
       ]);
@@ -1426,6 +1446,38 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("rejects a Windows payload without the target arch's tailcat runtime", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
+        yield* fs.remove(path.join(fixture.packagedAppDir, "resources/tailcat/win32-arm64"), {
+          recursive: true,
+        });
+
+        // The x64 runtime is still staged, so an x64 payload passes this check.
+        const x64Error = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+          fileLimit: 2,
+        }).pipe(Effect.flip);
+        assert.instanceOf(x64Error, WindowsPackagedPayloadValidationError);
+        assert.equal(x64Error.reason, "file-limit-exceeded");
+
+        const error = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "arm64",
+        }).pipe(Effect.flip);
+        assert.instanceOf(error, WindowsPackagedPayloadValidationError);
+        assert.equal(error.reason, "tailcat-missing");
+        assert.deepStrictEqual(error.missingFiles, ["tailcat/win32-arm64/tailcat.exe"]);
+      }),
+    ),
+  );
+
   it.effect("rejects a Windows payload that regresses above the file-count budget", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1745,13 +1797,25 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
-  it("stages the resource monitor as an external executable resource", () => {
+  it("stages the resource monitor and tailcat as external executable resources", () => {
     assert.deepStrictEqual(DESKTOP_EXTRA_RESOURCES, [
       {
         from: "apps/desktop/prod-resources/resource-monitor",
         to: "resource-monitor",
       },
+      {
+        from: "apps/desktop/prod-resources/tailcat",
+        to: "tailcat",
+      },
     ]);
+    // Universal macOS apps ship both darwin runtimes; the resolver picks by process arch.
+    assert.deepStrictEqual(resolveTailcatPlatformKeys("mac", "universal"), [
+      "darwin-arm64",
+      "darwin-x64",
+    ]);
+    assert.deepStrictEqual(resolveTailcatPlatformKeys("mac", "x64"), ["darwin-x64"]);
+    assert.deepStrictEqual(resolveTailcatPlatformKeys("linux", "arm64"), ["linux-arm64"]);
+    assert.deepStrictEqual(resolveTailcatPlatformKeys("win", "x64"), ["win32-x64"]);
     assert.deepStrictEqual(resolveResourceMonitorRustTargets("mac", "universal"), [
       "aarch64-apple-darwin",
       "x86_64-apple-darwin",

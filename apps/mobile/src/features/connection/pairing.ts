@@ -1,4 +1,5 @@
 import { readHostedPairingRequest } from "@t3tools/shared/remote";
+import { isT3ConnectionCode, peekT3ConnectionCodeKind } from "@t3tools/shared/t3ConnectionCode";
 import * as Schema from "effect/Schema";
 
 const MOBILE_PAIRING_URL_PARAM = "pairingUrl";
@@ -27,6 +28,36 @@ export class PairingQrPayloadEmptyError extends Schema.TaggedErrorClass<PairingQ
   }
 }
 
+/**
+ * A `t3c://` connection code was entered where a pairing URL belongs. Those
+ * codes are redeemed by the desktop app (which runs the Tailcat tunnel), so
+ * the message points there instead of calling the input an invalid URL.
+ */
+export class PairingInputNotPairableError extends Schema.TaggedErrorClass<PairingInputNotPairableError>()(
+  "PairingInputNotPairableError",
+  {
+    kind: Schema.NullOr(Schema.String),
+  },
+) {
+  override get message(): string {
+    switch (this.kind) {
+      case "tailcat":
+        return "This is a Tailcat connection code. Paste it in the desktop app under Add environment → Tailcat.";
+      case "peer":
+        return "This is a federation peer code. Add it in the desktop app under Settings → Connections → Federation.";
+      default:
+        return "This is a T3 connection code, not a pairing URL. Use it in the desktop app.";
+    }
+  }
+}
+
+/** Guidance for inputs that are T3 connection codes rather than pairing URLs; null for everything else. */
+export function unsupportedPairingInputMessage(input: string): string | null {
+  const trimmed = input.trim();
+  if (!isT3ConnectionCode(trimmed)) return null;
+  return new PairingInputNotPairableError({ kind: peekT3ConnectionCodeKind(trimmed) }).message;
+}
+
 export function buildPairingUrl(host: string, code: string): string {
   const h = host.trim();
   const c = code.trim();
@@ -45,6 +76,8 @@ export function buildPairingUrl(host: string, code: string): string {
 export function parsePairingUrl(url: string): { host: string; code: string } {
   const trimmed = url.trim();
   if (!trimmed) return { host: "", code: "" };
+  // Keep a pasted connection code intact so the guidance error matches what the user sees.
+  if (isT3ConnectionCode(trimmed)) return { host: trimmed, code: "" };
 
   try {
     const parsed = new URL(trimmed);
@@ -74,6 +107,9 @@ export function extractPairingUrlFromQrPayload(payload: string): string {
   const trimmed = payload.trim();
   if (!trimmed) {
     throw new PairingQrPayloadEmptyError({});
+  }
+  if (isT3ConnectionCode(trimmed)) {
+    throw new PairingInputNotPairableError({ kind: peekT3ConnectionCodeKind(trimmed) });
   }
 
   try {

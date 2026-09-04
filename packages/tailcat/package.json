@@ -1,0 +1,42 @@
+{
+  "name": "@t3tools/tailcat",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./address": {
+      "types": "./src/address.ts",
+      "import": "./src/address.ts"
+    },
+    "./backoff": {
+      "types": "./src/backoff.ts",
+      "import": "./src/backoff.ts"
+    },
+    "./errors": {
+      "types": "./src/errors.ts",
+      "import": "./src/errors.ts"
+    },
+    "./manifest": {
+      "types": "./src/manifest.ts",
+      "import": "./src/manifest.ts"
+    },
+    "./runtime": {
+      "types": "./src/runtime.ts",
+      "import": "./src/runtime.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

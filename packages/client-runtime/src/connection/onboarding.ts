@@ -1,5 +1,13 @@
-import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@t3tools/contracts";
+import type {
+  DesktopSshEnvironmentTarget,
+  EnvironmentId,
+  TailcatConnectionCodePayload,
+} from "@t3tools/contracts";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
+import {
+  T3ConnectionCodeInvalidError,
+  decodeTailcatConnectionCode,
+} from "@t3tools/shared/t3ConnectionCode";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -20,6 +28,8 @@ import {
   type ConnectionCredential,
   SshConnectionProfile,
   SshConnectionRegistration,
+  TailcatConnectionProfile,
+  TailcatConnectionRegistration,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import { mapRemoteEnvironmentError } from "./errors.ts";
@@ -27,6 +37,7 @@ import {
   BearerConnectionTarget,
   ConnectionBlockedError,
   SshConnectionTarget,
+  TailcatConnectionTarget,
   type ConnectionAttemptError,
 } from "./model.ts";
 import * as Persistence from "../platform/persistence.ts";
@@ -40,6 +51,12 @@ export interface PairingConnectionInput {
 
 export interface SshConnectionInput {
   readonly target: DesktopSshEnvironmentTarget;
+  readonly label?: string;
+}
+
+export interface TailcatConnectionInput {
+  /** A `t3c://tailcat/...` connection code copied or scanned from the remote machine. */
+  readonly code: string;
   readonly label?: string;
 }
 
@@ -67,6 +84,12 @@ export class ConnectionOnboarding extends Context.Service<
     readonly updateBearer: (
       input: BearerConnectionUpdateInput,
     ) => Effect.Effect<void, ConnectionAttemptError | Persistence.ConnectionPersistenceError>;
+    readonly registerTailcat: (
+      input: TailcatConnectionInput,
+    ) => Effect.Effect<
+      EnvironmentId,
+      ConnectionAttemptError | Persistence.ConnectionPersistenceError
+    >;
   }
 >()("@t3tools/client-runtime/connection/onboarding/ConnectionOnboarding") {}
 
@@ -242,11 +265,83 @@ export const registerSshConnection = Effect.fn(
   return registration.target.environmentId;
 });
 
+const isT3ConnectionCodeInvalidError = Schema.is(T3ConnectionCodeInvalidError);
+
+export const parseTailcatConnectionCode = Effect.fn(
+  "clientRuntime.connection.onboarding.parseTailcatConnectionCode",
+)(function* (code: string): Effect.fn.Return<TailcatConnectionCodePayload, ConnectionBlockedError> {
+  return yield* Effect.try({
+    try: () => decodeTailcatConnectionCode(code),
+    catch: (cause) =>
+      new ConnectionBlockedError({
+        reason: "configuration",
+        detail: isT3ConnectionCodeInvalidError(cause)
+          ? cause.message
+          : "The Tailcat connection code is invalid.",
+      }),
+  });
+});
+
+export const prepareTailcatRegistration = Effect.fn(
+  "clientRuntime.connection.onboarding.prepareTailcatRegistration",
+)(function* (input: TailcatConnectionInput) {
+  const payload = yield* parseTailcatConnectionCode(input.code);
+  if (payload.pairingToken === undefined) {
+    return yield* new ConnectionBlockedError({
+      reason: "authentication",
+      detail:
+        "This connection code has no pairing credential. Ask the other machine for a fresh code.",
+    });
+  }
+  if (payload.environmentId === undefined) {
+    return yield* new ConnectionBlockedError({
+      reason: "configuration",
+      detail:
+        "This connection code does not name its environment. Ask the other machine for a fresh code.",
+    });
+  }
+  const connectionId = `tailcat:${payload.environmentId}`;
+  const gateway = yield* ClientCapabilities.TailcatEnvironmentGateway;
+  const provisioned = yield* gateway.provision({ payload, connectionId });
+  if (payload.environmentId !== provisioned.environmentId) {
+    return yield* new ConnectionBlockedError({
+      reason: "configuration",
+      detail: "The machine behind this Tailcat address is not the environment the code named.",
+    });
+  }
+  const label = input.label?.trim() || provisioned.label || payload.name || "Tailcat environment";
+  return new TailcatConnectionRegistration({
+    target: new TailcatConnectionTarget({
+      environmentId: provisioned.environmentId,
+      label,
+      connectionId,
+    }),
+    profile: new TailcatConnectionProfile({
+      connectionId,
+      environmentId: provisioned.environmentId,
+      label,
+      address: payload.address,
+      remotePort: payload.port,
+    }),
+    credential: new BearerConnectionCredential({ token: provisioned.bearerToken }),
+  });
+});
+
+export const registerTailcatConnection = Effect.fn(
+  "clientRuntime.connection.onboarding.registerTailcatConnection",
+)(function* (input: TailcatConnectionInput) {
+  const registration = yield* prepareTailcatRegistration(input);
+  const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  yield* registry.register(registration);
+  return registration.target.environmentId;
+});
+
 export const make = Effect.gen(function* () {
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const presentation = yield* ClientCapabilities.ClientPresentation;
   const httpClient = yield* HttpClient.HttpClient;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
+  const tailcat = yield* ClientCapabilities.TailcatEnvironmentGateway;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
 
   return ConnectionOnboarding.of({
@@ -265,6 +360,11 @@ export const make = Effect.gen(function* () {
       updateBearerConnection(input).pipe(
         Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
         Effect.provideService(ConnectionCredentialStore.ConnectionCredentialStore, credentials),
+      ),
+    registerTailcat: (input) =>
+      registerTailcatConnection(input).pipe(
+        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
+        Effect.provideService(ClientCapabilities.TailcatEnvironmentGateway, tailcat),
       ),
   });
 });

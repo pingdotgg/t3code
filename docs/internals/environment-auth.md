@@ -11,16 +11,17 @@ checks and token exchange behavior can be audited against established concepts.
 Environment authorization is capability-based. A session carries zero or more
 OAuth-style scope strings:
 
-| Scope                   | Permission                                                               |
-| ----------------------- | ------------------------------------------------------------------------ |
-| `orchestration:read`    | Read snapshots, status, events, configuration, and filesystem/VCS state. |
-| `orchestration:operate` | Dispatch user operations and mutate environment-side workspace state.    |
-| `terminal:operate`      | Create, attach, input, resize, clear, restart, and terminate terminals.  |
-| `review:write`          | Read review diff previews used to compose review feedback.               |
-| `access:read`           | Inspect pairing links and client sessions.                               |
-| `access:write`          | Create or revoke pairing links and client sessions.                      |
-| `relay:read`            | Inspect managed relay connectivity.                                      |
-| `relay:write`           | Link, configure, or unlink managed relay connectivity.                   |
+| Scope                   | Permission                                                                                                                                                                                      |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `orchestration:read`    | Read snapshots, status, events, configuration, and filesystem/VCS state.                                                                                                                        |
+| `orchestration:operate` | Dispatch user operations and mutate environment-side workspace state.                                                                                                                           |
+| `terminal:operate`      | Create, attach, input, resize, clear, restart, and terminate terminals.                                                                                                                         |
+| `review:write`          | Read review diff previews used to compose review feedback.                                                                                                                                      |
+| `access:read`           | Inspect pairing links and client sessions.                                                                                                                                                      |
+| `access:write`          | Create or revoke pairing links and client sessions.                                                                                                                                             |
+| `relay:read`            | Inspect managed relay connectivity.                                                                                                                                                             |
+| `relay:write`           | Link, configure, or unlink managed relay connectivity.                                                                                                                                          |
+| `federation:peer`       | Marker for sessions issued to a paired peer environment; grants nothing outside the federation HTTP group, where per-peer federation scopes are checked (see [federation.md](./federation.md)). |
 
 Pairing-link lists and access-stream snapshots and updates contain metadata only.
 The raw credential is returned only by the creation request, after the server checks
@@ -103,6 +104,13 @@ Clients may additionally submit `client_label`, `client_device_type`, and
 device that established the session. These are presentation hints only; the
 environment derives transport metadata such as IP address and user agent from
 the request and does not use these fields for authorization.
+
+`client_tailcat_node_key` is the one extension parameter with an effect: when the
+redeemed bootstrap credential was issued as a Tailcat connection code (pairing
+link subject `tailcat-connection-code`), the server records the key as a trusted
+Tailcat peer linked to the new session, so the device can reach the listener
+after the pairing window closes. It is ignored for every other credential. See
+[tailcat.md](./tailcat.md).
 
 The response has the token-exchange shape:
 

@@ -191,6 +191,14 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
     Layer.succeed(RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization, remote),
     Layer.succeed(ClientCapabilities.SshEnvironmentGateway, ssh),
     Layer.succeed(
+      ClientCapabilities.TailcatEnvironmentGateway,
+      ClientCapabilities.TailcatEnvironmentGateway.of({
+        provision: () => Effect.die("unused"),
+        prepare: () => Effect.die("unused"),
+        disconnect: () => Effect.void,
+      }),
+    ),
+    Layer.succeed(
       ManagedRelay.ManagedRelayClient,
       relayClient(
         options?.connectEnvironment ??
