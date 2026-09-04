@@ -565,6 +565,29 @@ const windowsLockIsHeld = Effect.fnUntraced(function* (lockPath: string) {
   );
 });
 
+type WindowsLockProbe = (path: string) => Effect.Effect<boolean, never, FileSystem.FileSystem>;
+
+/**
+ * Chromium does not create its POSIX `SingletonLock` symlink on Windows. The
+ * live cookie database is opened without sharing instead, so probing each
+ * profile's current jar is the reliable running signal there.
+ */
+export const windowsChromiumCookiesAreHeld = Effect.fnUntraced(function* (
+  definition: BrowserImportSourceDefinition,
+  context: BrowserImportPathContext,
+  lockIsHeld: WindowsLockProbe = windowsLockIsHeld,
+) {
+  const profiles = yield* listSourceProfiles(definition, context);
+  const held = yield* Effect.forEach(profiles, (profile) =>
+    resolveCookieDatabase(definition, context, profile.directory).pipe(
+      Effect.flatMap((database) =>
+        database === undefined ? Effect.succeed(false) : lockIsHeld(database),
+      ),
+    ),
+  );
+  return held.some(Boolean);
+});
+
 /**
  * Whether a Firefox `lock` symlink's `<ip>:[+]<pid>` target still names a
  * live owner. Firefox writes this symlink beside the profile while it runs and
@@ -715,9 +738,13 @@ export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")
   const fileSystem = yield* FileSystem.FileSystem;
   const root = definition.userDataDirectory(context);
   if (root === undefined) return false;
-  // Both engines leave a lock file for as long as an instance holds a profile,
-  // which is far cheaper and more targeted than scanning the process table.
+  // Probe the source's own lock state rather than scanning the process table.
+  // Chromium exposes that through the cookie jar on Windows and through its
+  // user-data SingletonLock on POSIX.
   if (definition.engine !== "firefox") {
+    if (context.platform === "win32") {
+      return yield* windowsChromiumCookiesAreHeld(definition, context);
+    }
     const currentHost = yield* HostProcessHostname;
     const lock = context.path.join(root, "SingletonLock");
     return yield* fileSystem.readLink(lock).pipe(

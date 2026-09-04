@@ -28,6 +28,7 @@ import {
   posixLockIsHeld,
   listSourceProfiles,
   sourcePathContext,
+  windowsChromiumCookiesAreHeld,
 } from "./Sources.ts";
 
 const helium = BROWSER_IMPORT_SOURCES.find((source) => source.id === "helium")!;
@@ -168,6 +169,39 @@ describe("Helium on Windows", () => {
 });
 
 describe("isSourceRunning", () => {
+  it.effect("uses the held cookie database as Chromium's Windows running signal", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-helium-windows-lock-",
+        });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcessEnvironment, {
+            HOME: home,
+            LOCALAPPDATA: home,
+          }),
+          Effect.provideService(HostProcessPlatform, "win32"),
+        );
+        const profile = context.path.join(helium.userDataDirectory(context)!, "Default");
+        const database = context.path.join(profile, "Network", "Cookies");
+        yield* fileSystem.makeDirectory(context.path.join(profile, "Network"), { recursive: true });
+        yield* writeCookieDatabase(database, 1);
+
+        const probed: string[] = [];
+        assert.isTrue(
+          yield* windowsChromiumCookiesAreHeld(helium, context, (path) =>
+            Effect.sync(() => {
+              probed.push(path);
+              return true;
+            }),
+          ),
+        );
+        assert.deepEqual(probed, [database]);
+      }),
+    ),
+  );
+
   it.effect("reads Chromium's dangling SingletonLock symlink as a running browser", () =>
     run(
       Effect.gen(function* () {
