@@ -30,15 +30,145 @@ struct FeatureOutboxStoreTests {
         )
 
         try await store.enqueue(submission)
+        let persistedURL = await store.fileURL
         let restored = try await FeatureOutboxStore(
-            fileURL: store.fileURL
+            fileURL: persistedURL
         ).submissions()
 
         #expect(restored.count == 1)
         #expect(restored[0].identity == identity)
-        #expect(restored[0].runtimeMode == .fullAccess)
+        #expect(restored[0].runtimeMode == .automatic)
         #expect(restored[0].interactionMode == .standard)
         #expect(restored[0].attachments.first?.data == Data([0x01, 0x02]))
+    }
+
+    @Test
+    func fileBackedRoundTripPreservesLocalAndUploadedIdentity() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-feature-outbox-file-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let sourceURL = directory.appendingPathComponent("provider.json")
+        try Data("{}".utf8).write(to: sourceURL)
+        let attachmentID = UUID()
+        let storageRoot = directory.appendingPathComponent("attachments", isDirectory: true)
+        let ownedFile = try ManagedAttachmentFileStore(rootURL: storageRoot).copyOwnedFile(
+            from: sourceURL,
+            attachmentID: attachmentID,
+            originalFileName: "context.json"
+        )
+        let uploadedReference = FeatureUploadedAttachmentReference(
+            environmentID: "environment-1",
+            attachmentID: "uploaded-1"
+        )
+        let store = FeatureOutboxStore(
+            fileURL: directory.appendingPathComponent("outbox.json"),
+            attachmentStorageRootURL: storageRoot
+        )
+        let submission = FeatureQueuedSubmission(
+            environmentID: "environment-1",
+            identity: FeatureSubmissionIdentity(),
+            threadID: "thread-1",
+            text: "Review",
+            selection: nil,
+            runtimeMode: .fullAccess,
+            interactionMode: .standard,
+            attachments: [
+                FeatureUploadAttachment(
+                    id: attachmentID,
+                    ownedFile: ownedFile,
+                    name: "context.json",
+                    mimeType: "application/json",
+                    uploadedReference: uploadedReference
+                ),
+            ]
+        )
+
+        try await store.enqueue(submission)
+        let persistedURL = await store.fileURL
+        let restored = try await FeatureOutboxStore(
+            fileURL: persistedURL,
+            attachmentStorageRootURL: storageRoot
+        ).submissions().first
+
+        #expect(restored?.uploads.first?.id == attachmentID)
+        #expect(restored?.uploads.first?.ownedFile?.url == ownedFile.url)
+        #expect(restored?.uploads.first?.byteCount == 2)
+        #expect(restored?.uploads.first?.uploadedReference == uploadedReference)
+        let json = try #require(String(data: Data(contentsOf: persistedURL), encoding: .utf8))
+        #expect(!json.contains(Data("{}".utf8).base64EncodedString()))
+    }
+
+    @Test
+    func restoreAcceptsImageAttachmentWithoutNewFileFields() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-feature-outbox-old-image-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("outbox.json")
+        let identity = FeatureSubmissionIdentity(
+            threadID: "thread-1",
+            commandID: "command-1",
+            messageID: "message-1",
+            createdAt: Date(timeIntervalSince1970: 42)
+        )
+        let submission = FeatureQueuedSubmission(
+            environmentID: "environment-1",
+            identity: identity,
+            threadID: "thread-1",
+            text: "Old image",
+            selection: nil,
+            runtimeMode: .fullAccess,
+            interactionMode: .standard,
+            attachments: [
+                FeatureUploadAttachment(
+                    data: Data([1, 2, 3]),
+                    name: "old.png",
+                    mimeType: "image/png"
+                ),
+            ]
+        )
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let current = try JSONSerialization.jsonObject(
+            with: JSONEncoder.t3.encode(submission)
+        ) as! [String: Any]
+        var legacy = current
+        var attachments = legacy["attachments"] as! [[String: Any]]
+        attachments[0].removeValue(forKey: "id")
+        attachments[0].removeValue(forKey: "byteCount")
+        legacy["attachments"] = attachments
+        try JSONSerialization.data(
+            withJSONObject: ["version": 1, "submissions": [legacy]]
+        ).write(to: fileURL)
+
+        let restored = try await FeatureOutboxStore(fileURL: fileURL).submissions().first
+
+        #expect(restored?.uploads.first?.data == Data([1, 2, 3]))
+        #expect(restored?.uploads.first?.ownedFile == nil)
+    }
+
+    @Test
+    func restorePreservesLegacyPermission() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-feature-outbox-legacy-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        var submission = FeatureQueuedSubmission(
+            environmentID: "environment-1",
+            identity: FeatureSubmissionIdentity(),
+            threadID: "thread-scoped",
+            text: "Retry this",
+            selection: nil,
+            runtimeMode: .automatic,
+            interactionMode: .standard,
+            attachments: []
+        )
+        submission.runtimeMode = .autoAcceptEdits
+        try await store.enqueue(submission)
+        let persistedURL = await store.fileURL
+
+        let restored = try await FeatureOutboxStore(fileURL: persistedURL).submissions()
+
+        #expect(restored.first?.runtimeMode == .autoAcceptEdits)
     }
 
     @Test

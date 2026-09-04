@@ -5,10 +5,12 @@ struct MarkdownImageContext: Equatable, @unchecked Sendable {
     let threadID: String
     let workspaceRoot: String
     let resolver: any FeatureWorkspaceAssetResolving
+    var sourceFilePath: String? = nil
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.threadID == rhs.threadID
             && lhs.workspaceRoot == rhs.workspaceRoot
+            && lhs.sourceFilePath == rhs.sourceFilePath
             && ObjectIdentifier(lhs.resolver) == ObjectIdentifier(rhs.resolver)
     }
 }
@@ -328,6 +330,9 @@ private struct MarkdownBlockView: View, Equatable {
                 selectionContext: selectionContext
             )
 
+        case let .artifactTemplate(template):
+            CodexArtifactTemplateView(template: template)
+
         case .thematicBreak:
             Rectangle()
                 .fill(T3Colors.separator)
@@ -474,11 +479,19 @@ private struct MarkdownImageView: View {
     let image: MarkdownImage
     let context: MarkdownImageContext?
 
+    @SwiftUI.Environment(\.openURL) private var openURL
     @State private var loadedImage: UIImage?
+    @State private var previewURL: URL?
     @State private var failed = false
 
     private var classifiedSource: MarkdownImageSource {
-        MarkdownImageSource.classify(image.source, workspaceRoot: context?.workspaceRoot)
+        let basePath = context?.sourceFilePath.map {
+            let isWindows = $0.contains("\\")
+            let normalized = $0.replacingOccurrences(of: "\\", with: "/")
+            let parent = (normalized as NSString).deletingLastPathComponent
+            return isWindows ? parent.replacingOccurrences(of: "/", with: "\\") : parent
+        } ?? context?.workspaceRoot
+        return MarkdownImageSource.classify(image.source, workspaceRoot: basePath)
     }
 
     var body: some View {
@@ -499,7 +512,12 @@ private struct MarkdownImageView: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .accessibilityLabel(image.alternativeText.isEmpty ? "Image" : image.alternativeText)
-            .task(id: "\(image.source):\(context?.threadID ?? ""):\(context?.workspaceRoot ?? "")") {
+            .accessibilityAddTraits(.isButton)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if let previewURL { openURL(previewURL) }
+            }
+            .task(id: "\(image.source):\(context?.threadID ?? ""):\(context?.workspaceRoot ?? ""):\(context?.sourceFilePath ?? "")") {
                 await loadImage()
             }
         }
@@ -507,14 +525,27 @@ private struct MarkdownImageView: View {
 
     @MainActor
     private func loadImage() async {
+        previewURL = nil
         do {
             let url: URL
             switch classifiedSource {
             case let .direct(directURL):
                 url = directURL
+                if directURL.scheme == "http" || directURL.scheme == "https" {
+                    previewURL = directURL
+                }
             case let .workspaceFile(path):
                 guard let context else { return }
-                url = try await context.resolver.workspaceAssetURL(
+                var components = URLComponents()
+                components.scheme = "t3code"
+                components.host = "media-preview"
+                components.path = "/open"
+                components.queryItems = [
+                    URLQueryItem(name: "path", value: path),
+                    URLQueryItem(name: "kind", value: "image"),
+                ]
+                previewURL = components.url
+                url = try await context.resolver.mediaAssetURL(
                     threadID: context.threadID,
                     path: path
                 )
@@ -527,6 +558,30 @@ private struct MarkdownImageView: View {
         } catch {
             failed = true
         }
+    }
+}
+
+private struct CodexArtifactTemplateView: View {
+    let template: CodexArtifactTemplate
+    @SwiftUI.Environment(\.openURL) private var openURL
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(template.displayName)
+                    .font(T3Typography.threadBody.weight(.medium))
+                    .foregroundStyle(T3Colors.textPrimary)
+                Text(template.kind.label)
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+            }
+            Spacer(minLength: 8)
+            Button("Use") {
+                if let url = template.useURL { openURL(url) }
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(.vertical, 4)
     }
 }
 

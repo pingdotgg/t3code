@@ -308,7 +308,7 @@ struct DailyUXNewTaskTests {
     }
 
     @Test
-    func requestNormalizesLegacyModesAndKeepsImageBytes() {
+    func requestPreservesLegacyPermissionAndKeepsImageBytes() {
         let image = FeatureDraftAttachment(
             data: Data([1, 2, 3]),
             filename: "Image 1.jpg",
@@ -324,7 +324,7 @@ struct DailyUXNewTaskTests {
         )
 
         #expect(request.trimmedPrompt == "Build it")
-        #expect(request.runtimeMode == .fullAccess)
+        #expect(request.runtimeMode == .approvalRequired)
         #expect(request.interactionMode == .standard)
         #expect(request.workspaceMode == .local)
         #expect(request.branch == nil)
@@ -388,8 +388,20 @@ struct DailyUXNewTaskTests {
 
     @Test
     func mobileModeChoicesOnlyExposeSupportedValues() {
-        #expect(FeatureRuntimeMode.allCases == [.fullAccess])
+        #expect(FeatureRuntimeMode.allCases == [.automatic, .fullAccess])
         #expect(FeatureInteractionMode.allCases == [.standard])
+    }
+
+    @Test
+    func newTasksDefaultToFullAccessBuildMode() {
+        let request = NewTaskRequest(
+            projectID: "project",
+            prompt: "Build it",
+            selection: nil
+        )
+
+        #expect(request.runtimeMode == .fullAccess)
+        #expect(request.interactionMode == .standard)
     }
 
     @Test

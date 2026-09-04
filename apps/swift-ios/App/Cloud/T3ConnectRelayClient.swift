@@ -23,6 +23,85 @@ public enum T3ConnectRelayError: LocalizedError, Sendable {
     }
 }
 
+struct T3ConnectRelayErrorBody: Decodable, Sendable {
+    let message: String?
+    let reason: String?
+    let code: String?
+    let dpopFailureReason: DPoPFailureReason?
+    let maxTunnels: Int?
+    let traceId: String?
+}
+
+enum T3ConnectRelayErrorPresentation {
+    static func message(
+        for error: T3ConnectRelayErrorBody,
+        requestUsesDPoP: Bool
+    ) -> String {
+        switch error.code {
+        case "auth_invalid":
+            switch error.reason {
+            case "missing_bearer", "invalid_bearer":
+                return "Relay rejected the cloud session token."
+            case "invalid_dpop" where requestUsesDPoP:
+                return DPoPFailurePresentation.message(
+                    "Relay rejected the DPoP proof.",
+                    reason: error.dpopFailureReason
+                )
+            case "not_authorized":
+                return "Relay rejected the authenticated request."
+            default:
+                break
+            }
+        case "environment_link_proof_expired":
+            return "Relay rejected an expired environment link proof."
+        case "environment_link_proof_invalid":
+            if let reason = error.reason {
+                return "Relay rejected the environment link proof (\(reason))."
+            }
+        case "environment_connect_not_authorized":
+            if error.reason == "environment_link_not_found" {
+                return "Relay has no active link for this environment. The environment server may not have re-established its link yet."
+            }
+            if let reason = error.reason {
+                return "Relay rejected the environment connection request (\(reason))."
+            }
+            return "Relay rejected the environment connection request."
+        case "environment_endpoint_unavailable":
+            if let reason = error.reason {
+                return "Relay could not reach the environment endpoint (\(reason))."
+            }
+        case "environment_endpoint_timed_out":
+            return "Relay timed out while contacting the environment endpoint."
+        case "environment_link_failed":
+            if let reason = error.reason {
+                return "Relay could not link the environment (\(reason))."
+            }
+        case "environment_link_unavailable":
+            if let reason = error.reason {
+                return "Relay cannot provision the managed endpoint (\(reason))."
+            }
+        case "environment_link_limit_exceeded":
+            if let maxTunnels = error.maxTunnels {
+                return "Relay refused the link: this account already has its maximum of \(maxTunnels) managed tunnels. Unlink an environment to free one up."
+            }
+            return "Relay refused the link because this account has reached its managed tunnel limit. Unlink an environment to free one up."
+        case "agent_activity_publish_proof_expired":
+            return "Relay rejected an expired agent activity publish proof."
+        case "agent_activity_publish_proof_invalid":
+            if let reason = error.reason {
+                return "Relay rejected the agent activity publish proof (\(reason))."
+            }
+        case "internal_error":
+            if let reason = error.reason {
+                return "Relay encountered an internal error (\(reason))."
+            }
+        default:
+            break
+        }
+        return error.message ?? error.reason ?? error.code ?? "T3 Connect request failed."
+    }
+}
+
 public actor T3ConnectRelayClient {
     private struct CachedToken: Sendable {
         let accessToken: String
@@ -48,13 +127,6 @@ public actor T3ConnectRelayClient {
 
     private struct OKResponse: Decodable, Sendable {
         let ok: Bool
-    }
-
-    private struct RelayErrorBody: Decodable, Sendable {
-        let message: String?
-        let reason: String?
-        let code: String?
-        let traceId: String?
     }
 
     private let configuration: T3ConnectConfiguration
@@ -385,10 +457,16 @@ public actor T3ConnectRelayClient {
     ) async throws -> Response {
         let (data, response) = try await transport.data(for: HTTPRequestPolicy.prepare(request))
         guard (200..<300).contains(response.statusCode) else {
-            let body = try? JSONDecoder.t3.decode(RelayErrorBody.self, from: data)
+            let body = try? JSONDecoder.t3.decode(T3ConnectRelayErrorBody.self, from: data)
             throw T3ConnectRelayError.response(
                 status: response.statusCode,
-                message: body?.message ?? body?.reason ?? body?.code ?? "T3 Connect request failed.",
+                message: body.map {
+                    T3ConnectRelayErrorPresentation.message(
+                        for: $0,
+                        requestUsesDPoP: request.value(forHTTPHeaderField: "DPoP") != nil
+                    )
+                }
+                    ?? "T3 Connect request failed.",
                 traceID: body?.traceId
             )
         }

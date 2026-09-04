@@ -26,7 +26,9 @@ struct FeatureAttachmentPreparationState: Equatable {
     }
 
     var statusLabel: String {
-        pendingItemCount == 1 ? "Preparing image…" : "Preparing \(pendingItemCount) images…"
+        pendingItemCount == 1
+            ? "Preparing attachment…"
+            : "Preparing \(pendingItemCount) attachments…"
     }
 
     @discardableResult
@@ -41,6 +43,18 @@ struct FeatureAttachmentPreparationState: Equatable {
     }
 }
 
+struct FeatureAttachmentOperationIdentity: Equatable {
+    let ownerID: String
+    let environmentID: String?
+    let generation: UUID
+
+    func matches(ownerID: String, environmentID: String?, generation: UUID) -> Bool {
+        self.ownerID == ownerID
+            && self.environmentID == environmentID
+            && self.generation == generation
+    }
+}
+
 struct FeatureImageAttachmentPicker: View {
     private enum Source {
         case photoLibrary
@@ -52,7 +66,10 @@ struct FeatureImageAttachmentPicker: View {
     @Binding var preparationState: FeatureAttachmentPreparationState
     @Binding var isFlowActive: Bool
     let maximumCount: Int
-    let isEnabled: Bool
+    let draftOwnerID: String
+    let environmentID: String?
+    let imagesAllowed: Bool
+    let maximumFileBytes: Int?
 
     @State private var isAttachmentSourcePresented = false
     @State private var isPhotoLibraryPresented = false
@@ -61,23 +78,36 @@ struct FeatureImageAttachmentPicker: View {
     @State private var isFileImporterPresented = false
     @State private var sourcePresentationTask: Task<Void, Never>?
     @State private var errorMessage: String?
+    @State private var generation = UUID()
+    @State private var flowIdentity: FeatureAttachmentOperationIdentity?
 
     init(
         attachments: Binding<[FeatureDraftAttachment]>,
         preparationState: Binding<FeatureAttachmentPreparationState>,
         isFlowActive: Binding<Bool>,
-        maximumCount: Int = FeatureImageAttachmentLimits.maximumCount,
-        isEnabled: Bool = true
+        draftOwnerID: String,
+        environmentID: String?,
+        imagesAllowed: Bool,
+        maximumFileBytes: Int?,
+        maximumCount: Int = FeatureImageAttachmentLimits.maximumCount
     ) {
         _attachments = attachments
         _preparationState = preparationState
         _isFlowActive = isFlowActive
         self.maximumCount = maximumCount
-        self.isEnabled = isEnabled
+        self.draftOwnerID = draftOwnerID
+        self.environmentID = environmentID
+        self.imagesAllowed = imagesAllowed
+        self.maximumFileBytes = maximumFileBytes
     }
 
     var body: some View {
         Button {
+            flowIdentity = FeatureAttachmentOperationIdentity(
+                ownerID: draftOwnerID,
+                environmentID: environmentID,
+                generation: generation
+            )
             isFlowActive = true
             isAttachmentSourcePresented = true
         } label: {
@@ -93,10 +123,11 @@ struct FeatureImageAttachmentPicker: View {
         .accessibilityLabel(attachmentAccessibilityLabel)
         .accessibilityIdentifier("image-attachment-picker")
         .accessibilityHint(attachmentAccessibilityHint)
-        .confirmationDialog("Add image", isPresented: $isAttachmentSourcePresented) {
+        .confirmationDialog("Add attachment", isPresented: $isAttachmentSourcePresented) {
             Button("Photo Library") { present(.photoLibrary) }
+                .disabled(!imagesAllowed && maximumFileBytes == nil)
             Button("Camera") { present(.camera) }
-                .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
+                .disabled(!imagesAllowed || !UIImagePickerController.isSourceTypeAvailable(.camera))
             Button("Files") { present(.files) }
             Button("Cancel", role: .cancel) {
                 isFlowActive = false
@@ -108,6 +139,8 @@ struct FeatureImageAttachmentPicker: View {
         ) {
             FeaturePhotoLibraryPicker(
                 maximumCount: max(1, remainingCount),
+                imagesAllowed: imagesAllowed,
+                videosAllowed: maximumFileBytes != nil,
                 onFinish: { items in
                     pendingPhotoLibraryItems = items
                     isPhotoLibraryPresented = false
@@ -127,12 +160,12 @@ struct FeatureImageAttachmentPicker: View {
         }
         .fileImporter(
             isPresented: $isFileImporterPresented,
-            allowedContentTypes: [.image],
+            allowedContentTypes: maximumFileBytes == nil ? [.image] : [.item],
             allowsMultipleSelection: true,
             onCompletion: loadFiles
         )
         .alert(
-            "Couldn’t add image",
+            "Couldn’t add attachment",
             isPresented: Binding(
                 get: { errorMessage != nil },
                 set: { if !$0 { errorMessage = nil } }
@@ -144,6 +177,20 @@ struct FeatureImageAttachmentPicker: View {
         }
         .onDisappear {
             sourcePresentationTask?.cancel()
+            if !isFlowActive {
+                generation = UUID()
+                flowIdentity = nil
+            }
+        }
+        .onChange(of: draftOwnerID) {
+            generation = UUID()
+            flowIdentity = nil
+            pendingPhotoLibraryItems = []
+        }
+        .onChange(of: environmentID) {
+            generation = UUID()
+            flowIdentity = nil
+            pendingPhotoLibraryItems = []
         }
     }
 
@@ -152,7 +199,8 @@ struct FeatureImageAttachmentPicker: View {
     }
 
     private var canAdd: Bool {
-        isEnabled && !preparationState.isPreparing && remainingCount > 0
+        (imagesAllowed || maximumFileBytes != nil)
+            && !preparationState.isPreparing && remainingCount > 0
     }
 
     private var attachmentAccessibilityLabel: String {
@@ -162,9 +210,11 @@ struct FeatureImageAttachmentPicker: View {
     }
 
     private var attachmentAccessibilityHint: String {
-        if !isEnabled { return "The selected model does not accept images" }
+        if !imagesAllowed && maximumFileBytes == nil { return "Attachments are not supported" }
         if remainingCount == 0 { return "Remove an attachment before adding another" }
-        return "Choose a photo, take a photo, or browse image files"
+        return maximumFileBytes == nil
+            ? "Choose a photo, take a photo, or browse image files"
+            : "Choose a photo, video, or file"
     }
 
     private func present(_ source: Source) {
@@ -191,6 +241,11 @@ struct FeatureImageAttachmentPicker: View {
     }
 
     private func finishPhotoLibrarySelection() {
+        guard let identity = flowIdentity else {
+            pendingPhotoLibraryItems = []
+            isFlowActive = false
+            return
+        }
         Task { @MainActor in
             // Keep PhotosUI presentation and asset materialization in separate turns.
             // Some OS versions become stuck or dismiss mid-selection when the picker
@@ -214,11 +269,22 @@ struct FeatureImageAttachmentPicker: View {
 
             for (offset, item) in selected.enumerated() {
                 do {
-                    let data = try await item.loadData()
-                    try await appendImage(
-                        data,
-                        ordinal: firstOrdinal + offset
+                    let attachment = try await item.loadAttachment(
+                        ordinal: firstOrdinal + offset,
+                        maximumFileBytes: maximumFileBytes
                     )
+                    guard identity.matches(
+                        ownerID: draftOwnerID,
+                        environmentID: environmentID,
+                        generation: generation
+                    ) else {
+                        discardOwnedFile(for: attachment)
+                        return
+                    }
+                    if attachment.mimeType.hasPrefix("image/"), !imagesAllowed {
+                        throw FeatureAttachmentIntakeError.imagesUnsupported
+                    }
+                    attachments.append(attachment)
                 } catch {
                     errorMessage = error.localizedDescription
                 }
@@ -232,6 +298,10 @@ struct FeatureImageAttachmentPicker: View {
             isFlowActive = false
             return
         }
+        guard let identity = flowIdentity else {
+            isFlowActive = false
+            return
+        }
         let operation = preparationState.begin(itemCount: 1)
 
         Task {
@@ -240,13 +310,22 @@ struct FeatureImageAttachmentPicker: View {
                 isFlowActive = false
             }
             do {
+                let ordinal = attachments.count + 1
                 let data = try await Task.detached(priority: .userInitiated) {
                     guard let data = image.jpegData(compressionQuality: 0.94) else {
                         throw FeatureImageAttachmentError.encodingFailed
                     }
                     return data
                 }.value
-                try await appendImage(data)
+                let attachment = try await Task.detached(priority: .userInitiated) {
+                    try FeatureImageProcessor.attachment(from: data, ordinal: ordinal)
+                }.value
+                guard identity.matches(
+                    ownerID: draftOwnerID,
+                    environmentID: environmentID,
+                    generation: generation
+                ) else { return }
+                attachments.append(attachment)
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -254,26 +333,34 @@ struct FeatureImageAttachmentPicker: View {
     }
 
     private func loadFiles(_ result: Result<[URL], Error>) {
-        defer { isFlowActive = false }
         switch result {
         case .failure(let error):
             errorMessage = error.localizedDescription
+            isFlowActive = false
         case .success(let urls):
-            guard !urls.isEmpty, canAdd else { return }
+            guard !urls.isEmpty, canAdd, let identity = flowIdentity else {
+                isFlowActive = false
+                return
+            }
             let operation = preparationState.begin(itemCount: min(urls.count, remainingCount))
 
             Task {
-                defer { preparationState.finish(operation) }
+                defer {
+                    preparationState.finish(operation)
+                    isFlowActive = false
+                }
                 for url in urls.prefix(remainingCount) {
                     do {
-                        let data = try await Task.detached(priority: .userInitiated) {
-                            let hasAccess = url.startAccessingSecurityScopedResource()
-                            defer {
-                                if hasAccess { url.stopAccessingSecurityScopedResource() }
-                            }
-                            return try Data(contentsOf: url, options: .mappedIfSafe)
-                        }.value
-                        try await appendImage(data)
+                        let attachment = try await prepareFile(url)
+                        guard identity.matches(
+                            ownerID: draftOwnerID,
+                            environmentID: environmentID,
+                            generation: generation
+                        ) else {
+                            discardOwnedFile(for: attachment)
+                            return
+                        }
+                        attachments.append(attachment)
                     } catch {
                         errorMessage = error.localizedDescription
                         break
@@ -283,6 +370,38 @@ struct FeatureImageAttachmentPicker: View {
         }
     }
 
+    private func prepareFile(_ url: URL) async throws -> FeatureDraftAttachment {
+        let type = UTType(filenameExtension: url.pathExtension)
+        if type?.conforms(to: .image) == true {
+            guard imagesAllowed else { throw FeatureAttachmentIntakeError.imagesUnsupported }
+            let ordinal = attachments.count + 1
+            let data = try await Task.detached(priority: .userInitiated) {
+                let hasAccess = url.startAccessingSecurityScopedResource()
+                defer { if hasAccess { url.stopAccessingSecurityScopedResource() } }
+                return try Data(contentsOf: url, options: .mappedIfSafe)
+            }.value
+            return try await Task.detached(priority: .userInitiated) {
+                try FeatureImageProcessor.attachment(from: data, ordinal: ordinal)
+            }.value
+        }
+        guard let maximumFileBytes else { throw FeatureAttachmentIntakeError.filesUnsupported }
+        let id = UUID()
+        let owned = try await Task.detached(priority: .userInitiated) {
+            try ManagedAttachmentFileStore().copyOwnedFile(
+                from: url,
+                attachmentID: id,
+                originalFileName: url.lastPathComponent,
+                maximumBytes: maximumFileBytes
+            )
+        }.value
+        return FeatureDraftAttachment(
+            id: id,
+            ownedFile: owned,
+            filename: url.lastPathComponent,
+            mimeType: type?.preferredMIMEType ?? "application/octet-stream"
+        )
+    }
+
     private func appendImage(_ data: Data, ordinal: Int? = nil) async throws {
         let ordinal = ordinal ?? attachments.count + 1
         let attachment = try await Task.detached(priority: .userInitiated) {
@@ -290,14 +409,80 @@ struct FeatureImageAttachmentPicker: View {
         }.value
         attachments.append(attachment)
     }
+
+    private func discardOwnedFile(for attachment: FeatureDraftAttachment) {
+        guard let fileName = attachment.ownedFile?.fileName else { return }
+        try? ManagedAttachmentFileStore().removeOwnedFile(fileName: fileName)
+    }
 }
 
 private struct FeaturePhotoLibraryItem: @unchecked Sendable {
     let provider: NSItemProvider
 
     @MainActor
-    func loadData() async throws -> Data {
-        try await FeatureImageItemProviderLoader.data(from: provider)
+    func loadAttachment(
+        ordinal: Int,
+        maximumFileBytes: Int?
+    ) async throws -> FeatureDraftAttachment {
+        if provider.registeredTypeIdentifiers.contains(where: {
+            UTType($0)?.conforms(to: .image) == true
+        }) {
+            let data = try await FeatureImageItemProviderLoader.data(from: provider)
+            return try await Task.detached(priority: .userInitiated) {
+                try FeatureImageProcessor.attachment(from: data, ordinal: ordinal)
+            }.value
+        }
+        guard let maximumFileBytes else { throw FeatureAttachmentIntakeError.filesUnsupported }
+        return try await FeatureFileItemProviderLoader.attachment(
+            from: provider,
+            maximumBytes: maximumFileBytes
+        )
+    }
+}
+
+enum FeatureFileItemProviderLoader {
+    @MainActor
+    static func attachment(
+        from provider: NSItemProvider,
+        maximumBytes: Int
+    ) async throws -> FeatureDraftAttachment {
+        guard let identifier = provider.registeredTypeIdentifiers.first(where: {
+            UTType($0)?.conforms(to: .movie) == true
+                || UTType($0)?.conforms(to: .item) == true
+        }) else { throw FeatureAttachmentIntakeError.invalidFile }
+        let type = UTType(identifier)
+        let id = UUID()
+        let preferredExtension = type?.preferredFilenameExtension
+        let suggestedName = provider.suggestedName ?? "Attachment"
+        let suggestedURL = URL(fileURLWithPath: suggestedName)
+        let fileName = suggestedURL.pathExtension.isEmpty
+            ? preferredExtension.map { "\(suggestedName).\($0)" } ?? suggestedName
+            : suggestedName
+
+        return try await withCheckedThrowingContinuation { continuation in
+            provider.loadFileRepresentation(forTypeIdentifier: identifier) { url, error in
+                do {
+                    guard let url else {
+                        throw error ?? FeatureAttachmentIntakeError.invalidFile
+                    }
+                    // The provider deletes this URL when the callback returns.
+                    let owned = try ManagedAttachmentFileStore().copyOwnedFile(
+                        from: url,
+                        attachmentID: id,
+                        originalFileName: fileName,
+                        maximumBytes: maximumBytes
+                    )
+                    continuation.resume(returning: FeatureDraftAttachment(
+                        id: id,
+                        ownedFile: owned,
+                        filename: fileName,
+                        mimeType: type?.preferredMIMEType ?? "application/octet-stream"
+                    ))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 }
 
@@ -352,6 +537,8 @@ enum FeatureImageItemProviderLoader {
 
 private struct FeaturePhotoLibraryPicker: UIViewControllerRepresentable {
     let maximumCount: Int
+    let imagesAllowed: Bool
+    let videosAllowed: Bool
     let onFinish: @MainActor ([FeaturePhotoLibraryItem]) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -360,7 +547,13 @@ private struct FeaturePhotoLibraryPicker: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> PHPickerViewController {
         var configuration = PHPickerConfiguration()
-        configuration.filter = .images
+        configuration.filter = if imagesAllowed && videosAllowed {
+            .any(of: [.images, .videos])
+        } else if videosAllowed {
+            .videos
+        } else {
+            .images
+        }
         configuration.selectionLimit = maximumCount
         configuration.selection = .ordered
         configuration.preferredAssetRepresentationMode = .compatible
@@ -408,7 +601,7 @@ struct FeatureAttachmentStrip: View {
                 .padding(.horizontal, 1)
             }
             .scrollIndicators(.hidden)
-            .accessibilityLabel("\(attachments.count) image attachments")
+            .accessibilityLabel("\(attachments.count) attachments")
         }
     }
 }
@@ -425,9 +618,22 @@ private struct FeatureAttachmentThumbnail: View {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
-                } else {
+                } else if attachment.mimeType.hasPrefix("image/") {
                     Image(systemName: "photo")
                         .foregroundStyle(T3Colors.textSecondary)
+                } else {
+                    VStack(spacing: 3) {
+                        Image(systemName: "doc")
+                        Text(attachment.filename)
+                            .font(.caption2)
+                            .lineLimit(1)
+                        Text(ByteCountFormatter.string(
+                            fromByteCount: Int64(attachment.byteCount),
+                            countStyle: .file
+                        ))
+                        .font(.caption2)
+                    }
+                    .foregroundStyle(T3Colors.textSecondary)
                 }
             }
             .frame(width: 58, height: 58)
@@ -452,6 +658,7 @@ private struct FeatureAttachmentThumbnail: View {
         .padding(.top, 11)
         .padding(.trailing, 11)
         .task(id: attachment.id) {
+            guard attachment.mimeType.hasPrefix("image/") else { return }
             let data = attachment.thumbnailData ?? attachment.data
             image = await Task.detached(priority: .utility) {
                 UIImage(data: data)
@@ -572,6 +779,20 @@ enum FeatureImageAttachmentError: LocalizedError {
             "That photo could not be prepared."
         case .tooLarge:
             "Images must be smaller than 10 MB."
+        }
+    }
+}
+
+enum FeatureAttachmentIntakeError: LocalizedError {
+    case invalidFile
+    case filesUnsupported
+    case imagesUnsupported
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidFile: "That file could not be read."
+        case .filesUnsupported: "This environment does not accept file attachments."
+        case .imagesUnsupported: "The selected model does not accept images."
         }
     }
 }

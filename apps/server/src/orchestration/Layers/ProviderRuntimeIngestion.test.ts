@@ -111,6 +111,7 @@ function createProviderServiceHarness() {
     stopSession: () => unsupported(),
     listSessions: () => Effect.succeed([...runtimeSessions]),
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+    assertConversationRollbackSupported: () => unsupported(),
     getInstanceInfo: (instanceId) => {
       const driverKind = ProviderDriverKind.make(String(instanceId));
       return Effect.succeed({
@@ -971,6 +972,29 @@ describe("ProviderRuntimeIngestion", () => {
       harness.readModel,
       (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
     );
+  });
+
+  it("ignores provider content deltas that cannot change thread state", async () => {
+    const harness = await createHarness();
+    const initial = await harness.readModel();
+
+    for (const streamKind of ["reasoning_text", "command_output", "file_change_output"] as const) {
+      harness.emit({
+        type: "content.delta",
+        eventId: asEventId(`evt-ignored-${streamKind}`),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-ignored"),
+        payload: {
+          streamKind,
+          delta: "ignored output",
+        },
+      });
+    }
+
+    await harness.drain();
+    expect(await harness.readModel()).toEqual(initial);
   });
 
   it("maps canonical content delta/item completed into finalized assistant messages", async () => {
@@ -2821,6 +2845,16 @@ describe("ProviderRuntimeIngestion", () => {
         itemType: "command_execution",
         status: "inProgress",
         title: "Command run",
+        toolSurface: "computer",
+        toolIcon: {
+          _tag: "native-app",
+          app: { _tag: "app-id", appId: "com.apple.Terminal" },
+        },
+        toolSource: {
+          key: "native-app:com.apple.terminal",
+          name: "Terminal",
+          kind: "computer",
+        },
         detail: "Bash: vp test run",
         data: {
           toolName: "Bash",
@@ -2848,6 +2882,17 @@ describe("ProviderRuntimeIngestion", () => {
       itemType: "command_execution",
       toolCallId: "tool-call-9",
       status: "inProgress",
+      title: "Command run",
+      toolSurface: "computer",
+      toolIcon: {
+        _tag: "native-app",
+        app: { _tag: "app-id", appId: "com.apple.Terminal" },
+      },
+      toolSource: {
+        key: "native-app:com.apple.terminal",
+        name: "Terminal",
+        kind: "computer",
+      },
       detail: "Bash: vp test run",
       data: {
         toolName: "Bash",

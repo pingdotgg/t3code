@@ -4,7 +4,12 @@ import {
   connectionStatusText,
   type EnvironmentConnectionPhase,
 } from "@t3tools/client-runtime/connection";
-import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type EnvironmentMachineKind,
+  resolveEnvironmentMachineKind,
+} from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
@@ -15,11 +20,14 @@ import {
 } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
+import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
-import { useThemeColor } from "../../lib/useThemeColor";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
+import { serverEnvironment } from "../../state/server";
+import { ProviderSetupLink } from "../settings/ProviderSetupLink";
+import type { ProviderSetupRouteParams } from "../settings/SettingsProviderSetupRouteScreen";
 import { availableCloudEnvironmentPresentation } from "../cloud/cloudEnvironmentPresentation";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
@@ -28,6 +36,7 @@ import { type RelayEnvironmentView, useConnectionController } from "./useConnect
 interface CloudEnvironmentRowsProps {
   readonly connectedCloudEnvironments: ReadonlyArray<ConnectedEnvironmentSummary>;
   readonly onReconnectEnvironment: (environmentId: EnvironmentId) => void;
+  readonly onSetupProvider?: (target: ProviderSetupRouteParams) => void;
   readonly showcaseAvailableEnvironments?: ReadonlyArray<RelayEnvironmentView>;
   readonly showcaseSignedIn?: boolean;
   /**
@@ -78,7 +87,6 @@ function CloudEnvironmentRowsContent(
   props: CloudEnvironmentRowsProps & { readonly discoveryAvailable?: boolean },
 ) {
   const controller = useConnectionController();
-  const iconColor = useThemeColor("--color-icon");
   const discoveryAvailable = props.discoveryAvailable ?? true;
   const availableCloudEnvironments = discoveryAvailable
     ? (props.showcaseAvailableEnvironments ?? controller.availableRelayEnvironments)
@@ -118,12 +126,12 @@ function CloudEnvironmentRowsContent(
               className="h-9 w-9 items-center justify-center rounded-full bg-subtle active:opacity-70 disabled:opacity-50"
             >
               {controller.relayDiscovery.isRefreshing ? (
-                <ActivityIndicator color={iconColor} size="small" />
+                <ActivityIndicator colorClassName={"accent-icon"} size="small" />
               ) : (
                 <SymbolView
                   name="arrow.clockwise"
                   size={14}
-                  tintColor={iconColor}
+                  tintColorClassName={"accent-icon"}
                   type="monochrome"
                 />
               )}
@@ -143,6 +151,7 @@ function CloudEnvironmentRowsContent(
               onDisconnect={() => handleDisconnectCloudEnvironment(environment.environmentId)}
               errorExpanded={expandedErrorId === environment.environmentId}
               onToggleError={() => handleToggleCloudError(environment.environmentId)}
+              onSetupProvider={props.onSetupProvider}
             />
           ))}
           {availableCloudEnvironments.map((environment, index) => (
@@ -158,7 +167,7 @@ function CloudEnvironmentRowsContent(
         </View>
       ) : controller.relayDiscovery.isRefreshing ? (
         <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-card p-6">
-          <ActivityIndicator color={iconColor} />
+          <ActivityIndicator colorClassName={"accent-icon"} />
           <Text className="text-center text-sm leading-normal text-foreground-muted">
             Loading linked cloud environments.
           </Text>
@@ -206,25 +215,49 @@ function ConnectedCloudEnvironmentRow(props: {
   readonly onConnect: () => void;
   readonly onDisconnect: () => void;
   readonly onToggleError: () => void;
+  readonly onSetupProvider?: (target: ProviderSetupRouteParams) => void;
 }) {
+  const serverConfig = useAtomValue(
+    serverEnvironment.configValueAtom(props.environment.environmentId),
+  );
   return (
-    <CloudEnvironmentRowShell
-      borderTop={props.borderTop}
-      connectionError={props.environment.connectionError}
-      connectionErrorTraceId={props.environment.connectionErrorTraceId}
-      connectionState={props.environment.connectionState}
-      errorExpanded={props.errorExpanded}
-      label={props.environment.environmentLabel}
-      onValueChange={(enabled) => {
-        if (enabled) {
-          props.onConnect();
-          return;
-        }
-        props.onDisconnect();
-      }}
-      onToggleError={props.onToggleError}
-      value={props.environment.connectionState !== "available"}
-    />
+    <View>
+      <CloudEnvironmentRowShell
+        borderTop={props.borderTop}
+        connectionError={props.environment.connectionError}
+        connectionErrorTraceId={props.environment.connectionErrorTraceId}
+        connectionState={props.environment.connectionState}
+        errorExpanded={props.errorExpanded}
+        label={props.environment.environmentLabel}
+        machine={resolveEnvironmentMachineKind(serverConfig)}
+        onValueChange={(enabled) => {
+          if (enabled) {
+            props.onConnect();
+            return;
+          }
+          props.onDisconnect();
+        }}
+        onToggleError={props.onToggleError}
+        value={props.environment.connectionState !== "available"}
+      />
+      {props.onSetupProvider
+        ? serverConfig?.providers
+            .filter((provider) => provider.setup?.canAuthenticate || provider.setup?.canInstall)
+            .map((provider) => (
+              <ProviderSetupLink
+                key={provider.instanceId}
+                provider={provider}
+                disabled={props.environment.connectionState !== "connected"}
+                onPress={() =>
+                  props.onSetupProvider?.({
+                    environmentId: props.environment.environmentId,
+                    instanceId: provider.instanceId,
+                  })
+                }
+              />
+            ))
+        : null}
+    </View>
   );
 }
 
@@ -270,12 +303,13 @@ function CloudEnvironmentRowShell(props: {
   readonly disabled?: boolean;
   readonly errorExpanded: boolean;
   readonly label: string;
+  /** Absent for environments the relay lists but this device has not connected to. */
+  readonly machine?: EnvironmentMachineKind;
   readonly onToggleError: () => void;
   readonly onValueChange: (enabled: boolean) => void;
   readonly statusText?: string;
   readonly value: boolean;
 }) {
-  const chevron = useThemeColor("--color-chevron");
   const isRetrying =
     props.connectionState === "connecting" || props.connectionState === "reconnecting";
   const shouldPulse = isRetrying;
@@ -287,7 +321,7 @@ function CloudEnvironmentRowShell(props: {
       traceId: props.connectionErrorTraceId,
     });
   const statusClassName = props.connectionError
-    ? "text-rose-500 dark:text-rose-400"
+    ? "text-adaptive-rose-500-400"
     : "text-foreground-muted";
   const [errorMeasurement, setErrorMeasurement] = useState<{
     readonly text: string;
@@ -326,6 +360,13 @@ function CloudEnvironmentRowShell(props: {
       <View className="min-w-0 flex-1 gap-0.5">
         <View className="min-w-0 flex-row items-center gap-2">
           <ConnectionStatusDot state={props.connectionState} pulse={shouldPulse} size={7} />
+          {props.machine ? (
+            <EnvironmentMachineSymbol
+              kind={props.machine}
+              size={14}
+              tintColorClassName="accent-foreground-muted"
+            />
+          ) : null}
           <Text
             className="min-w-0 flex-shrink text-base font-t3-bold leading-snug text-foreground"
             numberOfLines={1}
@@ -377,7 +418,7 @@ function CloudEnvironmentRowShell(props: {
             <SymbolView
               name="chevron.down"
               size={10}
-              tintColor={chevron}
+              tintColorClassName={"accent-chevron"}
               type="monochrome"
               style={{
                 marginTop: 3,
@@ -397,8 +438,6 @@ function CloudEnvironmentRowShell(props: {
 }
 
 function CopyTraceIdButton(props: { readonly traceId: string }) {
-  const iconColor = useThemeColor("--color-icon");
-
   return (
     <Pressable
       accessibilityRole="button"
@@ -407,7 +446,12 @@ function CopyTraceIdButton(props: { readonly traceId: string }) {
       }}
       className="self-start flex-row items-center gap-1.5 rounded-full bg-subtle px-3 py-2 active:opacity-70"
     >
-      <SymbolView name="doc.on.doc" size={12} tintColor={iconColor} type="monochrome" />
+      <SymbolView
+        name="doc.on.doc"
+        size={12}
+        tintColorClassName={"accent-icon"}
+        type="monochrome"
+      />
       <Text className="text-xs font-t3-bold text-foreground">Copy trace ID</Text>
     </Pressable>
   );

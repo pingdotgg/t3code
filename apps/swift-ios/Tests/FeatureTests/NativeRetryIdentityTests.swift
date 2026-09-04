@@ -98,7 +98,7 @@ final class NativeRetryIdentityTests: XCTestCase {
         )!
         let client = NativeFeatureClient(runtime: runtime, settingsStore: settings)
         let initial = try await client.initialSnapshot()
-        XCTAssertEqual(initial.threads.first?.runtimeMode, .automatic)
+        XCTAssertEqual(initial.threads.first?.runtimeMode, .approvalRequired)
         XCTAssertEqual(initial.threads.first?.interactionMode, .standard)
         await connection.waitUntilConnected()
 
@@ -162,8 +162,12 @@ final class NativeRetryIdentityTests: XCTestCase {
             retriedBootstrap["message"]?["messageId"]
         )
         XCTAssertNotEqual(initialBootstrap["threadId"], retriedBootstrap["threadId"])
-        for command in commands {
-            XCTAssertEqual(command["runtimeMode"]?.stringValue, "full-access")
+        for command in turnCommands {
+            XCTAssertEqual(command["runtimeMode"]?.stringValue, "approval-required")
+            XCTAssertEqual(command["interactionMode"]?.stringValue, "default")
+        }
+        for command in bootstrapCommands {
+            XCTAssertEqual(command["runtimeMode"]?.stringValue, "auto-accept-edits")
             XCTAssertEqual(command["interactionMode"]?.stringValue, "default")
         }
         await client.disconnect()
@@ -298,7 +302,8 @@ private actor ConcurrentBootstrapWebSocketConnection: WebSocketConnection {
             connectionWaiters.forEach { $0.resume() }
             connectionWaiters.removeAll()
         }
-        if request["tag"]?.stringValue == RPCMethod.serverGetConfig.rawValue,
+        if request["tag"]?.stringValue == RPCMethod.serverGetConfig.rawValue
+            || request["tag"]?.stringValue == RPCMethod.subscribeServerConfig.rawValue,
            let response = try retryConfigResponse(for: request) {
             enqueue(response)
             return
@@ -560,7 +565,8 @@ private actor AmbiguousDispatchWebSocketConnection: WebSocketConnection {
             connectionWaiters.forEach { $0.resume() }
             connectionWaiters.removeAll()
         }
-        if request["tag"]?.stringValue == RPCMethod.serverGetConfig.rawValue,
+        if request["tag"]?.stringValue == RPCMethod.serverGetConfig.rawValue
+            || request["tag"]?.stringValue == RPCMethod.subscribeServerConfig.rawValue,
            let response = try retryConfigResponse(for: request) {
             enqueue(response)
             return
@@ -623,7 +629,8 @@ private actor PartialBootstrapWebSocketConnection: WebSocketConnection {
         }
         guard request["tag"]?.stringValue == RPCMethod.dispatchCommand.rawValue,
               let payload = request["payload"] else {
-            if request["tag"]?.stringValue == RPCMethod.serverGetConfig.rawValue,
+            if request["tag"]?.stringValue == RPCMethod.serverGetConfig.rawValue
+                || request["tag"]?.stringValue == RPCMethod.subscribeServerConfig.rawValue,
                let response = try retryConfigResponse(for: request) {
                 enqueue(response)
             }
@@ -682,13 +689,26 @@ private actor PartialBootstrapWebSocketConnection: WebSocketConnection {
 
 private func retryConfigResponse(for request: JSONValue) throws -> Data? {
     guard case let .number(requestID)? = request["id"] else { return nil }
+    let config = JSONValue.object(["providers": .array([])])
+    if request["tag"]?.stringValue == RPCMethod.subscribeServerConfig.rawValue {
+        return try JSONEncoder.t3.encode(
+            JSONValue.object([
+                "_tag": .string("Chunk"),
+                "requestId": .number(requestID),
+                "values": .array([.object([
+                    "type": .string("snapshot"),
+                    "config": config,
+                ])]),
+            ])
+        )
+    }
     return try JSONEncoder.t3.encode(
         JSONValue.object([
             "_tag": .string("Exit"),
             "requestId": .number(requestID),
             "exit": .object([
                 "_tag": .string("Success"),
-                "value": .object(["providers": .array([])]),
+                "value": config,
             ]),
         ])
     )

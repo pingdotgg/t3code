@@ -25,6 +25,13 @@ public actor T3Client {
     public let environment: Environment
     private let api: EnvironmentAPI
     private let rpc: WebSocketRPCClient
+    private let configSnapshotWaitTimeout: Duration
+    private var latestServerEnvironment: EnvironmentDescriptor?
+    private var serverConfigCache: ServerConfigSnapshot?
+    private var serverConfigGeneration: UInt64 = 0
+    private var serverConfigTask: Task<Void, Never>?
+    private var serverConfigWaiters: [UUID: CheckedContinuation<ServerConfigSnapshot, any Error>] = [:]
+    private var serverConfigListeners: [UUID: AsyncThrowingStream<ServerConfigStreamEvent, any Error>.Continuation] = [:]
 
     public init(
         environment: Environment,
@@ -41,6 +48,7 @@ public actor T3Client {
             managedAuthorization: managedAuthorization
         )
         self.api = api
+        self.configSnapshotWaitTimeout = rpcConnectionWaitTimeout
         self.rpc = WebSocketRPCClient(
             connector: webSocketConnector,
             connectionWaitTimeout: rpcConnectionWaitTimeout
@@ -88,7 +96,12 @@ public actor T3Client {
     }
 
     public func disconnect() async {
+        stopServerConfigSubscription(error: RPCError.disconnected)
         await rpc.stop()
+    }
+
+    public func reconnect() async {
+        await rpc.reconnect()
     }
 
     public func liveConnectionActive() async -> Bool {
@@ -118,21 +131,64 @@ public actor T3Client {
     public func threadSnapshot(
         id: String,
         turnLimit: Int? = nil,
-        beforeCursor: String? = nil
+        beforeCursor: String? = nil,
+        timeoutInterval: TimeInterval? = nil
     ) async throws -> OrchestrationThreadDetailSnapshot {
         try await api.threadSnapshot(
             id: id,
             environment: environment,
             turnLimit: turnLimit,
-            beforeCursor: beforeCursor
+            beforeCursor: beforeCursor,
+            timeoutInterval: timeoutInterval
         )
     }
 
     public func serverConfig() async throws -> ServerConfigSnapshot {
-        try await rpc.request(
-            RPCMethod.serverGetConfig.rawValue,
-            as: ServerConfigSnapshot.self
+        if let serverConfigCache { return serverConfigCache }
+        startServerConfigSubscriptionIfNeeded()
+        return try await withThrowingTaskGroup(of: ServerConfigSnapshot.self) { group in
+            group.addTask { try await self.waitForServerConfigSnapshot() }
+            group.addTask {
+                try await Task.sleep(for: self.configSnapshotWaitTimeout)
+                throw RPCError.responseTimedOut
+            }
+            defer { group.cancelAll() }
+            return try await group.next()!
+        }
+    }
+
+    public func updateSettings(_ change: ServerSettingsChange) async throws
+        -> ServerSettingsSnapshot
+    {
+        return try await rpc.request(
+            RPCMethod.serverUpdateSettings.rawValue,
+            payload: .object(["patch": change.jsonValue]),
+            as: ServerSettingsSnapshot.self
         )
+    }
+
+    public func refreshProviders(cwd: String? = nil, instanceID: String? = nil, refreshModels: Bool = true) async throws -> ServerConfigSnapshot {
+        let current = try await serverConfig()
+        let generation = serverConfigGeneration
+        let result: ServerRefreshProvidersResult = try await rpc.request(
+            RPCMethod.serverRefreshProviders.rawValue,
+            payload: .object([
+                "refreshModels": .bool(refreshModels),
+            ].merging(cwd.map { ["cwd": .string($0)] } ?? [:]) { _, new in new }
+                .merging(instanceID.map { ["instanceId": .string($0)] } ?? [:]) { _, new in new }),
+            as: ServerRefreshProvidersResult.self
+        )
+        guard generation == serverConfigGeneration else { throw CancellationError() }
+        let config = ServerConfigSnapshot(
+            providers: result.providers,
+            settings: current.settings,
+            threadSnapshotPagination: current.threadSnapshotPagination,
+            threadResumeCompletionMarker: current.threadResumeCompletionMarker,
+            environment: current.environment
+        )
+        cacheServerConfig(config)
+        serverConfigListeners.values.forEach { $0.yield(.snapshot(config)) }
+        return config
     }
 
     public func usageSummary(_ input: UsageSummaryInput) async throws -> UsageSummary {
@@ -141,6 +197,33 @@ public actor T3Client {
             payload: try JSONValue.encode(input),
             as: UsageSummary.self
         )
+    }
+
+    public func refreshUsageRates() async throws -> UsagePricing {
+        try await rpc.request("server.refreshUsageRates", as: UsagePricing.self)
+    }
+
+    public func setProviderEnabled(instanceID: String, driver: String, enabled: Bool) async throws {
+        let settings = try await rpc.request("server.getSettings", as: JSONValue.self)
+        let patch = ProviderSettingsPatch.enabled(settings: settings, instanceID: instanceID, driver: driver, enabled: enabled)
+        let _: JSONValue = try await rpc.request("server.updateSettings", payload: .object(["patch": patch]), as: JSONValue.self)
+    }
+
+    public func providerSetup(instanceID: String, action: ProviderSetupAction) async throws -> ProviderSetupEvent {
+        switch action {
+        case .signIn, .completeSignIn, .cancelSignIn, .signOut:
+            return .auth(try await rpc.request(action.method, payload: action.payload(instanceID: instanceID), as: ProviderAuthState.self))
+        case .install, .cancelInstall, .remove:
+            return .install(try await rpc.request(action.method, payload: action.payload(instanceID: instanceID), as: ProviderInstallState.self))
+        }
+    }
+
+    public func providerAuthEvents(instanceID: String) async -> AsyncThrowingStream<ProviderAuthState, Error> {
+        await rpc.subscribe("provider.auth.subscribe", payload: .object(["instanceId": .string(instanceID)]), as: ProviderAuthState.self)
+    }
+
+    public func providerInstallEvents(instanceID: String) async -> AsyncThrowingStream<ProviderInstallState, Error> {
+        await rpc.subscribe("provider.install.subscribe", payload: .object(["instanceId": .string(instanceID)]), as: ProviderInstallState.self)
     }
 
     public func pullRequests(_ input: PullRequestListInput) async throws -> PullRequestListResult {
@@ -322,10 +405,154 @@ public actor T3Client {
     public func serverConfigEvents() async
         -> AsyncThrowingStream<ServerConfigStreamEvent, Error>
     {
-        await rpc.subscribe(
-            RPCMethod.subscribeServerConfig.rawValue,
-            as: ServerConfigStreamEvent.self
-        )
+        let id = UUID()
+        let stream = AsyncThrowingStream<ServerConfigStreamEvent, Error> { continuation in
+            serverConfigListeners[id] = continuation
+            if let serverConfigCache { continuation.yield(.snapshot(serverConfigCache)) }
+            continuation.onTermination = { @Sendable _ in
+                Task { await self.removeServerConfigListener(id) }
+            }
+        }
+        startServerConfigSubscriptionIfNeeded()
+        return stream
+    }
+
+    private func startServerConfigSubscriptionIfNeeded() {
+        guard serverConfigTask == nil else { return }
+        serverConfigGeneration &+= 1
+        let generation = serverConfigGeneration
+        serverConfigTask = Task { [weak self] in
+            guard let self else { return }
+            let stream = await rpc.subscribe(
+                RPCMethod.subscribeServerConfig.rawValue,
+                as: ServerConfigStreamEvent.self
+            )
+            do {
+                for try await event in stream {
+                    guard !Task.isCancelled else { return }
+                    await self.consumeServerConfig(event, generation: generation)
+                }
+                await self.finishServerConfigSubscription(generation: generation, error: RPCError.disconnected)
+            } catch {
+                await self.handleServerConfigSubscriptionFailure(error, generation: generation)
+            }
+        }
+    }
+
+    private func consumeServerConfig(_ event: ServerConfigStreamEvent, generation: UInt64) {
+        guard generation == serverConfigGeneration else { return }
+        switch event {
+        case let .snapshot(config): cacheServerConfig(config)
+        case let .providerStatuses(providers):
+            if let current = serverConfigCache {
+                cacheServerConfig(.init(
+                    providers: providers,
+                    settings: current.settings,
+                    threadSnapshotPagination: current.threadSnapshotPagination,
+                    threadResumeCompletionMarker: current.threadResumeCompletionMarker,
+                    environment: current.environment
+                ))
+            }
+        case let .settingsUpdated(settings):
+            if let current = serverConfigCache {
+                cacheServerConfig(.init(
+                    providers: current.providers,
+                    settings: settings,
+                    threadSnapshotPagination: current.threadSnapshotPagination,
+                    threadResumeCompletionMarker: current.threadResumeCompletionMarker,
+                    environment: current.environment
+                ))
+            }
+        case .unrelated: break
+        }
+        serverConfigListeners.values.forEach { $0.yield(event) }
+    }
+
+    private func cacheServerConfig(_ config: ServerConfigSnapshot) {
+        serverConfigCache = config
+        latestServerEnvironment = config.environment
+        let waiters = serverConfigWaiters.values
+        serverConfigWaiters.removeAll()
+        waiters.forEach { $0.resume(returning: config) }
+    }
+
+    private func waitForServerConfigSnapshot() async throws -> ServerConfigSnapshot {
+        if let serverConfigCache { return serverConfigCache }
+        let id = UUID()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                serverConfigWaiters[id] = continuation
+            }
+        } onCancel: {
+            Task { await self.cancelServerConfigWaiter(id) }
+        }
+    }
+
+    private func cancelServerConfigWaiter(_ id: UUID) {
+        serverConfigWaiters.removeValue(forKey: id)?.resume(throwing: CancellationError())
+    }
+
+    private func removeServerConfigListener(_ id: UUID) { serverConfigListeners[id] = nil }
+
+    private func handleServerConfigSubscriptionFailure(_ error: any Error, generation: UInt64) async {
+        guard generation == serverConfigGeneration else { return }
+        guard isUnsupportedServerConfigSubscription(error) else {
+            finishServerConfigSubscription(generation: generation, error: error)
+            return
+        }
+        do {
+            let config: ServerConfigSnapshot = try await rpc.request(
+                RPCMethod.serverGetConfig.rawValue,
+                as: ServerConfigSnapshot.self
+            )
+            guard generation == serverConfigGeneration else { return }
+            cacheServerConfig(config)
+            serverConfigListeners.values.forEach { $0.yield(.snapshot(config)) }
+            serverConfigTask = nil
+        } catch {
+            finishServerConfigSubscription(generation: generation, error: error)
+        }
+    }
+
+    private func isUnsupportedServerConfigSubscription(_ error: any Error) -> Bool {
+        guard case let RPCError.remote(message) = error else { return false }
+        let value = message.lowercased()
+        guard value.contains(RPCMethod.subscribeServerConfig.rawValue.lowercased()) else {
+            return false
+        }
+        return value.contains("unsupported method") || value.contains("unknown rpc")
+            || value.contains("unknown request") || value.contains("method not found")
+    }
+
+    private func finishServerConfigSubscription(generation: UInt64, error: any Error) {
+        guard generation == serverConfigGeneration else { return }
+        serverConfigTask = nil
+        serverConfigCache = nil
+        latestServerEnvironment = nil
+        let waiters = serverConfigWaiters.values
+        serverConfigWaiters.removeAll()
+        waiters.forEach { $0.resume(throwing: error) }
+        let listeners = serverConfigListeners.values
+        serverConfigListeners.removeAll()
+        listeners.forEach { $0.finish(throwing: error) }
+    }
+
+    private func stopServerConfigSubscription(error: any Error) {
+        serverConfigGeneration &+= 1
+        serverConfigTask?.cancel()
+        serverConfigTask = nil
+        serverConfigCache = nil
+        latestServerEnvironment = nil
+        let waiters = serverConfigWaiters.values
+        serverConfigWaiters.removeAll()
+        waiters.forEach { $0.resume(throwing: error) }
+        let listeners = serverConfigListeners.values
+        serverConfigListeners.removeAll()
+        listeners.forEach { $0.finish(throwing: error) }
     }
 
     public func clientSessions() async throws -> [AuthClientSession] {
@@ -376,13 +603,15 @@ public actor T3Client {
     }
 
     public func shellEvents(
-        after sequence: Int? = nil
+        after sequence: Int? = nil,
+        reconnect: Bool = true
     ) async -> AsyncThrowingStream<ShellStreamItem, Error> {
         var payload: [String: JSONValue] = ["requestCompletionMarker": .bool(true)]
         if let sequence { payload["afterSequence"] = .number(Double(sequence)) }
         return await rpc.subscribe(
             RPCMethod.subscribeShell.rawValue,
             payload: .object(payload),
+            reconnect: reconnect,
             as: ShellStreamItem.self
         )
     }
@@ -390,7 +619,8 @@ public actor T3Client {
     public func threadEvents(
         threadID: String,
         after sequence: Int? = nil,
-        turnLimit: Int? = nil
+        turnLimit: Int? = nil,
+        reconnect: Bool = true
     ) async -> AsyncThrowingStream<ThreadStreamItem, Error> {
         var payload: [String: JSONValue] = [
             "threadId": .string(threadID),
@@ -401,6 +631,7 @@ public actor T3Client {
         return await rpc.subscribe(
             RPCMethod.subscribeThread.rawValue,
             payload: .object(payload),
+            reconnect: reconnect,
             as: ThreadStreamItem.self
         )
     }
@@ -715,17 +946,20 @@ public actor T3Client {
     }
 
     public func createAttachmentUploadURL(
+        type: String? = nil,
         name: String,
         mimeType: String,
         sizeBytes: Int
     ) async throws -> AttachmentCreateUploadURLResult {
-        try await rpc.request(
+        var payload: [String: JSONValue] = [
+            "name": .string(name),
+            "mimeType": .string(mimeType),
+            "sizeBytes": .number(Double(sizeBytes)),
+        ]
+        if let type { payload["type"] = .string(type) }
+        return try await rpc.request(
             RPCMethod.attachmentsCreateUploadURL.rawValue,
-            payload: .object([
-                "name": .string(name),
-                "mimeType": .string(mimeType),
-                "sizeBytes": .number(Double(sizeBytes)),
-            ]),
+            payload: .object(payload),
             as: AttachmentCreateUploadURLResult.self
         )
     }
@@ -755,38 +989,134 @@ public actor T3Client {
     private func prepareTurnAttachments(
         _ attachments: [UploadChatImageAttachment]
     ) async throws -> [JSONValue]? {
-        guard !attachments.isEmpty,
-              environment.descriptor?.capabilities.attachmentUploads == true else {
+        guard !attachments.isEmpty else { return nil }
+        guard attachments.count <= 8 else { throw FileAttachmentError.tooMany(maximum: 8) }
+
+        let capabilities = latestServerEnvironment?.capabilities
+            ?? environment.descriptor?.capabilities
+        let containsFiles = attachments.contains { $0.type == "file" }
+        let supportsImageUploads = capabilities?.attachmentUploads == true
+        let fileCapability = capabilities?.fileAttachments
+        if containsFiles, !supportsImageUploads || fileCapability == nil {
+            throw FileAttachmentError.unsupported
+        }
+
+        if let fileCapability {
+            let maximumBytes = min(
+                UploadChatAttachment.maximumFileBytes,
+                max(0, fileCapability.maxUploadBytes)
+            )
+            for attachment in attachments where attachment.type == "file" {
+                guard attachment.sizeBytes <= maximumBytes else {
+                    throw FileAttachmentError.tooLarge(
+                        actualBytes: attachment.sizeBytes,
+                        maximumBytes: maximumBytes
+                    )
+                }
+            }
+        }
+        guard containsFiles || supportsImageUploads else { return nil }
+
+        var prepared: [JSONValue] = []
+        for attachment in attachments {
+            if let reference = try await prepareAttachment(attachment) {
+                prepared.append(attachment.uploadedJSONValue(id: reference.attachmentID))
+            } else {
+                prepared.append(attachment.jsonValue)
+            }
+        }
+        return prepared
+    }
+
+    /// Uploads one attachment for this environment. Older servers keep images
+    /// inline, so a nil result means the caller must use the image data URL.
+    public func prepareAttachment(
+        _ attachment: UploadChatAttachment
+    ) async throws -> UploadedAttachmentReference? {
+        try Task.checkCancellation()
+        let capabilities = latestServerEnvironment?.capabilities
+            ?? environment.descriptor?.capabilities
+        let supportsUploads = capabilities?.attachmentUploads == true
+        if attachment.type == "file" {
+            guard supportsUploads, let fileCapability = capabilities?.fileAttachments else {
+                throw FileAttachmentError.unsupported
+            }
+            let maximumBytes = min(
+                UploadChatAttachment.maximumFileBytes,
+                max(0, fileCapability.maxUploadBytes)
+            )
+            guard attachment.sizeBytes <= maximumBytes else {
+                throw FileAttachmentError.tooLarge(
+                    actualBytes: attachment.sizeBytes,
+                    maximumBytes: maximumBytes
+                )
+            }
+        } else if !supportsUploads {
             return nil
         }
 
-        var prepared: [JSONValue] = []
-        var pendingIDs: [String] = []
+        if let reference = attachment.uploadedReference,
+           reference.environmentID == environment.id,
+           !reference.attachmentID.isEmpty {
+            do {
+                _ = try await createAssetURL(resource: .attachment(id: reference.attachmentID))
+                try Task.checkCancellation()
+                return reference
+            } catch where Self.isAttachmentNotFound(error) {
+                // The server expired the attachment. Upload the retained bytes again.
+            }
+        }
+
+        let upload = try await createAttachmentUploadURL(
+            type: attachment.type == "file" ? "file" : nil,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes
+        )
         do {
-            for attachment in attachments {
-                let upload = try await createAttachmentUploadURL(
-                    name: attachment.name,
-                    mimeType: attachment.mimeType,
-                    sizeBytes: attachment.sizeBytes
-                )
-                pendingIDs.append(upload.attachmentId)
-                guard let url = URL(
-                    string: upload.relativeUrl,
-                    relativeTo: environment.httpBaseURL
-                )?.absoluteURL,
-                      let data = attachment.imageData else {
-                    throw RPCError.protocolViolation("The image upload URL or image data is invalid.")
-                }
+            try Task.checkCancellation()
+            guard let url = URL(
+                string: upload.relativeUrl,
+                relativeTo: environment.httpBaseURL
+            )?.absoluteURL else {
+                throw RPCError.protocolViolation("The attachment upload URL is invalid.")
+            }
+            switch attachment.source {
+            case let .imageData(data):
                 try await api.uploadAttachment(data, mimeType: attachment.mimeType, to: url)
-                prepared.append(attachment.uploadedJSONValue(id: upload.attachmentId))
+            case let .file(fileURL):
+                guard let actualBytes = try? fileURL.resourceValues(
+                    forKeys: [.fileSizeKey, .isRegularFileKey]
+                ),
+                      actualBytes.isRegularFile == true,
+                      actualBytes.fileSize == attachment.sizeBytes else {
+                    throw FileAttachmentError.invalidFileURL
+                }
+                try await api.uploadAttachment(
+                    fileURL: fileURL,
+                    byteCount: attachment.sizeBytes,
+                    mimeType: attachment.mimeType,
+                    to: url
+                )
             }
+            try Task.checkCancellation()
+            return UploadedAttachmentReference(
+                environmentID: environment.id,
+                attachmentID: upload.attachmentId
+            )
         } catch {
-            for attachmentID in pendingIDs {
-                try? await deleteAttachment(id: attachmentID)
-            }
+            // Cleanup must not keep the composer in Uploading after the
+            // transfer has failed, especially if the WebSocket is offline.
+            Task { try? await self.deleteAttachment(id: upload.attachmentId) }
             throw error
         }
-        return prepared
+    }
+
+    private static func isAttachmentNotFound(_ error: any Error) -> Bool {
+        guard case let RPCError.remote(message) = error else { return false }
+        let normalized = message.lowercased()
+        return normalized.contains("attachment")
+            && (normalized.contains("not found") || normalized.contains("does not exist"))
     }
 
     public func resolvedAssetURL(resource: AssetResource) async throws -> URL {
@@ -1550,6 +1880,8 @@ public actor EnvironmentRuntime {
 public enum RPCMethod: String, Sendable {
     case serverProbe = "server.probe"
     case serverGetConfig = "server.getConfig"
+    case serverRefreshProviders = "server.refreshProviders"
+    case serverUpdateSettings = "server.updateSettings"
     case serverGetUsageSummary = "server.getUsageSummary"
     case pullRequestsList = "pullRequests.list"
     case pullRequestsDetail = "pullRequests.detail"

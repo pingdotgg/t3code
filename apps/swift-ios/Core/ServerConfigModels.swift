@@ -101,6 +101,15 @@ public struct ServerProviderSkillSnapshot: Codable, Equatable, Sendable {
     public let enabled: Bool
     public let displayName: String?
     public let shortDescription: String?
+    public var userInvocationOnly: Bool? = nil
+    public var userInvocable: Bool? = nil
+}
+
+public struct ServerProviderWorkspaceSnapshot: Codable, Equatable, Sendable {
+    public let cwd: String
+    public let checkedAt: String
+    public let slashCommands: [ServerProviderSlashCommandSnapshot]
+    public let skills: [ServerProviderSkillSnapshot]
 }
 
 public struct ServerProviderSnapshot: Codable, Identifiable, Equatable, Sendable {
@@ -125,6 +134,8 @@ public struct ServerProviderSnapshot: Codable, Identifiable, Equatable, Sendable
     public let models: [ServerProviderModelSnapshot]
     public let slashCommands: [ServerProviderSlashCommandSnapshot]?
     public let skills: [ServerProviderSkillSnapshot]?
+    public var workspaceSnapshots: [ServerProviderWorkspaceSnapshot]? = nil
+    public var setup: ProviderSetupCapabilities? = nil
 }
 
 public enum ServerThreadEnvironmentMode: String, Codable, Equatable, Sendable {
@@ -145,17 +156,100 @@ public struct ServerSettingsSnapshot: Codable, Equatable, Sendable {
     public let newWorktreesStartFromOrigin: Bool
     public let sidebarProjectGroupingMode: ServerProjectGroupingMode?
     public let sidebarProjectGroupingOverrides: [String: ServerProjectGroupingMode]?
+    public let sidebarAutoSettleOnMerge: Bool
+    public let sidebarAutoSettleAfterDays: Double?
+    public var environmentIcon: String? = nil
+    public var sourceControlWritingStyle: JSONValue? = nil
+
+    public var sharedPatch: JSONValue {
+        var fields: [String: JSONValue] = [
+            "sidebarAutoSettleAfterDays": sidebarAutoSettleAfterDays.map(JSONValue.number) ?? .null,
+            "sidebarAutoSettleOnMerge": .bool(sidebarAutoSettleOnMerge),
+            "defaultThreadEnvMode": .string(defaultThreadEnvMode.rawValue),
+            "newWorktreesStartFromOrigin": .bool(newWorktreesStartFromOrigin),
+        ]
+        if let sourceControlWritingStyle { fields["sourceControlWritingStyle"] = sourceControlWritingStyle }
+        return .object(fields)
+    }
 
     public init(
         defaultThreadEnvMode: ServerThreadEnvironmentMode = .local,
         newWorktreesStartFromOrigin: Bool = true,
         sidebarProjectGroupingMode: ServerProjectGroupingMode? = nil,
-        sidebarProjectGroupingOverrides: [String: ServerProjectGroupingMode]? = nil
+        sidebarProjectGroupingOverrides: [String: ServerProjectGroupingMode]? = nil,
+        sidebarAutoSettleOnMerge: Bool = true,
+        sidebarAutoSettleAfterDays: Double? = 3
     ) {
         self.defaultThreadEnvMode = defaultThreadEnvMode
         self.newWorktreesStartFromOrigin = newWorktreesStartFromOrigin
         self.sidebarProjectGroupingMode = sidebarProjectGroupingMode
         self.sidebarProjectGroupingOverrides = sidebarProjectGroupingOverrides
+        self.sidebarAutoSettleOnMerge = sidebarAutoSettleOnMerge
+        self.sidebarAutoSettleAfterDays = sidebarAutoSettleAfterDays
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case defaultThreadEnvMode
+        case newWorktreesStartFromOrigin
+        case sidebarProjectGroupingMode
+        case sidebarProjectGroupingOverrides
+        case sidebarAutoSettleOnMerge
+        case sidebarAutoSettleAfterDays
+        case environmentIcon
+        case sourceControlWritingStyle
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        environmentIcon = try container.decodeIfPresent(String.self, forKey: .environmentIcon)
+        sourceControlWritingStyle = try container.decodeIfPresent(JSONValue.self, forKey: .sourceControlWritingStyle)
+        defaultThreadEnvMode = try container.decodeIfPresent(
+            ServerThreadEnvironmentMode.self,
+            forKey: .defaultThreadEnvMode
+        ) ?? .local
+        newWorktreesStartFromOrigin = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .newWorktreesStartFromOrigin
+        ) ?? true
+        sidebarProjectGroupingMode = try container.decodeIfPresent(
+            ServerProjectGroupingMode.self,
+            forKey: .sidebarProjectGroupingMode
+        )
+        sidebarProjectGroupingOverrides = try container.decodeIfPresent(
+            [String: ServerProjectGroupingMode].self,
+            forKey: .sidebarProjectGroupingOverrides
+        )
+        sidebarAutoSettleOnMerge = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .sidebarAutoSettleOnMerge
+        ) ?? true
+        sidebarAutoSettleAfterDays = if container.contains(.sidebarAutoSettleAfterDays) {
+            try container.decodeIfPresent(Double.self, forKey: .sidebarAutoSettleAfterDays)
+        } else {
+            3
+        }
+    }
+}
+
+public enum ServerSettingsChange: Equatable, Sendable {
+    case sidebarAutoSettleOnMerge(Bool)
+    case sidebarAutoSettleAfterDays(Double?)
+    case defaultThreadEnvMode(ServerThreadEnvironmentMode)
+    case newWorktreesStartFromOrigin(Bool)
+    case environmentIcon(String?)
+    case sharedPreferences(JSONValue)
+
+    public var jsonValue: JSONValue {
+        switch self {
+        case let .defaultThreadEnvMode(value): .object(["defaultThreadEnvMode": .string(value.rawValue)])
+        case let .newWorktreesStartFromOrigin(value): .object(["newWorktreesStartFromOrigin": .bool(value)])
+        case let .environmentIcon(value): .object(["environmentIcon": value.map(JSONValue.string) ?? .null])
+        case let .sharedPreferences(value): value
+        case let .sidebarAutoSettleOnMerge(value):
+            .object(["sidebarAutoSettleOnMerge": .bool(value)])
+        case let .sidebarAutoSettleAfterDays(value):
+            .object(["sidebarAutoSettleAfterDays": value.map(JSONValue.number) ?? .null])
+        }
     }
 }
 
@@ -164,19 +258,25 @@ public struct ServerConfigSnapshot: Codable, Equatable, Sendable {
     public let providers: [ServerProviderSnapshot]
     public let settings: ServerSettingsSnapshot?
     public let threadSnapshotPagination: Bool?
+    public let threadResumeCompletionMarker: Bool?
+    public let environment: EnvironmentDescriptor?
 
     public init(
         providers: [ServerProviderSnapshot],
         settings: ServerSettingsSnapshot? = nil,
-        threadSnapshotPagination: Bool? = nil
+        threadSnapshotPagination: Bool? = nil,
+        threadResumeCompletionMarker: Bool? = nil,
+        environment: EnvironmentDescriptor? = nil
     ) {
         self.providers = providers
         self.settings = settings
         self.threadSnapshotPagination = threadSnapshotPagination
+        self.threadResumeCompletionMarker = threadResumeCompletionMarker
+        self.environment = environment
     }
 
     private enum CodingKeys: String, CodingKey {
-        case providers, settings, threadSnapshotPagination
+        case providers, settings, threadSnapshotPagination, threadResumeCompletionMarker, environment
     }
 
     public init(from decoder: any Decoder) throws {
@@ -190,6 +290,10 @@ public struct ServerConfigSnapshot: Codable, Equatable, Sendable {
             Bool.self,
             forKey: .threadSnapshotPagination
         )
+        environment = try container.decodeIfPresent(EnvironmentDescriptor.self, forKey: .environment)
+        threadResumeCompletionMarker = try container.decodeIfPresent(
+            Bool.self, forKey: .threadResumeCompletionMarker
+        )
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -200,6 +304,8 @@ public struct ServerConfigSnapshot: Codable, Equatable, Sendable {
             threadSnapshotPagination,
             forKey: .threadSnapshotPagination
         )
+        try container.encodeIfPresent(environment, forKey: .environment)
+        try container.encodeIfPresent(threadResumeCompletionMarker, forKey: .threadResumeCompletionMarker)
     }
 }
 
@@ -252,5 +358,13 @@ public enum ServerConfigStreamEvent: Decodable, Sendable {
         default:
             self = .unrelated(type: type)
         }
+    }
+}
+
+public struct ServerRefreshProvidersResult: Codable, Equatable, Sendable {
+    public let providers: [ServerProviderSnapshot]
+
+    public init(providers: [ServerProviderSnapshot]) {
+        self.providers = providers
     }
 }

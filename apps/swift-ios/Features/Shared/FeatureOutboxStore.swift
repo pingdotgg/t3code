@@ -23,26 +23,99 @@ public struct FeatureSubmissionIdentity: Sendable, Equatable, Hashable, Codable 
 }
 
 public struct FeatureQueuedAttachment: Sendable, Equatable, Codable {
-    public var data: Data
+    public var id: UUID
+    public var data: Data?
+    public var ownedFileName: String?
+    public var byteCount: Int?
     public var name: String
     public var mimeType: String
+    public var uploadedReference: FeatureUploadedAttachmentReference?
+    private var resolvedOwnedFile: FeatureOwnedAttachmentFile?
 
-    public init(data: Data, name: String, mimeType: String) {
+    public init(
+        id: UUID = UUID(),
+        data: Data,
+        name: String,
+        mimeType: String,
+        uploadedReference: FeatureUploadedAttachmentReference? = nil
+    ) {
+        self.id = id
         self.data = data
+        ownedFileName = nil
+        byteCount = data.count
         self.name = name
         self.mimeType = mimeType
+        self.uploadedReference = uploadedReference
+        resolvedOwnedFile = nil
     }
 
     init(_ attachment: FeatureUploadAttachment) {
-        self.init(
-            data: attachment.data,
-            name: attachment.name,
-            mimeType: attachment.mimeType
+        id = attachment.id
+        data = attachment.ownedFile == nil ? attachment.data : nil
+        ownedFileName = attachment.ownedFile?.fileName
+        byteCount = attachment.byteCount
+        name = attachment.name
+        mimeType = attachment.mimeType
+        uploadedReference = attachment.uploadedReference
+        resolvedOwnedFile = attachment.ownedFile
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, data, ownedFileName, byteCount, name, mimeType, uploadedReference
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        data = try container.decodeIfPresent(Data.self, forKey: .data)
+        ownedFileName = try container.decodeIfPresent(String.self, forKey: .ownedFileName)
+        byteCount = try container.decodeIfPresent(Int.self, forKey: .byteCount) ?? data?.count
+        name = try container.decode(String.self, forKey: .name)
+        mimeType = try container.decode(String.self, forKey: .mimeType)
+        uploadedReference = try container.decodeIfPresent(
+            FeatureUploadedAttachmentReference.self,
+            forKey: .uploadedReference
+        )
+        resolvedOwnedFile = nil
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(data, forKey: .data)
+        try container.encodeIfPresent(ownedFileName, forKey: .ownedFileName)
+        try container.encodeIfPresent(byteCount, forKey: .byteCount)
+        try container.encode(name, forKey: .name)
+        try container.encode(mimeType, forKey: .mimeType)
+        try container.encodeIfPresent(uploadedReference, forKey: .uploadedReference)
+    }
+
+    mutating func resolveOwnedFile(using fileStore: ManagedAttachmentFileStore) {
+        guard let ownedFileName else { return }
+        resolvedOwnedFile = try? fileStore.resolvedFile(
+            fileName: ownedFileName,
+            byteCount: byteCount ?? 0
         )
     }
 
-    var upload: FeatureUploadAttachment {
-        FeatureUploadAttachment(data: data, name: name, mimeType: mimeType)
+    var upload: FeatureUploadAttachment? {
+        if let resolvedOwnedFile {
+            return FeatureUploadAttachment(
+                id: id,
+                ownedFile: resolvedOwnedFile,
+                name: name,
+                mimeType: mimeType,
+                uploadedReference: uploadedReference
+            )
+        }
+        guard let data else { return nil }
+        return FeatureUploadAttachment(
+            id: id,
+            data: data,
+            name: name,
+            mimeType: mimeType,
+            uploadedReference: uploadedReference
+        )
     }
 }
 
@@ -101,14 +174,14 @@ public struct FeatureQueuedSubmission: Identifiable, Sendable, Equatable, Codabl
         self.threadID = threadID
         self.text = text
         self.selection = selection
-        self.runtimeMode = runtimeMode.mobileNormalized
+        self.runtimeMode = runtimeMode
         self.interactionMode = interactionMode.mobileNormalized
         self.attachments = attachments.map(FeatureQueuedAttachment.init)
         self.creation = creation
     }
 
     public var uploads: [FeatureUploadAttachment] {
-        attachments.map(\.upload)
+        attachments.compactMap(\.upload)
     }
 }
 
@@ -164,9 +237,11 @@ public actor FeatureOutboxStore {
     public static let shared = FeatureOutboxStore()
 
     public let fileURL: URL
+    public let attachmentFileStore: ManagedAttachmentFileStore
     private var cached: [FeatureQueuedSubmission]?
 
-    public init(fileURL: URL? = nil) {
+    public init(fileURL: URL? = nil, attachmentStorageRootURL: URL? = nil) {
+        attachmentFileStore = ManagedAttachmentFileStore(rootURL: attachmentStorageRootURL)
         if let fileURL {
             self.fileURL = fileURL
         } else {
@@ -198,7 +273,14 @@ public actor FeatureOutboxStore {
             cached = []
             throw error
         }
-        cached = document.submissions.sorted {
+        cached = document.submissions.map { submission in
+            var submission = submission
+            submission.interactionMode = submission.interactionMode.mobileNormalized
+            for index in submission.attachments.indices {
+                submission.attachments[index].resolveOwnedFile(using: attachmentFileStore)
+            }
+            return submission
+        }.sorted {
             $0.identity.createdAt < $1.identity.createdAt
         }
         return cached ?? []

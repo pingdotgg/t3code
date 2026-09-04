@@ -4,7 +4,6 @@ import { View } from "react-native";
 import { SymbolView } from "../../../components/AppSymbol";
 import { AppText as Text } from "../../../components/AppText";
 import { ThemedSwitch } from "../../../components/ThemedSwitch";
-import { useThemeColor } from "../../../lib/useThemeColor";
 
 type SymbolName = ComponentProps<typeof SymbolView>["name"];
 
@@ -16,8 +15,6 @@ export function SettingsSwitchRow(props: {
   readonly value: boolean;
   readonly onValueChange: (value: boolean) => void;
 }) {
-  const icon = useThemeColor("--color-icon");
-
   return (
     <View
       className={
@@ -26,7 +23,13 @@ export function SettingsSwitchRow(props: {
           : "flex-row items-center gap-4 p-4"
       }
     >
-      <SymbolView name={props.icon} size={22} tintColor={icon} type="monochrome" weight="regular" />
+      <SymbolView
+        name={props.icon}
+        size={22}
+        tintColorClassName={"accent-icon"}
+        type="monochrome"
+        weight="regular"
+      />
       <View className="min-w-0 flex-1">
         <Text className="text-lg text-foreground">{props.label}</Text>
         {props.subtitle ? (

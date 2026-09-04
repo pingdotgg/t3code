@@ -4,6 +4,75 @@ import Testing
 
 @Suite("Composer draft persistence")
 struct ComposerDraftStoreTests {
+    @Test func staleComposerSavePreservesUploadedReferenceForSameContent() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let key = "environment:test:thread:stale-save"
+        let attachment = FeatureDraftAttachment(
+            data: Data([1, 2, 3]),
+            filename: "same.png",
+            mimeType: "image/png"
+        )
+        try await store.setDraft(
+            FeatureComposerDraft(text: "before", attachments: [attachment]),
+            for: key
+        )
+        let reference = FeatureUploadedAttachmentReference(
+            environmentID: "test",
+            attachmentID: "uploaded"
+        )
+        #expect(try await store.setUploadedReference(
+            reference,
+            attachment: attachment,
+            for: key
+        ))
+
+        try await store.setDraft(
+            FeatureComposerDraft(text: "after", attachments: [attachment]),
+            for: key
+        )
+
+        let saved = try #require(await store.draft(for: key))
+        #expect(saved.text == "after")
+        #expect(saved.attachments.first?.uploadedReference == reference)
+    }
+
+    @Test func uploadedReferenceCompareAndSetDoesNotRestoreRemovedAttachment() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let key = "environment:test:thread:removed"
+        let attachment = FeatureDraftAttachment(
+            data: Data([1]),
+            filename: "removed.png",
+            mimeType: "image/png"
+        )
+        try await store.setDraft(
+            FeatureComposerDraft(text: "keep", attachments: [attachment]),
+            for: key
+        )
+        try await store.setDraft(FeatureComposerDraft(text: "keep"), for: key)
+
+        let didSave = try await store.setUploadedReference(
+            FeatureUploadedAttachmentReference(
+                environmentID: "test",
+                attachmentID: "late"
+            ),
+            attachment: attachment,
+            for: key
+        )
+
+        #expect(!didSave)
+        #expect(try await store.draft(for: key)?.attachments.isEmpty == true)
+    }
+
     @Test func roundTripsThreadTextImagesAndSelection() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -32,6 +101,106 @@ struct ComposerDraftStoreTests {
 
         let reloaded = FeatureComposerDraftStore(fileURL: fileURL)
         #expect(try await reloaded.draft(for: "environment:test:thread:one") == draft)
+    }
+
+    @Test func fileBackedDraftRoundTripUsesTheCurrentStorageRoot() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sourceURL = directory.appendingPathComponent("provider-notes.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("notes".utf8).write(to: sourceURL)
+        let attachmentID = UUID()
+        let firstRoot = directory.appendingPathComponent("first-root", isDirectory: true)
+        let firstFiles = ManagedAttachmentFileStore(rootURL: firstRoot)
+        let ownedFile = try firstFiles.copyOwnedFile(
+            from: sourceURL,
+            attachmentID: attachmentID,
+            originalFileName: "notes.txt"
+        )
+        let fileURL = directory.appendingPathComponent("drafts.json")
+        let store = FeatureComposerDraftStore(
+            fileURL: fileURL,
+            attachmentStorageRootURL: firstRoot
+        )
+        let reference = FeatureUploadedAttachmentReference(
+            environmentID: "environment-1",
+            attachmentID: "server-attachment-1"
+        )
+        try await store.setDraft(
+            FeatureComposerDraft(attachments: [
+                FeatureDraftAttachment(
+                    id: attachmentID,
+                    ownedFile: ownedFile,
+                    filename: "notes.txt",
+                    mimeType: "text/plain",
+                    uploadedReference: reference
+                ),
+            ]),
+            for: "environment:test:thread:file"
+        )
+
+        let movedRoot = directory.appendingPathComponent("moved-root", isDirectory: true)
+        try FileManager.default.moveItem(at: firstRoot, to: movedRoot)
+        let restored = try await FeatureComposerDraftStore(
+            fileURL: fileURL,
+            attachmentStorageRootURL: movedRoot
+        ).draft(for: "environment:test:thread:file")?.attachments.first
+
+        #expect(restored?.id == attachmentID)
+        #expect(restored?.ownedFile?.url.deletingLastPathComponent() == movedRoot)
+        #expect(restored?.byteCount == 5)
+        #expect(restored?.data.isEmpty == true)
+        #expect(restored?.uploadedReference == reference)
+        let json = try #require(String(data: Data(contentsOf: fileURL), encoding: .utf8))
+        #expect(!json.contains(Data("notes".utf8).base64EncodedString()))
+    }
+
+    @Test func ownedAttachmentPathsRejectTraversalAndUnknownNames() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let files = ManagedAttachmentFileStore(rootURL: root)
+
+        #expect(throws: ManagedAttachmentFileError.invalidFileName) {
+            try files.resolvedFile(fileName: "../outside.txt", byteCount: 1)
+        }
+        #expect(throws: ManagedAttachmentFileError.invalidFileName) {
+            try files.removeOwnedFile(fileName: "not-a-uuid.txt")
+        }
+    }
+
+    @Test func restoresImageAttachmentWrittenBeforeFileBacking() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileURL = directory.appendingPathComponent("drafts.json")
+        let attachmentID = UUID()
+        try Data(
+            """
+            {
+              "version": 2,
+              "drafts": {
+                "environment:test:thread:old": {
+                  "text": "Old image",
+                  "attachments": [{
+                    "id": "\(attachmentID.uuidString)",
+                    "data": "AQID",
+                    "filename": "old.png",
+                    "mimeType": "image/png"
+                  }]
+                }
+              }
+            }
+            """.utf8
+        ).write(to: fileURL)
+
+        let attachment = try await FeatureComposerDraftStore(fileURL: fileURL)
+            .draft(for: "environment:test:thread:old")?.attachments.first
+
+        #expect(attachment?.id == attachmentID)
+        #expect(attachment?.data == Data([1, 2, 3]))
+        #expect(attachment?.ownedFile == nil)
     }
 
     @Test func emptyDraftRemovesPersistedEntry() async throws {

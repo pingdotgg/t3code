@@ -210,7 +210,7 @@ public struct AddProjectView: View {
                 }
             } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: "server.rack")
+                    Image(systemName: environment.systemImage)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(environment.name)
                             .font(T3Typography.control)
@@ -901,7 +901,7 @@ public struct AddProjectView: View {
         destinationPath: String
     ) -> Bool {
         let currentRemoteURL = resolvedRepository?.sshUrl
-            ?? repositoryInput.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? ProjectCreationPath.normalizedCloneURL(repositoryInput)
         return cloneRequestID == requestID
             && selectedEnvironmentID == environmentID
             && currentRemoteURL == remoteURL

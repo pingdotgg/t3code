@@ -78,11 +78,13 @@ struct PlatformRootView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
+                Task { await model.applicationDidBecomeActive() }
                 consumeMailboxRouteIfAvailable()
                 synchronizeNotificationPreference()
                 synchronizeCloudDelivery()
                 refreshIncomingShares()
             } else if phase == .background {
+                model.applicationDidEnterBackground()
                 PlatformBackgroundRefreshCoordinator.shared.schedule()
             }
         }
