@@ -224,6 +224,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     () => knownSessions.find((session) => session.target.terminalId === terminalId) ?? null,
     [knownSessions, terminalId],
   );
+  const hasTerminalTarget = requestedTerminalId !== null || activeKnownSession !== null;
   const launchTarget = useMemo(
     () =>
       selectedThread
@@ -351,7 +352,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     environmentId: selectedThread?.environmentId ?? null,
     terminal: canOperateTerminal
       ? terminalAttachInput
-      : canReadTerminal && selectedThread && activeKnownSession
+      : canReadTerminal && selectedThread && hasTerminalTarget
         ? { threadId: selectedThread.id, terminalId }
         : null,
   });
@@ -1311,7 +1312,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
               terminalSession.error ?? "This connection does not have permission to view terminals."
             }
           />
-        ) : !canOperateTerminal && activeKnownSession === null ? (
+        ) : !canOperateTerminal && !hasTerminalTarget ? (
           <EmptyState
             title="No terminal sessions"
             detail="Existing terminals will appear here when another client opens one."
