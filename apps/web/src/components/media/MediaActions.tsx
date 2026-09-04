@@ -6,7 +6,7 @@ import {
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { AssetResource, ContextMenuItem, EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useRef, useState, type ReactElement } from "react";
+import { useCallback, useRef, useState, type ReactElement, type ReactNode } from "react";
 
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { readLocalApi } from "../../localApi";
@@ -73,15 +73,19 @@ export function useMediaActions(source: MediaActionSource) {
 export function MediaActions({
   source,
   children,
+  tooltipContent,
 }: {
   source: MediaActionSource;
   children: ReactElement;
+  tooltipContent?: ReactNode;
 }) {
   const { save, copyImage } = useMediaActions(source);
   const [tooltipOpen, setTooltipOpen] = useState(false);
   const menuOpen = useRef(false);
   const reference = source.reference;
-  const tooltip = reference?.kind === "file" ? reference.path : (reference?.url ?? source.name);
+  const tooltip =
+    tooltipContent ??
+    (reference?.kind === "file" ? reference.path : (reference?.url ?? source.name));
 
   const showMenu = async (position: { x: number; y: number }) => {
     const api = readLocalApi();

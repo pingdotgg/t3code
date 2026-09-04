@@ -8,7 +8,116 @@ import {
   nativeMarkdownListItemBlocks,
   nativeMarkdownTextRuns,
   nativeMarkdownWithPreservedSoftBreaks,
+  nativeMarkdownWithStandaloneMediaLinks,
 } from "@t3tools/mobile-markdown-text/markdown";
+
+describe("nativeMarkdownWithStandaloneMediaLinks", () => {
+  const link = (href: string, text = href): MarkdownNode => ({
+    type: "link",
+    href,
+    children: [{ type: "text", content: text }],
+  });
+  const document = (...children: MarkdownNode[]): MarkdownNode => ({
+    type: "document",
+    children: [{ type: "paragraph", children }],
+  });
+
+  it("embeds a media link that owns its line and drops the breaks beside it", () => {
+    expect(
+      nativeMarkdownWithStandaloneMediaLinks(
+        document(
+          { type: "text", content: "Here is the result:" },
+          { type: "soft_break" },
+          link("/tmp/shot.png", "shot.png"),
+          { type: "line_break" },
+          { type: "text", content: "See " },
+          link("/tmp/detail.png", "detail.png"),
+          { type: "text", content: " for details." },
+        ),
+      ),
+    ).toEqual(
+      document(
+        { type: "text", content: "Here is the result:" },
+        { type: "image", href: "/tmp/shot.png", alt: "shot.png" },
+        { type: "text", content: "See " },
+        link("/tmp/detail.png", "detail.png"),
+        { type: "text", content: " for details." },
+      ),
+    );
+  });
+
+  it("embeds every link in a run of consecutive lines", () => {
+    expect(
+      nativeMarkdownWithStandaloneMediaLinks(
+        document(link("/tmp/a.png", "a.png"), { type: "soft_break" }, link("/tmp/b.png", "b.png")),
+      ),
+    ).toEqual(
+      document(
+        { type: "image", href: "/tmp/a.png", alt: "a.png" },
+        { type: "image", href: "/tmp/b.png", alt: "b.png" },
+      ),
+    );
+  });
+
+  it("keeps the alt text of an image used as the link label", () => {
+    expect(
+      nativeMarkdownWithStandaloneMediaLinks(
+        document({
+          type: "link",
+          href: "/tmp/login.png",
+          children: [{ type: "image", href: "/tmp/thumb.png", alt: "Login page" }],
+        }),
+      ),
+    ).toEqual(document({ type: "image", href: "/tmp/login.png", alt: "Login page" }));
+  });
+
+  it("keeps video links because the native image view cannot render them", () => {
+    const input = document({ ...link("https://cdn.example.com/clip.mp4"), title: "Clip" });
+
+    expect(nativeMarkdownWithStandaloneMediaLinks(input)).toEqual(input);
+  });
+
+  it.each([
+    ["a non-media file", link("/tmp/report.pdf", "report.pdf")],
+    ["an editor scheme", link("vscode://file/tmp/shot.png", "shot.png")],
+    ["an unresolved home-relative path", link("~/Downloads/shot.png", "shot.png")],
+  ])("keeps %s a link", (_label, node) => {
+    const input = document(node);
+    expect(nativeMarkdownWithStandaloneMediaLinks(input)).toEqual(input);
+  });
+
+  it("keeps local media links when the renderer cannot load workspace files", () => {
+    const input = document(
+      link("/tmp/shot.png", "absolute"),
+      { type: "soft_break" },
+      link("images/shot.png", "relative"),
+      { type: "soft_break" },
+      link("https://cdn.example.com/shot.png", "remote"),
+    );
+
+    expect(nativeMarkdownWithStandaloneMediaLinks(input, { embedLocalPaths: false })).toEqual(
+      document(
+        link("/tmp/shot.png", "absolute"),
+        { type: "soft_break" },
+        link("images/shot.png", "relative"),
+        { type: "image", href: "https://cdn.example.com/shot.png", alt: "remote" },
+      ),
+    );
+  });
+
+  it("keeps links inside list items", () => {
+    const input: MarkdownNode = {
+      type: "document",
+      children: [
+        {
+          type: "list",
+          children: [{ type: "list_item", children: [link("/tmp/shot.png", "shot.png")] }],
+        },
+      ],
+    };
+    expect(nativeMarkdownWithStandaloneMediaLinks(input)).toEqual(input);
+  });
+});
 
 describe("nativeMarkdownTextRuns", () => {
   it("links a path-shaped code span without changing the same path in prose", () => {

@@ -127,12 +127,16 @@ from the same menu. Saving downloads a copy only when you request it; it does no
 the video buffers during playback. On iOS, touch and hold a file reference in a message to
 copy its full or relative path or open it in the file viewer.
 
-Use Markdown image syntax to embed either kind of media:
+Use Markdown image syntax to embed either kind of media. A link or bare URL to an image or
+video also embeds when it sits on a line of its own; a link that shares its line with other text
+stays a link.
 
 ```markdown
 ![Screenshot](/tmp/screenshot.png)
 ![Recording](/tmp/recording.mp4)
-[Open recording](/tmp/recording.mp4)
+[Recording](/tmp/recording.mp4)
+https://example.com/screenshot.png
+See the [screenshot](/tmp/screenshot.png) for the final layout.
 ```
 
 Relative paths resolve from the thread's workspace. Absolute paths and `file://` links refer to

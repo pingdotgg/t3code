@@ -1,3 +1,7 @@
+import {
+  classifyMarkdownImageSource,
+  markdownLinkMediaKind,
+} from "@t3tools/client-runtime/markdown-images";
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
 import type { SelectableMarkdownSkill } from "./SelectableMarkdownText.types";
@@ -347,6 +351,66 @@ export function nativeMarkdownWithPreservedSoftBreaks(node: MarkdownNode): Markd
     ...(node.type === "soft_break" ? { type: "line_break" as const } : {}),
     ...(children ? { children } : {}),
   };
+}
+
+function isLineBoundary(node: MarkdownNode | undefined): boolean {
+  return node === undefined || node.type === "soft_break" || node.type === "line_break";
+}
+
+function canEmbedStandaloneMediaLink(target: string, embedLocalPaths: boolean): boolean {
+  if (markdownLinkMediaKind(target) !== "image") return false;
+  const source = classifyMarkdownImageSource(
+    target,
+    embedLocalPaths ? "/__t3_workspace__" : undefined,
+  );
+  return source._tag === "Direct" || (embedLocalPaths && source._tag === "WorkspaceFile");
+}
+
+/**
+ * A link that owns its line in a top-level paragraph and points at an image becomes that image.
+ * The breaks beside it go too, so the media does not leave an empty line behind. Video links stay
+ * links because the native markdown image view cannot render them.
+ */
+export function nativeMarkdownWithStandaloneMediaLinks(
+  node: MarkdownNode,
+  options: { readonly embedLocalPaths?: boolean } = {},
+): MarkdownNode {
+  const embedLocalPaths = options.embedLocalPaths ?? true;
+  const children = node.children?.map((block) => {
+    if (block.type !== "paragraph" || !block.children) return block;
+    const siblings = block.children;
+    const embedded = siblings.map(
+      (child, index) =>
+        child.type === "link" &&
+        child.href !== undefined &&
+        isLineBoundary(siblings[index - 1]) &&
+        isLineBoundary(siblings[index + 1]) &&
+        canEmbedStandaloneMediaLink(child.href, embedLocalPaths),
+    );
+    if (!embedded.includes(true)) return block;
+    return {
+      ...block,
+      children: siblings.flatMap((child, index): MarkdownNode[] => {
+        if (embedded[index]) {
+          // A label that is itself an image carries its text in `alt`.
+          const text =
+            nodeTextContent(child) || (child.children?.find((n) => n.type === "image")?.alt ?? "");
+          return [
+            {
+              type: "image",
+              href: child.href!,
+              ...(child.title !== undefined ? { title: child.title } : {}),
+              // An autolink's text is its URL, which is not worth repeating as alt text.
+              ...(text.length > 0 && text !== child.href ? { alt: text } : {}),
+            },
+          ];
+        }
+        if (isLineBoundary(child) && (embedded[index - 1] || embedded[index + 1])) return [];
+        return [child];
+      }),
+    };
+  });
+  return children ? { ...node, children } : node;
 }
 
 function appendBlockTerminator(

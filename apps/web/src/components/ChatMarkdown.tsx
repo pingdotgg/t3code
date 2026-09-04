@@ -126,6 +126,7 @@ import {
   serializeTableElementToMarkdown,
 } from "../markdown-clipboard";
 import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
+import { remarkStandaloneMediaLinks } from "../markdown-media-links";
 import {
   extractMarkdownLinkHrefs,
   isWindowsDrivePathHref,
@@ -1309,6 +1310,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   >;
   readonly kind?: "image" | "video";
   readonly alt: string;
+  readonly title?: string | undefined;
   readonly copyMarkdown?: string;
   readonly srcFragment?: string;
   readonly style?: CSSProperties | undefined;
@@ -1390,7 +1392,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     );
   }
   return (
-    <MediaActions source={actionsSource}>
+    <MediaActions source={actionsSource} tooltipContent={props.title || undefined}>
       <img
         src={src ?? undefined}
         alt={props.alt}
@@ -2655,7 +2657,7 @@ function ChatMarkdown({
             );
           }
           return (
-            <MediaActions source={actionsSource}>
+            <MediaActions source={actionsSource} tooltipContent={authoredTitle || undefined}>
               <img
                 {...props}
                 src={mediaSrc}
@@ -2688,6 +2690,7 @@ function ChatMarkdown({
                 path: imageSource.path,
               }}
               alt={altText}
+              title={authoredTitle}
               kind={kind}
               copyMarkdown={copyMarkdown}
               srcFragment={markdownImageSourceFragment(classifiedSrc)}
@@ -2766,13 +2769,16 @@ function ChatMarkdown({
   ]);
   /* eslint-enable react/no-unstable-nested-components */
 
-  const remarkPlugins = useMemo(
-    () => [
+  // Only a thread can serve a path-based image, so thread-less surfaces such as the pull
+  // request body keep the chip for local media links and embed web URLs alone.
+  const embedLocalPaths = threadRef !== undefined;
+  const remarkPlugins = useMemo((): NonNullable<ReactMarkdownOptions["remarkPlugins"]> => {
+    return [
       ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
+      [remarkStandaloneMediaLinks, { embedLocalPaths, workspaceRoot: imageBaseDir ?? cwd }],
       ...extraRemarkPlugins,
-    ],
-    [extraRemarkPlugins, lineBreaks],
-  );
+    ];
+  }, [cwd, embedLocalPaths, extraRemarkPlugins, imageBaseDir, lineBreaks]);
 
   // react-markdown converts unparsed HTML nodes to text when skipHtml is false.
   // Keep that behavior explicit because literal mode depends on escaping the
