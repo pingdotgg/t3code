@@ -1,11 +1,15 @@
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10] as const;
 const BT709_FULL_RANGE_CICP = [1, 1, 0, 1] as const;
-const PNG_COLOR_PROFILE_CHUNKS = new Set(["cICP", "cHRM", "gAMA", "iCCP", "sRGB"]);
+const SRGB_GAMMA = [0, 0, 177, 143] as const;
+const SRGB_CHROMATICITIES = [
+  0, 0, 122, 38, 0, 0, 128, 132, 0, 0, 250, 0, 0, 0, 128, 232, 0, 0, 117, 48, 0, 0, 234, 96, 0, 0,
+  58, 152, 0, 0, 23, 112,
+] as const;
 const MAX_GITHUB_USER_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const GITHUB_ASSET_REDIRECT_HOST_PATTERN =
   /^github-production-user-asset-[a-z0-9]+\.s3\.amazonaws\.com$/i;
@@ -17,28 +21,36 @@ const SUPPORTED_IMAGE_CONTENT_TYPES = new Set([
   "image/webp",
 ]);
 
-export class GitHubUserAttachmentFetchError extends Data.TaggedError(
+export class GitHubUserAttachmentFetchError extends Schema.TaggedErrorClass<GitHubUserAttachmentFetchError>()(
   "GitHubUserAttachmentFetchError",
-)<{
-  readonly reason: "content-type" | "redirect" | "response-too-large" | "status" | "transport";
-  readonly status?: number;
-}> {
+  {
+    reason: Schema.Literals([
+      "content-type",
+      "redirect",
+      "response-too-large",
+      "status",
+      "transport",
+    ]),
+    status: Schema.optional(Schema.Number),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
   override get message(): string {
     return "The GitHub user attachment could not be loaded.";
   }
 }
+const isGitHubUserAttachmentFetchError = Schema.is(GitHubUserAttachmentFetchError);
 
 function bytesEqualAt(bytes: Uint8Array, offset: number, expected: ReadonlyArray<number>): boolean {
   return expected.every((byte, index) => bytes[offset + index] === byte);
 }
 
 /**
- * Chromium's newer PNG decoder color-manages cICP and legacy gAMA/cHRM metadata that GitHub's
- * rendering effectively ignores. macOS screenshots can contain both descriptions and render
- * much darker in Chromium as a result. When that exact BT.709 declaration is present, remove
- * the color-description chunks so the original compressed pixels are interpreted as sRGB.
+ * Newer Chromium versions honor cICP ahead of legacy PNG color metadata. Some macOS screenshots
+ * describe the same pixels as full-range BT.709 in cICP and as sRGB in gAMA/cHRM. Remove only the
+ * conflicting cICP chunk from that exact combination so decoders use the existing sRGB metadata.
  */
-export function stripBt709ColorMetadata(bytes: Uint8Array): Uint8Array {
+function stripConflictingBt709Cicp(bytes: Uint8Array): Uint8Array {
   if (bytes.length < PNG_SIGNATURE.length || !bytesEqualAt(bytes, 0, PNG_SIGNATURE)) return bytes;
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -73,9 +85,21 @@ export function stripBt709ColorMetadata(bytes: Uint8Array): Uint8Array {
       chunk.dataLength === BT709_FULL_RANGE_CICP.length &&
       bytesEqualAt(bytes, chunk.dataOffset, BT709_FULL_RANGE_CICP),
   );
-  if (!hasBt709Cicp) return bytes;
+  const hasSrgbGamma = chunks.some(
+    (chunk) =>
+      chunk.type === "gAMA" &&
+      chunk.dataLength === SRGB_GAMMA.length &&
+      bytesEqualAt(bytes, chunk.dataOffset, SRGB_GAMMA),
+  );
+  const hasSrgbChromaticities = chunks.some(
+    (chunk) =>
+      chunk.type === "cHRM" &&
+      chunk.dataLength === SRGB_CHROMATICITIES.length &&
+      bytesEqualAt(bytes, chunk.dataOffset, SRGB_CHROMATICITIES),
+  );
+  if (!hasBt709Cicp || !hasSrgbGamma || !hasSrgbChromaticities) return bytes;
 
-  const removedChunks = chunks.filter((chunk) => PNG_COLOR_PROFILE_CHUNKS.has(chunk.type));
+  const removedChunks = chunks.filter((chunk) => chunk.type === "cICP");
   const removedByteCount = removedChunks.reduce((sum, chunk) => sum + chunk.end - chunk.start, 0);
   const normalized = new Uint8Array(bytes.length - removedByteCount);
   let sourceOffset = 0;
@@ -128,9 +152,9 @@ const readLimitedBody = Effect.fn("GitHubUserAttachment.readLimitedBody")(functi
       return Effect.void;
     }),
     Effect.mapError((error) =>
-      error instanceof GitHubUserAttachmentFetchError
+      isGitHubUserAttachmentFetchError(error)
         ? error
-        : new GitHubUserAttachmentFetchError({ reason: "transport" }),
+        : new GitHubUserAttachmentFetchError({ reason: "transport", cause: error }),
     ),
   );
 
@@ -147,7 +171,9 @@ export const loadGitHubUserAttachment = Effect.fn("GitHubUserAttachment.loadGitH
   function* (sourceUrl: string) {
     const httpClient = yield* HttpClient.HttpClient;
     const initialResponse = yield* executeWithoutRedirects(httpClient.get(sourceUrl)).pipe(
-      Effect.mapError(() => new GitHubUserAttachmentFetchError({ reason: "transport" })),
+      Effect.mapError(
+        (cause) => new GitHubUserAttachmentFetchError({ reason: "transport", cause }),
+      ),
     );
     const response =
       initialResponse.status >= 300 && initialResponse.status < 400
@@ -159,7 +185,9 @@ export const loadGitHubUserAttachment = Effect.fn("GitHubUserAttachment.loadGitH
               return yield* new GitHubUserAttachmentFetchError({ reason: "redirect" });
             }
             return yield* executeWithoutRedirects(httpClient.get(redirectUrl)).pipe(
-              Effect.mapError(() => new GitHubUserAttachmentFetchError({ reason: "transport" })),
+              Effect.mapError(
+                (cause) => new GitHubUserAttachmentFetchError({ reason: "transport", cause }),
+              ),
             );
           })
         : initialResponse;
@@ -177,7 +205,7 @@ export const loadGitHubUserAttachment = Effect.fn("GitHubUserAttachment.loadGitH
 
     const bytes = yield* readLimitedBody(response);
     return {
-      bytes: contentType === "image/png" ? stripBt709ColorMetadata(bytes) : bytes,
+      bytes: contentType === "image/png" ? stripConflictingBt709Cicp(bytes) : bytes,
       contentType,
     };
   },

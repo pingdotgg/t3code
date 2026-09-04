@@ -404,4 +404,28 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).toContain("max-w-[min(100%,30rem)]");
     expect(html).not.toContain("Image unavailable");
   });
+
+  it.each([
+    ["success", "https://signed.test/workspace-image.svg"],
+    ["failure", "https://github.com/user-attachments/assets/f1d65268-4213-47a5-864d-5067e8bf5918"],
+  ] as const)("uses the GitHub attachment %s source", (assetState, expectedSrc) => {
+    const sourceUrl =
+      "https://github.com/user-attachments/assets/f1d65268-4213-47a5-864d-5067e8bf5918";
+    testState.assetState = assetState;
+
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/workspace/project"
+        environmentId={threadRef.environmentId}
+        text={`![attachment](${sourceUrl})`}
+        resolveDirectImageAsset={(url) =>
+          url === sourceUrl ? { _tag: "github-user-attachment", url } : null
+        }
+      />,
+    );
+
+    expect(testState.resources).toEqual([{ _tag: "github-user-attachment", url: sourceUrl }]);
+    expect(html).toContain(`src="${expectedSrc}"`);
+    expect(html).not.toContain("Image unavailable");
+  });
 });
