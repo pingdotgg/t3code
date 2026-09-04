@@ -87,12 +87,21 @@ const reviewViewedFileIdsByThreadKeyAtom = Atom.family((threadKey: string) =>
   ),
 );
 
-const reviewParsedDiffBySectionCacheKeyAtom = Atom.family((cacheKey: string) =>
-  Atom.make<{ readonly diff: string | null; readonly parsed: ReviewParsedDiff } | null>(null).pipe(
-    Atom.keepAlive,
-    Atom.withLabel(`mobile:review:parsed-diffs:${cacheKey}`),
-  ),
-);
+export const MAX_CACHED_REVIEW_DIFFS = 8;
+// This bounds source string length, not the parsed or native heap size.
+export const MAX_CACHED_REVIEW_SOURCE_CHARACTERS = 4 * 1024 * 1024;
+
+interface CachedReviewParsedDiff {
+  readonly diff: string | null;
+  readonly parsed: ReviewParsedDiff;
+  readonly sourceCharacterCount: number;
+}
+
+// The factory keeps this mutable cache local to the registry and releases it on reset or disposal.
+const reviewParsedDiffCacheAtom = Atom.make(() => ({
+  entries: new Map<string, CachedReviewParsedDiff>(),
+  sourceCharacterCount: 0,
+})).pipe(Atom.keepAlive, Atom.withLabel("mobile:review:parsed-diffs"));
 
 export interface ReviewCacheForThread {
   readonly threadKey: string | null;
@@ -256,6 +265,20 @@ export function updateReviewViewedFileIds(
   });
 }
 
+/** Returns the larger of current input and matching cached source, without changing recency. */
+export function getReviewParsedDiffSourceCharacterCount(input: {
+  readonly threadKey: string;
+  readonly sectionId: string;
+  readonly diff: string | null;
+}): number {
+  const sourceCharacterCount = input.diff?.length ?? 0;
+  const cache = appAtomRegistry.get(reviewParsedDiffCacheAtom);
+  const cached = cache.entries.get(buildSectionCacheKey(input.threadKey, input.sectionId));
+  return cached && cached.diff === (input.diff?.trim() ?? null)
+    ? Math.max(sourceCharacterCount, cached.sourceCharacterCount)
+    : sourceCharacterCount;
+}
+
 export function getCachedReviewParsedDiff(input: {
   readonly threadKey: string | null;
   readonly sectionId: string | null;
@@ -267,16 +290,39 @@ export function getCachedReviewParsedDiff(input: {
 
   const cacheKey = buildSectionCacheKey(input.threadKey, input.sectionId);
   const normalizedDiff = input.diff?.trim() ?? null;
-  const atom = reviewParsedDiffBySectionCacheKeyAtom(cacheKey);
-  const cached = appAtomRegistry.get(atom);
+  const cache = appAtomRegistry.get(reviewParsedDiffCacheAtom);
+  const cached = cache.entries.get(cacheKey);
   if (cached && cached.diff === normalizedDiff) {
+    cache.entries.delete(cacheKey);
+    cache.entries.set(cacheKey, cached);
     return cached.parsed;
   }
 
   const parsed = buildReviewParsedDiff(input.diff, input.sectionId);
-  appAtomRegistry.set(atom, {
+  if (cached) {
+    cache.entries.delete(cacheKey);
+    cache.sourceCharacterCount -= cached.sourceCharacterCount;
+  }
+  const sourceCharacterCount = input.diff?.length ?? 0;
+  if (sourceCharacterCount > MAX_CACHED_REVIEW_SOURCE_CHARACTERS) {
+    return parsed;
+  }
+
+  for (const [oldestKey, oldest] of cache.entries) {
+    if (
+      cache.entries.size < MAX_CACHED_REVIEW_DIFFS &&
+      cache.sourceCharacterCount + sourceCharacterCount <= MAX_CACHED_REVIEW_SOURCE_CHARACTERS
+    ) {
+      break;
+    }
+    cache.entries.delete(oldestKey);
+    cache.sourceCharacterCount -= oldest.sourceCharacterCount;
+  }
+  cache.entries.set(cacheKey, {
     diff: normalizedDiff,
     parsed,
+    sourceCharacterCount,
   });
+  cache.sourceCharacterCount += sourceCharacterCount;
   return parsed;
 }
