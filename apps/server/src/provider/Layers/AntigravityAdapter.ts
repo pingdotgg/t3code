@@ -1,5 +1,4 @@
 import {
-  ANTIGRAVITY_DEFAULT_MODEL,
   ApprovalRequestId,
   EventId,
   ProviderDriverKind,
@@ -13,6 +12,7 @@ import {
   type ProviderSession,
   type ProviderSetupError,
   type ProviderUserInputAnswers,
+  type RuntimeTaskStatus,
   type ThreadId,
   type TurnCompletedPayload,
 } from "@t3tools/contracts";
@@ -71,8 +71,11 @@ import {
 } from "../acp/AntigravityAcpSupport.ts";
 import {
   antigravityApprovalOptions,
+  antigravitySubagentResult,
+  classifyAntigravitySubagentToolCall,
   extractAntigravityUserInputQuestion,
   isAntigravityOpenCommand,
+  isAntigravitySubagentReplayStart,
   isAntigravityUserInputRequest,
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
@@ -164,6 +167,20 @@ interface OpenCommand {
   readonly promoted: boolean;
 }
 
+interface OpenSubagent {
+  readonly turnId: TurnId | undefined;
+  readonly status: "pending" | "running" | undefined;
+}
+
+function subagentLinkage(toolCallId: string) {
+  return {
+    taskId: RuntimeTaskId.make(toolCallId),
+    taskType: "subagent",
+    toolUseId: toolCallId,
+    title: "Antigravity subagent",
+  };
+}
+
 interface TurnIntent {
   readonly turnId: TurnId;
   readonly generation: number;
@@ -182,6 +199,8 @@ interface SessionContext {
   readonly approvals: Map<ApprovalRequestId, PendingApproval>;
   readonly questions: Map<ApprovalRequestId, PendingQuestion>;
   readonly commands: Map<string, OpenCommand>;
+  /** Keep only IDs after settlement or MCP exclusion so merged late updates cannot change identity. */
+  readonly subagents: Map<string, OpenSubagent | "finished" | "mcp">;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   session: ProviderSession;
   activeTurnId: TurnId | undefined;
@@ -368,6 +387,32 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       }),
     );
 
+  const finishSubagents = (
+    context: SessionContext,
+    status: Extract<RuntimeTaskStatus, "cancelled" | "failed" | "interrupted">,
+    error?: string,
+  ) =>
+    context.commandLock.withPermit(
+      Effect.gen(function* () {
+        for (const [id, subagent] of context.subagents) {
+          if (subagent === "finished" || subagent === "mcp") continue;
+          yield* emit({
+            type: "task.updated",
+            ...(yield* stamp),
+            provider: PROVIDER,
+            threadId: context.threadId,
+            turnId: subagent.turnId,
+            payload: {
+              ...subagentLinkage(id),
+              status,
+              ...(error ? { error } : {}),
+            },
+          });
+          context.subagents.set(id, "finished");
+        }
+      }),
+    );
+
   const stopContext = (context: SessionContext) =>
     context.stopLock
       .withPermit(
@@ -383,6 +428,12 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
           context.closed = true;
           if (sessions.get(context.threadId) === context) sessions.delete(context.threadId);
           yield* finishBackgroundCommands(context);
+          yield* finishSubagents(
+            context,
+            context.disconnected ? "failed" : "cancelled",
+            context.disconnected ? "Antigravity process stopped." : undefined,
+          );
+          context.subagents.clear();
           yield* emit({
             type: "session.exited",
             ...(yield* stamp),
@@ -560,6 +611,54 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         yield* context.commandLock.withPermit(
           Effect.gen(function* () {
             const toolCall = normalizeAntigravityToolCall(event.toolCall);
+            const tracked = context.subagents.get(toolCall.toolCallId);
+            if (tracked === "finished") return;
+            const kind = classifyAntigravitySubagentToolCall(toolCall, event.rawPayload);
+            const isMcp = tracked === "mcp" || kind === "mcp";
+            if (isMcp) context.subagents.set(toolCall.toolCallId, "mcp");
+            const subagent = tracked === "mcp" ? undefined : tracked;
+            if (!isMcp && (subagent || kind === "subagent")) {
+              const turnId = subagent?.turnId ?? context.activeTurnId;
+              const linkage = subagentLinkage(toolCall.toolCallId);
+              // Replay starts claim completion before the result says whether the call failed.
+              if (
+                context.activeTurnId === undefined &&
+                isAntigravitySubagentReplayStart(event.rawPayload)
+              ) {
+                context.subagents.set(toolCall.toolCallId, { turnId, status: undefined });
+                return;
+              }
+              if (toolCall.status === "completed" || toolCall.status === "failed") {
+                const summary = antigravitySubagentResult(toolCall);
+                yield* emit({
+                  type: "task.completed",
+                  ...(yield* stamp),
+                  provider: PROVIDER,
+                  threadId: context.threadId,
+                  turnId,
+                  payload: {
+                    ...linkage,
+                    status: toolCall.status,
+                    ...(summary ? { summary } : {}),
+                  },
+                });
+                context.subagents.set(toolCall.toolCallId, "finished");
+              } else {
+                const status = toolCall.status === "pending" ? "pending" : "running";
+                if (subagent?.status !== status) {
+                  yield* emit({
+                    type: "task.progress",
+                    ...(yield* stamp),
+                    provider: PROVIDER,
+                    threadId: context.threadId,
+                    turnId,
+                    payload: { ...linkage, description: linkage.title, status },
+                  });
+                }
+                context.subagents.set(toolCall.toolCallId, { turnId, status });
+              }
+              return;
+            }
             const existing = context.commands.get(toolCall.toolCallId);
             yield* emit(
               makeAcpToolCallEvent({
@@ -745,6 +844,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                 approvals: new Map(),
                 questions: new Map(),
                 commands: new Map(),
+                subagents: new Map(),
                 turns: [],
                 session,
                 activeTurnId: undefined,
@@ -866,6 +966,18 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         if (turn.settled || context.stopped || context.generation !== turn.generation) return;
         turn.settled = true;
         yield* promoteBackgroundCommands(context);
+        yield* finishSubagents(
+          context,
+          payload.state === "cancelled"
+            ? "cancelled"
+            : payload.state === "failed"
+              ? "failed"
+              : "interrupted",
+          payload.errorMessage ??
+            (payload.state === "completed"
+              ? "Antigravity ended the turn before reporting a subagent result."
+              : undefined),
+        );
         context.activeTurnId = undefined;
         context.promptFiber = undefined;
         context.session = {
@@ -923,6 +1035,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
             yield* cancelRequests(context);
             yield* context.runtime.cancel;
             yield* Fiber.await(context.promptFiber);
+            yield* finishSubagents(context, "cancelled");
           }
           yield* applyAntigravityAcpModelSelection({
             runtime: context.runtime,

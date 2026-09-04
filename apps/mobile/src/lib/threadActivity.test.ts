@@ -2121,6 +2121,104 @@ describe("buildThreadFeed", () => {
 });
 
 describe("quiet timeline: nested agents", () => {
+  it.each(["task.updated", "task.progress"] as const)(
+    "does not mark an ordinary task complete when it resumes through %s",
+    (resumeKind) => {
+      const thread = makeThread({
+        id: ThreadId.make("resumed-agent"),
+        projectId: ProjectId.make("project-1"),
+        title: "Resumed agent",
+        activities: (
+          [
+            ["task.progress", "running", "Review"],
+            ["task.updated", "idle", "Task idle"],
+            [resumeKind, "running", "Review resumed"],
+          ] as const
+        ).map(([kind, status, summary], index) =>
+          makeActivity({
+            id: EventId.make(`resumed-${index}`),
+            kind,
+            summary,
+            createdAt: `2026-04-01T00:00:0${index + 1}.000Z`,
+            payload: {
+              taskId: "agent-1",
+              agentKind: "agent",
+              title: "Reviewer",
+              status,
+              detail: summary,
+            },
+          }),
+        ),
+      });
+      const rows = buildThreadFeed(thread).flatMap((entry) =>
+        entry.type === "activity-group" ? entry.activities : [],
+      );
+      expect(rows).toMatchObject([
+        {
+          lifecycleStatus: "inProgress",
+          summary: "Reviewer",
+          workEntry: { label: resumeKind === "task.progress" ? "Review resumed" : "Review" },
+        },
+      ]);
+    },
+  );
+
+  it.each(["cancelled", "failed", "interrupted"] as const)(
+    "replaces Antigravity progress with %s without a timeline bypass flag",
+    (status) => {
+      const thread = makeThread({
+        id: ThreadId.make("antigravity-agents"),
+        projectId: ProjectId.make("project-1"),
+        title: "Antigravity subagents",
+        activities: [
+          ...["trajectory:4", "trajectory:5"].map((taskId, index) =>
+            makeActivity({
+              id: EventId.make(`progress-${index}`),
+              kind: "task.progress",
+              summary: "Antigravity subagent",
+              createdAt: `2026-04-01T00:00:0${index + 1}.000Z`,
+              payload: {
+                taskId,
+                taskType: "subagent",
+                agentKind: "agent",
+                title: "Antigravity subagent",
+                detail: "Antigravity subagent",
+                status: "running",
+              },
+            }),
+          ),
+          makeActivity({
+            id: EventId.make("agent-stopped"),
+            kind: "task.updated",
+            summary: `Task ${status}`,
+            createdAt: "2026-04-01T00:00:03.000Z",
+            payload: {
+              taskId: "trajectory:4",
+              taskType: "subagent",
+              agentKind: "agent",
+              title: "Antigravity subagent",
+              status,
+              error: "Antigravity process stopped.",
+            },
+          }),
+        ],
+      });
+      const rows = buildThreadFeed(thread).flatMap((entry) =>
+        entry.type === "activity-group" ? entry.activities : [],
+      );
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toMatchObject({
+        lifecycleStatus: status === "failed" ? "failed" : "stopped",
+        detail: "Antigravity process stopped.",
+        workEntry: { taskId: "trajectory:4", toolTitle: "Antigravity subagent" },
+      });
+      expect(rows[1]).toMatchObject({
+        lifecycleStatus: "inProgress",
+        workEntry: { taskId: "trajectory:5" },
+      });
+    },
+  );
+
   it("keeps a nested agent's terminal row but hides its background work", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-nested"),

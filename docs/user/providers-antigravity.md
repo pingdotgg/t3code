@@ -139,6 +139,17 @@ T3 Code keeps thread history and file diffs. Antigravity does not support conver
 so reverting a thread or editing and resubmitting an earlier turn is unavailable. Send a
 follow-up message or start a new thread instead.
 
+### Subagents
+
+Antigravity subagent calls appear in **Agents** on web and desktop, and in the work log on
+mobile. Each call shows its status and the result or error returned by Antigravity. Calls
+that run at the same time have separate entries.
+
+The official ACP agent does not report subagent names, models, token usage, or parent links.
+Entries use the name **Antigravity subagent**. Child tool calls cannot be assigned to an entry
+because ACP does not include their owning subagent. These entries track each invocation,
+not a separate thread you can open or control.
+
 ## Accounts and removal
 
 Each Antigravity provider instance has its own Google sign-in on its environment. Use
