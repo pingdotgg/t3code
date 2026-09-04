@@ -89,6 +89,19 @@ Background submission from a new thread is the exception. `mod+enter` starts tha
 another new thread with the same workspace mode and base branch. **New worktree** remains selected,
 but the new thread does not reuse the worktree created for the thread that just started.
 
+## Desktop quit shortcut
+
+Use `Cmd+Q` on macOS or `Ctrl+Q` on Windows and Linux. In the default **Hold** mode, hold the
+shortcut for 1.2 seconds or press it twice within 500 milliseconds. The second press quits
+immediately. You can keep Command or Control held between presses, or release both keys.
+
+Hold mode needs keyboard repeat. If holding does not quit, use two quick presses or choose
+**Quit** from the application menu.
+
+Change **Quit shortcut** in **Settings** → **General** → **Confirmations**. **Direct** quits on
+the first press. **Double press** requires two quick presses and does not accept a hold. The
+application menu's **Quit** action always quits immediately.
+
 ## `when` Conditions
 
 A `when` expression is evaluated against context keys describing the current UI state. The keys
