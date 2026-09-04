@@ -965,7 +965,9 @@ public final class FeatureRootModel {
             store(value, delta: delta)
             upsert(value.thread)
         case let .threadSync(id, state):
-            threadSyncStates[id] = state
+            if threadSyncStates[id] != state {
+                threadSyncStates[id] = state
+            }
             if state == .live, case .failed = detailLoadStates[id] {
                 detailLoadStates[id] = nil
             }

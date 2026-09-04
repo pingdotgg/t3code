@@ -37,6 +37,34 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func repeatedCatchUpEventsDoNotInvalidateViewState() async {
+        let client = FeatureClientStub()
+        let model = testRootModel(client: client)
+        let run = Task { await model.start() }
+        await withCheckedContinuation { continuation in
+            withObservationTracking {
+                _ = model.threadSyncStates["thread"]
+            } onChange: {
+                continuation.resume()
+            }
+            client.emit(.threadSync(id: "thread", state: .catchingUp))
+        }
+        let changes = AsyncStream<Void>.makeStream()
+        withObservationTracking {
+            _ = model.threadSyncStates["thread"]
+        } onChange: {
+            changes.continuation.yield()
+        }
+        client.emit(.threadSync(id: "thread", state: .catchingUp))
+        client.finishEvents()
+        await run.value
+        changes.continuation.finish()
+        let change = await changes.stream.first { _ in true }
+        #expect(change == nil)
+        #expect(model.threadSyncStates["thread"] == .catchingUp)
+    }
+
+    @Test
     func appearanceAppliesImmediatelyAndPersistsWithoutSavingTheDraft() async {
         let client = FeatureClientStub()
         let model = testRootModel(client: client)

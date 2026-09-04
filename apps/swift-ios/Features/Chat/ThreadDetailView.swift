@@ -308,11 +308,12 @@ public struct ThreadDetailView: View {
 
                 Spacer(minLength: 6)
 
-                // The per-second timeline only exists for the live working
-                // duration; idle threads render a static status instead of
-                // waking every second forever.
+                // Cached work state is not proof that the agent is still
+                // running. Only current, working threads need a live timer.
                 Group {
-                    if currentThread.homeStatus == .working {
+                    if refreshPresentation != nil {
+                        EmptyView()
+                    } else if currentThread.homeStatus == .working {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             headerStatus(at: context.date)
                         }
@@ -331,7 +332,7 @@ public struct ThreadDetailView: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
         .accessibilityAddTraits(
-            currentThread.hasLiveWorkingDuration ? .updatesFrequently : []
+            refreshPresentation == nil && currentThread.hasLiveWorkingDuration ? .updatesFrequently : []
         )
         .transaction { transaction in
             transaction.animation = nil
@@ -631,17 +632,23 @@ public struct ThreadDetailView: View {
     }
 
     private func timeline(_ detail: FeatureThreadDetail) -> some View {
-        let isWorking = detail.thread.state == .working
+        let hasActiveWork = detail.thread.state == .working
             || detail.thread.state == .queued
             || detail.thread.state == .monitoring
+        let isWorking = hasActiveWork && refreshPresentation == nil
         return Group {
-            if detail.messages.isEmpty, !isWorking {
-                ContentUnavailableView(
-                    "Ready for a task",
-                    systemImage: "sparkles",
-                    description: Text("Tell the agent what you want to build.")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if detail.messages.isEmpty, !hasActiveWork {
+                if refreshPresentation == nil {
+                    ContentUnavailableView(
+                        "Ready for a task",
+                        systemImage: "sparkles",
+                        description: Text("Tell the agent what you want to build.")
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    Color.clear
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             } else {
                 FeatureTranscriptCollectionView(
                     threadID: thread.id,

@@ -3524,6 +3524,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         guard activeThreadID == threadID,
               activeThreadEnvironmentID == client.environment.id else { return }
         guard force || detailStreamTask == nil else { return }
+        if force {
+            continuation.yield(.threadSync(id: threadID, state: .catchingUp))
+        }
         guard detailRefreshTask == nil else {
             detailRefreshPending = true
             return
@@ -3534,9 +3537,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let sessionGeneration = environmentGeneration
         detailRefreshTask = Task { [weak self] in
             do {
-                // Four updates per second keeps streaming text responsive while
-                // coalescing bursty shell events into one detail snapshot.
-                try await Task.sleep(for: .milliseconds(250))
+                // Shell updates can be coalesced. A required replacement cannot
+                // apply more thread events until its snapshot arrives.
+                if !force {
+                    try await Task.sleep(for: .milliseconds(250))
+                }
             } catch {
                 self?.finishDetailRefresh(generation: generation, client: client)
                 return
@@ -3549,7 +3554,20 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                    environmentID: client.environment.id,
                    generation: sessionGeneration
                ) {
-                try? await self.refreshThread(id: threadID, client: client)
+                do {
+                    try await self.refreshThread(id: threadID, client: client)
+                } catch is CancellationError {
+                    // Closing a thread cancels its read without changing its status.
+                } catch {
+                    if !Task.isCancelled,
+                       self.detailRefreshGeneration == generation,
+                       self.activeThreadID == threadID,
+                       self.activeRawThread == nil || self.detailStreamTask == nil {
+                        self.continuation.yield(.threadSync(
+                            id: threadID, state: .failed(error.localizedDescription)
+                        ))
+                    }
+                }
             }
             self.finishDetailRefresh(generation: generation, client: client)
         }
@@ -3628,12 +3646,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     expectedStreamGeneration: generation
                 )
                 guard !Task.isCancelled, let self,
-                      self.isCurrentDetail(route, generation: generation) else { return }
+                      self.isCurrentDetail(route, generation: generation),
+                      self.activeRawThread != nil,
+                      !self.detailRefreshPending else { return }
                 if self.serverConfigsByEnvironmentID[route.environmentID]?
                     .threadResumeCompletionMarker == true {
                     self.continuation.yield(.threadSync(id: route.uiID, state: .reconnecting))
                 } else {
-                    self.continuation.yield(.threadSync(id: route.uiID, state: .live))
+                    self.markDetailSynchronized(route)
                 }
             } catch is CancellationError {
                 return
@@ -3646,7 +3666,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     private func markDetailSynchronized(_ route: NativeThreadRoute) {
-        guard activeRawThread != nil else { return }
+        guard activeRawThread != nil, !detailRefreshPending else { return }
         // Flush the final message before publishing the completion state.
         // Otherwise the loading label can vanish one render before the text.
         flushDetailPublish(route)
@@ -3667,15 +3687,28 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             markDetailSynchronized(route)
             return
         case let .snapshot(snapshot):
-            guard activeRawThread == nil || snapshot.snapshotSequence > (activeThreadSequence ?? 0) else { return }
+            guard snapshot.snapshotSequence >= (activeThreadSequence ?? 0),
+                  activeRawThread == nil || snapshot.snapshotSequence > (activeThreadSequence ?? 0) else { return }
+            resetDetailRefresh()
             threadHistoryEpoch &+= 1
             pendingOlderThreadPage = nil
             activeThreadSequence = snapshot.snapshotSequence
             activeRawThread = snapshot.thread
             activeThreadPage = featurePage(snapshot.page)
             scheduleRawDetailPublish(route: route, mutation: .full)
+            if detailCompletionReceived { markDetailSynchronized(route) }
         case let .event(event):
             guard let current = activeRawThread else {
+                // Do not apply later events to a snapshot that missed earlier
+                // ones. It must cover every event skipped while replacing it.
+                if case let .number(value) = event["sequence"],
+                   let sequence = Int(exactly: value), sequence >= 0 {
+                    activeThreadSequence = max(activeThreadSequence ?? 0, sequence)
+                } else {
+                    // An event without a cursor needs a read started after it.
+                    threadHistoryEpoch &+= 1
+                    pendingOlderThreadPage = nil
+                }
                 scheduleDetailRefresh(threadID: route.uiID, client: route.client, force: true)
                 return
             }
@@ -3722,13 +3755,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         detailPublishTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(80))
             guard let self else { return }
-            self.detailPublishTask = nil
             guard !Task.isCancelled,
                   self.detailStreamGeneration == streamGeneration,
                   self.activeThreadID == route.uiID,
                   self.activeRawThread != nil else {
                 return
             }
+            self.detailPublishTask = nil
             self.flushDetailPublish(route)
         }
     }
@@ -3774,7 +3807,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let needsTrailingRefresh = detailRefreshPending
         detailRefreshPending = false
         if needsTrailingRefresh, let threadID = activeThreadID {
-            scheduleDetailRefresh(threadID: threadID, client: client)
+            // Events received without a base snapshot cannot be reduced. Read
+            // again even when the stream is open so those events are included.
+            scheduleDetailRefresh(threadID: threadID, client: client, force: true)
         }
     }
 
@@ -4090,6 +4125,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         let environment = route.client.environment
         let generation = environmentGeneration
+        let historyEpoch = threadHistoryEpoch
         let supportsPagination = serverConfigsByEnvironmentID[
             environment.id
         ]?.threadSnapshotPagination == true
@@ -4104,8 +4140,24 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             throw CancellationError()
         }
         if activeThreadID == route.uiID {
-            guard snapshot.snapshotSequence >= (activeThreadSequence ?? 0) else { return }
+            if activeRawThread == nil, historyEpoch != threadHistoryEpoch {
+                return
+            }
+            guard snapshot.snapshotSequence >= (activeThreadSequence ?? 0) else {
+                if activeRawThread == nil {
+                    if !detailRefreshPending {
+                        throw NativeFeatureClientError.threadSnapshotOutdated
+                    }
+                } else if detailCompletionReceived
+                            || serverConfigsByEnvironmentID[environment.id]?.threadResumeCompletionMarker != true {
+                    markDetailSynchronized(route)
+                }
+                return
+            }
             discardPendingDetailPublish()
+            // This snapshot includes the skipped events, so their pending
+            // request is satisfied without another HTTP read.
+            detailRefreshPending = false
             threadHistoryEpoch &+= 1
             pendingOlderThreadPage = nil
             activeRawThread = snapshot.thread
@@ -4126,22 +4178,17 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             client: client, thread: snapshot.thread, sequence: snapshot.snapshotSequence,
             page: featurePage(snapshot.page)
         )
-        if activeThreadID == route.uiID, detailCompletionReceived {
+        if activeThreadID == route.uiID,
+           detailCompletionReceived
+            || serverConfigsByEnvironmentID[environment.id]?.threadResumeCompletionMarker != true {
             markDetailSynchronized(route)
         }
-        let hydrationBase = latestDetails[route.uiID] ?? detail
-        let hydrated = await hydratedAttachmentURLs(
-            in: hydrationBase,
+        scheduleAttachmentHydration(
+            in: detail,
+            threadID: route.uiID,
             client: client,
-            environmentID: environment.id,
-            generation: generation
+            environmentID: environment.id
         )
-        guard isKnownClient(client, environmentID: environment.id, generation: generation),
-              latestDetails[route.uiID] == hydrationBase,
-              hydrated != hydrationBase else {
-            return
-        }
-        publish(hydrated, threadID: route.uiID, synchronizeRenderedMessages: true)
     }
 
     private func emitSnapshot(
@@ -7054,6 +7101,7 @@ private enum NativeFeatureClientError: LocalizedError {
     case environmentNotFound
     case projectNotFound
     case threadNotFound
+    case threadSnapshotOutdated
     case workspaceNotFound
     case approvalNotFound
     case inputRequestNotFound
@@ -7071,6 +7119,7 @@ private enum NativeFeatureClientError: LocalizedError {
         case .environmentNotFound: "That T3 environment is no longer available."
         case .projectNotFound: "The selected project is no longer available."
         case .threadNotFound: "The selected thread is no longer available."
+        case .threadSnapshotOutdated: "The computer has not finished updating this thread. Try again."
         case .workspaceNotFound: "The thread workspace is no longer available."
         case .approvalNotFound: "The approval request is no longer active."
         case .inputRequestNotFound: "The input request is no longer active."
