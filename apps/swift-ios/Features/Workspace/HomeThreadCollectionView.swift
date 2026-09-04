@@ -135,6 +135,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             guard !isApplyingSnapshot, hasQueuedUpdate, let dataSource else { return }
             hasQueuedUpdate = false
             let previousItems = itemsByID
+            let previousThreadItemIDs = threadItemIDs
             let previousSelection = selectedThreadID
             selectedThreadID = parent.selectedThreadID
 
@@ -214,6 +215,18 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     && !currentIdentifiers.isEmpty
                     && collectionView.window != nil
                     && !UIAccessibility.isReduceMotionEnabled
+                if shouldAnimate {
+                    for threadID in resolvedSwipes.keys {
+                        guard let identifier = previousThreadItemIDs[threadID],
+                              identifier != threadItemIDs[threadID],
+                              let indexPath = dataSource.indexPath(for: identifier),
+                              let cell = collectionView.cellForItem(at: indexPath) else { continue }
+                        // UIKit fades deleted cells while their neighbors move up.
+                        // Hide the departed text so it cannot show through those rows.
+                        // The native swipe action view is outside contentView.
+                        cell.contentView.isHidden = true
+                    }
+                }
                 isApplyingSnapshot = true
                 dataSource.apply(
                     snapshot,
@@ -368,6 +381,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             now: Date
         ) {
             guard let item = itemsByID[identifier] else { return }
+            cell.contentView.isHidden = false
             let pullRequestObservationIdentity: String?
             if case let .thread(thread, _, _, _, _, _) = item {
                 pullRequestObservationIdentity = thread.pullRequestObservationIdentity
@@ -1010,6 +1024,7 @@ private final class HomeCollectionCell: UICollectionViewListCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        contentView.isHidden = false
         onAccessibilityActivate = nil
     }
 }

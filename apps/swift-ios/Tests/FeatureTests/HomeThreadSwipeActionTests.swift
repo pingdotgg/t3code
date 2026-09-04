@@ -737,7 +737,7 @@ struct HomeThreadSwipeActionTests {
     }
 
     @Test
-    func settledSearchRowsFinishTheSwipeWithoutLeavingTheSearchResults() async {
+    func settledSearchRowsFinishTheSwipeWithoutLeavingTheSearchResults() async throws {
         let client = SwipeSettlementClientStub()
         let active = thread(id: "search")
         let initialList = threadList(
@@ -772,6 +772,9 @@ struct HomeThreadSwipeActionTests {
         var results = completions.stream.makeAsyncIterator()
         #expect(await results.next() == true)
         #expect(collectionView.numberOfItems(inSection: 0) == 1)
+        collectionView.layoutIfNeeded()
+        let cell = try #require(collectionView.cellForItem(at: IndexPath(item: 0, section: 0)))
+        #expect(!cell.contentView.isHidden)
     }
 
     @Test
@@ -913,10 +916,87 @@ struct HomeThreadSwipeActionTests {
         #expect(retainedCell.accessibilityLabel == latest.title)
         let firstCell = try #require(collectionView.visibleCells.first { $0.accessibilityLabel == first.title })
         #expect(firstCell.accessibilityValue?.contains("Settled") == !rollbackFirst)
+        #expect(!firstCell.contentView.isHidden)
+        #expect(!retainedCell.contentView.isHidden)
         let threadCells = collectionView.visibleCells.filter { $0.accessibilityTraits.contains(.button) }
         let frames = threadCells.map(\.frame).sorted { $0.minY < $1.minY }
         for (before, after) in zip(frames, frames.dropFirst()) {
             #expect(before.maxY <= after.minY + 0.5)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+    func departingTextIsHiddenWhileTheNextRowMovesIntoItsFrame(isSettledExpanded: Bool) async throws {
+        let client = SwipeSettlementClientStub()
+        let first = thread(id: "first")
+        let remaining = thread(id: "remaining")
+        let initial = threadList(
+            client: client,
+            snapshot: snapshot(threads: [first, remaining]),
+            isSettledExpanded: isSettledExpanded
+        )
+        let coordinator = initial.makeCoordinator()
+        let collectionView = testCollectionView()
+        coordinator.configure(collectionView)
+        collectionView.layoutIfNeeded()
+        let outgoing = try #require(collectionView.visibleCells.first { $0.accessibilityLabel == first.title })
+        let neighbor = try #require(collectionView.visibleCells.first { $0.accessibilityLabel == remaining.title })
+
+        let controller = UIViewController()
+        controller.view = collectionView
+        let window = UIWindow(frame: collectionView.frame)
+        window.rootViewController = controller
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            coordinator.invalidateTimer()
+            coordinator.cancelPendingSwipeActions()
+        }
+
+        var overlappingFrames = 0
+        var visibleOverlaps = 0
+        let probe = SwipeRemovalFrameProbe {
+            guard outgoing.superview === neighbor.superview,
+                  let outgoingFrame = outgoing.layer.presentation()?.frame,
+                  let neighborFrame = neighbor.layer.presentation()?.frame,
+                  outgoingFrame.intersection(neighborFrame).height > 1 else { return }
+            overlappingFrames += 1
+            let opacity = outgoing.layer.presentation()?.opacity ?? outgoing.layer.opacity
+            if !outgoing.contentView.isHidden, opacity > 0.01 {
+                visibleOverlaps += 1
+            }
+        }
+        defer { probe.stop() }
+        let completions = AsyncStream<Bool>.makeStream()
+        coordinator.performSwipe(.settle, for: first) { succeeded in
+            probe.stop()
+            completions.continuation.yield(succeeded)
+        }
+        var settled = first
+        settled.isSettled = true
+        settled.settledAt = now
+        coordinator.update(
+            parent: threadList(
+                client: client,
+                snapshot: snapshot(threads: [settled, remaining]),
+                isSettledExpanded: isSettledExpanded
+            ),
+            collectionView: collectionView
+        )
+
+        var results = completions.stream.makeAsyncIterator()
+        #expect(await results.next() == true)
+        #expect(visibleOverlaps == 0)
+        if UIView.areAnimationsEnabled, !UIAccessibility.isReduceMotionEnabled {
+            #expect(overlappingFrames > 0)
+        }
+        collectionView.layoutIfNeeded()
+        #expect(!neighbor.contentView.isHidden)
+        if isSettledExpanded {
+            let settledCell = try #require(collectionView.visibleCells.first {
+                $0.accessibilityLabel == first.title
+            })
+            #expect(!settledCell.contentView.isHidden)
         }
     }
 
@@ -1143,6 +1223,26 @@ enum PendingSettlementEvent: CaseIterable {
     case thread
     case detail
     case detailDelta
+}
+
+@MainActor
+private final class SwipeRemovalFrameProbe: NSObject {
+    private let onFrame: () -> Void
+    private var displayLink: CADisplayLink?
+
+    init(onFrame: @escaping () -> Void) {
+        self.onFrame = onFrame
+        super.init()
+        displayLink = CADisplayLink(target: self, selector: #selector(sample))
+        displayLink?.add(to: .main, forMode: .common)
+    }
+
+    @objc private func sample() { onFrame() }
+
+    func stop() {
+        displayLink?.invalidate()
+        displayLink = nil
+    }
 }
 
 @MainActor
