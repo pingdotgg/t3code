@@ -54,11 +54,12 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
     it.effect("serves repeated resolves from cache instead of re-walking candidates", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, "public/favicon.svg", "<svg>public</svg>");
 
         const resolved = yield* resolver.resolvePath(cwd);
-        expect(resolved?.endsWith("public/favicon.svg")).toBe(true);
+        expect(resolved?.endsWith(path.join("public", "favicon.svg"))).toBe(true);
 
         // `favicon.svg` outranks `public/favicon.svg`, so a resolver that walked
         // the candidate list again would switch to it. Staying on the original
@@ -71,7 +72,7 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
 
         yield* TestClock.adjust(Duration.minutes(11));
 
-        expect((yield* resolver.resolvePath(cwd))?.endsWith("/favicon.svg")).toBe(true);
+        expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "favicon.svg"));
         expect(yield* resolver.resolvePath(cwd)).not.toBe(resolved);
       }).pipe(Effect.provide(TestClock.layer())),
     );
