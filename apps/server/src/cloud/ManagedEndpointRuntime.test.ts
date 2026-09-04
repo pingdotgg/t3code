@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -8,6 +9,7 @@ import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as RelayClient from "@t3tools/shared/relayClient";
 
@@ -281,6 +283,126 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(spawned).toEqual([400, 401]);
       expect(killed).toEqual([400]);
     }),
+  );
+
+  const makeCrashLoopSpawner = (basePid: number, slots: number) =>
+    Effect.gen(function* () {
+      const spawned: Array<number> = [];
+      const exits: Array<Deferred.Deferred<ChildProcessSpawner.ExitCode>> = [];
+      const spawnSignals: Array<Deferred.Deferred<void>> = [];
+      for (let index = 0; index < slots; index += 1) {
+        exits.push(yield* Deferred.make<ChildProcessSpawner.ExitCode>());
+        spawnSignals.push(yield* Deferred.make<void>());
+      }
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const index = spawned.length;
+          spawned.push(basePid + index);
+          yield* Deferred.succeed(spawnSignals[index]!, undefined);
+          const handle = makeHandle({
+            pid: basePid + index,
+            exitCode: Deferred.await(exits[index]!),
+            onKill: () => {},
+          });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      return { spawner, spawned, exits, spawnSignals };
+    });
+
+  it.effect("backs off restarts while the connector crash-loops", () =>
+    Effect.gen(function* () {
+      const { spawner, spawned, exits, spawnSignals } = yield* makeCrashLoopSpawner(600, 4);
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+
+      yield* runtime.applyConfig({
+        providerKind: "cloudflare_tunnel",
+        connectorToken: "token",
+        tunnelId: "tunnel-1",
+      });
+      expect(spawned).toEqual([600]);
+
+      // The first crash restarts immediately.
+      yield* Deferred.succeed(exits[0]!, ChildProcessSpawner.ExitCode(1));
+      yield* Deferred.await(spawnSignals[1]!);
+      expect(spawned).toEqual([600, 601]);
+
+      // The second rapid crash waits out the base delay before restarting.
+      yield* Deferred.succeed(exits[1]!, ChildProcessSpawner.ExitCode(1));
+      yield* TestClock.adjust(Duration.millis(999));
+      expect(spawned).toEqual([600, 601]);
+      yield* TestClock.adjust(Duration.millis(1));
+      yield* Deferred.await(spawnSignals[2]!);
+      expect(spawned).toEqual([600, 601, 602]);
+
+      // The third rapid crash doubles the delay.
+      yield* Deferred.succeed(exits[2]!, ChildProcessSpawner.ExitCode(1));
+      yield* TestClock.adjust(Duration.millis(1999));
+      expect(spawned).toEqual([600, 601, 602]);
+      yield* TestClock.adjust(Duration.millis(1));
+      yield* Deferred.await(spawnSignals[3]!);
+      expect(spawned).toEqual([600, 601, 602, 603]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("resets the backoff after the connector runs stably", () =>
+    Effect.gen(function* () {
+      const { spawner, spawned, exits, spawnSignals } = yield* makeCrashLoopSpawner(700, 5);
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+
+      yield* runtime.applyConfig({
+        providerKind: "cloudflare_tunnel",
+        connectorToken: "token",
+      });
+
+      // One rapid crash arms the backoff.
+      yield* Deferred.succeed(exits[0]!, ChildProcessSpawner.ExitCode(1));
+      yield* Deferred.await(spawnSignals[1]!);
+
+      // The replacement stays up past the stable-uptime window, so its exit
+      // restarts immediately and the backoff starts over.
+      yield* TestClock.adjust(Duration.millis(30_000));
+      yield* Deferred.succeed(exits[1]!, ChildProcessSpawner.ExitCode(1));
+      yield* Deferred.await(spawnSignals[2]!);
+      yield* Deferred.succeed(exits[2]!, ChildProcessSpawner.ExitCode(1));
+      yield* Deferred.await(spawnSignals[3]!);
+
+      // The next rapid crash waits the base delay again, not a doubled one.
+      yield* Deferred.succeed(exits[3]!, ChildProcessSpawner.ExitCode(1));
+      yield* TestClock.adjust(Duration.millis(999));
+      expect(spawned).toEqual([700, 701, 702, 703]);
+      yield* TestClock.adjust(Duration.millis(1));
+      yield* Deferred.await(spawnSignals[4]!);
+      expect(spawned).toEqual([700, 701, 702, 703, 704]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("an explicit config change clears the backoff and preempts a delayed restart", () =>
+    Effect.gen(function* () {
+      const { spawner, spawned, exits, spawnSignals } = yield* makeCrashLoopSpawner(800, 3);
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+
+      yield* runtime.applyConfig({
+        providerKind: "cloudflare_tunnel",
+        connectorToken: "token-1",
+      });
+      yield* Deferred.succeed(exits[0]!, ChildProcessSpawner.ExitCode(1));
+      yield* Deferred.await(spawnSignals[1]!);
+
+      // Leave the supervisor sleeping on the base delay, then change config.
+      yield* Deferred.succeed(exits[1]!, ChildProcessSpawner.ExitCode(1));
+      const status = yield* runtime.applyConfig({
+        providerKind: "cloudflare_tunnel",
+        connectorToken: "token-2",
+      });
+      expect(status).toMatchObject({ status: "running", pid: 802 });
+      expect(spawned).toEqual([800, 801, 802]);
+
+      // The preempted supervisor wakes later and must not spawn a duplicate.
+      yield* TestClock.adjust(Duration.millis(60_000));
+      expect(spawned).toEqual([800, 801, 802]);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("serializes concurrent connector config changes", () =>
