@@ -146,6 +146,32 @@ export const request = Effect.fn("EnvironmentRpc.request")(function* <
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
 });
 
+/**
+ * Sends a unary RPC without waiting for a response frame. This is reserved for
+ * ordered, ephemeral traffic where replay would be unsafe and the caller has a
+ * separate authoritative stream for observing the resulting state.
+ */
+export const requestDiscard = Effect.fn("EnvironmentRpc.requestDiscard")(function* <
+  TTag extends EnvironmentUnaryRpcTag,
+>(tag: TTag, input: EnvironmentRpcInput<TTag>) {
+  const supervisor = yield* EnvironmentSupervisor;
+  yield* Effect.annotateCurrentSpan({
+    "environment.id": supervisor.target.environmentId,
+    "rpc.method": tag,
+  });
+  const session = yield* currentSession();
+  const observer = yield* EnvironmentRpcRequestObserver;
+  const method = session.client[tag] as (
+    input: EnvironmentRpcInput<TTag>,
+    options: { readonly discard: true },
+  ) => Effect.Effect<void, RpcClientError.RpcClientError>;
+  const completeObservation = yield* observer.observe({
+    environmentId: supervisor.target.environmentId,
+    method: tag,
+  });
+  return yield* method(input, { discard: true }).pipe(Effect.ensuring(completeObservation));
+});
+
 export function runStream<TTag extends EnvironmentStreamCommandRpcTag>(
   tag: TTag,
   input: EnvironmentRpcInput<TTag>,

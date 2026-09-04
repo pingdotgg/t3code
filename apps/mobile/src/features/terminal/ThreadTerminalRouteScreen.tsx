@@ -155,7 +155,7 @@ type ThreadTerminalRouteScreenProps = StaticScreenProps<{
 
 export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps) {
   const navigation = useNavigation();
-  const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
+  const writeTerminal = useAtomCommand(terminalEnvironment.input, "terminal input");
   const resizeTerminal = useAtomCommand(terminalEnvironment.resize, "terminal resize");
   const clearTerminal = useAtomCommand(terminalEnvironment.clear, "terminal clear");
   const closeTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");

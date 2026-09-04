@@ -1,15 +1,20 @@
 import { type TerminalSummary, WS_METHODS } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import { Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import {
   createAtomCommandScheduler,
+  createEnvironmentCommand,
   createEnvironmentRpcCommand,
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
+  runInEnvironment,
+  settleAsyncResult,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
+import { requestDiscard, subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
+import { createTerminalInputCommand } from "./terminalInput.ts";
 import {
   applyTerminalAttachStreamEvent,
   applyTerminalMetadataStreamEvent,
@@ -36,6 +41,28 @@ export function createTerminalEnvironmentAtoms<R, E>(
     readonly input: { readonly threadId: string; readonly terminalId?: string | undefined };
   }) => JSON.stringify([environmentId, input.threadId, input.terminalId ?? null]);
   const lifecycleConcurrency = { mode: "serial" as const, key: terminalThreadKey };
+  const sendTerminalInputFallback = createEnvironmentCommand(runtime, {
+    label: "environment-data:terminal:input:send",
+    execute: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalWrite>) =>
+      requestDiscard(WS_METHODS.terminalWrite, input),
+  });
+  const sendTerminalInput: typeof sendTerminalInputFallback = {
+    label: sendTerminalInputFallback.label,
+    run: (registry, target) => {
+      const runtimeContext = registry.get(runtime);
+      if (!AsyncResult.isSuccess(runtimeContext)) {
+        return sendTerminalInputFallback.run(registry, target);
+      }
+      return settleAsyncResult(() =>
+        Effect.runPromiseExitWith(runtimeContext.value)(
+          runInEnvironment(
+            target.environmentId,
+            requestDiscard(WS_METHODS.terminalWrite, target.input),
+          ),
+        ),
+      );
+    },
+  };
   return {
     attach: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:attach",
@@ -67,6 +94,7 @@ export function createTerminalEnvironmentAtoms<R, E>(
       label: "environment-data:terminal:write",
       tag: WS_METHODS.terminalWrite,
     }),
+    input: createTerminalInputCommand(sendTerminalInput),
     resize: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:terminal:resize",
       tag: WS_METHODS.terminalResize,
@@ -95,3 +123,4 @@ export function createTerminalEnvironmentAtoms<R, E>(
 }
 
 export * from "./terminalSession.ts";
+export * from "./terminalInput.ts";
