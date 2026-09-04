@@ -4,6 +4,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
+import * as Console from "effect/Console";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
@@ -126,6 +127,15 @@ import {
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
+import { federationHttpApiLayer } from "./federation/http.ts";
+import * as FederationIdentity from "./federation/FederationIdentity.ts";
+import * as FederationPeerStore from "./federation/FederationPeerStore.ts";
+import * as FederationService from "./federation/FederationService.ts";
+import * as FederationTransport from "./federation/FederationTransport.ts";
+import { tailcatHttpApiLayer } from "./tailcat/http.ts";
+import * as TailcatRemoteAccess from "./tailcat/TailcatRemoteAccess.ts";
+import * as TailcatRuntimeLive from "./tailcat/TailcatRuntimeLive.ts";
+import { formatTailcatHeadlessOutput } from "./tailcat/startupOutput.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
@@ -496,7 +506,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   ),
 );
 
-const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
+const RuntimeBaseDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   // Misc.
   Layer.provideMerge(BackgroundLayerLive),
   Layer.provideMerge(ResourceDiagnosticsLayerLive),
@@ -507,6 +517,26 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(RemoteOpenTargets.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
   Layer.provide(NetService.layer),
+);
+
+// Tailcat exposes this environment's loopback listener; federation rides on it.
+// Both consume the runtime above (auth, orchestration, checkpoints, workspace).
+const TailcatRemoteAccessLayerLive = TailcatRemoteAccess.layer.pipe(
+  Layer.provide(TailcatRuntimeLive.layer),
+);
+const FederationLayerLive = FederationService.layer.pipe(
+  Layer.provideMerge(
+    FederationTransport.layer.pipe(
+      Layer.provide(TailcatRuntimeLive.layer),
+      Layer.provide(NetService.layer),
+    ),
+  ),
+  Layer.provideMerge(FederationPeerStore.layer),
+  Layer.provideMerge(FederationIdentity.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+);
+const RuntimeDependenciesLive = FederationLayerLive.pipe(
+  Layer.provideMerge(TailcatRemoteAccessLayerLive),
+  Layer.provideMerge(RuntimeBaseDependenciesLive),
 );
 
 const commandReadinessLayer = HttpRouter.middleware(
@@ -525,6 +555,8 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(pullRequestHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
+      Layer.provide(tailcatHttpApiLayer),
+      Layer.provide(federationHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
     otlpTracesProxyRouteLayer,
@@ -553,6 +585,7 @@ export const makeServerLayer = Layer.unwrap(
     const activationLayer = Layer.succeed(ServerActivation, awaitActivation);
     const runtimeStateParked = yield* Deferred.make<void>();
     const tailscaleParked = yield* Deferred.make<void>();
+    const tailcatParked = yield* Deferred.make<void>();
     const cloudLinkParked = yield* Deferred.make<void>();
     const routesReady = yield* Deferred.make<void>();
     const launcherLayer = ServiceLauncherClient.layer;
@@ -651,6 +684,54 @@ export const makeServerLayer = Layer.unwrap(
           ),
         )
       : Layer.empty;
+    // Tailcat learns the bound loopback port once the listener is up, then
+    // starts serving if remote access is enabled (persisted or `--tailcat`).
+    const tailcatStartLayer = Layer.effectDiscard(
+      Effect.gen(function* () {
+        yield* Deferred.succeed(tailcatParked, undefined).pipe(Effect.orDie);
+        yield* awaitActivation;
+        const server = yield* HttpServer.HttpServer;
+        const address = server.address;
+        if (typeof address === "string" || !("port" in address)) {
+          return;
+        }
+        const remoteAccess = yield* TailcatRemoteAccess.TailcatRemoteAccess;
+        yield* remoteAccess.start({ localPort: address.port });
+        if (config.tailcatEnabled !== true || config.startupPresentation !== "headless") {
+          return;
+        }
+        // Headless `t3 serve --tailcat`: print a one-time connection code once
+        // the Tailcat listener is reachable, like the pairing URL for HTTP.
+        yield* Effect.forkScoped(
+          Stream.concat(Stream.fromEffect(remoteAccess.state), remoteAccess.changes).pipe(
+            Stream.filter(
+              (state) =>
+                state.status === "ready" ||
+                state.status === "error" ||
+                state.status === "unavailable",
+            ),
+            Stream.take(1),
+            Stream.runHead,
+            Effect.flatMap((settled) =>
+              settled._tag === "Some" && settled.value.status === "ready"
+                ? remoteAccess
+                    .createConnectionCode({})
+                    .pipe(
+                      Effect.flatMap((issued) =>
+                        Console.log(formatTailcatHeadlessOutput(settled.value, issued)),
+                      ),
+                    )
+                : Effect.logWarning("Tailcat remote access did not become ready.", {
+                    error: settled._tag === "Some" ? settled.value.lastError : null,
+                  }),
+            ),
+            Effect.catch((error) =>
+              Effect.logWarning("Could not print the Tailcat connection code.", { error }),
+            ),
+          ),
+        );
+      }),
+    );
     const cloudDesiredLinkReconcileLayer = Layer.effectDiscard(
       Effect.gen(function* () {
         if (!hasCloudPublicConfig) {
@@ -729,6 +810,7 @@ export const makeServerLayer = Layer.unwrap(
           Deferred.await(runtimeStateParked),
           Deferred.await(cloudLinkParked),
           Deferred.await(routesReady),
+          Deferred.await(tailcatParked),
           ...(config.tailscaleServeEnabled ? [Deferred.await(tailscaleParked)] : []),
         ],
         { concurrency: "unbounded" },
@@ -744,6 +826,7 @@ export const makeServerLayer = Layer.unwrap(
       httpListeningLayer,
       runtimeStateLayer,
       tailscaleServeLayer,
+      tailcatStartLayer,
       cloudDesiredLinkReconcileLayer,
     );
 

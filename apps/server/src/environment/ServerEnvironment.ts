@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  FEDERATION_PROTOCOL_VERSION,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
@@ -226,6 +227,8 @@ export const make = Effect.gen(function* () {
       threadTitleRegeneration: true,
       threadPullRequestLinking: true,
       environmentIcon: true,
+      tailcatRemoteAccess: true,
+      federation: { protocolVersion: FEDERATION_PROTOCOL_VERSION },
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
         ? {

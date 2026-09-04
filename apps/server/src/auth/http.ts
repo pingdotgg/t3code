@@ -36,6 +36,9 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
+import { isTailcatNodeKey } from "@t3tools/tailcat/address";
+import { TAILCAT_CONNECTION_CODE_PAIRING_SUBJECT } from "@t3tools/contracts";
+import * as TailcatRemoteAccess from "../tailcat/TailcatRemoteAccess.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
@@ -233,6 +236,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
+    const tailcatRemoteAccess = yield* TailcatRemoteAccess.TailcatRemoteAccess;
 
     return handlers
       .handle(
@@ -335,7 +339,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
                 )
               : undefined;
             yield* appendCredentialResponseHeaders;
-            return yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+            const exchange = yield* serverAuth.exchangeBootstrapCredential(
               args.payload.subject_token,
               requestedScopes,
               deriveAuthClientMetadata({
@@ -350,6 +354,28 @@ export const authHttpApiLayer = HttpApiBuilder.group(
               }),
               proofKeyThumbprint ? { proofKeyThumbprint } : undefined,
             );
+            // A Tailcat connection code binds the pairing to the client's node
+            // key: only a grant minted as such may extend the transport
+            // allowlist, so a LAN pairing link cannot smuggle a key in.
+            const tailcatNodeKey = args.payload.client_tailcat_node_key?.trim();
+            if (
+              tailcatNodeKey !== undefined &&
+              exchange.grant.subject === TAILCAT_CONNECTION_CODE_PAIRING_SUBJECT &&
+              isTailcatNodeKey(tailcatNodeKey)
+            ) {
+              yield* tailcatRemoteAccess
+                .recordTrustedPeer({
+                  nodeKey: tailcatNodeKey,
+                  label: args.payload.client_label,
+                  sessionId: exchange.sessionId,
+                })
+                .pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning("Could not record the paired Tailcat peer.", { error }),
+                  ),
+                );
+            }
+            return exchange.result;
           },
           traceRelayRequest,
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>

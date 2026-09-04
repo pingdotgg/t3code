@@ -74,6 +74,12 @@ export const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
   Flag.optional,
 );
+const tailcatFlag = Flag.boolean("tailcat").pipe(
+  Flag.withDescription(
+    "Enable Tailcat remote access: serve this backend through an encrypted Tailcat tunnel and print a connection code.",
+  ),
+  Flag.optional,
+);
 
 const EnvServerConfig = Config.all({
   logLevel: Config.logLevel("T3CODE_LOG_LEVEL").pipe(Config.withDefault("Info")),
@@ -139,6 +145,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  tailcatEnabled: Config.boolean("T3CODE_TAILCAT").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 export interface CliServerFlags {
@@ -154,6 +164,7 @@ export interface CliServerFlags {
   readonly logWebSocketEvents: Option.Option<boolean>;
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
+  readonly tailcatEnabled?: Option.Option<boolean>;
 }
 
 export interface CliAuthLocationFlags {
@@ -188,6 +199,7 @@ export const sharedServerCommandFlags = {
   logWebSocketEvents: logWebSocketEventsFlag,
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
+  tailcatEnabled: tailcatFlag,
 } as const;
 
 const resolveOptionPrecedence = <Value>(
@@ -231,6 +243,7 @@ export const resolveServerConfig = (
       logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
       tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
       tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
+      tailcatEnabled: flags.tailcatEnabled ?? Option.none(),
     } satisfies CliServerFlags;
     const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
     const bootstrapEnvelope =
@@ -336,6 +349,13 @@ export const resolveServerConfig = (
       ),
       () => 443,
     );
+    const tailcatEnabled = Option.getOrUndefined(
+      resolveOptionPrecedence(
+        normalizedFlags.tailcatEnabled ?? Option.none(),
+        Option.fromUndefinedOr(env.tailcatEnabled),
+      ),
+    );
+    const tailcatBinaryPath = bootstrap?.tailcatBinaryPath;
     const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
@@ -384,6 +404,8 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      tailcatEnabled,
+      tailcatBinaryPath,
     };
 
     return config;

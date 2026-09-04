@@ -21,6 +21,8 @@ import * as ServerConfig from "../config.ts";
 import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
 
 export interface BootstrapGrant {
+  /** The pairing link id, when the grant came from a persisted link. */
+  readonly id?: string;
   readonly method: ServerAuthBootstrapMethod;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly subject: string;
@@ -526,6 +528,7 @@ export const make = Effect.gen(function* () {
       if (Option.isSome(consumed)) {
         yield* emitRemoved(consumed.value.id);
         return {
+          id: consumed.value.id,
           method: consumed.value.method,
           scopes: consumed.value.scopes,
           subject: consumed.value.subject,

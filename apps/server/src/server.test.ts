@@ -93,6 +93,8 @@ const decodeTransferShellSnapshot = Schema.decodeUnknownEffect(
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
+import * as FederationService from "./federation/FederationService.ts";
+import * as TailcatRemoteAccess from "./tailcat/TailcatRemoteAccess.ts";
 import {
   isThreadDetailEvent,
   resolveAvailableEditorsForConfig,
@@ -562,6 +564,8 @@ const buildAppUnderTest = (options?: {
       logWebSocketEvents: false,
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
+      tailcatEnabled: undefined,
+      tailcatBinaryPath: undefined,
       ...options?.config,
     };
     const layerConfig = ServerConfig.layer(config);
@@ -717,6 +721,14 @@ const buildAppUnderTest = (options?: {
       Layer.provide(Layer.succeed(HostProcessEnvironment, {})),
     );
 
+    // Tailcat and federation are exercised by their own tests; here they only
+    // need to exist so the auth token exchange and RPC layer can resolve them.
+    const tailcatRemoteAccessLayer = Layer.mock(TailcatRemoteAccess.TailcatRemoteAccess)({
+      readyEndpoint: Effect.succeed(Option.none()),
+      recordTrustedPeer: () => Effect.void,
+      start: () => Effect.void,
+    });
+    const federationLayer = Layer.mock(FederationService.FederationService)({});
     const servedRoutesLayer = HttpRouter.serve(
       makeRoutesLayer.pipe(Layer.provide(serviceLauncherClientLayer)),
       {
@@ -979,6 +991,8 @@ const buildAppUnderTest = (options?: {
 
     const appLayer = servedRoutesLayer.pipe(
       Layer.provide(resourceTelemetryLayer),
+      Layer.provide(tailcatRemoteAccessLayer),
+      Layer.provide(federationLayer),
       Layer.provide(UsageService.layerTest),
       Layer.provide(
         Layer.mock(AnalyticsService.AnalyticsService)({
