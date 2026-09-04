@@ -346,6 +346,48 @@ final class NativeThreadCatchUpTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testNonImageAttachmentsResolveAfterTextCatchUpCompletes() async throws {
+        for (name, mimeType) in [("document.pdf", "application/pdf"), ("clip.mp4", "video/mp4")] {
+            let fixture = try await CatchUpFixture.make()
+            defer { fixture.cleanUp() }
+            var requests = fixture.requests.makeAsyncIterator()
+            var events = fixture.client.events().makeAsyncIterator()
+            _ = try await fixture.client.loadThread(id: fixture.firstID)
+            let stream = try await nextThreadRequest(&requests)
+            try await stream.synchronize()
+            _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+
+            await fixture.http.setResponse(text: "File ready", sequence: 10, attachment: .init(
+                type: "file", id: "file", name: name, mimeType: mimeType, sizeBytes: 20
+            ))
+            try await stream.invalidate(sequence: 10)
+            await nextCatchUp(&events, threadID: fixture.firstID)
+            // Text must become current before the asset URL request completes.
+            let messages = await messagesBeforeLive(&events, threadID: fixture.firstID)
+            XCTAssertEqual(messages, ["File ready"])
+
+            while let request = await requests.next(isolation: #isolation) {
+                guard request.tag == RPCMethod.assetsCreateURL.rawValue else { continue }
+                XCTAssertEqual(request.payload["resource"]?["mimeType"], .string(mimeType))
+                try await request.socket.succeed(id: request.id, value: .object([
+                    "relativeUrl": .string("/assets/\(name)"),
+                    "expiresAt": .number(Date.now.addingTimeInterval(3_600).timeIntervalSince1970 * 1_000),
+                ]))
+                break
+            }
+            var resolved: FeatureMessageAttachment?
+            while let event = await events.next(isolation: #isolation) {
+                guard case let .detail(detail) = event, detail.thread.id == fixture.firstID,
+                      let attachment = detail.messages.first?.attachments.first else { continue }
+                resolved = attachment
+                break
+            }
+            XCTAssertEqual(resolved?.mimeType, mimeType)
+            XCTAssertEqual(resolved?.url, URL(string: "https://one.example/assets/\(name)"))
+            await fixture.client.disconnect()
+        }
+    }
+
     private func nextHeldRead(
         _ iterator: inout AsyncStream<CatchUpHTTPRead>.Iterator
     ) async throws -> CatchUpHTTPRead {
@@ -451,8 +493,9 @@ private actor CatchUpHTTPTransport: HTTPTransport {
         heldReadContinuation = reads.continuation
     }
 
-    func setResponse(text: String, sequence: Int) {
-        setResponse(texts: [text], sequence: sequence)
+    func setResponse(text: String, sequence: Int, attachment: ChatAttachment? = nil) {
+        messages = [catchUpMessage(text, index: 0, attachment: attachment)]
+        self.sequence = sequence
     }
 
     func setResponse(texts: [String], sequence: Int, withImage: Bool = false) {
@@ -513,12 +556,14 @@ private struct CatchUpHTTPRead: Sendable {
     func fail() { continuation.resume(throwing: URLError(.notConnectedToInternet)) }
 }
 
-private func catchUpMessage(_ text: String, index: Int, withImage: Bool = false) -> OrchestrationMessage {
+private func catchUpMessage(
+    _ text: String, index: Int, withImage: Bool = false, attachment: ChatAttachment? = nil
+) -> OrchestrationMessage {
     OrchestrationMessage(
         id: "answer-\(index)", role: "assistant", text: text,
-        attachments: withImage ? [.init(
+        attachments: attachment.map { [$0] } ?? (withImage ? [.init(
             type: "image", id: "image-\(index)", name: "test.png", mimeType: "image/png", sizeBytes: 20
-        )] : [],
+        )] : []),
         turnId: nil, streaming: false, createdAt: "2026-09-02T12:00:00Z",
         updatedAt: "2026-09-02T12:00:00Z"
     )
@@ -623,6 +668,13 @@ private actor CatchUpSocket: WebSocketConnection {
     func chunk(id: Int, values: [JSONValue]) throws {
         try enqueue(.object([
             "_tag": .string("Chunk"), "requestId": .number(Double(id)), "values": .array(values),
+        ]))
+    }
+
+    func succeed(id: Int, value: JSONValue) throws {
+        try enqueue(.object([
+            "_tag": .string("Exit"), "requestId": .number(Double(id)),
+            "exit": .object(["_tag": .string("Success"), "value": value]),
         ]))
     }
 

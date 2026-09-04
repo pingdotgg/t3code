@@ -6003,9 +6003,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         environmentID: String
     ) {
         guard detail.messages.contains(where: { message in
-            message.attachments.contains {
-                $0.mimeType.hasPrefix("image/") && $0.url == nil
-            }
+            message.attachments.contains { $0.url == nil }
         }) else {
             return
         }

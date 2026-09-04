@@ -1133,6 +1133,9 @@ enum ThreadRefreshPresentation: Equatable {
         }
         if isOpening || loadState == .loading { return .loading }
         if case .failed = loadState { return .failed }
+        // A synchronized thread subscription is newer evidence than an
+        // environment's periodic shell probe. Socket loss has its own state.
+        if syncState == .live { return nil }
         switch connectionState {
         case .connecting, .reconnecting: return .reconnecting
         case .disconnected: return .offline
