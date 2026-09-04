@@ -30,6 +30,7 @@ import {
 import { ProjectionStoreV2, layer as projectionStoreLayer } from "./ProjectionStore.ts";
 import {
   ProviderEventIngestorV2,
+  ProviderTurnAnalytics,
   layer as providerEventIngestorLayer,
 } from "./ProviderEventIngestor.ts";
 import { makeProviderFailure } from "./ProviderFailure.ts";
@@ -118,6 +119,106 @@ function threadCreatedEvent(
 }
 
 const layer = it.layer(TestLayer);
+
+it.effect("records accepted billed turn usage once without billing the context window", () => {
+  const recorded: Array<Readonly<Record<string, unknown>>> = [];
+  const analytics = Layer.succeed(ProviderTurnAnalytics, {
+    record: (properties: Readonly<Record<string, unknown>>) =>
+      Effect.sync(() => {
+        recorded.push(properties);
+      }),
+  });
+  return Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const eventSink = yield* EventSinkV2;
+    const ingestor = yield* ProviderEventIngestorV2;
+    const idAllocator = yield* IdAllocatorV2;
+    const threadEvent = yield* threadCreatedEvent(now);
+    yield* eventSink.write({ events: [threadEvent] });
+    const providerSessionId = yield* idAllocator.allocate.providerSession({
+      providerInstanceId: modelSelection.instanceId,
+      threadId: threadEvent.threadId,
+    });
+    const providerThreadId = idAllocator.derive.providerThread({
+      driver: CODEX_DRIVER,
+      nativeThreadId: "billing-thread",
+    });
+    const providerTurn = {
+      id: idAllocator.derive.providerTurn({ driver: CODEX_DRIVER, nativeTurnId: "billing-turn" }),
+      providerThreadId,
+      nodeId: NodeId.make("node:billing-turn"),
+      runAttemptId: null,
+      nativeTurnRef: null,
+      ordinal: 1,
+      status: "completed" as const,
+      startedAt: now,
+      completedAt: DateTime.makeUnsafe(DateTime.toEpochMillis(now) + 120),
+      tokenUsage: {
+        inputTokens: 4000,
+        cachedInputTokens: 3000,
+        outputTokens: 100,
+        usedTokens: 4100,
+        updatedAt: DateTime.formatIso(now),
+      },
+      turnTokenUsage: {
+        usageStatus: "complete" as const,
+        usageScope: "main_agent" as const,
+        hasSubagents: false,
+        inputTokens: 40,
+        cachedInputTokens: 30,
+        outputTokens: 10,
+      },
+    };
+    const input = {
+      providerSessionId,
+      providerInstanceId: modelSelection.instanceId,
+      threadId: threadEvent.threadId,
+      analyticsContext: {
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+      },
+      event: { type: "provider_turn.updated" as const, driver: CODEX_DRIVER, providerTurn },
+    };
+    yield* ingestor.ingestNormalized(input);
+    yield* ingestor.ingestNormalized(input);
+    const ignored = yield* ingestor.ingestNormalized({
+      ...input,
+      event: {
+        ...input.event,
+        providerTurn: {
+          ...providerTurn,
+          id: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "stale-billing-turn",
+          }),
+        },
+      },
+      writeIfRunCurrent: {
+        runId: RunId.make("missing-run"),
+        activeAttemptId: RunAttemptId.make("stale-attempt"),
+        expectedStatus: "running",
+      },
+    });
+    assert.isEmpty(ignored);
+    assert.lengthOf(recorded, 1);
+    assert.deepEqual(recorded[0], {
+      provider: CODEX_DRIVER,
+      terminalStatus: "completed",
+      usageStatus: "complete",
+      usageScope: "main_agent",
+      hasSubagents: false,
+      inputTokens: 40,
+      cachedInputTokens: 30,
+      outputTokens: 10,
+      model: modelSelection.model,
+      mixedModels: false,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      durationMs: 120,
+    });
+  }).pipe(Effect.provide(TestLayer.pipe(Layer.provide(analytics))));
+});
 
 layer("ProviderEventIngestorV2", (it) => {
   it.effect("normalizes provider events through the real event log and projection store", () =>

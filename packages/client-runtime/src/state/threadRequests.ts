@@ -1,5 +1,7 @@
 import type {
   OrchestrationV2ThreadProjection,
+  OrchestrationV2RuntimeRequest,
+  OrchestrationV2UserInputQuestion,
   ProviderApprovalOption,
   ProviderRequestKind,
   RuntimeRequestId,
@@ -18,14 +20,10 @@ export interface ThreadPendingApproval {
   readonly responseCapability: "live" | "not_resumable";
 }
 
-export interface ThreadUserInputQuestion {
-  readonly id: string;
-  readonly header: string;
-  readonly question: string;
-  readonly options: ReadonlyArray<{
-    readonly label: string;
-    readonly description: string;
-  }>;
+export interface ThreadUserInputQuestion extends Omit<
+  OrchestrationV2UserInputQuestion,
+  "multiSelect"
+> {
   readonly multiSelect: boolean;
 }
 
@@ -33,7 +31,8 @@ export interface ThreadPendingUserInput {
   readonly requestId: RuntimeRequestId;
   readonly createdAt: string;
   readonly questions: ReadonlyArray<ThreadUserInputQuestion>;
-  readonly responseCapability: "live" | "not_resumable";
+  readonly responseCapability: OrchestrationV2RuntimeRequest["responseCapability"]["type"];
+  readonly responseMode?: "message";
 }
 
 export interface PendingThreadRequests {
@@ -65,6 +64,9 @@ export function derivePendingThreadRequests(
           multiSelect: question.multiSelect ?? false,
         })),
         responseCapability,
+        ...(item.responseMode === "message" || responseCapability === "message"
+          ? { responseMode: "message" as const }
+          : {}),
       });
       continue;
     }
@@ -82,7 +84,7 @@ export function derivePendingThreadRequests(
       ...(item?.type === "approval_request" && item.options !== undefined
         ? { options: item.options }
         : {}),
-      responseCapability,
+      responseCapability: responseCapability === "live" ? "live" : "not_resumable",
     });
   }
 

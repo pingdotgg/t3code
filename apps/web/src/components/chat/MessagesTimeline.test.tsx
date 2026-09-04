@@ -6,17 +6,24 @@ import type { LegendListRef } from "@legendapp/list/react";
 
 const activityTestState = vi.hoisted(() => ({ expanded: false }));
 
+vi.mock("../DiffWorkerPoolProvider", () => ({
+  DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => children,
+}));
+
 vi.mock("./MessagesTimeline.logic", async (importOriginal) => {
   const logic = await importOriginal<typeof import("./MessagesTimeline.logic")>();
   return {
     ...logic,
-    deriveMessagesTimelineRows(input: Parameters<typeof logic.deriveMessagesTimelineRows>[0]) {
-      const rows = logic.deriveMessagesTimelineRows(input);
-      if (!activityTestState.expanded) return rows;
-      return logic.deriveMessagesTimelineRows({
+    deriveMessagesTimelineRowsWithState(
+      input: Parameters<typeof logic.deriveMessagesTimelineRowsWithState>[0],
+      previous: Parameters<typeof logic.deriveMessagesTimelineRowsWithState>[1],
+    ) {
+      const projection = logic.deriveMessagesTimelineRowsWithState(input, previous);
+      if (!activityTestState.expanded) return projection;
+      return logic.deriveMessagesTimelineRowsWithState({
         ...input,
         expandedWorkGroupIds: new Set(
-          rows.flatMap((row) =>
+          projection.rows.flatMap((row) =>
             row.kind === "work-toggle" || row.kind === "work-live" ? [row.groupId] : [],
           ),
         ),
@@ -151,10 +158,6 @@ function MockFileDiff(props: {
 vi.mock("@pierre/diffs/react", () => {
   return { FileDiff: MockFileDiff };
 });
-
-vi.mock("../DiffWorkerPoolProvider", () => ({
-  DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => children,
-}));
 
 function matchMedia() {
   return {
@@ -546,16 +549,17 @@ describe("MessagesTimeline", () => {
         scrollLength: 800,
       }),
     ).toBe(false);
-    // The composer inset is part of contentLength and must not count as
-    // distance-to-end.
+    // LegendList can report at-end while the composer still covers the last row.
     expect(
-      resolveTimelineIsAtEnd(
-        { isAtEnd: false, contentLength: 2100, scroll: 1170, scrollLength: 800 },
-        100,
-      ),
-    ).toBe(true);
+      resolveTimelineIsAtEnd({
+        isAtEnd: true,
+        contentLength: 2100,
+        scroll: 1170,
+        scrollLength: 800,
+      }),
+    ).toBe(false);
     // Geometry missing (older state shape): fall back to the nearEnd/strict flags.
-    expect(resolveTimelineIsAtEnd({ isNearEnd: true, isAtEnd: false })).toBe(true);
+    expect(resolveTimelineIsAtEnd({ isNearEnd: true, isAtEnd: false })).toBe(false);
     expect(resolveTimelineIsAtEnd({ isAtEnd: false })).toBe(false);
 
     expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100vh - 18rem))");
@@ -679,7 +683,7 @@ describe("MessagesTimeline", () => {
     expect(onAnchorReady).not.toHaveBeenCalled();
   });
 
-  it("renders generic attachments as download links instead of image previews", () => {
+  it("offers preview and download actions for PDF attachments", () => {
     const entry = {
       ...buildUserTimelineEntry("Read the report."),
       message: {
@@ -701,9 +705,8 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
     );
 
-    expect(markup).toContain(
-      '<a href="https://environment.test/api/assets/report.pdf" download="report.pdf" class="flex min-w-0 items-center gap-2 rounded-md py-1 text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70">',
-    );
+    expect(markup).toContain('aria-label="Preview report.pdf"');
+    expect(markup).toContain('aria-label="Download report.pdf"');
     expect(markup).not.toContain('alt="report.pdf"');
   });
 
@@ -728,10 +731,9 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
     );
 
-    expect(markup).toContain(
-      '<button type="button" aria-label="Download report.pdf" class="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70">',
-    );
-    expect(markup).not.toContain("href=");
+    expect(markup).toContain('aria-label="Preview report.pdf"');
+    expect(markup).toContain('aria-label="Download report.pdf"');
+    expect(markup).not.toContain("<a ");
   });
 
   it("does not download an optimistic file before the server supplies its attachment ID", () => {
@@ -786,7 +788,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("voice-memo.ogg");
     expect(markup).not.toContain('aria-label="Download voice-memo.ogg"');
     expect(markup).not.toContain('alt="voice-memo.ogg"');
-    expect(markup).not.toContain("href=");
+    expect(markup).not.toContain("<a ");
   });
 
   it("keeps reserved end space when tool work starts while reading history", () => {
@@ -976,7 +978,7 @@ describe("MessagesTimeline", () => {
     expect(markup.indexOf("Steer")).toBeLessThan(markup.indexOf("Adjust the current turn"));
   });
 
-  it("does not add redundant space below a collapsed turn divider", () => {
+  it("keeps compact spacing below a collapsed turn divider", () => {
     const runId = RunId.make("run-collapsed-spacing");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1015,7 +1017,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('class="pb-0" data-timeline-row-id="turn-fold:');
+    expect(markup).toContain('class="pb-1.5" data-timeline-row-id="turn-fold:');
     expect(markup).toContain('data-timeline-row-kind="turn-fold"');
     expect(markup).not.toContain("border-b border-border/60");
   });
@@ -2335,7 +2337,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("lucide-circle-alert");
+    expect(markup).toContain("lucide-zap");
     expect(markup).toContain('aria-label="Tool call failed"');
     // Ordinary tool failures render muted, not red.
     expect(markup).not.toContain("text-destructive");

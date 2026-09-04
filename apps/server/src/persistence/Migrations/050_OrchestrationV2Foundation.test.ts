@@ -3,12 +3,12 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
-import * as NodeSqliteClient from "../NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 it.effect("backfills the V2 event driver from payload before the legacy provider column", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* runMigrations({ toMigrationInclusive: 46 });
+    yield* runMigrations({ toMigrationInclusive: 49 });
 
     yield* sql`
       INSERT INTO orchestration_v2_events (
@@ -37,7 +37,7 @@ it.effect("backfills the V2 event driver from payload before the legacy provider
         )
     `;
 
-    yield* runMigrations({ toMigrationInclusive: 47 });
+    yield* runMigrations({ toMigrationInclusive: 50 });
 
     const events = yield* sql<{
       readonly event_id: string;

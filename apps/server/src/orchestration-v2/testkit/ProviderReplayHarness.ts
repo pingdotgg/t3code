@@ -35,6 +35,7 @@ import { layer as orchestratorLayer } from "../Orchestrator.ts";
 import { layer as projectionStoreLayer } from "../ProjectionStore.ts";
 import { OrchestratorV2, type OrchestratorV2Error } from "../Orchestrator.ts";
 import { ProviderAdapterRegistryV2 } from "../ProviderAdapterRegistry.ts";
+import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { layer as providerEventIngestorLayer } from "../ProviderEventIngestor.ts";
 import { layerWithOptions as providerSessionManagerLayerWithOptions } from "../ProviderSessionManager.ts";
 import { layer as providerSwitchServiceLayer } from "../ProviderSwitchService.ts";
@@ -324,6 +325,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         idAllocatorLayer,
         storesLayer,
         providerSessionManagerProvided,
+        Layer.mock(ProviderAuthService)({ tryHandlePromptCommand: () => Effect.succeed(false) }),
         runExecutionServiceProvided,
         runtimeLayer,
       ),

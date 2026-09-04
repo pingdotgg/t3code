@@ -46,8 +46,10 @@ import type {
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2TurnMessage,
 } from "./ProviderAdapter.ts";
+import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
 import { ProviderEventIngestorV2 } from "./ProviderEventIngestor.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
+import { RunFinalizationObserver } from "./RunFinalizationService.ts";
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -562,6 +564,7 @@ export const layer: Layer.Layer<
     const idAllocator = yield* IdAllocatorV2;
     const providerEventIngestor = yield* ProviderEventIngestorV2;
     const serverSettings = yield* ServerSettingsService;
+    const finalizationObserver = yield* RunFinalizationObserver;
 
     const writeFinalRunEvents = (input: {
       readonly run: OrchestrationV2Run;
@@ -574,6 +577,7 @@ export const layer: Layer.Layer<
       readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
       readonly terminal: ProviderTerminalEvent;
       readonly failureItemPersisted: boolean;
+      readonly refreshAfterTurn: Effect.Effect<void>;
     }) =>
       Effect.gen(function* () {
         const completedAt = yield* DateTime.now;
@@ -615,6 +619,7 @@ export const layer: Layer.Layer<
                   },
                 ],
               });
+              yield* input.refreshAfterTurn;
             }
           }
           return;
@@ -774,6 +779,7 @@ export const layer: Layer.Layer<
             },
           ],
         });
+        yield* input.refreshAfterTurn;
       });
 
     return RunExecutionServiceV2.of({
@@ -811,6 +817,18 @@ export const layer: Layer.Layer<
           ) {
             return;
           }
+          // Startup failure and stream shutdown can report the same attempt.
+          const refreshAfterTurn = yield* Effect.cached(
+            finalizationObserver.refreshAfterTurn.pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("failed to refresh pull requests after run termination", {
+                  threadId: input.run.threadId,
+                  runId: input.run.id,
+                  cause,
+                }),
+              ),
+            ),
+          );
           const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
           const makeFailedTerminalEvent = (
             failure: OrchestrationV2ProviderFailure,
@@ -905,6 +923,7 @@ export const layer: Layer.Layer<
                 openRunOwnedSubagents: openSubagents,
                 terminal,
                 failureItemPersisted: terminal.status === "failed",
+                refreshAfterTurn,
               }).pipe(
                 Effect.mapError(
                   (cause) => new RunExecutionIngestError({ runId: input.run.id, cause }),
@@ -1112,6 +1131,11 @@ export const layer: Layer.Layer<
                     event.type === "provider_thread.updated" &&
                     event.providerThread.id === input.providerThread.id;
                   const storedEvents = yield* providerEventIngestor.ingestNormalized({
+                    analyticsContext: {
+                      modelSelection: input.modelSelection,
+                      runtimeMode: input.runtimePolicy.runtimeMode,
+                      interactionMode: input.runtimePolicy.interactionMode,
+                    },
                     providerSessionId: input.providerSessionId,
                     providerInstanceId: input.run.providerInstanceId,
                     threadId: input.run.threadId,
@@ -1222,6 +1246,7 @@ export const layer: Layer.Layer<
                                           latestItemOrdinal + 1,
                                         ),
                                         failureItemPersisted: false,
+                                        refreshAfterTurn,
                                       }),
                                     ),
                                   ),
@@ -1257,74 +1282,89 @@ export const layer: Layer.Layer<
           // its already-issued MCP credential valid even when the agent goes
           // a long time between browser-tool calls.
           yield* McpSessionRegistry.touchActiveMcpThread(input.run.threadId);
-          yield* input.session
-            .startTurn({
-              appThread: input.appThread,
-              threadId: input.run.threadId,
-              runId: input.run.id,
-              runOrdinal: input.run.ordinal,
-              providerTurnOrdinal: input.providerTurnOrdinal,
-              attemptId: input.attemptId,
-              rootNodeId: input.rootNode.id,
-              providerThread: input.providerThread,
-              message: input.message,
-              modelSelection: input.modelSelection,
-              runtimePolicy: input.runtimePolicy,
-            })
-            .pipe(
-              Effect.catchCause((cause) =>
-                Effect.logError("orchestration V2 provider turn start failed", {
+          const turnInput = {
+            appThread: input.appThread,
+            threadId: input.run.threadId,
+            runId: input.run.id,
+            runOrdinal: input.run.ordinal,
+            providerTurnOrdinal: input.providerTurnOrdinal,
+            attemptId: input.attemptId,
+            rootNodeId: input.rootNode.id,
+            providerThread: input.providerThread,
+            message: input.message,
+            modelSelection: input.modelSelection,
+            runtimePolicy: input.runtimePolicy,
+          };
+          const compact =
+            input.message.attachments.length === 0 &&
+            input.message.text.trim().toLowerCase() === "/compact";
+          const startTurn = compact
+            ? (input.session.compactThread?.(turnInput) ??
+              Effect.fail(
+                new ProviderAdapterTurnStartError({
+                  driver: input.session.driver,
+                  threadId: input.run.threadId,
+                  providerThreadId: input.providerThread.id,
                   runId: input.run.id,
-                  cause,
-                }).pipe(
-                  Effect.andThen(Fiber.interrupt(providerEventFiber)),
-                  Effect.andThen(Ref.get(latestProviderThread)),
-                  Effect.flatMap((providerThread) =>
-                    Ref.get(latestTurnItemOrdinal).pipe(
-                      Effect.flatMap((latestItemOrdinal) =>
-                        Ref.get(openRunOwnedSubagents).pipe(
-                          Effect.flatMap((openSubagents) =>
-                            writeFinalRunEvents({
-                              run: input.run,
-                              rootNode: input.rootNode,
-                              checkpointScope: input.checkpointScope,
-                              providerThread,
-                              attempt: input.attempt,
-                              ...(input.shouldFinalizeRun === undefined
-                                ? {}
-                                : { shouldFinalizeRun: input.shouldFinalizeRun }),
-                              ...(input.hasUnpairedRunInterruptRequest === undefined
-                                ? {}
-                                : {
-                                    hasUnpairedRunInterruptRequest:
-                                      input.hasUnpairedRunInterruptRequest,
-                                  }),
-                              openRunOwnedSubagents: openSubagents,
-                              terminal: makeFailedTerminalEvent(
-                                makeProviderFailure({
-                                  cause: Cause.squash(cause),
-                                  class: "provider_error",
+                  cause: "This provider does not support context compaction.",
+                }),
+              ))
+            : input.session.startTurn(turnInput);
+          yield* startTurn.pipe(
+            Effect.catchCause((cause) =>
+              Effect.logError("orchestration V2 provider turn start failed", {
+                runId: input.run.id,
+                cause,
+              }).pipe(
+                Effect.andThen(Fiber.interrupt(providerEventFiber)),
+                Effect.andThen(Ref.get(latestProviderThread)),
+                Effect.flatMap((providerThread) =>
+                  Ref.get(latestTurnItemOrdinal).pipe(
+                    Effect.flatMap((latestItemOrdinal) =>
+                      Ref.get(openRunOwnedSubagents).pipe(
+                        Effect.flatMap((openSubagents) =>
+                          writeFinalRunEvents({
+                            run: input.run,
+                            rootNode: input.rootNode,
+                            checkpointScope: input.checkpointScope,
+                            providerThread,
+                            attempt: input.attempt,
+                            ...(input.shouldFinalizeRun === undefined
+                              ? {}
+                              : { shouldFinalizeRun: input.shouldFinalizeRun }),
+                            ...(input.hasUnpairedRunInterruptRequest === undefined
+                              ? {}
+                              : {
+                                  hasUnpairedRunInterruptRequest:
+                                    input.hasUnpairedRunInterruptRequest,
                                 }),
-                                latestItemOrdinal + 1,
-                              ),
-                              failureItemPersisted: false,
-                            }),
-                          ),
+                            openRunOwnedSubagents: openSubagents,
+                            terminal: makeFailedTerminalEvent(
+                              makeProviderFailure({
+                                cause: Cause.squash(cause),
+                                class: "provider_error",
+                              }),
+                              latestItemOrdinal + 1,
+                            ),
+                            failureItemPersisted: false,
+                            refreshAfterTurn,
+                          }),
                         ),
                       ),
                     ),
                   ),
-                  Effect.mapError(
-                    (writeCause) =>
-                      new RunExecutionStartError({
-                        commandId: input.commandId,
-                        runId: input.run.id,
-                        cause: { start: cause, write: writeCause },
-                      }),
-                  ),
+                ),
+                Effect.mapError(
+                  (writeCause) =>
+                    new RunExecutionStartError({
+                      commandId: input.commandId,
+                      runId: input.run.id,
+                      cause: { start: cause, write: writeCause },
+                    }),
                 ),
               ),
-            );
+            ),
+          );
         }),
     } satisfies RunExecutionServiceV2Shape);
   }),

@@ -4,15 +4,15 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
-import * as NodeSqliteClient from "../NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("050_ApplicationEventSource", (it) => {
+layer("053_ApplicationEventSource", (it) => {
   it.effect("moves V2 events and current project state behind one global sequence", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 49 });
+      yield* runMigrations({ toMigrationInclusive: 52 });
 
       yield* sql`
         INSERT INTO orchestration_v2_events (
@@ -84,7 +84,7 @@ layer("050_ApplicationEventSource", (it) => {
         )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 50 });
+      yield* runMigrations({ toMigrationInclusive: 53 });
 
       const events = yield* sql<{
         readonly sequence: number;

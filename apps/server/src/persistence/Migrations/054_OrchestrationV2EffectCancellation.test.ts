@@ -4,15 +4,15 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
-import * as NodeSqliteClient from "../NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("051_OrchestrationV2EffectCancellation", (it) => {
+layer("054_OrchestrationV2EffectCancellation", (it) => {
   it.effect("preserves existing effects and adds the cancelled terminal status", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 50 });
+      yield* runMigrations({ toMigrationInclusive: 53 });
       yield* sql`
         INSERT INTO orchestration_v2_effect_outbox (
           effect_id,
@@ -47,7 +47,7 @@ layer("051_OrchestrationV2EffectCancellation", (it) => {
         )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 51 });
+      yield* runMigrations({ toMigrationInclusive: 54 });
       yield* sql`
         UPDATE orchestration_v2_effect_outbox
         SET
