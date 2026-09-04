@@ -118,7 +118,7 @@ describe("mobile message fork availability", () => {
     ).toEqual(new Set([TurnId.make("turn-ready")]));
   });
 
-  it("requires a ready checkpoint for any-turn providers", () => {
+  it("requires a ready checkpoint for earlier any-turn responses", () => {
     expect(
       canForkMobileAssistantMessage({
         capability: "any-turn",
@@ -128,6 +128,18 @@ describe("mobile message fork availability", () => {
         latestTurn,
       }),
     ).toBe(false);
+  });
+
+  it("forks the latest completed any-turn response before its checkpoint is ready", () => {
+    expect(
+      canForkMobileAssistantMessage({
+        capability: "any-turn",
+        completed: true,
+        completedTurnIds: new Set(),
+        messageTurnId: latestTurn.turnId,
+        latestTurn,
+      }),
+    ).toBe(true);
   });
 
   it("rejects a failed or interrupted latest turn for any-turn providers", () => {

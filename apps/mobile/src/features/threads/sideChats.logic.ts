@@ -65,11 +65,16 @@ export function canForkMobileAssistantMessage(input: {
   ) {
     return false;
   }
-  if (input.capability === "any-turn") return input.completedTurnIds.has(input.messageTurnId);
-  return (
-    input.capability === "latest-turn" &&
-    input.messageTurnId === resolveMobileLatestCompletedTurnId(input.latestTurn)
-  );
+  const latestCompletedTurnId = resolveMobileLatestCompletedTurnId(input.latestTurn);
+  if (input.capability === "any-turn") {
+    // The latest completed turn is forkable as soon as it completes; older
+    // turns need a ready checkpoint to prove they finished, same as web.
+    return (
+      input.messageTurnId === latestCompletedTurnId ||
+      input.completedTurnIds.has(input.messageTurnId)
+    );
+  }
+  return input.capability === "latest-turn" && input.messageTurnId === latestCompletedTurnId;
 }
 
 export interface MobileSideChatMenuItem {
