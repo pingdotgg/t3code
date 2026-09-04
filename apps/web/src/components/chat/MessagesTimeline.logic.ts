@@ -521,9 +521,10 @@ function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
 }
 
 /**
- * Settled turns fold activity before their terminal assistant message behind
- * a "Worked for ..." row. Work that lands after that message stays visible so
- * failed or interrupted turns do not hide their trailing tool-call summary.
+ * Settled turns fold work activity before their terminal assistant message
+ * behind a "Worked for ..." row, while retaining every assistant message.
+ * Providers may emit a substantive answer before trailing commentary, and
+ * work after the terminal message must remain visible for interrupted turns.
  */
 function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
@@ -598,6 +599,17 @@ function deriveTurnFolds(input: {
       ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
       : group.entries.length;
     for (const [index, entry] of group.entries.entries()) {
+      if (entry.kind !== "work") {
+        if (
+          entry.kind === "message" &&
+          entry.message.role === "assistant" &&
+          entry.message.text.trim().length === 0 &&
+          !input.terminalAssistantMessageIds.has(entry.message.id)
+        ) {
+          hiddenEntryIds.add(entry.id);
+        }
+        continue;
+      }
       if (entry.id === group.terminalEntry?.id) {
         continue;
       }
@@ -608,13 +620,10 @@ function deriveTurnFolds(input: {
       // turn (dynamic spawns, background execution), and folding the CTA
       // when the turn settles makes a still-running fleet invisible.
       if (
-        entry.kind === "work" &&
-        (entry.entry.agentSpawn !== undefined ||
-          entry.entry.sourceActivityKind === "context-compaction")
+        entry.entry.agentSpawn !== undefined ||
+        entry.entry.sourceActivityKind === "context-compaction" ||
+        workEntryRendersImagePreview(entry.entry)
       ) {
-        continue;
-      }
-      if (entry.kind === "work" && workEntryRendersImagePreview(entry.entry)) {
         continue;
       }
       hiddenEntryIds.add(entry.id);
