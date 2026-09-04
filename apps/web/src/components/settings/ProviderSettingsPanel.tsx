@@ -24,7 +24,7 @@ import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
-import { ChevronDownIcon, LoaderIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
+import { PlusIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
@@ -56,7 +56,6 @@ import {
   type ProviderUpdateCandidate,
 } from "../ProviderUpdateLaunchNotification.logic";
 import { Button } from "../ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import {
   NumberField,
   NumberFieldDecrement,
@@ -69,6 +68,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
+import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import { providerSettingsTabClassName } from "./providerSettingsTabs";
@@ -196,7 +196,7 @@ interface ProviderSettingsTarget {
 
 export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
   return (
-    <SettingsPageContainer className="gap-8">
+    <SettingsPageContainer width="wide" className="gap-8">
       <ProviderSettingsPanelContent
         key={`${target.environmentId ?? ""}:${target.instanceId ?? ""}`}
         {...target}
@@ -242,7 +242,8 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
   )?.environmentId;
   useEffect(() => {
     if (
-      searchTargetId === searchableSetting("provider-health-check-interval").id &&
+      (searchTargetId === searchableSetting("provider-health-check-interval").id ||
+        searchTargetId === searchableSetting("usage-providers").id) &&
       !selectedEnvironmentCanRenderSettings &&
       searchableEnvironmentId !== undefined
     ) {
@@ -254,11 +255,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
   const deviceTabs =
     !onlyPrimaryDevice && options.length > 0 ? (
       <ScrollArea hideScrollbars scrollFade className="mx-3 h-11 min-w-0 rounded-none sm:mx-4">
-        <div
-          role="group"
-          aria-label="Devices"
-          className="flex h-full w-max min-w-full border-b border-border/70 px-1"
-        >
+        <div role="group" aria-label="Devices" className="flex h-full w-max min-w-full px-1">
           {options.map((environment) => {
             const machine = resolveEnvironmentMachineKind(environment.serverConfig);
             const selected = environment.environmentId === effectiveEnvironmentId;
@@ -484,10 +481,9 @@ export function EnvironmentProviderSettings({
   readonly targetInstanceId?: ProviderInstanceId | undefined;
   /**
    * Grey out and freeze every write control when this session's credential
-   * lacks `orchestration:operate` on the environment. Selecting providers and
-   * opening Advanced still work so the real configuration stays readable;
-   * switches, forms, and the health interval are inert so no write is
-   * offered and then rejected.
+   * lacks `orchestration:operate` on the environment. Selecting providers
+   * still works so the real configuration stays readable; switches, forms,
+   * and the health interval are inert so no write is offered and then rejected.
    */
   readonly readOnly?: boolean;
 }) {
@@ -506,19 +502,11 @@ export function EnvironmentProviderSettings({
   const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | null>(
     targetInstanceId ?? null,
   );
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const searchTargetId = useSettingsSearchTargetId();
   const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
     ReadonlySet<ProviderDriverKind>
   >(() => new Set());
   const refreshingRef = useRef(false);
   const updatingDriversRef = useRef<Set<ProviderDriverKind>>(new Set());
-
-  useEffect(() => {
-    if (searchTargetId === searchableSetting("provider-health-check-interval").id) {
-      setAdvancedOpen(true);
-    }
-  }, [searchTargetId]);
 
   const providerUpdateCandidates = useMemo(
     () => collectProviderUpdateCandidates(serverProviders),
@@ -924,6 +912,7 @@ export function EnvironmentProviderSettings({
     <>
       <SettingsSection
         {...searchableSetting("providers")}
+        variant="plain"
         headerAction={
           <div className="flex min-w-0 items-center gap-2">
             {readOnly ? (
@@ -978,121 +967,117 @@ export function EnvironmentProviderSettings({
       >
         {deviceTabs}
         {readOnly ? (
-          <SettingsRow
-            title="Limited permissions"
-            description={`This session can view ${environmentLabel}'s providers, but its credential does not allow changing their configuration.`}
-          />
+          <div className="overflow-hidden rounded-xl border border-border/60 bg-card/40 shadow-xs/5">
+            <SettingsRow
+              title="Limited permissions"
+              description={`This session can view ${environmentLabel}'s providers but can't change their settings.`}
+            />
+          </div>
         ) : null}
-        <div className="space-y-1">
-          <div className="mx-3 overflow-hidden rounded-lg border border-border/70 sm:mx-4 lg:grid lg:h-[min(38rem,calc(100dvh-16rem))] lg:min-h-[30rem] lg:grid-cols-[20rem_minmax(0,1fr)]">
-            <div className="border-b border-border/70 lg:flex lg:min-h-0 lg:flex-col lg:border-r lg:border-b-0">
-              <ScrollArea scrollFade chainVerticalScroll className="lg:min-h-0 lg:flex-1">
-                <div className="divide-y divide-border/60">
-                  {rows.map((row) => (
-                    <div key={row.instanceId} className="p-1">
-                      {renderProviderInstance(row, "list")}
-                    </div>
-                  ))}
-                </div>
-              </ScrollArea>
-            </div>
-
-            <div className="min-w-0 lg:min-h-0">
-              {selectedRow ? (
-                renderProviderInstance(selectedRow, "editor")
-              ) : (
-                <div className="p-6 text-sm text-muted-foreground">
-                  {targetInstanceMissing
-                    ? "This provider instance is no longer available on this device."
-                    : "No providers configured."}
-                </div>
-              )}
-            </div>
+        <div className="overflow-hidden rounded-xl border border-border/60 bg-card/40 shadow-xs/5 lg:grid lg:h-[min(44rem,calc(100dvh-11rem))] lg:min-h-[32rem] lg:grid-cols-[17rem_minmax(0,1fr)]">
+          <div className="border-b border-border/60 bg-muted/10 lg:flex lg:min-h-0 lg:flex-col lg:border-r lg:border-b-0">
+            <ScrollArea scrollFade chainVerticalScroll className="lg:min-h-0 lg:flex-1">
+              <div className="divide-y divide-border/50">
+                {rows.map((row) => renderProviderInstance(row, "list"))}
+              </div>
+            </ScrollArea>
           </div>
 
-          <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="mt-1">
-            <CollapsibleTrigger className="flex h-10 w-full items-center gap-2 px-3 text-xs text-muted-foreground hover:text-foreground sm:px-4">
-              <ChevronDownIcon
-                className={cn("size-3 transition-transform", advancedOpen && "rotate-180")}
-              />
-              Advanced
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              {/* Only the write controls go inert; the title and its policy tooltip stay readable. */}
-              <SettingsRow
-                id={searchableSetting("provider-health-check-interval").id}
-                title={
-                  <span className="inline-flex items-center gap-1.5">
-                    {searchableSetting("provider-health-check-interval").title}
-                    <PolicyTooltip>
-                      This interval is configured here, then the shared Background activity policy
-                      decides whether provider probes may run when the timer fires. Custom intervals
-                      appear as Advanced in General settings.
-                    </PolicyTooltip>
-                  </span>
-                }
-                description="Refresh availability, versions, auth state, and models in the background. 0 seconds turns background checks off."
-                resetAction={
-                  providerHealthRefreshIntervalSeconds !==
-                  defaultProviderHealthRefreshIntervalSeconds ? (
-                    <span inert={readOnly} className={readOnly ? "opacity-50" : undefined}>
-                      <SettingResetButton
-                        label="provider health check interval"
-                        onClick={() =>
-                          updateSettings(
-                            backgroundActivityOverrideSettings(
-                              settings.backgroundActivity,
-                              resolvedBackgroundActivity,
-                              { providerHealthRefreshInterval: undefined },
-                            ),
-                          )
-                        }
-                      />
-                    </span>
-                  ) : null
-                }
-                control={
-                  <div
-                    inert={readOnly}
-                    aria-disabled={readOnly || undefined}
-                    className={cn(
-                      "flex shrink-0 items-center gap-2",
-                      readOnly && "opacity-50 select-none",
-                    )}
-                  >
-                    <NumberField
-                      value={providerHealthRefreshIntervalSeconds}
-                      min={0}
-                      step={PROVIDER_HEALTH_INTERVAL_STEP_SECONDS}
-                      size="sm"
-                      className="w-32"
-                      onValueChange={(value) =>
-                        updateSettings(
-                          backgroundActivityOverrideSettings(
-                            settings.backgroundActivity,
-                            resolvedBackgroundActivity,
-                            {
-                              providerHealthRefreshInterval: Duration.seconds(
-                                normalizeIntervalSeconds(value),
-                              ),
-                            },
-                          ),
-                        )
-                      }
-                    >
-                      <NumberFieldGroup>
-                        <NumberFieldDecrement aria-label="Decrease provider health check interval" />
-                        <NumberFieldInput aria-label="Provider health check interval in seconds" />
-                        <NumberFieldIncrement aria-label="Increase provider health check interval" />
-                      </NumberFieldGroup>
-                    </NumberField>
-                    <span className="text-xs text-muted-foreground">seconds</span>
-                  </div>
-                }
-              />
-            </CollapsibleContent>
-          </Collapsible>
+          <div className="min-w-0 lg:min-h-0">
+            {selectedRow ? (
+              <ScrollArea scrollFade chainVerticalScroll className="lg:h-full">
+                <div className="space-y-6 p-4">{renderProviderInstance(selectedRow, "editor")}</div>
+              </ScrollArea>
+            ) : (
+              <div className="p-6 text-sm text-muted-foreground">
+                {targetInstanceMissing
+                  ? "This provider instance is no longer available on this device."
+                  : "No providers configured."}
+              </div>
+            )}
+          </div>
         </div>
+      </SettingsSection>
+
+      <UsageProviderSettings
+        key={environmentId}
+        environmentId={environmentId}
+        environmentLabel={environmentLabel}
+        sources={settings.usageLimitSources}
+        readOnly={readOnly}
+      />
+
+      <SettingsSection title="Advanced">
+        <SettingsRow
+          id={searchableSetting("provider-health-check-interval").id}
+          title={
+            <span className="inline-flex items-center gap-1.5">
+              {searchableSetting("provider-health-check-interval").title}
+              <PolicyTooltip>
+                This interval is configured here, then the shared Background activity policy decides
+                whether provider probes may run when the timer fires. Custom intervals appear as
+                Advanced in General settings.
+              </PolicyTooltip>
+            </span>
+          }
+          description="Refresh provider status, versions, and models in the background. Set to 0 to disable."
+          resetAction={
+            providerHealthRefreshIntervalSeconds !== defaultProviderHealthRefreshIntervalSeconds ? (
+              <span inert={readOnly} className={readOnly ? "opacity-50" : undefined}>
+                <SettingResetButton
+                  label="provider health check interval"
+                  onClick={() =>
+                    updateSettings(
+                      backgroundActivityOverrideSettings(
+                        settings.backgroundActivity,
+                        resolvedBackgroundActivity,
+                        { providerHealthRefreshInterval: undefined },
+                      ),
+                    )
+                  }
+                />
+              </span>
+            ) : null
+          }
+          control={
+            <div
+              inert={readOnly}
+              aria-disabled={readOnly || undefined}
+              className={cn(
+                "flex shrink-0 items-center gap-2",
+                readOnly && "opacity-50 select-none",
+              )}
+            >
+              <NumberField
+                value={providerHealthRefreshIntervalSeconds}
+                min={0}
+                step={PROVIDER_HEALTH_INTERVAL_STEP_SECONDS}
+                size="sm"
+                className="w-32"
+                onValueChange={(value) =>
+                  updateSettings(
+                    backgroundActivityOverrideSettings(
+                      settings.backgroundActivity,
+                      resolvedBackgroundActivity,
+                      {
+                        providerHealthRefreshInterval: Duration.seconds(
+                          normalizeIntervalSeconds(value),
+                        ),
+                      },
+                    ),
+                  )
+                }
+              >
+                <NumberFieldGroup>
+                  <NumberFieldDecrement aria-label="Decrease provider health check interval" />
+                  <NumberFieldInput aria-label="Provider health check interval in seconds" />
+                  <NumberFieldIncrement aria-label="Increase provider health check interval" />
+                </NumberFieldGroup>
+              </NumberField>
+              <span className="text-xs text-muted-foreground">seconds</span>
+            </div>
+          }
+        />
       </SettingsSection>
 
       {isAddInstanceDialogOpen ? (

@@ -40,10 +40,14 @@ T3 Code works with the platforms your team already uses:
 **Stay on top of open reviews**
 
 - See if your current branch already has an open PR/MR
+- When an agent finishes a turn on your thread's branch, T3 Code checks for a newly opened
+  PR/MR if background activity is enabled for that repository. Known reviews keep their normal
+  refresh schedule.
 - Open several reviews from the **Pull requests** page as tabs in the right panel
-- By default, see passing and approved reviews first, passing reviews awaiting approval next, and
-  conflicting reviews last. Smaller changes come first within each readiness group, and finished
-  reviews follow open work when all states are visible.
+- Your authored reviews stay at the top and use the selected sort within their group. By default,
+  see passing and approved reviews first, passing reviews awaiting approval next, and conflicting
+  reviews last. Smaller changes come first within each readiness group, and finished reviews follow
+  open work when all states are visible.
 - Filter the list by author or labels, rank authors by merges in the loaded results, see label and
   change-size context on each row, and sort the results currently shown by readiness, update time,
   creation time, or change size. Your filters, search, scope, and sort are restored when you return.

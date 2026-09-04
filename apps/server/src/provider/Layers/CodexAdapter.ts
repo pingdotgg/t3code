@@ -8,6 +8,7 @@
  * @module CodexAdapterLive
  */
 import {
+  EventId,
   type CanonicalItemType,
   type CanonicalRequestType,
   type CodexSettings,
@@ -70,6 +71,7 @@ import {
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import { discoverCodexThreads } from "./CodexThreadDiscovery.ts";
+import { codexRateLimitsToUpdate } from "./codexUsageLimits.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -1446,6 +1448,27 @@ function mapToRuntimeEvents(
     if (!item) {
       return [];
     }
+    if (item.type === "agentMessage" && item.delivery === "async" && item.questions?.length) {
+      return [
+        {
+          ...runtimeEventBase(event, canonicalThreadId),
+          type: "user-input.requested",
+          requestId: RuntimeRequestId.make(`codex-async:${canonicalThreadId}:${item.id}`),
+          eventId: EventId.make(`codex-async:${canonicalThreadId}:${item.id}`),
+          payload: {
+            responseMode: "message",
+            questions: item.questions.map((question, index) => ({
+              id: String(index),
+              header: "Question",
+              question: question.title,
+              options: (question.options ?? []).map((label) => ({ label, description: "" })),
+              allowCustomAnswer: true,
+              multiSelect: false,
+            })),
+          },
+        },
+      ];
+    }
     const itemType = toCanonicalItemType(item.type);
     if (itemType === "plan") {
       const detail = itemDetail(itemType, item);
@@ -1463,7 +1486,18 @@ function mapToRuntimeEvents(
       ];
     }
     const completed = mapItemLifecycle(event, canonicalThreadId, "item.completed");
-    return completed ? [completed] : [];
+    if (!completed || itemType !== "context_compaction") {
+      return completed ? [completed] : [];
+    }
+    return [
+      completed,
+      {
+        ...runtimeEventBase(event, canonicalThreadId),
+        eventId: EventId.make(`${event.id}:thread-compacted`),
+        type: "thread.state.changed",
+        payload: { state: "compacted" },
+      },
+    ];
   }
 
   if (
@@ -1726,16 +1760,19 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "account/rateLimits/updated") {
-    if (!readPayload(EffectCodexSchema.V2AccountRateLimitsUpdatedNotification, event.payload)) {
+    const payload = readPayload(
+      EffectCodexSchema.V2AccountRateLimitsUpdatedNotification,
+      event.payload,
+    );
+    const limits = payload ? codexRateLimitsToUpdate(payload.rateLimits) : undefined;
+    if (!limits) {
       return [];
     }
     return [
       {
         type: "account.rate-limits.updated",
         ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          rateLimits: event.payload ?? {},
-        },
+        payload: { limits },
       },
     ];
   }
@@ -2191,6 +2228,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       ),
     );
 
+  const compactThread: NonNullable<CodexAdapterShape["compactThread"]> = Effect.fn("compactThread")(
+    function* (threadId) {
+      const session = yield* requireSession(threadId);
+      yield* session.runtime.compactThread.pipe(
+        Effect.mapError((cause) => mapCodexRuntimeError(threadId, "thread/compact/start", cause)),
+      );
+    },
+  );
+
   const readThread: CodexAdapterShape["readThread"] = (threadId) =>
     requireSession(threadId).pipe(
       Effect.flatMap((session) => session.runtime.readThread),
@@ -2345,6 +2391,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     },
     startSession,
     sendTurn,
+    compactThread,
     interruptTurn,
     readThread,
     discoverPersistedThreads,

@@ -84,6 +84,8 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
       }),
   );
 
+  public readonly compactThread = Effect.void;
+
   public readonly interruptTurnImpl = vi.fn((_turnId?: TurnId): Promise<void> =>
     Promise.resolve(undefined),
   );
@@ -331,6 +333,47 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       NodeAssert.equal(result.failure._tag, "ProviderAdapterSessionNotFoundError");
       NodeAssert.equal(result.failure.provider, "codex");
       NodeAssert.equal(result.failure.threadId, "sess-missing");
+    }),
+  );
+
+  it.effect("compacts the active Codex thread and emits compacted state", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-compact");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      const compactedEventFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "thread.state.changed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* adapter.compactThread!(threadId);
+      yield* runtime.emit({
+        id: asEventId("evt-compaction-item-completed"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/completed",
+        threadId,
+        payload: {
+          completedAtMs: 1_778_000_000_000,
+          threadId: "provider-thread-1",
+          turnId: "provider-compact-turn",
+          item: {
+            id: "provider-compact-item",
+            type: "contextCompaction",
+          },
+        },
+      });
+      const event = Option.getOrThrow(yield* Fiber.join(compactedEventFiber));
+      NodeAssert.ok(event.type === "thread.state.changed");
+      NodeAssert.equal(event.payload.state, "compacted");
+      yield* adapter.stopSession(threadId);
     }),
   );
 
@@ -1646,6 +1689,81 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
           });
         }
       }),
+  );
+
+  it.effect("maps async agent questions without ending the turn", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+        Effect.forkChild,
+      );
+      yield* runtime.emit({
+        id: asEventId("evt-async-question"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/completed",
+        payload: {
+          completedAtMs: 0,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "agentMessage",
+            id: "async-question-1",
+            text: "Which package manager?\n- pnpm\n- npm\n\nWhat should it be named?",
+            phase: "final_answer",
+            delivery: "async",
+            questions: [
+              { title: "Which package manager?", options: ["pnpm", "npm"] },
+              { title: "What should it be named?" },
+            ],
+          },
+        },
+      });
+      yield* runtime.emit({
+        id: asEventId("evt-async-continued"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        method: "item/agentMessage/delta",
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          itemId: "message-2",
+          delta: "I will keep working.",
+        },
+      });
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.equal(events[0]?.type, "user-input.requested");
+      NodeAssert.equal(events[0]?.requestId, "codex-async:thread-1:async-question-1");
+      NodeAssert.deepEqual(events[0]?.payload, {
+        responseMode: "message",
+        questions: [
+          {
+            id: "0",
+            header: "Question",
+            question: "Which package manager?",
+            options: [
+              { label: "pnpm", description: "" },
+              { label: "npm", description: "" },
+            ],
+            allowCustomAnswer: true,
+            multiSelect: false,
+          },
+          {
+            id: "1",
+            header: "Question",
+            question: "What should it be named?",
+            options: [],
+            allowCustomAnswer: true,
+            multiSelect: false,
+          },
+        ],
+      });
+      NodeAssert.equal(events[1]?.type, "content.delta");
+    }),
   );
 
   it.effect("unwraps Codex token usage payloads for context window events", () =>

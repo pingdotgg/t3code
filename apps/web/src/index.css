@@ -145,16 +145,16 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 @theme inline {
   --color-zinc-25: oklch(99.2% 0 0);
-  --animate-skeleton: skeleton 2s infinite linear;
+  --animate-skeleton: skeleton 2.4s infinite;
   /* Duty-cycled indicator animations: long holds with stepped ramps, so the
      compositor updates discrete frames instead of every vsync. */
   --animate-status-pulse: status-pulse 2s infinite;
-  --animate-ghost-pulse: ghost-pulse 2.4s infinite;
   --animate-status-ping: status-ping 2s infinite;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-warning-surface: var(--warning-surface);
   --color-error-foreground: var(--error-foreground);
+  --color-tool-error-icon: var(--tool-error-icon);
   --color-error: var(--error);
   --color-error-surface: var(--error-surface);
   --color-update-foreground: var(--update-foreground);
@@ -207,20 +207,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
   @keyframes skeleton {
-    /* Transform-only so the highlight sweep stays on the compositor, then a
-       long hold with the band parked off-screen instead of a constant shimmer. */
-    0% {
-      transform: translateX(-100%);
-    }
-    60%,
-    100% {
-      transform: translateX(100%);
-    }
-  }
-  @keyframes ghost-pulse {
-    /* The loading ghosts' breath. Stepped like the status indicators, so however many bars a
-       ghost holds, the compositor draws a handful of discrete frames per cycle rather than one
-       per vsync — which on a 120Hz display is the difference between ~14 and ~288 updates. */
+    /* The single loading-bar breath used by every skeleton: one opacity pulse
+       per container, stepped so however many bars sit under it, the compositor
+       draws a handful of discrete frames per cycle rather than one per vsync —
+       which on a 120Hz display is the difference between ~14 and ~288 updates. */
     0%,
     42% {
       opacity: 1;
@@ -959,6 +949,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --accent-foreground: var(--color-zinc-900);
   --error: var(--color-red-500);
   --error-foreground: var(--color-red-700);
+  --tool-error-icon: var(--error);
   --error-surface: color-mix(in srgb, var(--error) 8%, transparent);
   --destructive: var(--error);
   --border: var(--color-zinc-200);
@@ -1013,6 +1004,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --accent-foreground: var(--color-neutral-100);
     --error: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
     --error-foreground: var(--color-red-400);
+    --tool-error-icon: #fca5a5;
     --error-surface: color-mix(in srgb, var(--error) 16%, transparent);
     --border: --alpha(var(--color-white) / 6%);
     --input: --alpha(var(--color-white) / 8%);
@@ -1125,6 +1117,7 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --message-action-hover: var(--app-theme-message-action-hover);
   --error: var(--app-theme-error);
   --error-foreground: var(--app-theme-error-foreground);
+  --tool-error-icon: var(--error-foreground);
   --error-surface: var(--app-theme-error-surface);
   --destructive: var(--error);
   --destructive-foreground: var(--error-foreground);

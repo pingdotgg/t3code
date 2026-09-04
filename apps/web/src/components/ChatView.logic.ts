@@ -86,6 +86,19 @@ export function agentControlledBrowserCloseConfirmation(
   ].join("\n");
 }
 
+export function shouldRenderPreviewMiniPlayer(
+  miniPlayerTabId: string | null,
+  renderedRightPanelSurface: RightPanelSurface | null,
+): boolean {
+  return (
+    miniPlayerTabId !== null &&
+    !(
+      renderedRightPanelSurface?.kind === "preview" &&
+      renderedRightPanelSurface.resourceId === miniPlayerTabId
+    )
+  );
+}
+
 export function shouldOpenProactivePullRequest(
   previousTargetKey: string | null | undefined,
   targetKey: string | null,
@@ -882,6 +895,24 @@ export interface LocalDispatchSnapshot {
   latestTurnCompletedAt: string | null;
   sessionStatus: NonNullable<Thread["session"]>["status"] | null;
   sessionUpdatedAt: string | null;
+  latestTurnStartFailureId: string | null;
+}
+
+export function latestTurnStartFailureId(
+  activeThread: Thread | undefined,
+  latestUserMessageId: ChatMessage["id"] | null,
+): string | null {
+  if (latestUserMessageId === null) return null;
+  return (
+    activeThread?.activities.findLast((activity) => {
+      if (activity.kind !== "provider.turn.start.failed") return false;
+      const payload =
+        typeof activity.payload === "object" && activity.payload !== null
+          ? (activity.payload as { readonly requestId?: unknown })
+          : null;
+      return payload?.requestId === latestUserMessageId;
+    })?.id ?? null
+  );
 }
 
 export function createLocalDispatchSnapshot(
@@ -905,6 +936,7 @@ export function createLocalDispatchSnapshot(
     latestTurnCompletedAt: latestTurn?.completedAt ?? null,
     sessionStatus: session?.status ?? null,
     sessionUpdatedAt: session?.updatedAt ?? null,
+    latestTurnStartFailureId: latestTurnStartFailureId(activeThread, latestUserMessage?.id ?? null),
   };
 }
 
@@ -916,12 +948,20 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   session: Thread["session"] | null;
   hasPendingApproval: boolean;
   hasPendingUserInput: boolean;
+  latestTurnStartFailureId?: string | null;
   threadError: string | null | undefined;
 }): boolean {
   if (!input.localDispatch) {
     return false;
   }
   if (input.hasPendingApproval || input.hasPendingUserInput || Boolean(input.threadError)) {
+    return true;
+  }
+  if (
+    input.latestTurnStartFailureId !== undefined &&
+    input.latestTurnStartFailureId !== null &&
+    input.latestTurnStartFailureId !== input.localDispatch.latestTurnStartFailureId
+  ) {
     return true;
   }
   if (input.phase === "connecting") {

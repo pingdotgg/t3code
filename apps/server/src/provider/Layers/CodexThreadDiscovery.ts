@@ -36,9 +36,10 @@ function unixSecondsToIso(seconds: number): string {
   return DateTime.formatIso(DateTime.makeUnsafe(seconds * 1_000));
 }
 
-function discoveryCursorForThread(
-  thread: EffectCodexSchema.V2ThreadListResponse["data"][number],
-): string {
+function discoveryCursorForThread(thread: {
+  readonly updatedAt: number;
+  readonly status: { readonly type: string };
+}): string {
   return `${unixSecondsToIso(thread.updatedAt)}:${thread.status.type}`;
 }
 

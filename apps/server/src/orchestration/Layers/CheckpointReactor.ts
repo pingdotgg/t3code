@@ -38,6 +38,7 @@ import type { OrchestrationDispatchError } from "../Errors.ts";
 import { isGitRepository } from "../../git/Utils.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
+import * as PullRequestService from "../../pullRequest/PullRequestService.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -88,6 +89,9 @@ const make = Effect.gen(function* () {
   const receiptBus = yield* RuntimeReceiptBus;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
+  const pullRequests = yield* PullRequestService.PullRequestService;
+  const startedTurns = new Map<ThreadId, TurnId>();
+  const pending = new Set<ThreadId>();
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -553,7 +557,40 @@ const make = Effect.gen(function* () {
         cwd: sessionRuntime.value.cwd,
         local,
       });
+      yield* refreshPullRequestAfterTurn({
+        threadId: event.threadId,
+        turnId: toTurnId(event.turnId),
+        cwd: sessionRuntime.value.cwd,
+        local,
+      });
     }
+  });
+
+  // Retry a missing PR after the agent finishes its push and PR creation.
+  // Re-read the projected branch after drift adoption. A rejected metadata
+  // update must not let this thread refresh another thread's checkout.
+  const refreshPullRequestAfterTurn = Effect.fn("refreshPullRequestAfterTurn")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId | null;
+    readonly cwd: string;
+    readonly local: VcsStatusLocalResult;
+  }) {
+    const checkedOutBranch = input.local.refName;
+    if (checkedOutBranch === null || input.local.isDefaultRef) return;
+    const thread = yield* projectionSnapshotQuery
+      .getThreadShellById(input.threadId)
+      .pipe(Effect.map(Option.getOrUndefined));
+    if (!thread || thread.branch !== checkedOutBranch) return;
+    if (thread.session?.activeTurnId && !sameId(thread.session.activeTurnId, input.turnId)) return;
+    yield* vcsStatusBroadcaster.refreshPullRequestStatus(input.cwd).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("failed to refresh pull request status after turn completion", {
+          threadId: input.threadId,
+          cwd: input.cwd,
+          detail: error.message,
+        }),
+      ),
+    );
   });
 
   // A `git checkout` run inside a thread's dedicated worktree (by an agent or
@@ -821,6 +858,7 @@ const make = Effect.gen(function* () {
 
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (event: OrchestrationEvent) {
     if (event.type === "thread.turn-start-requested" || event.type === "thread.message-sent") {
+      if (event.type === "thread.turn-start-requested") pending.add(event.payload.threadId);
       yield* ensurePreTurnBaselineFromDomainTurnStart(event);
       return;
     }
@@ -843,9 +881,8 @@ const make = Effect.gen(function* () {
 
     // When ProviderRuntimeIngestion creates a placeholder checkpoint (status "missing")
     // from a turn.diff.updated runtime event, capture the real git checkpoint to
-    // replace it. The providerService.streamEvents PubSub does not reliably deliver
-    // turn.completed runtime events to this reactor (shared subscription), so
-    // reacting to the domain event is the reliable path.
+    // replace it. ProviderService broadcasts runtime events to each subscriber.
+    // This domain-event path also captures checkpoints from turn diff updates.
     if (event.type === "thread.turn-diff-completed") {
       yield* captureCheckpointFromPlaceholder(event).pipe(
         Effect.catch((error) =>
@@ -865,14 +902,46 @@ const make = Effect.gen(function* () {
   const processRuntimeEvent = Effect.fn("processRuntimeEvent")(function* (
     event: ProviderRuntimeEvent,
   ) {
+    if (event.type === "session.exited") {
+      startedTurns.delete(event.threadId);
+      pending.delete(event.threadId);
+      return;
+    }
+
     if (event.type === "turn.started") {
+      const turnId = toTurnId(event.turnId);
+      const activeTurnId = (yield* providerService.listSessions()).find((session) =>
+        sameId(session.threadId, event.threadId),
+      )?.activeTurnId;
+      const mayReplace = pending.has(event.threadId) && sameId(activeTurnId, turnId);
+      if (turnId !== null && (!startedTurns.has(event.threadId) || mayReplace)) {
+        startedTurns.set(event.threadId, turnId);
+        pending.delete(event.threadId);
+      }
       yield* ensurePreTurnBaselineFromTurnStart(event);
       return;
     }
 
-    if (event.type === "turn.completed") {
+    if (event.type === "turn.completed" || event.type === "turn.aborted") {
       const turnId = toTurnId(event.turnId);
-      yield* refreshLocalGitStatusFromTurnCompletion(event);
+      const thread = yield* resolveThreadDetail(event.threadId);
+      const startedTurnId = startedTurns.get(event.threadId);
+      const isTrackedTurn = sameId(startedTurnId, turnId);
+      if (isTrackedTurn) startedTurns.delete(event.threadId);
+      if (event.type === "turn.completed") {
+        yield* refreshLocalGitStatusFromTurnCompletion(event);
+      }
+      if (
+        turnId !== null &&
+        thread !== undefined &&
+        (isTrackedTurn ||
+          sameId(thread.session?.activeTurnId, turnId) ||
+          (startedTurnId === undefined && !thread.session?.activeTurnId))
+      ) {
+        pending.delete(event.threadId);
+        yield* pullRequests.refreshAfterTurn;
+      }
+      if (event.type === "turn.aborted") return;
       yield* captureCheckpointFromTurnCompletion(event).pipe(
         Effect.catch((error) =>
           Effect.flatMap(nowIso, (createdAt) =>
@@ -931,7 +1000,12 @@ const make = Effect.gen(function* () {
 
     yield* forkParked(
       Stream.runForEach(providerService.streamEvents, (event) => {
-        if (event.type !== "turn.started" && event.type !== "turn.completed") {
+        if (
+          event.type !== "turn.started" &&
+          event.type !== "turn.completed" &&
+          event.type !== "turn.aborted" &&
+          event.type !== "session.exited"
+        ) {
           return Effect.void;
         }
         return worker.enqueue({ source: "runtime", event });

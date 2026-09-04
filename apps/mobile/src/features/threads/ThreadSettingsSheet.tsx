@@ -647,7 +647,7 @@ function useThreadSettingsCatalogItems(
         if (session.providerFilter !== null && group.providerKey !== session.providerFilter) {
           return [];
         }
-        const driver = group.models[0]?.providerDriver;
+        const driver = group.models[0]?.providerDriver ?? group.providerKey;
         const catalogModels = session.showLegacy
           ? group.models
           : group.models.filter((model) => !model.isLegacy || session.isDisplayed(model));

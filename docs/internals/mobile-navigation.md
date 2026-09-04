@@ -37,6 +37,14 @@ an over-the-air JavaScript update alone is insufficient. The Android view manage
 implements the generated identifier setter as a no-op because this behavior is
 specific to iOS 26 and later.
 
+On iOS 26 the full-screen back swipe is UIKit's `interactiveContentPopGestureRecognizer`,
+and react-native-screens makes it wait for any horizontally scrollable ScrollView to
+fail first. Upstream applies that to every horizontal ScrollView regardless of
+position, so a back swipe on a code block or table that is already at its leading
+edge only bounces. The patch narrows the rule to ScrollViews with content still
+hidden to the left; at the leading edge they yield to the pop gesture like plain
+text does.
+
 After changing a dependency patch, refresh CocoaPods before rebuilding an
 existing iOS project. pnpm installs each patch hash in a different directory;
 an old Pods project can keep compiling the previous directory even though Metro

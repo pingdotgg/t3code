@@ -233,6 +233,9 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
             if (event._tag === "EventStreamBarrier") {
               return Deferred.succeed(event.acknowledge, undefined).pipe(Effect.asVoid);
             }
+            if (event._tag === "ConfigOptionsUpdated") {
+              return provider.onConfigOptionsUpdated(event.configOptions);
+            }
             return event._tag === "AvailableCommandsUpdated"
               ? provider.onAvailableCommands(event.availableCommands)
               : Effect.void;
@@ -248,7 +251,11 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
       });
 
+      // Kick the TTL-gated manifest refresh alongside the health check, as
+      // Codex and Claude do. Without it an environment that only runs
+      // Antigravity would keep classifying against a stale disk cache.
       const probe = Effect.gen(function* () {
+        yield* modelManifest.refreshInBackground;
         const processScope = yield* Scope.make();
         yield* Effect.addFinalizer((exit) => Scope.close(processScope, exit));
         return yield* authFlow
@@ -295,6 +302,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         withProcess: authFlow.withProcess,
         defaultModel,
         onSessionStarted: provider.onSessionStarted,
+        onConfigOptionsUpdated: provider.onConfigOptionsUpdated,
         onAvailableCommands: provider.onAvailableCommands,
         onAuthRequired: provider.onAuthRequired,
         ...(loggers.native ? { nativeEventLogger: loggers.native } : {}),
@@ -328,7 +336,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         },
         Effect.scoped,
         Effect.timeoutOrElse({
-          duration: "60 seconds",
+          duration: "90 seconds",
           orElse: () =>
             Effect.fail(
               new ProviderDriverError({

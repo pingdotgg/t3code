@@ -58,7 +58,7 @@ import {
   pullRequestEntryKey,
   pullRequestEntryViewer,
   rankPullRequestMatches,
-  rankPullRequestsByMergeReadiness,
+  sortPullRequestGroups,
   pullRequestEnvironmentSetKey,
   readPullRequestListSnapshot,
   resolveProjectScope,
@@ -120,7 +120,6 @@ import { SidebarInset } from "../components/ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { useLiveRefresh } from "../hooks/useLiveRefresh";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
-import { toSortableTimestamp } from "../lib/threadSort";
 import {
   pullRequestSurfaceId,
   selectActiveRightPanelSurface,
@@ -136,6 +135,7 @@ import {
   pullRequestEnvironment,
   usePullRequestList,
   usePullRequestListStats,
+  usePullRequestTurnRefreshes,
   type EnvironmentQueryTarget,
 } from "../state/pullRequests";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -220,6 +220,9 @@ const EMPTY_PREVIEW_DESKTOP_STATE = {};
 const EMPTY_TERMINAL_LABELS = new Map<string, string>();
 const EMPTY_PENDING_SURFACES = new Set<string>();
 const MAX_SEARCH_LABEL_CANDIDATES = 100;
+
+const pullRequestListEntryId = (target: Parameters<typeof pullRequestSurfaceId>[0]) =>
+  pullRequestSurfaceId({ ...target, repository: target.repository.toLowerCase() });
 
 function pullRequestSearchLabels(raw: unknown): Partial<Pick<PullRequestsSearch, "labels">> {
   const values = (Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : []).slice(
@@ -630,6 +633,12 @@ function PullRequestsRouteView() {
         .join("|"),
     [environmentQueries],
   );
+  const turnRefreshes = usePullRequestTurnRefreshes(
+    environmentQueries.map(({ environmentId }) => environmentId),
+  );
+  const turnRefreshToken = turnRefreshes
+    .map(([environmentId, revision]) => `${environmentId}:${revision}`)
+    .join("|");
   // Page size is view state, not a URL concern: a shared link should open the first page.
   const scopeKey = `${environmentKey}:${assignmentKey}:${search.state}:${search.involvement}:${scopedProjectId ?? ""}:${search.host ?? ""}:${search.draft ?? ""}:${search.review ?? ""}:${search.checks ?? ""}:${search.author ?? ""}:${search.labels?.join("\u0000") ?? ""}`;
   const filterKey = `${scopeKey}:${sentQuery}`;
@@ -1089,6 +1098,18 @@ function PullRequestsRouteView() {
     });
   };
 
+  const appliedTurnRefreshToken = useRef("");
+  const refreshAfterTurn = useEffectEvent(() => {
+    if (sentCursors !== null) refreshList();
+  });
+  useEffect(() => {
+    if (turnRefreshToken.length === 0 || appliedTurnRefreshToken.current === turnRefreshToken) {
+      return;
+    }
+    appliedTurnRefreshToken.current = turnRefreshToken;
+    refreshAfterTurn();
+  }, [turnRefreshToken]);
+
   // The list goes stale the same way the detail does: somebody opens a pull request, a check
   // finishes, a branch is merged. So it reads again on the way back to the window, and once a
   // minute while somebody is reading it. Those reads go through the server's cache and stop
@@ -1426,52 +1447,26 @@ function PullRequestsRouteView() {
       ...group,
       entries: group.entries.map((entry) => withDiffStat(entry, statsByRow)),
     }));
-    if (sort === "ready" && typedParsed.text.length === 0) {
-      return [
-        {
-          key: "others" as const,
-          label: "",
-          entries: rankPullRequestsByMergeReadiness(
-            enriched.flatMap((group) => group.entries),
-            (entry) =>
-              entry.additions + entry.deletions > 0 ||
-              statsByRow.has(pullRequestDiffStatKey(entry)),
-          ),
-        },
-      ];
-    }
     // Searching keeps its relevance order and priority groups unless the reader explicitly asks
     // for another sort. The readiness queue is the default browse order, not a way to bury a
     // closer text match.
-    if (sort === "ready" || sort === "updated") return enriched;
-    const entries = enriched.flatMap((group) => group.entries);
-    const hasSize = (entry: (typeof entries)[number]) =>
-      entry.additions + entry.deletions > 0 || statsByRow.has(pullRequestDiffStatKey(entry));
-    const timestamp = (entry: (typeof entries)[number]) =>
-      toSortableTimestamp(entry.updatedAt) ?? toSortableTimestamp(entry.createdAt) ?? 0;
-    return [
-      {
-        key: "others" as const,
-        label: "",
-        entries: entries.toSorted((left, right) => {
-          if (sort === "newest" || sort === "oldest") {
-            const leftCreated = toSortableTimestamp(left.createdAt);
-            const rightCreated = toSortableTimestamp(right.createdAt);
-            const measured = Number(rightCreated !== null) - Number(leftCreated !== null);
-            const dated = (leftCreated ?? 0) - (rightCreated ?? 0);
-            return (
-              measured || (sort === "newest" ? -dated : dated) || timestamp(right) - timestamp(left)
-            );
-          }
-          const measured = Number(hasSize(right)) - Number(hasSize(left));
-          const sized = left.additions + left.deletions - (right.additions + right.deletions);
-          return (
-            measured || (sort === "largest" ? -sized : sized) || timestamp(right) - timestamp(left)
-          );
-        }),
-      },
-    ];
+    return sortPullRequestGroups(
+      enriched,
+      sort,
+      typedParsed.text,
+      (entry) =>
+        entry.additions + entry.deletions > 0 || statsByRow.has(pullRequestDiffStatKey(entry)),
+    );
   }, [groups, sort, statsByRow, typedParsed.text]);
+  const listedPullRequestsBySurface = useMemo(
+    () =>
+      new Map(
+        displayGroups.flatMap((group) =>
+          group.entries.map((entry) => [pullRequestListEntryId(entry), entry] as const),
+        ),
+      ),
+    [displayGroups],
+  );
 
   const linkedSelection = useMemo(
     () =>
@@ -1975,6 +1970,11 @@ function PullRequestsRouteView() {
                 repository: renderedPullRequestSurface.repository,
                 number: renderedPullRequestSurface.number,
               }}
+              listEntry={
+                listedPullRequestsBySurface.get(
+                  pullRequestListEntryId(renderedPullRequestSurface),
+                ) ?? null
+              }
               refreshToken={detailRefreshToken}
               // Merging, closing or reopening changes the row this panel was opened from, so
               // the list behind it is out of date the moment the host takes the action.

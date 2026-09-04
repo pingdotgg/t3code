@@ -6,6 +6,9 @@ import {
   extractAntigravityUserInputQuestion,
   isAntigravityOpenCommand,
   antigravityApprovalOptions,
+  antigravitySubagentOutput,
+  isAntigravitySubagentReplayStart,
+  classifyAntigravitySubagentToolCall,
   isAntigravityUserInputRequest,
   makeAntigravityUserInputResponse,
   normalizeAntigravitySessionUpdate,
@@ -16,6 +19,68 @@ import {
 import { mergeToolCallState, parseSessionUpdateEvent } from "./AcpRuntimeModel.ts";
 
 const isSessionNotification = Schema.is(EffectAcpSchema.SessionNotification);
+
+describe("native Antigravity subagent tools", () => {
+  it("recognizes only native invocation titles and excludes MCP tools", () => {
+    const toolCall = { toolCallId: "trajectory:4", kind: "other", data: {} };
+    for (const title of ["Running start_subagent", "Run start_subagent?"]) {
+      expect(classifyAntigravitySubagentToolCall({ ...toolCall, title }, {})).toBe("subagent");
+      expect(
+        classifyAntigravitySubagentToolCall(
+          { ...toolCall, title },
+          { update: { _meta: { is_mcp_tool_call: true } } },
+        ),
+      ).toBe("mcp");
+    }
+    for (const title of [
+      "Running subagent",
+      "start_subagent",
+      "Run command",
+      "Running manage_task",
+    ]) {
+      expect(classifyAntigravitySubagentToolCall({ ...toolCall, title }, {})).toBeUndefined();
+    }
+    expect(
+      classifyAntigravitySubagentToolCall(
+        { ...toolCall, title: "Running start_subagent", kind: "execute" },
+        {},
+      ),
+    ).toBeUndefined();
+  });
+
+  it("recognizes history starts and bounds the launch output", () => {
+    expect(
+      isAntigravitySubagentReplayStart({
+        update: { sessionUpdate: "tool_call", status: "completed", rawOutput: "Done." },
+      }),
+    ).toBe(false);
+    expect(
+      isAntigravitySubagentReplayStart({
+        update: { sessionUpdate: "tool_call", status: "completed" },
+      }),
+    ).toBe(true);
+    expect(
+      isAntigravitySubagentReplayStart({
+        update: { sessionUpdate: "tool_call_update", status: "completed" },
+      }),
+    ).toBe(false);
+    expect(
+      antigravitySubagentOutput({
+        toolCallId: "trajectory:4",
+        data: { rawOutput: "  Finished review.  " },
+      }),
+    ).toBe("Finished review.");
+    const result = antigravitySubagentOutput({
+      toolCallId: "trajectory:4",
+      data: { rawOutput: `${"x".repeat(16_000)}The result.` },
+    });
+    expect(result?.length).toBeLessThan(8_100);
+    expect(result?.endsWith("The result.")).toBe(true);
+    expect(
+      antigravitySubagentOutput({ toolCallId: "trajectory:4", data: { rawOutput: {} } }),
+    ).toBeUndefined();
+  });
+});
 
 const questionRequest = {
   sessionId: "session-1",

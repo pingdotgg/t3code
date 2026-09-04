@@ -14,7 +14,7 @@ interface Props {
 
 const {
   title = "T3 Code",
-  description = "T3 Code — The open-source control plane for coding agents.",
+  description = "T3 Code. The open-source control plane for coding agents.",
   pageClass,
 } = Astro.props;
 ---
@@ -268,21 +268,17 @@ const {
     }
   }
 
-  @keyframes pulse {
-    50% { opacity: 0.4; }
+  /* Page-load sequence: [data-rise] plays once with delay --d. */
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: none; }
   }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
+  [data-rise] {
+    animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+    animation-delay: var(--d, 0ms);
   }
-
-  @keyframes floatDrift {
-    0%, 100% { translate: 0 0; }
-    50%      { translate: 0 -10px; }
-  }
-
-  @keyframes blink {
-    50% { opacity: 0; }
+  @media (prefers-reduced-motion: reduce) {
+    [data-rise] { animation: none; }
   }
 </style>
 

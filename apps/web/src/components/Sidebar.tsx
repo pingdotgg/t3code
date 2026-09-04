@@ -280,6 +280,7 @@ function terminalProcessLabel(count: number): string {
 function SidebarThreadTooltip({
   thread,
   projectTitle,
+  projectDisplayName,
   projectCwd,
   projectFaviconPath,
   projectIcon,
@@ -295,6 +296,7 @@ function SidebarThreadTooltip({
 }: {
   thread: SidebarThreadSummary;
   projectTitle: string | null;
+  projectDisplayName: string | null;
   projectCwd: string | null;
   projectFaviconPath: string | null;
   projectIcon: ProjectIconOverride | null;
@@ -325,17 +327,17 @@ function SidebarThreadTooltip({
           {thread.title}
         </div>
         <div className="grid gap-1.5 pl-0.5 text-xs text-muted-foreground">
-          {projectTitle ? (
+          {projectDisplayName ? (
             <div className="flex min-w-0 items-center gap-2">
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 cwd={projectCwd ?? ""}
-                projectName={projectTitle}
+                projectName={projectTitle ?? ""}
                 faviconPath={projectFaviconPath}
                 projectIcon={projectIcon}
                 className="size-3 shrink-0"
               />
-              <div className="min-w-0 truncate text-foreground/75">{projectTitle}</div>
+              <div className="min-w-0 truncate text-foreground/75">{projectDisplayName}</div>
             </div>
           ) : null}
           {environmentLabel ? (
@@ -501,6 +503,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   session: DraftSessionState;
   composer: ComposerThreadDraftState;
   projectTitle: string | null;
+  projectDisplayName: string | null;
   projectCwd: string | null;
   projectFaviconPath: string | null;
   projectIcon: ProjectIconOverride | null;
@@ -575,7 +578,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               className="size-4 shrink-0"
             />
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
-              {props.projectTitle}
+              {props.projectDisplayName}
             </span>
             <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
               <Tooltip>
@@ -613,6 +616,7 @@ interface SidebarDraftRowData {
 // subscription + closing divider) so per-keystroke composer updates
 // re-render only this block, never the whole sidebar. Vanishes at count 0.
 const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
+  projectTitleByKey: ReadonlyMap<string, string>;
   projectDisplayNameByKey: ReadonlyMap<string, string>;
   projectCwdByKey: ReadonlyMap<string, string>;
   projectFaviconPathByKey: ReadonlyMap<string, string | null | undefined>;
@@ -710,7 +714,8 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
             draftId={draftId}
             session={session}
             composer={composer}
-            projectTitle={props.projectDisplayNameByKey.get(projectKey) ?? null}
+            projectTitle={props.projectTitleByKey.get(projectKey) ?? null}
+            projectDisplayName={props.projectDisplayNameByKey.get(projectKey) ?? null}
             projectCwd={props.projectCwdByKey.get(projectKey) ?? null}
             projectFaviconPath={props.projectFaviconPathByKey.get(projectKey) ?? null}
             projectIcon={props.projectIconByKey.get(projectKey) ?? null}
@@ -763,6 +768,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   projectFaviconPath: string | null;
   projectIcon: ProjectIconOverride | null;
   projectTitle: string | null;
+  projectDisplayName: string | null;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   timestampFormat: TimestampFormat;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
@@ -952,7 +958,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     linkedPullRequestStatus,
   });
   const prStatus = prStatusIndicator(pr, prProvider);
-  const settledPrHoverClass = pr ? settledPrHoverColorClass(pr.state) : undefined;
+  const settledPrHoverClass = pr ? settledPrHoverColorClass(pr.state, pr.isDraft) : undefined;
   useEffect(() => {
     const nextSnapshot = nextThreadChangeRequestSnapshot({
       threadBranch: thread.branch,
@@ -998,6 +1004,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     <SidebarThreadTooltip
       thread={thread}
       projectTitle={props.projectTitle}
+      projectDisplayName={props.projectDisplayName}
       projectCwd={props.projectCwd}
       projectFaviconPath={props.projectFaviconPath}
       projectIcon={props.projectIcon}
@@ -1119,7 +1126,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     [onSnooze, threadRef],
   );
   // While the snooze popover is open the pointer leaves the row, which
-  // would fade the hover actions out from under the open menu; pin them.
+  // would fade the hover actions out from under the open menu. Pin them and
+  // suppress the row tooltip so its portal cannot overlap the popover.
   const [snoozeMenuOpenRaw, setSnoozeMenuOpen] = useState(false);
   // Snooze is offered only where it can succeed: capability-gated and never
   // on blocked-on-you work or queued turns (the server rejects both).
@@ -1308,7 +1316,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 cwd={props.projectCwd ?? ""}
-                projectName={props.projectTitle ?? thread.title}
+                projectName={props.projectTitle ?? ""}
                 faviconPath={props.projectFaviconPath}
                 projectIcon={props.projectIcon}
                 className="size-4"
@@ -1442,7 +1450,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         sortable?.isDragging && "z-20 opacity-80",
       )}
     >
-      <Tooltip>
+      <Tooltip disabled={snoozeMenuOpen}>
         <TooltipTrigger
           render={
             <div
@@ -1469,14 +1477,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 projectIcon={props.projectIcon}
                 className="size-4 shrink-0"
               />
-              {props.projectTitle ? (
+              {props.projectDisplayName ? (
                 <span
                   className={cn(
                     "min-w-0 flex-1 truncate text-secondary-label text-xs",
                     shouldRecede ? "font-normal" : "font-medium",
                   )}
                 >
-                  {props.projectTitle}
+                  {props.projectDisplayName}
                 </span>
               ) : (
                 <span className="flex-1" />
@@ -1604,7 +1612,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {thread.branch ? (
                 <>
                   <ThreadWorktreeIndicator thread={thread} />
-                  <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
+                  <span className="min-w-0 flex-1 truncate whitespace-nowrap text-muted-foreground/40">
+                    {thread.branch}
+                  </span>
                 </>
               ) : (
                 <span className="flex-1" />
@@ -1673,6 +1683,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   projectFaviconPath: string | null;
   projectIcon: ProjectIconOverride | null;
   projectTitle: string | null;
+  projectDisplayName: string | null;
   environmentLabel: string | null;
   environmentMachine: EnvironmentMachineKind;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
@@ -1739,7 +1750,9 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
               aria-selected={props.isHighlighted}
               aria-current={props.isRouteActive ? "page" : undefined}
               aria-label={
-                props.projectTitle ? `${thread.title}, ${props.projectTitle}` : thread.title
+                props.projectDisplayName
+                  ? `${thread.title}, ${props.projectDisplayName}`
+                  : thread.title
               }
               onMouseMove={props.onHighlight}
               onClick={props.onSelect}
@@ -1755,7 +1768,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           <ProjectFavicon
             environmentId={thread.environmentId}
             cwd={props.projectCwd ?? ""}
-            projectName={props.projectTitle ?? thread.title}
+            projectName={props.projectTitle ?? ""}
             faviconPath={props.projectFaviconPath}
             projectIcon={props.projectIcon}
             className="size-4 shrink-0"
@@ -1768,6 +1781,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
         <SidebarThreadTooltip
           thread={thread}
           projectTitle={props.projectTitle}
+          projectDisplayName={props.projectDisplayName}
           projectCwd={props.projectCwd}
           projectFaviconPath={props.projectFaviconPath}
           projectIcon={props.projectIcon}
@@ -1997,6 +2011,12 @@ export default function Sidebar() {
       new Map(
         projects.map((project) => [`${project.environmentId}:${project.id}`, project.projectIcon]),
       ),
+    [projects],
+  );
+  // Icons use saved titles. Group labels can include a repository owner or a different title.
+  const projectTitleByKey = useMemo(
+    () =>
+      new Map(projects.map((project) => [`${project.environmentId}:${project.id}`, project.title])),
     [projects],
   );
   const projectDisplayNameByKey = useMemo(
@@ -3654,7 +3674,7 @@ export default function Sidebar() {
                         <ProjectFavicon
                           environmentId={scopedProjectGroup.environmentId}
                           cwd={scopedProjectGroup.workspaceRoot}
-                          projectName={scopedProjectGroup.displayName}
+                          projectName={scopedProjectGroup.title}
                           faviconPath={scopedProjectGroup.faviconPath}
                           projectIcon={scopedProjectGroup.projectIcon}
                           className="size-4"
@@ -3712,7 +3732,7 @@ export default function Sidebar() {
                               <ProjectFavicon
                                 environmentId={project.environmentId}
                                 cwd={project.workspaceRoot}
-                                projectName={project.displayName}
+                                projectName={project.title}
                                 faviconPath={project.faviconPath}
                                 projectIcon={project.projectIcon}
                                 className="size-4 shrink-0"
@@ -3803,6 +3823,10 @@ export default function Sidebar() {
                           null
                         }
                         projectTitle={
+                          projectTitleByKey.get(`${thread.environmentId}:${thread.projectId}`) ??
+                          null
+                        }
+                        projectDisplayName={
                           projectDisplayNameByKey.get(
                             `${thread.environmentId}:${thread.projectId}`,
                           ) ?? null
@@ -3925,6 +3949,10 @@ export default function Sidebar() {
                           null
                         }
                         projectTitle={
+                          projectTitleByKey.get(`${thread.environmentId}:${thread.projectId}`) ??
+                          null
+                        }
+                        projectDisplayName={
                           projectDisplayNameByKey.get(
                             `${thread.environmentId}:${thread.projectId}`,
                           ) ?? null
@@ -3964,6 +3992,7 @@ export default function Sidebar() {
                   const items: ReactNode[] = [
                     <SidebarDraftBlock
                       key="draft-sessions"
+                      projectTitleByKey={projectTitleByKey}
                       projectDisplayNameByKey={projectDisplayNameByKey}
                       projectCwdByKey={projectCwdByKey}
                       projectFaviconPathByKey={projectFaviconPathByKey}

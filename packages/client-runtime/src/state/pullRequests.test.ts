@@ -1,8 +1,10 @@
 import { EnvironmentId, ProjectId, WS_METHODS } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
@@ -42,8 +44,10 @@ function session(client: WsRpcProtocolClient): RpcSession {
 it.effect("refreshes pull request activity after a comment is updated", () =>
   Effect.scoped(
     Effect.gen(function* () {
+      const refreshEvents = yield* PubSub.unbounded<number>();
       let commentBody = "old comment";
       const client = {
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.fromPubSub(refreshEvents),
         [WS_METHODS.pullRequestsActivity]: () =>
           Effect.succeed({
             author: null,
@@ -138,6 +142,22 @@ it.effect("refreshes pull request activity after a comment is updated", () =>
         (yield* AtomRegistry.getResult(registry, activity, { suspendOnWaiting: true })).comments[0]
           ?.body,
       ).toBe("updated");
+      const refreshed = Latch.makeUnsafe();
+      const stop = registry.subscribe(activity, (result) => {
+        if (AsyncResult.isSuccess(result) && result.value.comments[0]?.body === "after turn") {
+          refreshed.openUnsafe();
+        }
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(stop));
+
+      commentBody = "after turn";
+      yield* PubSub.publish(refreshEvents, 1);
+      yield* refreshed.await;
+
+      expect(
+        (yield* AtomRegistry.getResult(registry, activity, { suspendOnWaiting: true })).comments[0]
+          ?.body,
+      ).toBe("after turn");
     }),
   ),
 );
