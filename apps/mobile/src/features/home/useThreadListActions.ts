@@ -8,13 +8,13 @@ import { Alert } from "react-native";
 import { showConfirmDialog } from "../../components/ConfirmDialogHost";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
-import { pinOrderKeyBetween, planPinnedMove } from "@t3tools/client-runtime/state/thread-sort";
+import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { beginPendingThreadOrder, getPendingThreadOrder } from "../../state/thread-order";
-import { createPendingThreadOrder } from "../threads/threadOrder";
+import { createPendingThreadOrder, createThreadMovePlanner } from "../threads/threadOrder";
 import { getThreadListV2OrderedSection } from "../threads/threadListV2";
 
 /** Version skew: never send settle/unsettle to a server that predates them
@@ -491,34 +491,15 @@ export function useThreadListActions(): {
           ),
         ),
       });
-      const orderedIds = ordered.map((shell) => scopedThreadKey(shell.environmentId, shell.id));
-      const assignments = planPinnedMove({
-        orderedIds,
-        keysById: new Map(
-          ordered.map((shell) => [
-            scopedThreadKey(shell.environmentId, shell.id),
-            (section === "pinned" ? shell.pinOrderKey : shell.activeOrderKey) ?? null,
-          ]),
-        ),
-        movedId: scopedThreadKey(thread.environmentId, thread.id),
-        direction,
-      });
-      if (assignments === null || assignments.length === 0) return false;
+      const assignments = createThreadMovePlanner({
+        ordered,
+        section,
+        reorderableEnvironmentIds: new Set([...configs.keys()].filter(supportsReorder)),
+      })(scopedThreadKey(thread.environmentId, thread.id), direction);
+      if (assignments === null) return false;
       const shellByKey = new Map(
         ordered.map((shell) => [scopedThreadKey(shell.environmentId, shell.id), shell]),
       );
-      if (
-        assignments.some((assignment) => {
-          const target = shellByKey.get(assignment.id);
-          return target === undefined || !supportsReorder(target.environmentId);
-        })
-      ) {
-        Alert.alert(
-          "Could not move thread",
-          "Update the other environments in this list before moving across threads without a saved order.",
-        );
-        return false;
-      }
       selectionHaptic();
       const pending = beginPendingThreadOrder(
         createPendingThreadOrder({
