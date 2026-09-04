@@ -4,11 +4,6 @@ import { memo, type ComponentProps } from "react";
 import { formatDuration } from "../../session-logic";
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
-import {
-  ComposerActivityIcon,
-  ComposerActivityLabel,
-  type ComposerActivityStatus,
-} from "./ComposerActivityStatus";
 
 export interface ComposerTasksProgress {
   readonly step: string;
@@ -65,29 +60,18 @@ function TaskSummary({
   expanded,
   progress,
   steps,
-  activityStatus,
 }: {
   readonly expanded: boolean;
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
-  readonly activityStatus: ComposerActivityStatus | undefined;
 }) {
   return (
     <>
-      {activityStatus !== undefined ? (
-        <ComposerActivityIcon status={activityStatus} />
-      ) : (
-        <ComposerBanner.Icon>
-          <ListTodoIcon />
-        </ComposerBanner.Icon>
-      )}
+      <ComposerBanner.Icon>
+        <ListTodoIcon />
+      </ComposerBanner.Icon>
       <ComposerBanner.Content>
-        {activityStatus !== undefined ? (
-          <ComposerActivityLabel status={activityStatus} />
-        ) : (
-          <span className="shrink-0 text-muted-foreground">Tasks</span>
-        )}
-        {activityStatus !== undefined ? <ComposerBanner.Separator /> : null}
+        <span className="shrink-0 text-muted-foreground">Tasks</span>
         <span
           className="min-w-0 flex-1 truncate text-left font-medium text-foreground/80"
           data-composer-task-current="true"
@@ -115,14 +99,12 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
   placement = "tab",
   progress,
   steps,
-  activityStatus,
 }: {
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly placement?: "inline" | "tab";
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
-  readonly activityStatus?: ComposerActivityStatus | undefined;
 }) {
   if (progress.totalSteps <= 0) return null;
 
@@ -135,18 +117,15 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
       onClick={onToggle}
       onPointerDown={(event) => event.preventDefault()}
     >
-      <TaskSummary
-        expanded={expanded}
-        progress={progress}
-        steps={steps}
-        activityStatus={activityStatus}
-      />
+      <TaskSummary expanded={expanded} progress={progress} steps={steps} />
     </ComposerBanner.Row>
   );
   return placement === "inline" ? (
     row
   ) : (
-    <ComposerBanner.Root data-composer-shoulder-tab>{row}</ComposerBanner.Root>
+    <ComposerBanner.Root density="comfortable" data-composer-shoulder-tab>
+      {row}
+    </ComposerBanner.Root>
   );
 });
 
@@ -155,13 +134,11 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
   onToggle,
   progress,
   steps,
-  activityStatus,
 }: {
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
-  readonly activityStatus?: ComposerActivityStatus | undefined;
 }) {
   return (
     <div
@@ -174,12 +151,11 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
         placement="inline"
         progress={progress}
         steps={steps}
-        activityStatus={activityStatus}
       />
       {expanded ? (
         <ComposerBanner.Scroll data-composer-tasks-scroll="true">
           <ComposerBanner.Children
-            render={<ul />}
+            render={<ul role="list" />}
             aria-label={`Task list. ${progress.completedSteps} of ${progress.totalSteps} complete.`}
             data-composer-tasks-list="true"
           >

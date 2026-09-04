@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
+import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
@@ -5,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { TestClock } from "effect/testing";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -35,6 +38,89 @@ const makeRepositoryIdentityResolverTestLayer = (options: {
   ).pipe(Layer.provide(ProcessRunner.layer));
 
 it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
+  it.effect("reuses the cached Git root for repeated workspace lookups", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    const processRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+      run: (input) =>
+        Effect.sync(() => {
+          calls.push(input.args);
+          return {
+            stdout: input.args.includes("rev-parse")
+              ? "/repo\n"
+              : "origin\tgit@github.com:T3Tools/t3code.git (fetch)\n",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          };
+        }),
+    });
+    const resolverLayer = Layer.effect(
+      RepositoryIdentityResolver.RepositoryIdentityResolver,
+      RepositoryIdentityResolver.make(),
+    ).pipe(Layer.provide(processRunner));
+
+    return Effect.gen(function* () {
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const first = yield* resolver.resolve("/repo/packages/web");
+      const second = yield* resolver.resolve("/repo/packages/web");
+
+      expect(first?.canonicalKey).toBe("github.com/t3tools/t3code");
+      expect(second).toEqual(first);
+      expect(calls).toEqual([
+        ["-C", "/repo/packages/web", "rev-parse", "--show-toplevel"],
+        ["-C", "/repo", "remote", "-v"],
+      ]);
+    }).pipe(Effect.provide(resolverLayer));
+  });
+
+  it.effect("retries Git root discovery after a failed lookup", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    let rootAttempts = 0;
+    const processRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+      run: (input) =>
+        Effect.sync(() => {
+          calls.push(input.args);
+          const rootLookup = input.args.includes("rev-parse");
+          const failed = rootLookup && rootAttempts++ === 0;
+          return {
+            stdout: rootLookup
+              ? failed
+                ? ""
+                : "/repo\n"
+              : "origin\tgit@github.com:T3Tools/t3code.git (fetch)\n",
+            stderr: failed ? "temporary Git failure" : "",
+            code: ChildProcessSpawner.ExitCode(failed ? 1 : 0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          };
+        }),
+    });
+    const resolverLayer = Layer.effect(
+      RepositoryIdentityResolver.RepositoryIdentityResolver,
+      RepositoryIdentityResolver.make(),
+    ).pipe(Layer.provide(processRunner));
+
+    return Effect.gen(function* () {
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      expect(yield* resolver.resolve("/repo/packages/web")).toBeNull();
+
+      const recovered = yield* resolver.resolve("/repo/packages/web");
+      expect(recovered?.rootPath).toBe("/repo");
+      expect(calls).toEqual([
+        ["-C", "/repo/packages/web", "rev-parse", "--show-toplevel"],
+        ["-C", "/repo/packages/web", "rev-parse", "--show-toplevel"],
+        ["-C", "/repo", "remote", "-v"],
+      ]);
+    }).pipe(Effect.provide(resolverLayer));
+  });
+
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -47,9 +133,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const identity = yield* resolver.resolve(cwd);
+      // Native realpath, since git reports the long form of a directory the
+      // temp dir may name by its 8.3 short form on Windows.
       const resolvedIdentityRoot =
-        identity?.rootPath === undefined ? "" : yield* fileSystem.realPath(identity.rootPath);
-      const resolvedCwd = yield* fileSystem.realPath(cwd);
+        identity?.rootPath === undefined ? "" : NodeFS.realpathSync.native(identity.rootPath);
+      const resolvedCwd = NodeFS.realpathSync.native(cwd);
 
       expect(identity).not.toBeNull();
       expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
@@ -77,8 +165,8 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const identity = yield* resolver.resolve(nestedWorkspace);
       const resolvedIdentityRoot =
-        identity?.rootPath === undefined ? "" : yield* fileSystem.realPath(identity.rootPath);
-      const resolvedRepoRoot = yield* fileSystem.realPath(repoRoot);
+        identity?.rootPath === undefined ? "" : NodeFS.realpathSync.native(identity.rootPath);
+      const resolvedRepoRoot = NodeFS.realpathSync.native(repoRoot);
 
       expect(identity).not.toBeNull();
       expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");

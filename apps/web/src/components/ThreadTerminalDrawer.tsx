@@ -3,7 +3,13 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { type TerminalSessionState } from "@t3tools/client-runtime/state/terminal";
+import {
+  INITIAL_TERMINAL_OUTPUT_CURSOR,
+  readTerminalOutputUpdate,
+  type TerminalOutputCursor,
+  type TerminalOutputUpdate,
+  type TerminalSessionState,
+} from "@t3tools/client-runtime/state/terminal";
 import {
   Plus,
   Square,
@@ -27,6 +33,7 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -37,6 +44,11 @@ import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
+import {
+  observeSelectionActions,
+  resolveSelectionActionPosition,
+  type SelectionActionPoint,
+} from "~/lib/selectionActions";
 import {
   GhosttyTerminalSurface,
   type GhosttyTerminalSurfaceOptions,
@@ -78,7 +90,6 @@ import {
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
-const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
 
 function maxDrawerHeight(): number {
   if (typeof window === "undefined") return DEFAULT_THREAD_TERMINAL_HEIGHT;
@@ -95,8 +106,15 @@ function writeSystemMessage(terminal: GhosttyTerminalSurface, message: string): 
   terminal.write(`\r\n[terminal] ${message}\r\n`);
 }
 
-function writeTerminalBuffer(terminal: GhosttyTerminalSurface, buffer: string): void {
-  terminal.resetAndWrite(buffer);
+export function writeTerminalOutputUpdate(
+  terminal: Pick<GhosttyTerminalSurface, "resetAndWrite" | "write">,
+  update: TerminalOutputUpdate,
+): void {
+  if (update.type === "reset") {
+    terminal.resetAndWrite(update.data);
+  } else if (update.type === "append") {
+    terminal.write(update.data);
+  }
 }
 
 function parseTerminalColor(value: string, fallback: GhosttyColor): GhosttyColor {
@@ -201,52 +219,6 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
   };
 }
 
-export function resolveTerminalSelectionActionPosition(options: {
-  bounds: { left: number; top: number; width: number; height: number };
-  selectionRect: { right: number; bottom: number } | null;
-  pointer: { x: number; y: number } | null;
-  viewport?: { width: number; height: number } | null;
-}): { x: number; y: number } {
-  const { bounds, selectionRect, pointer, viewport } = options;
-  const viewportWidth =
-    viewport?.width ??
-    (typeof window === "undefined" ? bounds.left + bounds.width + 8 : window.innerWidth);
-  const viewportHeight =
-    viewport?.height ??
-    (typeof window === "undefined" ? bounds.top + bounds.height + 8 : window.innerHeight);
-  const drawerLeft = Math.round(bounds.left);
-  const drawerTop = Math.round(bounds.top);
-  const drawerRight = Math.round(bounds.left + bounds.width);
-  const drawerBottom = Math.round(bounds.top + bounds.height);
-  const preferredX =
-    selectionRect !== null
-      ? Math.round(selectionRect.right)
-      : pointer === null
-        ? Math.round(bounds.left + bounds.width - 140)
-        : Math.max(drawerLeft, Math.min(Math.round(pointer.x), drawerRight));
-  const preferredY =
-    selectionRect !== null
-      ? Math.round(selectionRect.bottom + 4)
-      : pointer === null
-        ? Math.round(bounds.top + 12)
-        : Math.max(drawerTop, Math.min(Math.round(pointer.y), drawerBottom));
-  return {
-    x: Math.max(8, Math.min(preferredX, Math.max(viewportWidth - 8, 8))),
-    y: Math.max(8, Math.min(preferredY, Math.max(viewportHeight - 8, 8))),
-  };
-}
-
-export function terminalSelectionActionDelayForClickCount(clickCount: number): number {
-  return clickCount >= 2 ? MULTI_CLICK_SELECTION_ACTION_DELAY_MS : 0;
-}
-
-export function shouldHandleTerminalSelectionMouseUp(
-  selectionGestureActive: boolean,
-  button: number,
-): boolean {
-  return selectionGestureActive && button === 0;
-}
-
 export function terminalSelectionLineRange(position: {
   start: { y: number };
   end: { y: number };
@@ -294,11 +266,11 @@ export function terminalContextMenuItems(options: {
  * newer context-menu flow instead.
  */
 export function shouldClearTerminalSelectionAction(options: {
-  timerPending: boolean;
+  actionPending: boolean;
   openMenuRequestId: number | null;
   currentRequestId: number;
 }): boolean {
-  return options.timerPending || options.openMenuRequestId === options.currentRequestId;
+  return options.actionPending || options.openMenuRequestId === options.currentRequestId;
 }
 
 export function shouldHandleTerminalExit(
@@ -324,6 +296,7 @@ interface TerminalViewportProps {
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   focusRequestId: number;
   autoFocus: boolean;
+  visible: boolean;
   resizeEpoch: number;
   drawerHeight: number;
   keybindings: ResolvedKeybindingsConfig;
@@ -348,12 +321,14 @@ export function TerminalViewport({
   onAddTerminalContext,
   focusRequestId,
   autoFocus,
+  visible,
   resizeEpoch,
   drawerHeight,
   keybindings,
 }: TerminalViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<GhosttyTerminalSurface | null>(null);
+  const visibleRef = useRef(visible);
   const environmentId = threadRef.environmentId;
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
@@ -371,14 +346,11 @@ export function TerminalViewport({
     reportFailure: false,
   });
   const hasHandledExitRef = useRef(false);
-  const selectionPointerRef = useRef<{ x: number; y: number } | null>(null);
-  const selectionGestureActiveRef = useRef(false);
   const selectionActionRequestIdRef = useRef(0);
   // Holds the request id of the selection popup currently on screen, so a
   // popup that was superseded (but whose menu promise has not settled yet)
   // cannot be mistaken for the active flow.
   const openSelectionMenuRequestIdRef = useRef<number | null>(null);
-  const selectionActionTimerRef = useRef<number | null>(null);
   const keybindingsRef = useRef(keybindings);
   const runtimeEnvKey = useMemo(() => runtimeEnvSignature(runtimeEnv), [runtimeEnv]);
   const handleSessionExited = useEffectEvent(() => {
@@ -425,9 +397,10 @@ export function TerminalViewport({
       input: { threadId, terminalId, cols, rows },
     }),
   );
-  const terminalBuffer = terminalSession.buffer;
+  const terminalOutput = terminalSession.output;
   const terminalError = terminalSession.error;
   const terminalStatus = terminalSession.status;
+  const outputCursorRef = useRef<TerminalOutputCursor>(INITIAL_TERMINAL_OUTPUT_CURSOR);
   const synchronizedStatusRef = useRef<TerminalSessionState["status"]>("closed");
   const synchronizeTerminalStatus = useEffectEvent(
     (terminal: GhosttyTerminalSurface, status: TerminalSessionState["status"]) => {
@@ -448,14 +421,14 @@ export function TerminalViewport({
   );
   const terminalVersion = terminalSession.version;
   const previousSessionRef = useRef({
-    buffer: terminalBuffer,
+    output: terminalOutput,
     error: terminalError,
     status: terminalStatus,
     version: terminalVersion,
   });
   const latestSessionRef = useRef(previousSessionRef.current);
   latestSessionRef.current = {
-    buffer: terminalBuffer,
+    output: terminalOutput,
     error: terminalError,
     status: terminalStatus,
     version: terminalVersion,
@@ -464,6 +437,11 @@ export function TerminalViewport({
   useEffect(() => {
     keybindingsRef.current = keybindings;
   }, [keybindings]);
+
+  useLayoutEffect(() => {
+    visibleRef.current = visible;
+    terminalRef.current?.setVisible(visible);
+  }, [visible]);
 
   useEffect(() => {
     const current = terminalFontRef.current;
@@ -481,12 +459,16 @@ export function TerminalViewport({
     let teardown: (() => void) | null = null;
     let setupTerminal: GhosttyTerminalSurface | null = null;
     let setupCleanups: Array<() => void> = [];
+    let selectionActions: ReturnType<typeof observeSelectionActions> | null = null;
 
     const setup = async (): Promise<(() => void) | null> => {
       const setupFont = terminalFontRef.current;
       const terminalOptions: GhosttyTerminalSurfaceOptions = {
         theme: terminalThemeFromApp(mount),
         font: terminalFontOptions(setupFont.family, setupFont.size),
+        get visible() {
+          return visibleRef.current;
+        },
         onData: (data) => handleData(data),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => handleSelectionChange(),
@@ -504,6 +486,7 @@ export function TerminalViewport({
         terminal.dispose();
         return null;
       }
+      terminal.setVisible(visibleRef.current);
       // The theme observer is not installed yet, so re-read the theme in case
       // the app toggled light/dark while the WASM surface was loading.
       terminal.setTheme(terminalThemeFromApp(mount));
@@ -518,7 +501,14 @@ export function TerminalViewport({
       }
       const latestSession = latestSessionRef.current;
       previousSessionRef.current = latestSession;
-      if (latestSession.buffer.length > 0) terminal.resetAndWrite(latestSession.buffer);
+      const initialOutput = readTerminalOutputUpdate(
+        latestSession.output,
+        INITIAL_TERMINAL_OUTPUT_CURSOR,
+      );
+      if (initialOutput.type === "reset" && initialOutput.data.length > 0) {
+        writeTerminalOutputUpdate(terminal, initialOutput);
+      }
+      outputCursorRef.current = initialOutput.cursor;
       if (latestSession.error !== null) writeSystemMessage(terminal, latestSession.error);
       // Attaching to a session that already exited must still run exit handling
       // once, so mount synchronization starts from the empty "closed" state.
@@ -526,18 +516,24 @@ export function TerminalViewport({
       // never started, so only "exited" triggers the message — as with xterm.)
       synchronizedStatusRef.current = "closed";
       synchronizeTerminalStatus(terminal, latestSession.status);
-      if (autoFocus) window.requestAnimationFrame(() => terminal.focus());
+      if (autoFocus && visibleRef.current) window.requestAnimationFrame(() => terminal.focus());
 
+      const dismissSelectionAction = (supersede = false) => {
+        const ownsMenu =
+          openSelectionMenuRequestIdRef.current === selectionActionRequestIdRef.current;
+        // Passive cancellation must not invalidate a newer right-click flow.
+        if (supersede || ownsMenu) selectionActionRequestIdRef.current += 1;
+        if (ownsMenu) void localApi?.contextMenu.close();
+      };
       const clearSelectionAction = () => {
-        selectionActionRequestIdRef.current += 1;
-        if (selectionActionTimerRef.current !== null) {
-          window.clearTimeout(selectionActionTimerRef.current);
-          selectionActionTimerRef.current = null;
-        }
+        selectionActions?.cancel();
+        dismissSelectionAction(true);
       };
       setupCleanups.push(clearSelectionAction);
 
-      const readSelectionAction = (): {
+      const readSelectionAction = (
+        pointer: SelectionActionPoint | null = null,
+      ): {
         position: { x: number; y: number };
         clipboardText: string;
         selection: TerminalContextSelection;
@@ -555,10 +551,11 @@ export function TerminalViewport({
         }
         const { lineStart, lineEnd } = terminalSelectionLineRange(selectionPosition);
         const bounds = mountElement.getBoundingClientRect();
-        const position = resolveTerminalSelectionActionPosition({
+        const position = resolveSelectionActionPosition({
           bounds,
           selectionRect: activeTerminal.getSelectionEndClientRect(),
-          pointer: selectionPointerRef.current,
+          pointer,
+          viewport: { width: window.innerWidth, height: window.innerHeight },
         });
         return {
           position,
@@ -659,15 +656,15 @@ export function TerminalViewport({
         }
       };
 
-      const showSelectionAction = async () => {
+      const showSelectionAction = async (pointer: SelectionActionPoint | null) => {
         if (!localApi) {
           clearSelectionAction();
           return;
         }
-        if (openSelectionMenuRequestIdRef.current !== null) {
+        if (openSelectionMenuRequestIdRef.current === selectionActionRequestIdRef.current) {
           return;
         }
-        const nextAction = readSelectionAction();
+        const nextAction = readSelectionAction(pointer);
         if (!nextAction) {
           clearSelectionAction();
           return;
@@ -765,10 +762,8 @@ export function TerminalViewport({
           };
           void openTerminalLinkInPreview({
             url: text,
-            position: { x: event.clientX, y: event.clientY },
             threadRef,
             openPreview,
-            localApi,
             fallbackToBrowser,
           });
           return;
@@ -804,48 +799,22 @@ export function TerminalViewport({
           return;
         }
         const shouldClear = shouldClearTerminalSelectionAction({
-          timerPending: selectionActionTimerRef.current !== null,
+          actionPending: selectionActions?.pending ?? false,
           openMenuRequestId: openSelectionMenuRequestIdRef.current,
           currentRequestId: selectionActionRequestIdRef.current,
         });
         if (!shouldClear) return;
         clearSelectionAction();
-        // A copy shortcut that clears the selection (Ctrl+C) must also close
-        // the context menu that appears with the selection, but a clear that
-        // never opened a menu must not dismiss an unrelated one.
-        if (openSelectionMenuRequestIdRef.current !== null) {
-          void localApi?.contextMenu.close();
-        }
       }
 
-      const handleMouseUp = (event: MouseEvent) => {
-        const shouldHandle = shouldHandleTerminalSelectionMouseUp(
-          selectionGestureActiveRef.current,
-          event.button,
-        );
-        selectionGestureActiveRef.current = false;
-        if (!shouldHandle) {
-          return;
-        }
-        selectionPointerRef.current = { x: event.clientX, y: event.clientY };
-        const delay = terminalSelectionActionDelayForClickCount(event.detail);
-        selectionActionTimerRef.current = window.setTimeout(() => {
-          selectionActionTimerRef.current = null;
-          window.requestAnimationFrame(() => {
-            void showSelectionAction();
-          });
-        }, delay);
-      };
-      const handlePointerDown = (event: PointerEvent) => {
-        clearSelectionAction();
-        selectionGestureActiveRef.current = event.button === 0;
-      };
-      window.addEventListener("mouseup", handleMouseUp);
-      mount.addEventListener("pointerdown", handlePointerDown);
-      setupCleanups.push(() => {
-        window.removeEventListener("mouseup", handleMouseUp);
-        mount.removeEventListener("pointerdown", handlePointerDown);
+      selectionActions = observeSelectionActions({
+        element: mount,
+        onSelection: (pointer) => {
+          void showSelectionAction(pointer);
+        },
+        onDismiss: (reason) => dismissSelectionAction(reason === "interaction"),
       });
+      setupCleanups.push(() => selectionActions?.dispose());
 
       const themeObserver = new MutationObserver(() => {
         const activeTerminal = terminalRef.current;
@@ -910,7 +879,7 @@ export function TerminalViewport({
   useEffect(() => {
     const terminal = terminalRef.current;
     const current = {
-      buffer: terminalBuffer,
+      output: terminalOutput,
       error: terminalError,
       status: terminalStatus,
       version: terminalVersion,
@@ -922,34 +891,29 @@ export function TerminalViewport({
 
     const previous = previousSessionRef.current;
     synchronizeTerminalStatus(terminal, current.status);
-    if (current.version === previous.version) {
+    if (current.version === previous.version && current.output === previous.output) {
       return;
     }
 
-    if (
-      current.buffer.length >= previous.buffer.length &&
-      current.buffer.startsWith(previous.buffer)
-    ) {
-      terminal.write(current.buffer.slice(previous.buffer.length));
-    } else {
-      writeTerminalBuffer(terminal, current.buffer);
-    }
+    const outputUpdate = readTerminalOutputUpdate(current.output, outputCursorRef.current);
+    writeTerminalOutputUpdate(terminal, outputUpdate);
+    outputCursorRef.current = outputUpdate.cursor;
     terminal.clearSelection();
 
     if (current.error !== null && current.error !== previous.error) {
       writeSystemMessage(terminal, current.error);
     }
 
-    if (previous.version === 0 && autoFocus) {
+    if (previous.version === 0 && autoFocus && visibleRef.current) {
       window.requestAnimationFrame(() => {
         terminal.focus();
       });
     }
     previousSessionRef.current = current;
-  }, [autoFocus, terminalBuffer, terminalError, terminalStatus, terminalVersion]);
+  }, [autoFocus, terminalOutput, terminalError, terminalStatus, terminalVersion]);
 
   useEffect(() => {
-    if (!autoFocus) return;
+    if (!autoFocus || !visible) return;
     const terminal = terminalRef.current;
     if (!terminal) return;
     const frame = window.requestAnimationFrame(() => {
@@ -958,15 +922,16 @@ export function TerminalViewport({
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [autoFocus, focusRequestId]);
+  }, [autoFocus, focusRequestId, visible]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
-    if (!terminal) return;
+    if (!terminal || !visibleRef.current) return;
     const wasAtBottom = terminal.isAtBottom();
     // The surface reports grid changes through onResize, which is the single
     // channel for PTY resize RPCs; fitting here only refreshes the layout.
     const frame = window.requestAnimationFrame(() => {
+      if (!visibleRef.current) return;
       terminal.fit();
       if (wasAtBottom) {
         terminal.scrollToBottom();
@@ -1542,6 +1507,7 @@ export default function ThreadTerminalDrawer({
                           onAddTerminalContext={onAddTerminalContext}
                           focusRequestId={focusRequestId}
                           autoFocus={terminalId === resolvedActiveTerminalId}
+                          visible={visible}
                           resizeEpoch={resizeEpoch}
                           drawerHeight={drawerHeight}
                           keybindings={keybindings}
@@ -1571,6 +1537,7 @@ export default function ThreadTerminalDrawer({
                   onAddTerminalContext={onAddTerminalContext}
                   focusRequestId={focusRequestId}
                   autoFocus
+                  visible={visible}
                   resizeEpoch={resizeEpoch}
                   drawerHeight={drawerHeight}
                   keybindings={keybindings}

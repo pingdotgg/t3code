@@ -1,6 +1,9 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { InfoIcon } from "lucide-react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { Button } from "../ui/button";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
 
 // Match the duration-220 exit transition before removing a dismissed notice.
@@ -15,14 +18,13 @@ export interface ComposerBannerStackItem {
   readonly description?: ReactNode;
   readonly children?: ReactNode;
   readonly actions?: ReactNode;
-  readonly className?: string;
   readonly dismissLabel?: string;
   readonly onDismiss?: () => void;
 }
 
 export type ComposerBannerStackContent = Pick<
   ComposerBannerStackItem,
-  "id" | "variant" | "priority" | "className"
+  "id" | "variant" | "priority"
 > & { readonly content: ReactNode };
 
 type ComposerBannerStackEntry = ComposerBannerStackItem | ComposerBannerStackContent;
@@ -46,6 +48,8 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
   const [stackExpanded, setStackExpanded] = useState(false);
   const noticesRef = useRef<HTMLDivElement>(null);
   const peekRef = useRef<HTMLButtonElement>(null);
+  const expandedItemsRef = useRef<HTMLDivElement>(null);
+  const pendingFocusRef = useRef<"peek" | "notice" | null>(null);
   const expandedItemsId = useId();
   const [requestedExitingItemId, setExitingItemId] = useState<string | null>(null);
   const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -65,6 +69,19 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
   useEffect(() => {
     if (items.length < 2) setStackExpanded(false);
   }, [items.length]);
+
+  useLayoutEffect(() => {
+    if (stackExpanded && pendingFocusRef.current === "notice") {
+      pendingFocusRef.current = null;
+      const firstControl = expandedItemsRef.current?.querySelector<HTMLElement>(
+        'button:not(:disabled), a[href], input:not(:disabled), [tabindex="0"]',
+      );
+      (firstControl ?? expandedItemsRef.current)?.focus({ preventScroll: true });
+    } else if (!stackExpanded && pendingFocusRef.current === "peek") {
+      pendingFocusRef.current = null;
+      peekRef.current?.focus({ preventScroll: true });
+    }
+  }, [stackExpanded]);
 
   if (items.length === 0) {
     return null;
@@ -130,14 +147,17 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
         {hasStack ? (
           <div
             ref={noticesRef}
-            className="relative z-20"
+            className={cn("relative z-20", stackExpanded && "min-h-3")}
             onPointerEnter={(event) => {
-              if (event.pointerType !== "touch") setStackExpanded(true);
+              if (event.pointerType === "touch") return;
+              if (document.activeElement === peekRef.current) {
+                pendingFocusRef.current = "notice";
+              }
+              setStackExpanded(true);
             }}
             onPointerLeave={(event) => {
               if (!event.currentTarget.contains(document.activeElement)) setStackExpanded(false);
             }}
-            onFocusCapture={() => setStackExpanded(true)}
             onBlurCapture={(event) => {
               if (
                 !event.currentTarget.contains(event.relatedTarget) &&
@@ -147,9 +167,10 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
               }
             }}
             onKeyDown={(event) => {
-              if (event.key !== "Escape") return;
+              if (event.key !== "Escape" || !stackExpanded) return;
+              event.preventDefault();
               event.stopPropagation();
-              peekRef.current?.focus({ preventScroll: true });
+              pendingFocusRef.current = "peek";
               setStackExpanded(false);
             }}
           >
@@ -160,18 +181,25 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
                 aria-label="Show other notices"
                 aria-expanded={stackExpanded}
                 aria-controls={expandedItemsId}
+                aria-hidden={stackExpanded || undefined}
+                tabIndex={stackExpanded ? -1 : 0}
                 onClick={(event) => {
                   event.currentTarget.focus({ preventScroll: true });
+                  pendingFocusRef.current = "notice";
                   setStackExpanded(true);
                 }}
-                className={cn(stackExpanded && "opacity-0")}
+                className={cn(stackExpanded && "pointer-events-none invisible opacity-0")}
               />
             ) : null}
             <div
               id={expandedItemsId}
+              ref={expandedItemsRef}
+              role="group"
+              aria-label="Other notices"
+              tabIndex={-1}
               data-composer-banner-stack-expanded-items="true"
               className={cn(
-                "grid transition-[grid-template-rows] duration-150 ease-out",
+                "grid transition-[grid-template-rows] duration-150 ease-out focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
                 stackExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
               )}
             >
@@ -226,25 +254,64 @@ function ComposerBannerStackAlert({
   if ("content" in item) {
     return (
       <ComposerBanner.Root
+        density="comfortable"
         placement={attached ? "attached" : "floating"}
         variant={item.variant}
-        className={item.className}
       >
         {item.content}
       </ComposerBanner.Root>
     );
   }
-
   return (
     <ComposerBanner.Root
       role="alert"
       placement={attached ? "attached" : "floating"}
       variant={item.variant}
-      className={item.className}
+      density="comfortable"
     >
-      <ComposerBanner.Row layout="wrap-actions">
-        <ComposerBanner.Icon>{item.icon}</ComposerBanner.Icon>
-        <ComposerBanner.Content className="font-medium">{item.title}</ComposerBanner.Content>
+      <ComposerBanner.Row layout="wrap-actions-narrow">
+        <ComposerBanner.Icon className="h-(--composer-banner-icon-column) self-start">
+          {item.icon}
+        </ComposerBanner.Icon>
+        <ComposerBanner.Content className="whitespace-nowrap">
+          <span
+            className={cn(
+              "min-w-0 font-medium leading-7 sm:leading-6",
+              typeof item.title === "string" && "truncate",
+            )}
+          >
+            {item.title}
+          </span>
+          {item.description ? (
+            <>
+              <span className="min-w-0 shrink-[9999] truncate text-muted-foreground @max-[400px]:sr-only">
+                {item.description}
+              </span>
+              <Popover>
+                <PopoverTrigger
+                  openOnHover
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      aria-label="Show notice details"
+                      className="hidden flex-none text-muted-foreground hover:text-foreground @max-[400px]:inline-flex"
+                    />
+                  }
+                >
+                  <InfoIcon className="size-3.5" />
+                </PopoverTrigger>
+                <PopoverPopup
+                  tooltipStyle
+                  side="top"
+                  className="max-w-72 whitespace-normal text-pretty"
+                >
+                  {item.description}
+                </PopoverPopup>
+              </Popover>
+            </>
+          ) : null}
+        </ComposerBanner.Content>
         {item.actions || item.onDismiss ? (
           <ComposerBanner.Actions>
             {item.actions}
@@ -258,19 +325,7 @@ function ComposerBannerStackAlert({
           </ComposerBanner.Actions>
         ) : null}
       </ComposerBanner.Row>
-      {item.description || item.children ? (
-        <ComposerBanner.Children>
-          {item.description ? (
-            <ComposerBanner.Row>
-              <ComposerBanner.Icon />
-              <ComposerBanner.Content className="text-muted-foreground">
-                {item.description}
-              </ComposerBanner.Content>
-            </ComposerBanner.Row>
-          ) : null}
-          {item.children}
-        </ComposerBanner.Children>
-      ) : null}
+      {item.children ? <ComposerBanner.Children>{item.children}</ComposerBanner.Children> : null}
     </ComposerBanner.Root>
   );
 }

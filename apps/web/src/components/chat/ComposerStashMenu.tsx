@@ -1,5 +1,6 @@
 import { BookmarkIcon, FileIcon, FileTextIcon } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
+import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "~/lib/utils";
@@ -14,7 +15,7 @@ function missingImageCount(entry: PromptStashEntry): number {
 }
 
 function stashEntrySnippet(entry: PromptStashEntry): string {
-  const trimmed = entry.prompt.trim().replace(/\s+/g, " ");
+  const trimmed = assistantCitationsToPlainText(entry.prompt).trim().replace(/\s+/g, " ");
   if (trimmed.length > 0) {
     return trimmed.length > SNIPPET_MAX_CHARS ? `${trimmed.slice(0, SNIPPET_MAX_CHARS)}…` : trimmed;
   }
@@ -29,10 +30,10 @@ function stashEntrySnippet(entry: PromptStashEntry): string {
 }
 
 /**
- * Attached banner listing the stashed prompts. Keyboard-first: opened by ⌘S on an
- * empty composer, navigated with arrows, restored with Enter, dismissed
- * with Escape. The listener runs capture-phase on window so it wins over
- * the Lexical editor's handlers while the menu is open.
+ * Attached banner listing the stashed prompts. Opened by the stash badge or ⌘S
+ * when the empty composer cannot restore a single entry. Navigated with arrows,
+ * restored with Enter, dismissed with Escape. The listener runs capture-phase
+ * on window so it wins over the Lexical editor's handlers while the menu is open.
  */
 export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   entries: ReadonlyArray<PromptStashEntry>;
@@ -130,7 +131,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
         </ComposerBanner.Actions>
       </ComposerBanner.Row>
       <ComposerBanner.Scroll>
-        <ComposerBanner.Children render={<ul />} aria-label="Stashed prompts">
+        <ComposerBanner.Children render={<ul role="list" />} aria-label="Stashed prompts">
           {entries.length === 0 ? (
             <ComposerBanner.Row render={<li />}>
               <ComposerBanner.Icon />
