@@ -271,6 +271,23 @@ Typical uses:
 
 Use `t3 auth --help` and the nested subcommand help pages for the full reference.
 
+### Using T3 Connect Authorization in Scripts
+
+After signing in with `t3 connect login`, scripts can request the current short-lived OAuth access
+token without reading T3 Code's stored credential:
+
+```sh
+T3_CONNECT_TOKEN="$(t3 connect token)" your-command
+```
+
+The command refreshes the stored authorization when needed and writes only the access token to
+standard output. It never prints the refresh token or starts an interactive login. If authorization
+is missing, expired, or revoked, run `t3 connect login` again.
+
+Treat the printed value like a password. Avoid putting it directly in command arguments, shell
+history, logs, or long-lived environment variables. Prefer passing it only to the process that needs
+it, as in the example above.
+
 ### Deregister a T3 Connect Environment
 
 Open your account menu and choose **T3 Connect** to see every environment registered to your

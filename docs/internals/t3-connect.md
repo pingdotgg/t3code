@@ -107,6 +107,7 @@ The connect command group is:
 ```sh
 t3 connect            # default: onboarding
 t3 connect login
+t3 connect token      # print the current OAuth access token
 t3 connect link       # --publish-only
 t3 connect status     # --json
 t3 connect publish    # --disable
@@ -117,7 +118,9 @@ t3 connect logout
 `t3 serve` is a separate top-level command, not a connect subcommand.
 
 `t3 connect login` opens the Clerk authorization flow and stores the CLI credential without enabling
-cloud exposure. `t3 connect link` installs the pinned managed `cloudflared` binary when needed,
+cloud exposure. `t3 connect token` prints only the current OAuth access token, refreshing it when
+needed; it never prints the stored refresh token or starts an interactive login. `t3 connect link`
+installs the pinned managed `cloudflared` binary when needed,
 authorizes when needed, and records durable intent to expose the environment. It works without a
 running T3 server. The next `t3 serve` or `t3 start` reconciles the relay link and launches the
 managed tunnel. `t3 connect unlink` records disabled intent immediately, stops a reachable running
