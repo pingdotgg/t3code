@@ -1,3 +1,4 @@
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -133,6 +134,6 @@ describe("ssh config", () => {
         "/tmp/home",
       );
       assert.equal(pattern, "/tmp/home/.ssh/config.d/*.conf");
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(NodePath.layerPosix)),
   );
 });

@@ -1,3 +1,4 @@
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -492,7 +493,11 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
 
   it.effect("lets the administrator's managed policy outrank every other settings file", () =>
     Effect.gen(function* () {
-      const path = yield* Path.Path;
+      // The function is pure on its `path` argument, so hand it the
+      // implementation matching each platform under test rather than the
+      // host's.
+      const path = yield* Path.Path.pipe(Effect.provide(NodePath.layerPosix));
+      const win32Path = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
 
       for (const [platform, expected] of [
         ["darwin", "/Library/Application Support/ClaudeCode/managed-settings.json"],
@@ -508,14 +513,15 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       }
 
       assert.deepEqual(
-        skillOverrideSettingsPaths(path, "/home/.claude", undefined, "win32", {
-          PROGRAMDATA: "C:/ProgramData",
+        skillOverrideSettingsPaths(win32Path, "C:\\Users\\me\\.claude", undefined, "win32", {
+          PROGRAMDATA: "C:\\ProgramData",
         }).at(-1),
-        "C:/ProgramData/ClaudeCode/managed-settings.json",
+        "C:\\ProgramData\\ClaudeCode\\managed-settings.json",
       );
-      assert.deepEqual(skillOverrideSettingsPaths(path, "/home/.claude", undefined, "win32", {}), [
-        "/home/.claude/settings.json",
-      ]);
+      assert.deepEqual(
+        skillOverrideSettingsPaths(win32Path, "C:\\Users\\me\\.claude", undefined, "win32", {}),
+        ["C:\\Users\\me\\.claude\\settings.json"],
+      );
 
       // Only the repository root's local file joins in, after the
       // workspace's own local file so it wins.
