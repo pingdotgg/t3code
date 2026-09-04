@@ -223,6 +223,10 @@
       "types": "./src/hostProcess.ts",
       "import": "./src/hostProcess.ts"
     },
+    "./testing/symlinks": {
+      "types": "./src/testing/symlinks.ts",
+      "import": "./src/testing/symlinks.ts"
+    },
     "./httpReadiness": {
       "types": "./src/httpReadiness.ts",
       "import": "./src/httpReadiness.ts"

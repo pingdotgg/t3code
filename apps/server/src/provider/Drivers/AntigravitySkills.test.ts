@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import { discoverAntigravitySkills } from "./AntigravitySkills.ts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const writeSkill = Effect.fn("writeSkill")(function* (directory: string, contents: string) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -239,27 +240,29 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
-  it.effect("follows directory symlinks used to install shared skills", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const input = yield* makeWorkspace();
-      const sourceDirectory = path.join(input.profileDirectory, "shared-review");
-      yield* writeSkill(sourceDirectory, "---\nname: review\n---\n");
-      const root = path.join(input.cwd, ".agents", "skills");
-      const linkedDirectory = path.join(root, "review");
-      yield* fileSystem.makeDirectory(root, { recursive: true });
-      yield* fileSystem.symlink(sourceDirectory, linkedDirectory);
+  it.effect.skipIf(!symlinksSupported)(
+    "follows directory symlinks used to install shared skills",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const input = yield* makeWorkspace();
+        const sourceDirectory = path.join(input.profileDirectory, "shared-review");
+        yield* writeSkill(sourceDirectory, "---\nname: review\n---\n");
+        const root = path.join(input.cwd, ".agents", "skills");
+        const linkedDirectory = path.join(root, "review");
+        yield* fileSystem.makeDirectory(root, { recursive: true });
+        yield* fileSystem.symlink(sourceDirectory, linkedDirectory);
 
-      assert.deepEqual(yield* discoverAntigravitySkills(input), [
-        {
-          name: "review",
-          path: path.join(linkedDirectory, "SKILL.md"),
-          scope: "project",
-          enabled: true,
-        },
-      ]);
-    }),
+        assert.deepEqual(yield* discoverAntigravitySkills(input), [
+          {
+            name: "review",
+            path: path.join(linkedDirectory, "SKILL.md"),
+            scope: "project",
+            enabled: true,
+          },
+        ]);
+      }),
   );
 
   it.effect("rejects an oversized skill instead of returning an incomplete catalog", () =>

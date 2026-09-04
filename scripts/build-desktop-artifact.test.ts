@@ -87,6 +87,7 @@ import {
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 // A minimal stand-in for the staged sidecar roots packed into the WSL archive.
 const stageWslRuntimeTreeFixture = Effect.fn("stageWslRuntimeTreeFixture")(function* (
@@ -2191,7 +2192,7 @@ it("keeps the prefix of a UNC path instead of going relative", () => {
   assert.deepStrictEqual(paths[0], "\\\\server\\share\\tmp\\node_modules");
 });
 
-it.effect("rebases packaged links into the isolated tree", () =>
+it.effect.skipIf(!symlinksSupported)("rebases packaged links into the isolated tree", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
