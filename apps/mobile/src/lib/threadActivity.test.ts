@@ -263,6 +263,29 @@ describe("pending user input answers", () => {
 });
 
 describe("pending approvals", () => {
+  it("surfaces dynamic tool requests from servers that did not stamp requestKind", () => {
+    const activity = makeActivity({
+      id: EventId.make("approval-dynamic-tool"),
+      kind: "approval.requested",
+      summary: "Approval requested",
+      createdAt: "2026-08-24T00:00:00.000Z",
+      payload: {
+        requestId: "req-dynamic-tool",
+        requestType: "dynamic_tool_call",
+        detail: "Search the web",
+      },
+    });
+
+    expect(derivePendingApprovals([activity])).toEqual([
+      {
+        requestId: "req-dynamic-tool",
+        requestKind: "command",
+        createdAt: "2026-08-24T00:00:00.000Z",
+        detail: "Search the web",
+      },
+    ]);
+  });
+
   it("keeps app access approvals and persistence choices from remote environments", () => {
     const options = [
       { decision: "decline", label: "Decline" },

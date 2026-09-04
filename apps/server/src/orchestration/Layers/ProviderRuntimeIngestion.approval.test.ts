@@ -31,6 +31,34 @@ describe("runtimeEventToActivities approval details", () => {
     expect((activity?.payload as Record<string, unknown> | undefined)?.detail).toBe(detail);
   });
 
+  it("stamps dynamic tool requests as actionable command approvals", () => {
+    const event = {
+      type: "request.opened",
+      eventId: EventId.make("evt-dynamic-tool"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: "2026-07-18T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      requestId: RuntimeRequestId.make("approval-dynamic-tool"),
+      payload: {
+        requestType: "dynamic_tool_call",
+        detail: "Search the web",
+      },
+    } satisfies ProviderRuntimeEvent;
+
+    const [activity] = runtimeEventToActivities(event);
+
+    expect(activity).toMatchObject({
+      kind: "approval.requested",
+      summary: "Command approval requested",
+      payload: {
+        requestId: "approval-dynamic-tool",
+        requestKind: "command",
+        requestType: "dynamic_tool_call",
+        detail: "Search the web",
+      },
+    });
+  });
+
   it("keeps app details and approval options available to remote clients", () => {
     const options = [
       { decision: "decline", label: "Decline" },
