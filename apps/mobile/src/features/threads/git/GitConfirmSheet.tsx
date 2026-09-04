@@ -29,6 +29,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
   const insets = useSafeAreaInsets();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
+  const { canWriteSourceControl } = gitActions;
 
   const params = props.route.params;
 
@@ -56,17 +57,17 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
   );
 
   const continuePendingAction = useCallback(async () => {
-    if (!confirmAction) return;
+    if (!canWriteSourceControl || !confirmAction) return;
     navigation.dispatch(StackActions.replace("Thread", { environmentId, threadId }));
     await gitActions.onRunSelectedThreadGitAction({
       action: confirmAction,
       ...(params.commitMessage ? { commitMessage: params.commitMessage } : {}),
       ...(params.filePaths ? { filePaths: params.filePaths.split(",") } : {}),
     });
-  }, [confirmAction, environmentId, gitActions, params, navigation, threadId]);
+  }, [canWriteSourceControl, confirmAction, environmentId, gitActions, params, navigation, threadId]);
 
   const movePendingActionToFeatureBranch = useCallback(async () => {
-    if (!confirmAction) return;
+    if (!canWriteSourceControl || !confirmAction) return;
     navigation.dispatch(StackActions.replace("Thread", { environmentId, threadId }));
 
     if (includesCommit) {
@@ -91,6 +92,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
     await gitActions.onCreateSelectedThreadBranch(newBranchName);
     await gitActions.onRunSelectedThreadGitAction({ action: confirmAction });
   }, [
+    canWriteSourceControl,
     confirmAction,
     gitActions,
     gitState.selectedThreadBranches,
@@ -122,15 +124,22 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
       </View>
 
       <View className="gap-3 px-5 pt-2" style={{ paddingBottom: Math.max(insets.bottom, 18) + 8 }}>
+        {!canWriteSourceControl ? (
+          <Text className="text-sm text-foreground-muted">
+            This connection cannot change source control.
+          </Text>
+        ) : null}
         <SheetActionButton
           icon="arrow.right.circle"
           label={copy?.continueLabel ?? "Continue"}
+          disabled={!canWriteSourceControl}
           onPress={() => void continuePendingAction()}
         />
         <SheetActionButton
           icon="arrow.branch"
           label="Feature branch & continue"
           tone="primary"
+          disabled={!canWriteSourceControl}
           onPress={() => void movePendingActionToFeatureBranch()}
         />
       </View>
