@@ -687,6 +687,21 @@ const windowsToWslPathImpl = (
 
 const IPV4_PATTERN = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 
+const ipv4ToInt = (ip: string): number | null => {
+  if (!IPV4_PATTERN.test(ip)) return null;
+  let value = 0;
+  for (const part of ip.split(".")) {
+    const octet = Number(part);
+    if (octet > 255) return null;
+    value = value * 256 + octet;
+  }
+  return value;
+};
+
+// Strict dotted-quad check: four octets, each 0–255, so a malformed token
+// from the probe output can never become a candidate.
+const isValidIpv4 = (ip: string): boolean => ipv4ToInt(ip) !== null;
+
 const DISTRO_IP_ROUTE_PREFIX = "route:";
 const DISTRO_IP_ADDRESSES_PREFIX = "all:";
 
@@ -710,10 +725,10 @@ export const parseDistroIpCandidates = (stdout: string): ReadonlyArray<string> =
       const tokens = trimmed.slice(DISTRO_IP_ROUTE_PREFIX.length).trim().split(/\s+/);
       const srcIndex = tokens.indexOf("src");
       const candidate = srcIndex === -1 ? undefined : tokens[srcIndex + 1];
-      if (candidate !== undefined && IPV4_PATTERN.test(candidate)) push(candidate);
+      if (candidate !== undefined && isValidIpv4(candidate)) push(candidate);
     } else if (trimmed.startsWith(DISTRO_IP_ADDRESSES_PREFIX)) {
       for (const part of trimmed.slice(DISTRO_IP_ADDRESSES_PREFIX.length).split(/\s+/)) {
-        if (IPV4_PATTERN.test(part)) push(part);
+        if (isValidIpv4(part)) push(part);
       }
     }
   }
@@ -725,18 +740,6 @@ export interface WindowsIpv4Interface {
   readonly address: string;
   readonly netmask: string | undefined;
 }
-
-const ipv4ToInt = (ip: string): number | null => {
-  const parts = ip.split(".");
-  if (parts.length !== 4) return null;
-  let value = 0;
-  for (const part of parts) {
-    const octet = Number(part);
-    if (!Number.isInteger(octet) || octet < 0 || octet > 255) return null;
-    value = value * 256 + octet;
-  }
-  return value;
-};
 
 const inSameSubnet = (a: string, b: string, netmask: string): boolean => {
   const aInt = ipv4ToInt(a);
@@ -763,8 +766,9 @@ const isWslAdapterName = (name: string): boolean => name.toLowerCase().includes(
 //    10.x/172.x space overlaps an in-distro tunnel or Docker bridge cannot
 //    capture the probe while the real WSL adapter has a match.
 // Docker bridges and in-distro VPN tunnels normally match no pass. When
-// nothing matches, fall back to the first candidate, preserving the
-// pre-validation behavior.
+// nothing matches, a lone candidate is still the only possible answer, but
+// several candidates give no basis to choose, so return none and let the
+// caller fall back to loopback rather than guess an unreachable address.
 export const pickDistroIp = (
   candidates: ReadonlyArray<string>,
   windowsInterfaces: ReadonlyArray<WindowsIpv4Interface>,
@@ -779,7 +783,7 @@ export const pickDistroIp = (
       if (windowsInterfaces.some((iface) => pass(candidate, iface))) return candidate;
     }
   }
-  return candidates[0] ?? null;
+  return candidates.length === 1 ? (candidates[0] ?? null) : null;
 };
 
 export const windowsIpv4Interfaces = (

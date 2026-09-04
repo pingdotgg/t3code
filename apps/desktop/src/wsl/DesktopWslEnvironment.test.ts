@@ -113,6 +113,14 @@ describe("parseDistroIpCandidates", () => {
     expect(parseDistroIpCandidates("route:\r\nall:172.27.5.44\r\n")).toEqual(["172.27.5.44"]);
   });
 
+  it("rejects tokens with out-of-range octets", () => {
+    const stdout = [
+      "route:1.1.1.1 via 10.0.0.1 dev eth0 src 300.1.2.3 uid 1000",
+      "all:999.1.1.1 172.27.5.44 172.27.5.256",
+    ].join("\n");
+    expect(parseDistroIpCandidates(stdout)).toEqual(["172.27.5.44"]);
+  });
+
   it("returns no candidates when neither probe produced an IPv4 address", () => {
     expect(parseDistroIpCandidates("route:\nall:")).toEqual([]);
     expect(parseDistroIpCandidates("")).toEqual([]);
@@ -147,6 +155,14 @@ describe("pickDistroIp", () => {
     expect(pickDistroIp(["192.168.1.219"], [wifi])).toBe("192.168.1.219");
   });
 
+  it("picks the mirrored host address even when Docker bridges sort first (#5211)", () => {
+    // The exact `hostname -I` ordering from the issue under mirrored
+    // networking: three Docker bridge addresses ahead of the mirrored IP.
+    expect(pickDistroIp(["172.22.0.1", "172.19.0.1", "172.17.0.1", "192.168.1.219"], [wifi])).toBe(
+      "192.168.1.219",
+    );
+  });
+
   it("outranks a Windows VPN whose address space overlaps an in-distro tunnel", () => {
     // A corporate VPN adapter on Windows can share 10.x/172.x space with an
     // in-distro tunnel or Docker bridge; the WSL adapter match must win even
@@ -166,9 +182,9 @@ describe("pickDistroIp", () => {
     expect(pickDistroIp(["192.168.100.44"], [customSwitch])).toBe("192.168.100.44");
   });
 
-  it("falls back to the first candidate when nothing is provably reachable", () => {
-    expect(pickDistroIp(["10.8.0.5", "172.17.0.1"], [wifi])).toBe("10.8.0.5");
+  it("returns a lone unmatched candidate but never guesses between several", () => {
     expect(pickDistroIp(["172.27.5.44"], [])).toBe("172.27.5.44");
+    expect(pickDistroIp(["10.8.0.5", "172.17.0.1"], [wifi])).toBeNull();
   });
 
   it("returns null with no candidates", () => {
