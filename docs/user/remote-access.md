@@ -80,6 +80,10 @@ and expiry, and can revoke it if they have access management permission.
 
 The default endpoint controls the QR code and primary copy action for pairing links. You can change it from the expanded endpoint list. The preference is stored by endpoint type, so choosing the local LAN endpoint survives normal IP address changes when you move between networks.
 
+After an app restart, the desktop app replaces its previous
+local credential. Old local desktop entries are removed from **Authorized clients**
+automatically. Paired phones, browsers, and remote desktop clients keep their access.
+
 When no user default is saved, the app uses the built-in LAN endpoint for pairing links when
 available. You can set another endpoint as the default from the expanded endpoint list.
 
@@ -202,15 +206,14 @@ If reconnecting after an app update fails, retry the SSH launch once. The launch
 ## Antigravity Google sign-in
 
 Antigravity runs and saves its Google credentials on the selected environment. You can install
-it and sign in from a remote web, desktop, or mobile client without an SSH login.
+it and sign in from a remote web or desktop client without an SSH login.
 
-Start in **Settings** > **Providers** on web or desktop. On mobile, open **Settings** >
-**Environments**, expand the environment, then choose **Set up Antigravity**.
+Start in **Settings** > **Providers**, select the environment, then choose **Antigravity**.
+Provider setup is not available in the mobile app.
 
 After Google sign-in, a remote browser usually reaches a `127.0.0.1` page that cannot load.
-Copy that full address into the return URL field in the same T3 Code client. Choose
-**Continue** on web or desktop, or **Complete sign-in** on mobile. Keep the address unchanged.
-Do not paste the return URL into a thread or bug report.
+Copy that full address into the return URL field in the same T3 Code client and choose
+**Continue**. Keep the address unchanged. Do not paste the return URL into a thread or bug report.
 
 See [Antigravity setup](./providers-antigravity.md) for installation, expiry, and account changes.
 

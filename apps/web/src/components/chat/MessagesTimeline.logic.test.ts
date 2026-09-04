@@ -4,6 +4,7 @@ import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
+  deriveMessagesTimelineRowsWithState,
   liveWorkEntryLabel,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
@@ -13,6 +14,346 @@ import {
   type MessagesTimelineRow,
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
+import {
+  createMessageAttachmentPreviewProjector,
+  deriveTimelineEntries,
+  deriveTimelineEntriesWithState,
+  type WorkLogEntry,
+} from "../../session-logic";
+import { isImageAttachment, type ChatMessage, type TurnDiffSummary } from "../../types";
+
+describe("streaming row projection", () => {
+  function fixture(text = "") {
+    const turnId = TurnId.make("live-turn");
+    const historyTurnId = TurnId.make("history-turn");
+    const time = (second: number) => new Date(Date.UTC(2026, 8, 4, 0, 0, second)).toISOString();
+    const messages: ChatMessage[] = [
+      {
+        id: MessageId.make("history-user"),
+        role: "user",
+        text: "Inspect",
+        turnId: null,
+        createdAt: time(0),
+        updatedAt: time(0),
+        streaming: false,
+      },
+      {
+        id: MessageId.make("history-assistant"),
+        role: "assistant",
+        text: "Done",
+        turnId: historyTurnId,
+        createdAt: time(3),
+        updatedAt: time(4),
+        streaming: false,
+      },
+      {
+        id: MessageId.make("live-user"),
+        role: "user",
+        text: "Continue",
+        turnId: null,
+        createdAt: time(5),
+        updatedAt: time(5),
+        streaming: false,
+      },
+      {
+        id: MessageId.make("live-assistant"),
+        role: "assistant",
+        text,
+        turnId,
+        createdAt: time(7),
+        updatedAt: time(7),
+        streaming: true,
+      },
+    ];
+    const work: WorkLogEntry[] = [
+      {
+        id: "history-work",
+        turnId: historyTurnId,
+        createdAt: time(1),
+        label: "Ran command",
+        tone: "tool",
+        command: "vp test",
+        toolCallId: "history-tool",
+        toolLifecycleStatus: "failed",
+        sourceActivityKind: "tool.completed",
+      },
+      {
+        id: "live-work",
+        turnId,
+        createdAt: time(6),
+        label: "Read file",
+        tone: "tool",
+        changedFiles: ["/repo/src/index.ts"],
+        toolCallId: "live-tool",
+        toolLifecycleStatus: "completed",
+        sourceActivityKind: "tool.completed",
+      },
+    ];
+    const timeline = deriveTimelineEntriesWithState(messages, [], work);
+    const input = {
+      timelineEntries: timeline.entries,
+      latestTurn: { turnId, state: "running", startedAt: time(5), completedAt: null },
+      runningTurnId: turnId,
+      isWorking: true,
+      activeTurnStartedAt: time(5),
+      turnDiffSummaryByAssistantMessageId: new Map<MessageId, TurnDiffSummary>(),
+      revertTurnCountByUserMessageId: new Map<MessageId, number>(),
+    } satisfies Parameters<typeof deriveMessagesTimelineRows>[0];
+    return { messages, work, timeline, input, time, turnId, historyTurnId };
+  }
+
+  it.each([
+    ["", "Now visible"],
+    [" \n", "Now visible"],
+    ["Visible", ""],
+    ["", " \t\n"],
+    ["Visible", "★ Insight\nKeep these line breaks"],
+  ])("keeps row parity and history identity when text changes from %j to %j", (before, after) => {
+    const initial = fixture(before);
+    const previous = deriveMessagesTimelineRowsWithState(initial.input);
+    Object.freeze(previous.rows);
+    for (const row of previous.rows) Object.freeze(row);
+    const last = initial.messages.at(-1)!;
+    const messages = [
+      ...initial.messages.slice(0, -1),
+      { ...last, text: after, updatedAt: initial.time(8) },
+    ];
+    const timeline = deriveTimelineEntriesWithState(messages, [], initial.work, initial.timeline);
+    const input = { ...initial.input, timelineEntries: timeline.entries };
+    const next = deriveMessagesTimelineRowsWithState(input, previous);
+
+    expect(next.rows).toEqual(
+      deriveMessagesTimelineRows({
+        ...input,
+        timelineEntries: deriveTimelineEntries(messages, [], initial.work),
+      }),
+    );
+    for (const [index, row] of previous.rows.entries()) {
+      if ((row.kind === "message" || row.kind === "assistant-meta") && row.message === last) {
+        expect(next.rows[index]).toMatchObject({ message: { text: after } });
+        expect(row.message.text).toBe(before);
+      } else {
+        expect(next.rows[index]).toBe(row);
+      }
+    }
+  });
+
+  it("keeps earlier emitted rows unchanged across two projection branches", () => {
+    const initial = fixture();
+    const previous = deriveMessagesTimelineRowsWithState(initial.input);
+    const last = initial.messages.at(-1)!;
+    const branch = (text: string) => {
+      const messages = [...initial.messages.slice(0, -1), { ...last, text }];
+      const timeline = deriveTimelineEntriesWithState(messages, [], initial.work, initial.timeline);
+      const input = { ...initial.input, timelineEntries: timeline.entries };
+      const projection = deriveMessagesTimelineRowsWithState(input, previous);
+      expect(projection.rows).toEqual(deriveMessagesTimelineRows(input));
+      return projection;
+    };
+    const first = branch("First branch");
+    const savedFirst = structuredClone(first.rows);
+    branch("Second branch");
+    expect(first.rows).toEqual(savedFirst);
+    expect(previous.rows).toEqual(deriveMessagesTimelineRows(initial.input));
+  });
+
+  it.each(["file", "image", "handoff", "streaming-image"] as const)(
+    "preserves stream reuse through the real %s preview materializer",
+    (kind) => {
+      const initial = fixture("Partial");
+      const image = {
+        type: "image" as const,
+        id: "image",
+        name: "image.png",
+        mimeType: "image/png",
+        sizeBytes: 42,
+      };
+      const file = {
+        type: "file" as const,
+        id: "file",
+        name: "file.txt",
+        mimeType: "text/plain",
+        sizeBytes: 8,
+      };
+      const source = initial.messages.map((message, index) =>
+        index === 0 || (kind === "streaming-image" && index === initial.messages.length - 1)
+          ? { ...message, attachments: kind === "file" ? [file] : [image, file] }
+          : message,
+      );
+      const server = createMessageAttachmentPreviewProjector();
+      const handoff = createMessageAttachmentPreviewProjector();
+      const materialize = (messages: ReadonlyArray<ChatMessage>, url: string) => {
+        const urls = new Map(kind === "handoff" ? [] : [[image.id, url]]);
+        return messages.map((message) => {
+          const displayed = server(message, (attachment) => urls.get(attachment.id));
+          return kind === "handoff" && message.role === "user"
+            ? handoff(displayed, (attachment) =>
+                isImageAttachment(attachment) ? "blob:handoff" : undefined,
+              )
+            : displayed;
+        });
+      };
+      const firstMessages = materialize(source, "https://first.test/image");
+      const firstTimeline = deriveTimelineEntriesWithState(firstMessages, [], initial.work);
+      const input = { ...initial.input, timelineEntries: firstTimeline.entries };
+      const previous = deriveMessagesTimelineRowsWithState(input);
+      const saved = structuredClone(previous.rows);
+      const nextSource = [...source.slice(0, -1), { ...source.at(-1)!, text: "Next token" }];
+      const nextMessages = materialize(nextSource, "https://first.test/image");
+      const nextTimeline = deriveTimelineEntriesWithState(
+        nextMessages,
+        [],
+        initial.work,
+        firstTimeline,
+      );
+      const nextInput = { ...input, timelineEntries: nextTimeline.entries };
+      const next = deriveMessagesTimelineRowsWithState(nextInput, previous);
+
+      expect(nextMessages[0]).toBe(firstMessages[0]);
+      expect(next.rows).toEqual(deriveMessagesTimelineRows(nextInput));
+      for (const [index, row] of previous.rows.entries()) {
+        if (
+          (row.kind === "message" || row.kind === "assistant-meta") &&
+          row.message.id === source.at(-1)?.id
+        )
+          continue;
+        expect(next.rows[index]).toBe(row);
+      }
+      expect(previous.rows).toEqual(saved);
+
+      if (kind === "image" || kind === "streaming-image") {
+        const renewed = materialize(nextSource, "https://renewed.test/image");
+        const renewedTimeline = deriveTimelineEntriesWithState(
+          renewed,
+          [],
+          initial.work,
+          nextTimeline,
+        );
+        const renewedInput = { ...input, timelineEntries: renewedTimeline.entries };
+        const renewedRows = deriveMessagesTimelineRowsWithState(renewedInput, next);
+        expect(renewedRows.rows).toEqual(deriveMessagesTimelineRows(renewedInput));
+        expect(renewed[0]?.attachments?.[0]).toMatchObject({
+          previewUrl: "https://renewed.test/image",
+        });
+        expect(firstMessages[0]?.attachments?.[0]).toMatchObject({
+          previewUrl: "https://first.test/image",
+        });
+      }
+    },
+  );
+
+  it.each(["completion", "turn", "role", "ordering"] as const)(
+    "rebuilds row structure for a %s change with otherwise unchanged controls",
+    (change) => {
+      const initial = fixture("Partial");
+      const input = {
+        ...initial.input,
+        latestTurn: {
+          ...initial.input.latestTurn,
+          state: "completed" as const,
+          completedAt: initial.time(9),
+        },
+        runningTurnId: null,
+        isWorking: false,
+      };
+      const previous = deriveMessagesTimelineRowsWithState(input);
+      const last = initial.messages.at(-1)!;
+      const changed: ChatMessage =
+        change === "completion"
+          ? { ...last, streaming: false, updatedAt: initial.time(10) }
+          : change === "turn"
+            ? { ...last, turnId: initial.historyTurnId }
+            : change === "role"
+              ? { ...last, role: "user", turnId: null }
+              : { ...last, createdAt: initial.time(0) };
+      const messages = [...initial.messages.slice(0, -1), changed];
+      const timeline = deriveTimelineEntriesWithState(messages, [], initial.work, initial.timeline);
+      const nextInput = { ...input, timelineEntries: timeline.entries };
+      const next = deriveMessagesTimelineRowsWithState(nextInput, previous);
+      expect(next.rows).toEqual(
+        deriveMessagesTimelineRows({
+          ...nextInput,
+          timelineEntries: deriveTimelineEntries(messages, [], initial.work),
+        }),
+      );
+      expect(previous.rows).toEqual(deriveMessagesTimelineRows(input));
+    },
+  );
+
+  it("keeps full parity through completion, trailing failure, metadata, expansion, and paging", () => {
+    const initial = fixture("Partial");
+    let timeline = initial.timeline;
+    let input: Parameters<typeof deriveMessagesTimelineRows>[0] = initial.input;
+    let projection = deriveMessagesTimelineRowsWithState(input);
+    let messages = initial.messages;
+    let work = initial.work;
+    const check = (changes: Partial<typeof input> = {}) => {
+      const oldRows = structuredClone(projection.rows);
+      const previous = projection;
+      timeline = deriveTimelineEntriesWithState(messages, [], work, timeline);
+      input = { ...input, ...changes, timelineEntries: timeline.entries };
+      projection = deriveMessagesTimelineRowsWithState(input, previous);
+      expect(projection.rows).toEqual(
+        deriveMessagesTimelineRows({
+          ...input,
+          timelineEntries: deriveTimelineEntries(messages, [], work),
+        }),
+      );
+      expect(previous.rows).toEqual(oldRows);
+    };
+
+    messages = [
+      ...messages.slice(0, -1),
+      { ...messages.at(-1)!, streaming: false, text: "Complete", updatedAt: initial.time(9) },
+    ];
+    check({
+      latestTurn: { ...initial.input.latestTurn, state: "completed", completedAt: initial.time(9) },
+      runningTurnId: null,
+      isWorking: false,
+    });
+    work = [
+      ...work,
+      {
+        id: "late-failure",
+        turnId: initial.turnId,
+        createdAt: initial.time(10),
+        label: "Failed command",
+        command: "vp test",
+        tone: "error",
+        toolCallId: "failed-tool",
+        toolLifecycleStatus: "failed",
+        sourceActivityKind: "tool.completed",
+      },
+    ];
+    check();
+    messages = [
+      ...messages.slice(0, -1),
+      { ...messages.at(-1)!, text: "Updated final text", updatedAt: initial.time(11) },
+    ];
+    check();
+    check({
+      latestTurn: {
+        ...initial.input.latestTurn,
+        state: "interrupted",
+        completedAt: initial.time(12),
+      },
+    });
+    check({ expandedTurnIds: new Set([initial.historyTurnId, initial.turnId]) });
+    const group = projection.rows.find((row) => row.kind === "work-toggle");
+    check({ expandedWorkGroupIds: new Set(group ? [group.id] : []) });
+    messages = [
+      { ...messages[0]!, id: MessageId.make("older-user"), createdAt: "2026-09-03T23:59:00.000Z" },
+      ...messages,
+    ];
+    check();
+    messages = messages.map((message) =>
+      message.id === MessageId.make("live-assistant")
+        ? { ...message, role: "user", turnId: null, createdAt: initial.time(0) }
+        : message,
+    );
+    check({ revertTurnCountByUserMessageId: new Map([[MessageId.make("live-user"), 3]]) });
+  });
+});
 
 describe("expanded tool group scrolling", () => {
   const entries = [{ id: "first" }, { id: "second" }];
@@ -829,11 +1170,10 @@ describe("deriveMessagesTimelineRows", () => {
       })),
     ];
 
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries,
+    const input = {
       latestTurn: {
         turnId,
-        state: "error",
+        state: "error" as const,
         startedAt: "2026-01-01T00:00:00Z",
         completedAt: "2026-01-01T00:00:10Z",
       },
@@ -841,7 +1181,8 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
-    });
+    };
+    const rows = deriveMessagesTimelineRows({ ...input, timelineEntries });
 
     expect(rows.map((row) => row.id)).toEqual([
       "turn-fold:turn-1",
@@ -864,6 +1205,11 @@ describe("deriveMessagesTimelineRows", () => {
       showAssistantMeta: false,
       showAssistantCopyButton: false,
     });
+    expect(
+      deriveMessagesTimelineRows({ ...input, timelineEntries: timelineEntries.slice(0, 3) }).map(
+        (row) => row.id,
+      ),
+    ).toEqual(["turn-fold:turn-1", "assistant-final-entry"]);
   });
 
   it("folds all assistant messages before the terminal message", () => {

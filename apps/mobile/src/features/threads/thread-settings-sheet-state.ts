@@ -1,26 +1,4 @@
-import type { ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
-import { providerNeedsSetup } from "../settings/provider-setup-state";
-
-/** Read setup choices from this environment, not the selectable model list. */
-export function providerSetupCandidates(input: {
-  readonly providers: ReadonlyArray<ServerProvider>;
-  readonly instanceId?: ProviderInstanceId;
-  readonly providerFilter: string | null;
-  readonly query: string;
-}): ReadonlyArray<ServerProvider> {
-  const query = input.query.trim().toLocaleLowerCase();
-  return input.providers.filter(
-    (provider) =>
-      providerNeedsSetup(provider) &&
-      (input.instanceId === undefined || provider.instanceId === input.instanceId) &&
-      (input.providerFilter === null || provider.instanceId === input.providerFilter) &&
-      (query.length === 0 ||
-        [provider.displayName ?? "", provider.driver, provider.instanceId].some((label) =>
-          label.toLocaleLowerCase().includes(query),
-        )),
-  );
-}
 
 /** Match the terms a user can actually see or recognize in the model picker. */
 export function modelMatchesCatalogQuery(input: {
@@ -53,7 +31,7 @@ export function pendingModelAfterPress(input: {
   return input.current?.key === input.pressed.key ? input.current : input.pressed;
 }
 
-/** A model can disappear while its setup page is open inside the picker. */
+/** A model can disappear while the picker is open. */
 export function canCommitPendingModel(
   pending: ModelOption,
   groups: ReadonlyArray<ProviderGroup>,

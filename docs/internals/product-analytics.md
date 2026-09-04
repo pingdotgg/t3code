@@ -23,6 +23,54 @@ time.
 client metadata because a provider turn can continue after the requesting
 client disconnects.
 
+## Provider turn events
+
+`provider.turn.completed` records one anonymous event when a provider emits a
+canonical completed or aborted turn. The event reports normalized main-agent
+token counts when the provider supplies enough data.
+
+| Property              | Values and meaning                                                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`            | Provider driver, such as `codex`, `claudeAgent`, or `opencode`. Use this as the harness breakdown.                              |
+| `model`               | Selected or provider-reported model when known. This is metadata, not proof that one model produced every token.                |
+| `effort`              | Selected or provider-reported reasoning effort when known.                                                                      |
+| `interactionMode`     | Turn interaction mode, `default` or `plan`, when known.                                                                         |
+| `runtimeMode`         | Session permission mode when known.                                                                                             |
+| `mixedModels`         | `true` when T3 Code observed `model.rerouted` during the turn. This does not split token counts by model.                       |
+| `durationMs`          | Time from the observed turn start or accepted send request to the terminal event. Omitted when start metadata is not available. |
+| `terminalStatus`      | `completed`, `failed`, `interrupted`, or `cancelled`.                                                                           |
+| `usageStatus`         | `complete`, `partial`, or `unavailable`.                                                                                        |
+| `usageScope`          | `main_agent`. Child-agent token use is not included.                                                                            |
+| `hasSubagents`        | Whether the adapter observed child agents during the turn. Omitted when the adapter does not provide a normalized usage report. |
+| `inputTokens`         | Total main-agent input tokens. This includes uncached input, cache reads, and cache creation or writes.                         |
+| `cachedInputTokens`   | Cache-read tokens. This is a subset of `inputTokens`.                                                                           |
+| `cacheCreationTokens` | Cache creation or write tokens. This is a subset of `inputTokens`.                                                              |
+| `outputTokens`        | Total main-agent output tokens, including reasoning tokens.                                                                     |
+| `reasoningTokens`     | Reasoning tokens when the provider reports them separately. This is a subset of `outputTokens`.                                 |
+
+`complete` means the provider supplied full input and output totals for the
+turn. `partial` means each included count is valid, but T3 Code did not observe
+the full turn. This can happen after an interruption, provider failure, or
+reconnect. `unavailable` means the provider did not supply trustworthy counts.
+Numeric properties are omitted when their values are unknown. They are not set
+to zero.
+
+Codex uses deltas from its cumulative token totals, and falls back to the
+newest response's `last` usage when no prior total exists or the total was
+reset. Claude uses the final result's per-turn `usage` value and does not use
+cumulative `modelUsage`.
+OpenCode sums unique main-session step totals. Cursor, Grok, and Antigravity
+usage stays `unavailable` until their ACP token fields and scope are verified.
+
+The completed event count does not have to match `provider.turn.sent`. For
+example, Claude can emit synthetic turns without a matching send request.
+Duplicate terminal events for the same provider instance, thread, and turn
+produce one analytics event.
+
+Collection is best effort and starts with the first server release that
+contains this event. T3 Code does not scan provider history or backfill older
+turns.
+
 ## Recommended properties
 
 Client properties appear on the three client events when the connected client
@@ -94,6 +142,20 @@ In PostHog Data management, use the event and property descriptions from this
 document. Mark the recommended properties as verified. Keep `clientType`
 visible with its legacy description so old reports remain understandable.
 
+Create a second saved dashboard named `Provider token efficiency`. Start each
+token insight with these filters:
+
+- `usageStatus = complete`
+- `hasSubagents = false`
+- `mixedModels = false`
+
+Break down input tokens, output tokens, and their ratio by `provider`. Compare
+the same `model`, `effort`, `interactionMode`, and `terminalStatus`. Without
+these filters, model choice, reasoning level, plan mode, failures, and child
+agents can look like harness differences. Keep separate views for median turn
+usage and aggregate `sum(outputTokens) / sum(inputTokens)`. Do not average each
+turn's ratio because small-input turns can dominate that result.
+
 ## Collection and release boundary
 
 Client values are best effort. Invalid values are ignored and never reject a
@@ -101,9 +163,12 @@ connection. Browser clients use user-agent data for broad OS, browser, phone,
 and tablet groups. They do not infer CPU architecture or an exact OS version
 from `navigator.platform`.
 
-This change does not collect URLs, tokens, prompts, IP addresses, or
-user-assigned device names. It measures authenticated product use. It does not
-measure a person who visits the hosted app without connecting to a server.
+This change does not collect URLs, authentication tokens, prompts, IP
+addresses, or user-assigned device names. The token event does not include
+thread IDs, turn IDs, provider instance IDs, event IDs, request IDs, raw
+provider payloads, or child-agent output. It does not scan provider history on
+disk or start external work. It measures authenticated product use. It does
+not measure a person who visits the hosted app without connecting to a server.
 
 The new fields start with the first client and server release that contains
 this metadata path. Historical events cannot reliably identify the client OS,

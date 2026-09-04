@@ -193,6 +193,14 @@ export interface ProjectionSnapshotQueryShape {
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThreadShell>, ProjectionRepositoryError>;
 
+  /** Read the active thread and session facts used to ingest provider events. */
+  readonly getThreadRuntimeContext: (
+    threadId: ThreadId,
+  ) => Effect.Effect<
+    Option.Option<Pick<OrchestrationThreadShell, "id" | "title" | "session">>,
+    ProjectionRepositoryError
+  >;
+
   /**
    * Read a single active thread detail snapshot by id.
    */

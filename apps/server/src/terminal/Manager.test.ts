@@ -276,6 +276,70 @@ const createManager = (
 const withHostPlatform = (platform: NodeJS.Platform) =>
   Layer.succeed(HostProcessPlatform, platform);
 
+// The previous split/join algorithm is the reference for retained text.
+function retainedHistory(text: string, maxLines: number): string {
+  const terminated = text.endsWith("\n");
+  const lines = text.split("\n");
+  if (terminated) lines.pop();
+  const retained = lines.slice(Math.max(0, lines.length - maxLines)).join("\n");
+  return terminated ? `${retained}\n` : retained;
+}
+
+it("preserves history across arbitrary chunks, Unicode, ANSI sequences, and clear", () => {
+  let randomSeed = 0x20260904;
+  const fragments = [
+    "",
+    "a",
+    "\n",
+    "\n\n",
+    "\r",
+    "\r\n",
+    "café",
+    "名",
+    "🚀",
+    "\u001b[31m",
+    "\u001b[0m",
+    "\u001b]8;;url\u0007",
+    "\ud83d",
+    "\ude80",
+  ];
+  const nextFragment = () => {
+    randomSeed = (Math.imul(randomSeed, 1_664_525) + 1_013_904_223) >>> 0;
+    return fragments[randomSeed % fragments.length]!;
+  };
+
+  for (const maxLines of [0, 1, 3, 5, 5_000]) {
+    let expected = retainedHistory("before\ninitial\n", maxLines);
+    const history = new TerminalManager.BoundedTerminalHistory(maxLines, expected);
+    expect(history.value()).toBe(expected);
+
+    for (let step = 0; step < 300; step += 1) {
+      if (step % 73 === 0) {
+        history.clear();
+        expected = "";
+        expect(history.value()).toBe(expected);
+      }
+      const chunk = nextFragment() + nextFragment();
+      history.append(chunk);
+      expected = retainedHistory(expected + chunk, maxLines);
+      expect(history.value()).toBe(expected);
+    }
+  }
+});
+
+it("preserves retained lines as older storage is compacted", () => {
+  for (const maxLines of [3, 5_000]) {
+    let expected = "";
+    const history = new TerminalManager.BoundedTerminalHistory(maxLines, expected);
+    for (let batch = 0; batch < 40; batch += 1) {
+      const chunk = Array.from({ length: 300 }, (_, line) => `${batch}:${line}\n`).join("");
+      history.append(chunk);
+      expected = retainedHistory(expected + chunk, maxLines);
+      expect(history.value()).toBe(expected);
+    }
+  }
+});
+
 it.layer(
   Layer.merge(NodeServices.layer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
   { excludeTestServices: true },
@@ -1087,6 +1151,25 @@ it.layer(
       const reopened = yield* manager.open(openInput());
       const nonEmptyLines = reopened.history.split("\n").filter((line) => line.length > 0);
       expect(nonEmptyLines).toEqual(["line2", "line3", "line4"]);
+    }),
+  );
+
+  it.effect("caps incrementally appended history without losing partial or empty lines", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(3);
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("line1\n");
+      process.emitData("\n");
+      process.emitData("line3");
+      process.emitData("-continued\nline4");
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      expect(reopened.history).toBe("\nline3-continued\nline4");
     }),
   );
 
