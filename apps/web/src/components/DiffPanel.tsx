@@ -33,6 +33,7 @@ import { cn } from "~/lib/utils";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useTheme } from "../hooks/useTheme";
+import { useT3ProjectFileState } from "../hooks/useT3ProjectFileScripts";
 import {
   buildFileDiffContentVersion,
   buildFileDiffIdentityKey,
@@ -85,6 +86,7 @@ import { reviewEnvironment } from "../state/review";
 import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
 import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
+import { resolvePathLinkTarget } from "../terminal-links";
 
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
@@ -125,6 +127,7 @@ export default function DiffPanel({
     Schema.Boolean,
   );
   const [baseRefQuery, setBaseRefQuery] = useState("");
+  const [selectedRepositoryPath, setSelectedRepositoryPath] = useState<string | null>(null);
   const [collapsedDiffFiles, setCollapsedDiffFiles] = useState<CollapsedDiffFilesState>(() => ({
     scopeKey: null,
     fileKeys: EMPTY_COLLAPSED_DIFF_FILE_KEYS,
@@ -151,6 +154,26 @@ export default function DiffPanel({
   const activeRepositoryRoot = activeThread?.worktreePath
     ? undefined
     : activeProject?.repositoryIdentity?.rootPath;
+  const projectFile = useT3ProjectFileState(
+    activeThread?.environmentId ?? null,
+    activeProject?.workspaceRoot ?? null,
+  );
+  const configuredRepositories =
+    activeThread?.worktreePath === null || activeThread?.worktreePath === undefined
+      ? (projectFile.file?.repositories ?? [])
+      : [];
+  const effectiveRepositoryPath = selectedRepositoryPath ?? configuredRepositories[0]?.path ?? null;
+  const selectedRepository = configuredRepositories.find(
+    (repository) => repository.path === effectiveRepositoryPath,
+  );
+  const activeGitCwd =
+    activeCwd && selectedRepository
+      ? selectedRepository.path === "."
+        ? activeCwd
+        : resolvePathLinkTarget(selectedRepository.path, activeCwd)
+      : activeCwd;
+  const selectedRepositoryLabel =
+    selectedRepository?.name ?? selectedRepository?.path ?? "Workspace";
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(activeThread?.environmentId ?? null),
   );
@@ -160,10 +183,10 @@ export default function DiffPanel({
   );
   const getDiffFileContents = useAtomCommand(reviewEnvironment.diffFileContents);
   const gitStatusQuery = useEnvironmentQuery(
-    activeThread !== null && activeThread !== undefined && activeCwd != null
+    activeThread !== null && activeThread !== undefined && activeGitCwd != null
       ? vcsEnvironment.status({
           environmentId: activeThread.environmentId,
-          input: { cwd: activeCwd },
+          input: { cwd: activeGitCwd },
         })
       : null,
   );
@@ -259,11 +282,11 @@ export default function DiffPanel({
     { enabled: isGitRepo && selectedTurn !== undefined },
   );
   const primaryBranchDiffPreview = useEnvironmentQuery(
-    selectedTurnId === null && activeThread && activeCwd
+    selectedTurnId === null && activeThread && activeGitCwd
       ? reviewEnvironment.diffPreview({
           environmentId: activeThread.environmentId,
           input: {
-            cwd: activeCwd,
+            cwd: activeGitCwd,
             ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
             ignoreWhitespace: diffIgnoreWhitespace,
           },
@@ -274,7 +297,7 @@ export default function DiffPanel({
     selectedTurnId === null &&
     primaryBranchDiffPreview.error?.includes("configured workspace root") === true &&
     serverConfig?.cwd !== undefined &&
-    serverConfig.cwd !== activeCwd;
+    serverConfig.cwd !== activeGitCwd;
   const fallbackBranchDiffPreview = useEnvironmentQuery(
     shouldRetryBranchDiffAtEnvironmentCwd && activeThread && serverConfig
       ? reviewEnvironment.diffPreview({
@@ -292,7 +315,7 @@ export default function DiffPanel({
     : primaryBranchDiffPreview;
   const refreshBranchDiffPreview = branchDiffPreview.refresh;
   const canRefreshGitDiff =
-    isGitRepo && selectedTurnId === null && activeThread != null && activeCwd != null;
+    isGitRepo && selectedTurnId === null && activeThread != null && activeGitCwd != null;
   const activeThreadRefreshKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
     : null;
@@ -480,7 +503,10 @@ export default function DiffPanel({
         threadRef: routeThreadRef,
         filePath,
         activeCwd,
-        repositoryRoot: activeRepositoryRoot,
+        repositoryRoot:
+          selectedRepository && activeCwd && selectedRepository.path !== "."
+            ? resolvePathLinkTarget(selectedRepository.path, activeCwd)
+            : activeRepositoryRoot,
         openInEditor: (targetPath) => {
           void (async () => {
             const result = await openInPreferredEditor(targetPath);
@@ -500,7 +526,7 @@ export default function DiffPanel({
         },
       });
     },
-    [activeCwd, activeRepositoryRoot, openInPreferredEditor, routeThreadRef],
+    [activeCwd, activeRepositoryRoot, openInPreferredEditor, routeThreadRef, selectedRepository],
   );
   const toggleDiffFileCollapsed = useCallback(
     (fileKey: string) => {
@@ -532,6 +558,7 @@ export default function DiffPanel({
 
   const selectTurn = (turnId: TurnId) => {
     if (!routeThreadRef) return;
+    setSelectedRepositoryPath(null);
     useDiffPanelStore.getState().selectTurn(routeThreadRef, turnId);
   };
   const selectGitScope = (scope: "branch" | "unstaged") => {
@@ -542,10 +569,43 @@ export default function DiffPanel({
     if (!routeThreadRef) return;
     useDiffPanelStore.getState().selectBranchBaseRef(routeThreadRef, baseRef);
   };
+  const selectRepository = (path: string) => {
+    if (!routeThreadRef) return;
+    setSelectedRepositoryPath(path);
+  };
 
   const headerRow = (
     <>
       <div className="flex min-w-0 flex-1 items-center gap-3 [-webkit-app-region:no-drag]">
+        {configuredRepositories.length > 0 && selectedTurnId === null && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className="inline-flex h-6 max-w-full items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={`Diff repository: ${selectedRepositoryLabel}`}
+            >
+              <span className="truncate">{selectedRepositoryLabel}</span>
+              <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-60">
+              {configuredRepositories.map((repository) => (
+                <DropdownMenuItem
+                  key={repository.path}
+                  className={
+                    repository.path === effectiveRepositoryPath ? "bg-foreground/[0.08]" : undefined
+                  }
+                  onClick={() => selectRepository(repository.path)}
+                >
+                  <span className="truncate">{repository.name ?? repository.path}</span>
+                  {repository.name && (
+                    <span className="ml-auto truncate text-xs text-muted-foreground">
+                      {repository.path}
+                    </span>
+                  )}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger
             className="inline-flex h-6 max-w-full items-center gap-1 rounded-md bg-accent px-2 text-xs font-medium text-accent-foreground outline-none transition-colors hover:bg-accent/80 focus-visible:ring-2 focus-visible:ring-ring"
