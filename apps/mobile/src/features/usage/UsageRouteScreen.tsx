@@ -302,9 +302,19 @@ export function UsageRouteScreen() {
                     : "Select an environment to see usage."}
                 </Text>
               ) : !canReadDiagnostics ? (
-                <Text className="py-16 text-center text-base text-foreground-muted">
-                  This connection does not have access to diagnostics and usage.
-                </Text>
+                // Each environment explains itself: a denied grant and a failed
+                // access check are different problems.
+                <View className="gap-2 py-16">
+                  {selectedEnvironments.map((environment) => (
+                    <Text
+                      key={environment.environmentId}
+                      className="text-center text-base text-foreground-muted"
+                    >
+                      {selectedEnvironments.length > 1 ? `${environment.label}: ` : null}
+                      {environment.error}
+                    </Text>
+                  ))}
+                </View>
               ) : (
                 <>
                   <ChartCard
