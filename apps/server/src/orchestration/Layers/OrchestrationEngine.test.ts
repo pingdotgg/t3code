@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import {
   ApprovalRequestId,
   EventId,
@@ -27,7 +32,10 @@ import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import * as OrchestrationCommandReceipts from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import {
+  makeSqlitePersistenceLive,
+  SqlitePersistenceMemory,
+} from "../../persistence/Layers/Sqlite.ts";
 import {
   OrchestrationEventStore,
   type OrchestrationEventStoreShape,
@@ -51,7 +59,10 @@ const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(value);
 
-function makeOrchestrationLayer() {
+function makeOrchestrationLayer(databasePath?: string) {
+  const persistence = databasePath
+    ? makeSqlitePersistenceLive(databasePath)
+    : SqlitePersistenceMemory;
   const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-orchestration-engine-test-",
   });
@@ -67,19 +78,21 @@ function makeOrchestrationLayer() {
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provideMerge(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(RepositoryIdentityResolver.layer),
-    Layer.provide(SqlitePersistenceMemory),
+    Layer.provide(persistence),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
   );
 }
 
-async function createOrchestrationSystem() {
-  const runtime = ManagedRuntime.make(makeOrchestrationLayer());
+async function createOrchestrationSystem(databasePath?: string) {
+  const runtime = ManagedRuntime.make(makeOrchestrationLayer(databasePath));
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
   const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
   return {
     engine,
     readModel: () => runtime.runPromise(snapshotQuery.getSnapshot()),
+    readThread: (threadId: ThreadId) =>
+      runtime.runPromise(snapshotQuery.getThreadDetailById(threadId)),
     run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
     dispose: () => runtime.dispose(),
   };
@@ -102,9 +115,13 @@ const hasMetricSnapshot = (
 
 describe("OrchestrationEngine", () => {
   it.each(["running", "stopped"] as const)(
-    "sends async answers as messages with a %s session and rejects duplicate replies",
+    "sends async answers with a %s session and rejects old duplicate replies",
     async (status) => {
-      const system = await createOrchestrationSystem();
+      const directory = await NodeFSP.mkdtemp(
+        NodePath.join(NodeOS.tmpdir(), "t3-async-questions-"),
+      );
+      const databasePath = NodePath.join(directory, "state.sqlite");
+      let system = await createOrchestrationSystem(databasePath);
       const threadId = ThreadId.make("async-thread");
       const projectId = ProjectId.make("async-project");
       const requestId = ApprovalRequestId.make("codex-async:question-1");
@@ -185,30 +202,36 @@ describe("OrchestrationEngine", () => {
             },
           }),
         );
-        // The question must stay available when later work fills the activity window.
-        for (let index = 0; index < 501; index += 1) {
-          await system.run(
-            system.engine.dispatch({
-              type: "thread.activity.append",
-              commandId: CommandId.make(`work-${index}`),
-              threadId,
-              createdAt: "2026-01-01T00:00:01.000Z",
-              activity: {
-                id: EventId.make(`work-${index}`),
-                kind: "tool.completed",
-                summary: "Work continued",
-                payload: {},
-                tone: "info",
-                turnId: TurnId.make("turn-1"),
-                createdAt: "2026-01-01T00:00:01.000Z",
-              },
-            }),
-          );
-        }
+        const appendWork = async (prefix: string, createdAt: string) => {
+          for (let index = 0; index < 501; index += 1) {
+            await system.run(
+              system.engine.dispatch({
+                type: "thread.activity.append",
+                commandId: CommandId.make(`${prefix}-${index}`),
+                threadId,
+                createdAt,
+                activity: {
+                  id: EventId.make(`${prefix}-${index}`),
+                  kind: "tool.completed",
+                  summary: "Work continued",
+                  payload: {},
+                  tone: "info",
+                  turnId: TurnId.make("turn-1"),
+                  createdAt,
+                },
+              }),
+            );
+          }
+        };
+        await appendWork("work", "2026-01-01T00:00:01.000Z");
         const before = await system.readModel();
         expect(
           before.threads[0]?.activities.some((activity) => activity.id === "async-question"),
         ).toBe(true);
+        if (status === "stopped") {
+          await system.dispose();
+          system = await createOrchestrationSystem(databasePath);
+        }
         const response = {
           type: "thread.user-input.respond" as const,
           commandId: CommandId.make("async-response"),
@@ -257,8 +280,26 @@ describe("OrchestrationEngine", () => {
             }),
           ),
         ).rejects.toThrow("This question has already been answered.");
+        await appendWork("later-work", "2026-01-01T00:00:03.000Z");
+        const afterEviction = Option.getOrThrow(await system.readThread(threadId));
+        expect(
+          afterEviction.activities.some((activity) => activity.kind === "user-input.resolved"),
+        ).toBe(false);
+        if (status === "stopped") {
+          await system.dispose();
+          system = await createOrchestrationSystem(databasePath);
+        }
+        await expect(
+          system.run(
+            system.engine.dispatch({
+              ...response,
+              commandId: CommandId.make("reply-after-eviction"),
+            }),
+          ),
+        ).rejects.toThrow("This question has already been answered.");
       } finally {
         await system.dispose();
+        await NodeFSP.rm(directory, { recursive: true, force: true });
       }
     },
   );
@@ -347,6 +388,7 @@ describe("OrchestrationEngine", () => {
     const layer = OrchestrationEngineLive.pipe(
       Layer.provide(
         Layer.succeed(ProjectionSnapshotQuery, {
+          getUserInputActivity: () => Effect.die("unused"),
           getCommandReadModel: () => Effect.succeed(commandReadModel),
           getSnapshot: () =>
             Effect.sync(() => {

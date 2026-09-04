@@ -6,6 +6,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type OrchestrationThread,
+  type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
@@ -187,9 +188,11 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
   command,
   readModel,
+  userInputActivity,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
+  readonly userInputActivity?: OrchestrationThreadActivity;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandRejection | PlatformError.PlatformError,
@@ -1068,12 +1071,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      const request = thread.activities.findLast(
-        (activity) =>
-          (activity.kind === "user-input.requested" || activity.kind === "user-input.resolved") &&
-          Predicate.isObject(activity.payload) &&
-          activity.payload.requestId === command.requestId,
-      );
+      const request = userInputActivity;
       if (
         request &&
         Predicate.isObject(request.payload) &&
