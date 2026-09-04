@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { serializeRenderedMarkdownFragment } from "./markdown-clipboard";
+import {
+  chatMarkdownClipboardPayload,
+  serializeRenderedMarkdownFragment,
+} from "./markdown-clipboard";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import {
   collectAssistantCitations,
@@ -13,6 +16,7 @@ const ELEMENT_NODE = 1;
 class FakeText {
   readonly nodeType = TEXT_NODE;
   readonly childNodes: ReadonlyArray<never> = [];
+  parentElement: FakeElement | null = null;
 
   constructor(readonly textContent: string) {}
 }
@@ -20,6 +24,7 @@ class FakeText {
 class FakeElement {
   readonly nodeType = ELEMENT_NODE;
   readonly childNodes: Array<FakeElement | FakeText> = [];
+  parentElement: FakeElement | null = null;
   readonly classList = {
     contains: (name: string) => this.classNames.includes(name),
   };
@@ -43,8 +48,14 @@ class FakeElement {
   }
 
   append(...children: Array<FakeElement | FakeText>): this {
+    for (const child of children) child.parentElement = this;
     this.childNodes.push(...children);
     return this;
+  }
+
+  appendChild<T extends FakeElement | FakeText>(child: T): T {
+    this.append(child);
+    return child;
   }
 
   getAttribute(name: string): string | null {
@@ -55,8 +66,20 @@ class FakeElement {
     return Object.hasOwn(this.attributes, name);
   }
 
-  closest(): FakeElement | null {
-    return null;
+  closest(selector: string): FakeElement | null {
+    if (selector === "[data-markdown-copy]" && this.hasAttribute("data-markdown-copy")) {
+      return this;
+    }
+    if (this.tagName === selector.toUpperCase()) return this;
+    return this.parentElement?.closest(selector) ?? null;
+  }
+
+  querySelectorAll(): ReadonlyArray<FakeElement> {
+    return [];
+  }
+
+  get innerHTML(): string {
+    return this.textContent;
   }
 
   /** Supports only the selectors markdown-clipboard actually asks for. */
@@ -261,5 +284,27 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
       "Hello World (Document template)",
     );
+  });
+
+  it("uses an ancestor's explicit Markdown when a selection only clones its children", () => {
+    const label = new FakeElement("TEXT").append(new FakeText("A"));
+    new FakeElement("DIV", [], {
+      "data-markdown-copy": "```mermaid\nflowchart LR\nA-->B\n```\n\n",
+    }).append(new FakeElement("SVG").append(label));
+    vi.stubGlobal("document", {
+      createElement: () => new FakeElement("DIV"),
+    });
+
+    const payload = chatMarkdownClipboardPayload({
+      rangeCount: 1,
+      getRangeAt: () => ({
+        collapsed: false,
+        cloneContents: () => new FakeElement("SVG").append(new FakeText("A")),
+        commonAncestorContainer: label,
+        toString: () => "A",
+      }),
+    } as unknown as Selection);
+
+    expect(payload?.text).toBe("```mermaid\nflowchart LR\nA-->B\n```\n\n");
   });
 });

@@ -395,6 +395,14 @@ export function chatMarkdownClipboardPayload(
     const ancestor = range.commonAncestorContainer;
     const ancestorElement =
       ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as Element) : ancestor.parentElement;
+    const markdownCopy = ancestorElement
+      ?.closest("[data-markdown-copy]")
+      ?.getAttribute("data-markdown-copy");
+    if (markdownCopy != null) {
+      texts.push(markdownCopy);
+      htmls.push(sanitizedHtmlFrom(container));
+      continue;
+    }
     if (ancestorElement?.closest("pre")) {
       const text = range.toString();
       if (text) {
