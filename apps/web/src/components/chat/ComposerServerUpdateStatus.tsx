@@ -12,7 +12,7 @@ export function ComposerServerUpdateIcon({
   readonly status: ServerUpdateState["status"];
 }) {
   if (status === "running") {
-    return <LoaderCircleIcon aria-hidden className="motion-safe:animate-spin" />;
+    return <LoaderCircleIcon aria-hidden />;
   }
   if (status === "failed") {
     return <CircleAlertIcon aria-hidden className="text-error" />;

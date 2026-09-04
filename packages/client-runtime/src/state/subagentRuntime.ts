@@ -58,7 +58,7 @@ export interface SubagentRunHandles {
 
 export interface RuntimeSubagent {
   readonly id: string;
-  readonly kind: "subagent" | "workflow" | "workflow_agent";
+  readonly kind: "subagent" | "subagent_batch" | "workflow" | "workflow_agent";
   readonly title: string;
   readonly role: string | null;
   readonly model: string | null;
@@ -259,6 +259,9 @@ function kindFromPayload(
   payload: Record<string, unknown>,
   agentId: string,
 ): RuntimeSubagent["kind"] {
+  if (payload.taskType === "subagent_batch") {
+    return "subagent_batch";
+  }
   if (asString(payload.taskType) === "local_workflow") {
     return "workflow";
   }
@@ -314,6 +317,7 @@ function getOrCreate(
 
 /** Metadata fill from any payload: never downgrades known values to null. */
 function fillMetadata(agent: MutableAgent, payload: Record<string, unknown>): void {
+  if (payload.taskType === "subagent_batch") agent.kind = "subagent_batch";
   const title = asString(payload.title);
   if (title) agent.title = title;
   const role = asString(payload.role);

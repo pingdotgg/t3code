@@ -1194,6 +1194,32 @@ const withWsRpcClient = <A, E, R>(
   onMessage?: (message: string) => void,
 ) => makeWsRpcClient.pipe(Effect.flatMap(f), Effect.provide(wsRpcProtocolLayer(wsUrl, onMessage)));
 
+const withFirstWsAckHeld = (
+  wsUrl: string,
+  held: Deferred.Deferred<void>,
+  release: Deferred.Deferred<void>,
+) => {
+  let holdNextAck = true;
+  return Layer.effect(RpcClient.Protocol)(
+    Effect.map(RpcClient.Protocol, (protocol) =>
+      RpcClient.Protocol.of({
+        ...protocol,
+        send: (clientId, request, transferables) => {
+          const send = protocol.send(clientId, request, transferables);
+          if (request._tag !== "Ack" || !holdNextAck) {
+            return send;
+          }
+          holdNextAck = false;
+          return Deferred.succeed(held, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.andThen(send),
+          );
+        },
+      }),
+    ),
+  ).pipe(Layer.provide(wsRpcProtocolLayer(wsUrl)));
+};
+
 const appendSessionCookieToWsUrl = (url: string, sessionCookieHeader: string) => {
   const isAbsoluteUrl = /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(url);
   const next = new URL(url, "http://localhost");
@@ -1647,6 +1673,310 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("revalidates static files without sending unchanged bodies", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-cache-" });
+      const indexPath = path.join(staticDir, "index.html");
+      yield* fileSystem.writeFileString(indexPath, "<html>first build</html>");
+      yield* buildAppUnderTest({ config: { staticDir } });
+
+      const initial = yield* HttpClient.get("/");
+      assert.equal(initial.status, 200);
+      assert.equal(initial.headers["cache-control"], "no-cache");
+      assert.include(yield* initial.text, "first build");
+      const etag = initial.headers.etag;
+      assert.isDefined(etag);
+      assert.isDefined(initial.headers["last-modified"]);
+
+      for (const headers of [
+        { "if-none-match": etag! },
+        { "if-none-match": `"older", ${etag!.replace(/^W\//, "")}` },
+        { "if-none-match": "*" },
+        { "if-modified-since": initial.headers["last-modified"]! },
+      ]) {
+        const response = yield* HttpClient.get("/", { headers });
+        assert.equal(response.status, 304);
+        assert.equal(response.headers.etag, etag);
+        assert.equal(response.headers["cache-control"], "no-cache");
+        assert.equal(yield* response.text, "");
+      }
+
+      const mismatched = yield* HttpClient.get("/", {
+        headers: {
+          "if-none-match": '"another-build"',
+          "if-modified-since": initial.headers["last-modified"]!,
+        },
+      });
+      assert.equal(mismatched.status, 200);
+      assert.include(yield* mismatched.text, "first build");
+
+      yield* fileSystem.writeFileString(indexPath, "<html>the next build is available</html>");
+      const changed = yield* HttpClient.get("/", { headers: { "if-none-match": etag! } });
+      assert.equal(changed.status, 200);
+      assert.notEqual(changed.headers.etag, etag);
+      assert.include(yield* changed.text, "next build");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("caches hashed static assets without freezing mutable files or SPA fallbacks", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-hashes-" });
+      yield* fileSystem.makeDirectory(path.join(staticDir, "assets"));
+      yield* fileSystem.makeDirectory(path.join(staticDir, ".vite"));
+      yield* fileSystem.writeFileString(
+        path.join(staticDir, ".vite", "manifest.json"),
+        `{
+          "index.html": { "file": "assets/index-AbCd0123.js", "isEntry": true },
+          "large.js": { "file": "assets/large-aBcD9876.js" }
+        }`,
+      );
+      yield* fileSystem.writeFileString(path.join(staticDir, "index.html"), "<html>app</html>");
+      yield* fileSystem.writeFileString(
+        path.join(staticDir, "assets", "index-AbCd0123.js"),
+        "export const app = true;",
+      );
+      yield* fileSystem.writeFileString(path.join(staticDir, "assets", "config.json"), "{}");
+      const largeAsset = "export const value = 123;\n".repeat(8192);
+      yield* fileSystem.writeFileString(
+        path.join(staticDir, "assets", "large-aBcD9876.js"),
+        largeAsset,
+      );
+      yield* buildAppUnderTest({ config: { staticDir } });
+
+      const asset = yield* HttpClient.get("/assets/index-AbCd0123.js");
+      assert.equal(asset.status, 200);
+      assert.equal(asset.headers["cache-control"], "public, max-age=31536000, immutable");
+      assert.equal(yield* asset.text, "export const app = true;");
+
+      const head = yield* HttpClient.head("/assets/index-AbCd0123.js", {
+        headers: { "accept-encoding": "identity" },
+      });
+      assert.equal(head.status, 200);
+      assert.equal(head.headers.etag, asset.headers.etag);
+      assert.equal(head.headers["content-length"], String("export const app = true;".length));
+      assert.equal(yield* head.text, "");
+
+      const compressed = yield* HttpClient.get("/assets/large-aBcD9876.js", {
+        headers: { "accept-encoding": "gzip" },
+      });
+      assert.equal(compressed.headers["content-encoding"], "gzip");
+      assert.equal(compressed.headers.vary, "Accept-Encoding");
+      assert.equal(yield* compressed.text, largeAsset);
+      const compressedHead = yield* HttpClient.head("/assets/large-aBcD9876.js", {
+        headers: { "accept-encoding": "gzip" },
+      });
+      assert.equal(compressedHead.status, 200);
+      assert.equal(compressedHead.headers["content-encoding"], "gzip");
+      assert.equal(compressedHead.headers.vary, "Accept-Encoding");
+      assert.equal(compressedHead.headers.etag, compressed.headers.etag);
+      assert.equal(compressedHead.headers["content-length"], compressed.headers["content-length"]);
+      assert.equal(yield* compressedHead.text, "");
+      const unchanged = yield* HttpClient.get("/assets/large-aBcD9876.js", {
+        headers: { "accept-encoding": "identity", "if-none-match": compressed.headers.etag! },
+      });
+      assert.equal(unchanged.status, 304);
+      assert.equal(unchanged.headers.vary, "Accept-Encoding");
+      assert.equal(yield* unchanged.text, "");
+
+      for (const resource of [
+        "/assets/config.json",
+        "/threads/example",
+        "/assets/old-ZyXw9876.js",
+      ]) {
+        const response = yield* HttpClient.get(resource);
+        assert.equal(response.status, 200);
+        assert.equal(response.headers["cache-control"], "no-cache");
+        assert.equal(
+          yield* response.text,
+          resource.endsWith("config.json") ? "{}" : "<html>app</html>",
+        );
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  for (const manifest of [
+    { label: "missing", contents: null },
+    { label: "nonmatching", contents: '{"other.js":{"file":"assets/other-AbCd0123.js"}}' },
+    { label: "malformed", contents: "{not-json" },
+  ]) {
+    it.effect(`revalidates hash-like static filenames with a ${manifest.label} manifest`, () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const staticDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-static-mutable-",
+        });
+        yield* fileSystem.makeDirectory(path.join(staticDir, "assets"));
+        if (manifest.contents !== null) {
+          yield* fileSystem.makeDirectory(path.join(staticDir, ".vite"));
+          yield* fileSystem.writeFileString(
+            path.join(staticDir, ".vite", "manifest.json"),
+            manifest.contents,
+          );
+        }
+        const filePath = path.join(staticDir, "assets", "config-20260904.js");
+        yield* fileSystem.writeFileString(filePath, "first config");
+        yield* buildAppUnderTest({ config: { staticDir } });
+
+        const initial = yield* HttpClient.get("/assets/config-20260904.js");
+        assert.equal(initial.headers["cache-control"], "no-cache");
+        assert.equal(yield* initial.text, "first config");
+
+        yield* fileSystem.writeFileString(filePath, "replacement config");
+        const changed = yield* HttpClient.get("/assets/config-20260904.js", {
+          headers: { "if-none-match": initial.headers.etag! },
+        });
+        assert.equal(changed.status, 200);
+        assert.equal(changed.headers["cache-control"], "no-cache");
+        assert.notEqual(changed.headers.etag, initial.headers.etag);
+        assert.equal(yield* changed.text, "replacement config");
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
+
+  it.effect("binds static metadata and bytes to one file across atomic replacement", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-replace-" });
+      const beforeOpenPath = path.join(staticDir, "before-open.txt");
+      const afterOpenPath = path.join(staticDir, "after-open.txt");
+      const original = "original bytes";
+      const replacement = "replacement bytes with a different size";
+      for (const filePath of [beforeOpenPath, afterOpenPath]) {
+        yield* fileSystem.writeFileString(filePath, original);
+        yield* fileSystem.writeFileString(`${filePath}.next`, replacement);
+      }
+      const replaced = new Set<string>();
+      const replaceOnce = Effect.fnUntraced(function* (filePath: string) {
+        if (replaced.has(filePath)) return;
+        replaced.add(filePath);
+        yield* fileSystem.rename(`${filePath}.next`, filePath);
+      });
+      const replacingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        stat: (filePath) =>
+          fileSystem
+            .stat(filePath)
+            .pipe(
+              Effect.tap(() => (filePath === beforeOpenPath ? replaceOnce(filePath) : Effect.void)),
+            ),
+        open: (filePath, options) =>
+          fileSystem
+            .open(filePath, options)
+            .pipe(
+              Effect.tap(() => (filePath === afterOpenPath ? replaceOnce(filePath) : Effect.void)),
+            ),
+      });
+      yield* buildAppUnderTest({ config: { staticDir } }).pipe(
+        Effect.provideService(FileSystem.FileSystem, replacingFileSystem),
+      );
+
+      for (const [name, expected] of [
+        ["before-open.txt", replacement],
+        ["after-open.txt", original],
+      ] as const) {
+        const response = yield* HttpClient.get(`/${name}`, {
+          headers: { "accept-encoding": "identity" },
+        });
+        assert.equal(response.status, 200);
+        assert.equal(response.headers["content-length"], String(expected.length));
+        assert.isTrue(response.headers.etag?.startsWith(`W/"${expected.length.toString(16)}-`));
+        assert.equal(yield* response.text, expected);
+        assert.isTrue(replaced.has(path.join(staticDir, name)));
+        assert.equal(yield* fileSystem.readFileString(path.join(staticDir, name)), replacement);
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("closes static file handles after GET, HEAD, 304, and request cancellation", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-close-" });
+      const filePath = path.join(staticDir, "index.html");
+      const body = "<p>file content</p>".repeat(1024);
+      yield* fileSystem.writeFileString(filePath, body);
+      const closed = yield* Queue.unbounded<FileSystem.File>();
+      const blocked = yield* Deferred.make<void>();
+      const active = new Set<FileSystem.File>();
+      let blockAfterOpen = false;
+      let bodyReads = 0;
+      const trackedFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        open: (candidate, options) =>
+          Effect.gen(function* () {
+            if (candidate !== filePath) return yield* fileSystem.open(candidate, options);
+            let opened: FileSystem.File | undefined;
+            // Registered first, so this signal runs after the real descriptor-close finalizer.
+            yield* Effect.addFinalizer(() =>
+              Effect.gen(function* () {
+                if (opened === undefined) return;
+                active.delete(opened);
+                yield* Queue.offer(closed, opened);
+              }),
+            );
+            const file = yield* fileSystem.open(candidate, options);
+            opened = file;
+            active.add(file);
+            if (blockAfterOpen) {
+              yield* Deferred.succeed(blocked, undefined);
+              return yield* Effect.never;
+            }
+            return new Proxy(file, {
+              get(target, key) {
+                if (key === "readAlloc") {
+                  return (size: FileSystem.SizeInput) => {
+                    bodyReads += 1;
+                    return target.readAlloc(size);
+                  };
+                }
+                return Reflect.get(target, key, target);
+              },
+            });
+          }),
+      });
+      yield* buildAppUnderTest({ config: { staticDir } }).pipe(
+        Effect.provideService(FileSystem.FileSystem, trackedFileSystem),
+      );
+
+      const get = yield* HttpClient.get("/");
+      assert.equal(yield* get.text, body);
+      yield* Queue.take(closed);
+      assert.equal(active.size, 0);
+      assert.isAbove(bodyReads, 0);
+      const readsAfterGet = bodyReads;
+
+      const head = yield* HttpClient.head("/", { headers: { "accept-encoding": "gzip" } });
+      assert.equal(head.status, 200);
+      assert.equal(head.headers["content-encoding"], "gzip");
+      assert.equal(yield* head.text, "");
+      yield* Queue.take(closed);
+      assert.equal(active.size, 0);
+      assert.equal(bodyReads, readsAfterGet);
+
+      const unchanged = yield* HttpClient.get("/", {
+        headers: { "if-none-match": get.headers.etag! },
+      });
+      assert.equal(unchanged.status, 304);
+      yield* Queue.take(closed);
+      assert.equal(active.size, 0);
+      assert.equal(bodyReads, readsAfterGet);
+
+      blockAfterOpen = true;
+      const cancelled = yield* HttpClient.get("/").pipe(Effect.forkChild);
+      yield* Deferred.await(blocked);
+      assert.equal(active.size, 1);
+      yield* Fiber.interrupt(cancelled);
+      yield* Queue.take(closed);
+      assert.equal(active.size, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("redirects to dev URL when configured", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({
@@ -1902,6 +2232,38 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "access:write",
         "relay:write",
       ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("replaces the local desktop credential on repeated bootstrap exchanges", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const first = yield* exchangeAccessToken();
+      const second = yield* exchangeAccessToken();
+      const third = yield* exchangeAccessToken();
+      assert.equal(first.response.status, 200);
+      assert.equal(second.response.status, 200);
+      assert.equal(third.response.status, 200);
+
+      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
+        headers: { authorization: `Bearer ${third.body.access_token}` },
+      });
+      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
+        readonly current: boolean;
+        readonly subject: string;
+      }>;
+      assert.equal(clientsResponse.status, 200);
+      assert.equal(clients.length, 1);
+      assert.equal(clients[0]?.current, true);
+      assert.equal(clients[0]?.subject, "desktop-bootstrap");
+
+      for (const previous of [first, second]) {
+        const response = yield* HttpClient.get("/api/auth/session", {
+          headers: { authorization: `Bearer ${previous.body.access_token}` },
+        });
+        const state = (yield* response.json) as { readonly authenticated: boolean };
+        assert.equal(state.authenticated, false);
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -7729,6 +8091,273 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(second?.kind, "synchronized");
       assert.equal(readEventsCalls, 0);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "stops an overflowing thread producer without an ACK and replays the missing events",
+    () =>
+      Effect.gen(function* () {
+        const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+        const attached = yield* Deferred.make<void>();
+        const detached = yield* Deferred.make<void>();
+        const ackHeld = yield* Deferred.make<void>();
+        const releaseAck = yield* Deferred.make<void>();
+        const firstApplied = yield* Deferred.make<void>();
+        const replayStarted = yield* Deferred.make<void>();
+        const replayCalls: Array<{ afterSequence: number; limit: number | undefined }> = [];
+        let headSequence = 0;
+        let snapshotCalls = 0;
+        const message = (sequence: number, text: string) =>
+          ({
+            sequence,
+            eventId: EventId.make(`slow-thread-${sequence}`),
+            aggregateKind: "thread",
+            aggregateId: defaultThreadId,
+            occurredAt: "2026-01-01T00:00:01.000Z",
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            type: "thread.message-sent",
+            payload: {
+              threadId: defaultThreadId,
+              messageId: MessageId.make(`slow-message-${sequence}`),
+              role: "assistant",
+              text,
+              turnId: TurnId.make("turn-edit"),
+              streaming: false,
+              createdAt: "2026-01-01T00:00:01.000Z",
+              updatedAt: "2026-01-01T00:00:01.000Z",
+            },
+          }) satisfies OrchestrationEvent;
+        const events = [
+          message(1, "a".repeat(4 * 1024 * 1024)),
+          message(2, "b".repeat(4 * 1024 * 1024)),
+          makeLiveToolActivityEvent(3, "tool.completed"),
+          message(4, "Finished"),
+        ] as const;
+
+        yield* buildAppUnderTest({
+          layers: {
+            orchestrationEngine: {
+              latestSequence: Effect.sync(() => headSequence),
+              streamDomainEvents: Stream.unwrap(
+                Effect.gen(function* () {
+                  const subscription = yield* PubSub.subscribe(liveEvents);
+                  yield* Deferred.succeed(attached, undefined);
+                  return Stream.fromSubscription(subscription);
+                }),
+              ).pipe(Stream.ensuring(Deferred.succeed(detached, undefined))),
+              readEvents: (afterSequence, limit) => {
+                replayCalls.push({ afterSequence, limit });
+                const range = events.filter(
+                  (event) => event.sequence > afterSequence && event.sequence <= headSequence,
+                );
+                return Stream.concat(
+                  Stream.fromEffect(Deferred.succeed(replayStarted, undefined)).pipe(Stream.drain),
+                  Stream.fromIterable(range),
+                );
+              },
+            },
+            projectionSnapshotQuery: {
+              getThreadDetailSnapshot: () =>
+                Effect.sync(() => {
+                  snapshotCalls += 1;
+                  return Option.none();
+                }),
+              getEventReplayStats: ({ fromSequenceExclusive, toSequenceInclusive }) => {
+                const range = events.filter(
+                  (event) =>
+                    event.sequence > fromSequenceExclusive && event.sequence <= toSequenceInclusive,
+                );
+                return Effect.succeed({
+                  eventCount: range.length,
+                  payloadBytes: range.reduce(
+                    (bytes, event) => bytes + Buffer.byteLength(jsonRequestBody(event.payload)),
+                    0,
+                  ),
+                });
+              },
+            },
+          },
+        });
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        yield* makeWsRpcClient.pipe(
+          Effect.flatMap((client) =>
+            Effect.gen(function* () {
+              let cursor = 0;
+              const received: number[] = [];
+              const attempt = yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+                threadId: defaultThreadId,
+                afterSequence: cursor,
+              }).pipe(
+                Stream.tap((item) => {
+                  if (item.kind !== "event") return Effect.void;
+                  cursor = item.event.sequence;
+                  received.push(cursor);
+                  return Deferred.succeed(firstApplied, undefined);
+                }),
+                Stream.runDrain,
+                Effect.result,
+                Effect.forkScoped,
+              );
+              yield* Deferred.await(attached);
+              yield* Deferred.await(replayStarted);
+              headSequence = 1;
+              yield* PubSub.publish(liveEvents, events[0]!);
+              yield* Deferred.await(ackHeld);
+              yield* Deferred.await(firstApplied);
+              headSequence = 4;
+              yield* PubSub.publishAll(liveEvents, events.slice(1));
+
+              // This must finish while the server is still waiting for the first
+              // batch's ACK. A failed output queue alone would leave PubSub live.
+              yield* Deferred.await(detached);
+              assert.equal(yield* PubSub.size(liveEvents), 0);
+              assert.deepEqual(received, [1]);
+              yield* Deferred.succeed(releaseAck, undefined);
+              const result = yield* Fiber.join(attempt);
+              assertTrue(result._tag === "Failure");
+              assert.equal(result.failure._tag, "OrchestrationGetSnapshotError");
+
+              const recovered = yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+                threadId: defaultThreadId,
+                afterSequence: cursor,
+                requestCompletionMarker: true,
+              }).pipe(
+                Stream.takeUntil((item) => item.kind === "synchronized"),
+                Stream.runCollect,
+              );
+              assert.deepEqual(
+                recovered.map((item) => (item.kind === "event" ? item.event.sequence : item.kind)),
+                [2, 3, 4, "synchronized"],
+              );
+              const first = recovered[0];
+              assertTrue(first?.kind === "event" && first.event.type === "thread.message-sent");
+              assert.equal(first.event.payload.text, events[1]!.payload.text);
+              const completed = recovered[1];
+              assertTrue(
+                completed?.kind === "event" && completed.event.type === "thread.activity-appended",
+              );
+              assert.equal(completed.event.payload.activity.kind, "tool.completed");
+              assert.deepEqual(replayCalls, [
+                { afterSequence: 0, limit: 0 },
+                { afterSequence: 1, limit: 3 },
+              ]);
+              assert.equal(snapshotCalls, 0);
+            }),
+          ),
+          Effect.provide(withFirstWsAckHeld(wsUrl, ackHeld, releaseAck)),
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("stops an overflowing shell producer without an ACK and recovers deleted entries", () =>
+    Effect.gen(function* () {
+      const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+      const detached = yield* Deferred.make<void>();
+      const ackHeld = yield* Deferred.make<void>();
+      const releaseAck = yield* Deferred.make<void>();
+      let headSequence = 1;
+      let snapshotCalls = 0;
+      let replayCalls = 0;
+      const thread = makeDefaultOrchestrationThreadShell();
+      const project = makeDefaultOrchestrationReadModel().projects[0]!;
+      const events: OrchestrationEvent[] = Array.from({ length: 1_001 }, (_, index) =>
+        makeLiveToolActivityEvent(index + 2, "tool.completed"),
+      );
+      events.push(
+        {
+          ...events[0]!,
+          sequence: 1_003,
+          type: "thread.archived",
+          payload: {
+            threadId: defaultThreadId,
+            archivedAt: "2026-01-01T00:00:02.000Z",
+            updatedAt: "2026-01-01T00:00:02.000Z",
+          },
+        },
+        {
+          ...events[0]!,
+          sequence: 1_004,
+          aggregateKind: "project",
+          aggregateId: defaultProjectId,
+          type: "project.deleted",
+          payload: { projectId: defaultProjectId, deletedAt: "2026-01-01T00:00:02.000Z" },
+        },
+      );
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.sync(() => headSequence),
+            streamDomainEvents: Stream.fromPubSub(liveEvents).pipe(
+              Stream.ensuring(Deferred.succeed(detached, undefined)),
+            ),
+            readEvents: () => {
+              replayCalls += 1;
+              return Stream.empty;
+            },
+          },
+          projectionSnapshotQuery: {
+            getShellSnapshot: () =>
+              Effect.sync(() => {
+                snapshotCalls += 1;
+                return {
+                  snapshotSequence: headSequence,
+                  projects: headSequence === 1 ? [project] : [],
+                  threads: headSequence === 1 ? [thread] : [],
+                  updatedAt: "2026-01-01T00:00:02.000Z",
+                };
+              }),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* makeWsRpcClient.pipe(
+        Effect.flatMap((client) =>
+          Effect.gen(function* () {
+            const received: OrchestrationShellStreamItem[] = [];
+            const attempt = yield* client[ORCHESTRATION_WS_METHODS.subscribeShell]({}).pipe(
+              Stream.tap((item) => Effect.sync(() => received.push(item))),
+              Stream.runDrain,
+              Effect.result,
+              Effect.forkScoped,
+            );
+            yield* Deferred.await(ackHeld);
+            headSequence = 1_004;
+            yield* PubSub.publishAll(liveEvents, events);
+            yield* Deferred.await(detached);
+            assert.equal(yield* PubSub.size(liveEvents), 0);
+            yield* Deferred.succeed(releaseAck, undefined);
+            const result = yield* Fiber.join(attempt);
+            assertTrue(result._tag === "Failure");
+            assert.equal(result.failure._tag, "OrchestrationGetSnapshotError");
+            assert.equal(received.length, 1);
+            const initial = received[0];
+            assertTrue(initial?.kind === "snapshot");
+            assert.equal(initial.snapshot.threads.length, 1);
+
+            const recovered = yield* client[ORCHESTRATION_WS_METHODS.subscribeShell]({
+              afterSequence: initial.snapshot.snapshotSequence,
+              requestCompletionMarker: true,
+            }).pipe(
+              Stream.takeUntil((item) => item.kind === "synchronized"),
+              Stream.runCollect,
+            );
+            const snapshot = recovered[0];
+            assertTrue(snapshot?.kind === "snapshot");
+            assert.equal(snapshot.snapshot.snapshotSequence, 1_004);
+            assert.deepEqual(snapshot.snapshot.projects, []);
+            assert.deepEqual(snapshot.snapshot.threads, []);
+            assert.deepEqual(recovered[1], { kind: "synchronized" });
+            assert.equal(snapshotCalls, 2);
+            assert.equal(replayCalls, 0);
+          }),
+        ),
+        Effect.provide(withFirstWsAckHeld(wsUrl, ackHeld, releaseAck)),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("subscribeThread replaces a cursor ahead of the authoritative head", () =>

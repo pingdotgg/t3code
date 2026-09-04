@@ -49,6 +49,7 @@ const decodeRequestLog = Schema.decodeEffect(
 
 interface NativePrompt {
   readonly index: number;
+  readonly content: ReadonlyArray<AcpSchema.ContentBlock>;
   readonly result: Deferred.Deferred<AcpSchema.PromptResponse, AcpErrors.AcpError>;
 }
 
@@ -179,12 +180,13 @@ const makeHarness = Effect.fn("makeAntigravityAdapterHarness")(function* (option
       }),
     getEvents: () => Stream.fromQueue(runtimeEvents),
     drainEvents,
-    prompt: (_payload, promptOptions) =>
+    prompt: (payload, promptOptions) =>
       Effect.gen(function* () {
         yield* Deferred.succeed(dispatchStarted, undefined);
         if (options?.holdDispatch) yield* Deferred.await(dispatchRelease);
         const prompt: NativePrompt = {
           index: ++promptIndex,
+          content: payload.prompt,
           result: yield* Deferred.make<AcpSchema.PromptResponse, AcpErrors.AcpError>(),
         };
         active = prompt;
@@ -597,7 +599,11 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       const first = yield* h.adapter
         .sendTurn({ threadId, input: "First prompt" })
         .pipe(Effect.forkChild);
-      yield* h.nextPrompt;
+      const initialPrompt = yield* h.nextPrompt;
+      expect(initialPrompt.content).toEqual([
+        { type: "text", text: "First prompt" },
+        { type: "text", text: expect.stringContaining(`Antigravity harness, as ${nativeDefault}`) },
+      ]);
       const marker = h.calls.length;
       const second = yield* h.adapter
         .sendTurn({
@@ -615,6 +621,13 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       });
       yield* Deferred.succeed(h.cancelRelease, undefined);
       const replacement = yield* h.nextPrompt;
+      expect(replacement.content).toEqual([
+        { type: "text", text: "Steer the turn" },
+        {
+          type: "text",
+          text: expect.stringContaining(`Antigravity harness, as ${nativeAlternative}`),
+        },
+      ]);
       expect(h.calls.slice(marker)).toEqual([
         "cancel:1",
         "drained:1",
@@ -796,6 +809,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       expect(launched.payload).toMatchObject({
         taskId: started.toolCall.toolCallId,
         title: "Antigravity subagent batch",
+        taskType: "subagent_batch",
         description: "Launch subagents",
         status: "running",
       });
@@ -857,7 +871,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       const completed = yield* h.waitForEvent((event) => event.type === "task.completed");
       expect(completed.payload).toEqual({
         taskId: "replayed:4",
-        taskType: "subagent",
+        taskType: "subagent_batch",
         toolUseId: "replayed:4",
         title: "Antigravity subagent batch",
         status: "failed",
@@ -1085,7 +1099,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         expect(settled.payload).toMatchObject({
           taskId: "trajectory:4",
           title: "Antigravity subagent batch",
-          taskType: "subagent",
+          taskType: "subagent_batch",
           status:
             stop === "disconnect"
               ? "failed"

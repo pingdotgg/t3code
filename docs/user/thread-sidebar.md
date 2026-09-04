@@ -13,10 +13,10 @@ request merges if **Auto-settle merged threads** is enabled.
 Each server stores its own copy of the automatic settlement settings and checks them even when no
 web, desktop, or mobile client is connected. By default, it settles threads after three days without
 activity and when their pull request merges. An eligible idle thread also settles when its pull
-request closes. An open pull request blocks inactivity settlement. Active work, pending input, and
-live background work keep the thread active. T3 Code settles from a closed or merged pull request
-only when its timestamp is not older than the user's latest activity. If that timestamp is not
-available, the inactivity rule still applies. A manual un-settle also keeps the thread active.
+request closes. An open pull request does not block inactivity settlement. Active work, pending
+input, and live background work keep the thread active. T3 Code settles from a closed or merged
+pull request only when its timestamp is not older than the user's latest activity. If that timestamp
+is not available, the inactivity rule still applies. A manual un-settle also keeps the thread active.
 
 **Settled** lists threads by when their work finished, newest first. A thread you settle yourself
 sorts by the moment you settled it. A thread that settled on its own sorts by its last message or
@@ -35,6 +35,10 @@ by older clients on one device no longer control this behavior.
 
 When you un-settle a thread, it returns to the top of the active list so you can find it right
 away. Its timestamps do not change. Other threads keep their positions.
+
+A thread whose composer holds unsent text or attachments shows an amber tint and a pen icon in the
+sidebar, the same marks a new-thread draft uses. On web and desktop, hover the row and choose the
+**X** to discard that draft without opening the thread.
 
 Right-click a pull request link in a thread and choose **Link to thread** to show that pull request
 in the sidebar. The thread settles when the linked pull request merges if **Auto-settle merged

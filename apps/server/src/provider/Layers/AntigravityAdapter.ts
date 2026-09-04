@@ -36,6 +36,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { ServerConfig } from "../../config.ts";
+import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { AntigravityAuth } from "../AntigravityAuth.ts";
 import {
@@ -176,7 +177,7 @@ interface OpenSubagent {
 function subagentLinkage(toolCallId: string) {
   return {
     taskId: RuntimeTaskId.make(toolCallId),
-    taskType: "subagent",
+    taskType: "subagent_batch",
     toolUseId: toolCallId,
     title: "Antigravity subagent batch",
   };
@@ -1075,7 +1076,18 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
           };
           const dispatched = yield* Deferred.make<void>();
           const fiber = yield* context.runtime
-            .prompt({ prompt }, { dispatched })
+            .prompt(
+              {
+                prompt: [
+                  ...prompt,
+                  {
+                    type: "text",
+                    text: buildRuntimeInstructions({ harness: "Antigravity", model }),
+                  },
+                ],
+              },
+              { dispatched },
+            )
             .pipe(Effect.forkIn(context.scope));
           context.promptFiber = fiber;
           // Fiber.join can skip a scope-close waiter when the child is interrupted.

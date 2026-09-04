@@ -174,6 +174,8 @@ On web and desktop, loading and syncing statuses fill the available banner width
 stash tab. Task progress appears above the composer, while the timeline's working timer shows
 only elapsed time.
 
+Loading, syncing, and server-update icons are static. Live tool labels do not shimmer.
+
 On web and desktop, additional notices peek out above the attached banner. Hover over the peek
 to reveal them, or focus **Show other notices** with `Tab` and press `Enter` or `Space`. Press
 `Escape` to close the stack and return focus to that control. On a touchscreen, tap the peek to
@@ -182,8 +184,10 @@ open the stack. Interacting with the attached banner or composer does not open t
 ## Prompt stash
 
 Use the default shortcut, `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux, to stash the current
-prompt and its attachments after all file uploads finish. Restore the entry later from the stash
-menu. Stashes that contain files must be restored in the environment where those files were
+prompt and its attachments after all file uploads finish. When the composer is empty and the stash
+has one entry, press the shortcut again to restore it. The shortcut opens the stash menu if there
+are multiple entries or the entry's images are still saving. You can also open the menu from the
+stash badge. Stashes that contain files must be restored in the environment where those files were
 uploaded. Stashed files stay uploaded on the server for 24 hours. If you restore an entry after
 that, the file comes back with **Attach again** next to it. Attach the file again or remove it, then
 send.
