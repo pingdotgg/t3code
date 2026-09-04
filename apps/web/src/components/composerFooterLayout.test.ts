@@ -333,6 +333,33 @@ describe("resolveRestingComposerControlsLayout hysteresis", () => {
     ).toEqual({ hiddenCount: 0, visible: true });
   });
 
+  it("restores the blocks that fit when the full cluster has no slack", () => {
+    const partlyRestored = resolveRestingComposerControlsLayout({
+      ...base,
+      hostWidth: 357,
+      previous: { hiddenCount: 2, visible: true },
+    });
+    expect(partlyRestored).toEqual({ hiddenCount: 1, visible: true });
+    expect(
+      resolveRestingComposerControlsLayout({ ...base, hostWidth: 357, previous: partlyRestored }),
+    ).toEqual(partlyRestored);
+    expect(
+      resolveRestingComposerControlsLayout({ ...base, hostWidth: 358, previous: partlyRestored }),
+    ).toEqual({ hiddenCount: 0, visible: true });
+  });
+
+  it("requires slack before partially restoring a cluster", () => {
+    // One inline block, the picker, and overflow need 149 + 60 + 24 + 8 = 241px.
+    const previous = { hiddenCount: 2, visible: true };
+    expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 241, previous })).toEqual(
+      previous,
+    );
+    expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 242, previous })).toEqual({
+      hiddenCount: 1,
+      visible: true,
+    });
+  });
+
   it("still resolves from scratch when there is no previous layout", () => {
     expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 357 })).toEqual({
       hiddenCount: 0,

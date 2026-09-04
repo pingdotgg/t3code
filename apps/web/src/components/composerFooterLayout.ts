@@ -134,9 +134,13 @@ export function resolveRestingComposerControlsLayout(
   // composer re-measures on every render, so without that margin a host
   // sitting exactly on a threshold flips a block in and out until React
   // gives up with "Maximum update depth exceeded".
-  if (previous && hiddenCount < previous.hiddenCount) {
-    if (restingComposerControlsWidth(input, hiddenCount) > hostWidth - RESTING_CONTROLS_SLACK_PX) {
-      hiddenCount = Math.min(previous.hiddenCount, blockWidths.length);
+  if (previous) {
+    const previousHiddenCount = Math.min(previous.hiddenCount, blockWidths.length);
+    while (
+      hiddenCount < previousHiddenCount &&
+      restingComposerControlsWidth(input, hiddenCount) > hostWidth - RESTING_CONTROLS_SLACK_PX
+    ) {
+      hiddenCount += 1;
     }
   }
   const minimumWidth = restingComposerControlsWidth(input, hiddenCount, input.minimumFixedWidth);
