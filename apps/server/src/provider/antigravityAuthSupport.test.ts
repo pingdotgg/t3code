@@ -5,6 +5,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -32,6 +33,7 @@ import {
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
   resolveAntigravityProfileDirectory,
+  serveAntigravityAuthorizationUrlSink,
 } from "./antigravityAuthSupport.ts";
 
 const authorizationUrl =
@@ -51,7 +53,37 @@ describe("Antigravity process environment", () => {
     acpDirectory: "/t3/userdata/providers/antigravity/profile/antigravity-acp",
     tokenPath: "/t3/userdata/providers/antigravity/profile/antigravity-acp/acp_token.json",
     browserCommand: "managed-browser-helper",
+    browserHelperPath: "/runtime/node",
+    browserPreloadPath:
+      "/t3/userdata/providers/antigravity/profile/antigravity-acp/t3-browser-preload.cjs",
   };
+
+  it("routes only the sign-in launch through the browser preload and sink", () => {
+    const signIn = buildAntigravityAcpSpawnInput({
+      installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+      profile,
+      cwd: "/project",
+      baseEnv: { NODE_OPTIONS: "--max-old-space-size=4096", T3_ANTIGRAVITY_AUTH_SINK: "stale" },
+      authorizationUrlSink: "http://127.0.0.1:41234/token",
+    });
+    expect(signIn.env).toMatchObject({
+      BROWSER: "/runtime/node",
+      NODE_OPTIONS: `--max-old-space-size=4096 --require "${profile.browserPreloadPath}"`,
+      T3_ANTIGRAVITY_AUTH_SINK: "http://127.0.0.1:41234/token",
+    });
+
+    const session = buildAntigravityAcpSpawnInput({
+      installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+      profile,
+      cwd: "/project",
+      baseEnv: { NODE_OPTIONS: "--max-old-space-size=4096", T3_ANTIGRAVITY_AUTH_SINK: "stale" },
+    });
+    expect(session.env).toMatchObject({
+      BROWSER: profile.browserCommand,
+      NODE_OPTIONS: "--max-old-space-size=4096",
+    });
+    expect(session.env).not.toHaveProperty("T3_ANTIGRAVITY_AUTH_SINK");
+  });
 
   it("isolates the profile and harness after merging overrides without changing the base environment", () => {
     const baseEnv = {
@@ -590,7 +622,47 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       }).pipe(Effect.result);
 
       expect(Result.isFailure(result)).toBe(true);
-      expect(yield* fs.exists(profileDirectory)).toBe(false);
+      expect(
+        yield* fs.exists(path.join(profileDirectory, "antigravity-acp", "settings.json")),
+      ).toBe(false);
+    }),
+  );
+
+  it.effect("delivers the sign-in URL from the browser preload to the sink", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+      const profile = yield* prepareAntigravityProfile({ profileDirectory: temporaryDirectory });
+      const received = yield* Deferred.make<string>();
+      const sink = yield* serveAntigravityAuthorizationUrlSink((url) =>
+        Deferred.succeed(received, url).pipe(Effect.asVoid),
+      );
+      const spawn = buildAntigravityAcpSpawnInput({
+        installation: { executablePath: "unused", harnessPath: "unused" },
+        profile,
+        cwd: temporaryDirectory,
+        authorizationUrlSink: sink,
+      });
+      const env = spawn.env ?? {};
+      const child = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          NodeChildProcess.spawn(env.BROWSER ?? "", [authorizationUrl], {
+            cwd: temporaryDirectory,
+            env,
+            stdio: "ignore",
+          }),
+        ),
+        (process) => Effect.sync(() => void process.kill()),
+      );
+      const exitCode = yield* Effect.promise(
+        () =>
+          new Promise<number | null>((resolve, reject) => {
+            child.once("error", reject);
+            child.once("exit", resolve);
+          }),
+      );
+      expect(exitCode).toBe(0);
+      expect(yield* Deferred.await(received)).toBe(authorizationUrl);
     }),
   );
 

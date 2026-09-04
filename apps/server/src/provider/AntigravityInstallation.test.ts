@@ -312,7 +312,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           const profile = command.options.env?.GEMINI_HOME;
           if (!profile) return yield* Effect.die("Expected a disposable validation profile.");
           profiles.add(profile);
-          const helper = command.args[0] === "-e";
+          const helper = command.args[0]?.startsWith("https://") === true;
           const output = yield* Queue.unbounded<Uint8Array>();
           const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
           const terminate = Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0)).pipe(

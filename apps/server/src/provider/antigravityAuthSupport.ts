@@ -1,4 +1,6 @@
 import * as NodeCrypto from "node:crypto";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - node:http hosts the one-shot loopback sink with no routing, logging, or middleware.
+import * as NodeHttp from "node:http";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - resolveAntigravityProfileDirectory is a pure sync helper, so it cannot use the Path service.
 import * as NodePath from "node:path";
 
@@ -9,6 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
@@ -20,6 +23,7 @@ import type { AcpSpawnInput } from "./acp/AcpSessionRuntime.ts";
 export const ANTIGRAVITY_AUTH_STDOUT_PREFIX =
   "Open the following link to authenticate the ACP server: ";
 export const ANTIGRAVITY_AUTH_BROWSER_MARKER = "__T3_ANTIGRAVITY_AUTH_URL__";
+export const ANTIGRAVITY_AUTH_SINK_ENV = "T3_ANTIGRAVITY_AUTH_SINK";
 export const ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE =
   "Sign in to Antigravity in Settings before you continue.";
 
@@ -52,6 +56,39 @@ const browserHelperSource =
   `process.stderr.on("error",()=>process.exit(0)).write(` +
   `"${ANTIGRAVITY_AUTH_BROWSER_MARKER}"+JSON.stringify(process.argv[1])+"\\n",` +
   `()=>process.exit(0))`;
+// The agent's Python 3.10 webbrowser runs BROWSER as one executable with the
+// URL as its only argument, and its stdout copy of the URL sits in a block
+// buffer until the process exits. Sign-in therefore points BROWSER at the T3
+// runtime and preloads this file through NODE_OPTIONS. Node resolves its entry
+// argument as a path before preloads run, so the URL arrives as
+// <cwd>/https:/host/path and is rebuilt here. The entry then fails to load,
+// which the handler ignores until delivery has finished.
+const browserPreloadSource = String.raw`"use strict";
+const argument = process.argv[1];
+const cwd = process.cwd();
+const trimmed =
+  typeof argument === "string" && argument.startsWith(cwd) ? argument.slice(cwd.length) : "";
+const url = trimmed
+  .replace(/^[\\/]+/, "")
+  .replaceAll("\\", "/")
+  .replace(/^https:\/(?!\/)/, "https://");
+if (url.startsWith("https://")) {
+  process.on("uncaughtException", () => {});
+  const done = () => process.exit(0);
+  const sink = process.env.${ANTIGRAVITY_AUTH_SINK_ENV};
+  if (sink) {
+    fetch(sink, { method: "POST", headers: { "content-type": "text/plain" }, body: url }).then(
+      done,
+      done,
+    );
+  } else {
+    process.stderr
+      .on("error", done)
+      .write("${ANTIGRAVITY_AUTH_BROWSER_MARKER}" + JSON.stringify(url) + "\n", done);
+  }
+}
+`;
+const browserPreloadFileName = "t3-browser-preload.cjs";
 const browserPreflightUrl = "https://example.invalid/t3-antigravity-browser-preflight";
 
 const removedEnvironmentKeys = new Set([
@@ -72,6 +109,7 @@ const removedEnvironmentKeys = new Set([
   "BROWSER",
   "PYTHONUNBUFFERED",
   "ELECTRON_RUN_AS_NODE",
+  ANTIGRAVITY_AUTH_SINK_ENV,
 ]);
 
 export interface AntigravityProfile {
@@ -80,6 +118,10 @@ export interface AntigravityProfile {
   readonly acpDirectory: string;
   readonly tokenPath: string;
   readonly browserCommand: string;
+  /** T3 runtime that sign-in launches instead of a browser. */
+  readonly browserHelperPath: string;
+  /** Preload that hands the sign-in URL to T3. Lives inside `acpDirectory`. */
+  readonly browserPreloadPath: string;
 }
 
 /**
@@ -189,16 +231,37 @@ function quoteBrowserArgument(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
+/**
+ * Sign-in launches route the browser through the preload, and only they carry
+ * NODE_OPTIONS so turn subprocesses never inherit it. Other launches keep a
+ * BROWSER value Python cannot run, so no browser opens.
+ */
 function antigravityEnvironment(
   profile: AntigravityProfile,
   baseEnv: NodeJS.ProcessEnv,
   auth: AntigravityAuthConfig,
+  signIn?: { readonly authorizationUrlSink?: string },
 ) {
   const environment: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
     // Windows treats environment keys as case-insensitive. Remove aliases too.
     if (!removedEnvironmentKeys.has(key.toUpperCase())) environment[key] = value;
   }
+  const browser = signIn
+    ? {
+        BROWSER: profile.browserHelperPath,
+        // Node reads backslashes inside quoted NODE_OPTIONS values as escapes.
+        NODE_OPTIONS: [
+          environment.NODE_OPTIONS,
+          `--require "${profile.browserPreloadPath.replaceAll("\\", "/")}"`,
+        ]
+          .filter((value) => value)
+          .join(" "),
+        ...(signIn.authorizationUrlSink
+          ? { [ANTIGRAVITY_AUTH_SINK_ENV]: signIn.authorizationUrlSink }
+          : {}),
+      }
+    : { BROWSER: profile.browserCommand };
   // Only the configured method's credential reaches the agent. The agent
   // prefers GOOGLE_API_KEY over the GCP pair for Agent Platform, so the pair
   // goes through settings.json instead of the environment.
@@ -213,7 +276,7 @@ function antigravityEnvironment(
     ...credential,
     GEMINI_HOME: profile.geminiHome,
     AGY_ACP_FORCE_FILE_STORAGE: "1",
-    BROWSER: profile.browserCommand,
+    ...browser,
     PYTHONUNBUFFERED: "1",
     ELECTRON_RUN_AS_NODE: "1",
   };
@@ -251,17 +314,50 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
 
   const geminiHome = path.resolve(input.profileDirectory);
   const acpDirectory = path.join(geminiHome, "antigravity-acp");
+  const browserPreloadPath = path.join(acpDirectory, browserPreloadFileName);
+  if (browserPreloadPath.includes('"')) {
+    return yield* authSupportError(
+      "The Antigravity profile path cannot be used to suppress browser launches.",
+    );
+  }
   const profile: AntigravityProfile = {
     platform,
     geminiHome,
     acpDirectory,
     tokenPath: path.join(acpDirectory, "acp_token.json"),
     browserCommand,
+    browserHelperPath: helperExecutable,
+    browserPreloadPath,
   };
-  const environment = antigravityEnvironment(profile, input.baseEnv ?? process.env, auth);
+  for (const directory of [geminiHome, acpDirectory]) {
+    yield* fs
+      .makeDirectory(directory, { recursive: true, mode: 0o700 })
+      .pipe(
+        Effect.mapError(() =>
+          authSupportError("The Antigravity profile directory could not be created."),
+        ),
+      );
+    if (platform !== "win32") {
+      yield* fs
+        .chmod(directory, 0o700)
+        .pipe(
+          Effect.mapError(() =>
+            authSupportError("The Antigravity profile directory permissions could not be set."),
+          ),
+        );
+    }
+  }
+  yield* fs
+    .writeFileString(browserPreloadPath, browserPreloadSource)
+    .pipe(
+      Effect.mapError(() =>
+        authSupportError("The Antigravity browser preload could not be written."),
+      ),
+    );
+  const environment = antigravityEnvironment(profile, input.baseEnv ?? process.env, auth, {});
   yield* Effect.gen(function* () {
     const child = yield* spawner.spawn(
-      ChildProcess.make(helperExecutable, ["-e", browserHelperSource, "--", browserPreflightUrl], {
+      ChildProcess.make(helperExecutable, [browserPreflightUrl], {
         env: environment,
         extendEnv: false,
         shell: false,
@@ -298,24 +394,6 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     ),
   );
 
-  for (const directory of [geminiHome, acpDirectory]) {
-    yield* fs
-      .makeDirectory(directory, { recursive: true, mode: 0o700 })
-      .pipe(
-        Effect.mapError(() =>
-          authSupportError("The Antigravity profile directory could not be created."),
-        ),
-      );
-    if (platform !== "win32") {
-      yield* fs
-        .chmod(directory, 0o700)
-        .pipe(
-          Effect.mapError(() =>
-            authSupportError("The Antigravity profile directory permissions could not be set."),
-          ),
-        );
-    }
-  }
   // Rewriting on every launch keeps a method, project, or location edit in
   // Settings effective. The agent also records auth.type here after a
   // sign-in, which matches the value written below.
@@ -339,6 +417,8 @@ export function buildAntigravityAcpSpawnInput(input: {
   readonly cwd: string;
   readonly baseEnv?: NodeJS.ProcessEnv;
   readonly auth?: AntigravityAuthConfig;
+  /** Present only for the sign-in launch. See `serveAntigravityAuthorizationUrlSink`. */
+  readonly authorizationUrlSink?: string;
 }): AcpSpawnInput {
   return {
     command: input.installation.executablePath,
@@ -349,6 +429,9 @@ export function buildAntigravityAcpSpawnInput(input: {
         input.profile,
         input.baseEnv ?? process.env,
         input.auth ?? ANTIGRAVITY_PERSONAL_AUTH,
+        input.authorizationUrlSink
+          ? { authorizationUrlSink: input.authorizationUrlSink }
+          : undefined,
       ),
       ANTIGRAVITY_HARNESS_PATH: input.installation.harnessPath,
     },
@@ -499,3 +582,60 @@ export function makeAntigravityStderrHandler(
     yield* Effect.forEach(lines, handleLine, { discard: true });
   });
 }
+
+/**
+ * Serves the loopback endpoint the browser preload posts the sign-in URL to.
+ * The agent's own stdout copy of the URL never leaves its buffer until exit,
+ * so this is how sign-in learns the URL. Lives for the sign-in scope.
+ */
+export const serveAntigravityAuthorizationUrlSink = Effect.fn(
+  "serveAntigravityAuthorizationUrlSink",
+)(function* (
+  onAuthorizationUrl: (url: string) => Effect.Effect<void, AcpErrors.AcpError>,
+): Effect.fn.Return<string, AcpErrors.AcpError, Scope.Scope> {
+  const token = NodeCrypto.randomBytes(16).toString("hex");
+  const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  const server = NodeHttp.createServer((request, response) => {
+    if (request.method !== "POST" || request.url !== `/${token}`) {
+      response.statusCode = 404;
+      response.end();
+      request.resume();
+      return;
+    }
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    request.on("data", (chunk: Buffer) => {
+      bytes += chunk.byteLength;
+      if (bytes > maxAuthorizationUrlLength) {
+        response.statusCode = 413;
+        response.end();
+        request.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on("end", () => {
+      response.statusCode = 204;
+      response.end();
+      runFork(onAuthorizationUrl(Buffer.concat(chunks).toString("utf8")).pipe(Effect.ignore));
+    });
+  });
+  yield* Effect.acquireRelease(
+    Effect.callback<void, AcpErrors.AcpError>((resume) => {
+      server.once("error", () =>
+        resume(authSupportError("The Antigravity sign-in listener could not start.")),
+      );
+      server.listen(0, "127.0.0.1", () => resume(Effect.void));
+    }),
+    () =>
+      Effect.sync(() => {
+        server.closeAllConnections();
+        server.close();
+      }),
+  );
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    return yield* authSupportError("The Antigravity sign-in listener could not start.");
+  }
+  return `http://127.0.0.1:${address.port}/${token}`;
+});
