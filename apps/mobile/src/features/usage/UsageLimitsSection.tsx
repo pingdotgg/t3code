@@ -255,7 +255,7 @@ export function UsageLimitsSection() {
   return (
     <>
       {sources.map((source) => (
-        <SettingsSection key={source.key} title={source.label} card>
+        <SettingsSection key={source.key} card>
           {source.error ? (
             <Text className="p-4 text-sm text-foreground-muted">{source.error}</Text>
           ) : source.accounts.length === 0 ? (

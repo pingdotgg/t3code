@@ -393,22 +393,17 @@ function SourceAccountLimits({
   );
 }
 
-/**
- * Accounts a configured source (a CLIProxyAPI hub) pools, grouped under the
- * source's name. Unlike provider rows these are read-only: nothing on this
- * environment can run a turn against them.
- */
 const SOURCE_KIND_LABEL: Record<UsageLimitSourceSnapshot["kind"], string> = {
   cliproxy: "CLI Proxy",
 };
 
 type LimitsSource = ReturnType<typeof collectLimitSources>[number];
 
+/** Read-only accounts pooled by a configured usage source. */
 function SourceLimits({ source, now }: { readonly source: LimitsSource; readonly now: number }) {
   const kind = SOURCE_KIND_LABEL[source.kind];
   return (
     <div className="flex flex-col gap-6">
-      <h2 className="text-xs tracking-wide text-muted-foreground uppercase">{source.label}</h2>
       {source.error ? (
         <span className="text-xs text-muted-foreground">{source.error}</span>
       ) : source.accounts.length === 0 ? (
