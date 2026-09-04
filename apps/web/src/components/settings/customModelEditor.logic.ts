@@ -20,6 +20,7 @@ export interface EditorDescriptor {
   readonly id: string;
   readonly label: string;
   readonly choices: ReadonlyArray<EditorChoice>;
+  readonly currentBooleanValue?: boolean | undefined;
 }
 
 export interface CustomModelDraft {
@@ -77,15 +78,6 @@ export const DESCRIPTOR_PRESETS_BY_KIND: Partial<
     },
     { id: "fastMode", label: "Fast Mode", type: "boolean" },
     { id: "thinking", label: "Thinking", type: "boolean" },
-    {
-      id: "contextWindow",
-      label: "Context Window",
-      type: "select",
-      choices: [
-        { id: "200k", label: "200k", isDefault: true },
-        { id: "1m", label: "1M" },
-      ],
-    },
   ],
   [ProviderDriverKind.make("cursor")]: [
     { id: "reasoning", label: "Reasoning", type: "select", choices: EFFORT_CHOICES },
@@ -163,6 +155,9 @@ export function descriptorToEditor(descriptor: ProviderOptionDescriptor): Editor
     type: descriptor.type,
     id: descriptor.id,
     label: descriptor.label,
+    ...(descriptor.type === "boolean" && descriptor.currentValue !== undefined
+      ? { currentBooleanValue: descriptor.currentValue }
+      : {}),
     choices: choices.map((option) => ({
       key: newEditorKey(),
       id: option.id,
@@ -180,11 +175,14 @@ export function draftFromDefinition(entry: CustomModelDefinition): CustomModelDr
   };
 }
 
-/** Descriptor list copied from another model, e.g. a built-in "start from". */
+/** Claude context choices require runtime suffix mappings that custom entries do not carry. */
 export function descriptorsFromCapabilities(
   capabilities: ModelCapabilities | null | undefined,
+  driverKind: ProviderDriverKind | null,
 ): EditorDescriptor[] {
-  return (capabilities?.optionDescriptors ?? []).map(descriptorToEditor);
+  return (capabilities?.optionDescriptors ?? [])
+    .filter((descriptor) => driverKind !== "claudeAgent" || descriptor.id !== "contextWindow")
+    .map(descriptorToEditor);
 }
 
 /**
@@ -221,7 +219,14 @@ export function definitionFromDraft(draft: CustomModelDraft): CustomModelDefinit
     const id = descriptor.id.trim();
     const label = descriptor.label.trim();
     if (descriptor.type === "boolean") {
-      return { id, label, type: "boolean" };
+      return {
+        id,
+        label,
+        type: "boolean",
+        ...(descriptor.currentBooleanValue !== undefined
+          ? { currentValue: descriptor.currentBooleanValue }
+          : {}),
+      };
     }
     const options = descriptor.choices.map((choice) => ({
       id: choice.id.trim(),

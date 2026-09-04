@@ -119,6 +119,7 @@ export function CustomModelEditor({
       label: preset.label,
       type: preset.type,
       choices: (preset.choices ?? []).map(choiceFromPreset),
+      currentBooleanValue: undefined,
     });
   };
 
@@ -129,7 +130,7 @@ export function CustomModelEditor({
     setError(null);
     setDraft((current) => ({
       ...current,
-      descriptors: descriptorsFromCapabilities(model.capabilities),
+      descriptors: descriptorsFromCapabilities(model.capabilities, driverKind),
     }));
   };
 
