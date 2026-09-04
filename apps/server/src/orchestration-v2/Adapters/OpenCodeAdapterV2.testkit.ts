@@ -120,11 +120,26 @@ function frameRecord(frame: unknown): Record<string, unknown> | null {
   return typeof frame === "object" && frame !== null ? (frame as Record<string, unknown>) : null;
 }
 
+function materializeMessageIds(value: unknown, messageIds: ReadonlyMap<string, string>): unknown {
+  if (Array.isArray(value)) return value.map((entry) => materializeMessageIds(entry, messageIds));
+  const record = frameRecord(value);
+  if (record === null) return value;
+  return Object.fromEntries(
+    Object.entries(record).map(([key, entry]) => [
+      key,
+      typeof entry === "string" && (key === "id" || key === "messageID" || key === "parentID")
+        ? (messageIds.get(entry) ?? entry)
+        : materializeMessageIds(entry, messageIds),
+    ]),
+  );
+}
+
 export class OpenCodeReplayController {
   private cursor = 0;
   private readonly waiters = new Set<() => void>();
   private failure: unknown = null;
   private readonly transcript: OpenCodeSdkReplayTranscript;
+  private messageIds = new Map<string, string>();
 
   constructor(transcript: OpenCodeSdkReplayTranscript) {
     this.transcript = transcript;
@@ -133,14 +148,44 @@ export class OpenCodeReplayController {
   async expectOutbound(actual: unknown): Promise<void> {
     try {
       const entry = this.transcript.entries[this.cursor];
-      if (entry?.type !== "expect_outbound" || !replayValueMatches(entry.frame, actual)) {
+      const expectedFrame = entry?.type === "expect_outbound" ? frameRecord(entry.frame) : null;
+      const actualFrame = frameRecord(actual);
+      const messageIds = new Map(this.messageIds);
+      let conflictingMessageId = false;
+      if (
+        expectedFrame?.type === "session.promptAsync" &&
+        actualFrame?.type === expectedFrame.type
+      ) {
+        const recordedId = frameRecord(expectedFrame.input)?.messageID;
+        const actualId = frameRecord(actualFrame.input)?.messageID;
+        if (
+          typeof recordedId === "string" &&
+          typeof actualId === "string" &&
+          recordedId !== "<any>" &&
+          recordedId !== "<workspace>" &&
+          !messageIds.has(recordedId)
+        ) {
+          conflictingMessageId = [...messageIds.values()].includes(actualId);
+          if (!conflictingMessageId) messageIds.set(recordedId, actualId);
+        }
+      }
+      const expected =
+        entry?.type === "expect_outbound"
+          ? materializeMessageIds(entry.frame, messageIds)
+          : (entry ?? null);
+      if (
+        conflictingMessageId ||
+        entry?.type !== "expect_outbound" ||
+        !replayValueMatches(expected, actual)
+      ) {
         throw new OpenCodeReplayMismatchError({
           scenario: this.transcript.scenario,
           cursor: this.cursor,
-          expected: entry?.type === "expect_outbound" ? entry.frame : (entry ?? null),
+          expected,
           actual,
         });
       }
+      this.messageIds = messageIds;
       this.advance();
     } catch (cause) {
       this.fail(cause);
@@ -158,7 +203,7 @@ export class OpenCodeReplayController {
           if (entry.afterMs !== undefined && entry.afterMs > 0) {
             await Effect.runPromise(Effect.sleep(Duration.millis(entry.afterMs)));
           }
-          const data = frame.data;
+          const data = materializeMessageIds(frame.data, this.messageIds);
           this.advance();
           return data;
         }
@@ -188,7 +233,7 @@ export class OpenCodeReplayController {
           if (entry.afterMs !== undefined && entry.afterMs > 0) {
             await Effect.runPromise(Effect.sleep(Duration.millis(entry.afterMs)));
           }
-          const event = frame.event as OpenCodeEvent;
+          const event = materializeMessageIds(frame.event, this.messageIds) as OpenCodeEvent;
           this.advance();
           yield event;
           continue;
