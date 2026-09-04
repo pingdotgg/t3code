@@ -580,6 +580,24 @@ Path=Profiles/wxyz.empty
       }),
     ),
   );
+
+  it.effect("falls through to the legacy database when Network/Cookies is a directory", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const paths = yield* withSourceHome();
+        const root = helium.userDataDirectory(paths);
+        // A folder squatting on the preferred candidate path must not shadow
+        // the real legacy database behind it.
+        yield* fileSystem.makeDirectory(`${root}/Default/Network/Cookies`, { recursive: true });
+        yield* writeCookieDatabase(`${root}/Default/Cookies`, 2);
+
+        const [profile] = yield* listSourceProfiles(helium, paths);
+        assert.equal(profile?.directory, "Default");
+        assert.equal(profile?.cookieCount, 2);
+      }),
+    ),
+  );
 });
 
 describe("cookieDatabaseCandidatePaths", () => {
@@ -767,6 +785,41 @@ describe("listSourceProfiles Firefox fallback", () => {
     );
   }
 
+  it.effect("scans for profiles when profiles.ini declares only ones without cookies", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-firefox-stale-ini-",
+        });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcessEnvironment, { HOME: home }),
+          Effect.provideService(HostProcessPlatform, "darwin"),
+        );
+        const root = firefox.userDataDirectory(context)!;
+        // `profiles.ini` names a profile that was never launched (no cookie
+        // database), while the real cookies sit in an undeclared one.
+        yield* fileSystem.makeDirectory(path.join(root, "Profiles", "stale.default"), {
+          recursive: true,
+        });
+        const realDirectory = path.join(root, "Profiles", "real.default");
+        yield* fileSystem.makeDirectory(realDirectory, { recursive: true });
+        yield* writeFirefoxCookieDatabase(path.join(realDirectory, "cookies.sqlite"), 3, 0);
+        yield* fileSystem.writeFileString(
+          path.join(root, "profiles.ini"),
+          ["[Profile0]", "Name=Stale", "IsRelative=1", "Path=Profiles/stale.default"].join("\n"),
+        );
+
+        // Returning the empty declared list would hide the browser entirely.
+        assert.deepEqual(yield* listSourceProfiles(firefox, context), [
+          { directory: "Profiles/real.default", name: "real.default", cookieCount: 3 },
+        ]);
+        assert.isTrue(yield* isSourceInstalled(firefox, context));
+      }),
+    ),
+  );
+
   it.effect("counts only importable cookies for declared and fallback profiles", () =>
     run(
       Effect.gen(function* () {
@@ -941,7 +994,12 @@ describe("isSourceRunning for Firefox", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-firefox-" });
         const context = yield* sourcePathContext.pipe(
-          Effect.provideService(HostProcessEnvironment, { HOME: home }),
+          // Firefox's win32 root hangs off %APPDATA%; without it the root is
+          // undefined and the fixture would escape the sandbox into the repo.
+          Effect.provideService(HostProcessEnvironment, {
+            HOME: home,
+            APPDATA: `${home}/AppData/Roaming`,
+          }),
           Effect.provideService(HostProcessPlatform, "win32"),
         );
         const root = firefox.userDataDirectory(context)!;
@@ -960,14 +1018,13 @@ describe("isSourceRunning for Firefox", () => {
 });
 
 describe("Windows user-data directories", () => {
-  it.effect("does not support any Chromium fork on win32", () =>
-    Effect.gen(function* () {
-      // No Chromium fork lists win32 anymore: since Chrome 127 their cookies
-      // are App-Bound Encrypted, so nothing can import them. Omitting the
-      // platform is what makes `unavailableReason` report `unsupportedPlatform`,
-      // hiding these sources like Arc and Helium.
+  it.effect("keeps app-bound Chromium forks unsupported on win32", () =>
+    Effect.sync(() => {
+      // Helium retains the older DPAPI-backed store. Other Chromium forks use
+      // App-Bound Encryption, so omitting win32 makes `unavailableReason`
+      // report `unsupportedPlatform` and keeps them out of the menu.
       for (const source of BROWSER_IMPORT_SOURCES) {
-        if (source.engine === "chromium") {
+        if (source.engine === "chromium" && source.id !== "helium") {
           assert.notInclude(source.platforms, "win32");
         }
       }
