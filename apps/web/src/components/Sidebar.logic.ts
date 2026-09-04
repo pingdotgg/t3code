@@ -395,6 +395,24 @@ export function orderItemsByPreferredIds<TItem, TId>(input: {
   return [...ordered, ...remaining];
 }
 
+export function resolveActiveThreadOrder(input: {
+  threads: readonly { id: string; orderAnchor: string }[];
+  savedOrder: readonly string[];
+  savedOrderAnchorById: Readonly<Record<string, string>>;
+}): string[] {
+  const currentAnchorById = new Map(
+    input.threads.map((thread) => [thread.id, thread.orderAnchor] as const),
+  );
+  const savedOrder = input.savedOrder.filter(
+    (threadId) => currentAnchorById.get(threadId) === input.savedOrderAnchorById[threadId],
+  );
+  const savedIds = new Set(savedOrder);
+  const newOrReactivatedIds = input.threads
+    .map((thread) => thread.id)
+    .filter((threadId) => !savedIds.has(threadId));
+  return [...newOrReactivatedIds, ...savedOrder];
+}
+
 export function getVisibleSidebarThreadIds<TThreadId>(
   renderedProjects: readonly {
     shouldShowThreadPanel?: boolean;
@@ -866,23 +884,29 @@ export function getFallbackThreadIdAfterDelete<
   deletedThreadId: T["id"];
   sortOrder: SidebarThreadSortOrder;
   deletedThreadIds?: ReadonlySet<T["id"]>;
+  preferredThreadIds?: readonly T["id"][];
 }): T["id"] | null {
-  const { deletedThreadId, deletedThreadIds, sortOrder, threads } = input;
+  const { deletedThreadId, deletedThreadIds, preferredThreadIds, sortOrder, threads } = input;
   const deletedThread = threads.find((thread) => thread.id === deletedThreadId);
   if (!deletedThread) {
     return null;
   }
 
+  const sortedThreads = sortThreads(
+    threads.filter(
+      (thread) =>
+        thread.projectId === deletedThread.projectId &&
+        thread.id !== deletedThreadId &&
+        !deletedThreadIds?.has(thread.id),
+    ),
+    sortOrder,
+  );
   return (
-    sortThreads(
-      threads.filter(
-        (thread) =>
-          thread.projectId === deletedThread.projectId &&
-          thread.id !== deletedThreadId &&
-          !deletedThreadIds?.has(thread.id),
-      ),
-      sortOrder,
-    )[0]?.id ?? null
+    orderItemsByPreferredIds({
+      items: sortedThreads,
+      preferredIds: preferredThreadIds ?? [],
+      getId: (thread) => thread.id,
+    })[0]?.id ?? null
   );
 }
 export function getProjectSortTimestamp(

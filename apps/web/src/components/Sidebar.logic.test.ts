@@ -19,6 +19,7 @@ import {
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  resolveActiveThreadOrder,
   resolveProjectStatusIndicator,
   resolveThreadRowClassName,
   resolveSidebarThreadStatus,
@@ -535,6 +536,42 @@ describe("orderItemsByPreferredIds", () => {
       "physical-a",
       "physical-b",
     ]);
+  });
+});
+
+describe("resolveActiveThreadOrder", () => {
+  it("keeps saved order while thread anchors match", () => {
+    expect(
+      resolveActiveThreadOrder({
+        threads: [
+          { id: "thread-newer", orderAnchor: "2026-08-29T12:00:00.000Z" },
+          { id: "thread-older", orderAnchor: "2026-08-29T10:00:00.000Z" },
+        ],
+        savedOrder: ["thread-older", "thread-newer"],
+        savedOrderAnchorById: {
+          "thread-newer": "2026-08-29T12:00:00.000Z",
+          "thread-older": "2026-08-29T10:00:00.000Z",
+        },
+      }),
+    ).toEqual(["thread-older", "thread-newer"]);
+  });
+
+  it("puts reactivated and new threads above the saved order", () => {
+    expect(
+      resolveActiveThreadOrder({
+        threads: [
+          { id: "thread-reactivated", orderAnchor: "2026-08-29T13:00:00.000Z" },
+          { id: "thread-new", orderAnchor: "2026-08-29T12:00:00.000Z" },
+          { id: "thread-saved", orderAnchor: "2026-08-29T10:00:00.000Z" },
+        ],
+        savedOrder: ["thread-saved", "thread-reactivated", "thread-hidden"],
+        savedOrderAnchorById: {
+          "thread-reactivated": "2026-08-29T09:00:00.000Z",
+          "thread-saved": "2026-08-29T10:00:00.000Z",
+          "thread-hidden": "2026-08-29T11:00:00.000Z",
+        },
+      }),
+    ).toEqual(["thread-reactivated", "thread-new", "thread-saved"]);
   });
 });
 
@@ -1468,6 +1505,36 @@ describe("getFallbackThreadIdAfterDelete", () => {
     });
 
     expect(fallbackThreadId).toBe(ThreadId.make("thread-next"));
+  });
+
+  it("uses the active sidebar order when one is provided", () => {
+    const fallbackThreadId = getFallbackThreadIdAfterDelete({
+      threads: [
+        makeThread({
+          id: ThreadId.make("thread-active"),
+          projectId: ProjectId.make("project-1"),
+          createdAt: "2026-03-09T10:05:00.000Z",
+          messages: [],
+        }),
+        makeThread({
+          id: ThreadId.make("thread-newest"),
+          projectId: ProjectId.make("project-1"),
+          createdAt: "2026-03-09T10:10:00.000Z",
+          messages: [],
+        }),
+        makeThread({
+          id: ThreadId.make("thread-preferred"),
+          projectId: ProjectId.make("project-1"),
+          createdAt: "2026-03-09T10:00:00.000Z",
+          messages: [],
+        }),
+      ],
+      deletedThreadId: ThreadId.make("thread-active"),
+      preferredThreadIds: [ThreadId.make("thread-preferred"), ThreadId.make("thread-newest")],
+      sortOrder: "created_at",
+    });
+
+    expect(fallbackThreadId).toBe(ThreadId.make("thread-preferred"));
   });
 });
 describe("sortProjectsForSidebar", () => {

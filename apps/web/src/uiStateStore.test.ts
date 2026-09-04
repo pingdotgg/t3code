@@ -10,6 +10,7 @@ import {
   type PersistedUiState,
   persistState,
   reorderProjects,
+  reorderThreads,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
@@ -21,6 +22,8 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
+    threadOrder: [],
+    threadOrderAnchorById: {},
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -116,6 +119,52 @@ describe("uiStateStore pure functions", () => {
     );
   });
 
+  it("reorders active threads from the current sidebar order", () => {
+    const state = makeUiState({ threadOrder: ["thread-1", "thread-2"] });
+
+    const next = reorderThreads(
+      state,
+      ["thread-1", "thread-2", "thread-3"],
+      {
+        "thread-1": "2026-08-29T10:00:00.000Z",
+        "thread-2": "2026-08-29T11:00:00.000Z",
+        "thread-3": "2026-08-29T12:00:00.000Z",
+      },
+      "thread-3",
+      "thread-1",
+    );
+
+    expect(next.threadOrder).toEqual(["thread-3", "thread-1", "thread-2"]);
+    expect(next.threadOrderAnchorById).toEqual({
+      "thread-1": "2026-08-29T10:00:00.000Z",
+      "thread-2": "2026-08-29T11:00:00.000Z",
+      "thread-3": "2026-08-29T12:00:00.000Z",
+    });
+    expect(
+      reorderThreads(next, next.threadOrder, next.threadOrderAnchorById, "thread-1", "thread-1"),
+    ).toBe(next);
+  });
+
+  it("preserves hidden thread positions when reordering a filtered list", () => {
+    const state = makeUiState({
+      threadOrder: ["hidden-a", "visible-a", "hidden-b", "visible-b", "inactive-a"],
+    });
+
+    expect(
+      reorderThreads(
+        state,
+        ["visible-a", "visible-b", "visible-new"],
+        {
+          "visible-a": "2026-08-29T10:00:00.000Z",
+          "visible-b": "2026-08-29T11:00:00.000Z",
+          "visible-new": "2026-08-29T12:00:00.000Z",
+        },
+        "visible-new",
+        "visible-a",
+      ).threadOrder,
+    ).toEqual(["hidden-a", "visible-new", "hidden-b", "visible-a", "inactive-a", "visible-b"]);
+  });
+
   it("stores explicit changed-file expansion choices", () => {
     const threadId = ThreadId.make("thread-1");
     const collapsed = setThreadChangedFilesExpanded(makeUiState(), threadId, "turn-1", false);
@@ -154,6 +203,11 @@ describe("parsePersistedState", () => {
         invalid: "no" as unknown as boolean,
       },
       projectOrder: ["physical-b", "", "physical-a", "physical-b"],
+      threadOrder: ["environment:thread-2", "", "environment:thread-1"],
+      threadOrderAnchorById: {
+        "environment:thread-1": "2026-08-29T10:00:00.000Z",
+        invalid: "not-a-date",
+      },
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
         invalid: "not-a-date",
@@ -173,6 +227,10 @@ describe("parsePersistedState", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      threadOrder: ["environment:thread-2", "environment:thread-1"],
+      threadOrderAnchorById: {
+        "environment:thread-1": "2026-08-29T10:00:00.000Z",
+      },
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -270,6 +328,10 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      threadOrder: ["environment:thread-2", "environment:thread-1"],
+      threadOrderAnchorById: {
+        "environment:thread-1": "2026-08-29T10:00:00.000Z",
+      },
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -292,6 +354,10 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      threadOrder: ["environment:thread-2", "environment:thread-1"],
+      threadOrderAnchorById: {
+        "environment:thread-1": "2026-08-29T10:00:00.000Z",
+      },
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
