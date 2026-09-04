@@ -59,7 +59,7 @@ export interface PendingUserInputCardProps {
   readonly onSelectOption: (
     requestId: RuntimeRequestId,
     question: ThreadUserInputQuestion,
-    label: string,
+    value: string,
   ) => void;
   readonly onChangeCustomAnswer: (
     requestId: RuntimeRequestId,
@@ -88,9 +88,8 @@ const CARD_LAYOUT_TRANSITION = LinearTransition.duration(200);
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const questionCount = props.pendingUserInput.questions.length;
-  // V2 runtime requests carry response capability: a dead provider process
-  // cannot accept answers, so the card reads-only until the run restarts.
-  const canRespond = props.pendingUserInput.responseCapability === "live";
+  // Message responses start a new run and remain available after the provider exits.
+  const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
 
   const cardCoverage = props.cardCoverage;
   const barHeightRef = useRef(0);
@@ -277,12 +276,13 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
               </Text>
               <View className="gap-2">
                 {question.options.map((option) => {
-                  const selected = isPendingUserInputOptionSelected(draft, option.label);
+                  const optionValue = option.value ?? option.label.trim();
+                  const selected = isPendingUserInputOptionSelected(question, draft, optionValue);
                   const description =
                     option.description !== option.label ? option.description : undefined;
                   return (
                     <Pressable
-                      key={option.label}
+                      key={optionValue}
                       disabled={!canRespond}
                       className={cn(
                         "min-h-12 w-full rounded-2xl border px-3.5 py-3",
@@ -294,7 +294,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                         props.onSelectOption(
                           props.pendingUserInput.requestId,
                           question,
-                          option.label,
+                          optionValue,
                         )
                       }
                     >
@@ -319,17 +319,19 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   );
                 })}
               </View>
-              <TextInput
-                editable={canRespond}
-                value={draft?.customAnswer ?? ""}
-                onChangeText={(value) =>
-                  props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
-                }
-                onFocus={() => props.onInputFocusChange?.(true)}
-                onBlur={() => props.onInputFocusChange?.(false)}
-                placeholder="Or type a custom answer"
-                className="min-h-[54px] rounded-2xl border border-adaptive-neutral-200-white-a8 bg-adaptive-white-neutral-950-a70 px-3.5 py-3 font-sans text-base text-adaptive-neutral-950-50"
-              />
+              {question.allowCustomAnswer !== false ? (
+                <TextInput
+                  editable={canRespond}
+                  value={draft?.customAnswer ?? ""}
+                  onChangeText={(value) =>
+                    props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
+                  }
+                  onFocus={() => props.onInputFocusChange?.(true)}
+                  onBlur={() => props.onInputFocusChange?.(false)}
+                  placeholder="Or type a custom answer"
+                  className="min-h-[54px] rounded-2xl border border-adaptive-neutral-200-white-a8 bg-adaptive-white-neutral-950-a70 px-3.5 py-3 font-sans text-base text-adaptive-neutral-950-50"
+                />
+              ) : null}
             </View>
           );
         })}

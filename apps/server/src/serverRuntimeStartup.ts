@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   type ModelSelection,
+  type Project,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -34,6 +35,8 @@ import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManag
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
+import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -185,6 +188,65 @@ interface AutoBootstrapWelcomeTargets {
   readonly bootstrapProjectId?: ProjectId;
   readonly bootstrapThreadId?: ThreadId;
 }
+
+export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
+  projects: ReadonlyArray<Pick<Project, "workspaceRoot" | "autoPull">>,
+) {
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  const workspaceRoots = [
+    ...new Set(
+      projects
+        .filter((project) => project.autoPull === true)
+        .map((project) => project.workspaceRoot),
+    ),
+  ];
+
+  yield* Effect.forEach(
+    workspaceRoots,
+    (cwd) =>
+      Effect.gen(function* () {
+        const status = yield* git.statusDetails(cwd);
+        if (
+          !status.isRepo ||
+          !status.isDefaultBranch ||
+          !status.hasUpstream ||
+          status.hasWorkingTreeChanges ||
+          status.aheadCount > 0
+        ) {
+          yield* Effect.logDebug("Skipped automatic project pull", {
+            cwd,
+            reason: !status.isRepo
+              ? "not-a-repository"
+              : !status.isDefaultBranch
+                ? "not-on-default-branch"
+                : !status.hasUpstream
+                  ? "no-upstream"
+                  : status.hasWorkingTreeChanges
+                    ? "working-tree-changes"
+                    : "local-commits",
+          });
+          return;
+        }
+
+        if (status.behindCount <= 0) return;
+
+        const result = yield* git.pullCurrentBranch(cwd);
+        yield* Effect.logDebug("Automatic project pull completed", {
+          cwd,
+          status: result.status,
+          refName: result.refName,
+        });
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Automatic project pull failed", {
+            cwd,
+            cause,
+          }),
+        ),
+      ),
+    { concurrency: 4, discard: true },
+  );
+});
 
 export const resolveWelcomeBase = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
@@ -506,6 +568,14 @@ export const make = (options?: StartupOptions) =>
         ).pipe(Effect.map((targets): AutoBootstrapWelcomeTargets => targets)),
       });
       yield* Effect.logInfo("V2 orchestration recovery completed", recovery);
+      yield* runStartupPhase(
+        "projects.auto-pull",
+        Effect.gen(function* () {
+          const snapshots = yield* ProjectionSnapshotQuery;
+          const projects = yield* snapshots.getProjectShellsWithoutEnrichment();
+          yield* autoPullProjects(projects);
+        }),
+      );
 
       const importPendingTranscripts = legacyV1ThreadImporter.importPendingTranscripts.pipe(
         Effect.tap((summary) =>

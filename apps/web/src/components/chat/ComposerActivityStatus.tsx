@@ -6,7 +6,7 @@ export function ComposerActivityRow({ phase }: { readonly phase: ThreadSyncPhase
   return (
     <ComposerBanner.Row>
       <ComposerBanner.Icon>
-        <LoaderCircleIcon className="motion-safe:animate-spin" />
+        <LoaderCircleIcon />
       </ComposerBanner.Icon>
       <ComposerBanner.Content>
         <span

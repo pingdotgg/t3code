@@ -1207,11 +1207,11 @@ describe("ClaudeAdapterV2 attachments", () => {
         );
         const expectedDocumentPath = path.join(attachmentsDir, attachmentRelativePath(document)!);
         assert.deepEqual(offeredMessages[0]?.message.content, [
+          expectedImageBlock,
           {
             type: "text",
             text: `Ultrathink:\nWhat's in this image?\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]\n[Attached file "requirements.pdf" is saved at: ${expectedDocumentPath}]`,
           },
-          expectedImageBlock,
         ]);
 
         const providerTurnId = idAllocator.derive.providerTurn({
@@ -1234,11 +1234,11 @@ describe("ClaudeAdapterV2 attachments", () => {
 
         assert.equal(offeredMessages[1]?.priority, "now");
         assert.deepEqual(offeredMessages[1]?.message.content, [
+          expectedImageBlock,
           {
             type: "text",
             text: `Ultrathink:\nFocus on the diagram labels.\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]\n[Attached file "requirements.pdf" is saved at: ${expectedDocumentPath}]`,
           },
-          expectedImageBlock,
         ]);
       }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
     ),
@@ -1820,6 +1820,78 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect(
+    "runs native compaction and keeps its context watermark separate from billed usage",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const compact = harness.runtime.compactThread;
+        assert.isDefined(compact);
+        if (compact === undefined) return;
+        yield* compact(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("claude-native-compact-attempt"),
+            text: " /COMPACT ",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "compact_boundary",
+            compact_metadata: { trigger: "manual", pre_tokens: 1500, post_tokens: 400 },
+            uuid: "00000000-0000-4000-8000-000000000201",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000202",
+            result: "Compacted conversation.",
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+
+        assert.deepEqual(harness.offeredMessages[0]?.message.content, "/compact");
+        const compaction = harness.events.find(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+        );
+        assert.isDefined(compaction);
+        if (compaction?.type === "turn_item.updated" && compaction.turnItem.type === "compaction") {
+          assert.equal(compaction.turnItem.beforeTokenCount, 1500);
+          assert.equal(compaction.turnItem.afterTokenCount, 400);
+          assert.equal(compaction.turnItem.status, "completed");
+        }
+        const watermark = harness.events.find(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.tokenUsage?.usedTokens === 400,
+        );
+        assert.isDefined(watermark);
+        const completed = harness.events.findLast(
+          (event) => event.type === "provider_turn.updated",
+        );
+        assert.equal(completed?.type, "provider_turn.updated");
+        if (completed?.type === "provider_turn.updated") {
+          assert.deepEqual(completed.providerTurn.turnTokenUsage, {
+            usageScope: "main_agent",
+            usageStatus: "complete",
+            hasSubagents: false,
+            inputTokens: 1,
+            outputTokens: 1,
+            cachedInputTokens: 0,
+            cacheCreationTokens: 0,
+          });
+        }
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
+  );
 
   it.effect("preserves typed Claude plans and todos through generic tool completion", () =>
     Effect.scoped(

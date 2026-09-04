@@ -1,16 +1,11 @@
 import { assert, it, vi } from "@effect/vitest";
-import {
-  CheckpointRef,
-  CheckpointScopeId,
-  RunId,
-  ThreadId,
-  type OrchestrationV2ThreadProjection,
-} from "@t3tools/contracts";
+import { CheckpointRef, CheckpointScopeId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { checkpointRefForScopeOrdinal } from "../orchestration-v2/CheckpointService.ts";
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
+import type { ProjectionCheckpointContext } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as CheckpointDiffQuery from "./CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
@@ -27,7 +22,7 @@ const firstScopeId = CheckpointScopeId.make("scope:checkpoint-diff-v2:1");
 const secondScopeId = CheckpointScopeId.make("scope:checkpoint-diff-v2:2");
 const secondRef = CheckpointRef.make("refs/t3/test/second");
 
-function makeProjection(): OrchestrationV2ThreadProjection {
+function makeProjection(): ProjectionCheckpointContext {
   return {
     runs: [
       { id: firstRunId, ordinal: 1, status: "completed" },
@@ -46,18 +41,18 @@ function makeProjection(): OrchestrationV2ThreadProjection {
         ref: secondRef,
       },
     ],
-  } as unknown as OrchestrationV2ThreadProjection;
+  };
 }
 
 function makeLayer(input: {
-  readonly projection: Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorProjectionError>;
+  readonly projection: Effect.Effect<ProjectionCheckpointContext, OrchestratorProjectionError>;
   readonly diffCheckpoints?: CheckpointStore.CheckpointStore["Service"]["diffCheckpoints"];
 }) {
   return CheckpointDiffQuery.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagement.ThreadManagementService)({
-          getThreadProjection: () => input.projection,
+          getCheckpointContext: () => input.projection,
         }),
         Layer.mock(CheckpointStore.CheckpointStore)({
           diffCheckpoints: input.diffCheckpoints ?? (() => Effect.succeed("diff")),

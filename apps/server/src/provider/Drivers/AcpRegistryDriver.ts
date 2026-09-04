@@ -135,6 +135,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           }),
           getSnapshot: Effect.sync(currentSnapshot),
           refresh: Effect.sync(currentSnapshot),
+          // Registry agents report no subscription usage.
+          applyUsageLimits: () => Effect.void,
           streamChanges: Stream.empty,
         },
         orchestrationAdapter,
