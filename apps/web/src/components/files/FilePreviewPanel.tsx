@@ -48,7 +48,8 @@ import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
-import { useEnvironmentScope } from "~/state/session";
+import { useEnvironmentQuery } from "~/state/query";
+import { environmentSession, useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
@@ -990,7 +991,11 @@ export default function FilePreviewPanel({
   // A file outside the workspace (an absolute path) is shown, never edited.
   const isHostFile =
     attachment !== undefined || (relativePath !== null && isAbsolutePath(relativePath));
-  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
+  const fileAccessSession = useEnvironmentQuery(environmentSession.sessionStateAtom(environmentId));
+  const canReadFiles =
+    fileAccessSession.error === null &&
+    fileAccessSession.data?.authenticated === true &&
+    fileAccessSession.data.scopes?.includes(AuthFilesystemReadScope) === true;
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const file = useProjectFileQuery(
     environmentId,
@@ -1109,9 +1114,17 @@ export default function FilePreviewPanel({
   ]);
 
   if (attachment === undefined && !canReadFiles) {
+    if (fileAccessSession.data === null && fileAccessSession.error === null) {
+      return (
+        <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
+          <LoaderCircle className="size-4 animate-spin" aria-hidden />
+          Checking file access...
+        </div>
+      );
+    }
     return (
       <div className="p-4 text-sm text-muted-foreground">
-        This connection cannot read host files.
+        {fileAccessSession.error ?? "This connection cannot read host files."}
       </div>
     );
   }

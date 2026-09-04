@@ -1,5 +1,5 @@
 import { AuthFilesystemReadScope } from "@t3tools/contracts";
-import { useEnvironmentScope } from "../../state/session";
+import { environmentSession } from "../../state/session";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -316,7 +316,13 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     props.route.params,
   );
   const revealedInspectorRef = useRef(false);
-  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
+  const fileAccessSession = useEnvironmentQuery(
+    environmentId !== null ? environmentSession.sessionStateAtom(environmentId) : null,
+  );
+  const canReadFiles =
+    fileAccessSession.error === null &&
+    fileAccessSession.data?.authenticated === true &&
+    fileAccessSession.data.scopes?.includes(AuthFilesystemReadScope) === true;
   const entriesQuery = useEnvironmentQuery(
     canReadFiles && environmentId !== null && cwd !== null && !fileInspector.supported
       ? projectEnvironment.listEntries({
@@ -410,7 +416,16 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     return <LoadingScreen message="Opening files..." messagePlacement="above-spinner" />;
   }
 
-  if (!canReadFiles) return <FilesUnavailable detail="This connection cannot read host files." />;
+  if (!canReadFiles) {
+    if (fileAccessSession.data === null && fileAccessSession.error === null) {
+      return <LoadingScreen message="Checking file access..." messagePlacement="above-spinner" />;
+    }
+    return (
+      <FilesUnavailable
+        detail={fileAccessSession.error ?? "This connection cannot read host files."}
+      />
+    );
+  }
   if (cwd === null) {
     return <FilesUnavailable />;
   }
@@ -626,7 +641,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     relativePath !== null &&
     !isVideoFile &&
     (resolvedActiveMode === "source" || isMarkdownPreviewFile(relativePath));
-  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
+  const fileAccessSession = useEnvironmentQuery(
+    environmentId !== null ? environmentSession.sessionStateAtom(environmentId) : null,
+  );
+  const canReadFiles =
+    fileAccessSession.error === null &&
+    fileAccessSession.data?.authenticated === true &&
+    fileAccessSession.data.scopes?.includes(AuthFilesystemReadScope) === true;
   const fileQuery = useEnvironmentQuery(
     canReadFiles &&
       environmentId !== null &&
@@ -809,7 +830,16 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     return <LoadingScreen message="Opening file..." messagePlacement="above-spinner" />;
   }
 
-  if (!canReadFiles) return <FilesUnavailable detail="This connection cannot read host files." />;
+  if (!canReadFiles) {
+    if (fileAccessSession.data === null && fileAccessSession.error === null) {
+      return <LoadingScreen message="Checking file access..." messagePlacement="above-spinner" />;
+    }
+    return (
+      <FilesUnavailable
+        detail={fileAccessSession.error ?? "This connection cannot read host files."}
+      />
+    );
+  }
   if (cwd === null) {
     return <FilesUnavailable />;
   }
