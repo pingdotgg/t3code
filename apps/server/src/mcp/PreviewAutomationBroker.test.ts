@@ -655,6 +655,68 @@ it.effect("pins a provider session to its initial host despite later focus chang
   ),
 );
 
+it.effect("does not send profile selection to a host that would ignore it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const connected = yield* Deferred.make<void>();
+      const events = yield* broker.connect(makeHost());
+      yield* Stream.runForEach(events, () => Deferred.succeed(connected, undefined)).pipe(
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(connected);
+
+      const error = yield* broker
+        .invoke<void>({
+          scope,
+          operation: "open",
+          input: { profileId: "incognito", reuseExistingTab: false },
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(PreviewAutomationNoAvailableHostError);
+    }),
+  ),
+);
+
+it.effect("routes a profile open to a capable host and pins subsequent calls to its new tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const connected = yield* Deferred.make<void>();
+      const events = yield* broker.connect(makeHost({ supportsOpenProfile: true }));
+      const requests = requestsFrom(
+        events.pipe(Stream.tap(() => Deferred.succeed(connected, undefined))),
+      );
+      const legacyConnected = yield* Deferred.make<void>();
+      const legacyEvents = yield* broker.connect(makeHost({ clientId: "legacy" }));
+      yield* Stream.runForEach(legacyEvents, () =>
+        Deferred.succeed(legacyConnected, undefined),
+      ).pipe(Effect.forkScoped);
+      const routed: RoutedRequest[] = [];
+      yield* Stream.runForEach(requests, (request) => {
+        routed.push(request);
+        return broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: { tabId: "tab-feature-a", profileId: "profile-feature-a" },
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+      yield* Deferred.await(legacyConnected);
+
+      const input = { profileId: "profile-feature-a", reuseExistingTab: false };
+      yield* broker.invoke({ scope, operation: "open", input });
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} });
+
+      expect(routed[0]?.input).toEqual(input);
+      expect(routed[1]?.tabId).toBe("tab-feature-a");
+    }),
+  ),
+);
+
 it.effect("does not route new operations to legacy hosts that did not advertise support", () =>
   Effect.scoped(
     Effect.gen(function* () {

@@ -61,7 +61,7 @@ export const PreviewStatusTool = Tool.make("preview_status", {
 export const PreviewOpenTool = browserTool(
   Tool.make("preview_open", {
     description:
-      "Initialize a collaborative browser tab and open its thread-bound inline preview by default. Set open=false for background-only automation. Pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab.",
+      "Initialize a collaborative browser tab and open its thread-bound inline preview by default. Set open=false for background-only automation. Pass profileId to create a new tab in an existing browser profile. Otherwise, pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab.",
     parameters: PreviewAutomationOpenInput,
     success: PreviewAutomationStatus,
     failure: PreviewAutomationError,

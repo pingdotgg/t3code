@@ -3,6 +3,13 @@ import { describe, expect, it } from "vite-plus/test";
 import { normalizePreviewOpenInput } from "./handlers.ts";
 
 describe("normalizePreviewOpenInput", () => {
+  it("opens a new tab when a profile is supplied", () => {
+    expect(normalizePreviewOpenInput({ profileId: "profile-feature-a" })).toEqual({
+      profileId: "profile-feature-a",
+      reuseExistingTab: false,
+    });
+  });
+
   it("leaves an unstated visibility for the client preference to decide", () => {
     // Filling `open` in here would outrank `browserAutoShowFloatingPreview`,
     // which is desktop-local and cannot be read from the server.
