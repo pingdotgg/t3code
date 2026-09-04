@@ -274,21 +274,27 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
                 }),
             ),
             // The windows just changed; re-probe so the snapshot says so. A
-            // refresh that fails keeps the pre-redemption snapshot, credit
-            // count included, so the refresh's own failure is surfaced.
+            // failed probe republishes the pre-redemption limits rather than
+            // marking them failed, so "confirmed" means `checkedAt` moved
+            // past what was published before the redemption started.
             Effect.tap(() =>
-              snapshot.refresh.pipe(
-                Effect.flatMap((refreshed) =>
+              Effect.gen(function* () {
+                const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
+                const refreshed = yield* snapshot.refresh;
+                const after = refreshed.usageLimits?.checkedAt;
+                if (
+                  after === undefined ||
+                  after === before ||
                   refreshed.usageLimits?.unavailable?.reason === "probeFailed"
-                    ? new ProviderDriverError({
-                        driver: DRIVER_KIND,
-                        instanceId,
-                        detail:
-                          "The reset was applied, but Codex could not confirm the new limits. Refresh to check.",
-                      })
-                    : Effect.void,
-                ),
-              ),
+                ) {
+                  return yield* new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail:
+                      "The reset was applied, but Codex could not confirm the new limits. Refresh to check.",
+                  });
+                }
+              }),
             ),
           );
 
