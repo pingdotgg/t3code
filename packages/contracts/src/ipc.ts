@@ -38,6 +38,7 @@ import type {
 } from "./project.ts";
 import type {
   TerminalAttachInput,
+  TerminalObserveInput,
   TerminalAttachStreamEvent,
   TerminalClearInput,
   TerminalCloseInput,
@@ -1487,6 +1488,13 @@ export interface EnvironmentApi {
     open: (input: typeof TerminalOpenInput.Encoded) => Promise<TerminalSessionSnapshot>;
     attach: (
       input: typeof TerminalAttachInput.Encoded,
+      callback: (event: TerminalAttachStreamEvent) => void,
+      options?: {
+        onResubscribe?: () => void;
+      },
+    ) => () => void;
+    observe: (
+      input: typeof TerminalObserveInput.Encoded,
       callback: (event: TerminalAttachStreamEvent) => void,
       options?: {
         onResubscribe?: () => void;

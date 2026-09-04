@@ -37,6 +37,7 @@ interface TerminalSurfaceProps extends ViewProps {
   readonly buffer: string;
   readonly fontSize?: number;
   readonly isRunning: boolean;
+  readonly readOnly?: boolean;
   readonly autoFocus?: boolean;
   readonly keyboardFocusRequest?: number;
   readonly theme?: TerminalTheme;
@@ -62,7 +63,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
   const inputRef = useRef<TextInput>(null);
   const { themeAppearance, themeId } = useAppearancePreferences();
   const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
-  const statusLabel = props.isRunning
+  const statusLabel = props.readOnly ? "Viewing terminal output." : props.isRunning
     ? "Native terminal unavailable. Using text fallback."
     : "Open terminal to start a shell.";
 
@@ -72,14 +73,14 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
   };
 
   useEffect(() => {
-    if ((props.keyboardFocusRequest ?? 0) > 0) {
+    if (!props.readOnly && (props.keyboardFocusRequest ?? 0) > 0) {
       inputRef.current?.blur();
       const focusFrame = requestAnimationFrame(() => inputRef.current?.focus());
       return () => cancelAnimationFrame(focusFrame);
     }
 
     return undefined;
-  }, [props.keyboardFocusRequest]);
+  }, [props.keyboardFocusRequest, props.readOnly]);
 
   return (
     <View
@@ -132,7 +133,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
           autoCapitalize="none"
           autoCorrect={false}
           blurOnSubmit={false}
-          editable={props.isRunning}
+          editable={props.isRunning && !props.readOnly}
           placeholder="type and press return"
           placeholderTextColor={theme.mutedForeground}
           returnKeyType="send"
@@ -152,9 +153,9 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
           }}
         />
         <Pressable
-          disabled={!props.isRunning}
+          disabled={!props.isRunning || props.readOnly}
           style={({ pressed }) => ({
-            opacity: !props.isRunning ? 0.35 : pressed ? 0.65 : 1,
+            opacity: !props.isRunning || props.readOnly ? 0.35 : pressed ? 0.65 : 1,
             paddingHorizontal: 10,
             paddingVertical: 6,
             borderRadius: 8,
@@ -191,7 +192,7 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
   }, [hasNativeSurface, props.buffer.length, props.isRunning, props.terminalKey]);
   const handleNativeInput = useCallback(
     (event: NativeSyntheticEvent<TerminalInputEvent>) => {
-      if (!props.isRunning) {
+      if (!props.isRunning || props.readOnly) {
         return;
       }
       terminalDebugLog("native:onInput", {
@@ -199,7 +200,7 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
       });
       onInput(event.nativeEvent.data);
     },
-    [onInput, props.isRunning],
+    [onInput, props.isRunning, props.readOnly],
   );
   const handleNativeResize = useCallback(
     (event: NativeSyntheticEvent<TerminalResizeEvent>) => {
@@ -216,9 +217,10 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
       <View style={props.style}>
         <NativeTerminalSurfaceView
           appearanceScheme={themeAppearance}
-          autoFocus={props.autoFocus ?? true}
+          autoFocus={!props.readOnly && (props.autoFocus ?? true)}
+          readOnly={props.readOnly ?? false}
           backgroundColor={theme.background}
-          focusRequest={props.isRunning ? (props.keyboardFocusRequest ?? 0) : 0}
+          focusRequest={props.isRunning && !props.readOnly ? (props.keyboardFocusRequest ?? 0) : 0}
           foregroundColor={theme.foreground}
           mutedForegroundColor={theme.mutedForeground}
           terminalKey={props.terminalKey}
