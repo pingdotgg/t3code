@@ -2,27 +2,59 @@ import Foundation
 
 public struct FeatureDraftAttachment: Identifiable, Sendable, Equatable {
     public let id: UUID
-    public var data: Data
+    private var inlineData: Data?
+    public var ownedFile: FeatureOwnedAttachmentFile?
     public var thumbnailData: Data?
     public var filename: String
     public var mimeType: String
+    public var uploadedReference: FeatureUploadedAttachmentReference?
 
     public init(
         id: UUID = UUID(),
         data: Data,
         thumbnailData: Data? = nil,
         filename: String,
-        mimeType: String
+        mimeType: String,
+        uploadedReference: FeatureUploadedAttachmentReference? = nil
     ) {
         self.id = id
-        self.data = data
+        inlineData = data
+        ownedFile = nil
         self.thumbnailData = thumbnailData
         self.filename = filename
         self.mimeType = mimeType
+        self.uploadedReference = uploadedReference
+    }
+
+    public init(
+        id: UUID = UUID(),
+        ownedFile: FeatureOwnedAttachmentFile,
+        thumbnailData: Data? = nil,
+        filename: String,
+        mimeType: String,
+        uploadedReference: FeatureUploadedAttachmentReference? = nil
+    ) {
+        self.id = id
+        inlineData = nil
+        self.ownedFile = ownedFile
+        self.thumbnailData = thumbnailData
+        self.filename = filename
+        self.mimeType = mimeType
+        self.uploadedReference = uploadedReference
+    }
+
+    /// Kept for image-only callers. File-backed attachments return empty data
+    /// instead of loading up to 50 MB into a UI property.
+    public var data: Data {
+        get { inlineData ?? Data() }
+        set {
+            inlineData = newValue
+            ownedFile = nil
+        }
     }
 
     public var byteCount: Int {
-        data.count
+        inlineData?.count ?? ownedFile?.byteCount ?? 0
     }
 }
 
@@ -42,8 +74,8 @@ public struct NewTaskRequest: Sendable, Equatable {
         projectID: String,
         prompt: String,
         selection: FeatureSelection?,
-        runtimeMode: FeatureRuntimeMode,
-        interactionMode: FeatureInteractionMode,
+        runtimeMode: FeatureRuntimeMode = .fullAccess,
+        interactionMode: FeatureInteractionMode = .standard,
         workspaceMode: FeatureWorkspaceMode = .local,
         branch: String? = nil,
         worktreePath: String? = nil,
@@ -53,7 +85,7 @@ public struct NewTaskRequest: Sendable, Equatable {
         self.projectID = projectID
         self.prompt = prompt
         self.selection = selection
-        self.runtimeMode = runtimeMode.mobileNormalized
+        self.runtimeMode = runtimeMode
         self.interactionMode = interactionMode.mobileNormalized
         self.workspaceMode = workspaceMode
         self.branch = Self.nonEmpty(branch)
@@ -128,12 +160,13 @@ enum DailyUXSnoozePresets {
             result.append(.init(id: .evening, label: "This evening", until: evening))
         }
 
-        if let tomorrow = calendar.date(
+        let tomorrow = calendar.date(
             bySettingHour: 9,
             minute: 0,
             second: 0,
             of: calendar.date(byAdding: .day, value: 1, to: now) ?? now
-        ) {
+        )
+        if let tomorrow {
             result.append(.init(id: .tomorrow, label: "Tomorrow", until: tomorrow))
         }
 
@@ -141,7 +174,8 @@ enum DailyUXSnoozePresets {
         let daysUntilMonday = (2 - weekday + 7) % 7
         let nextMondayOffset = daysUntilMonday == 0 ? 7 : daysUntilMonday
         if let monday = calendar.date(byAdding: .day, value: nextMondayOffset, to: now),
-           let nextWeek = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: monday) {
+           let nextWeek = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: monday),
+           nextWeek != tomorrow {
             result.append(.init(id: .nextWeek, label: "Next week", until: nextWeek))
         }
 
@@ -676,22 +710,14 @@ struct DailyUXSidebarIndex {
         pinned = available
             .filter {
                 $0.pinnedAt != nil
-                    && !($0.canToggleSettlement && $0.isEffectivelySettled(
-                        at: now,
-                        settings: snapshot.settings,
-                        pullRequest: pullRequestsByThreadID[$0.id]
-                    ))
+                    && !($0.supportsSettlement == true && $0.isEffectivelySettled())
             }
             .sorted(by: Self.creationOrder)
 
         active = available
             .filter {
                 $0.pinnedAt == nil
-                    && !($0.canToggleSettlement && $0.isEffectivelySettled(
-                        at: now,
-                        settings: snapshot.settings,
-                        pullRequest: pullRequestsByThreadID[$0.id]
-                    ))
+                    && !($0.supportsSettlement == true && $0.isEffectivelySettled())
             }
             .sorted { lhs, rhs in
                 let leftAnchor = max(lhs.createdAt, lhs.unsettledAt ?? lhs.createdAt)
@@ -712,12 +738,8 @@ struct DailyUXSidebarIndex {
 
         settled = available
             .filter {
-                $0.canToggleSettlement
-                    && $0.isEffectivelySettled(
-                        at: now,
-                        settings: snapshot.settings,
-                        pullRequest: pullRequestsByThreadID[$0.id]
-                    )
+                $0.supportsSettlement == true
+                    && $0.isEffectivelySettled()
             }
             .sorted { lhs, rhs in
                 if lhs.settledSortDate != rhs.settledSortDate {
@@ -771,55 +793,23 @@ enum DailyUXSidebarRefresh {
     static func nextBoundary(
         for threads: [FeatureThread],
         after now: Date,
-        settings: FeatureSettings = .init(),
-        pullRequestsByThreadID: [String: HomeThreadPullRequestPresentation] = [:]
+        settings _: FeatureSettings = .init(),
+        pullRequestsByThreadID _: [String: HomeThreadPullRequestPresentation] = [:]
     ) -> Date? {
         threads.reduce(nil as Date?) { earliest, thread in
             let snoozeBoundary = thread.isEffectivelySnoozed(at: now)
                 ? thread.snoozedUntil
                 : nil
-            let settlementBoundary = automaticSettlementBoundary(
-                for: thread,
-                after: now,
-                settings: settings,
-                pullRequest: pullRequestsByThreadID[thread.id]
-            )
-            let threadBoundary = [snoozeBoundary, settlementBoundary]
+            let queuedBoundary = thread.isArchived
+                ? nil
+                : thread.queuedSettlementBoundary(after: now)
+            let threadBoundary = [snoozeBoundary, queuedBoundary]
                 .compactMap { $0 }
                 .min()
 
             guard let threadBoundary else { return earliest }
             return min(earliest ?? threadBoundary, threadBoundary)
         }
-    }
-
-    private static func automaticSettlementBoundary(
-        for thread: FeatureThread,
-        after now: Date,
-        settings: FeatureSettings,
-        pullRequest: HomeThreadPullRequestPresentation?
-    ) -> Date? {
-        guard !thread.isArchived else {
-            return nil
-        }
-
-        if let queuedBoundary = thread.queuedSettlementBoundary(after: now) {
-            return queuedBoundary
-        }
-
-        guard !thread.hasSettlementActivityBlock(at: now),
-              thread.effectiveSettlementOverride == nil,
-              pullRequest?.state != .open,
-              !thread.pullRequestAutoSettles(
-                  pullRequest,
-                  autoSettleOnMerge: settings.autoSettleOnMerge
-              ),
-              let days = settings.autoSettleAfterDays,
-              let lastActivityAt = thread.settlementLastActivityAt else {
-            return nil
-        }
-        let boundary = lastActivityAt.addingTimeInterval(Double(days) * 24 * 60 * 60 + 0.001)
-        return boundary > now ? boundary : nil
     }
 }
 
@@ -1020,45 +1010,8 @@ extension FeatureThread {
         state == .waitingForApproval || state == .waitingForInput || state == .failed
     }
 
-    func isEffectivelySettled(
-        at now: Date,
-        settings: FeatureSettings = .init(),
-        pullRequest: HomeThreadPullRequestPresentation? = nil
-    ) -> Bool {
-        if hasHardSettlementActivityBlock {
-            return false
-        }
-        if hasQueuedTurnStart(at: now) {
-            let queuedWasAdjudicated = effectiveSettlementOverride == .settled
-                && settledAt.map { settledAt in
-                    settlementFacts?.latestUserMessageAt.map { settledAt >= $0 } ?? false
-                } == true
-            if !queuedWasAdjudicated { return false }
-        }
-
-        switch effectiveSettlementOverride {
-        case .settled:
-            return true
-        case .active:
-            return false
-        case nil:
-            break
-        }
-
-        if pullRequestAutoSettles(
-            pullRequest,
-            autoSettleOnMerge: settings.autoSettleOnMerge
-        ) {
-            return true
-        }
-        if pullRequest?.state == .open || settings.autoSettleAfterDays == nil {
-            return false
-        }
-        guard let lastActivityAt = settlementLastActivityAt,
-              let days = settings.autoSettleAfterDays else {
-            return false
-        }
-        return lastActivityAt < now.addingTimeInterval(-Double(days) * 24 * 60 * 60)
+    func isEffectivelySettled() -> Bool {
+        effectiveSettlementOverride == .settled
     }
 
     func canSettleNow(at now: Date = .now) -> Bool {
@@ -1071,16 +1024,6 @@ extension FeatureThread {
         if keepsActive { return .active }
         if isSettled { return .settled }
         return nil
-    }
-
-    var settlementLastActivityAt: Date? {
-        guard let facts = settlementFacts else { return lastActivityAt }
-        return [
-            facts.latestUserMessageAt,
-            facts.latestTurn?.requestedAt,
-            facts.latestTurn?.startedAt,
-            facts.latestTurn?.completedAt,
-        ].compactMap { $0 }.max()
     }
 
     func hasSettlementActivityBlock(at now: Date) -> Bool {
@@ -1131,23 +1074,6 @@ extension FeatureThread {
         }
         let boundary = messageAt.addingTimeInterval(2 * 60 + 0.001)
         return boundary > now ? boundary : nil
-    }
-
-    func pullRequestAutoSettles(
-        _ pullRequest: HomeThreadPullRequestPresentation?,
-        autoSettleOnMerge: Bool
-    ) -> Bool {
-        guard let pullRequest else { return false }
-        let isTerminal = pullRequest.state == .closed
-            || (pullRequest.state == .merged && autoSettleOnMerge)
-        guard isTerminal else { return false }
-        guard let updatedAt = pullRequest.updatedAt else { return true }
-        let userActivityAnchor = [
-            createdAt,
-            settlementFacts?.latestUserMessageAt,
-            settlementFacts?.latestTurn?.requestedAt,
-        ].compactMap { $0 }.max() ?? createdAt
-        return updatedAt >= userActivityAnchor
     }
 
     func isEffectivelySnoozed(at now: Date) -> Bool {
@@ -1236,6 +1162,40 @@ struct DailyUXModelCatalog {
 }
 
 enum DailyUXModelOptions {
+    static func reasoningDescriptor(
+        for model: FeatureModel
+    ) -> FeatureModelOptionDescriptor? {
+        model.options.first(where: isReasoningDescriptor)
+    }
+
+    static func advancedDescriptors(
+        for model: FeatureModel
+    ) -> [FeatureModelOptionDescriptor] {
+        model.options.filter { !isReasoningDescriptor($0) }
+    }
+
+    static func undescribedSelections(
+        for model: FeatureModel,
+        selections: [FeatureModelOptionSelection]
+    ) -> [FeatureModelOptionSelection] {
+        let describedIDs = Set(model.options.map(\.id))
+        return selections.filter { !describedIDs.contains($0.id) }
+    }
+
+    static func isSupportedValue(
+        _ value: FeatureModelOptionValue,
+        for descriptor: FeatureModelOptionDescriptor
+    ) -> Bool {
+        switch (descriptor.kind, value) {
+        case let (.select, .string(choiceID)):
+            return descriptor.choices.contains { $0.id == choiceID }
+        case (.boolean, .boolean):
+            return true
+        case (.select, .boolean), (.boolean, .string):
+            return false
+        }
+    }
+
     static func initialSelection(
         projectDefault: FeatureSelection?,
         appDefault: FeatureSelection?,
@@ -1333,6 +1293,7 @@ enum DailyUXModelOptions {
             switch value {
             case let .string(choiceID):
                 return descriptor.choices.first(where: { $0.id == choiceID })?.label
+                    ?? choiceID
             case let .boolean(isEnabled):
                 return isEnabled ? descriptor.label : nil
             }
@@ -1346,22 +1307,28 @@ enum DailyUXModelOptions {
         for model: FeatureModel,
         selections: [FeatureModelOptionSelection]
     ) -> String? {
-        guard let descriptor = model.options.first(where: { descriptor in
-            let searchable = "\(descriptor.id) \(descriptor.label)".lowercased()
-            return searchable.contains("reason")
-                || searchable.contains("effort")
-                || searchable.contains("thinking")
-                || searchable.contains("thought")
-        }), let value = value(for: descriptor, in: selections) else {
+        guard let descriptor = reasoningDescriptor(for: model),
+              let value = value(for: descriptor, in: selections) else {
             return nil
         }
 
         switch value {
         case let .string(choiceID):
             return descriptor.choices.first(where: { $0.id == choiceID })?.label
+                ?? choiceID
         case let .boolean(isEnabled):
             return isEnabled ? descriptor.label : nil
         }
+    }
+
+    private static func isReasoningDescriptor(
+        _ descriptor: FeatureModelOptionDescriptor
+    ) -> Bool {
+        let searchable = "\(descriptor.id) \(descriptor.label)".lowercased()
+        return searchable.contains("reason")
+            || searchable.contains("effort")
+            || searchable.contains("thinking")
+            || searchable.contains("thought")
     }
 
     static func supportsImages(
@@ -1378,6 +1345,6 @@ enum DailyUXModelOptions {
               let model = provider.models.first(where: { $0.id == selection.modelID }) else {
             return true
         }
-        return model.supportsImages
+        return model.imageSupportIsUnknown == true || model.supportsImages
     }
 }

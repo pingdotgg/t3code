@@ -5,6 +5,76 @@ import Testing
 @Suite("Incoming share import")
 struct PlatformIncomingShareTests {
     @Test
+    func decodesSchemaOneImageEnvelopeWithoutFiles() throws {
+        let json = #"{"schemaVersion":1,"id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","createdAt":"1970-01-01T00:01:40Z","text":"old","images":[{"id":"12345678-1234-1234-1234-123456789abc","fileName":"reference.png","typeIdentifier":"public.png","relativePath":"image.png","byteCount":2}],"warnings":[]}"#
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let envelope = try decoder.decode(T3IncomingShareEnvelope.self, from: Data(json.utf8))
+
+        #expect(envelope.schemaVersion == 1)
+        #expect(envelope.images.count == 1)
+        #expect(envelope.files.isEmpty)
+    }
+
+    @Test
+    func rejectsSharedFilePathOutsideTheInbox() throws {
+        let root = URL(fileURLWithPath: "/tmp/t3-share-root", isDirectory: true)
+
+        #expect(T3IncomingShareStore.fileURL(
+            relativePath: "../outside.txt",
+            rootURL: root
+        ) == nil)
+    }
+
+    @Test
+    func genericFileImportRetriesWithoutReplacingTheOwnedCopy() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let sourceURL = directory.appendingPathComponent("report.txt")
+        try Data("report".utf8).write(to: sourceURL)
+        let attachmentID = try #require(UUID(uuidString: "12345678-1234-1234-1234-123456789abc"))
+        let envelope = Self.envelope(files: [Self.file(
+            id: attachmentID.uuidString,
+            byteCount: 6
+        )])
+        let recorder = IncomingShareTestRecorder()
+        let ownedRoot = directory.appendingPathComponent("owned", isDirectory: true)
+        let pipeline = PlatformIncomingSharePipeline(
+            source: PlatformIncomingShareSource(
+                loadAll: { [envelope] },
+                data: { _ in Data() },
+                remove: { _ in await recorder.record("remove") },
+                fileURL: { _ in sourceURL }
+            ),
+            drafts: PlatformIncomingShareDraftRepository(
+                importContent: { _, _, attachments, _, _ in
+                    await recorder.record("import")
+                    if await recorder.events.count == 1 {
+                        throw IncomingShareTestError.saveFailed
+                    }
+                    return FeatureComposerDraft(attachments: attachments)
+                }
+            ),
+            attachmentFileStore: ManagedAttachmentFileStore(rootURL: ownedRoot)
+        )
+
+        do {
+            _ = try await pipeline.importEnvelope(envelope, into: Self.project())
+            Issue.record("Expected the first draft write to fail")
+        } catch {
+            #expect(error as? IncomingShareTestError == .saveFailed)
+        }
+        let draft = try await pipeline.importEnvelope(envelope, into: Self.project())
+
+        #expect(draft.attachments.first?.id == attachmentID)
+        #expect(draft.attachments.first?.ownedFile?.byteCount == 6)
+        #expect(await recorder.events == ["import", "import", "remove"])
+    }
+
+    @Test
     func persistsMergedDraftBeforeRemovingInboxEnvelope() async throws {
         let recorder = IncomingShareTestRecorder()
         let directory = FileManager.default.temporaryDirectory
@@ -302,7 +372,8 @@ struct PlatformIncomingShareTests {
 
     private static func envelope(
         text: String = "",
-        images: [T3IncomingShareImage] = []
+        images: [T3IncomingShareImage] = [],
+        files: [T3IncomingShareFile] = []
     ) -> T3IncomingShareEnvelope {
         T3IncomingShareEnvelope(
             schemaVersion: T3IncomingShareEnvelope.schemaVersion,
@@ -310,7 +381,18 @@ struct PlatformIncomingShareTests {
             createdAt: Date(timeIntervalSince1970: 100),
             text: text,
             images: images,
+            files: files,
             warnings: []
+        )
+    }
+
+    private static func file(id: String, byteCount: Int) -> T3IncomingShareFile {
+        T3IncomingShareFile(
+            id: id,
+            fileName: "report.txt",
+            mimeType: "text/plain",
+            relativePath: "report.txt",
+            byteCount: byteCount
         )
     }
 

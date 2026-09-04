@@ -21,7 +21,7 @@ struct PlatformAgentAwarenessTests {
     @Test
     func legacySettingsEnableLiveActivitiesWithoutResettingOtherPreferences() throws {
         let legacy = Data(
-            #"{"appearance":"system","hapticsEnabled":false,"notificationsEnabled":false}"#.utf8
+            #"{"appearance":"system","hapticsEnabled":false,"notificationsEnabled":false,"autoSettleOnMerge":false,"autoSettleAfterDays":14}"#.utf8
         )
         let decoded = try JSONDecoder.t3.decode(FeatureSettings.self, from: legacy)
 
@@ -29,25 +29,17 @@ struct PlatformAgentAwarenessTests {
         #expect(!decoded.hapticsEnabled)
         #expect(!decoded.notificationsEnabled)
         #expect(decoded.liveActivitiesEnabled)
-        #expect(decoded.autoSettleOnMerge)
-        #expect(decoded.autoSettleAfterDays == 3)
 
         var disabled = decoded
         disabled.liveActivitiesEnabled = false
-        let roundTrip = try JSONDecoder.t3.decode(
-            FeatureSettings.self,
-            from: JSONEncoder.t3.encode(disabled)
-        )
+        let encoded = try JSONEncoder.t3.encode(disabled)
+        let roundTrip = try JSONDecoder.t3.decode(FeatureSettings.self, from: encoded)
         #expect(!roundTrip.liveActivitiesEnabled)
-
-        disabled.autoSettleOnMerge = false
-        disabled.autoSettleAfterDays = nil
-        let settlementRoundTrip = try JSONDecoder.t3.decode(
-            FeatureSettings.self,
-            from: JSONEncoder.t3.encode(disabled)
+        let encodedSettings = try #require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
         )
-        #expect(!settlementRoundTrip.autoSettleOnMerge)
-        #expect(settlementRoundTrip.autoSettleAfterDays == nil)
+        #expect(encodedSettings["autoSettleOnMerge"] == nil)
+        #expect(encodedSettings["autoSettleAfterDays"] == nil)
     }
 
     @Test

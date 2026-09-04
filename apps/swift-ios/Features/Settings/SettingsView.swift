@@ -112,6 +112,13 @@ public struct SettingsView: View {
         SettingsSection(title: "Workspace") {
             VStack(spacing: 0) {
                 NavigationLink {
+                    ProvidersSettingsView(model: model)
+                } label: {
+                    SettingsNavigationRow(title: "Providers", systemImage: "cpu")
+                }
+                .buttonStyle(.plain)
+                settingsDivider
+                NavigationLink {
                     PullRequestsView(model: model)
                 } label: {
                     SettingsNavigationRow(
@@ -137,10 +144,7 @@ public struct SettingsView: View {
     }
 
     private var preferencesSection: some View {
-        SettingsSection(
-            title: "Preferences",
-            footer: "Auto-settle preferences are saved on this device."
-        ) {
+        SettingsSection(title: "Preferences") {
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
                     SettingsRowIcon(systemName: "circle.lefthalf.filled")
@@ -179,46 +183,6 @@ public struct SettingsView: View {
                     systemImage: "waveform.path.ecg.rectangle",
                     isOn: $settings.liveActivitiesEnabled
                 )
-                settingsDivider
-                SettingsToggleRow(
-                    title: "Auto-settle merged threads",
-                    systemImage: "arrow.triangle.merge",
-                    isOn: $settings.autoSettleOnMerge
-                )
-                settingsDivider
-                SettingsToggleRow(
-                    title: "Auto-settle inactive threads",
-                    systemImage: "clock",
-                    isOn: Binding(
-                        get: { settings.autoSettleAfterDays != nil },
-                        set: { enabled in
-                            settings.autoSettleAfterDays = enabled
-                                ? (settings.autoSettleAfterDays ?? 3)
-                                : nil
-                        }
-                    )
-                )
-                if let days = settings.autoSettleAfterDays {
-                    settingsDivider
-                    HStack(spacing: 12) {
-                        SettingsRowIcon(systemName: "calendar")
-                        Text("Inactive for \(days) \(days == 1 ? "day" : "days")")
-                            .font(T3Typography.threadBody)
-                            .foregroundStyle(T3Colors.textPrimary)
-                        Spacer(minLength: 12)
-                        Stepper(
-                            "Inactivity days",
-                            value: Binding(
-                                get: { settings.autoSettleAfterDays ?? 3 },
-                                set: { settings.autoSettleAfterDays = $0 }
-                            ),
-                            in: 1 ... 90
-                        )
-                        .labelsHidden()
-                    }
-                    .padding(.horizontal, 20)
-                    .frame(minHeight: 56)
-                }
             }
         }
     }

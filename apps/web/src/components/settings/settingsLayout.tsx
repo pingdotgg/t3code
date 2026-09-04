@@ -11,6 +11,10 @@ import {
   useState,
 } from "react";
 
+import {
+  PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
+  usePrimarySettingsAvailable,
+} from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePageContainer";
 import { Button } from "../ui/button";
@@ -84,6 +88,26 @@ function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) 
   return targetRef;
 }
 
+export function SettingsSearchTarget({
+  children,
+  ...targetProps
+}: ComponentPropsWithoutRef<"div">) {
+  const targetRef = useSettingsSearchTarget<HTMLDivElement>(targetProps.id);
+  return (
+    <div {...targetProps} ref={targetRef} tabIndex={targetProps.id ? -1 : targetProps.tabIndex}>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Trigger classes for the composer model/traits pickers when they sit in a
+ * settings row: match the `sm` control box (the composer pins them to 28px at
+ * every breakpoint) and drop the composer's max-width.
+ */
+export const SETTINGS_PICKER_TRIGGER_CLASSNAME =
+  "h-8 min-h-8 min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground sm:h-7 sm:min-h-7";
+
 /** Info affordance explaining how a setting interacts with the shared background policy. */
 export function PolicyTooltip({ children }: { readonly children: string }) {
   return (
@@ -147,12 +171,25 @@ export function SettingsSection({
   );
 }
 
+/**
+ * One setting. `serverScoped` marks rows whose value lives in the primary
+ * environment's settings.json; where there is no primary (the hosted app)
+ * the control goes inert with a tooltip instead of showing an editable
+ * default that would never save.
+ *
+ * Control sizing across settings follows three tiers so rows share a baseline:
+ * - `control` slot: `size="sm"` (Button, Select, Input, NumberField) or `icon-sm`.
+ * - Section `headerAction`s and buttons inside list items, cards, toolbars: `xs` / `icon-xs`.
+ * - Inline affordances (reset arrows, info tooltips, table-cell buttons): `icon-micro`.
+ * Dialog footers keep the app-wide default button size.
+ */
 export function SettingsRow({
   title,
   description,
   status,
   resetAction,
   control,
+  serverScoped = false,
   children,
   className,
   ...rowProps
@@ -162,9 +199,36 @@ export function SettingsRow({
   status?: ReactNode;
   resetAction?: ReactNode;
   control?: ReactNode;
+  serverScoped?: boolean;
   children?: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
+  const primarySettingsAvailable = usePrimarySettingsAvailable();
+  const unavailable = serverScoped && !primarySettingsAvailable;
+  const renderedReset = unavailable ? null : resetAction;
+  const renderedControl =
+    unavailable && control ? (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            // Focusable so keyboard users can still reach the explanation.
+            <span
+              tabIndex={0}
+              className="flex w-full items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-auto"
+            />
+          }
+        >
+          <div inert className="flex w-full items-center gap-2 opacity-50 sm:w-auto">
+            {control}
+          </div>
+        </TooltipTrigger>
+        <TooltipPopup side="top" className="max-w-72">
+          {PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE}
+        </TooltipPopup>
+      </Tooltip>
+    ) : (
+      control
+    );
 
   return (
     <div
@@ -178,7 +242,7 @@ export function SettingsRow({
           <div className="flex min-h-5 items-center gap-1.5">
             <h3 className="text-sm font-medium tracking-[-0.005em] text-foreground">{title}</h3>
             <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-              {resetAction}
+              {renderedReset}
             </span>
           </div>
           {description ? (
@@ -188,13 +252,19 @@ export function SettingsRow({
           ) : null}
           {status ? <div className="pt-0.5 text-xs text-muted-foreground">{status}</div> : null}
         </div>
-        {control ? (
+        {renderedControl ? (
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-            {control}
+            {renderedControl}
           </div>
         ) : null}
       </div>
-      {children}
+      {unavailable && children ? (
+        <div inert className="opacity-50">
+          {children}
+        </div>
+      ) : (
+        children
+      )}
     </div>
   );
 }
@@ -250,7 +320,7 @@ export function SettingsPageContainer({
   return (
     <SettingsSearchTargetProvider targetId={targetId} onTargetHandled={clearTargetHash}>
       <div
-        className="topbar-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto [--topbar-scroll-fade-height:1.5rem] sm:[--topbar-scroll-fade-height:1.5rem]"
+        className="topbar-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto"
         data-settings-page-scroll
       >
         <WorkspacePageContainer width={width} className={cn("gap-12", className)}>

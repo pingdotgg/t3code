@@ -9,7 +9,9 @@ struct MarkdownDocument: Equatable, Sendable {
     let blocks: [MarkdownBlock]
 
     init(parsing source: String) {
-        var parser = MarkdownBlockParser(source: source)
+        var parser = MarkdownBlockParser(
+            source: CodexMarkdownDirectives.replacingFileCitations(in: source)
+        )
         blocks = parser.parse()
     }
 
@@ -28,6 +30,7 @@ indirect enum MarkdownBlock: Equatable, Sendable {
     case table(MarkdownTable)
     case codeBlock(language: String?, code: String)
     case thematicBreak
+    case artifactTemplate(CodexArtifactTemplate)
 }
 
 struct MarkdownImage: Equatable, Sendable {
@@ -118,16 +121,20 @@ enum MarkdownImageSource: Equatable, Sendable {
 
 enum MarkdownWorkspaceFileLink {
     static func relativePath(for url: URL, workspaceRoot: String) -> String? {
-        let raw = url.absoluteString.removingPercentEncoding ?? url.absoluteString
-        let lowercase = raw.lowercased()
-        if lowercase.hasPrefix("http://") || lowercase.hasPrefix("https://")
-            || lowercase.hasPrefix("data:") || lowercase.hasPrefix("javascript:") {
+        let raw = url.absoluteString
+        let isWindowsPath = raw.range(of: #"^[A-Za-z]:[/\\]"#, options: .regularExpression) != nil
+        if url.scheme != nil, !url.isFileURL, !isWindowsPath {
             return nil
         }
 
-        var path = url.isFileURL ? url.path : raw
-        if let suffix = path.firstIndex(where: { $0 == "#" || $0 == "?" }) {
-            path = String(path[..<suffix])
+        var path: String
+        if url.isFileURL {
+            // URL.path is decoded and already excludes a real query or fragment.
+            path = url.path
+        } else {
+            let pathEnd = raw.firstIndex(where: { $0 == "#" || $0 == "?" }) ?? raw.endIndex
+            let encodedPath = String(raw[..<pathEnd])
+            path = encodedPath.removingPercentEncoding ?? encodedPath
         }
         path = path.replacingOccurrences(
             of: #":\d+(?::\d+)?$"#,
@@ -211,6 +218,12 @@ private struct MarkdownBlockParser {
 
             if let fence = fenceMarker(in: lines[index]) {
                 blocks.append(parseCodeBlock(opening: fence))
+                continue
+            }
+
+            if let template = CodexMarkdownDirectives.artifactTemplate(from: lines[index]) {
+                blocks.append(.artifactTemplate(template))
+                index += 1
                 continue
             }
 
@@ -476,6 +489,7 @@ private struct MarkdownBlockParser {
     /// Splits a GFM table row while preserving escapes for Foundation's inline parser.
     /// Pipes inside code spans or escaped with a backslash remain cell content.
     private func tableCells(in line: String) -> [String]? {
+        guard line.contains("|") else { return nil }
         let source = line.markdownTrimmed
         guard !source.isEmpty else { return nil }
 
@@ -553,7 +567,8 @@ private struct MarkdownBlockParser {
     }
 
     private func isBlockStarter(_ line: String) -> Bool {
-        fenceMarker(in: line) != nil
+        if CodexMarkdownDirectives.artifactTemplate(from: line) != nil { return true }
+        return fenceMarker(in: line) != nil
             || atxHeading(in: line) != nil
             || blockquoteContent(in: line) != nil
             || listMarker(in: line) != nil
@@ -572,11 +587,11 @@ private struct MarkdownBlockParser {
     }
 
     private func atxHeading(in line: String) -> (level: Int, text: String)? {
-        let characters = Array(line)
-        let indent = min(line.markdownLeadingSpaces, characters.count)
-        guard indent <= 3, indent < characters.count, characters[indent] == "#" else {
+        let indent = line.markdownLeadingSpaces
+        guard indent <= 3, line.dropFirst(indent).first == "#" else {
             return nil
         }
+        let characters = Array(line)
 
         var cursor = indent
         while cursor < characters.count, characters[cursor] == "#" {
@@ -618,11 +633,11 @@ private struct MarkdownBlockParser {
     }
 
     private func blockquoteContent(in line: String) -> String? {
-        let characters = Array(line)
-        let indent = min(line.markdownLeadingSpaces, characters.count)
-        guard indent <= 3, indent < characters.count, characters[indent] == ">" else {
+        let indent = line.markdownLeadingSpaces
+        guard indent <= 3, line.dropFirst(indent).first == ">" else {
             return nil
         }
+        let characters = Array(line)
         var cursor = indent + 1
         if cursor < characters.count, characters[cursor].isMarkdownWhitespace {
             cursor += 1
@@ -631,9 +646,12 @@ private struct MarkdownBlockParser {
     }
 
     private func listMarker(in line: String) -> ListMarker? {
+        let indent = line.markdownLeadingSpaces
+        guard indent <= 3, let marker = line.dropFirst(indent).first,
+              marker == "-" || marker == "+" || marker == "*" || marker.isNumber else {
+            return nil
+        }
         let characters = Array(line)
-        let indent = min(line.markdownLeadingSpaces, characters.count)
-        guard indent <= 3, indent < characters.count else { return nil }
 
         var cursor = indent
         var number: Int?
@@ -675,6 +693,7 @@ private struct MarkdownBlockParser {
     }
 
     private func taskState(in line: String) -> MarkdownTaskState? {
+        guard line.first == "[" else { return nil }
         let characters = Array(line)
         guard characters.count >= 3,
               characters[0] == "[",
@@ -705,13 +724,12 @@ private struct MarkdownBlockParser {
     }
 
     private func fenceMarker(in line: String) -> FenceMarker? {
-        let characters = Array(line)
-        let indent = min(line.markdownLeadingSpaces, characters.count)
-        guard indent <= 3,
-              indent < characters.count,
-              characters[indent] == "`" || characters[indent] == "~" else {
+        let indent = line.markdownLeadingSpaces
+        guard indent <= 3, let marker = line.dropFirst(indent).first,
+              marker == "`" || marker == "~" else {
             return nil
         }
+        let characters = Array(line)
 
         let character = characters[indent]
         var cursor = indent
@@ -733,13 +751,11 @@ private struct MarkdownBlockParser {
     }
 
     private func isClosingFence(_ line: String, matching opening: FenceMarker) -> Bool {
-        let characters = Array(line)
-        let indent = min(line.markdownLeadingSpaces, characters.count)
-        guard indent <= 3,
-              indent < characters.count,
-              characters[indent] == opening.character else {
+        let indent = line.markdownLeadingSpaces
+        guard indent <= 3, line.dropFirst(indent).first == opening.character else {
             return false
         }
+        let characters = Array(line)
 
         var cursor = indent
         while cursor < characters.count, characters[cursor] == opening.character {

@@ -32,6 +32,7 @@ public struct NewThreadView: View {
     @State private var restoredDraftProjectID: String?
     @State private var draftRestoreContext: NewTaskDraftRestoreContext?
     @State private var draftSaveTask: Task<Void, Never>?
+    @State private var draftSaveError: String?
     @State private var immediateDraftSaveTasks: [String: Task<Void, Never>] = [:]
     @State private var submittedSuccessfully = false
     @State private var restoresPromptAfterPickerDismissal = false
@@ -64,7 +65,7 @@ public struct NewThreadView: View {
                 topBar
                 if creationProjects.isEmpty {
                     noProjects
-                } else {
+                } else if !usesCompactProjectContext {
                     hero
                         .padding(.top, 82)
                 }
@@ -74,6 +75,10 @@ public struct NewThreadView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if !creationProjects.isEmpty {
                 VStack(spacing: 0) {
+                    if usesCompactProjectContext {
+                        compactProjectContext
+                    }
+
                     if let submissionValidationError {
                         Label(submissionValidationError, systemImage: "exclamationmark.circle")
                             .font(T3Typography.supporting)
@@ -89,7 +94,19 @@ public struct NewThreadView: View {
                     FeatureComposerView(
                         text: $prompt,
                         selection: selectionBinding,
-                        attachments: $attachments,
+                        attachments: attachmentBinding,
+                        draftOwnerID: selectedProject.map {
+                            "new-task:\($0.environmentID):\($0.id)"
+                        } ?? "new-task:unselected",
+                        environmentID: selectedProject?.environmentID,
+                        draftStorageKey: currentDraftKey,
+                        environmentIsConnected: selectedProject.flatMap { project in
+                            model.snapshot.environments.first {
+                                $0.id == project.environmentID
+                            }?.connectionState
+                        } == .connected,
+                        attachmentUploads: model.attachmentUploads,
+                        attachmentPreferences: environmentPreferences,
                         providers: creationProviders,
                         threadSelection: nil,
                         isSending: isSubmitting,
@@ -99,7 +116,10 @@ public struct NewThreadView: View {
                         onStop: {},
                         forceExpanded: true,
                         powerFeatures: composerPowerFeatures,
-                        onDismissKeyboard: { promptFocused = false }
+                        onDismissKeyboard: { promptFocused = false },
+                        onRefreshModels: refreshSelectedEnvironmentModels,
+                        draftSaveError: draftSaveError,
+                        onRetryDraftSave: persistCurrentDraftImmediately
                     )
                 }
                 .background(T3Colors.background)
@@ -148,7 +168,6 @@ public struct NewThreadView: View {
         }
         .onChange(of: prompt) { scheduleDraftSave() }
         .onChange(of: selection) { scheduleDraftSave() }
-        .onChange(of: attachments) { scheduleDraftSave() }
         .onChange(of: workspaceMode) { scheduleDraftSave() }
         .onChange(of: selectedBranch) { scheduleDraftSave() }
         .onChange(of: startFromOrigin) { scheduleDraftSave() }
@@ -161,6 +180,14 @@ public struct NewThreadView: View {
             }
         }
         .task(id: projectID) { await restoreDraftAndLoadBranches() }
+        .environment(\.providerSetupContext, selectedProject.map {
+            ProviderSetupContext(model: model, environmentID: $0.environmentID)
+        })
+        .task(id: "\(selectedProject?.id ?? ""):\(selection?.providerID ?? "")") {
+            if let project = selectedProject, let instanceID = selection?.providerID {
+                await model.refreshWorkspaceProviders(environmentID: project.environmentID, cwd: project.path, instanceID: instanceID)
+            }
+        }
         .onDisappear {
             guard !submittedSuccessfully else { return }
             persistCurrentDraftImmediately()
@@ -210,6 +237,14 @@ public struct NewThreadView: View {
         .interactiveDismissDisabled(isSubmitting)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+    }
+
+    private var usesCompactProjectContext: Bool {
+        NewThreadComposerLayout.usesCompactContext(
+            prompt: prompt,
+            isFocused: promptFocused,
+            hasAttachments: !attachments.isEmpty
+        )
     }
 
     private var topBar: some View {
@@ -269,47 +304,89 @@ public struct NewThreadView: View {
             .foregroundStyle(T3Colors.textPrimary)
             .multilineTextAlignment(.center)
 
-            Menu {
-                ForEach(creationEnvironments) { environment in
-                    Button {
-                        selectEnvironment(environment.id)
-                    } label: {
-                        if environment.id == selectedProject?.environmentID {
-                            Label(environmentLabel(environment), systemImage: "checkmark")
-                        } else {
-                            Text(environmentLabel(environment))
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "server.rack")
-                        .font(.system(size: 11, weight: .medium))
-                    Text(environmentName)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if let environmentStatus {
-                        Text(environmentStatus)
-                            .foregroundStyle(T3Colors.warning)
-                    }
-                    if creationEnvironments.count > 1 {
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .bold))
-                    }
-                }
-                .font(T3Typography.supporting)
-                .foregroundStyle(T3Colors.textSecondary)
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(isSubmitting || creationEnvironments.count < 2)
-            .accessibilityLabel("Environment")
-            .accessibilityValue(environmentAccessibilityValue)
+            environmentPicker
         }
         .padding(.horizontal, 24)
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .contain)
+    }
+
+    private var compactProjectContext: some View {
+        HStack(spacing: 12) {
+            Button {
+                presentPicker(.project)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder")
+                        .font(.system(size: 11, weight: .medium))
+                    Text(
+                        selectedProjectGroup?.name
+                            ?? selectedProject?.name
+                            ?? "Choose project"
+                    )
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .font(T3Typography.supporting)
+                .foregroundStyle(T3Colors.textPrimary)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isSubmitting)
+            .layoutPriority(1)
+            .accessibilityLabel("Choose project")
+            .accessibilityValue(
+                selectedProjectGroup?.name ?? selectedProject?.name ?? "Not selected"
+            )
+
+            Spacer(minLength: 0)
+
+            environmentPicker
+        }
+        .padding(.horizontal, 18)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var environmentPicker: some View {
+        Menu {
+            ForEach(creationEnvironments) { environment in
+                Button {
+                    selectEnvironment(environment.id)
+                } label: {
+                    if environment.id == selectedProject?.environmentID {
+                        Label(environmentLabel(environment), systemImage: "checkmark")
+                    } else {
+                        Text(environmentLabel(environment))
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: creationEnvironments.first { $0.id == selectedProject?.environmentID }?.systemImage ?? "server.rack")
+                    .font(.system(size: 11, weight: .medium))
+                Text(environmentName)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let environmentStatus {
+                    Text(environmentStatus)
+                        .foregroundStyle(T3Colors.warning)
+                }
+                if creationEnvironments.count > 1 {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                }
+            }
+            .font(T3Typography.supporting)
+            .foregroundStyle(T3Colors.textSecondary)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isSubmitting || creationEnvironments.count < 2)
+        .accessibilityLabel("Environment")
+        .accessibilityValue(environmentAccessibilityValue)
     }
 
     private var noProjects: some View {
@@ -573,6 +650,13 @@ public struct NewThreadView: View {
         )
     }
 
+    private func refreshSelectedEnvironmentModels() async throws {
+        guard let environmentID = selectedProject?.environmentID else { return }
+        guard await model.refreshProviders(environmentID: environmentID) else {
+            throw FeatureModelRefreshError()
+        }
+    }
+
     private var selectionBinding: Binding<FeatureSelection?> {
         Binding(
             get: { selection },
@@ -609,8 +693,8 @@ public struct NewThreadView: View {
             )
         }
         return FeatureComposerPowerFeatures(
-            slashCommands: provider?.slashCommands ?? [],
-            skills: provider?.skills ?? [],
+            slashCommands: provider?.workspaceCatalog(cwd: project.path).slashCommands ?? [],
+            skills: provider?.workspaceCatalog(cwd: project.path).skills ?? [],
             pathSearchScopeID: project.id,
             searchPaths: { query in
                 try await model.client.searchProjectFiles(
@@ -725,7 +809,11 @@ public struct NewThreadView: View {
                 )
                 : nil,
             startFromOrigin: startFromOrigin,
-            attachments: attachments
+            attachments: model.attachmentUploads.attachmentsForSend(
+                draftKey: draftKey ?? FeatureComposerDraftStore.newTaskKey(project: project),
+                environmentID: project.environmentID,
+                attachments: attachments
+            )
         )
 
         Task { @MainActor in
@@ -747,6 +835,7 @@ public struct NewThreadView: View {
                 onCreated(thread)
             } else {
                 isSubmitting = false
+                persistCurrentDraftImmediately()
                 submissionFailed = true
             }
         }
@@ -827,6 +916,7 @@ public struct NewThreadView: View {
         }
 
         restoredDraftProjectID = nil
+        draftSaveError = nil
         draftSaveTask?.cancel()
         draftSaveTask = nil
         prompt = ""
@@ -975,6 +1065,12 @@ public struct NewThreadView: View {
         restoredDraftProjectID = requestedProjectID
         if liveDraft != context.baseline {
             scheduleDraftSave()
+        } else if saved != nil {
+            model.attachmentUploads.syncOwner(
+                draftKey: key,
+                environmentID: project.environmentID,
+                attachments: restored.attachments
+            )
         }
         refreshAutomaticProjectIfNeeded()
         guard projectID == requestedProjectID else { return }
@@ -984,6 +1080,18 @@ public struct NewThreadView: View {
     private var currentDraftKey: String? {
         guard let project = selectedProject else { return nil }
         return draftKey(for: project)
+    }
+
+    private var attachmentBinding: Binding<[FeatureDraftAttachment]> {
+        Binding(
+            get: { attachments },
+            set: { value in
+                attachments = value
+                if restoredDraftProjectID == projectID {
+                    persistCurrentDraftImmediately()
+                }
+            }
+        )
     }
 
     private func draftKey(for project: FeatureProject) -> String {
@@ -1022,22 +1130,35 @@ public struct NewThreadView: View {
         pendingDraftSaveTask?.cancel()
         draftSaveTask = nil
         let snapshot = composerDraft
+        let environmentID = selectedProject?.environmentID
+        let immediateSave = immediateDraftSaveTasks[key]
         draftSaveTask = Task {
             await NewTaskDraftWriteFence.wait(pendingDraftSaveTask)
+            await NewTaskDraftWriteFence.wait(immediateSave)
             do {
                 try await Task.sleep(for: .milliseconds(220))
                 try Task.checkCancellation()
                 try await draftStore.setDraft(snapshot, for: key)
+                guard !Task.isCancelled else { return }
+                if currentDraftKey == key { draftSaveError = nil }
+                if let environmentID {
+                    model.attachmentUploads.syncOwner(
+                        draftKey: key,
+                        environmentID: environmentID,
+                        attachments: snapshot.attachments
+                    )
+                }
             } catch is CancellationError {
                 return
             } catch {
-                return
+                guard !Task.isCancelled, currentDraftKey == key else { return }
+                draftSaveError = "Could not save draft. \(error.localizedDescription)"
             }
         }
     }
 
     private func persistCurrentDraftImmediately() {
-        guard !submittedSuccessfully,
+        guard !submittedSuccessfully, !isSubmitting,
               let key = currentDraftKey else {
             return
         }
@@ -1047,6 +1168,7 @@ public struct NewThreadView: View {
         let snapshot = composerDraft
         let restoreContext = draftRestoreContext
         let draftProjectID = projectID
+        let environmentID = selectedProject?.environmentID
         let needsRestoreMerge = restoredDraftProjectID != draftProjectID
         let previousSave = immediateDraftSaveTasks[key]
         previousSave?.cancel()
@@ -1060,9 +1182,37 @@ public struct NewThreadView: View {
                 let saved = try? await draftStore.draft(for: key)
                 guard !Task.isCancelled else { return }
                 let merged = restoreContext.merging(saved: saved, current: snapshot)
-                try? await draftStore.setDraft(merged, for: key)
+                do {
+                    try await draftStore.setDraft(merged, for: key)
+                    guard !Task.isCancelled else { return }
+                    if currentDraftKey == key { draftSaveError = nil }
+                    if let environmentID {
+                        model.attachmentUploads.syncOwner(
+                            draftKey: key,
+                            environmentID: environmentID,
+                            attachments: merged.attachments
+                        )
+                    }
+                } catch {
+                    guard !Task.isCancelled, currentDraftKey == key else { return }
+                    draftSaveError = "Could not save draft. \(error.localizedDescription)"
+                }
             } else {
-                try? await draftStore.setDraft(snapshot, for: key)
+                do {
+                    try await draftStore.setDraft(snapshot, for: key)
+                    guard !Task.isCancelled else { return }
+                    if currentDraftKey == key { draftSaveError = nil }
+                    if let environmentID {
+                        model.attachmentUploads.syncOwner(
+                            draftKey: key,
+                            environmentID: environmentID,
+                            attachments: snapshot.attachments
+                        )
+                    }
+                } catch {
+                    guard !Task.isCancelled, currentDraftKey == key else { return }
+                    draftSaveError = "Could not save draft. \(error.localizedDescription)"
+                }
             }
         }
         immediateDraftSaveTasks[key] = task
@@ -1076,6 +1226,19 @@ public struct NewThreadView: View {
         let rhsRank = rhs.isCurrent ? 0 : rhs.isDefault ? 1 : rhs.isRemote ? 3 : 2
         if lhsRank != rhsRank { return lhsRank < rhsRank }
         return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+    }
+}
+
+enum NewThreadComposerLayout {
+    /// The full prompt is useful before editing starts. Once a draft needs
+    /// room, a compact row keeps the project and environment visible while the
+    /// editor uses the rest of the hero's space.
+    static func usesCompactContext(
+        prompt: String,
+        isFocused: Bool,
+        hasAttachments: Bool
+    ) -> Bool {
+        !prompt.isEmpty || isFocused || hasAttachments
     }
 }
 

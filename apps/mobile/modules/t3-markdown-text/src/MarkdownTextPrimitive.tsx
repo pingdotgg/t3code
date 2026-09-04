@@ -9,10 +9,10 @@ const TextAncestorContext = React.createContext<[boolean, ViewStyle]>([
   StyleSheet.create({}),
 ]);
 
-const textDefaults: TextProps = {
+const textDefaults = {
   allowFontScaling: true,
   selectable: true,
-};
+} satisfies TextProps;
 
 const useTextAncestorContext = () => React.useContext(TextAncestorContext);
 
@@ -24,8 +24,18 @@ export type SelectionChangeEvent = {
   nativeEvent: { target: number; start: number; end: number };
 };
 
-export type MarkdownTextPrimitiveProps = TextProps & {
+export type ContextMenuActionEvent = {
+  nativeEvent: { target: number; actionIdentifier: string };
+};
+
+/**
+ * `onTextLayout` is not offered: the native view reports plain line strings
+ * while the React Native Text fallback reports measured `TextLayoutLine`s.
+ */
+export type MarkdownTextPrimitiveProps = Omit<TextProps, "onTextLayout"> & {
   uiTextView?: boolean;
+  contextMenuConfig?: string;
+  onContextMenuAction?: (event: ContextMenuActionEvent) => void;
   /**
    * Fired when the native text selection changes. Only fires on iOS when
    * `uiTextView` is true. Note: fires on every selection-edge adjustment
@@ -69,16 +79,14 @@ function MarkdownTextPrimitiveChild({ style, children, ...rest }: MarkdownTextPr
   });
 
   if (!isAncestor) {
+    // Press handlers are delivered by the text runs; the container never sees them.
+    const { onPress: _onPress, onLongPress: _onLongPress, ...containerProps } = rest;
     return (
       <TextAncestorContext.Provider value={contextValue}>
         <T3MarkdownTextNativeComponent
           {...textDefaults}
-          {...rest}
-          // ellipsizeMode={rest.ellipsizeMode ?? rest.lineBreakMode ?? 'tail'}
+          {...containerProps}
           style={[flattenedStyle]}
-          // @ts-expect-error Weirdness
-          onPress={undefined}
-          onLongPress={undefined}
         >
           {nativeChildren}
         </T3MarkdownTextNativeComponent>

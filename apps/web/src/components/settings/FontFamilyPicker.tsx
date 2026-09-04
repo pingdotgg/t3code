@@ -11,6 +11,7 @@ import {
   ComboboxPopup,
   ComboboxTrigger,
 } from "../ui/combobox";
+import { selectTriggerVariants } from "../ui/select";
 
 const DEFAULT_FONT_VALUE = "__default__";
 
@@ -203,14 +204,11 @@ export function FontFamilyPicker({
         void listRef.current?.scrollIndexIntoView?.({ index: eventDetails.index, animated: false });
       }}
     >
-      <ComboboxTrigger
-        aria-label={ariaLabel}
-        className="relative inline-flex min-h-9 w-full min-w-36 cursor-pointer select-none items-center justify-between gap-2 rounded-lg border border-input bg-background px-[calc(--spacing(3)-1px)] text-left text-base text-foreground shadow-xs/5 outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24 sm:min-h-8 sm:text-sm dark:bg-input/32"
-      >
+      <ComboboxTrigger aria-label={ariaLabel} className={selectTriggerVariants({ size: "sm" })}>
         <span className="min-w-0 truncate">
           {selectedFamily.length === 0 ? defaultFamily : selectedFamily}
         </span>
-        <ChevronDownIcon className="-me-1 size-3 shrink-0 text-muted-foreground opacity-50" />
+        <ChevronDownIcon className="-me-1 size-3 opacity-50" />
       </ComboboxTrigger>
       <ComboboxPopup align="end" className="flex w-72 flex-col">
         <div className="shrink-0 px-3 pt-2.5">

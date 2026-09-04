@@ -2,6 +2,7 @@
 
 import { Dialog as SheetPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
+import type { CSSProperties } from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -62,18 +63,34 @@ function SheetPopup({
   children,
   showCloseButton = true,
   keepMounted = false,
+  transitionDurationMs,
   side = "right",
   variant = "default",
+  style,
   ...props
 }: SheetPrimitive.Popup.Props & {
   showCloseButton?: boolean;
   keepMounted?: boolean;
+  transitionDurationMs?: number;
   side?: "right" | "left" | "top" | "bottom";
   variant?: "default" | "inset";
 }) {
+  const transitionStyle =
+    transitionDurationMs === undefined
+      ? undefined
+      : ({ transitionDuration: `${transitionDurationMs}ms` } satisfies CSSProperties);
+  const instant = transitionDurationMs === 0;
+
   return (
     <SheetPortal keepMounted={keepMounted}>
-      <SheetBackdrop />
+      <SheetBackdrop
+        className={
+          instant
+            ? "transition-none! data-ending-style:opacity-100! data-starting-style:opacity-100!"
+            : undefined
+        }
+        style={transitionStyle}
+      />
       <SheetViewport side={side} variant={variant}>
         <SheetPrimitive.Popup
           className={cn(
@@ -88,9 +105,12 @@ function SheetPopup({
               "col-start-2 w-[calc(100%-(--spacing(12)))] max-w-md border-s data-ending-style:translate-x-8 data-starting-style:translate-x-8",
             variant === "inset" &&
               "before:hidden sm:rounded-2xl sm:border sm:before:rounded-[calc(var(--radius-2xl)-1px)] sm:**:data-[slot=sheet-footer]:rounded-b-[calc(var(--radius-2xl)-1px)]",
+            instant &&
+              "transition-none! will-change-auto! data-ending-style:translate-x-0! data-starting-style:translate-x-0! data-ending-style:translate-y-0! data-starting-style:translate-y-0! data-ending-style:opacity-100! data-starting-style:opacity-100!",
             className,
           )}
           data-slot="sheet-popup"
+          style={{ ...transitionStyle, ...style }}
           {...props}
         >
           {children}

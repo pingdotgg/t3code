@@ -44,6 +44,19 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
     /// has not probed this saved environment yet.
     public var connectionState: FeatureConnection.State?
     public var connectionDetail: String?
+    public var machineIcon: String? = nil
+    public var canCustomizeIcon: Bool? = nil
+
+    public var systemImage: String {
+        switch machineIcon {
+        case "cloud": "cloud"
+        case "desktop": "desktopcomputer"
+        case "laptop": "laptopcomputer"
+        case "mac-mini": "macmini"
+        case "mac-studio": "macstudio"
+        default: "server.rack"
+        }
+    }
 
     public init(
         id: String,
@@ -74,6 +87,8 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         case source
         case connectionState
         case connectionDetail
+        case machineIcon
+        case canCustomizeIcon
     }
 
     public init(from decoder: any Decoder) throws {
@@ -89,6 +104,8 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
             forKey: .connectionState
         )
         connectionDetail = try container.decodeIfPresent(String.self, forKey: .connectionDetail)
+        machineIcon = try container.decodeIfPresent(String.self, forKey: .machineIcon)
+        canCustomizeIcon = try container.decodeIfPresent(Bool.self, forKey: .canCustomizeIcon)
     }
 }
 
@@ -124,6 +141,7 @@ public struct FeatureProject: Identifiable, Sendable, Equatable, Hashable, Codab
     public var repositoryIdentity: FeatureRepositoryIdentity?
     public var createdAt: String?
     public var updatedAt: String?
+    public var projectIcon: ProjectIconOverride? = nil
 
     public init(
         id: String,
@@ -167,13 +185,9 @@ public enum FeatureRuntimeMode: String, CaseIterable, Sendable, Codable {
     case automatic
     case fullAccess
 
-    /// Mobile is a build surface. Legacy modes remain decodable for server
-    /// history, but every command originating here uses full access.
-    public static let allCases: [FeatureRuntimeMode] = [.fullAccess]
-
-    public var mobileNormalized: FeatureRuntimeMode {
-        .fullAccess
-    }
+    /// Mobile offers the two current modes. Legacy modes remain distinct so
+    /// existing threads keep their exact server permission.
+    public static let allCases: [FeatureRuntimeMode] = [.automatic, .fullAccess]
 }
 
 public enum FeatureInteractionMode: String, CaseIterable, Sendable, Codable {
@@ -418,14 +432,62 @@ public struct FeatureMessageAttachment: Identifiable, Sendable, Equatable, Hasha
 }
 
 public struct FeatureUploadAttachment: Sendable, Equatable {
-    public var data: Data
+    public let id: UUID
+    private var inlineData: Data?
+    public var ownedFile: FeatureOwnedAttachmentFile?
     public var name: String
     public var mimeType: String
+    public var uploadedReference: FeatureUploadedAttachmentReference?
 
-    public init(data: Data, name: String, mimeType: String) {
-        self.data = data
+    public init(
+        id: UUID = UUID(),
+        data: Data,
+        name: String,
+        mimeType: String,
+        uploadedReference: FeatureUploadedAttachmentReference? = nil
+    ) {
+        self.id = id
+        inlineData = data
+        ownedFile = nil
         self.name = name
         self.mimeType = mimeType
+        self.uploadedReference = uploadedReference
+    }
+
+    public init(
+        id: UUID = UUID(),
+        ownedFile: FeatureOwnedAttachmentFile,
+        name: String,
+        mimeType: String,
+        uploadedReference: FeatureUploadedAttachmentReference? = nil
+    ) {
+        self.id = id
+        inlineData = nil
+        self.ownedFile = ownedFile
+        self.name = name
+        self.mimeType = mimeType
+        self.uploadedReference = uploadedReference
+    }
+
+    public init(_ draft: FeatureDraftAttachment) {
+        id = draft.id
+        inlineData = draft.ownedFile == nil ? draft.data : nil
+        ownedFile = draft.ownedFile
+        name = draft.filename
+        mimeType = draft.mimeType
+        uploadedReference = draft.uploadedReference
+    }
+
+    public var data: Data {
+        get { inlineData ?? Data() }
+        set {
+            inlineData = newValue
+            ownedFile = nil
+        }
+    }
+
+    public var byteCount: Int {
+        inlineData?.count ?? ownedFile?.byteCount ?? 0
     }
 }
 
@@ -437,6 +499,9 @@ public struct FeatureMessage: Identifiable, Sendable, Equatable, Hashable, Codab
     public var state: FeatureMessageState
     public var toolName: String?
     public var attachments: [FeatureMessageAttachment]
+    public var workLogImagePaths: [String]?
+    public var activeWorkLabel: String?
+    public var toolPresentation: ToolActivityPresentation? = nil
 
     public init(
         id: String,
@@ -445,7 +510,9 @@ public struct FeatureMessage: Identifiable, Sendable, Equatable, Hashable, Codab
         createdAt: Date = .now,
         state: FeatureMessageState = .complete,
         toolName: String? = nil,
-        attachments: [FeatureMessageAttachment] = []
+        attachments: [FeatureMessageAttachment] = [],
+        workLogImagePaths: [String]? = nil,
+        activeWorkLabel: String? = nil
     ) {
         self.id = id
         self.role = role
@@ -454,6 +521,8 @@ public struct FeatureMessage: Identifiable, Sendable, Equatable, Hashable, Codab
         self.state = state
         self.toolName = toolName
         self.attachments = attachments
+        self.workLogImagePaths = workLogImagePaths
+        self.activeWorkLabel = activeWorkLabel
     }
 }
 
@@ -707,6 +776,7 @@ public struct FeatureModel: Identifiable, Sendable, Equatable, Hashable, Codable
     public var name: String
     public var detail: String?
     public var supportsImages: Bool
+    public var imageSupportIsUnknown: Bool? = nil
     public var supportsReasoning: Bool
     public var isDefault: Bool
     public var isLegacy: Bool?
@@ -829,6 +899,12 @@ public struct FeatureModelOptionSelection: Identifiable, Sendable, Equatable, Ha
     }
 }
 
+public struct FeatureProviderWorkspace: Sendable, Equatable, Hashable, Codable {
+    public let cwd: String
+    public let slashCommands: [FeatureProviderSlashCommand]
+    public let skills: [FeatureProviderSkill]
+}
+
 public struct FeatureProvider: Identifiable, Sendable, Equatable, Hashable, Codable {
     public let id: String
     public var name: String
@@ -838,6 +914,24 @@ public struct FeatureProvider: Identifiable, Sendable, Equatable, Hashable, Coda
     public var models: [FeatureModel]
     public var slashCommands: [FeatureProviderSlashCommand]?
     public var skills: [FeatureProviderSkill]?
+    public var workspaceSnapshots: [FeatureProviderWorkspace]? = nil
+    public var setup: ProviderSetupCapabilities? = nil
+    public var isEnabled: Bool? = nil
+    public var isInstalled: Bool? = nil
+    public var authStatus: String? = nil
+    public var statusMessage: String? = nil
+
+    func workspaceCatalog(cwd: String?) -> FeatureProviderWorkspace {
+        if let cwd, let workspace = workspaceSnapshots?.first(where: { $0.cwd == cwd }) {
+            return workspace
+        }
+        // A catalog from another workspace must not leak into this composer.
+        return FeatureProviderWorkspace(
+            cwd: cwd ?? "",
+            slashCommands: workspaceSnapshots == nil ? slashCommands ?? [] : [],
+            skills: workspaceSnapshots == nil ? skills ?? [] : []
+        )
+    }
 
     public init(
         id: String,
@@ -888,25 +982,19 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
     public var notificationsEnabled: Bool
     public var liveActivitiesEnabled: Bool
     public var defaultSelection: FeatureSelection?
-    public var autoSettleOnMerge: Bool
-    public var autoSettleAfterDays: Int?
 
     public init(
         appearance: FeatureAppearance = .system,
         hapticsEnabled: Bool = true,
         notificationsEnabled: Bool = true,
         liveActivitiesEnabled: Bool = true,
-        defaultSelection: FeatureSelection? = nil,
-        autoSettleOnMerge: Bool = true,
-        autoSettleAfterDays: Int? = 3
+        defaultSelection: FeatureSelection? = nil
     ) {
         self.appearance = appearance
         self.hapticsEnabled = hapticsEnabled
         self.notificationsEnabled = notificationsEnabled
         self.liveActivitiesEnabled = liveActivitiesEnabled
         self.defaultSelection = defaultSelection
-        self.autoSettleOnMerge = autoSettleOnMerge
-        self.autoSettleAfterDays = autoSettleAfterDays.map { min(90, max(1, $0)) }
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -915,8 +1003,6 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
         case notificationsEnabled
         case liveActivitiesEnabled
         case defaultSelection
-        case autoSettleOnMerge
-        case autoSettleAfterDays
     }
 
     public init(from decoder: any Decoder) throws {
@@ -941,18 +1027,6 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
             FeatureSelection.self,
             forKey: .defaultSelection
         )
-        autoSettleOnMerge = try container.decodeIfPresent(
-            Bool.self,
-            forKey: .autoSettleOnMerge
-        ) ?? true
-        if container.contains(.autoSettleAfterDays) {
-            autoSettleAfterDays = try container.decodeIfPresent(
-                Int.self,
-                forKey: .autoSettleAfterDays
-            ).map { min(90, max(1, $0)) }
-        } else {
-            autoSettleAfterDays = 3
-        }
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -962,12 +1036,6 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
         try container.encode(notificationsEnabled, forKey: .notificationsEnabled)
         try container.encode(liveActivitiesEnabled, forKey: .liveActivitiesEnabled)
         try container.encodeIfPresent(defaultSelection, forKey: .defaultSelection)
-        try container.encode(autoSettleOnMerge, forKey: .autoSettleOnMerge)
-        if let autoSettleAfterDays {
-            try container.encode(autoSettleAfterDays, forKey: .autoSettleAfterDays)
-        } else {
-            try container.encodeNil(forKey: .autoSettleAfterDays)
-        }
     }
 }
 
@@ -982,17 +1050,26 @@ public struct FeatureEnvironmentPreferences: Sendable, Equatable, Codable {
     public var newWorktreesStartFromOrigin: Bool
     public var projectGroupingMode: ProjectGroupingMode
     public var projectGroupingOverrides: [String: ProjectGroupingMode]
+    public var automaticSettlement: FeatureAutomaticSettlementSettings?
+    public var supportsImageUploads: Bool
+    public var maxFileAttachmentBytes: Int?
 
     public init(
         defaultWorkspaceMode: FeatureWorkspaceMode = .local,
         newWorktreesStartFromOrigin: Bool = true,
         projectGroupingMode: ProjectGroupingMode = .repository,
-        projectGroupingOverrides: [String: ProjectGroupingMode] = [:]
+        projectGroupingOverrides: [String: ProjectGroupingMode] = [:],
+        automaticSettlement: FeatureAutomaticSettlementSettings? = nil,
+        supportsImageUploads: Bool = false,
+        maxFileAttachmentBytes: Int? = nil
     ) {
         self.defaultWorkspaceMode = defaultWorkspaceMode
         self.newWorktreesStartFromOrigin = newWorktreesStartFromOrigin
         self.projectGroupingMode = projectGroupingMode
         self.projectGroupingOverrides = projectGroupingOverrides
+        self.automaticSettlement = automaticSettlement
+        self.supportsImageUploads = supportsImageUploads
+        self.maxFileAttachmentBytes = maxFileAttachmentBytes
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -1000,6 +1077,9 @@ public struct FeatureEnvironmentPreferences: Sendable, Equatable, Codable {
         case newWorktreesStartFromOrigin
         case projectGroupingMode
         case projectGroupingOverrides
+        case automaticSettlement
+        case supportsImageUploads
+        case maxFileAttachmentBytes
     }
 
     public init(from decoder: any Decoder) throws {
@@ -1016,10 +1096,22 @@ public struct FeatureEnvironmentPreferences: Sendable, Equatable, Codable {
             ProjectGroupingMode.self,
             forKey: .projectGroupingMode
         ) ?? .repository
+        supportsImageUploads = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .supportsImageUploads
+        ) ?? false
+        maxFileAttachmentBytes = try container.decodeIfPresent(
+            Int.self,
+            forKey: .maxFileAttachmentBytes
+        )
         projectGroupingOverrides = try container.decodeIfPresent(
             [String: ProjectGroupingMode].self,
             forKey: .projectGroupingOverrides
         ) ?? [:]
+        automaticSettlement = try container.decodeIfPresent(
+            FeatureAutomaticSettlementSettings.self,
+            forKey: .automaticSettlement
+        )
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -1028,7 +1120,25 @@ public struct FeatureEnvironmentPreferences: Sendable, Equatable, Codable {
         try container.encode(newWorktreesStartFromOrigin, forKey: .newWorktreesStartFromOrigin)
         try container.encode(projectGroupingMode, forKey: .projectGroupingMode)
         try container.encode(projectGroupingOverrides, forKey: .projectGroupingOverrides)
+        try container.encodeIfPresent(automaticSettlement, forKey: .automaticSettlement)
+        try container.encode(supportsImageUploads, forKey: .supportsImageUploads)
+        try container.encodeIfPresent(maxFileAttachmentBytes, forKey: .maxFileAttachmentBytes)
     }
+}
+
+public struct FeatureAutomaticSettlementSettings: Sendable, Equatable, Codable {
+    public var onMerge: Bool
+    public var afterDays: Double?
+
+    public init(onMerge: Bool, afterDays: Double?) {
+        self.onMerge = onMerge
+        self.afterDays = afterDays
+    }
+}
+
+public enum FeatureAutomaticSettlementChange: Sendable, Equatable {
+    case onMerge(Bool)
+    case afterDays(Double?)
 }
 
 public struct FeatureSnapshot: Sendable, Equatable, Codable {
@@ -1094,6 +1204,13 @@ public enum FeatureApprovalDecision: String, Sendable, Codable {
     }
 }
 
+public enum FeatureThreadSyncState: Sendable, Equatable {
+    case catchingUp
+    case reconnecting
+    case live
+    case failed(String)
+}
+
 public enum FeatureEvent: Sendable {
     case snapshot(FeatureSnapshot)
     case connection(FeatureConnection)
@@ -1101,5 +1218,6 @@ public enum FeatureEvent: Sendable {
     case threadRemoved(id: String)
     case detail(FeatureThreadDetail)
     case detailDelta(FeatureThreadDetail, FeatureDetailDelta)
+    case threadSync(id: String, state: FeatureThreadSyncState?)
     case failure(String)
 }

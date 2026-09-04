@@ -705,7 +705,7 @@ public struct WorkspaceView: View {
 
 private extension FeatureDraftAttachment {
     var uploadValue: FeatureUploadAttachment {
-        FeatureUploadAttachment(data: data, name: filename, mimeType: mimeType)
+        FeatureUploadAttachment(self)
     }
 }
 
@@ -827,6 +827,7 @@ struct HomeShelfHeader: View {
 }
 
 struct HomeThreadRowContext: Equatable {
+    var projectIcon: ProjectIconOverride? = nil
     let projectName: String
     let projectEnvironmentID: String?
     let projectWorkspaceRoot: String?
@@ -895,6 +896,7 @@ struct HomeThreadRowContext: Equatable {
                 : environment?.connectionState
 
             result[thread.id] = HomeThreadRowContext(
+                projectIcon: project?.projectIcon,
                 projectName: projectGroupNameByID[thread.projectID] ?? project?.name ?? "Project",
                 projectEnvironmentID: project?.environmentID,
                 projectWorkspaceRoot: project?.path,
@@ -1307,6 +1309,7 @@ struct FeatureThreadRow: View {
     private var projectBadge: some View {
         ProjectBadge(
             name: context.projectName,
+            icon: context.projectIcon,
             environmentID: context.projectEnvironmentID,
             workspaceRoot: context.projectWorkspaceRoot,
             client: projectFaviconClient
@@ -1345,6 +1348,7 @@ struct FeatureThreadRow: View {
 
 private struct ProjectBadge: View {
     let name: String
+    let icon: ProjectIconOverride?
     let environmentID: String?
     let workspaceRoot: String?
     let client: (any FeatureClient)?
@@ -1352,11 +1356,13 @@ private struct ProjectBadge: View {
 
     init(
         name: String,
+        icon: ProjectIconOverride? = nil,
         environmentID: String?,
         workspaceRoot: String?,
         client: (any FeatureClient)?
     ) {
         self.name = name
+        self.icon = icon
         self.environmentID = environmentID
         self.workspaceRoot = workspaceRoot
         self.client = client
@@ -1375,7 +1381,13 @@ private struct ProjectBadge: View {
 
     var body: some View {
         Group {
-            if let favicon {
+            if let icon, icon.kind == "emoji", let emoji = icon.emoji {
+                Text(emoji).font(.system(size: 14))
+            } else if let icon, icon.kind == "lucide" {
+                Image(systemName: ProjectIconPresentation.symbol(icon.name))
+                    .font(.system(size: 13))
+                    .foregroundStyle(ProjectIconPresentation.color(icon.color))
+            } else if let favicon {
                 Image(uiImage: favicon)
                     .resizable()
                     .scaledToFit()
@@ -1404,6 +1416,7 @@ private struct ProjectBadge: View {
     }
 
     private func loadFavicon() async {
+        guard icon == nil else { return }
         guard let environmentID, let workspaceRoot, let client, let faviconKey else {
             return
         }

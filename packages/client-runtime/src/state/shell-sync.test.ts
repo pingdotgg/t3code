@@ -51,6 +51,7 @@ function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
   return {
     client,
     initialConfig: Effect.succeed({ shellResumeCompletionMarker: true } as never),
+    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,

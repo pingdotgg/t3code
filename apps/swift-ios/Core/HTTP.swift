@@ -2,6 +2,20 @@ import Foundation
 
 public protocol HTTPTransport: Sendable {
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse)
+    func upload(for request: URLRequest, fromFile fileURL: URL) async throws
+        -> (Data, HTTPURLResponse)
+}
+
+public extension HTTPTransport {
+    /// Test transports can keep recording URLRequest bodies without providing
+    /// a second transport implementation. Production overrides this method.
+    func upload(for request: URLRequest, fromFile fileURL: URL) async throws
+        -> (Data, HTTPURLResponse)
+    {
+        var request = request
+        request.httpBody = try Data(contentsOf: fileURL)
+        return try await data(for: request)
+    }
 }
 
 /// The Core transport deliberately knows nothing about Clerk or the relay.
@@ -45,6 +59,19 @@ public struct URLSessionHTTPTransport: HTTPTransport {
         // their body. Applying the policy here is a final guard for requests
         // constructed outside EnvironmentAPI.
         let (data, response) = try await session.data(for: HTTPRequestPolicy.prepare(request))
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw HTTPError.invalidResponse
+        }
+        return (data, httpResponse)
+    }
+
+    public func upload(for request: URLRequest, fromFile fileURL: URL) async throws
+        -> (Data, HTTPURLResponse)
+    {
+        let (data, response) = try await session.upload(
+            for: HTTPRequestPolicy.prepare(request),
+            fromFile: fileURL
+        )
         guard let httpResponse = response as? HTTPURLResponse else {
             throw HTTPError.invalidResponse
         }
@@ -95,9 +122,51 @@ public enum HTTPError: LocalizedError, Sendable {
     }
 }
 
-private struct ErrorBody: Decodable {
+enum DPoPFailureReason: Decodable, Equatable, Sendable {
+    case timeWindow
+    case keyMismatch
+    case requestMismatch
+    case tokenMismatch
+    case replay
+    case invalidProof
+    case unknown
+
+    init(from decoder: any Decoder) throws {
+        switch try decoder.singleValueContainer().decode(String.self) {
+        case "time_window": self = .timeWindow
+        case "key_mismatch": self = .keyMismatch
+        case "request_mismatch": self = .requestMismatch
+        case "token_mismatch": self = .tokenMismatch
+        case "replay": self = .replay
+        case "invalid_proof": self = .invalidProof
+        default: self = .unknown
+        }
+    }
+}
+
+enum DPoPFailurePresentation {
+    static let clockHint =
+        "Hint: Check that automatic date and time is enabled on both devices, then try again."
+    static let unknownHint =
+        "Hint: Try again. If it still fails, clock skew may be the cause; check that automatic date and time is enabled on both devices."
+    static let retryHint = "Hint: Try again. If the problem continues, copy the trace ID."
+
+    static func message(_ message: String, reason: DPoPFailureReason?) -> String {
+        let hint = if reason == .timeWindow {
+            clockHint
+        } else if reason == nil {
+            unknownHint
+        } else {
+            retryHint
+        }
+        return "\(message) \(hint)"
+    }
+}
+
+struct EnvironmentErrorBody: Decodable {
     let message: String?
     let reason: String?
+    let dpopFailureReason: DPoPFailureReason?
     let traceId: String?
 }
 
@@ -153,7 +222,8 @@ public actor EnvironmentAPI {
         id: String,
         environment: Environment,
         turnLimit: Int? = nil,
-        beforeCursor: String? = nil
+        beforeCursor: String? = nil,
+        timeoutInterval: TimeInterval? = nil
     ) async throws -> OrchestrationThreadDetailSnapshot {
         let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         var queryItems: [URLQueryItem] = []
@@ -168,6 +238,7 @@ public actor EnvironmentAPI {
             path: "/api/orchestration/threads/\(encodedID)",
             queryItems: queryItems,
             method: "GET",
+            timeoutInterval: timeoutInterval,
             as: OrchestrationThreadDetailSnapshot.self
         )
     }
@@ -206,7 +277,7 @@ public actor EnvironmentAPI {
         mimeType: String,
         to url: URL
     ) async throws {
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: url, timeoutInterval: 60)
         request.httpMethod = "POST"
         request.httpBody = data
         request.setValue(mimeType, forHTTPHeaderField: "Content-Type")
@@ -221,6 +292,34 @@ public actor EnvironmentAPI {
             throw HTTPError.status(
                 response.statusCode,
                 message: detail.flatMap { $0.isEmpty ? nil : $0 } ?? "Image upload failed.",
+                traceID: nil
+            )
+        }
+    }
+
+    /// Production uses URLSession's file upload API so large attachments never
+    /// become one in-memory Data value.
+    public func uploadAttachment(
+        fileURL: URL,
+        byteCount: Int,
+        mimeType: String,
+        to url: URL
+    ) async throws {
+        var request = URLRequest(url: url, timeoutInterval: 60)
+        request.httpMethod = "POST"
+        request.setValue(mimeType, forHTTPHeaderField: "Content-Type")
+        request.setValue(String(byteCount), forHTTPHeaderField: "Content-Length")
+
+        let (responseData, response) = try await transport.upload(
+            for: HTTPRequestPolicy.prepare(request),
+            fromFile: fileURL
+        )
+        guard (200...299).contains(response.statusCode) else {
+            let detail = String(data: responseData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw HTTPError.status(
+                response.statusCode,
+                message: detail.flatMap { $0.isEmpty ? nil : $0 } ?? "File upload failed.",
                 traceID: nil
             )
         }
@@ -465,10 +564,22 @@ public actor EnvironmentAPI {
     ) async throws -> Result {
         let (data, response) = try await transport.data(for: HTTPRequestPolicy.prepare(request))
         guard (200..<300).contains(response.statusCode) else {
-            let body = try? JSONDecoder.t3.decode(ErrorBody.self, from: data)
+            let body = try? JSONDecoder.t3.decode(EnvironmentErrorBody.self, from: data)
+            let message: String
+            if response.statusCode == 401,
+               request.value(forHTTPHeaderField: "DPoP") != nil,
+               body?.reason == "invalid_credential"
+            {
+                message = DPoPFailurePresentation.message(
+                    "The environment credential is invalid.",
+                    reason: body?.dpopFailureReason
+                )
+            } else {
+                message = body?.message ?? body?.reason ?? "Environment request failed."
+            }
             throw HTTPError.status(
                 response.statusCode,
-                message: body?.message ?? body?.reason ?? "Environment request failed.",
+                message: message,
                 traceID: body?.traceId
             )
         }

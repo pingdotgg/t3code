@@ -82,10 +82,10 @@ public actor FeatureComposerDraftStore {
             importedShareIDs = nil
         }
 
-        var featureValue: FeatureComposerDraft {
+        func featureValue(fileStore: ManagedAttachmentFileStore) -> FeatureComposerDraft {
             FeatureComposerDraft(
                 text: text,
-                attachments: attachments.map(\.featureValue),
+                attachments: attachments.compactMap { $0.featureValue(fileStore: fileStore) },
                 selection: selection,
                 workspace: workspace?.featureValue
             )
@@ -117,34 +117,69 @@ public actor FeatureComposerDraftStore {
 
     private struct PersistedAttachment: Codable {
         var id: UUID
-        var data: Data
+        var data: Data?
+        var ownedFileName: String?
+        var byteCount: Int?
         var thumbnailData: Data?
         var filename: String
         var mimeType: String
+        var uploadedReference: FeatureUploadedAttachmentReference?
 
         init(_ attachment: FeatureDraftAttachment) {
             id = attachment.id
-            data = attachment.data
+            data = attachment.ownedFile == nil ? attachment.data : nil
+            ownedFileName = attachment.ownedFile?.fileName
+            byteCount = attachment.byteCount
             thumbnailData = attachment.thumbnailData
             filename = attachment.filename
             mimeType = attachment.mimeType
+            uploadedReference = attachment.uploadedReference
         }
 
-        var featureValue: FeatureDraftAttachment {
-            FeatureDraftAttachment(
+        func featureValue(fileStore: ManagedAttachmentFileStore) -> FeatureDraftAttachment? {
+            if let ownedFileName,
+               let ownedFile = try? fileStore.resolvedFile(
+                   fileName: ownedFileName,
+                   byteCount: byteCount ?? 0
+               ) {
+                return FeatureDraftAttachment(
+                    id: id,
+                    ownedFile: ownedFile,
+                    thumbnailData: thumbnailData,
+                    filename: filename,
+                    mimeType: mimeType,
+                    uploadedReference: uploadedReference
+                )
+            }
+            guard let data else { return nil }
+            return FeatureDraftAttachment(
                 id: id,
                 data: data,
                 thumbnailData: thumbnailData,
                 filename: filename,
-                mimeType: mimeType
+                mimeType: mimeType,
+                uploadedReference: uploadedReference
             )
+        }
+
+        func hasSameContent(as attachment: FeatureDraftAttachment) -> Bool {
+            guard id == attachment.id,
+                  filename == attachment.filename,
+                  mimeType == attachment.mimeType,
+                  (byteCount ?? data?.count ?? 0) == attachment.byteCount else { return false }
+            if let ownedFileName {
+                return ownedFileName == attachment.ownedFile?.fileName
+            }
+            return attachment.ownedFile == nil && data == attachment.data
         }
     }
 
     public let fileURL: URL
+    public let attachmentFileStore: ManagedAttachmentFileStore
     private var loadedDrafts: [String: PersistedDraft]?
 
-    public init(fileURL: URL? = nil) {
+    public init(fileURL: URL? = nil, attachmentStorageRootURL: URL? = nil) {
+        attachmentFileStore = ManagedAttachmentFileStore(rootURL: attachmentStorageRootURL)
         if let fileURL {
             self.fileURL = fileURL
         } else {
@@ -159,24 +194,38 @@ public actor FeatureComposerDraftStore {
     }
 
     public func draft(for key: String) throws -> FeatureComposerDraft? {
-        guard let draft = try loadIfNeeded()[key]?.featureValue,
+        guard let draft = try loadIfNeeded()[key]?.featureValue(fileStore: attachmentFileStore),
               !draft.isEmpty else { return nil }
         return draft
     }
 
     public func setDraft(_ draft: FeatureComposerDraft, for key: String) throws {
         var drafts = try loadIfNeeded()
-        if draft.isEmpty {
+        let existingReferences = Dictionary(
+            uniqueKeysWithValues: (drafts[key]?.attachments ?? []).compactMap { attachment in
+                attachment.uploadedReference.map { (attachment.id, (attachment, $0)) }
+            }
+        )
+        var mergedDraft = draft
+        for index in mergedDraft.attachments.indices
+        where mergedDraft.attachments[index].uploadedReference == nil {
+            let incoming = mergedDraft.attachments[index]
+            if let (persisted, reference) = existingReferences[incoming.id],
+               persisted.hasSameContent(as: incoming) {
+                mergedDraft.attachments[index].uploadedReference = reference
+            }
+        }
+        if mergedDraft.isEmpty {
             if let importedShareIDs = drafts[key]?.importedShareIDs,
                !importedShareIDs.isEmpty {
-                var persisted = PersistedDraft(draft)
+                var persisted = PersistedDraft(mergedDraft)
                 persisted.importedShareIDs = importedShareIDs
                 drafts[key] = persisted
             } else {
                 drafts.removeValue(forKey: key)
             }
         } else {
-            var persisted = PersistedDraft(draft)
+            var persisted = PersistedDraft(mergedDraft)
             // Preserve the crash-replay ledger while the composer performs its
             // ordinary debounced saves after opening an imported share.
             persisted.importedShareIDs = drafts[key]?.importedShareIDs
@@ -184,6 +233,25 @@ public actor FeatureComposerDraftStore {
         }
         try persist(drafts)
         loadedDrafts = drafts
+    }
+
+    /// Saves an upload result only if the attachment still exists with the
+    /// same immutable content. Text, selection, and workspace stay unchanged.
+    @discardableResult
+    public func setUploadedReference(
+        _ reference: FeatureUploadedAttachmentReference,
+        attachment: FeatureDraftAttachment,
+        for key: String
+    ) throws -> Bool {
+        var drafts = try loadIfNeeded()
+        guard var draft = drafts[key],
+              let index = draft.attachments.firstIndex(where: { $0.id == attachment.id }),
+              draft.attachments[index].hasSameContent(as: attachment) else { return false }
+        draft.attachments[index].uploadedReference = reference
+        drafts[key] = draft
+        try persist(drafts)
+        loadedDrafts = drafts
+        return true
     }
 
     /// Atomically imports one share-extension envelope into the latest stored
@@ -200,7 +268,9 @@ public actor FeatureComposerDraftStore {
         var drafts = try loadIfNeeded()
         var persisted = drafts[key] ?? PersistedDraft(FeatureComposerDraft())
         var importedIDs = persisted.importedShareIDs ?? []
-        guard !importedIDs.contains(shareID) else { return persisted.featureValue }
+        guard !importedIDs.contains(shareID) else {
+            return persisted.featureValue(fileStore: attachmentFileStore)
+        }
 
         let existingIDs = Set(persisted.attachments.map(\.id))
         let uniqueAttachments = attachments.filter { !existingIDs.contains($0.id) }
@@ -225,7 +295,7 @@ public actor FeatureComposerDraftStore {
         drafts[key] = persisted
         try persist(drafts)
         loadedDrafts = drafts
-        return persisted.featureValue
+        return persisted.featureValue(fileStore: attachmentFileStore)
     }
 
     public func removeDraft(for key: String) throws {
@@ -297,7 +367,9 @@ public actor FeatureComposerDraftStore {
                 drafts[key]?.selection = nil
                 drafts[key]?.workspace = nil
             }
-            drafts = drafts.filter { !$0.value.featureValue.isEmpty }
+            drafts = drafts.filter {
+                !$0.value.featureValue(fileStore: attachmentFileStore).isEmpty
+            }
             try persist(drafts)
         }
         loadedDrafts = drafts

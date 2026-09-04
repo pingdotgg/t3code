@@ -94,43 +94,63 @@ public struct EnvironmentDescriptor: Codable, Equatable, Sendable {
     public struct Platform: Codable, Equatable, Sendable {
         public let os: String
         public let arch: String
+        public var machine: String? = nil
     }
 
     public struct Capabilities: Codable, Equatable, Sendable {
+        public struct FileAttachments: Codable, Equatable, Sendable {
+            public let maxUploadBytes: Int
+        }
+
         public let repositoryIdentity: Bool
         public let connectionProbe: Bool?
         public let attachmentUploads: Bool?
+        public let fileAttachments: FileAttachments?
         public let pullRequests: Bool?
         public let threadSettlement: Bool?
+        public let threadAutoSettlement: Bool?
         public let threadSnooze: Bool?
         public let threadPinning: Bool?
         public let threadTitleRegeneration: Bool?
         public let threadPullRequestLinking: Bool?
         public let serverSelfUpdate: String?
         public let serverSelfUpdateProgress: Bool?
+        public var environmentIcon: Bool? = nil
 
         private enum CodingKeys: String, CodingKey {
             case repositoryIdentity
             case connectionProbe
             case attachmentUploads
+            case fileAttachments
             case pullRequests
             case threadSettlement
+            case threadAutoSettlement
             case threadSnooze
             case threadPinning
             case threadTitleRegeneration
             case threadPullRequestLinking
             case serverSelfUpdate
             case serverSelfUpdateProgress
+            case environmentIcon
         }
 
         public init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
+            environmentIcon = try container.decodeIfPresent(Bool.self, forKey: .environmentIcon)
             repositoryIdentity =
                 try container.decodeIfPresent(Bool.self, forKey: .repositoryIdentity) ?? false
             connectionProbe = try container.decodeIfPresent(Bool.self, forKey: .connectionProbe)
             attachmentUploads = try container.decodeIfPresent(Bool.self, forKey: .attachmentUploads)
+            fileAttachments = try container.decodeIfPresent(
+                FileAttachments.self,
+                forKey: .fileAttachments
+            )
             pullRequests = try container.decodeIfPresent(Bool.self, forKey: .pullRequests)
             threadSettlement = try container.decodeIfPresent(Bool.self, forKey: .threadSettlement)
+            threadAutoSettlement = try container.decodeIfPresent(
+                Bool.self,
+                forKey: .threadAutoSettlement
+            )
             threadSnooze = try container.decodeIfPresent(Bool.self, forKey: .threadSnooze)
             threadPinning = try container.decodeIfPresent(Bool.self, forKey: .threadPinning)
             threadTitleRegeneration = try container.decodeIfPresent(
@@ -360,6 +380,14 @@ public struct OrchestrationProject: Codable, Identifiable, Equatable, Sendable {
     public let createdAt: String
     public let updatedAt: String
     public let deletedAt: String?
+    public var projectIcon: ProjectIconOverride? = nil
+}
+
+public struct ProjectIconOverride: Codable, Equatable, Hashable, Sendable {
+    public let kind: String
+    public var name: String? = nil
+    public var color: String? = nil
+    public var emoji: String? = nil
 }
 
 public enum RuntimeMode: String, Codable, CaseIterable, Sendable {

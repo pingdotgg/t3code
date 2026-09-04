@@ -9,6 +9,12 @@ public protocol FeatureClient: AnyObject {
     /// Background tasks use this instead of the foreground bootstrap path.
     func backgroundSnapshot() async throws -> FeatureSnapshot
     func events() -> AsyncStream<FeatureEvent>
+    func resumeAfterBackground(reconnect: Bool) async
+
+    func preuploadAttachment(
+        _ attachment: FeatureUploadAttachment,
+        environmentID: String
+    ) async throws -> FeatureUploadedAttachmentReference?
 
     func pair(endpoint: String, token: String?) async throws
     func setEnvironmentEnabled(id: String, enabled: Bool) async throws
@@ -65,6 +71,7 @@ public protocol FeatureClient: AnyObject {
     func deleteThread(id: String) async throws
 
     func loadThread(id: String) async throws -> FeatureThreadDetail
+    func loadThread(id: String, fresh: Bool) async throws -> FeatureThreadDetail
     func loadEarlierThreadTurns(id: String) async throws -> FeatureThreadDetail?
     func releaseThread(id: String)
     func sendMessage(threadID: String, text: String, selection: FeatureSelection?) async throws
@@ -81,13 +88,34 @@ public protocol FeatureClient: AnyObject {
         attachments: [FeatureUploadAttachment],
         identity: FeatureSubmissionIdentity
     ) async throws
+    func sendMessage(
+        threadID: String,
+        text: String,
+        selection: FeatureSelection?,
+        runtimeMode: FeatureRuntimeMode,
+        attachments: [FeatureUploadAttachment],
+        identity: FeatureSubmissionIdentity
+    ) async throws
     func cancelTurn(threadID: String) async throws
     func resolveApproval(id: String, decision: FeatureApprovalDecision) async throws
     func resolveUserInput(id: String, answers: [String: FeatureInputAnswer]) async throws
 
     func saveSettings(_ settings: FeatureSettings) async throws
+    func serverPreferences(environmentID: String) async throws -> ServerSettingsSnapshot
+    func updateServerPreferences(environmentID: String, change: ServerSettingsChange) async throws
+    func sharedPreferenceMismatches(environmentID: String) -> [String]
+    func refreshProviders(environmentID: String) async throws -> [FeatureProvider]
+    func refreshWorkspaceProviders(environmentID: String, cwd: String, instanceID: String) async throws -> [FeatureProvider]
+    func providerSetup(environmentID: String, instanceID: String, action: ProviderSetupAction) async throws -> ProviderSetupEvent
+    func providerSetupEvents(environmentID: String, instanceID: String) -> AsyncThrowingStream<ProviderSetupEvent, Error>
+    func setProviderEnabled(environmentID: String, instanceID: String, enabled: Bool) async throws
+    func updateAutomaticSettlement(
+        environmentID: String,
+        change: FeatureAutomaticSettlementChange
+    ) async throws -> FeatureAutomaticSettlementSettings
 
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage]
+    func usageSummaries(_ input: UsageSummaryInput, refreshPricing: Bool) async throws -> [FeatureEnvironmentUsage]
     func pullRequestLists(_ input: PullRequestListInput) async throws
         -> [FeaturePullRequestEnvironmentList]
     func pullRequestLists(
@@ -193,6 +221,45 @@ public protocol FeatureClient: AnyObject {
 }
 
 public extension FeatureClient {
+    func serverPreferences(environmentID: String) async throws -> ServerSettingsSnapshot {
+        throw FeatureCapabilityUnavailable("Server preferences")
+    }
+    func updateServerPreferences(environmentID: String, change: ServerSettingsChange) async throws {
+        throw FeatureCapabilityUnavailable("Server preferences")
+    }
+    func sharedPreferenceMismatches(environmentID: String) -> [String] { [] }
+
+    func loadThread(id: String, fresh: Bool) async throws -> FeatureThreadDetail {
+        try await loadThread(id: id)
+    }
+
+    func usageSummaries(_ input: UsageSummaryInput, refreshPricing: Bool) async throws -> [FeatureEnvironmentUsage] {
+        try await usageSummaries(input)
+    }
+
+    func setProviderEnabled(environmentID: String, instanceID: String, enabled: Bool) async throws {
+        throw FeatureCapabilityUnavailable("Provider settings")
+    }
+
+    func providerSetup(environmentID: String, instanceID: String, action: ProviderSetupAction) async throws -> ProviderSetupEvent {
+        throw FeatureCapabilityUnavailable("Provider setup")
+    }
+
+    func providerSetupEvents(environmentID: String, instanceID: String) -> AsyncThrowingStream<ProviderSetupEvent, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+
+    func resumeAfterBackground(reconnect: Bool) async {}
+
+    func preuploadAttachment(
+        _ attachment: FeatureUploadAttachment,
+        environmentID: String
+    ) async throws -> FeatureUploadedAttachmentReference? {
+        nil
+    }
+}
+
+public extension FeatureClient {
     func backgroundSnapshot() async throws -> FeatureSnapshot {
         try await initialSnapshot()
     }
@@ -214,6 +281,19 @@ public extension FeatureClient {
     func setEnvironmentEnabled(id: String, enabled: Bool) async throws {}
     func removeEnvironment(id: String) async throws {}
     func disconnect() async {}
+    func refreshWorkspaceProviders(environmentID: String, cwd: String, instanceID: String) async throws -> [FeatureProvider] {
+        throw FeatureCapabilityUnavailable("Workspace provider catalog")
+    }
+
+    func refreshProviders(environmentID _: String) async throws -> [FeatureProvider] {
+        throw FeatureCapabilityUnavailable("Provider refresh")
+    }
+    func updateAutomaticSettlement(
+        environmentID _: String,
+        change _: FeatureAutomaticSettlementChange
+    ) async throws -> FeatureAutomaticSettlementSettings {
+        throw FeatureCapabilityUnavailable("Automatic settlement settings")
+    }
     func addProject(path: String) async throws {}
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage] {
         []
@@ -425,6 +505,26 @@ public extension FeatureClient {
             text: text,
             selection: selection,
             attachments: attachments
+        )
+    }
+
+    /// Durable submissions carry the modes that were active when the user
+    /// sent them. Older clients can ignore them, while native retries preserve
+    /// the original permission instead of reading a later thread value.
+    func sendMessage(
+        threadID: String,
+        text: String,
+        selection: FeatureSelection?,
+        runtimeMode: FeatureRuntimeMode,
+        attachments: [FeatureUploadAttachment],
+        identity: FeatureSubmissionIdentity
+    ) async throws {
+        try await sendMessage(
+            threadID: threadID,
+            text: text,
+            selection: selection,
+            attachments: attachments,
+            identity: identity
         )
     }
 

@@ -14,8 +14,10 @@ public struct ProviderModelPicker: View {
     let threadSelection: FeatureSelection?
     let materializesDefaultSelection: Bool
     private let onPresentationChange: ((Bool) -> Void)?
+    private let onRefresh: (@MainActor () async throws -> Void)?
 
     @State private var isPresented = false
+    @State private var preservesSelectionDuringRefresh = false
 
     public init(
         providers: [FeatureProvider],
@@ -24,6 +26,7 @@ public struct ProviderModelPicker: View {
         isLoading: Bool = false,
         threadSelection: FeatureSelection? = nil,
         materializesDefaultSelection: Bool = true,
+        onRefresh: (@MainActor () async throws -> Void)? = nil,
         onPresentationChange: ((Bool) -> Void)? = nil
     ) {
         self.providers = providers
@@ -33,6 +36,7 @@ public struct ProviderModelPicker: View {
         self.isLoading = isLoading
         self.threadSelection = threadSelection
         self.materializesDefaultSelection = materializesDefaultSelection
+        self.onRefresh = onRefresh
         self.onPresentationChange = onPresentationChange
     }
 
@@ -68,6 +72,10 @@ public struct ProviderModelPicker: View {
                     Text(compactModelName)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                    if let compactReasoningSummary {
+                        Text("· \(compactReasoningSummary)")
+                            .fixedSize()
+                    }
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.system(size: 8, weight: .bold))
                         .fixedSize()
@@ -89,11 +97,20 @@ public struct ProviderModelPicker: View {
                 selection: $selection,
                 isLoading: isLoading,
                 threadSelection: threadSelection,
-                materializesDefaultSelection: materializesDefaultSelection
+                materializesDefaultSelection: materializesDefaultSelection,
+                onRefresh: onRefresh.map { refresh in
+                    {
+                        preservesSelectionDuringRefresh = true
+                        defer { preservesSelectionDuringRefresh = false }
+                        try await refresh()
+                    }
+                }
             )
         }
         .onAppear(perform: materializeSelection)
-        .onChange(of: providers) { materializeSelection() }
+        .onChange(of: providers) {
+            if !preservesSelectionDuringRefresh { materializeSelection() }
+        }
         .onChange(of: selection) { materializeSelection() }
     }
 
@@ -154,6 +171,14 @@ public struct ProviderModelPicker: View {
         return selectedOption.model.name
     }
 
+    private var compactReasoningSummary: String? {
+        guard let selectedOption, let resolvedSelection else { return nil }
+        return DailyUXModelOptions.reasoningSummary(
+            for: selectedOption.model,
+            selections: resolvedSelection.options
+        )
+    }
+
     private var unavailableSelectionLabel: String {
         if isLoading { return "Loading models" }
         if normalizedProviders.isEmpty { return "No providers" }
@@ -184,11 +209,13 @@ public struct ProviderModelPicker: View {
 
 private struct ModelPickerSheet: View {
     @SwiftUI.Environment(\.dismiss) private var dismiss
+    @SwiftUI.Environment(\.providerSetupContext) private var setupContext
     let providers: [FeatureProvider]
     @Binding var selection: FeatureSelection?
     let isLoading: Bool
     let threadSelection: FeatureSelection?
     let materializesDefaultSelection: Bool
+    let onRefresh: (@MainActor () async throws -> Void)?
 
     @AppStorage("swift-ios.model-picker.favorites") private var favoriteStorage = ""
     @AppStorage("swift-ios.model-picker.recents") private var recentStorage = ""
@@ -196,6 +223,39 @@ private struct ModelPickerSheet: View {
     @State private var configuring: DailyUXModelOption?
     @State private var legacyModelsExpanded = false
     @State private var catalogCache = ModelPickerCatalogCache()
+    @State private var draftSelection: FeatureSelection?
+    @State private var draftBaseSelection: FeatureSelection?
+    @State private var modelDrafts: [String: FeatureSelection]
+    @State private var hasEditedDraft = false
+    @State private var isRefreshing = false
+    @State private var refreshError: String?
+
+    init(
+        providers: [FeatureProvider],
+        selection: Binding<FeatureSelection?>,
+        isLoading: Bool,
+        threadSelection: FeatureSelection?,
+        materializesDefaultSelection: Bool,
+        onRefresh: (@MainActor () async throws -> Void)?
+    ) {
+        self.providers = providers
+        _selection = selection
+        self.isLoading = isLoading
+        self.threadSelection = threadSelection
+        self.materializesDefaultSelection = materializesDefaultSelection
+        self.onRefresh = onRefresh
+        let initialSelection = Self.effectiveSelection(
+            explicit: selection.wrappedValue,
+            inherited: threadSelection,
+            providers: providers,
+            materializesDefaultSelection: materializesDefaultSelection
+        )
+        _draftSelection = State(initialValue: initialSelection)
+        _draftBaseSelection = State(initialValue: initialSelection)
+        _modelDrafts = State(initialValue: initialSelection.map {
+            [DailyUXModelOption.key(providerID: $0.providerID, modelID: $0.modelID): $0]
+        } ?? [:])
+    }
 
     var body: some View {
         NavigationStack {
@@ -226,27 +286,92 @@ private struct ModelPickerSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search models")
             .toolbar {
+                if let setupContext {
+                    ToolbarItem(placement: .topBarLeading) {
+                        NavigationLink("Providers") {
+                            ProvidersSettingsView(model: setupContext.model, environmentID: setupContext.environmentID)
+                        }
+                    }
+                }
+                if onRefresh != nil {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            refreshCatalog()
+                        } label: {
+                            if isRefreshing {
+                                Image(systemName: "hourglass")
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                        }
+                        .disabled(isRefreshing)
+                        .accessibilityLabel(isRefreshing ? "Refreshing models" : "Refresh models")
+                        .accessibilityIdentifier("model-picker-refresh")
+                    }
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Apply") { applySelection() }
+                        .fontWeight(.semibold)
+                        .disabled(!hasDraftChanges)
+                        .accessibilityIdentifier("model-picker-apply")
                 }
             }
             .navigationDestination(item: $configuring) { option in
                 ModelConfigurationView(
                     option: option,
-                    currentSelection: selection
+                    currentSelection: pickerSelection
                 ) { configuredSelection in
-                    selection = configuredSelection
-                    recordRecent(option.id)
-                    dismiss()
+                    draftSelection = configuredSelection
+                    rememberDraft(configuredSelection)
+                    hasEditedDraft = configuredSelection != committedSelection
+                    configuring = nil
                 }
             }
             .t3NavigationChrome()
+            .alert("Could not refresh models", isPresented: Binding(
+                get: { refreshError != nil },
+                set: { if !$0 { refreshError = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(refreshError ?? "Try again.")
+            }
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
-        .onAppear(perform: revealSelectedLegacyModel)
-        .onChange(of: selection) { revealSelectedLegacyModel() }
-        .onChange(of: providers) { revealSelectedLegacyModel() }
+        .onAppear {
+            reconcileDraftSelectionWithCurrentState()
+            revealSelectedLegacyModel()
+        }
+        .onChange(of: selection) {
+            reconcileDraftSelectionWithCurrentState()
+            revealSelectedLegacyModel()
+        }
+        .onChange(of: threadSelection) {
+            reconcileDraftSelectionWithCurrentState()
+            revealSelectedLegacyModel()
+        }
+        .onChange(of: providers) {
+            reconcileDraftSelectionWithCurrentState()
+            revealSelectedLegacyModel()
+        }
+    }
+
+    private func refreshCatalog() {
+        guard let onRefresh, !isRefreshing else { return }
+        isRefreshing = true
+        refreshError = nil
+        Task {
+            do {
+                try await onRefresh()
+            } catch {
+                refreshError = error.localizedDescription
+            }
+            isRefreshing = false
+        }
     }
 
     private var modelList: some View {
@@ -337,11 +462,15 @@ private struct ModelPickerSheet: View {
                 ContentUnavailableView.search(text: query)
                     .listRowBackground(Color.clear)
             }
+
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .scrollDismissesKeyboard(.interactively)
         .background(T3Colors.background)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            selectionControls
+        }
     }
 
     private var emptyStateTitle: String {
@@ -365,7 +494,7 @@ private struct ModelPickerSheet: View {
     }
 
     private var availableModelCount: Int {
-        providers
+        pickerProviders
             .filter(\.isAvailable)
             .reduce(into: 0) { count, provider in
                 count += provider.models.count
@@ -377,8 +506,8 @@ private struct ModelPickerSheet: View {
         showsProvider: Bool = false,
         disambiguatesModel: Bool = false
     ) -> some View {
-        let isSelected = resolvedSelection?.providerID == option.provider.id
-            && resolvedSelection?.modelID == option.model.id
+        let isSelected = pickerSelection?.providerID == option.provider.id
+            && pickerSelection?.modelID == option.model.id
         let isFavorite = favoriteIDs.contains(option.id)
         return HStack(spacing: 10) {
             Button {
@@ -402,12 +531,11 @@ private struct ModelPickerSheet: View {
                     : option.provider.name
             )
             .accessibilityAddTraits(isSelected ? .isSelected : [])
+            .accessibilityIdentifier("model-option-\(option.id)")
             .accessibilityHint(
                 isLocked(option)
                     ? "This task cannot change models."
-                    : option.model.options.isEmpty
-                        ? "Use this model."
-                        : "Configure and use this model."
+                    : "Select this model."
             )
 
             Button {
@@ -431,6 +559,201 @@ private struct ModelPickerSheet: View {
         .listRowBackground(T3Colors.background)
     }
 
+    @ViewBuilder
+    private var selectionControls: some View {
+        if let selectedOption {
+            VStack(alignment: .leading, spacing: 10) {
+                Divider()
+                if let descriptor = DailyUXModelOptions.reasoningDescriptor(
+                    for: selectedOption.model
+                ) {
+                    modelOptionControl(descriptor)
+                    optionFooter(for: descriptor)
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(T3Colors.textSecondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Reasoning effort")
+                            .font(T3Typography.control)
+                            .foregroundStyle(T3Colors.textPrimary)
+                        Text("This environment does not describe reasoning effort choices for this model.")
+                            .font(T3Typography.supporting)
+                            .foregroundStyle(T3Colors.textSecondary)
+                    }
+                    .frame(minHeight: T3Metrics.minimumTapTarget)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("reasoning-effort-unavailable")
+                }
+
+                if !DailyUXModelOptions.advancedDescriptors(for: selectedOption.model).isEmpty
+                    || !undescribedSelections.isEmpty {
+                    Button {
+                        configuring = selectedOption
+                    } label: {
+                        HStack {
+                            Text("Advanced options")
+                                .foregroundStyle(T3Colors.textPrimary)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(T3Typography.supportingStrong)
+                                .foregroundStyle(T3Colors.textTertiary)
+                        }
+                        .frame(minHeight: T3Metrics.minimumTapTarget)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("advanced-model-options")
+
+                    if !undescribedSelections.isEmpty {
+                        Text(undescribedOptionsMessage)
+                            .font(T3Typography.supporting)
+                            .foregroundStyle(T3Colors.textSecondary)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+            .background(T3Colors.background)
+        }
+    }
+
+    private var selectedOption: DailyUXModelOption? {
+        guard let pickerSelection,
+              let provider = providers.first(where: { $0.id == pickerSelection.providerID }),
+              let model = provider.models.first(where: { $0.id == pickerSelection.modelID }) else {
+            return nil
+        }
+        return DailyUXModelOption(provider: provider, model: model)
+    }
+
+    private var undescribedSelections: [FeatureModelOptionSelection] {
+        guard let selectedOption, let pickerSelection else { return [] }
+        return DailyUXModelOptions.undescribedSelections(
+            for: selectedOption.model,
+            selections: pickerSelection.options
+        )
+    }
+
+    private var undescribedOptionsMessage: String {
+        let optionIDs = undescribedSelections.map(\.id).joined(separator: ", ")
+        return "This environment does not describe these saved options: \(optionIDs). They will be kept when you apply."
+    }
+
+    @ViewBuilder
+    private func modelOptionControl(
+        _ descriptor: FeatureModelOptionDescriptor
+    ) -> some View {
+        switch descriptor.kind {
+        case .select:
+            HStack {
+                Text("Reasoning effort")
+                    .font(T3Typography.control)
+                Spacer()
+                if descriptor.choices.isEmpty {
+                    Text("No choices available")
+                        .foregroundStyle(T3Colors.textSecondary)
+                        .accessibilityIdentifier("reasoning-effort-control")
+                } else {
+                    Menu {
+                        ForEach(descriptor.choices) { choice in
+                            Button {
+                                updateDraftOption(
+                                    id: descriptor.id,
+                                    value: .string(choice.id)
+                                )
+                            } label: {
+                                if isSelected(choice, for: descriptor) {
+                                    Label(choice.label, systemImage: "checkmark")
+                                } else {
+                                    Text(choice.label)
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Text(optionValueLabel(for: descriptor))
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.system(size: 8, weight: .bold))
+                        }
+                        .foregroundStyle(T3Colors.textPrimary)
+                    }
+                    .accessibilityLabel("Reasoning effort")
+                    .accessibilityValue(optionValueLabel(for: descriptor))
+                    .accessibilityIdentifier("reasoning-effort-control")
+                }
+            }
+            .frame(minHeight: T3Metrics.minimumTapTarget)
+        case .boolean:
+            Toggle("Reasoning effort", isOn: booleanBinding(for: descriptor))
+                .frame(minHeight: T3Metrics.minimumTapTarget)
+                .accessibilityIdentifier("reasoning-effort-control")
+        }
+    }
+
+    @ViewBuilder
+    private func optionFooter(
+        for descriptor: FeatureModelOptionDescriptor
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let detail = descriptor.detail {
+                Text(detail)
+            }
+            if let value = currentValue(for: descriptor),
+               !DailyUXModelOptions.isSupportedValue(value, for: descriptor) {
+                Text("The saved value is not listed by this environment. Choose a listed value or keep the saved value.")
+            } else if descriptor.kind == .select, descriptor.choices.isEmpty {
+                Text("This environment did not provide choices for this option.")
+            }
+        }
+    }
+
+    private func optionValueLabel(
+        for descriptor: FeatureModelOptionDescriptor
+    ) -> String {
+        guard case let .string(value) = currentValue(for: descriptor) else {
+            return "Choose"
+        }
+        return descriptor.choices.first(where: { $0.id == value })?.label ?? value
+    }
+
+    private func currentValue(
+        for descriptor: FeatureModelOptionDescriptor
+    ) -> FeatureModelOptionValue? {
+        DailyUXModelOptions.value(
+            for: descriptor,
+            in: pickerSelection?.options ?? []
+        )
+    }
+
+    private func updateDraftOption(id: String, value: FeatureModelOptionValue) {
+        guard var next = pickerSelection else { return }
+        next.options = DailyUXModelOptions.updating(next.options, id: id, value: value)
+        draftSelection = next
+        rememberDraft(next)
+        hasEditedDraft = next != committedSelection
+    }
+
+    private func isSelected(
+        _ choice: FeatureModelOptionChoice,
+        for descriptor: FeatureModelOptionDescriptor
+    ) -> Bool {
+        currentValue(for: descriptor) == .string(choice.id)
+    }
+
+    private func booleanBinding(
+        for descriptor: FeatureModelOptionDescriptor
+    ) -> Binding<Bool> {
+        Binding(
+            get: {
+                guard case let .boolean(value) = currentValue(for: descriptor) else {
+                    return false
+                }
+                return value
+            },
+            set: { updateDraftOption(id: descriptor.id, value: .boolean($0)) }
+        )
+    }
+
     private var favoriteIDs: Set<String> {
         Set(favoriteStorage.split(separator: "\n").map(String.init))
     }
@@ -441,10 +764,18 @@ private struct ModelPickerSheet: View {
 
     private var cachedCatalog: DailyUXModelCatalog {
         catalogCache.catalog(
-            providers: providers,
+            providers: pickerProviders,
             query: query,
             favoriteStorage: favoriteStorage,
             recentStorage: recentStorage
+        )
+    }
+
+    private var pickerProviders: [FeatureProvider] {
+        ThreadComposerModelSelectionPolicy.pickerProviders(
+            providers,
+            inherited: threadSelection,
+            allowsProviderChange: materializesDefaultSelection
         )
     }
 
@@ -452,26 +783,88 @@ private struct ModelPickerSheet: View {
         ProviderModelDisplaySections(catalog: cachedCatalog)
     }
 
-    private var resolvedSelection: FeatureSelection? {
-        if materializesDefaultSelection {
-            return ProviderModelSelectionResolver.materialized(selection, in: providers)
-        }
-        return ThreadComposerModelSelectionPolicy.resolvedSelection(
+    private var committedSelection: FeatureSelection? {
+        Self.effectiveSelection(
             explicit: selection,
             inherited: threadSelection,
-            providers: providers
+            providers: providers,
+            materializesDefaultSelection: materializesDefaultSelection
         )
+    }
+
+    private var pickerSelection: FeatureSelection? {
+        draftSelection ?? committedSelection
     }
 
     private func select(_ option: DailyUXModelOption) {
         guard !isLocked(option) else { return }
-        if option.model.options.isEmpty {
-            selection = FeatureSelection(providerID: option.provider.id, modelID: option.model.id)
-            recordRecent(option.id)
-            dismiss()
-        } else {
-            configuring = option
+        let next = ProviderModelDraftPolicy.selection(
+            for: option,
+            cached: modelDrafts[option.id],
+            current: pickerSelection,
+            committed: committedSelection
+        )
+        draftSelection = next
+        rememberDraft(next)
+        hasEditedDraft = next != committedSelection
+    }
+
+    private var hasDraftChanges: Bool {
+        hasEditedDraft && draftSelection != nil && draftSelection != committedSelection
+    }
+
+    private func applySelection() {
+        guard hasDraftChanges else { return }
+        guard let validated = ProviderModelDraftPolicy.validated(
+            draftSelection,
+            providers: providers,
+            inheriting: threadSelection,
+            allowsProviderChange: materializesDefaultSelection
+        ) else {
+            replaceDraft(with: committedSelection)
+            return
         }
+        selection = validated
+        recordRecent(DailyUXModelOption.key(
+            providerID: validated.providerID,
+            modelID: validated.modelID
+        ))
+        dismiss()
+    }
+
+    private func reconcileDraftSelectionWithCurrentState() {
+        let committed = committedSelection
+        guard hasEditedDraft else {
+            replaceDraft(with: committed)
+            return
+        }
+        guard ProviderModelDraftPolicy.canKeepEditedDraft(
+            base: draftBaseSelection,
+            currentCommitted: committed,
+            draft: draftSelection,
+            providers: providers,
+            inheriting: threadSelection,
+            allowsProviderChange: materializesDefaultSelection
+        ) else {
+            replaceDraft(with: committed)
+            return
+        }
+    }
+
+    private func replaceDraft(with value: FeatureSelection?) {
+        draftSelection = value
+        draftBaseSelection = value
+        modelDrafts = value.map {
+            [DailyUXModelOption.key(providerID: $0.providerID, modelID: $0.modelID): $0]
+        } ?? [:]
+        hasEditedDraft = false
+    }
+
+    private func rememberDraft(_ value: FeatureSelection) {
+        modelDrafts[DailyUXModelOption.key(
+            providerID: value.providerID,
+            modelID: value.modelID
+        )] = value
     }
 
     private func recordRecent(_ id: String) {
@@ -481,10 +874,10 @@ private struct ModelPickerSheet: View {
     }
 
     private func revealSelectedLegacyModel() {
-        guard !legacyModelsExpanded, let resolvedSelection else { return }
+        guard !legacyModelsExpanded, let pickerSelection else { return }
         if displaySections.legacy.contains(where: {
-            $0.provider.id == resolvedSelection.providerID
-                && $0.model.id == resolvedSelection.modelID
+            $0.provider.id == pickerSelection.providerID
+                && $0.model.id == pickerSelection.modelID
         }) {
             legacyModelsExpanded = true
         }
@@ -499,9 +892,9 @@ private struct ModelPickerSheet: View {
     }
 
     private func isLocked(_ option: DailyUXModelOption) -> Bool {
-        guard modelChangesAreLocked, let threadSelection else { return false }
-        return option.provider.id != threadSelection.providerID
-            || option.model.id != threadSelection.modelID
+        guard let threadSelection else { return false }
+        if option.provider.id != threadSelection.providerID { return true }
+        return modelChangesAreLocked && option.model.id != threadSelection.modelID
     }
 
     private func toggleFavorite(_ id: String) {
@@ -512,6 +905,94 @@ private struct ModelPickerSheet: View {
             next.insert(id)
         }
         favoriteStorage = next.sorted().joined(separator: "\n")
+    }
+
+    private static func effectiveSelection(
+        explicit: FeatureSelection?,
+        inherited: FeatureSelection?,
+        providers: [FeatureProvider],
+        materializesDefaultSelection: Bool
+    ) -> FeatureSelection? {
+        if materializesDefaultSelection {
+            return ProviderModelSelectionResolver.materialized(explicit, in: providers)
+        }
+        return ThreadComposerModelSelectionPolicy.resolvedSelection(
+            explicit: explicit,
+            inherited: inherited,
+            providers: providers
+        )
+    }
+}
+
+enum ProviderModelDraftPolicy {
+    static func selection(
+        for option: DailyUXModelOption,
+        cached: FeatureSelection?,
+        current: FeatureSelection?,
+        committed: FeatureSelection?
+    ) -> FeatureSelection {
+        if let cached, matches(cached, option: option) {
+            return ProviderModelConfiguration.selection(for: option, preserving: cached)
+        }
+        if let committed, matches(committed, option: option) {
+            return ProviderModelConfiguration.selection(for: option, preserving: committed)
+        }
+        return ProviderModelConfiguration.selection(for: option, preserving: current)
+    }
+
+    static func validated(
+        _ selection: FeatureSelection?,
+        providers: [FeatureProvider],
+        inheriting inherited: FeatureSelection?,
+        allowsProviderChange: Bool
+    ) -> FeatureSelection? {
+        guard let selection,
+              providers.contains(where: { provider in
+                  provider.id == selection.providerID
+                      && provider.isAvailable
+                      && provider.models.contains { $0.id == selection.modelID }
+              }) else {
+            return nil
+        }
+        guard let validated = ProviderModelSelectionResolver.validated(selection, in: providers)
+        else {
+            return nil
+        }
+        if !allowsProviderChange {
+            guard let inherited else { return nil }
+            guard validated.providerID == inherited.providerID else { return nil }
+            let inheritedProvider = providers.first { $0.id == inherited.providerID }
+            if inheritedProvider?.requiresNewThreadForModelChange == true,
+               validated.modelID != inherited.modelID {
+                return nil
+            }
+        }
+        return validated
+    }
+
+    static func canKeepEditedDraft(
+        base: FeatureSelection?,
+        currentCommitted: FeatureSelection?,
+        draft: FeatureSelection?,
+        providers: [FeatureProvider],
+        inheriting inherited: FeatureSelection?,
+        allowsProviderChange: Bool
+    ) -> Bool {
+        base == currentCommitted
+            && validated(
+                draft,
+                providers: providers,
+                inheriting: inherited,
+                allowsProviderChange: allowsProviderChange
+            ) != nil
+    }
+
+    private static func matches(
+        _ selection: FeatureSelection,
+        option: DailyUXModelOption
+    ) -> Bool {
+        selection.providerID == option.provider.id
+            && selection.modelID == option.model.id
     }
 }
 
@@ -627,13 +1108,23 @@ enum ProviderModelSelectionResolver {
 /// chooses an override. Unlike new-task composers, a missing selection must not
 /// materialize the environment default and silently change providers.
 enum ThreadComposerModelSelectionPolicy {
+    static func pickerProviders(
+        _ providers: [FeatureProvider],
+        inherited: FeatureSelection?,
+        allowsProviderChange: Bool
+    ) -> [FeatureProvider] {
+        if allowsProviderChange { return providers }
+        guard let inherited else { return [] }
+        return providers.filter { $0.id == inherited.providerID }
+    }
+
     static func resolvedSelection(
         explicit: FeatureSelection?,
         inherited: FeatureSelection?,
         providers: [FeatureProvider]
     ) -> FeatureSelection? {
         explicitSelection(explicit, inherited: inherited, providers: providers)
-            ?? ProviderModelSelectionResolver.validated(inherited, in: providers)
+            ?? preservedSelection(inherited, providers: providers)
     }
 
     static func explicitSelection(
@@ -642,18 +1133,81 @@ enum ThreadComposerModelSelectionPolicy {
         providers: [FeatureProvider]
     ) -> FeatureSelection? {
         guard let explicit, let inherited else { return nil }
-        guard let validated = ProviderModelSelectionResolver.validated(explicit, in: providers)
-        else {
+        guard explicit.providerID == inherited.providerID else { return nil }
+        let inheritedProvider = providers.first { $0.id == inherited.providerID }
+        if inheritedProvider?.requiresNewThreadForModelChange == true,
+           explicit.modelID != inherited.modelID {
             return nil
         }
 
-        let inheritedProvider = providers.first { $0.id == inherited.providerID }
-        if inheritedProvider?.requiresNewThreadForModelChange == true,
-           (validated.providerID != inherited.providerID
-               || validated.modelID != inherited.modelID) {
-            return nil
+        // An environment refresh can briefly remove a provider or a custom
+        // model from discovery. Keep an existing override until discovery can
+        // validate it again. Applying a new choice still uses the stricter
+        // ProviderModelDraftPolicy validation path.
+        return ProviderModelSelectionResolver.validated(explicit, in: providers)
+            ?? explicit
+    }
+
+    private static func preservedSelection(
+        _ selection: FeatureSelection?,
+        providers: [FeatureProvider]
+    ) -> FeatureSelection? {
+        guard var selection else { return nil }
+        guard let model = providers
+            .first(where: { $0.id == selection.providerID })?
+            .models.first(where: { $0.id == selection.modelID }) else {
+            return selection
         }
-        return validated
+        selection.options = ProviderModelConfiguration.materializedOptions(
+            for: model,
+            preserving: selection.options
+        )
+        return selection
+    }
+}
+
+/// Existing threads use their saved environment and provider instance as the
+/// catalog identity. Project rows and provider discovery can be temporarily
+/// absent, but neither should make the thread's saved model disappear.
+enum ThreadComposerProviderCatalog {
+    static func providers(
+        for thread: FeatureThread,
+        in snapshot: FeatureSnapshot
+    ) -> [FeatureProvider] {
+        let environmentID = thread.environmentID
+            ?? snapshot.projects.first(where: { $0.id == thread.projectID })?.environmentID
+        var providers = environmentID.flatMap {
+            snapshot.providersByEnvironment?[$0]
+        } ?? []
+
+        guard let providerID = thread.providerID,
+              let modelID = thread.modelID else {
+            return providers
+        }
+
+        // A missing catalog entry has unknown image support, not a known restriction.
+        var savedModel = FeatureModel(id: modelID, name: modelID)
+        savedModel.imageSupportIsUnknown = true
+        if let providerIndex = providers.firstIndex(where: { $0.id == providerID }) {
+            guard !providers[providerIndex].models.contains(where: { $0.id == modelID }) else {
+                return providers
+            }
+            providers[providerIndex].models.append(savedModel)
+            return providers
+        }
+
+        let providerName = thread.providerName?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedProviderName = providerName.flatMap { name in
+            name.isEmpty ? nil : name
+        } ?? providerID
+        providers.append(FeatureProvider(
+            id: providerID,
+            name: resolvedProviderName,
+            isAvailable: false,
+            models: [savedModel]
+        ))
+        return providers
     }
 }
 
@@ -721,6 +1275,7 @@ enum ProviderModelCatalogNormalizer {
     }
 
     private static func isImplicitModel(_ model: FeatureModel) -> Bool {
+        if model.id == "antigravity-default" { return true }
         let tokens = [model.id, model.name].flatMap {
             $0.lowercased()
                 .split { !$0.isLetter && !$0.isNumber }
@@ -800,15 +1355,10 @@ private struct ModelConfigurationView: View {
     ) {
         self.option = option
         self.onConfirm = onConfirm
-        if currentSelection?.providerID == option.provider.id,
-           currentSelection?.modelID == option.model.id {
-            _optionSelections = State(initialValue: ProviderModelConfiguration.materializedOptions(
-                for: option.model,
-                preserving: currentSelection?.options ?? []
-            ))
-        } else {
-            _optionSelections = State(initialValue: DailyUXModelOptions.defaults(for: option.model))
-        }
+        _optionSelections = State(initialValue: ProviderModelConfiguration.selection(
+            for: option,
+            preserving: currentSelection
+        ).options)
     }
 
     var body: some View {
@@ -817,35 +1367,64 @@ private struct ModelConfigurationView: View {
                 ModelOptionLabel(option: option, isSelected: false)
             }
 
-            ForEach(option.model.options) { descriptor in
+            ForEach(DailyUXModelOptions.advancedDescriptors(for: option.model)) { descriptor in
                 Section {
                     switch descriptor.kind {
                     case .select:
-                        Picker(
-                            descriptor.label,
-                            selection: stringBinding(for: descriptor)
-                        ) {
-                            ForEach(descriptor.choices) { choice in
-                                VStack(alignment: .leading) {
-                                    Text(choice.label)
-                                    if let detail = choice.detail {
-                                        Text(detail)
+                        HStack {
+                            Text(descriptor.label)
+                            Spacer()
+                            if descriptor.choices.isEmpty {
+                                Text("No choices available")
+                                    .foregroundStyle(T3Colors.textSecondary)
+                            } else {
+                                Menu {
+                                    ForEach(descriptor.choices) { choice in
+                                        Button {
+                                            optionSelections = DailyUXModelOptions.updating(
+                                                optionSelections,
+                                                id: descriptor.id,
+                                                value: .string(choice.id)
+                                            )
+                                        } label: {
+                                            if isSelected(choice, for: descriptor) {
+                                                Label(choice.label, systemImage: "checkmark")
+                                            } else {
+                                                Text(choice.label)
+                                            }
+                                        }
                                     }
+                                } label: {
+                                    HStack(spacing: 5) {
+                                        Text(optionValueLabel(for: descriptor))
+                                        Image(systemName: "chevron.up.chevron.down")
+                                            .font(.system(size: 8, weight: .bold))
+                                    }
+                                    .foregroundStyle(T3Colors.textPrimary)
                                 }
-                                .tag(choice.id)
                             }
                         }
-                        .pickerStyle(.navigationLink)
+                        .frame(minHeight: T3Metrics.minimumTapTarget)
+                        .accessibilityIdentifier("advanced-option-\(descriptor.id)")
+                        .accessibilityValue(optionValueLabel(for: descriptor))
                     case .boolean:
                         Toggle(
                             descriptor.label,
                             isOn: booleanBinding(for: descriptor)
                         )
+                        .frame(minHeight: T3Metrics.minimumTapTarget)
+                        .accessibilityIdentifier("advanced-option-\(descriptor.id)")
                     }
                 } footer: {
-                    if let detail = descriptor.detail {
-                        Text(detail)
-                    }
+                    optionFooter(for: descriptor)
+                }
+            }
+
+            if !undescribedSelections.isEmpty {
+                Section("Saved options") {
+                    Text(undescribedOptionsMessage)
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(T3Colors.textSecondary)
                 }
             }
         }
@@ -855,7 +1434,7 @@ private struct ModelConfigurationView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("Use model") {
+                Button("Save options") {
                     onConfirm(
                         FeatureSelection(
                             providerID: option.provider.id,
@@ -869,27 +1448,57 @@ private struct ModelConfigurationView: View {
         }
     }
 
-    private func stringBinding(
-        for descriptor: FeatureModelOptionDescriptor
-    ) -> Binding<String> {
-        Binding(
-            get: {
-                guard case let .string(value) = DailyUXModelOptions.value(
-                    for: descriptor,
-                    in: optionSelections
-                ) else {
-                    return ""
-                }
-                return value
-            },
-            set: { value in
-                optionSelections = DailyUXModelOptions.updating(
-                    optionSelections,
-                    id: descriptor.id,
-                    value: .string(value)
-                )
-            }
+    private var undescribedSelections: [FeatureModelOptionSelection] {
+        DailyUXModelOptions.undescribedSelections(
+            for: option.model,
+            selections: optionSelections
         )
+    }
+
+    private var undescribedOptionsMessage: String {
+        let optionIDs = undescribedSelections.map(\.id).joined(separator: ", ")
+        return "This environment does not describe these saved options: \(optionIDs). T3 Code will keep them."
+    }
+
+    private func optionValueLabel(
+        for descriptor: FeatureModelOptionDescriptor
+    ) -> String {
+        guard case let .string(value) = DailyUXModelOptions.value(
+            for: descriptor,
+            in: optionSelections
+        ) else {
+            return "Choose"
+        }
+        return descriptor.choices.first(where: { $0.id == value })?.label ?? value
+    }
+
+    private func isSelected(
+        _ choice: FeatureModelOptionChoice,
+        for descriptor: FeatureModelOptionDescriptor
+    ) -> Bool {
+        DailyUXModelOptions.value(
+            for: descriptor,
+            in: optionSelections
+        ) == .string(choice.id)
+    }
+
+    @ViewBuilder
+    private func optionFooter(
+        for descriptor: FeatureModelOptionDescriptor
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let detail = descriptor.detail {
+                Text(detail)
+            }
+            if let value = DailyUXModelOptions.value(
+                for: descriptor,
+                in: optionSelections
+            ), !DailyUXModelOptions.isSupportedValue(value, for: descriptor) {
+                Text("The saved value is not listed by this environment. Choose a listed value or keep the saved value.")
+            } else if descriptor.kind == .select, descriptor.choices.isEmpty {
+                Text("This environment did not provide choices for this option.")
+            }
+        }
     }
 
     private func booleanBinding(
@@ -917,6 +1526,27 @@ private struct ModelConfigurationView: View {
 }
 
 enum ProviderModelConfiguration {
+    static func selection(
+        for option: DailyUXModelOption,
+        preserving currentSelection: FeatureSelection?
+    ) -> FeatureSelection {
+        let selections: [FeatureModelOptionSelection]
+        if currentSelection?.providerID == option.provider.id,
+           currentSelection?.modelID == option.model.id {
+            selections = materializedOptions(
+                for: option.model,
+                preserving: currentSelection?.options ?? []
+            )
+        } else {
+            selections = DailyUXModelOptions.defaults(for: option.model)
+        }
+        return FeatureSelection(
+            providerID: option.provider.id,
+            modelID: option.model.id,
+            options: selections
+        )
+    }
+
     static func materializedOptions(
         for model: FeatureModel,
         preserving selections: [FeatureModelOptionSelection]

@@ -43,4 +43,87 @@ final class T3ConnectRelayDecodingTests: XCTestCase {
         XCTAssertNil(link.endpointRuntime)
         XCTAssertEqual(link.endpoint.providerKind, .t3Relay)
     }
+
+    func testConfirmedDPoPClockFailureHasClockHint() throws {
+        let body = try relayErrorBody(
+            #"{"code":"auth_invalid","reason":"invalid_dpop","dpopFailureReason":"time_window","traceId":"trace-clock"}"#
+        )
+
+        XCTAssertEqual(body.dpopFailureReason, .timeWindow)
+        XCTAssertEqual(
+            T3ConnectRelayErrorPresentation.message(for: body, requestUsesDPoP: true),
+            "Relay rejected the DPoP proof. \(DPoPFailurePresentation.clockHint)"
+        )
+    }
+
+    func testOlderDPoPFailureTreatsClockSkewAsPossible() throws {
+        let body = try relayErrorBody(
+            #"{"code":"auth_invalid","reason":"invalid_dpop","traceId":"trace-old"}"#
+        )
+
+        XCTAssertNil(body.dpopFailureReason)
+        XCTAssertEqual(
+            T3ConnectRelayErrorPresentation.message(for: body, requestUsesDPoP: true),
+            "Relay rejected the DPoP proof. \(DPoPFailurePresentation.unknownHint)"
+        )
+    }
+
+    func testNonClockAndUnknownDPoPFailuresUseNeutralHint() throws {
+        for reason in ["key_mismatch", "request_mismatch", "token_mismatch", "replay",
+                       "invalid_proof", "future_reason"]
+        {
+            let body = try relayErrorBody(
+                #"{"code":"auth_invalid","reason":"invalid_dpop","dpopFailureReason":"\#(reason)","traceId":"trace-retry"}"#
+            )
+            XCTAssertEqual(
+                T3ConnectRelayErrorPresentation.message(for: body, requestUsesDPoP: true),
+                "Relay rejected the DPoP proof. \(DPoPFailurePresentation.retryHint)"
+            )
+        }
+    }
+
+    func testMissingEnvironmentLinkUsesSpecificMessage() throws {
+        let body = try relayErrorBody(
+            #"{"code":"environment_connect_not_authorized","reason":"environment_link_not_found","traceId":"trace-link"}"#
+        )
+
+        XCTAssertEqual(
+            T3ConnectRelayErrorPresentation.message(for: body, requestUsesDPoP: true),
+            "Relay has no active link for this environment. The environment server may not have re-established its link yet."
+        )
+    }
+
+    func testPresentedRelayErrorPreservesTraceID() throws {
+        let body = try relayErrorBody(
+            #"{"code":"environment_endpoint_timed_out","traceId":"trace-timeout"}"#
+        )
+        let error = T3ConnectRelayError.response(
+            status: 504,
+            message: T3ConnectRelayErrorPresentation.message(
+                for: body,
+                requestUsesDPoP: true
+            ),
+            traceID: body.traceId
+        )
+
+        XCTAssertEqual(
+            error.errorDescription,
+            "Relay timed out while contacting the environment endpoint. (trace trace-timeout)"
+        )
+    }
+
+    func testBearerRelayRequestDoesNotGetDPoPClockAdvice() throws {
+        let body = try relayErrorBody(
+            #"{"code":"auth_invalid","reason":"invalid_dpop","dpopFailureReason":"time_window","message":"The session was rejected.","traceId":"trace-bearer"}"#
+        )
+
+        XCTAssertEqual(
+            T3ConnectRelayErrorPresentation.message(for: body, requestUsesDPoP: false),
+            "The session was rejected."
+        )
+    }
+
+    private func relayErrorBody(_ json: String) throws -> T3ConnectRelayErrorBody {
+        try JSONDecoder.t3.decode(T3ConnectRelayErrorBody.self, from: Data(json.utf8))
+    }
 }
