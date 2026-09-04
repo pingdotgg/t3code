@@ -813,17 +813,20 @@ export function createEnvironmentThreadStateAtoms<R, E>(
     E
   >,
 ) {
-  const family = Atom.family((key: string) => {
-    const { environmentId, threadId } = parseThreadKey(key);
-    // This node retains plain snapshots, not environment scopes or RPC streams.
-    // A factory gives each registry its own cache and ownership token.
-    const resumeAtom = Atom.make((): ThreadResumeCache => ({
+  // Cache definitions must outlive collectible live-atom definitions. The
+  // registry retains these nodes without retaining environment or RPC scopes.
+  const resumeFamily = Atom.family((key: string) =>
+    Atom.make((): ThreadResumeCache => ({
       snapshot: undefined,
       owner: undefined,
     })).pipe(
       Atom.setIdleTTL(THREAD_SNAPSHOT_IDLE_TTL_MS),
       Atom.withLabel(`environment-thread-resume:${key}`),
-    );
+    ),
+  );
+  const family = Atom.family((key: string) => {
+    const { environmentId, threadId } = parseThreadKey(key);
+    const resumeAtom = resumeFamily(key);
     return runtime
       .atom(
         (get) => {

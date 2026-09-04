@@ -222,6 +222,7 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
   return {
     registry,
     makeRegistry,
+    rawAtoms: raw,
     stateAtom,
     details,
     ref,
@@ -251,7 +252,10 @@ function currentThread(
 }
 
 describe("createEnvironmentThreadStateAtoms", () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   it.effect("shares one live stream and closes it after the last detail consumer leaves", () =>
     Effect.gen(function* () {
@@ -307,6 +311,38 @@ describe("createEnvironmentThreadStateAtoms", () => {
       yield* Deferred.await(first.closed);
       const remount = h.registry.mount(h.stateAtom);
       expect(currentThread(h.registry, h.stateAtom)).toBe(before);
+      const next = yield* Queue.take(h.subscriptions);
+      expect(next.afterSequence).toBe(8);
+      expect(h.counts()).toEqual({ httpLoads: 1, diskLoads: 1, opened: 2, active: 1 });
+      remount();
+      yield* Deferred.await(next.closed);
+    }),
+  );
+
+  it.effect("keeps warm data when the raw atom family's weak entry is collected", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const oldRaw = h.rawAtoms.stateAtom(TARGET.environmentId, THREAD_ID);
+      const unmount = h.registry.mount(h.stateAtom);
+      const first = yield* Queue.take(h.subscriptions);
+      const latest = { ...THREAD, title: "Newer cached thread" };
+      yield* Queue.offer(first.events, {
+        kind: "snapshot",
+        snapshot: { snapshotSequence: 8, thread: latest },
+      });
+      yield* Queue.offer(first.events, { kind: "synchronized" });
+      yield* observeState(h.registry, h.stateAtom, (value) => value.status === "live");
+      unmount();
+      yield* Deferred.await(first.closed);
+
+      // Force the weak-family miss without depending on host GC timing.
+      const deref = WeakRef.prototype.deref;
+      vi.spyOn(WeakRef.prototype, "deref").mockImplementation(function (this: WeakRef<object>) {
+        const value = deref.call(this);
+        return value === oldRaw ? undefined : value;
+      });
+      const remount = h.registry.mount(h.stateAtom);
+      expect(currentThread(h.registry, h.stateAtom)).toBe(latest);
       const next = yield* Queue.take(h.subscriptions);
       expect(next.afterSequence).toBe(8);
       expect(h.counts()).toEqual({ httpLoads: 1, diskLoads: 1, opened: 2, active: 1 });
