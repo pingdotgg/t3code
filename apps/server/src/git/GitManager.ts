@@ -120,7 +120,13 @@ const SHORT_SHA_LENGTH = 7;
 const TOAST_DESCRIPTION_MAX = 72;
 const STATUS_RESULT_CACHE_TTL = Duration.seconds(1);
 const STATUS_RESULT_CACHE_CAPACITY = 2_048;
-const PR_LOOKUP_CACHE_TTL = Duration.minutes(2);
+// Matches the automatic settlement sweep cadence so every background sweep
+// reads fresh branch state: an external merge settles within about a minute
+// instead of waiting out a longer cache. Unpublished branches never reach the
+// host (a local probe answers first), and failed lookups still back off
+// exponentially via prLookupFailureTtl, so throttling pressure still drops
+// under 429s instead of amplifying it.
+const PR_LOOKUP_CACHE_TTL = Duration.seconds(60);
 const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
