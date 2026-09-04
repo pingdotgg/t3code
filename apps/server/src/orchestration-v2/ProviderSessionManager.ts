@@ -113,6 +113,8 @@ export class ProviderSessionReleaseError extends Schema.TaggedErrorClass<Provide
   }
 }
 
+const isProviderSessionReleaseError = Schema.is(ProviderSessionReleaseError);
+
 export class ProviderSessionActivityError extends Schema.TaggedErrorClass<ProviderSessionActivityError>()(
   "ProviderSessionActivityError",
   {
@@ -764,11 +766,21 @@ export const layerWithOptions = (
                     input.providerSessionId,
                     Effect.gen(function* () {
                       const reportExit = yield* Effect.gen(function* () {
+                        if (Exit.isFailure(exit)) {
+                          yield* Effect.logWarning(
+                            "orchestration-v2.driver-session.cleanup-failed",
+                            {
+                              providerSessionId: input.providerSessionId,
+                              reason: input.reason,
+                              cause: exit.cause,
+                            },
+                          );
+                        }
                         yield* writeReleasedSessionEvents({
                           entry: release.entry,
                           reason: Exit.isFailure(exit) ? "runtime_error" : input.reason,
                           ...(Exit.isFailure(exit)
-                            ? { detail: Cause.pretty(exit.cause) }
+                            ? { detail: "Provider session cleanup failed." }
                             : input.detail === undefined
                               ? {}
                               : { detail: input.detail }),
@@ -824,20 +836,23 @@ export const layerWithOptions = (
               return yield* new ProviderSessionReleaseError({
                 providerSessionId: input.providerSessionId,
                 reason: input.reason,
-                cause: detail,
               });
             }
           }),
         ).pipe(
-          Effect.catchCause((cause) =>
-            Effect.fail(
+          Effect.catchCause((cause) => {
+            const error = Cause.findErrorOption(cause);
+            if (Option.isSome(error) && isProviderSessionReleaseError(error.value)) {
+              return Effect.fail(error.value);
+            }
+            return Effect.fail(
               new ProviderSessionReleaseError({
                 providerSessionId: input.providerSessionId,
                 reason: input.reason,
                 cause,
               }),
-            ),
-          ),
+            );
+          }),
         );
 
       // Annotated to break the releaseIfStillIdle <-> scheduleIdleReleaseInternal

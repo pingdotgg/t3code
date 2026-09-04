@@ -13,6 +13,7 @@ import {
   type ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -1588,6 +1589,7 @@ it.effect(
 
 it.effect("ProviderSessionManagerV2 blocks replacement when cleanup fails", () =>
   Effect.gen(function* () {
+    const cleanupDefect = "private adapter output that must not reach the client";
     const state = yield* Ref.make(emptyState);
     yield* Effect.gen(function* () {
       const eventSink = yield* EventSinkV2;
@@ -1611,7 +1613,13 @@ it.effect("ProviderSessionManagerV2 blocks replacement when cleanup fails", () =
         -1,
       );
       assert.equal(session?.status, "error");
-      assert.include(session?.lastError ?? "", "cleanup failed");
+      assert.equal(session?.lastError, "Provider session cleanup failed.");
+      const release = manager.release({ providerSessionId, reason: "manual_shutdown" });
+      const releaseError = yield* release.pipe(Effect.flip);
+      const cleanupCause = releaseError.cause;
+      if (!Cause.isCause(cleanupCause)) assert.fail("Expected the original cleanup cause");
+      assert.strictEqual(Cause.squash(cleanupCause), cleanupDefect);
+      assert.strictEqual(yield* release.pipe(Effect.flip), releaseError);
       assert.equal((yield* open.pipe(Effect.flip))._tag, "ProviderSessionOpenError");
       assert.equal((yield* manager.close(providerSessionId).pipe(Effect.result))._tag, "Failure");
       assert.equal((yield* Ref.get(state)).openCount, 1);
@@ -1620,7 +1628,7 @@ it.effect("ProviderSessionManagerV2 blocks replacement when cleanup fails", () =
         makeTestLayer({
           state,
           idleTimeoutMs: 3_600_000,
-          beforeClose: Effect.die("cleanup failed"),
+          beforeClose: Effect.die(cleanupDefect),
         }),
       ),
     );
