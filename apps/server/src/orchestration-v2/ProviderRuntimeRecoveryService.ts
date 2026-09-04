@@ -322,6 +322,7 @@ export const make = Effect.gen(function* () {
       // cancelled above for recovered nonterminal runs to avoid duplicate
       // cancellation events.
       const recoveredNonterminalRunIds = new Set(runs.map((run) => run.id));
+      const cancelledStaleNodeIds = new Set<string>();
       for (const item of projection.turnItems ?? []) {
         if (item.runId !== null && recoveredNonterminalRunIds.has(item.runId)) {
           continue;
@@ -343,13 +344,32 @@ export const make = Effect.gen(function* () {
           occurredAt: now,
           payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
         });
+        if (item.nodeId !== null && item.nodeId !== undefined) {
+          const staleItemNode = projection.nodes.find(
+            (candidate) =>
+              candidate.id === item.nodeId && isNonterminalNodeStatus(candidate.status),
+          );
+          if (staleItemNode !== undefined && !cancelledStaleNodeIds.has(staleItemNode.id)) {
+            cancelledStaleNodeIds.add(staleItemNode.id);
+            events.push({
+              id: yield* allocateEventId(),
+              type: "node.updated",
+              threadId: projection.thread.id,
+              ...(item.runId === null ? {} : { runId: item.runId }),
+              nodeId: staleItemNode.id,
+              providerInstanceId,
+              occurredAt: now,
+              payload: { ...staleItemNode, status: "cancelled", completedAt: now },
+            });
+          }
+        }
         if (item.type !== "subagent") {
           continue;
         }
         // Cancelling only the turn item would leave the linked subagent entity
-        // and its execution node non-terminal forever, since the dead provider
-        // process can no longer emit their terminal events. Match the exact
-        // linked ids so a subagent that already finished is never overwritten.
+        // non-terminal forever, since the dead provider process can no longer
+        // emit its terminal event. Match the exact linked id so a subagent
+        // that already finished is never overwritten.
         const staleSubagent = projection.subagents.find(
           (candidate) =>
             candidate.id === item.subagentId && isNonterminalSubagentStatus(candidate.status),
@@ -371,7 +391,8 @@ export const make = Effect.gen(function* () {
           (candidate) =>
             candidate.id === item.subagentId && isNonterminalNodeStatus(candidate.status),
         );
-        if (staleSubagentNode !== undefined) {
+        if (staleSubagentNode !== undefined && !cancelledStaleNodeIds.has(staleSubagentNode.id)) {
+          cancelledStaleNodeIds.add(staleSubagentNode.id);
           events.push({
             id: yield* allocateEventId(),
             type: "node.updated",
