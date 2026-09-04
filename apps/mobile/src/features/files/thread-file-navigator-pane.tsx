@@ -1,4 +1,4 @@
-import { AuthFilesystemReadScope } from "@t3tools/contracts";
+import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { environmentSession } from "../../state/session";
 import type { EnvironmentId, ProjectListEntriesResult } from "@t3tools/contracts";
 import { SymbolView } from "../../components/AppSymbol";
@@ -17,6 +17,7 @@ import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
@@ -38,11 +39,13 @@ export function ThreadFileNavigatorPane(props: {
   const fileAccessSession = useEnvironmentQuery(
     environmentSession.sessionStateAtom(props.environmentId),
   );
-  const fileAccessPending = fileAccessSession.data === null && fileAccessSession.error === null;
-  const canReadFiles =
-    fileAccessSession.error === null &&
-    fileAccessSession.data?.authenticated === true &&
-    fileAccessSession.data.scopes?.includes(AuthFilesystemReadScope) === true;
+  const fileEnvironment = useEnvironmentPresentation(props.environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
   const entriesQuery = useEnvironmentQuery(
     canReadFiles
       ? projectEnvironment.listEntries({
@@ -86,11 +89,11 @@ export function ThreadFileNavigatorPane(props: {
       error={
         canReadFiles
           ? entriesQuery.error
-          : fileAccessPending
+          : fileAccess.isPending
             ? null
-            : (fileAccessSession.error ?? "This connection cannot read host files.")
+            : (fileAccess.error ?? "This connection cannot read host files.")
       }
-      isPending={fileAccessPending || entriesQuery.isPending}
+      isPending={fileAccess.isPending || entriesQuery.isPending}
       searchQuery={searchQuery}
       selectedPath={props.selectedPath}
       onPreviewFile={handlePreviewFile}

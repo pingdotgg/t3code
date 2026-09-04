@@ -1,5 +1,6 @@
-import { AuthFilesystemReadScope } from "@t3tools/contracts";
+import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { environmentSession } from "~/state/session";
+import { useEnvironmentPresentation } from "~/state/presentation";
 import { useAtomValue } from "@effect/atom-react";
 import type { FileDiffContentsLoader } from "@pierre/diffs";
 import { useParams } from "@tanstack/react-router";
@@ -143,10 +144,13 @@ export default function DiffPanel({
   const fileAccessSession = useEnvironmentQuery(
     activeThread ? environmentSession.sessionStateAtom(activeThread.environmentId) : null,
   );
-  const canReadFiles =
-    fileAccessSession.error === null &&
-    fileAccessSession.data?.authenticated === true &&
-    fileAccessSession.data.scopes?.includes(AuthFilesystemReadScope) === true;
+  const fileEnvironment = useEnvironmentPresentation(activeThread?.environmentId ?? null);
+  const fileAccess = resolveFilesystemReadAccess({
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
   const activeProjectId = activeThread?.projectId ?? null;
   const activeProject = useProject(
     activeThread && activeProjectId
@@ -910,11 +914,11 @@ export default function DiffPanel({
           No completed turns yet.
         </div>
       ) : selectedTurnId === null && !canReadFiles ? (
-        fileAccessSession.data === null && fileAccessSession.error === null ? (
+        fileAccess.isPending ? (
           <DiffPanelLoadingState label="Checking file access..." />
         ) : (
           <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
-            {fileAccessSession.error ?? "This connection cannot read local diffs."}
+            {fileAccess.error ?? "This connection cannot read local diffs."}
           </div>
         )
       ) : (
