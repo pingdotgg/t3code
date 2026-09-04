@@ -488,6 +488,11 @@ function SortablePinnedThreadRow(props: {
   return props.children({ listeners, setNodeRef, transform, transition, isDragging });
 }
 
+// Unsent work shares one look: the new-thread draft rows and thread rows
+// with unsent composer text both use this tint and pen so they read alike.
+const draftSurfaceClassName = "bg-amber-400/[0.04] hover:bg-amber-400/[0.08]";
+const draftPenClassName = "size-3 shrink-0 text-amber-600 dark:text-amber-300/80";
+
 // One unsent draft session the user has invested content in. Two lines,
 // nothing else: project name, then the typed prompt. All the draft's
 // settings (model, env mode, branch, worktree) still travel with it —
@@ -553,19 +558,14 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
         data-testid="sidebar-draft-row"
         className={cn(
           "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left text-sidebar-foreground outline-none select-none",
-          props.isActive
-            ? "bg-sidebar-row-active"
-            : "bg-amber-400/[0.04] hover:bg-amber-400/[0.08]",
+          props.isActive ? "bg-sidebar-row-active" : draftSurfaceClassName,
         )}
         onClick={handleActivate}
         onKeyDown={handleKeyDown}
       >
         <div className="relative z-10 px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]">
           <div className="flex h-5 min-w-0 items-center gap-1.5">
-            <SquarePenIcon
-              aria-hidden
-              className="size-3 shrink-0 text-amber-600 dark:text-amber-300/80"
-            />
+            <SquarePenIcon aria-hidden className={draftPenClassName} />
             <ProjectFavicon
               environmentId={session.environmentId}
               cwd={props.projectCwd ?? ""}
@@ -1178,7 +1178,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       : isSelected
         ? "bg-sidebar-row-selected text-sidebar-foreground"
         : hasUnsentDraft
-          ? "bg-amber-400/[0.04] text-sidebar-foreground hover:bg-amber-400/[0.08]"
+          ? cn(draftSurfaceClassName, "text-sidebar-foreground")
           : shouldRecede
             ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
             : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
@@ -1277,11 +1277,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             role="img"
             aria-label="Unsent draft"
             data-testid={`sidebar-draft-indicator-${thread.id}`}
-            className="inline-flex shrink-0 items-center text-amber-600 dark:text-amber-300/80"
+            className="inline-flex shrink-0 items-center"
           />
         }
       >
-        <SquarePenIcon aria-hidden className="size-3" />
+        <SquarePenIcon aria-hidden className={draftPenClassName} />
       </TooltipTrigger>
       <TooltipPopup side="top">Unsent draft</TooltipPopup>
     </Tooltip>
