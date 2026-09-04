@@ -1338,6 +1338,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
             title="No terminal sessions"
             detail="Existing terminals will appear here when another client opens one."
           />
+        ) : !canOperateTerminal && terminal.error !== null ? (
+          <EmptyState title="Terminal unavailable" detail={terminal.error} />
         ) : (
           <>
             <BlurTargetView
