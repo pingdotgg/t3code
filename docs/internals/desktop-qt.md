@@ -92,7 +92,11 @@ The bricks come in two layers. Chrome bricks each own one piece of the page's
 chrome and read one key of `Shell.state`: `Sidebar`, `Workspace` (the header
 strip), `Composer`, `RightPanel`, `TerminalDrawer`, `SettingsNav`, `GitActions`,
 `Notifications`, `ContextMenuHost`, plus `WebSurface`, `DefaultShell` and
-`ShellErrorOverlay`. Under them sit the primitives a rice composes its own
+`ShellErrorOverlay`. A rice that cards a surface passes the card's inner
+radius as `WebSurface.radius` (`TerminalDrawer` and `RightPanel` forward
+theirs): the page clips itself to the curve and drops its own backdrop
+(`data-shell-surface-radius` in `index.html` and `index.css`), so no QML layer is needed to
+round a live web view. Under them sit the primitives a rice composes its own
 chrome from, all styled from `Theme`: `ShellWindow` (the root every rice
 starts from: theme-driven colour, opacity and frame, `sidebarCollapsed` /
 `settingsActive` read from the page, the shell's context menus, the error

@@ -215,14 +215,18 @@ Rectangle {
             Layout.fillHeight: true
             active: false
             visible: panel.open
-            onWantedChanged: if (wanted) active = true
-            Component.onCompleted: if (wanted) active = true
+            onWantedChanged: if (wanted)
+                active = true
+            Component.onCompleted: if (wanted)
+                active = true
 
             // The document follows thread changes itself (t3Shell.onState), so
             // the URL is only the starting point; rebinding it would reload.
             sourceComponent: WebSurface {
                 surfaceId: "rightPanel"
                 sleepsWhenHidden: true
+                // The panel's own radius rounds the document's corners too.
+                radius: panel.radius
                 Component.onCompleted: url = panel.embedUrl
             }
         }

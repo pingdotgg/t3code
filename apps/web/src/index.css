@@ -1578,6 +1578,20 @@ body {
   background-size: var(--surface-grain-size);
 }
 
+/* Hosted by the Qt shell inside a rounded card (WebSurface.radius): the shell
+   paints the card and passes its inner radius, the document stays transparent
+   (index.html), and the app clips itself to the curve. Backdrop and grain move
+   to #root, the box the clip covers. */
+html[data-shell-surface-radius] #root {
+  contain: paint;
+  overflow: hidden;
+  border-radius: var(--app-shell-surface-radius);
+  background-color: var(--app-chrome-background);
+  background-image: var(--surface-grain);
+  background-repeat: repeat;
+  background-size: var(--surface-grain-size);
+}
+
 pre,
 code {
   font-family: var(--font-mono);

@@ -437,6 +437,18 @@
         color: var(--boot-foreground);
       }
 
+      /* A shell that cards the surface sets `data-shell-surface-radius` before
+         this document exists; the document stays transparent and the splash
+         clips to the curve, so the card shows through from the first paint. */
+      html[data-shell-surface-radius],
+      html[data-shell-surface-radius] body {
+        background: transparent !important;
+      }
+
+      html[data-shell-surface-radius] #boot-shell {
+        border-radius: var(--app-shell-surface-radius);
+      }
+
       #boot-shell-card {
         position: relative;
         z-index: 1;

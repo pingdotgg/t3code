@@ -25,6 +25,9 @@ Item {
         return origin ? origin[1] + model.terminalEmbedPath : "";
     }
 
+    // The web surface's corner radius, for a rice that cards the drawer.
+    property real radius: 0
+
     // The height while the edge is dragged and until the page publishes it
     // back; -1 when the page's height is the one shown.
     property int localHeight: -1
@@ -45,12 +48,14 @@ Item {
         }
     }
 
+    // The hairline over the drawer; a carded drawer has the card's edge instead.
     Rectangle {
         id: edgeLine
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        height: 1
+        height: drawer.radius > 0 ? 0 : 1
+        visible: height > 0
         color: Theme.color("border", "#27272a")
     }
 
@@ -79,6 +84,7 @@ Item {
         sourceComponent: WebSurface {
             surfaceId: "terminal"
             sleepsWhenHidden: true
+            radius: drawer.radius
             Component.onCompleted: url = drawer.embedUrl
         }
     }

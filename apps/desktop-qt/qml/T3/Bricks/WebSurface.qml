@@ -27,7 +27,13 @@ WebEngineView {
     // theme signals that leave the page side unchanged.
     property string installedThemeScript: ""
 
-    backgroundColor: Theme.windowTransparent ? "transparent" : Theme.color("chrome", "#0b0b0d")
+    // Rounds the document's corners, for a rice that cards the surface: pass
+    // the card's inner radius. The page clips itself to the curve and drops
+    // its own backdrop (index.css, `data-shell-surface-radius`), and the
+    // view's backdrop goes transparent, so the card shows through the corners.
+    property real radius: 0
+
+    backgroundColor: Theme.windowTransparent || view.radius > 0 ? "transparent" : Theme.color("chrome", "#0b0b0d")
 
     profile: WebProfile
     lifecycleState: sleepsWhenHidden && !visible && !loading ? WebEngineView.LifecycleState.Frozen : WebEngineView.LifecycleState.Active
@@ -58,9 +64,54 @@ WebEngineView {
         view.userScripts.insert(script);
     }
 
+    function radiusScript() {
+        const pixels = Math.max(0, Math.round(view.radius));
+        return `(() => {
+            const run = () => {
+                const root = document.documentElement;
+                if (${pixels} > 0) {
+                    root.style.setProperty('--app-shell-surface-radius', '${pixels}px');
+                    root.dataset.shellSurfaceRadius = '${pixels}';
+                } else {
+                    root.style.removeProperty('--app-shell-surface-radius');
+                    delete root.dataset.shellSurfaceRadius;
+                }
+            };
+            if (document.documentElement) run();
+            else new MutationObserver((_, observer) => {
+                if (document.documentElement) { observer.disconnect(); run(); }
+            }).observe(document, { childList: true });
+        })();`;
+    }
+
+    // Installed at document creation so the first paint is already clipped,
+    // and run live when the radius changes under a loaded page.
+    function syncRadiusScript() {
+        for (const stale of view.userScripts.find("t3-surface-radius")) {
+            view.userScripts.remove(stale);
+        }
+        const source = view.radiusScript();
+        if (view.radius > 0) {
+            const script = WebEngine.script();
+            script.name = "t3-surface-radius";
+            script.sourceCode = source;
+            script.injectionPoint = WebEngineScript.DocumentCreation;
+            script.worldId = WebEngineScript.MainWorld;
+            view.userScripts.insert(script);
+        }
+        if (!view.loading) {
+            view.runJavaScript(source);
+        }
+    }
+
+    onRadiusChanged: view.syncRadiusScript()
+
     Component.onCompleted: {
         channel.registerObject("shell", Shell.channel);
         view.syncThemeScript();
+        if (view.radius > 0) {
+            view.syncRadiusScript();
+        }
 
         const tag = WebEngine.script();
         tag.name = "t3-surface-id";
