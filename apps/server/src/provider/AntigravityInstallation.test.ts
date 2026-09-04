@@ -681,65 +681,69 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       }),
   );
 
-  it.effect("honors explicit paths and reports invalid overrides without falling back", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-path-test-" });
-      const externalDirectory = path.join(baseDir, "external");
-      const externalExecutable = path.join(externalDirectory, "agy_acp_server.par");
-      const externalHarness = path.join(externalDirectory, "localharness_external");
-      yield* fs.makeDirectory(externalDirectory);
-      yield* fs.writeFileString(externalExecutable, "external server", { mode: 0o755 });
-      yield* fs.writeFileString(externalHarness, "external harness", { mode: 0o755 });
-      const { installation } = yield* makeHarness({
-        baseDir,
-        path: externalDirectory,
-        previous: true,
-      });
-      yield* expectPreviousRelease(installation);
-      expect(yield* installation.resolve(undefined, { PATH: externalDirectory })).toMatchObject({
-        source: "managed",
-        version: previousVersion,
-      });
-      expect(yield* installation.resolve(externalExecutable)).toMatchObject({
-        executablePath: externalExecutable,
-        source: "override",
-        managedVersionDirectory: null,
-      });
-      expect(yield* installation.resolve("agy_acp_server.par")).toMatchObject({
-        source: "override",
-      });
-      yield* fs.remove(externalHarness);
-      expect(yield* installation.resolve(externalExecutable).pipe(Effect.flip)).toMatchObject({
-        operation: "resolve",
-      });
-      expect(
-        yield* installation.resolve(path.join(baseDir, "missing")).pipe(Effect.flip),
-      ).toMatchObject({
-        operation: "resolve",
-      });
-      yield* expectPreviousRelease(installation);
-      yield* fs.writeFileString(externalHarness, "external harness", { mode: 0o755 });
-      yield* installation.remove();
-      expect(yield* installation.resolve()).toMatchObject({
-        source: "path",
-        executablePath: externalExecutable,
-      });
-      const isolated = yield* makeHarness({ baseDir });
-      expect(yield* isolated.installation.resolve().pipe(Effect.flip)).toMatchObject({
-        operation: "resolve",
-      });
-      expect(
-        yield* isolated.installation.resolve(undefined, { PATH: externalDirectory }),
-      ).toMatchObject({
-        source: "path",
-        executablePath: externalExecutable,
-      });
-      expect(
-        yield* isolated.installation.resolve("agy_acp_server.par", { PATH: externalDirectory }),
-      ).toMatchObject({ source: "override", executablePath: externalExecutable });
-    }),
+  // Real posix executables in a real temp dir, resolved by a linux-mocked
+  // PATH walk; a Windows temp path cannot be split on `:`.
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "honors explicit paths and reports invalid overrides without falling back",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-path-test-" });
+        const externalDirectory = path.join(baseDir, "external");
+        const externalExecutable = path.join(externalDirectory, "agy_acp_server.par");
+        const externalHarness = path.join(externalDirectory, "localharness_external");
+        yield* fs.makeDirectory(externalDirectory);
+        yield* fs.writeFileString(externalExecutable, "external server", { mode: 0o755 });
+        yield* fs.writeFileString(externalHarness, "external harness", { mode: 0o755 });
+        const { installation } = yield* makeHarness({
+          baseDir,
+          path: externalDirectory,
+          previous: true,
+        });
+        yield* expectPreviousRelease(installation);
+        expect(yield* installation.resolve(undefined, { PATH: externalDirectory })).toMatchObject({
+          source: "managed",
+          version: previousVersion,
+        });
+        expect(yield* installation.resolve(externalExecutable)).toMatchObject({
+          executablePath: externalExecutable,
+          source: "override",
+          managedVersionDirectory: null,
+        });
+        expect(yield* installation.resolve("agy_acp_server.par")).toMatchObject({
+          source: "override",
+        });
+        yield* fs.remove(externalHarness);
+        expect(yield* installation.resolve(externalExecutable).pipe(Effect.flip)).toMatchObject({
+          operation: "resolve",
+        });
+        expect(
+          yield* installation.resolve(path.join(baseDir, "missing")).pipe(Effect.flip),
+        ).toMatchObject({
+          operation: "resolve",
+        });
+        yield* expectPreviousRelease(installation);
+        yield* fs.writeFileString(externalHarness, "external harness", { mode: 0o755 });
+        yield* installation.remove();
+        expect(yield* installation.resolve()).toMatchObject({
+          source: "path",
+          executablePath: externalExecutable,
+        });
+        const isolated = yield* makeHarness({ baseDir });
+        expect(yield* isolated.installation.resolve().pipe(Effect.flip)).toMatchObject({
+          operation: "resolve",
+        });
+        expect(
+          yield* isolated.installation.resolve(undefined, { PATH: externalDirectory }),
+        ).toMatchObject({
+          source: "path",
+          executablePath: externalExecutable,
+        });
+        expect(
+          yield* isolated.installation.resolve("agy_acp_server.par", { PATH: externalDirectory }),
+        ).toMatchObject({ source: "override", executablePath: externalExecutable });
+      }),
   );
 
   it.effect("keeps leased releases available while new sessions resolve the new release", () =>
