@@ -1,4 +1,7 @@
-import { BearerConnectionTarget, PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
+import {
+  BearerConnectionTarget,
+  PrimaryConnectionTarget,
+} from "@t3tools/client-runtime/connection";
 import type { EnvironmentCatalogState } from "@t3tools/client-runtime/state/connections";
 import type { EnvironmentShellState } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId } from "@t3tools/contracts";
