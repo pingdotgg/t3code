@@ -1,7 +1,7 @@
-import { UsageLimitSourceId } from "@t3tools/contracts";
+import { type EnvironmentId, UsageLimitSourceId } from "@t3tools/contracts";
 import { useState } from "react";
 
-import { useUpdatePrimarySettings } from "../../hooks/useSettings";
+import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -35,18 +35,22 @@ function sourceIdFromUrl(url: string): UsageLimitSourceId {
 }
 
 /**
- * Adds a CLIProxyAPI hub as a usage-limit source on the primary environment.
- * The management key is sent once and kept in the server's secret store;
+ * Adds a CLIProxyAPI hub as a usage-limit source on one environment. The
+ * management key is sent once and kept in that server's secret store;
  * settings only ever carry a redaction marker for it afterwards.
  */
 export function AddUsageLimitSourceDialog({
   open,
   onOpenChange,
+  environmentId,
+  environmentLabel,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
 }) {
-  const updateSettings = useUpdatePrimarySettings();
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("");
   const [managementKey, setManagementKey] = useState("");
@@ -90,8 +94,8 @@ export function AddUsageLimitSourceDialog({
         <DialogHeader>
           <DialogTitle>Add a CLIProxyAPI hub</DialogTitle>
           <DialogDescription>
-            Show the quota of every account the hub pools, next to the providers on this machine.
-            The key stays on the server.
+            Show the quota of every account the hub pools, next to the providers on{" "}
+            {environmentLabel}. The key stays on that server.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

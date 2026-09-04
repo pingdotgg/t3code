@@ -1,12 +1,11 @@
-import type {
+import {
   EnvironmentId,
-  ProviderConsumeResetCreditOutcome,
+  type ProviderConsumeResetCreditOutcome,
   ProviderInstanceId,
   ServerProvider,
   ServerProviderResetCredits,
   ServerProviderUsageWindow,
   UsageLimitSourceAccount,
-  UsageLimitSourceId,
   UsageLimitSourceSnapshot,
   UsageProviderKind,
 } from "@t3tools/contracts";
@@ -25,12 +24,8 @@ import {
 import { GaugeIcon, PlusIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, useState } from "react";
 
-import {
-  usePrimarySettings,
-  usePrimarySettingsAvailable,
-  useUpdatePrimarySettings,
-} from "../../hooks/useSettings";
-import { usePrimaryEnvironmentId } from "../../state/environments";
+import { usePrimarySettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -49,6 +44,7 @@ import {
 } from "../ui/alert-dialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
@@ -486,6 +482,33 @@ function SourceLimits({
   );
 }
 
+/** One source with a remove control bound to the environment it lives in. */
+function SourceLimitsRow({
+  source,
+  now,
+}: {
+  readonly source: UsageLimitSourceSnapshot & {
+    readonly key: string;
+    readonly environmentId: EnvironmentId;
+  };
+  readonly now: number;
+}) {
+  const updateSettings = useUpdateEnvironmentSettings(source.environmentId);
+  const connection = useAtomValue(environmentPresentations.presentationsAtom).get(
+    source.environmentId,
+  )?.connection;
+  // The patch names only this entry, so two edits in flight cannot clobber
+  // each other's map.
+  const remove = () => updateSettings({ usageLimitSources: { [source.id]: null } });
+  return (
+    <SourceLimits
+      source={source}
+      now={now}
+      onRemove={connection?.phase === "connected" ? remove : null}
+    />
+  );
+}
+
 /**
  * Subscription quota windows from every connected environment's providers.
  * Countdowns anchor to render time rather than ticking: a live clock would
@@ -495,19 +518,29 @@ export function UsageLimitsSection() {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const groups = collectLimitsGroups(presentations);
   const sources = collectLimitSources(presentations);
-  const configuredSources = usePrimarySettings((settings) => settings.usageLimitSources);
-  const canEditSources = usePrimarySettingsAvailable();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const updateSettings = useUpdatePrimarySettings();
+  const { environments } = useEnvironments();
   const [adding, setAdding] = useState(false);
   // Anchored once per mount on purpose: countdowns must not tick (see below).
   const [now] = useState(() => Date.now());
 
-  // The patch names only this entry, so two edits in flight cannot clobber
-  // each other's map.
-  const removeSource = (id: UsageLimitSourceId) => {
-    updateSettings({ usageLimitSources: { [id]: null } });
-  };
+  // Sources live in one environment's settings. Writing them needs only the
+  // operate scope, like any provider control, so a T3 Connect client can add
+  // a hub to whichever environment it is connected to: the primary when there
+  // is one, else the first connected environment, with a picker for more.
+  const connected = environments.filter(
+    (environment) => environment.connection.phase === "connected",
+  );
+  const [pickedEnvironmentId, setPickedEnvironmentId] = useState<EnvironmentId | null>(null);
+  const targetEnvironment =
+    (pickedEnvironmentId !== null
+      ? connected.find((environment) => environment.environmentId === pickedEnvironmentId)
+      : undefined) ??
+    (primaryEnvironmentId !== null
+      ? connected.find((environment) => environment.environmentId === primaryEnvironmentId)
+      : undefined) ??
+    connected[0] ??
+    null;
 
   return (
     <div className="flex flex-col gap-8">
@@ -520,11 +553,37 @@ export function UsageLimitsSection() {
             Quota from a CLIProxyAPI hub shows beside the providers signed in on this machine.
           </p>
         </div>
-        {canEditSources ? (
-          <Button size="xs" variant="outline" onClick={() => setAdding(true)}>
-            <PlusIcon className="size-3" aria-hidden />
-            Add hub
-          </Button>
+        {targetEnvironment ? (
+          <div className="flex items-center gap-2">
+            {connected.length > 1 ? (
+              <Select
+                value={targetEnvironment.environmentId}
+                onValueChange={(value) => {
+                  if (value !== null) setPickedEnvironmentId(EnvironmentId.make(value));
+                }}
+              >
+                <SelectTrigger
+                  aria-label="Environment to add the hub to"
+                  size="compact"
+                  variant="ghost"
+                  className="w-auto min-w-0"
+                >
+                  <SelectValue>{targetEnvironment.label}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {connected.map((environment) => (
+                    <SelectItem key={environment.environmentId} value={environment.environmentId}>
+                      {environment.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            ) : null}
+            <Button size="xs" variant="outline" onClick={() => setAdding(true)}>
+              <PlusIcon className="size-3" aria-hidden />
+              Add hub
+            </Button>
+          </div>
         ) : null}
       </div>
       {groups.length === 0 && sources.length === 0 ? (
@@ -533,20 +592,7 @@ export function UsageLimitsSection() {
         </p>
       ) : null}
       {sources.map((source) => (
-        <SourceLimits
-          key={source.key}
-          source={source}
-          now={now}
-          // Only the primary environment's own sources can be edited from
-          // here; a remote environment's row with the same id is read-only.
-          onRemove={
-            canEditSources &&
-            source.environmentId === primaryEnvironmentId &&
-            source.id in configuredSources
-              ? () => removeSource(source.id)
-              : null
-          }
-        />
+        <SourceLimitsRow key={source.key} source={source} now={now} />
       ))}
       {groups.map((group) => (
         <div key={group.environmentId} className="flex flex-col gap-6">
@@ -565,7 +611,14 @@ export function UsageLimitsSection() {
           ))}
         </div>
       ))}
-      <AddUsageLimitSourceDialog open={adding} onOpenChange={setAdding} />
+      {targetEnvironment ? (
+        <AddUsageLimitSourceDialog
+          open={adding}
+          onOpenChange={setAdding}
+          environmentId={targetEnvironment.environmentId}
+          environmentLabel={targetEnvironment.label}
+        />
+      ) : null}
     </div>
   );
 }
