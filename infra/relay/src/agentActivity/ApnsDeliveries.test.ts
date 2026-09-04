@@ -5,11 +5,15 @@ import type {
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeCrypto from "node:crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Redacted from "effect/Redacted";
 import * as References from "effect/References";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import {
   FetchHttpClient,
   HttpClient,
@@ -974,6 +978,79 @@ describe("ApnsDeliveries", () => {
       ),
     );
   });
+
+  it.effect("continues a signed delivery batch after an APNs timeout", () =>
+    Effect.gen(function* () {
+      const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+      const markedDeliveries: Array<
+        Parameters<LiveActivities.LiveActivities["Service"]["markDelivery"]>[0]
+      > = [];
+      const secondTarget = {
+        ...target,
+        device_id: "device-2",
+        activity_push_token: "second-token",
+      };
+      const jobs = [target, secondTarget].map((device) =>
+        signApnsDeliveryJob({
+          secret: signingConfig.apnsDeliveryJobSigningSecret,
+          payload: makeApnsDeliveryJobPayload({
+            kind: "live_activity_update",
+            userId: device.user_id,
+            deviceId: device.device_id,
+            token: device.activity_push_token!,
+            aggregate,
+            createdAt: "1970-01-01T00:00:00.000Z",
+            expiresAt: "1970-01-01T00:10:00.000Z",
+            jobId: `job-timeout-${device.device_id}`,
+          }),
+        }),
+      );
+      const started = yield* Deferred.make<void>();
+      const results: Array<{ deviceId: string; ok: boolean }> = [];
+      const layer = makeLayer({
+        attempts,
+        markedDeliveries,
+        currentTargets: [target, secondTarget],
+        config: signingConfig,
+        execute: (request) =>
+          request.url.endsWith("/activity-token")
+            ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response("", { status: 200 })),
+              ),
+      });
+      const batch = yield* Effect.gen(function* () {
+        const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+        yield* Stream.fromIterable(jobs).pipe(
+          Stream.runForEach((job) =>
+            deliveries.processSignedJob(job).pipe(
+              Effect.tap((result) =>
+                Effect.sync(() => {
+                  results.push(result);
+                }),
+              ),
+            ),
+          ),
+        );
+      }).pipe(Effect.provide(layer), Effect.forkChild);
+
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("10 seconds");
+      yield* Fiber.join(batch);
+      expect(results).toMatchObject([
+        { deviceId: "device-1", ok: false },
+        { deviceId: "device-2", ok: true },
+      ]);
+      expect(attempts).toMatchObject([
+        {
+          sourceJobId: "job-timeout-device-1",
+          apnsReason: expect.stringContaining("request failed"),
+        },
+        { sourceJobId: "job-timeout-device-2", apnsStatus: 200 },
+      ]);
+      expect(markedDeliveries).toMatchObject([{ deviceId: "device-2" }]);
+    }),
+  );
 
   it.effect("processes signed push notification jobs through APNs and records attempts", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
