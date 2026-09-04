@@ -647,12 +647,39 @@ export const make = Effect.gen(function* () {
       Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
       Effect.withSpan("EnvironmentRegistry.connect"),
     );
+  // A managed SSH environment owns a tunnel that outlives the RPC session, so
+  // parking the supervisor is not enough to stop it. `resolver.prepare` runs on
+  // every attempt and brings the tunnel back on the next connect.
+  const disconnectManagedSsh = Effect.fn("EnvironmentRegistry.disconnectManagedSsh")(function* (
+    environmentId: EnvironmentId,
+  ) {
+    const target = (yield* getEntry(environmentId)).target;
+    if (target._tag !== "SshConnectionTarget") {
+      return;
+    }
+    const profile = yield* profiles.get(target.connectionId);
+    if (Option.isNone(profile) || !isSshConnectionProfile(profile.value)) {
+      return;
+    }
+    yield* ssh.disconnect(profile.value.target);
+  });
+
   const disconnect = (environmentId: EnvironmentId) =>
     withLeaseLock(
       environmentId,
-      acquireSupervisorLocked(environmentId).pipe(
-        Effect.flatMap((supervisor) => supervisor.disconnect),
-      ),
+      Effect.gen(function* () {
+        const supervisor = yield* acquireSupervisorLocked(environmentId);
+        yield* supervisor.disconnect;
+        yield* disconnectManagedSsh(environmentId).pipe(
+          Effect.tapError((error) =>
+            Effect.logWarning("Could not disconnect the managed SSH environment.", {
+              environmentId,
+              error,
+            }),
+          ),
+          Effect.ignore,
+        );
+      }),
     ).pipe(
       Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
       Effect.withSpan("EnvironmentRegistry.disconnect"),

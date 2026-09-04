@@ -780,6 +780,37 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
+  it.effect("disconnect tears down the managed SSH tunnel but keeps the environment", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([SSH_CONNECTION], [SSH_PROFILE]);
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          SSH_CONNECTION.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        yield* registry.disconnect(SSH_CONNECTION.environmentId);
+        yield* awaitConnectionState(
+          registry,
+          SSH_CONNECTION.environmentId,
+          (state) => state.phase === "available",
+        );
+
+        expect(yield* Ref.get(harness.disconnectedSshTargets)).toEqual([SSH_TARGET]);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).has(SSH_CONNECTION.environmentId),
+        ).toBe(true);
+        expect((yield* Ref.get(harness.storedProfiles)).has(SSH_CONNECTION.connectionId)).toBe(
+          true,
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("ignores connect and disconnect for environments that are no longer registered", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([]);
