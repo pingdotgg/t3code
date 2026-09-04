@@ -267,7 +267,19 @@ export const make = Effect.gen(function* () {
       ensureGit(operation, input.cwd).pipe(Effect.andThen(run(input)));
 
   return GitWorkflowService.of({
-    isRepository: (cwd) => detectGitRepositoryForStatus("GitWorkflowService.isRepository", cwd),
+    isRepository: (cwd) =>
+      registry.detect({ cwd }).pipe(
+        Effect.map((handle) => handle?.kind === "git"),
+        Effect.mapError(
+          (cause) =>
+            new GitManagerError({
+              operation: "GitWorkflowService.isRepository",
+              cwd,
+              detail: "Failed to detect a VCS repository for this Git workflow.",
+              cause,
+            }),
+        ),
+      ),
     hasCommit: (input) =>
       ensureGitCommand("GitWorkflowService.hasCommit", input.cwd).pipe(
         Effect.andThen(
