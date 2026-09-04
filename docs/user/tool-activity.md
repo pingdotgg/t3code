@@ -13,6 +13,10 @@ The latest live activity stays in the present tense while the turn continues, su
 Expanded rows follow the call's own state, such as "Clicked" after success.
 When a call has not reported a state yet, the label stays in the present tense.
 Failed, declined, and stopped calls say what happened without implying success.
+Failed calls keep their tool icon with a muted red tint, so a failed command still
+looks like a command. App logos and other multicolor icons keep their artwork and
+show a small muted red failure mark beside the row. Expand the call to inspect its
+output. Runtime errors and warnings keep their stronger styling.
 Preview browser actions use a globe icon. Other T3 tools keep the T3 mark.
 Group summaries count browser actions separately, such as "Used browser 18 times" or
 "Ran 4 commands and used browser 15 times". Browser-only groups also use a globe icon.
