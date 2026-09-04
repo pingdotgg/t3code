@@ -225,8 +225,8 @@ export function buildModelOptions(
       });
       options.set(key, {
         key,
-        label: model?.name ?? fallbackModelSelection.model,
-        subtitle: model?.subProvider ?? "",
+        label: model ? modelDisplayLabel(model) : fallbackModelSelection.model,
+        subtitle: providerLabel,
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
         providerDriver,
