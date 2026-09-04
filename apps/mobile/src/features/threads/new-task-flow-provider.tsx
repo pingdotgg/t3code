@@ -380,7 +380,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // Default mode until the user picks one explicitly — same resolution web
   // uses for new draft threads: per-project setting, then the repo's
   // checked-in t3.json, then the server's configured default.
-  const canReadFiles = useEnvironmentScope(selectedProject?.environmentId ?? null, AuthFilesystemReadScope);
+  const canReadFiles = useEnvironmentScope(
+    selectedProject?.environmentId ?? null,
+    AuthFilesystemReadScope,
+  );
   const t3ProjectFileQuery = useEnvironmentQuery(
     canReadFiles && selectedProject !== null && selectedProject.workspaceRoot !== ""
       ? projectEnvironment.readFile({

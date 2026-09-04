@@ -43,7 +43,8 @@ export function useAssetUrlState(
   resource: AssetResource | null,
 ): AssetUrlState {
   const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
-  const canReadResource = canReadFiles || (resource?._tag !== "workspace-file" && resource?._tag !== "media-file");
+  const canReadResource =
+    canReadFiles || (resource?._tag !== "workspace-file" && resource?._tag !== "media-file");
   const preparedConnection = usePreparedConnection(environmentId);
   const connectionPhase = useConnectionPhase(environmentId);
   const result = useAtomValue(
@@ -51,10 +52,12 @@ export function useAssetUrlState(
       ? EMPTY_ASSET_URL_ATOM
       : assetEnvironment.createUrl({ environmentId, input: { resource } }),
   );
-  const shared = !canReadResource ? { _tag: "Failure" as const } : assetUrlStateFromResult(
-    result,
-    preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null,
-  );
+  const shared = !canReadResource
+    ? { _tag: "Failure" as const }
+    : assetUrlStateFromResult(
+        result,
+        preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null,
+      );
   return deriveAssetUrlState({
     connectionPhase,
     // A failure left over from an outage is re-queried as soon as the
@@ -85,8 +88,11 @@ export function useRefreshAssetUrl(
   });
   return useCallback(async () => {
     if (environmentId === null || resource === null || httpBaseUrl === null) return null;
-    if ((resource._tag === "workspace-file" || resource._tag === "media-file") &&
-      !readEnvironmentScope(environmentId, AuthFilesystemReadScope)) return null;
+    if (
+      (resource._tag === "workspace-file" || resource._tag === "media-file") &&
+      !readEnvironmentScope(environmentId, AuthFilesystemReadScope)
+    )
+      return null;
     const state = assetUrlStateFromResult(
       await createUrl({ environmentId, input: { resource } }),
       httpBaseUrl,

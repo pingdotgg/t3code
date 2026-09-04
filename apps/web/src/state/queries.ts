@@ -274,7 +274,8 @@ export function useProjectPathSearch(
   const debouncedTarget = useDebouncedValue(normalizedTarget, PROJECT_PATH_SEARCH_DEBOUNCE_MS);
   const canReadFiles = useEnvironmentScope(debouncedTarget.environmentId, AuthFilesystemReadScope);
   const result = useEnvironmentQuery(
-    canReadFiles && debouncedTarget.environmentId !== null &&
+    canReadFiles &&
+      debouncedTarget.environmentId !== null &&
       debouncedTarget.cwd !== null &&
       debouncedTarget.query !== null &&
       (allowEmptyQuery || debouncedTarget.query.length > 0)

@@ -5,7 +5,9 @@ import { AuthEnvironmentScopes, AuthGrantScopes, AuthStandardClientScopes } from
 
 describe("authorization grants", () => {
   it("decodes legacy review credentials without offering them in new grants", () => {
-    expect(Schema.decodeUnknownSync(AuthEnvironmentScopes)(["review:write"])).toEqual(["review:write"]);
+    expect(Schema.decodeUnknownSync(AuthEnvironmentScopes)(["review:write"])).toEqual([
+      "review:write",
+    ]);
     expect(() => Schema.decodeUnknownSync(AuthGrantScopes)(["review:write"])).toThrow();
     expect(AuthStandardClientScopes).not.toContain("review:write");
   });

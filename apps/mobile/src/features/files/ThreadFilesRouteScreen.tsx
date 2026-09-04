@@ -261,14 +261,15 @@ function useThreadFilesWorkspace(params: {
   };
 }
 
-function FilesUnavailable({ detail = "This thread does not have an active workspace path." }: { detail?: string }) {
+function FilesUnavailable({
+  detail = "This thread does not have an active workspace path.",
+}: {
+  detail?: string;
+}) {
   return (
     <View className="flex-1 items-center justify-center bg-sheet px-6">
       <NativeStackScreenOptions options={{ title: "Files" }} />
-      <EmptyState
-        title="Files unavailable"
-        detail={detail}
-      />
+      <EmptyState title="Files unavailable" detail={detail} />
     </View>
   );
 }
@@ -627,7 +628,11 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     (resolvedActiveMode === "source" || isMarkdownPreviewFile(relativePath));
   const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const fileQuery = useEnvironmentQuery(
-    canReadFiles && environmentId !== null && cwd !== null && relativePath !== null && needsFileContents
+    canReadFiles &&
+      environmentId !== null &&
+      cwd !== null &&
+      relativePath !== null &&
+      needsFileContents
       ? projectEnvironment.readFile({
           environmentId,
           input: { cwd, relativePath },

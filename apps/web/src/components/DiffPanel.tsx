@@ -140,7 +140,10 @@ export default function DiffPanel({
   });
   const activeThreadId = routeThreadRef?.threadId ?? null;
   const activeThread = useThread(routeThreadRef);
-  const canReadFiles = useEnvironmentScope(activeThread?.environmentId ?? null, AuthFilesystemReadScope);
+  const canReadFiles = useEnvironmentScope(
+    activeThread?.environmentId ?? null,
+    AuthFilesystemReadScope,
+  );
   const activeProjectId = activeThread?.projectId ?? null;
   const activeProject = useProject(
     activeThread && activeProjectId
