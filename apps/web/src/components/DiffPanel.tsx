@@ -129,7 +129,7 @@ export default function DiffPanel({
     fileKeys: EMPTY_COLLAPSED_DIFF_FILE_KEYS,
   }));
   const [codeViewRevision, setCodeViewRevision] = useState(0);
-  const codeViewRef = useRef<AnnotatableCodeViewHandle>(null);
+  const [codeView, setCodeView] = useState<AnnotatableCodeViewHandle | null>(null);
 
   const routeThreadRef = useParams({
     strict: false,
@@ -449,16 +449,16 @@ export default function DiffPanel({
 
   useEffect(() => {
     if (!selectedDiffFileKey) return;
-    codeViewRef.current?.scrollTo({ type: "item", id: selectedDiffFileKey, align: "start" });
-  }, [codeViewMountKey, selectedDiffFileKey, selectedFileRevealRequestId]);
+    codeView?.scrollTo({ type: "item", id: selectedDiffFileKey, align: "start" });
+  }, [codeView, codeViewMountKey, selectedDiffFileKey, selectedFileRevealRequestId]);
 
   // Held as state so the scroll runs after a collapsed file has been drawn open again; scrolling
   // in the same tick would land on the folded header's position.
   const [treeReveal, setTreeReveal] = useState<{ fileKey: string; id: number } | null>(null);
   useEffect(() => {
     if (treeReveal === null) return;
-    codeViewRef.current?.scrollTo({ type: "item", id: treeReveal.fileKey, align: "start" });
-  }, [treeReveal]);
+    codeView?.scrollTo({ type: "item", id: treeReveal.fileKey, align: "start" });
+  }, [codeView, treeReveal]);
   const revealDiffFile = useCallback(
     (filePath: string) => {
       const file = codeViewFiles.find((candidate) => candidate.filePath === filePath);
@@ -972,7 +972,7 @@ export default function DiffPanel({
                 >
                   <AnnotatableCodeView
                     key={collapseScopeKey ?? reviewSectionId}
-                    viewerRef={codeViewRef}
+                    viewerRef={setCodeView}
                     codeViewKey={codeViewMountKey}
                     className="h-full min-h-0 overflow-auto"
                     files={codeViewFiles}
