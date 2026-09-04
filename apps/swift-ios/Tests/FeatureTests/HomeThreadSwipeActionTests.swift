@@ -926,7 +926,7 @@ struct HomeThreadSwipeActionTests {
     }
 
     @Test(.timeLimit(.minutes(1)), arguments: [false, true])
-    func departingTextIsHiddenWhileTheNextRowMovesIntoItsFrame(isSettledExpanded: Bool) async throws {
+    func departingTextIsHiddenBeforeNeighborFramesChange(isSettledExpanded: Bool) async throws {
         let client = SwipeSettlementClientStub()
         let first = thread(id: "first")
         let remaining = thread(id: "remaining")
@@ -953,23 +953,24 @@ struct HomeThreadSwipeActionTests {
             coordinator.cancelPendingSwipeActions()
         }
 
-        var overlappingFrames = 0
-        var visibleOverlaps = 0
-        let probe = SwipeRemovalFrameProbe {
-            guard outgoing.superview === neighbor.superview,
-                  let outgoingFrame = outgoing.layer.presentation()?.frame,
-                  let neighborFrame = neighbor.layer.presentation()?.frame,
-                  outgoingFrame.intersection(neighborFrame).height > 1 else { return }
-            overlappingFrames += 1
-            let opacity = outgoing.layer.presentation()?.opacity ?? outgoing.layer.opacity
-            if !outgoing.contentView.isHidden, opacity > 0.01 {
-                visibleOverlaps += 1
+        let originalIndexPath = try #require(collectionView.indexPath(for: outgoing))
+        let originalNeighborFrame = neighbor.frame
+        var hidBeforeSnapshot = false
+        // XCTest can complete UIKit animations without rendering any frames.
+        // Observe the visibility change before the collection starts its update.
+        let observation = outgoing.contentView.observe(\.isHidden, options: [.new]) { _, change in
+            MainActor.assumeIsolated {
+                guard change.newValue == true else { return }
+                if collectionView.indexPath(for: outgoing) == originalIndexPath,
+                   neighbor.frame == originalNeighborFrame,
+                   !neighbor.contentView.isHidden {
+                    hidBeforeSnapshot = true
+                }
             }
         }
-        defer { probe.stop() }
+        defer { observation.invalidate() }
         let completions = AsyncStream<Bool>.makeStream()
         coordinator.performSwipe(.settle, for: first) { succeeded in
-            probe.stop()
             completions.continuation.yield(succeeded)
         }
         var settled = first
@@ -986,10 +987,7 @@ struct HomeThreadSwipeActionTests {
 
         var results = completions.stream.makeAsyncIterator()
         #expect(await results.next() == true)
-        #expect(visibleOverlaps == 0)
-        if UIView.areAnimationsEnabled, !UIAccessibility.isReduceMotionEnabled {
-            #expect(overlappingFrames > 0)
-        }
+        #expect(hidBeforeSnapshot == !UIAccessibility.isReduceMotionEnabled)
         collectionView.layoutIfNeeded()
         #expect(!neighbor.contentView.isHidden)
         if isSettledExpanded {
@@ -1223,26 +1221,6 @@ enum PendingSettlementEvent: CaseIterable {
     case thread
     case detail
     case detailDelta
-}
-
-@MainActor
-private final class SwipeRemovalFrameProbe: NSObject {
-    private let onFrame: () -> Void
-    private var displayLink: CADisplayLink?
-
-    init(onFrame: @escaping () -> Void) {
-        self.onFrame = onFrame
-        super.init()
-        displayLink = CADisplayLink(target: self, selector: #selector(sample))
-        displayLink?.add(to: .main, forMode: .common)
-    }
-
-    @objc private func sample() { onFrame() }
-
-    func stop() {
-        displayLink?.invalidate()
-        displayLink = nil
-    }
 }
 
 @MainActor
