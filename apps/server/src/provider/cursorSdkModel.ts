@@ -41,12 +41,10 @@ export function cursorSdkModelSelection(modelSelection: ModelSelection): CursorS
     ...(modelSelection.options === undefined || modelSelection.options.length === 0
       ? {}
       : {
-          params: modelSelection.options.map(
-            (option): ModelParameterValue => ({
-              id: cursorSdkParameterId(option.id),
-              value: String(option.value),
-            }),
-          ),
+          params: modelSelection.options.map((option): ModelParameterValue => ({
+            id: cursorSdkParameterId(option.id),
+            value: String(option.value),
+          })),
         }),
   };
 }
