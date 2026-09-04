@@ -13,6 +13,7 @@ import { afterEach, vi } from "vite-plus/test";
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import {
+  formatServicePruneResult,
   formatServiceStatus,
   offerServiceDuringOnboarding,
   reconcileService,
@@ -85,6 +86,7 @@ function makeTestService(serviceStatus: BootService.BootServiceStatus) {
         };
       }),
     uninstall: Effect.succeed(false),
+    prune: () => Effect.die("Prune is not exercised by this test."),
   });
   return { service, installOptions };
 }
@@ -201,3 +203,24 @@ it.effect("keeps onboarding successful when a newer version appears before insta
     expect(ready).toBe(false);
   }),
 );
+
+it("formats a service runtime prune preview", () => {
+  assert.equal(
+    formatServicePruneResult({ dryRun: true, versions: ["0.0.31", "0.0.32"] }),
+    ["Would prune 2 old T3 Code service runtimes:", "  t3@0.0.31", "  t3@0.0.32"].join("\n"),
+  );
+});
+
+it("formats a completed service runtime prune", () => {
+  assert.equal(
+    formatServicePruneResult({ dryRun: false, versions: ["0.0.31"] }),
+    ["Pruned 1 old T3 Code service runtime:", "  t3@0.0.31"].join("\n"),
+  );
+});
+
+it("reports when there are no old service runtimes", () => {
+  assert.equal(
+    formatServicePruneResult({ dryRun: false, versions: [] }),
+    "No old T3 Code service runtimes found.",
+  );
+});

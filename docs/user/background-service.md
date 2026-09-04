@@ -39,6 +39,18 @@ and pass `--allow-downgrade`:
 npx t3@1.2.3 service update --allow-downgrade
 ```
 
+Preview old service runtimes that can be removed:
+
+```sh
+npx t3@latest service prune --dry-run
+```
+
+Remove them:
+
+```sh
+npx t3@latest service prune
+```
+
 Stop it and remove it from startup:
 
 ```sh
@@ -47,6 +59,8 @@ npx t3@latest service uninstall
 
 Updating restarts T3 Code briefly. Let active agent work and terminal commands finish first.
 If a remote update is already in progress, wait for it to finish before retrying a local update.
+Pruning does not restart the service. It keeps the active runtime and both versions named by the
+latest update record, and it refuses to run while an update is pending.
 
 The service runs a small stable launcher. Exact T3 Code versions are installed separately, so a
 failed remote candidate can return to the previous version without rewriting the service

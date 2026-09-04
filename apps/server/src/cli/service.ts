@@ -90,6 +90,18 @@ export function formatServiceStatus(
   ].join("\n");
 }
 
+export function formatServicePruneResult(result: BootService.BootServicePruneResult): string {
+  if (result.versions.length === 0) {
+    return "No old T3 Code service runtimes found.";
+  }
+  const action = result.dryRun ? "Would prune" : "Pruned";
+  const noun = result.versions.length === 1 ? "runtime" : "runtimes";
+  return [
+    `${action} ${result.versions.length} old T3 Code service ${noun}:`,
+    ...result.versions.map((version) => `  t3@${version}`),
+  ].join("\n");
+}
+
 const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
   flags: { readonly baseDir: Parameters<typeof resolveCliAuthConfig>[0]["baseDir"] },
   run: Effect.Effect<A, E, BootService.BootService>,
@@ -178,6 +190,27 @@ const serviceStatusCommand = Command.make("status", projectLocationFlags).pipe(
   ),
 );
 
+const dryRunFlag = Flag.boolean("dry-run").pipe(
+  Flag.withDescription("Show which runtimes would be removed without changing anything."),
+  Flag.withDefault(false),
+);
+
+const servicePruneCommand = Command.make("prune", {
+  ...projectLocationFlags,
+  dryRun: dryRunFlag,
+}).pipe(
+  Command.withDescription("Remove old T3 Code service runtimes that are safe to discard."),
+  Command.withHandler((flags) =>
+    runServiceCommand(
+      flags,
+      Effect.gen(function* () {
+        const service = yield* BootService.BootService;
+        yield* Console.log(formatServicePruneResult(yield* service.prune(flags)));
+      }),
+    ),
+  ),
+);
+
 export const offerServiceDuringOnboarding = Effect.gen(function* () {
   const service = yield* BootService.BootService;
   const status = yield* service.status;
@@ -252,6 +285,7 @@ export const serviceCommand = Command.make("service").pipe(
     serviceInstallCommand,
     serviceUninstallCommand,
     serviceUpdateCommand,
+    servicePruneCommand,
     serviceStatusCommand,
   ]),
 );

@@ -7,6 +7,11 @@ import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ProcessRunner from "../processRunner.ts";
+import {
+  compareExactServiceVersions,
+  isExactServiceVersion,
+  type ServiceState,
+} from "./serviceProtocol.ts";
 
 /**
  * A pinned runtime is an exact `t3@<version>` npm-installed into
@@ -26,6 +31,11 @@ export interface PinnedRuntimePaths {
   readonly versionDir: string;
   readonly entryPath: string;
   readonly sentinelPath: string;
+}
+
+export interface PinnedRuntimePruneResult {
+  readonly dryRun: boolean;
+  readonly versions: ReadonlyArray<string>;
 }
 
 export function pinnedRuntimePaths(
@@ -220,3 +230,69 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
 
 export const ensurePinnedRuntimeInstalled = (input: PinnedRuntimeInstallInput) =>
   pinnedRuntimeInstallLock.withPermit(installPinnedRuntime(input));
+
+export const prunePinnedRuntimes = Effect.fn("cloud.pinned_runtime.prune")(function* (input: {
+  readonly baseDir: string;
+  readonly state: ServiceState;
+  readonly dryRun: boolean;
+  readonly fs: FileSystem.FileSystem;
+  readonly path: Path.Path;
+}) {
+  const versionsDir = input.path.join(input.baseDir, PINNED_RUNTIME_DIR, "versions");
+  if (!(yield* input.fs.exists(versionsDir))) {
+    return { dryRun: input.dryRun, versions: [] } satisfies PinnedRuntimePruneResult;
+  }
+
+  const protectedVersions = new Set([
+    input.state.activeVersion,
+    ...(input.state.update === undefined
+      ? []
+      : [input.state.update.fromVersion, input.state.update.targetVersion]),
+  ]);
+  const realVersionsDir = yield* input.fs.realPath(versionsDir);
+  const entries = yield* input.fs.readDirectory(versionsDir);
+  const versions = yield* Effect.filter(entries, (version) =>
+    Effect.gen(function* () {
+      if (
+        !isExactServiceVersion(version) ||
+        protectedVersions.has(version) ||
+        compareExactServiceVersions(version, input.state.activeVersion) >= 0
+      ) {
+        return false;
+      }
+
+      const paths = pinnedRuntimePaths(input.path, input.baseDir, version);
+      const realVersionDir = yield* input.fs.realPath(paths.versionDir).pipe(Effect.option);
+      if (
+        Option.isNone(realVersionDir) ||
+        realVersionDir.value !== input.path.join(realVersionsDir, version)
+      ) {
+        return false;
+      }
+
+      const [entryExists, sentinel] = yield* Effect.all([
+        input.fs.exists(paths.entryPath),
+        input.fs.readFileString(paths.sentinelPath).pipe(Effect.option),
+      ]);
+      return entryExists && Option.isSome(sentinel) && sentinel.value.trim() === version;
+    }),
+  );
+  versions.sort((left, right) => {
+    const precedence = compareExactServiceVersions(left, right);
+    return precedence === 0 ? left.localeCompare(right) : precedence;
+  });
+
+  if (!input.dryRun) {
+    yield* Effect.forEach(
+      versions,
+      (version) =>
+        input.fs.remove(pinnedRuntimePaths(input.path, input.baseDir, version).versionDir, {
+          recursive: true,
+          force: true,
+        }),
+      { discard: true },
+    );
+  }
+
+  return { dryRun: input.dryRun, versions } satisfies PinnedRuntimePruneResult;
+});

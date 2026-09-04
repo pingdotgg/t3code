@@ -12,7 +12,9 @@ import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
+  prunePinnedRuntimes,
 } from "./pinnedRuntime.ts";
+import { SERVICE_LAUNCHER_PROTOCOL, type ServiceState } from "./serviceProtocol.ts";
 
 const successfulRunner = (fs: FileSystem.FileSystem, path: Path.Path) =>
   ProcessRunner.ProcessRunner.of({
@@ -36,6 +38,19 @@ const successfulRunner = (fs: FileSystem.FileSystem, path: Path.Path) =>
         };
       }),
   });
+
+const writeCompletedRuntime = Effect.fn("test.write_completed_runtime")(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  baseDir: string,
+  version: string,
+) {
+  const runtime = pinnedRuntimePaths(path, baseDir, version);
+  yield* fs.makeDirectory(path.dirname(runtime.entryPath), { recursive: true });
+  yield* fs.writeFileString(runtime.entryPath, "export {};\n");
+  yield* fs.writeFileString(runtime.sentinelPath, `${version}\n`);
+  return runtime;
+});
 
 it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
   it.effect("validates a staging tree before atomically publishing it", () =>
@@ -171,6 +186,59 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       yield* Fiber.interrupt(install);
       const versionsDir = path.join(baseDir, "runtime", "versions");
       assert.deepEqual(yield* fs.readDirectory(versionsDir), []);
+    }),
+  );
+});
+
+it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
+  it.effect("removes only completed, unreferenced runtimes older than the active version", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-prune-" });
+      const removable = yield* writeCompletedRuntime(fs, path, baseDir, "1.8.0");
+      const rollback = yield* writeCompletedRuntime(fs, path, baseDir, "1.9.0");
+      const active = yield* writeCompletedRuntime(fs, path, baseDir, "2.0.0");
+      const newer = yield* writeCompletedRuntime(fs, path, baseDir, "2.1.0");
+      const incomplete = pinnedRuntimePaths(path, baseDir, "1.7.0");
+      yield* fs.makeDirectory(incomplete.versionDir, { recursive: true });
+      const wrongSentinel = yield* writeCompletedRuntime(fs, path, baseDir, "1.6.0");
+      yield* fs.writeFileString(wrongSentinel.sentinelPath, "wrong-version\n");
+      const staging = path.join(path.dirname(active.versionDir), ".staging-install");
+      yield* fs.makeDirectory(staging);
+      const linkedTarget = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runtime-link-target-" });
+      const linkedRuntime = pinnedRuntimePaths(path, baseDir, "1.5.0");
+      yield* fs.symlink(linkedTarget, linkedRuntime.versionDir);
+
+      const state = {
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: "2.0.0",
+        update: {
+          id: "committed-update",
+          fromVersion: "1.9.0",
+          targetVersion: "2.0.0",
+          status: "committed",
+        },
+      } satisfies ServiceState;
+
+      const preview = yield* prunePinnedRuntimes({ baseDir, state, dryRun: true, fs, path });
+      assert.deepEqual(preview, { dryRun: true, versions: ["1.8.0"] });
+      assert.isTrue(yield* fs.exists(removable.versionDir));
+
+      const pruned = yield* prunePinnedRuntimes({ baseDir, state, dryRun: false, fs, path });
+      assert.deepEqual(pruned, { dryRun: false, versions: ["1.8.0"] });
+      assert.isFalse(yield* fs.exists(removable.versionDir));
+      for (const preserved of [
+        rollback.versionDir,
+        active.versionDir,
+        newer.versionDir,
+        incomplete.versionDir,
+        wrongSentinel.versionDir,
+        staging,
+        linkedRuntime.versionDir,
+      ]) {
+        assert.isTrue(yield* fs.exists(preserved));
+      }
     }),
   );
 });
