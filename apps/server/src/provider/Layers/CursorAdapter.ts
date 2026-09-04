@@ -89,6 +89,7 @@ const CURSOR_RESUME_VERSION = 1 as const;
 const ACP_PLAN_MODE_ALIASES = ["plan", "architect"];
 const ACP_IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "implement"];
 const ACP_APPROVAL_MODE_ALIASES = ["ask"];
+const CURSOR_TURN_ERROR_MAX_CHARS = 1_000;
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
@@ -135,6 +136,11 @@ interface CursorSessionContext {
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
+  /** Turns interrupted while sendTurn was still preparing (before the prompt
+   * reached the wire). acp.cancel is a no-op at that point, so sendTurn
+   * checks this set at its prompt checkpoints instead. Entries are removed
+   * when the turn settles. */
+  readonly cancelledTurnIds: Set<TurnId>;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
@@ -298,6 +304,31 @@ function applyRequestedSessionConfiguration<E>(input: {
       ),
     );
   });
+}
+
+/**
+ * Maps an approval decision to the option id the agent actually advertised.
+ * ACP lets agents choose their own option ids — only the option kind is
+ * contractual — so the decision is mapped to a kind and matched against the
+ * request's own options (same style as selectAutoApprovedPermissionOption);
+ * the generic hyphenated fallback only applies when the agent offered no
+ * option of that kind.
+ */
+function selectCursorPermissionOptionId(
+  request: EffectAcpSchema.RequestPermissionRequest,
+  decision: Exclude<ProviderApprovalDecision, "cancel">,
+): string {
+  const kind =
+    decision === "acceptForSession"
+      ? "allow_always"
+      : decision === "accept"
+        ? "allow_once"
+        : "reject_once";
+  const match = request.options.find((option) => option.kind === kind);
+  if (typeof match?.optionId === "string" && match.optionId.trim()) {
+    return match.optionId.trim();
+  }
+  return acpPermissionOutcome(decision);
 }
 
 function selectAutoApprovedPermissionOption(
@@ -735,7 +766,7 @@ export function makeCursorAdapter(
                         ? ({ outcome: "cancelled" } as const)
                         : {
                             outcome: "selected" as const,
-                            optionId: acpPermissionOutcome(resolved),
+                            optionId: selectCursorPermissionOptionId(params, resolved),
                           },
                   };
                 }),
@@ -782,6 +813,7 @@ export function makeCursorAdapter(
             notificationFiber: undefined,
             pendingApprovals,
             pendingUserInputs,
+            cancelledTurnIds: new Set(),
             turns: [],
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
@@ -931,9 +963,46 @@ export function makeCursorAdapter(
         const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
         // Count this prompt immediately so a superseded in-flight prompt
         // resolving from here on does not settle the turn; the matching
-        // decrement is the `ensuring` below.
+        // decrement is the `ensuring` below. Bind the active turn id in the
+        // same synchronous stretch: after the increment, a concurrent
+        // sendTurn must already see this turn id or it would steer onto the
+        // previous one.
         ctx.promptsInFlight += 1;
+        ctx.activeTurnId = turnId;
 
+        // interruptTurn cannot reach a turn whose prompt has not been sent
+        // yet (acp.cancel is a no-op pre-prompt), so cancelled turn ids are
+        // checked at both checkpoints instead.
+        const settleIfCancelled = () =>
+          Effect.gen(function* () {
+            if (!ctx.cancelledTurnIds.has(turnId)) {
+              return false;
+            }
+            if (ctx.promptsInFlight !== 1) {
+              // A steered sibling prompt for this same turn is still in
+              // flight or preparing: skip the wire but keep the marker — the
+              // last draining prompt settles the turn (here once
+              // promptsInFlight === 1, or in the ensuring once it hits 0).
+              return true;
+            }
+            ctx.cancelledTurnIds.delete(turnId);
+            settled = true;
+            yield* offerRuntimeEvent({
+              type: "turn.completed",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: input.threadId,
+              turnId,
+              payload: { state: "cancelled", stopReason: "cancelled" },
+            });
+            return true;
+          });
+
+        // Set once any path publishes this turn's terminal event, so the
+        // ensuring below cannot republish it when a late interrupt re-adds
+        // the cancel marker between the terminal publish and the drain.
+        let settled = false;
+        let turnStartedEmitted = false;
         return yield* Effect.gen(function* () {
           const turnModelSelection =
             input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
@@ -953,7 +1022,6 @@ export function makeCursorAdapter(
             mapError: ({ cause, method }) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
           });
-          ctx.activeTurnId = turnId;
           if (steeringTurnId === undefined) {
             ctx.lastPlanFingerprint = undefined;
           }
@@ -962,6 +1030,14 @@ export function makeCursorAdapter(
             activeTurnId: turnId,
             updatedAt: yield* nowIso,
           };
+
+          if (yield* settleIfCancelled()) {
+            return {
+              threadId: input.threadId,
+              turnId,
+              resumeCursor: ctx.session.resumeCursor,
+            };
+          }
 
           if (steeringTurnId === undefined) {
             yield* offerRuntimeEvent({
@@ -972,6 +1048,7 @@ export function makeCursorAdapter(
               turnId,
               payload: { model: resolvedModel },
             });
+            turnStartedEmitted = true;
           }
 
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
@@ -1043,6 +1120,14 @@ export function makeCursorAdapter(
             });
           }
 
+          if (yield* settleIfCancelled()) {
+            return {
+              threadId: input.threadId,
+              turnId,
+              resumeCursor: ctx.session.resumeCursor,
+            };
+          }
+
           const result = yield* ctx.acp
             .prompt({
               prompt: promptParts,
@@ -1070,6 +1155,8 @@ export function makeCursorAdapter(
           // superseded prompt resolving (usually cancelled) while another is
           // in flight or pending must leave the merged turn running.
           if (ctx.promptsInFlight === 1) {
+            ctx.cancelledTurnIds.delete(turnId);
+            settled = true;
             yield* offerRuntimeEvent({
               type: "turn.completed",
               ...(yield* makeEventStamp()),
@@ -1089,17 +1176,92 @@ export function makeCursorAdapter(
             resumeCursor: ctx.session.resumeCursor,
           };
         }).pipe(
+          // A failure after turn.started must still close the turn: surface
+          // it as turn.completed(failed) before the error propagates so the
+          // UI never waits on a dead turn. Same settle rule as the success
+          // path — only the last remaining prompt may settle.
+          Effect.tapError((error) =>
+            ctx.promptsInFlight !== 1 ||
+            ctx.stopped || // session torn down or replaced mid-flight; a late failure must not publish on a dead/new session
+            (!turnStartedEmitted && steeringTurnId === undefined)
+              ? Effect.void
+              : Effect.gen(function* () {
+                  ctx.cancelledTurnIds.delete(turnId);
+                  settled = true;
+                  const rawMessage =
+                    typeof error === "object" && error !== null && "message" in error
+                      ? error.message
+                      : undefined;
+                  const collapsed = (typeof rawMessage === "string" ? rawMessage : String(error))
+                    .replace(/\s+/g, " ")
+                    .trim();
+                  yield* offerRuntimeEvent({
+                    type: "turn.completed",
+                    ...(yield* makeEventStamp()),
+                    provider: PROVIDER,
+                    threadId: input.threadId,
+                    turnId,
+                    payload: {
+                      state: "failed",
+                      stopReason: null,
+                      errorMessage:
+                        collapsed.length > CURSOR_TURN_ERROR_MAX_CHARS
+                          ? `${collapsed.slice(0, CURSOR_TURN_ERROR_MAX_CHARS - 1)}…`
+                          : collapsed,
+                    },
+                  });
+                }),
+          ),
+          // The last draining prompt settles a cancelled turn whose
+          // checkpoints all ran while a steered sibling was still in flight
+          // (those skip the wire but leave the marker in place).
           Effect.ensuring(
-            Effect.sync(() => {
-              ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
-            }),
+            // Finalizers must be infallible; the decrement is a leading sync
+            // step, so ignoring a failed settle publish cannot skip it.
+            Effect.ignore(
+              Effect.gen(function* () {
+                ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
+                if (
+                  !settled &&
+                  ctx.promptsInFlight === 0 &&
+                  !ctx.stopped &&
+                  ctx.cancelledTurnIds.delete(turnId)
+                ) {
+                  yield* offerRuntimeEvent({
+                    type: "turn.completed",
+                    ...(yield* makeEventStamp()),
+                    provider: PROVIDER,
+                    threadId: input.threadId,
+                    turnId,
+                    payload: { state: "cancelled", stopReason: "cancelled" },
+                  });
+                }
+              }),
+            ),
           ),
         );
       });
 
-    const interruptTurn: CursorAdapterShape["interruptTurn"] = (threadId) =>
+    const interruptTurn: CursorAdapterShape["interruptTurn"] = (threadId, turnId) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(threadId);
+        if (turnId !== undefined && turnId !== ctx.activeTurnId) {
+          // A cancel addressed to a non-active turn must never reach the
+          // wire: acp.cancel would kill whatever prompt IS active on this
+          // session. While a prompt is in flight the addressed sendTurn may
+          // not have become active yet, so record the cancel for its
+          // checkpoints; a completed or unknown turn is ignored.
+          if (ctx.promptsInFlight > 0) {
+            ctx.cancelledTurnIds.add(turnId);
+          }
+          return;
+        }
+        // Pre-prompt cancellation cannot ride acp.cancel (a no-op until the
+        // prompt is on the wire); sendTurn checks this set at its prompt
+        // checkpoints and settles the turn as cancelled instead.
+        if (ctx.activeTurnId !== undefined) {
+          ctx.cancelledTurnIds.add(ctx.activeTurnId);
+        }
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
         yield* Effect.ignore(
