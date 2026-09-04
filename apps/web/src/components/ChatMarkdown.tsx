@@ -2157,17 +2157,28 @@ function useChatMarkdownState({
     reportFailure: false,
     refresh: true,
   });
-  const createAssetUrl = useCallback<typeof loadAssetUrl>((input) => {
-    const resource = input.input.resource;
-    if ((resource._tag === "workspace-file" || resource._tag === "media-file") &&
-      !readEnvironmentScope(input.environmentId, AuthFilesystemReadScope)) {
-      return Promise.resolve(AsyncResult.failure(Cause.fail(new EnvironmentAuthorizationError({
-        message: "This connection cannot read host files.",
-        requiredScope: AuthFilesystemReadScope,
-      }))));
-    }
-    return loadAssetUrl(input);
-  }, [loadAssetUrl]);
+  const createAssetUrl = useCallback<typeof loadAssetUrl>(
+    (input) => {
+      const resource = input.input.resource;
+      if (
+        (resource._tag === "workspace-file" || resource._tag === "media-file") &&
+        !readEnvironmentScope(input.environmentId, AuthFilesystemReadScope)
+      ) {
+        return Promise.resolve(
+          AsyncResult.failure(
+            Cause.fail(
+              new EnvironmentAuthorizationError({
+                message: "This connection cannot read host files.",
+                requiredScope: AuthFilesystemReadScope,
+              }),
+            ),
+          ),
+        );
+      }
+      return loadAssetUrl(input);
+    },
+    [loadAssetUrl],
+  );
   const searchProjectEntries = useAtomQueryRunner(projectEnvironment.searchEntries, {
     reportFailure: false,
   });
@@ -2424,7 +2435,12 @@ function useChatMarkdownState({
   );
   const findWorkspaceBasenameMatch = useCallback(
     async (workspaceRelativePath: string) => {
-      if (!cwd || environmentId === null || !readEnvironmentScope(environmentId, AuthFilesystemReadScope) || !needsWorkspaceBasenameLookup(workspaceRelativePath)) {
+      if (
+        !cwd ||
+        environmentId === null ||
+        !readEnvironmentScope(environmentId, AuthFilesystemReadScope) ||
+        !needsWorkspaceBasenameLookup(workspaceRelativePath)
+      ) {
         return null;
       }
       const result = await searchProjectEntries({
