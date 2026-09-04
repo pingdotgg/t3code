@@ -15,6 +15,7 @@ import {
   resolveWebAssetBrandForPackageVersion,
   resolveWebIconOverrides,
 } from "../../../scripts/lib/brand-assets.ts";
+import { findEagerBunRuntimeImports } from "../../../scripts/lib/cli-external-packages.ts";
 import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
@@ -24,6 +25,7 @@ import {
   ServerCliBuildAssetMissingError,
   ServerCliCommandExitError,
   ServerCliDevelopmentIconSourceMissingError,
+  ServerCliEagerBunImportError,
   ServerCliDevelopmentIconTargetMissingError,
   ServerCliPublishIconSourceMissingError,
   ServerCliPublishIconTargetMissingError,
@@ -140,6 +142,53 @@ const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")
 // build subcommand
 // ---------------------------------------------------------------------------
 
+/**
+ * Fail the build if a chunk Node loads eagerly imports a Bun module.
+ *
+ * `@effect/platform-bun` and `@effect/sql-sqlite-bun` are inlined so that a
+ * Bun-hosted server shares the bundle's single `effect` instance — two
+ * instances silently broke CORS, compression and auth headers, because Effect
+ * keys per-request pre-response handlers off a module-level WeakMap. Inlining
+ * them also pulls `bun:sqlite` into the bundle, which is only safe while it
+ * sits in a chunk reached solely through `import()`.
+ *
+ * Rolldown merges a dynamic import into its importer's chunk with only an
+ * INEFFECTIVE_DYNAMIC_IMPORT warning and exit 0, so read the artifact instead
+ * of trusting the build to fail. This runs on every PR through
+ * `vp run build:desktop`, unlike the desktop self-containment probe.
+ */
+const assertNoEagerBunImports = Effect.fn("assertNoEagerBunImports")(function* (distDir: string) {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+
+  const chunks = new Map<string, string>();
+  for (const name of yield* fs.readDirectory(distDir)) {
+    if (!name.endsWith(".mjs")) continue;
+    chunks.set(name, yield* fs.readFileString(path.join(distDir, name)));
+  }
+
+  // Both entries are packed separately into the same flat directory, so each
+  // owns a graph that has to be walked.
+  const entryChunks = ["bin.mjs", "service-launcher.mjs"];
+  for (const entry of entryChunks) {
+    if (!chunks.has(entry)) {
+      return yield* new ServerCliBuildAssetMissingError({ assetPath: path.join(distDir, entry) });
+    }
+  }
+
+  const { reachable, violations } = findEagerBunRuntimeImports(chunks, entryChunks);
+  if (violations.length > 0) {
+    return yield* new ServerCliEagerBunImportError({
+      imports: violations.map(({ chunk, specifier }) => `${chunk} -> ${specifier}`),
+      eagerChunkCount: reachable.length,
+    });
+  }
+
+  yield* Effect.log(
+    `[cli] Verified ${reachable.length} eagerly loaded chunks import no Bun modules`,
+  );
+});
+
 const buildCmd = Command.make(
   "build",
   {
@@ -161,6 +210,8 @@ const buildCmd = Command.make(
           shell: false,
         }),
       );
+
+      yield* assertNoEagerBunImports(path.join(serverDir, "dist"));
 
       const webDist = path.join(repoRoot, "apps/web/dist");
       const clientTarget = path.join(serverDir, "dist/client");

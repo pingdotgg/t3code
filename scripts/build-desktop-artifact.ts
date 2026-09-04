@@ -2088,9 +2088,11 @@ const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSel
     // --version exercises the eagerly loaded module graph, which is where a
     // missing dependency shows up, without starting a server or touching disk
     // state. It does not cover lazily imported externals: node-pty is checked
-    // by the WSL preflight probe at runtime, while ffi-rs, @ff-labs/fff-node
-    // and the bun adapters are covered by the shared runtime-external closure
-    // and emitted-bundle checks.
+    // by the WSL preflight probe at runtime, while ffi-rs and @ff-labs/fff-node
+    // are covered by the shared runtime-external closure and the emitted-bundle
+    // checks above. The Bun adapters are not external at all any more, and this
+    // probe never takes the Bun branch; `assertNoEagerBunImports` in
+    // apps/server/scripts/cli.ts is what keeps them off the eager graph.
     yield* runCommand(
       ChildProcess.make(
         process.execPath,

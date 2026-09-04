@@ -68,3 +68,15 @@ export class ServerCliBuildAssetMissingError extends Schema.TaggedErrorClass<Ser
     return `Missing build asset: ${this.assetPath}. Run the build subcommand first.`;
   }
 }
+
+export class ServerCliEagerBunImportError extends Schema.TaggedErrorClass<ServerCliEagerBunImportError>()(
+  "ServerCliEagerBunImportError",
+  {
+    imports: Schema.Array(Schema.String),
+    eagerChunkCount: Schema.Int,
+  },
+) {
+  override get message(): string {
+    return `The bundle imports Bun modules from chunks Node loads eagerly (${this.eagerChunkCount} scanned): ${this.imports.join(", ")}. Node cannot resolve a \`bun:\` specifier, so every \`node bin.mjs\` would fail with ERR_UNSUPPORTED_ESM_URL_SCHEME. @effect/platform-bun and @effect/sql-sqlite-bun are inlined so a Bun-hosted server shares one effect instance with the bundle; that requires every path into them to stay behind a runtime-conditional dynamic import. Something now imports one of them statically.`;
+  }
+}

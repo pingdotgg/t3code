@@ -11,6 +11,7 @@ import serverPackageJson from "../../apps/server/package.json" with { type: "jso
 
 import {
   CLI_RUNTIME_EXTERNAL_PREFIXES,
+  findEagerBunRuntimeImports,
   findInlinedExternalPackages,
   selectCliRuntimeExternalDependencies,
   shouldBundleCliDependency,
@@ -55,9 +56,20 @@ describe("shouldBundleCliDependency", () => {
     }
   });
 
-  it("leaves bun-only entry points external", () => {
-    assert.strictEqual(shouldBundleCliDependency("@effect/platform-bun"), false);
-    assert.strictEqual(shouldBundleCliDependency("@effect/sql-sqlite-bun"), false);
+  // Externalizing these packages instead of the `bun:*` specifiers they import
+  // gave a Bun-hosted server a second `effect` beside the bundle, and Effect
+  // keys its per-request pre-response handlers off a module-level WeakMap. The
+  // bundled copy wrote handlers the platform server's copy never read, so CORS,
+  // gzip and auth headers silently vanished from real responses.
+  it("bundles the Bun platform packages so one effect instance serves requests", () => {
+    assert.strictEqual(shouldBundleCliDependency("@effect/platform-bun"), true);
+    assert.strictEqual(shouldBundleCliDependency("@effect/sql-sqlite-bun"), true);
+  });
+
+  it("leaves Bun's own runtime modules external", () => {
+    for (const id of ["bun", "bun:sqlite", "bun:ffi"]) {
+      assert.strictEqual(shouldBundleCliDependency(id), false, id);
+    }
   });
 
   // The real package is `node-gyp-build-optional-packages`, reached by prefix.
@@ -72,7 +84,7 @@ describe("selectCliRuntimeExternalDependencies", () => {
   it("keeps only runtime-external dependency roots for the Windows sidecar", () => {
     assert.deepStrictEqual(
       selectCliRuntimeExternalDependencies({
-        "@effect/platform-bun": "1.0.0",
+        "@effect/platform-node": "1.0.0",
         "@ff-labs/fff-node": "2.0.0",
         effect: "3.0.0",
         "node-pty": "4.0.0",
@@ -148,8 +160,6 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
     return installed;
   }).pipe(Effect.cached, Effect.runSync);
 
-  // Runtime-external only. The build-only entries resolve `bun:*` and are never
-  // loaded by Node, so their closure genuinely does not need to be external.
   const isRuntimeExternal = (name: string) =>
     CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => name.startsWith(prefix));
 
@@ -274,5 +284,64 @@ var x = 1;
     const result = findInlinedExternalPackages("var x = 1; // node_modules/detect-libc/lib.js");
     assert.strictEqual(result.regionCount, 0);
     assert.deepStrictEqual(result.inlined, []);
+  });
+});
+
+// The bundle now carries `bun:sqlite` itself. That only works while the chunk
+// holding it is reached solely through `import()`; statically reachable, it
+// kills every Node run with ERR_UNSUPPORTED_ESM_URL_SCHEME.
+describe("findEagerBunRuntimeImports", () => {
+  const chunks = (entries: Record<string, string>) => new Map(Object.entries(entries));
+
+  it("allows a bun specifier behind a dynamic import", () => {
+    const result = findEagerBunRuntimeImports(
+      chunks({
+        "bin.mjs": `import { a } from "./shared-abc.mjs";
+const client = await import("./SqliteClient-def.mjs");`,
+        "shared-abc.mjs": "export const a = 1;",
+        "SqliteClient-def.mjs": 'import { Database } from "bun:sqlite";',
+      }),
+      ["bin.mjs"],
+    );
+
+    assert.deepStrictEqual(result.violations, []);
+    // The dynamically imported chunk must stay out of the eager graph, or the
+    // pass above would be vacuous for the wrong reason.
+    assert.deepStrictEqual(result.reachable, ["bin.mjs", "shared-abc.mjs"]);
+  });
+
+  it("flags a bun specifier a statically reachable chunk imports", () => {
+    const result = findEagerBunRuntimeImports(
+      chunks({
+        "bin.mjs": 'import { a } from "./shared-abc.mjs";',
+        "shared-abc.mjs": `import { Database } from "bun:sqlite";
+export const a = Database;`,
+      }),
+      ["bin.mjs"],
+    );
+
+    assert.deepStrictEqual(result.violations, [
+      { chunk: "shared-abc.mjs", specifier: "bun:sqlite" },
+    ]);
+  });
+
+  it("follows re-exports and bare imports, and flags the bun package too", () => {
+    const result = findEagerBunRuntimeImports(
+      chunks({
+        "bin.mjs": 'import "./side-effect.mjs";',
+        "side-effect.mjs": 'export * from "./redis-ghi.mjs";',
+        "redis-ghi.mjs": 'import { RedisClient } from "bun";',
+      }),
+      ["bin.mjs"],
+    );
+
+    assert.deepStrictEqual(result.violations, [{ chunk: "redis-ghi.mjs", specifier: "bun" }]);
+  });
+
+  it("reports nothing reachable when the entry chunk is missing", () => {
+    const result = findEagerBunRuntimeImports(chunks({}), ["bin.mjs"]);
+
+    assert.deepStrictEqual(result.reachable, []);
+    assert.deepStrictEqual(result.violations, []);
   });
 });
