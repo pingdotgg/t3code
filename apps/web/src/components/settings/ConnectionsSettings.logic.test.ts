@@ -19,10 +19,10 @@ describe("parseSshEnvironmentVariables", () => {
     ).toEqual({ AWS_PROFILE: "production", TOKEN: "  keep spaces  " });
   });
 
-  it("preserves names that overlap with object prototype properties", () => {
-    const environment = parseSshEnvironmentVariables([{ name: "__proto__", value: "value" }]);
-    expect(environment?.["__proto__"]).toBe("value");
-    expect(Object.hasOwn(environment ?? {}, "__proto__")).toBe(true);
+  it("rejects names that overlap with object prototype properties", () => {
+    expect(() => parseSshEnvironmentVariables([{ name: "__proto__", value: "value" }])).toThrow(
+      "local SSH process",
+    );
   });
 
   it("does not count blank rows toward the variable limit", () => {
@@ -63,6 +63,12 @@ describe("parseSshEnvironmentVariables", () => {
       parseSshEnvironmentVariables([
         { name: "TOKEN", value: "one" },
         { name: " TOKEN ", value: "two" },
+      ]),
+    ).toThrow("listed more than once");
+    expect(() =>
+      parseSshEnvironmentVariables([
+        { name: "TOKEN", value: "one" },
+        { name: "token", value: "two" },
       ]),
     ).toThrow("listed more than once");
     expect(() => parseSshEnvironmentVariables([{ name: "TOKEN", value: "bad\0value" }])).toThrow(

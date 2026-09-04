@@ -336,6 +336,7 @@ const UNSAFE_DESKTOP_SSH_ENVIRONMENT_VARIABLE_NAMES = new Set([
   "SHLIB_PATH",
   "T3_SSH_AUTH_SECRET",
   "USERPROFILE",
+  "__PROTO__",
 ]);
 
 /** Block high-risk process overrides before target-specific SendEnv validation. */

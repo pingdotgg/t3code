@@ -24,6 +24,7 @@ export function parseSshEnvironmentVariables(
     string,
     string
   >;
+  const normalizedNames = new Set<string>();
   let nonEmptyDraftCount = 0;
   let encodedBytes = 0;
 
@@ -59,9 +60,11 @@ export function parseSshEnvironmentVariables(
     if (draft.value.includes("\0")) {
       throw new Error(`SSH environment variable '${name}' contains a NUL character.`);
     }
-    if (Object.hasOwn(environmentVariables, name)) {
+    const normalizedName = name.toUpperCase();
+    if (normalizedNames.has(normalizedName)) {
       throw new Error(`SSH environment variable '${name}' is listed more than once.`);
     }
+    normalizedNames.add(normalizedName);
     encodedBytes +=
       sshEnvironmentTextEncoder.encode(name).byteLength +
       1 +

@@ -65,6 +65,15 @@ describe("DesktopSshEnvironmentTargetSchema", () => {
         environmentVariables: { "BAD-NAME": "value" },
       }),
     ).toThrow();
+    expect(() =>
+      decode({
+        alias: "devbox",
+        hostname: "devbox.example.test",
+        username: null,
+        port: null,
+        environmentVariables: JSON.parse('{"__proto__":"value"}'),
+      }),
+    ).toThrow();
   });
 
   it("rejects oversized SSH target fields", () => {
