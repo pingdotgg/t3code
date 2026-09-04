@@ -9,6 +9,36 @@ describe("orchestrator MCP tool guidance", () => {
     assert.include(DelegateTaskTool.description ?? "", "cross-provider");
     assert.include(CreateThreadsTool.description ?? "", "not delegation");
     assert.include(CreateThreadsTool.description ?? "", "call delegate_task");
+    assert.include(DelegateTaskTool.description ?? "", "waitTimedOut");
+    assert.include(DelegateTaskTool.description ?? "", "does not cancel the child");
+    assert.include(DelegateTaskTool.description ?? "", "keep that taskId");
+  });
+
+  it("documents wait timeout as a parent budget, not a child failure", () => {
+    const schema = Tool.getJsonSchema(DelegateTaskTool) as {
+      readonly properties?: Readonly<
+        Record<
+          string,
+          {
+            readonly description?: unknown;
+            readonly anyOf?: ReadonlyArray<{ readonly description?: unknown }>;
+          }
+        >
+      >;
+    };
+    const mode = schema.properties?.mode;
+    const timeoutMs = schema.properties?.timeoutMs;
+    const modeText = [mode?.description, ...(mode?.anyOf ?? []).map((entry) => entry.description)]
+      .filter((value) => typeof value === "string")
+      .join(" ");
+    const timeoutText = [
+      timeoutMs?.description,
+      ...(timeoutMs?.anyOf ?? []).map((entry) => entry.description),
+    ]
+      .filter((value) => typeof value === "string")
+      .join(" ");
+    assert.include(modeText, "Defaults to async");
+    assert.include(timeoutText, "does not cancel the child");
   });
 
   it("publishes an actionable schedule schema and compatibility string branch", () => {
