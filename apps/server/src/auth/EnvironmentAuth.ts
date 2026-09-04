@@ -731,14 +731,18 @@ export const make = Effect.gen(function* () {
 
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) =>
-      bootstrapCredentials.consume(credential, input).pipe(
-        Effect.mapError(toBootstrapExchangeError),
+      bootstrapCredentials.consume(credential, {
+        ...input,
+        ...(requestedScopes !== undefined ? { requestedScopes } : {}),
+      }).pipe(
+        Effect.mapError((cause) =>
+          cause._tag === "BootstrapCredentialScopeNotGrantedError"
+            ? new ServerAuthScopeNotGrantedError({})
+            : toBootstrapExchangeError(cause),
+        ),
         Effect.flatMap((grant) =>
           Effect.gen(function* () {
             const grantedScopes = requestedScopes ?? grant.scopes;
-            if (!grantedScopes.every((scope) => grant.scopes.includes(scope))) {
-              return yield* new ServerAuthScopeNotGrantedError({});
-            }
             return yield* sessions
               .issue({
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
