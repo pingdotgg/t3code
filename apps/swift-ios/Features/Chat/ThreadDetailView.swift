@@ -26,8 +26,11 @@ public struct ThreadDetailView: View {
     @State private var feedbackIdentifier: String?
     @State private var didRestoreDraft = false
     @State private var draftSaveTask: Task<Void, Never>?
+    @State private var draftSaveError: String?
     @State private var toolSurface: FeatureThreadToolSurface?
     @State private var branchPullRequest: FeaturePullRequest?
+    @State private var linkedMediaPreview: FeatureLinkedMediaPreview?
+    @State private var linkedMediaPreviewError: String?
     // Plain state, not `FocusState`: the composer's UIKit text view owns
     // focus and mirrors it through this binding, because SwiftUI drops
     // writes to a `FocusState` no `.focused()` view registers with.
@@ -76,18 +79,29 @@ public struct ThreadDetailView: View {
             }
         }
         .task(id: thread.id) {
-            let restoreBaseline = composerDraft
-            let restoreKey = draftKey
             isLoading = true
             _ = await model.detail(for: thread.id, force: true)
             isLoading = false
-            await restoreDraft(from: restoreBaseline, key: restoreKey)
+        }
+        .task(id: thread.id) {
+            // A cached thread can already show its composer while the server
+            // is catching up. Local drafts must not wait for that request.
+            guard !didRestoreDraft else { return }
+            await restoreDraft(from: composerDraft, key: draftKey)
         }
         .task(id: pullRequestObservationID) {
             await observeThreadPullRequest()
         }
+        .task(id: workspaceCatalogID) {
+            if let environmentID = currentThread.environmentID, let cwd = workspaceCatalogPath,
+               let instanceID = selection?.providerID ?? currentSelection?.providerID {
+                await model.refreshWorkspaceProviders(environmentID: environmentID, cwd: cwd, instanceID: instanceID)
+            }
+        }
+        .environment(\.providerSetupContext, currentThread.environmentID.map {
+            ProviderSetupContext(model: model, environmentID: $0)
+        })
         .onChange(of: draft) { scheduleDraftSave() }
-        .onChange(of: attachments) { scheduleDraftSave() }
         .onChange(of: selection) { scheduleDraftSave() }
         .onChange(of: threadConnectionState) { _, state in
             if state == .connected,
@@ -110,9 +124,18 @@ public struct ThreadDetailView: View {
                 Group {
                     switch surface {
                     case .files:
-                        FeatureFilesView(client: model.client, threadID: thread.id)
+                        FeatureFilesView(
+                            client: model.client,
+                            threadID: thread.id,
+                            workspaceRoot: markdownImageContext?.workspaceRoot
+                        )
                     case let .file(path):
-                        FeatureFilesView(client: model.client, threadID: thread.id, initialPath: path)
+                        FeatureFilesView(
+                            client: model.client,
+                            threadID: thread.id,
+                            initialPath: path,
+                            workspaceRoot: markdownImageContext?.workspaceRoot
+                        )
                     case .review:
                         FeatureReviewView(client: model.client, threadID: thread.id)
                     case .sourceControl:
@@ -164,17 +187,80 @@ public struct ThreadDetailView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .environment(\.openURL, OpenURLAction { url in
+            if handleArtifactTemplateURL(url) { return .handled }
+            if handleTypedMediaPreviewURL(url) { return .handled }
+            if case let .workspaceFile(hostPath) = MarkdownImageSource.classify(
+                url.absoluteString, workspaceRoot: markdownImageContext?.workspaceRoot
+            ) {
+                let kind = FeatureFilePreviewKind.infer(path: hostPath)
+                let suffix = URL(fileURLWithPath: hostPath).pathExtension.lowercased()
+                if kind == .image || kind == .video || kind == .pdf || ["html", "htm"].contains(suffix) {
+                    resolveHostMedia(path: hostPath, kind: kind)
+                    return .handled
+                }
+            }
             guard let workspaceRoot = markdownImageContext?.workspaceRoot,
                   let path = MarkdownWorkspaceFileLink.relativePath(
                       for: url,
                       workspaceRoot: workspaceRoot
                   ) else {
+                if url.scheme?.lowercased() == "http" || url.scheme?.lowercased() == "https",
+                   let kind = FeatureLinkedMediaPreview.previewKind(for: url) {
+                    linkedMediaPreview = FeatureLinkedMediaPreview(
+                        source: url.isFileURL ? .file(url) : .remote(url),
+                        kind: kind,
+                        fileName: url.lastPathComponent
+                    )
+                    return .handled
+                }
+                if url.isFileURL {
+                    let path = url.path
+                    let kind = FeatureFilePreviewKind.infer(path: path)
+                    if kind == .image || kind == .video {
+                        resolveHostMedia(path: path, kind: kind)
+                        return .handled
+                    }
+                }
+                if url.scheme?.lowercased() == "t3code" { return .discarded }
                 parentOpenURL(url)
+                return .handled
+            }
+            let kind = FeatureFilePreviewKind.infer(path: path)
+            if kind == .image || kind == .video {
+                resolveHostMedia(path: path, kind: kind)
                 return .handled
             }
             toolSurface = .file(path)
             return .handled
         })
+        .fullScreenCover(item: $linkedMediaPreview) { preview in
+            NavigationStack {
+                FeatureNativeMediaPreviewView(
+                    source: preview.source,
+                    kind: preview.kind,
+                    fileName: preview.fileName
+                )
+                .navigationTitle(preview.fileName)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { linkedMediaPreview = nil }
+                    }
+                }
+            }
+            .preferredColorScheme(.dark)
+        }
+        .alert(
+            "Preview unavailable",
+            isPresented: Binding(
+                get: { linkedMediaPreviewError != nil },
+                set: { if !$0 { linkedMediaPreviewError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(linkedMediaPreviewError ?? "The file could not be opened.")
+        }
     }
 
     private var detail: FeatureThreadDetail? {
@@ -225,11 +311,12 @@ public struct ThreadDetailView: View {
 
                 Spacer(minLength: 6)
 
-                // The per-second timeline only exists for the live working
-                // duration; idle threads render a static status instead of
-                // waking every second forever.
+                // Cached work state is not proof that the agent is still
+                // running. Only current, working threads need a live timer.
                 Group {
-                    if currentThread.homeStatus == .working {
+                    if refreshPresentation != nil {
+                        EmptyView()
+                    } else if currentThread.homeStatus == .working {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             headerStatus(at: context.date)
                         }
@@ -248,7 +335,7 @@ public struct ThreadDetailView: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
         .accessibilityAddTraits(
-            currentThread.hasLiveWorkingDuration ? .updatesFrequently : []
+            refreshPresentation == nil && currentThread.hasLiveWorkingDuration ? .updatesFrequently : []
         )
         .transaction { transaction in
             transaction.animation = nil
@@ -302,6 +389,36 @@ public struct ThreadDetailView: View {
                         Label("Regenerate title", systemImage: "sparkles")
                     }
                 }
+                Menu {
+                    if !FeatureRuntimeMode.allCases.contains(currentThread.runtimeMode) {
+                        Section("Current") {
+                            Button {} label: {
+                                Label(
+                                    runtimeModeLabel(currentThread.runtimeMode),
+                                    systemImage: "checkmark"
+                                )
+                            }
+                            .disabled(true)
+                        }
+                    }
+                    ForEach(FeatureRuntimeMode.allCases, id: \.self) { mode in
+                        Button {
+                            guard currentThread.runtimeMode != mode else {
+                                return
+                            }
+                            Task { await model.setRuntimeMode(thread.id, mode: mode) }
+                        } label: {
+                            if currentThread.runtimeMode == mode {
+                                Label(runtimeModeLabel(mode), systemImage: "checkmark")
+                            } else {
+                                Text(runtimeModeLabel(mode))
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Permissions", systemImage: "checkmark.shield")
+                }
+                .disabled(model.isPerformingAction)
                 if currentThread.canTogglePin, !currentThread.isArchived {
                     Button {
                         Task {
@@ -372,6 +489,15 @@ public struct ThreadDetailView: View {
         .accessibilityIdentifier("thread-actions-menu")
     }
 
+    private func runtimeModeLabel(_ mode: FeatureRuntimeMode) -> String {
+        switch mode {
+        case .approvalRequired: "Supervised"
+        case .autoAcceptEdits: "Auto-accept edits"
+        case .automatic: "Automatic"
+        case .fullAccess: "Full access"
+        }
+    }
+
     private var currentPullRequest: ThreadPullRequestDestination? {
         return ThreadPullRequestDestination.resolve(
             thread: currentThread,
@@ -385,6 +511,7 @@ public struct ThreadDetailView: View {
 
     @MainActor
     private func observeThreadPullRequest() async {
+        branchPullRequest = nil
         guard let observationIdentity = pullRequestObservationID else {
             branchPullRequest = nil
             return
@@ -439,7 +566,7 @@ public struct ThreadDetailView: View {
     private func reloadThread() {
         isLoading = true
         Task {
-            _ = await model.detail(for: thread.id, force: true)
+            _ = await model.detail(for: thread.id, force: true, fresh: true)
             isLoading = false
         }
     }
@@ -453,7 +580,8 @@ public struct ThreadDetailView: View {
         ThreadRefreshPresentation.resolve(
             loadState: model.detailLoadStates[thread.id],
             connectionState: threadConnectionState,
-            isOpening: isLoading
+            isOpening: isLoading,
+            syncState: model.threadSyncStates[thread.id]
         )
     }
 
@@ -507,17 +635,23 @@ public struct ThreadDetailView: View {
     }
 
     private func timeline(_ detail: FeatureThreadDetail) -> some View {
-        let isWorking = detail.thread.state == .working
+        let hasActiveWork = detail.thread.state == .working
             || detail.thread.state == .queued
             || detail.thread.state == .monitoring
+        let isWorking = hasActiveWork && refreshPresentation == nil
         return Group {
-            if detail.messages.isEmpty, !isWorking {
-                ContentUnavailableView(
-                    "Ready for a task",
-                    systemImage: "sparkles",
-                    description: Text("Tell the agent what you want to build.")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if detail.messages.isEmpty, !hasActiveWork {
+                if refreshPresentation == nil {
+                    ContentUnavailableView(
+                        "Ready for a task",
+                        systemImage: "sparkles",
+                        description: Text("Tell the agent what you want to build.")
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    Color.clear
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             } else {
                 FeatureTranscriptCollectionView(
                     threadID: thread.id,
@@ -544,7 +678,15 @@ public struct ThreadDetailView: View {
                 FeatureComposerView(
                     text: $draft,
                     selection: $selection,
-                    attachments: $attachments,
+                    attachments: attachmentBinding,
+                    draftOwnerID: "thread:\(currentThread.id)",
+                    environmentID: currentThread.environmentID,
+                    draftStorageKey: draftKey,
+                    environmentIsConnected: threadConnectionState == .connected,
+                    attachmentUploads: model.attachmentUploads,
+                    attachmentPreferences: currentThread.environmentID.flatMap {
+                        model.snapshot.preferencesByEnvironment?[$0]
+                    } ?? FeatureEnvironmentPreferences(),
                     providers: threadProviders,
                     threadSelection: currentSelection,
                     materializesDefaultSelection: false,
@@ -566,7 +708,10 @@ public struct ThreadDetailView: View {
                     },
                     onUserInputSubmit: { id, answers in
                         Task { await model.resolveUserInput(id, answers: answers) }
-                    }
+                    },
+                    onRefreshModels: refreshThreadEnvironmentModels,
+                    draftSaveError: draftSaveError,
+                    onRetryDraftSave: persistDraftImmediately
                 )
             }
             .background(T3Colors.background)
@@ -577,8 +722,8 @@ public struct ThreadDetailView: View {
         let selectedProviderID = selection?.providerID ?? currentSelection?.providerID
         let provider = threadProviders.first { $0.id == selectedProviderID }
         return FeatureComposerPowerFeatures(
-            slashCommands: provider?.slashCommands ?? [],
-            skills: provider?.skills ?? [],
+            slashCommands: provider?.workspaceCatalog(cwd: workspaceCatalogPath).slashCommands ?? [],
+            skills: provider?.workspaceCatalog(cwd: workspaceCatalogPath).skills ?? [],
             pathSearchScopeID: currentThread.id,
             searchPaths: { query in
                 try await model.client.searchThreadFiles(
@@ -596,8 +741,25 @@ public struct ThreadDetailView: View {
     }
 
     private var threadProviders: [FeatureProvider] {
-        let project = model.snapshot.projects.first { $0.id == currentThread.projectID }
-        return DailyUXCreationContext.providers(for: project, in: model.snapshot)
+        ThreadComposerProviderCatalog.providers(
+            for: currentThread,
+            in: model.snapshot
+        )
+    }
+
+    private var workspaceCatalogPath: String? {
+        currentThread.worktreePath ?? model.snapshot.projects.first { $0.id == currentThread.projectID }?.path
+    }
+
+    private var workspaceCatalogID: String {
+        "\(currentThread.environmentID ?? ""):\(workspaceCatalogPath ?? ""):\(selection?.providerID ?? currentSelection?.providerID ?? "")"
+    }
+
+    private func refreshThreadEnvironmentModels() async throws {
+        guard let environmentID = currentThread.environmentID else { return }
+        guard await model.refreshProviders(environmentID: environmentID) else {
+            throw FeatureModelRefreshError()
+        }
     }
 
     private var timelineRenderUpdate: FeatureDetailRenderUpdate? {
@@ -636,6 +798,60 @@ public struct ThreadDetailView: View {
         )
     }
 
+    private func handleArtifactTemplateURL(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "t3code",
+              url.host?.lowercased() == "codex-artifact-template",
+              url.path == "/use",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.queryItems?.count == 1,
+              components.queryItems?.first?.name == "prompt",
+              let prompt = components.queryItems?.first?.value?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !prompt.isEmpty, prompt.count <= 4_096 else { return false }
+        if draft == prompt || draft.hasSuffix(" \(prompt)") || draft.hasSuffix("\n\(prompt)") {
+            composerFocused = true
+            return true
+        }
+        draft = draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? prompt
+            : draft + (draft.last?.isWhitespace == true ? "" : " ") + prompt
+        composerFocused = true
+        return true
+    }
+
+    private func handleTypedMediaPreviewURL(_ url: URL) -> Bool {
+        guard let route = FeatureTypedMediaPreviewRoute.parse(url) else { return false }
+        resolveHostMedia(path: route.path, kind: route.kind)
+        return true
+    }
+
+    private func resolveHostMedia(path: String, kind: FeatureFilePreviewKind) {
+        guard let resolver = model.client as? any FeatureWorkspaceAssetResolving else {
+            linkedMediaPreviewError = "This environment cannot resolve media files."
+            return
+        }
+        let requestedThreadID = currentThread.id
+        Task {
+            do {
+                let resolved = try await resolver.mediaAssetURL(
+                    threadID: requestedThreadID,
+                    path: path
+                )
+                guard !Task.isCancelled, currentThread.id == requestedThreadID else { return }
+                linkedMediaPreview = FeatureLinkedMediaPreview(
+                    source: .remote(resolved),
+                    kind: kind,
+                    fileName: URL(fileURLWithPath: path).lastPathComponent
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled, currentThread.id == requestedThreadID else { return }
+                linkedMediaPreviewError = error.localizedDescription
+            }
+        }
+    }
+
     private func dismissKeyboard() {
         guard composerFocused else { return }
         composerFocused = false
@@ -649,7 +865,13 @@ public struct ThreadDetailView: View {
 
     private func send() {
         let message = draft
-        let pendingAttachments = attachments
+        let pendingAttachments = currentThread.environmentID.map {
+            model.attachmentUploads.attachmentsForSend(
+                draftKey: draftKey,
+                environmentID: $0,
+                attachments: attachments
+            )
+        } ?? attachments
         guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !pendingAttachments.isEmpty else {
             return
@@ -663,12 +885,15 @@ public struct ThreadDetailView: View {
             sendFeedback(command, message: message, submitter: submitter)
             return
         }
-        draftSaveTask?.cancel()
+        let pendingDraftSave = draftSaveTask
+        pendingDraftSave?.cancel()
+        draftSaveTask = nil
         isSending = true
         draft = ""
         attachments = []
         composerFocused = false
         Task {
+            await pendingDraftSave?.value
             let sent = await submitMessage(
                 FeatureMessageSubmission(
                 threadID: thread.id,
@@ -678,6 +903,10 @@ public struct ThreadDetailView: View {
                 )
             )
             if sent {
+                let trailingSave = draftSaveTask
+                trailingSave?.cancel()
+                draftSaveTask = nil
+                await trailingSave?.value
                 let followUpDraft = composerDraft
                 if followUpDraft.text.isEmpty && followUpDraft.attachments.isEmpty {
                     try? await draftStore.removeDraft(for: draftKey)
@@ -699,7 +928,7 @@ public struct ThreadDetailView: View {
                 sendFailed = true
             }
             isSending = false
-            if !sent {
+            if !sent || !draft.isEmpty || !attachments.isEmpty {
                 persistDraftImmediately()
             }
         }
@@ -737,7 +966,12 @@ public struct ThreadDetailView: View {
         isSending = true
 
         Task {
-            defer { isSending = false }
+            defer {
+                isSending = false
+                if !draft.isEmpty || !attachments.isEmpty {
+                    persistDraftImmediately()
+                }
+            }
             do {
                 let identifier = try await submitter.submitCodexFeedback(
                     threadID: thread.id,
@@ -772,6 +1006,18 @@ public struct ThreadDetailView: View {
         FeatureComposerDraftStore.threadKey(currentThread)
     }
 
+    private var attachmentBinding: Binding<[FeatureDraftAttachment]> {
+        Binding(
+            get: { attachments },
+            set: { value in
+                attachments = value
+                // Photo results arrive while a full-screen cover is closing.
+                // Save at the handoff, not through a parent view observer.
+                persistDraftImmediately()
+            }
+        )
+    }
+
     @MainActor
     private func restoreDraft(from baseline: FeatureComposerDraft, key: String) async {
         let saved = try? await draftStore.draft(for: key)
@@ -797,34 +1043,71 @@ public struct ThreadDetailView: View {
         // not pass the didRestoreDraft gate, so enqueue their first save now.
         if liveDraft != baseline {
             scheduleDraftSave()
+        } else if saved != nil, let environmentID = currentThread.environmentID {
+            model.attachmentUploads.syncOwner(
+                draftKey: key,
+                environmentID: environmentID,
+                attachments: restored.attachments
+            )
         }
     }
 
     private func scheduleDraftSave() {
         guard didRestoreDraft, !isSending else { return }
-        draftSaveTask?.cancel()
+        let previousSave = draftSaveTask
+        previousSave?.cancel()
         let snapshot = composerDraft
         let key = draftKey
+        let environmentID = currentThread.environmentID
         draftSaveTask = Task {
+            await previousSave?.value
             do {
                 try await Task.sleep(for: .milliseconds(220))
                 try Task.checkCancellation()
                 try await draftStore.setDraft(snapshot, for: key)
+                guard !Task.isCancelled else { return }
+                draftSaveError = nil
+                if let environmentID {
+                    model.attachmentUploads.syncOwner(
+                        draftKey: key,
+                        environmentID: environmentID,
+                        attachments: snapshot.attachments
+                    )
+                }
             } catch is CancellationError {
                 return
             } catch {
-                return
+                guard !Task.isCancelled else { return }
+                draftSaveError = "Could not save draft. \(error.localizedDescription)"
             }
         }
     }
 
     private func persistDraftImmediately() {
-        guard didRestoreDraft else { return }
-        draftSaveTask?.cancel()
+        guard didRestoreDraft, !isSending else { return }
+        let previousSave = draftSaveTask
+        previousSave?.cancel()
         let snapshot = composerDraft
         let key = draftKey
+        let environmentID = currentThread.environmentID
         draftSaveTask = Task {
-            try? await draftStore.setDraft(snapshot, for: key)
+            do {
+                await previousSave?.value
+                try Task.checkCancellation()
+                try await draftStore.setDraft(snapshot, for: key)
+                guard !Task.isCancelled else { return }
+                draftSaveError = nil
+                if let environmentID {
+                    model.attachmentUploads.syncOwner(
+                        draftKey: key,
+                        environmentID: environmentID,
+                        attachments: snapshot.attachments
+                    )
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                draftSaveError = "Could not save draft. \(error.localizedDescription)"
+            }
         }
     }
 
@@ -845,6 +1128,7 @@ public struct ThreadDetailView: View {
 
 enum ThreadRefreshPresentation: Equatable {
     case loading
+    case catchingUp
     case reconnecting
     case offline
     case failed
@@ -852,6 +1136,7 @@ enum ThreadRefreshPresentation: Equatable {
     var title: String {
         switch self {
         case .loading: "Updating thread..."
+        case .catchingUp: "Catching up..."
         case .reconnecting: "Reconnecting..."
         case .offline: "Computer offline"
         case .failed: "Could not update thread"
@@ -860,7 +1145,7 @@ enum ThreadRefreshPresentation: Equatable {
 
     var systemImage: String {
         switch self {
-        case .loading: "hourglass"
+        case .loading, .catchingUp: "hourglass"
         case .reconnecting: "wifi"
         case .offline, .failed: "wifi.exclamationmark"
         }
@@ -871,10 +1156,20 @@ enum ThreadRefreshPresentation: Equatable {
     static func resolve(
         loadState: FeatureThreadLoadState?,
         connectionState: FeatureConnection.State?,
-        isOpening: Bool
+        isOpening: Bool,
+        syncState: FeatureThreadSyncState? = nil
     ) -> Self? {
+        switch syncState {
+        case .catchingUp: return .catchingUp
+        case .reconnecting: return .reconnecting
+        case .failed: return .failed
+        case .live, nil: break
+        }
         if isOpening || loadState == .loading { return .loading }
         if case .failed = loadState { return .failed }
+        // A synchronized thread subscription is newer evidence than an
+        // environment's periodic shell probe. Socket loss has its own state.
+        if syncState == .live { return nil }
         switch connectionState {
         case .connecting, .reconnecting: return .reconnecting
         case .disconnected: return .offline
@@ -2162,7 +2457,7 @@ struct FeatureMessageView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("message-\(message.id)")
         case .tool:
-            FeatureWorkLogView(message: message)
+            FeatureWorkLogView(message: message, imageContext: imageContext)
                 .id(message.id)
         case .system:
             Text(message.text)
@@ -2186,6 +2481,7 @@ struct FeatureMessageView: View {
 
 private struct FeatureWorkLogView: View {
     let message: FeatureMessage
+    let imageContext: MarkdownImageContext?
     @State private var isExpanded = false
 
     var body: some View {
@@ -2196,7 +2492,20 @@ private struct FeatureWorkLogView: View {
                 withTransaction(transaction) { isExpanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
-                    Label(message.toolName ?? "Tool output", systemImage: "terminal")
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            FeatureToolActivityIcon(presentation: message.toolPresentation, context: imageContext)
+                            Text(message.toolName ?? "Tool output")
+                            if let source = message.toolPresentation?.sourceName {
+                                Text(source).lineLimit(1)
+                            }
+                        }
+                        if let activeWorkLabel = message.activeWorkLabel {
+                            Text(activeWorkLabel)
+                                .lineLimit(1)
+                                .foregroundStyle(T3Colors.statusRunning)
+                        }
+                    }
                     Spacer(minLength: 8)
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.caption.weight(.semibold))
@@ -2218,6 +2527,18 @@ private struct FeatureWorkLogView: View {
                     .textSelection(.enabled)
                     .padding(.top, 8)
                     .transition(.identity)
+                if FeatureWorkLogMedia.shouldRenderImages(
+                    isExpanded: isExpanded,
+                    paths: message.workLogImagePaths ?? []
+                ) {
+                    MarkdownMessageView(
+                        FeatureWorkLogMedia.markdownSource(
+                            for: message.workLogImagePaths ?? []
+                        ),
+                        imageContext: imageContext
+                    )
+                    .padding(.top, 8)
+                }
             }
         }
         .padding(.vertical, 6)
@@ -2226,6 +2547,23 @@ private struct FeatureWorkLogView: View {
             transaction.animation = nil
             transaction.disablesAnimations = true
         }
+    }
+}
+
+enum FeatureWorkLogMedia {
+    static func shouldRenderImages(isExpanded: Bool, paths: [String]) -> Bool {
+        isExpanded && !paths.isEmpty
+    }
+
+    static func markdownSource(for paths: [String]) -> String {
+        paths.prefix(8).compactMap { path in
+            guard let escaped = path.addingPercentEncoding(
+                withAllowedCharacters: .urlPathAllowed.subtracting(
+                    CharacterSet(charactersIn: "()<>[]!\\\"' #%?\n\r")
+                )
+            ) else { return nil }
+            return "![](\(escaped))"
+        }.joined(separator: "\n\n")
     }
 }
 
@@ -2305,24 +2643,20 @@ private struct FeatureMessageAttachmentsView: View {
                     )
                     .accessibilityValue(attachmentAccessibilityValue(attachment))
                     .accessibilityIdentifier("attachment-\(attachment.id)")
-                    .accessibilityAddTraits(
-                        attachment.mimeType.hasPrefix("image/") && attachment.url != nil
-                            ? .isButton
-                            : []
-                    )
+                    .accessibilityAddTraits(canPreview(attachment) ? .isButton : [])
                     .accessibilityHint(
-                        attachment.mimeType.hasPrefix("image/") && attachment.url != nil
+                        canPreview(attachment)
                             ? "Opens full-screen preview"
                             : ""
                     )
                     .accessibilityAction {
-                        if attachment.mimeType.hasPrefix("image/"), attachment.url != nil {
+                        if canPreview(attachment) {
                             previewedAttachment = attachment
                         }
                     }
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        if attachment.mimeType.hasPrefix("image/"), attachment.url != nil {
+                        if canPreview(attachment) {
                             previewedAttachment = attachment
                         }
                     }
@@ -2350,6 +2684,11 @@ private struct FeatureMessageAttachmentsView: View {
         )
         return "\(attachment.name), \(size)"
     }
+
+    private func canPreview(_ attachment: FeatureMessageAttachment) -> Bool {
+        (attachment.previewData != nil && attachment.mimeType.hasPrefix("image/"))
+            || attachment.url != nil
+    }
 }
 
 private struct FeatureAttachmentPreview: View {
@@ -2358,29 +2697,16 @@ private struct FeatureAttachmentPreview: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                Color.black.ignoresSafeArea()
-                if let url = attachment.url {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case let .success(image):
-                            image
-                                .resizable()
-                                .scaledToFit()
-                        case .failure:
-                            ContentUnavailableView(
-                                "Image unavailable",
-                                systemImage: "exclamationmark.triangle"
-                            )
-                        case .empty:
-                            ProgressView()
-                        @unknown default:
-                            ProgressView()
-                        }
-                    }
-                    .padding(12)
-                }
-            }
+            FeatureNativeMediaPreviewView(
+                source: attachment.previewData.map(FeatureMediaPreviewSource.localImage)
+                    ?? attachment.url.map(FeatureMediaPreviewSource.remote)
+                    ?? .localImage(Data()),
+                kind: FeatureLinkedMediaPreview.previewKind(
+                    fileName: attachment.name,
+                    mimeType: attachment.mimeType
+                ),
+                fileName: attachment.name
+            )
             .navigationTitle(attachment.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -2391,5 +2717,28 @@ private struct FeatureAttachmentPreview: View {
             .t3NavigationChrome()
         }
         .preferredColorScheme(.dark)
+    }
+}
+
+private struct FeatureLinkedMediaPreview: Identifiable {
+    let id = UUID()
+    let source: FeatureMediaPreviewSource
+    let kind: FeatureFilePreviewKind
+    let fileName: String
+
+    static func previewKind(for url: URL) -> FeatureFilePreviewKind? {
+        let kind = FeatureFilePreviewKind.infer(path: url.path)
+        return switch kind {
+        case .image, .pdf, .video, .document: kind
+        case .markdown, .source, .plainText: nil
+        }
+    }
+
+    static func previewKind(fileName: String, mimeType: String) -> FeatureFilePreviewKind {
+        if mimeType.hasPrefix("image/") { return .image }
+        if mimeType.hasPrefix("video/") { return .video }
+        if mimeType == "application/pdf" { return .pdf }
+        let inferred = FeatureFilePreviewKind.infer(path: fileName)
+        return inferred == .plainText ? .document : inferred
     }
 }

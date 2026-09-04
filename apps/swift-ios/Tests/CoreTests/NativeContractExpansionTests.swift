@@ -153,13 +153,18 @@ final class NativeContractExpansionTests: XCTestCase {
                   "label": "Studio",
                   "platform": {"os": "darwin", "arch": "arm64"},
                   "serverVersion": "1.0.0",
-                  "capabilities": {"repositoryIdentity": true, "attachmentUploads": true}
+                  "capabilities": {
+                    "repositoryIdentity": true,
+                    "attachmentUploads": true,
+                    "fileAttachments": {"maxUploadBytes": 123456}
+                  }
                 }
                 """.utf8
             )
         )
 
         XCTAssertEqual(descriptor.capabilities.attachmentUploads, true)
+        XCTAssertEqual(descriptor.capabilities.fileAttachments?.maxUploadBytes, 123_456)
         XCTAssertEqual(RPCMethod.attachmentsCreateUploadURL.rawValue, "attachments.createUploadUrl")
         XCTAssertEqual(RPCMethod.attachmentsDelete.rawValue, "attachments.delete")
     }
@@ -176,9 +181,25 @@ final class NativeContractExpansionTests: XCTestCase {
 
     func testAssetContractUsesExactTagsAndResultFields() throws {
         XCTAssertEqual(RPCMethod.assetsCreateURL.rawValue, "assets.createUrl")
+        let legacyAttachment = AssetResource.attachment(id: "attachment-1").jsonValue
         XCTAssertEqual(
-            AssetResource.attachment(id: "attachment-1").jsonValue["_tag"]?.stringValue,
+            legacyAttachment["_tag"]?.stringValue,
             "attachment"
+        )
+        XCTAssertNil(legacyAttachment["fileName"])
+        XCTAssertNil(legacyAttachment["mimeType"])
+        XCTAssertEqual(
+            AssetResource.attachment(
+                id: "attachment-2",
+                fileName: "report.pdf",
+                mimeType: "application/pdf"
+            ).jsonValue,
+            .object([
+                "_tag": .string("attachment"),
+                "attachmentId": .string("attachment-2"),
+                "fileName": .string("report.pdf"),
+                "mimeType": .string("application/pdf"),
+            ])
         )
         XCTAssertEqual(
             AssetResource.workspaceFile(
@@ -186,6 +207,17 @@ final class NativeContractExpansionTests: XCTestCase {
                 path: "screenshots/app.png"
             ).jsonValue["threadId"]?.stringValue,
             "thread-1"
+        )
+        XCTAssertEqual(
+            AssetResource.mediaFile(
+                threadID: "thread-2",
+                path: "uploads/report.pdf"
+            ).jsonValue,
+            .object([
+                "_tag": .string("media-file"),
+                "threadId": .string("thread-2"),
+                "path": .string("uploads/report.pdf"),
+            ])
         )
         let result = try JSONDecoder.t3.decode(
             AssetCreateURLResult.self,

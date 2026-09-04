@@ -8,15 +8,57 @@ struct T3IncomingShareImage: Codable, Hashable, Identifiable, Sendable {
     var byteCount: Int
 }
 
+struct T3IncomingShareFile: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var fileName: String
+    var mimeType: String
+    var relativePath: String
+    var byteCount: Int
+}
+
 struct T3IncomingShareEnvelope: Codable, Hashable, Identifiable, Sendable {
-    static let schemaVersion = 1
+    static let schemaVersion = 2
 
     var schemaVersion: Int
     var id: String
     var createdAt: Date
     var text: String
     var images: [T3IncomingShareImage]
+    var files: [T3IncomingShareFile]
     var warnings: [String]
+
+    init(
+        schemaVersion: Int,
+        id: String,
+        createdAt: Date,
+        text: String,
+        images: [T3IncomingShareImage],
+        files: [T3IncomingShareFile] = [],
+        warnings: [String]
+    ) {
+        self.schemaVersion = schemaVersion
+        self.id = id
+        self.createdAt = createdAt
+        self.text = text
+        self.images = images
+        self.files = files
+        self.warnings = warnings
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, id, createdAt, text, images, files, warnings
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
+        id = try values.decode(String.self, forKey: .id)
+        createdAt = try values.decode(Date.self, forKey: .createdAt)
+        text = try values.decode(String.self, forKey: .text)
+        images = try values.decodeIfPresent([T3IncomingShareImage].self, forKey: .images) ?? []
+        files = try values.decodeIfPresent([T3IncomingShareFile].self, forKey: .files) ?? []
+        warnings = try values.decodeIfPresent([String].self, forKey: .warnings) ?? []
+    }
 }
 
 struct T3PendingShareImage: Sendable {
@@ -24,6 +66,13 @@ struct T3PendingShareImage: Sendable {
     var byteCount: Int
     var suggestedName: String?
     var typeIdentifier: String
+}
+
+struct T3PendingShareFile: Sendable {
+    var stagedFileURL: URL
+    var byteCount: Int
+    var suggestedName: String?
+    var mimeType: String
 }
 
 enum T3IncomingShareStoreError: LocalizedError {
@@ -35,7 +84,7 @@ enum T3IncomingShareStoreError: LocalizedError {
         case .appGroupUnavailable:
             "T3 Code could not access its shared inbox."
         case .noSupportedContent:
-            "This app did not provide text, a URL, or a supported image."
+            "This app did not provide text, a URL, or a supported file."
         }
     }
 }
@@ -47,10 +96,13 @@ enum T3IncomingShareStore {
     static let manifestFileName = "manifest.json"
     static let maximumImageCount = 8
     static let maximumImageBytes = 10 * 1_024 * 1_024
+    static let maximumAttachmentCount = 8
+    static let maximumFileBytes = 50 * 1_024 * 1_024
 
     static func write(
         textFragments: [String],
         images: [T3PendingShareImage],
+        files: [T3PendingShareFile] = [],
         warnings initialWarnings: [String] = [],
         now: Date = Date(),
         id: String = UUID().uuidString.lowercased()
@@ -59,8 +111,8 @@ enum T3IncomingShareStore {
             throw T3IncomingShareStoreError.appGroupUnavailable
         }
         defer {
-            for image in images {
-                try? FileManager.default.removeItem(at: image.stagedFileURL)
+            for url in images.map(\.stagedFileURL) + files.map(\.stagedFileURL) {
+                try? FileManager.default.removeItem(at: url)
             }
         }
 
@@ -70,6 +122,7 @@ enum T3IncomingShareStore {
             .appending(path: id, directoryHint: .isDirectory)
         var warnings = initialWarnings
         var savedImages: [T3IncomingShareImage] = []
+        var savedFiles: [T3IncomingShareFile] = []
         var validOverflowCount = 0
 
         do {
@@ -91,7 +144,7 @@ enum T3IncomingShareStore {
                     warnings.append("One shared image exceeded the 10 MB attachment limit.")
                     continue
                 }
-                guard savedImages.count < maximumImageCount else {
+                guard savedImages.count + savedFiles.count < maximumAttachmentCount else {
                     validOverflowCount += 1
                     continue
                 }
@@ -115,11 +168,41 @@ enum T3IncomingShareStore {
                 )
             }
 
-            if validOverflowCount > 0 {
-                warnings.append("Only the first \(maximumImageCount) shared images were attached.")
+            for file in files {
+                let values = try? file.stagedFileURL.resourceValues(forKeys: [
+                    .fileSizeKey, .isRegularFileKey,
+                ])
+                guard values?.isRegularFile == true,
+                      let byteCount = values?.fileSize,
+                      byteCount > 0,
+                      byteCount <= maximumFileBytes,
+                      byteCount == file.byteCount else {
+                    warnings.append("One shared file exceeded the 50 MB attachment limit.")
+                    continue
+                }
+                guard savedImages.count + savedFiles.count < maximumAttachmentCount else {
+                    validOverflowCount += 1
+                    continue
+                }
+                let attachmentID = UUID().uuidString.lowercased()
+                let fileName = safeFileName(file.suggestedName, fallback: "shared-file-\(savedFiles.count + 1)")
+                let storedName = "\(attachmentID)-\(fileName)"
+                let fileURL = itemDirectory.appending(path: storedName, directoryHint: .notDirectory)
+                try FileManager.default.copyItem(at: file.stagedFileURL, to: fileURL)
+                savedFiles.append(T3IncomingShareFile(
+                    id: attachmentID,
+                    fileName: fileName,
+                    mimeType: safeMIMEType(file.mimeType),
+                    relativePath: "\(inboxRelativePath)/\(id)/\(storedName)",
+                    byteCount: byteCount
+                ))
             }
 
-            guard !normalizedText.isEmpty || !savedImages.isEmpty else {
+            if validOverflowCount > 0 {
+                warnings.append("Only the first \(maximumAttachmentCount) shared files were attached.")
+            }
+
+            guard !normalizedText.isEmpty || !savedImages.isEmpty || !savedFiles.isEmpty else {
                 throw T3IncomingShareStoreError.noSupportedContent
             }
 
@@ -129,6 +212,7 @@ enum T3IncomingShareStore {
                 createdAt: now,
                 text: normalizedText,
                 images: savedImages,
+                files: savedFiles,
                 warnings: warnings
             )
             let manifestURL = itemDirectory.appending(
@@ -159,7 +243,7 @@ enum T3IncomingShareStore {
             guard let data = try? Data(contentsOf: manifestURL) else { return nil }
             return try? decoder.decode(T3IncomingShareEnvelope.self, from: data)
         }
-        .filter { $0.schemaVersion == T3IncomingShareEnvelope.schemaVersion }
+        .filter { $0.schemaVersion == 1 || $0.schemaVersion == T3IncomingShareEnvelope.schemaVersion }
         .sorted { $0.createdAt < $1.createdAt }
     }
 
@@ -184,13 +268,37 @@ enum T3IncomingShareStore {
     }
 
     static func fileURL(for image: T3IncomingShareImage) -> URL? {
-        guard let root = T3SharedContainer.rootURL?.standardizedFileURL else { return nil }
+        fileURL(relativePath: image.relativePath)
+    }
+
+    static func fileURL(for file: T3IncomingShareFile) -> URL? {
+        fileURL(relativePath: file.relativePath)
+    }
+
+    private static func fileURL(relativePath: String) -> URL? {
+        guard let root = T3SharedContainer.rootURL else { return nil }
+        return fileURL(relativePath: relativePath, rootURL: root)
+    }
+
+    static func fileURL(relativePath: String, rootURL: URL) -> URL? {
+        let root = rootURL.standardizedFileURL.resolvingSymlinksInPath()
         let inbox = root.appending(path: inboxRelativePath, directoryHint: .isDirectory)
-            .standardizedFileURL
-        let url = root.appending(path: image.relativePath, directoryHint: .notDirectory)
-            .standardizedFileURL
+            .standardizedFileURL.resolvingSymlinksInPath()
+        let url = root.appending(path: relativePath, directoryHint: .notDirectory)
+            .standardizedFileURL.resolvingSymlinksInPath()
         guard url.path.hasPrefix(inbox.path + "/") else { return nil }
         return url
+    }
+
+    private static func safeMIMEType(_ proposed: String) -> String {
+        let value = proposed.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "!#$&^_.+-/"))
+        guard value.count <= 100,
+              value.filter({ $0 == "/" }).count == 1,
+              value.unicodeScalars.allSatisfy(allowed.contains) else {
+            return "application/octet-stream"
+        }
+        return value
     }
 
     private static func deduplicatedText(_ fragments: [String]) -> String {
@@ -207,7 +315,13 @@ enum T3IncomingShareStore {
         let lastPathComponent = URL(fileURLWithPath: candidate).lastPathComponent
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ".-_ "))
         let sanitized = String(lastPathComponent.unicodeScalars.filter(allowed.contains)).prefix(96)
-        return sanitized.isEmpty ? fallback : String(sanitized)
+        guard !sanitized.isEmpty else { return fallback }
+        let value = String(sanitized)
+        let pathExtension = URL(fileURLWithPath: value).pathExtension
+        guard pathExtension.count <= 16 else {
+            return URL(fileURLWithPath: value).deletingPathExtension().lastPathComponent
+        }
+        return value
     }
 
     private static func fileExtension(for typeIdentifier: String) -> String {

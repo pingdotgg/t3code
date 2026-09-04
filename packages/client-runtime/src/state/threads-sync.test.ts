@@ -112,6 +112,7 @@ function testSession(
         ? ({ threadResumeCompletionMarker: true } as never)
         : ({} as never),
     ),
+    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,

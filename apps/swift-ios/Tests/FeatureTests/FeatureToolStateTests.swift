@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import T3Code
 
@@ -21,10 +22,86 @@ struct FeatureToolStateTests {
     @Test
     func filePreviewKindUsesImageMarkdownAndSourceSemantics() {
         #expect(FeatureFilePreviewKind.infer(path: "art/hero.webp") == .image)
+        #expect(FeatureFilePreviewKind.infer(path: "docs/spec.pdf") == .pdf)
+        #expect(FeatureFilePreviewKind.infer(path: "demo.mov") == .video)
+        #expect(FeatureFilePreviewKind.infer(path: "brief.docx") == .document)
         #expect(FeatureFilePreviewKind.infer(path: "README.md") == .markdown)
         #expect(FeatureFilePreviewKind.infer(path: "Package.swift") == .source)
         #expect(FeatureFilePreviewKind.infer(path: "LICENSE") == .plainText)
         #expect(FeatureFilePreviewKind.infer(path: "template", language: "html") == .source)
+    }
+
+    @Test
+    func previewFileNamesDropPathsAndRejectEmptyNames() throws {
+        #expect(try FeatureMediaPreviewFiles.safeFileName("reports/final.pdf") == "final.pdf")
+        #expect(try FeatureMediaPreviewFiles.safeFileName("clip:one.mov") == "clip_one.mov")
+        #expect(throws: FeatureMediaPreviewError.invalidFileName) {
+            try FeatureMediaPreviewFiles.safeFileName("  ")
+        }
+    }
+
+    @Test
+    func previewDirectoriesHaveUniqueOwnership() throws {
+        let first = try FeatureMediaPreviewFiles.ownedDirectory()
+        let second = try FeatureMediaPreviewFiles.ownedDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: first)
+            try? FileManager.default.removeItem(at: second)
+        }
+        #expect(first != second)
+        #expect(FileManager.default.fileExists(atPath: first.path))
+        #expect(FileManager.default.fileExists(atPath: second.path))
+    }
+
+    @Test
+    func remotePreviewNeverSharesItsSignedSourceURL() {
+        let signedURL = URL(string: "https://example.com/file.pdf?token=secret")!
+        let downloadedURL = URL(fileURLWithPath: "/tmp/owned/file.pdf")
+        #expect(
+            FeatureMediaPreviewFiles.shareURL(
+                for: .remote(signedURL),
+                downloadedURL: nil
+            ) == nil
+        )
+        #expect(
+            FeatureMediaPreviewFiles.shareURL(
+                for: .remote(signedURL),
+                downloadedURL: downloadedURL
+            ) == downloadedURL
+        )
+    }
+
+    @Test
+    func typedMediaPreviewRouteKeepsHostPathAndKind() {
+        var components = URLComponents()
+        components.scheme = "t3code"
+        components.host = "media-preview"
+        components.path = "/open"
+        components.queryItems = [
+            URLQueryItem(name: "path", value: "/tmp/output/final image.png"),
+            URLQueryItem(name: "kind", value: "image"),
+        ]
+        #expect(
+            FeatureTypedMediaPreviewRoute.parse(components.url!)
+                == FeatureTypedMediaPreviewRoute(
+                    path: "/tmp/output/final image.png",
+                    kind: .image
+                )
+        )
+        #expect(
+            FeatureTypedMediaPreviewRoute.parse(
+                URL(string: "t3code://media-preview/open?path=/tmp/a.pdf&kind=pdf")!
+            ) == FeatureTypedMediaPreviewRoute(path: "/tmp/a.pdf", kind: .pdf)
+        )
+    }
+
+    @Test
+    func previewGenerationRejectsCompletionAfterDismissal() {
+        var generation = FeatureMediaPreviewGeneration()
+        let downloadGeneration = generation.begin()
+        #expect(generation.isCurrent(downloadGeneration))
+        generation.invalidate()
+        #expect(!generation.isCurrent(downloadGeneration))
     }
 
     @Test

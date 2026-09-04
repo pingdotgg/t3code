@@ -98,6 +98,14 @@ public struct UsageView: View {
         .navigationTitle("Usage")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Refresh prices", systemImage: "arrow.clockwise") {
+                    Task { await load(refreshPricing: true) }
+                }
+                .disabled(isLoading)
+            }
+        }
         .t3NavigationChrome()
         .task(id: loadState.windowDays) {
             await load()
@@ -118,7 +126,7 @@ public struct UsageView: View {
                     Text("Couldn’t refresh usage. The totals below are from the last successful scan.")
                 }
                 ForEach(failed) { environment in
-                    Text("\(environment.label) could not report usage.")
+                    Text("\(environment.label): \(environment.errorMessage ?? "Could not report usage.")")
                 }
                 ForEach(stale) { environment in
                     Text("\(environment.label) uses an unsupported usage format and is excluded from totals.")
@@ -448,11 +456,11 @@ public struct UsageView: View {
         }
     }
 
-    private func load() async {
+    private func load(refreshPricing: Bool = false) async {
         let request = loadState.begin(days: loadState.windowDays)
         defer { loadState.finish(request) }
         do {
-            let result = try await client.usageSummaries(request.input)
+            let result = try await client.usageSummaries(request.input, refreshPricing: refreshPricing)
             try Task.checkCancellation()
             loadState.receive(result, for: request)
         } catch is CancellationError {

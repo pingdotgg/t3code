@@ -79,6 +79,65 @@ final class CoreContractTests: XCTestCase {
         )
 
         XCTAssertEqual(config.threadSnapshotPagination, true)
+        XCTAssertNil(config.environment)
+    }
+
+    func testEnvironmentDescriptorRequiresExplicitAutomaticSettlementCapability() throws {
+        let config = try JSONDecoder.t3.decode(
+            ServerConfigSnapshot.self,
+            from: Data(
+                #"{"providers":[],"environment":{"environmentId":"wire-environment","label":"Studio","platform":{"os":"darwin","arch":"arm64"},"serverVersion":"1.0.0","capabilities":{"repositoryIdentity":true,"threadAutoSettlement":true}}}"#.utf8
+            )
+        )
+        let supported = try XCTUnwrap(config.environment)
+        let absent = try JSONDecoder.t3.decode(
+            EnvironmentDescriptor.self,
+            from: Data(
+                #"{"environmentId":"older-server","label":"Old","platform":{"os":"darwin","arch":"arm64"},"serverVersion":"0.9.0","capabilities":{"repositoryIdentity":true}}"#.utf8
+            )
+        )
+
+        XCTAssertEqual(supported.capabilities.threadAutoSettlement, true)
+        XCTAssertNil(absent.capabilities.threadAutoSettlement)
+    }
+
+    func testAutomaticSettlementSettingsPreserveNullAndApplyMissingDefaults() throws {
+        let missing = try JSONDecoder.t3.decode(
+            ServerSettingsSnapshot.self,
+            from: Data("{}".utf8)
+        )
+        let explicit = try JSONDecoder.t3.decode(
+            ServerSettingsSnapshot.self,
+            from: Data(
+                #"{"sidebarAutoSettleOnMerge":false,"sidebarAutoSettleAfterDays":null}"#.utf8
+            )
+        )
+        let fractional = try JSONDecoder.t3.decode(
+            ServerSettingsSnapshot.self,
+            from: Data(#"{"sidebarAutoSettleAfterDays":2.5}"#.utf8)
+        )
+
+        XCTAssertTrue(missing.sidebarAutoSettleOnMerge)
+        XCTAssertEqual(missing.sidebarAutoSettleAfterDays, 3)
+        XCTAssertFalse(explicit.sidebarAutoSettleOnMerge)
+        XCTAssertNil(explicit.sidebarAutoSettleAfterDays)
+        XCTAssertEqual(fractional.sidebarAutoSettleAfterDays, 2.5)
+    }
+
+    func testAutomaticSettlementPatchesContainOnlyTheChangedKey() {
+        XCTAssertEqual(
+            ServerSettingsChange.sidebarAutoSettleOnMerge(false).jsonValue,
+            .object(["sidebarAutoSettleOnMerge": .bool(false)])
+        )
+        XCTAssertEqual(
+            ServerSettingsChange.sidebarAutoSettleAfterDays(4.5).jsonValue,
+            .object(["sidebarAutoSettleAfterDays": .number(4.5)])
+        )
+        XCTAssertEqual(
+            ServerSettingsChange.sidebarAutoSettleAfterDays(nil).jsonValue,
+            .object(["sidebarAutoSettleAfterDays": .null])
+        )
+        XCTAssertEqual(RPCMethod.serverUpdateSettings.rawValue, "server.updateSettings")
     }
 
     func testCommandBuildersMatchOrchestrationContract() throws {

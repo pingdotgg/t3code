@@ -5,6 +5,8 @@ import SwiftUI
 enum PlatformIncomingShareError: LocalizedError, Equatable {
     case missingImage(String)
     case invalidImage(String)
+    case missingFile(String)
+    case invalidFile(String)
     case invalidEnvelope
 
     var errorDescription: String? {
@@ -13,6 +15,10 @@ enum PlatformIncomingShareError: LocalizedError, Equatable {
             "The shared image \(name) is no longer available. Share it again to retry."
         case let .invalidImage(name):
             "The shared image \(name) is incomplete or too large. Share it again to retry."
+        case let .missingFile(name):
+            "The shared file \(name) is no longer available. Share it again to retry."
+        case let .invalidFile(name):
+            "The shared file \(name) is incomplete or too large. Share it again to retry."
         case .invalidEnvelope:
             "This shared item is invalid. Share it again to retry."
         }
@@ -22,7 +28,25 @@ enum PlatformIncomingShareError: LocalizedError, Equatable {
 struct PlatformIncomingShareSource: Sendable {
     var loadAll: @Sendable () async -> [T3IncomingShareEnvelope]
     var data: @Sendable (T3IncomingShareImage) async throws -> Data
+    var fileURL: @Sendable (T3IncomingShareFile) async throws -> URL
     var remove: @Sendable (String) async throws -> Void
+
+    init(
+        loadAll: @escaping @Sendable () async -> [T3IncomingShareEnvelope],
+        data: @escaping @Sendable (T3IncomingShareImage) async throws -> Data,
+        remove: @escaping @Sendable (String) async throws -> Void,
+        fileURL: @escaping @Sendable (T3IncomingShareFile) async throws -> URL = { file in
+            guard let url = T3IncomingShareStore.fileURL(for: file) else {
+                throw PlatformIncomingShareError.missingFile(file.fileName)
+            }
+            return url
+        }
+    ) {
+        self.loadAll = loadAll
+        self.data = data
+        self.fileURL = fileURL
+        self.remove = remove
+    }
 
     static let live = PlatformIncomingShareSource(
         loadAll: {
@@ -56,6 +80,22 @@ struct PlatformIncomingShareSource: Sendable {
             try await Task.detached(priority: .utility) {
                 try T3IncomingShareStore.remove(id: id)
             }.value
+        },
+        fileURL: { file in
+            guard let root = T3SharedContainer.rootURL?.standardizedFileURL,
+                  let url = T3IncomingShareStore.fileURL(for: file)?.standardizedFileURL,
+                  url.path.hasPrefix(root.path + "/") else {
+                throw PlatformIncomingShareError.missingFile(file.fileName)
+            }
+            let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            guard values.isRegularFile == true,
+                  let byteCount = values.fileSize,
+                  byteCount > 0,
+                  byteCount <= T3IncomingShareStore.maximumFileBytes,
+                  byteCount == file.byteCount else {
+                throw PlatformIncomingShareError.invalidFile(file.fileName)
+            }
+            return url
         }
     )
 }
@@ -91,6 +131,7 @@ struct PlatformIncomingSharePipeline: Sendable {
     private let source: PlatformIncomingShareSource
     private let drafts: PlatformIncomingShareDraftRepository
     private let prepareImage: @Sendable (Data, Int) async throws -> FeatureDraftAttachment
+    private let attachmentFileStore: ManagedAttachmentFileStore
 
     init(
         source: PlatformIncomingShareSource = .live,
@@ -101,11 +142,13 @@ struct PlatformIncomingSharePipeline: Sendable {
             try await Task.detached(priority: .userInitiated) {
                 try FeatureImageProcessor.attachment(from: data, ordinal: ordinal)
             }.value
-        }
+        },
+        attachmentFileStore: ManagedAttachmentFileStore = ManagedAttachmentFileStore()
     ) {
         self.source = source
         self.drafts = drafts
         self.prepareImage = prepareImage
+        self.attachmentFileStore = attachmentFileStore
     }
 
     func pendingEnvelopes() async -> [T3IncomingShareEnvelope] {
@@ -120,9 +163,12 @@ struct PlatformIncomingSharePipeline: Sendable {
         guard UUID(uuidString: envelope.id) != nil else {
             throw PlatformIncomingShareError.invalidEnvelope
         }
+        guard envelope.images.count + envelope.files.count <= Self.maximumAttachmentCount else {
+            throw PlatformIncomingShareError.invalidEnvelope
+        }
         let key = draftKey ?? FeatureComposerDraftStore.newTaskKey(project: project)
         var prepared: [FeatureDraftAttachment] = []
-        prepared.reserveCapacity(envelope.images.count)
+        prepared.reserveCapacity(envelope.images.count + envelope.files.count)
         for (offset, image) in envelope.images.enumerated() {
             let data = try await source.data(image)
             let attachment = try await prepareImage(
@@ -130,6 +176,39 @@ struct PlatformIncomingSharePipeline: Sendable {
                 offset + 1
             )
             prepared.append(Self.stableAttachment(attachment, for: image))
+        }
+        for file in envelope.files {
+            guard let attachmentID = UUID(uuidString: file.id) else {
+                throw PlatformIncomingShareError.invalidEnvelope
+            }
+            let sourceURL = try await source.fileURL(file)
+            let ownedFile: FeatureOwnedAttachmentFile
+            do {
+                ownedFile = try attachmentFileStore.copyOwnedFile(
+                    from: sourceURL,
+                    attachmentID: attachmentID,
+                    originalFileName: file.fileName,
+                    maximumBytes: T3IncomingShareStore.maximumFileBytes
+                )
+            } catch ManagedAttachmentFileError.alreadyExists {
+                ownedFile = try Self.existingOwnedFile(
+                    in: attachmentFileStore,
+                    sourceURL: sourceURL,
+                    attachmentID: attachmentID,
+                    file: file
+                )
+            }
+            guard ownedFile.byteCount == file.byteCount else {
+                throw PlatformIncomingShareError.invalidFile(file.fileName)
+            }
+            prepared.append(FeatureDraftAttachment(
+                id: attachmentID,
+                ownedFile: ownedFile,
+                thumbnailData: nil,
+                filename: file.fileName,
+                mimeType: file.mimeType,
+                uploadedReference: nil
+            ))
         }
 
         let merged = try await drafts.importContent(
@@ -144,6 +223,38 @@ struct PlatformIncomingSharePipeline: Sendable {
         // and records the share ID. Never acknowledge the inbox before it ends.
         try await source.remove(envelope.id)
         return merged
+    }
+
+    private static func existingOwnedFile(
+        in store: ManagedAttachmentFileStore,
+        sourceURL: URL,
+        attachmentID: UUID,
+        file: T3IncomingShareFile
+    ) throws -> FeatureOwnedAttachmentFile {
+        let pathExtension = URL(fileURLWithPath: file.fileName).pathExtension
+        let ownedName = pathExtension.isEmpty
+            ? attachmentID.uuidString
+            : "\(attachmentID.uuidString).\(pathExtension.lowercased())"
+        let existing = try store.resolvedFile(fileName: ownedName, byteCount: file.byteCount)
+        let values = try existing.url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+        guard values.isRegularFile == true,
+              values.fileSize == file.byteCount,
+              try filesMatch(sourceURL, existing.url) else {
+            throw PlatformIncomingShareError.invalidFile(file.fileName)
+        }
+        return existing
+    }
+
+    private static func filesMatch(_ lhsURL: URL, _ rhsURL: URL) throws -> Bool {
+        let lhs = try FileHandle(forReadingFrom: lhsURL)
+        let rhs = try FileHandle(forReadingFrom: rhsURL)
+        defer { try? lhs.close(); try? rhs.close() }
+        while true {
+            let left = try lhs.read(upToCount: 256 * 1_024) ?? Data()
+            let right = try rhs.read(upToCount: 256 * 1_024) ?? Data()
+            guard left == right else { return false }
+            if left.isEmpty { return true }
+        }
     }
 
     private static func stableAttachment(
@@ -310,12 +421,13 @@ struct PlatformIncomingShareDestinationSheet: View {
     }
 
     private var summary: String {
-        if !envelope.text.isEmpty, !envelope.images.isEmpty {
-            return "\(envelope.text)\n\(envelope.images.count) image\(envelope.images.count == 1 ? "" : "s")"
+        let attachmentCount = envelope.images.count + envelope.files.count
+        if !envelope.text.isEmpty, attachmentCount > 0 {
+            return "\(envelope.text)\n\(attachmentCount) file\(attachmentCount == 1 ? "" : "s")"
         }
         if !envelope.text.isEmpty { return envelope.text }
-        guard !envelope.images.isEmpty else { return "" }
-        return "\(envelope.images.count) shared image\(envelope.images.count == 1 ? "" : "s")"
+        guard attachmentCount > 0 else { return "" }
+        return "\(attachmentCount) shared file\(attachmentCount == 1 ? "" : "s")"
     }
 
     private func environmentName(for project: FeatureProject) -> String? {

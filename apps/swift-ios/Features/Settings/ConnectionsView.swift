@@ -157,7 +157,7 @@ struct ConnectionsView: View {
                 detailEnvironmentID = environment.id
             } label: {
                 HStack(spacing: 12) {
-                    Image(systemName: "desktopcomputer")
+                    Image(systemName: environment.systemImage)
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(T3Colors.textSecondary)
                         .frame(width: 25)
@@ -284,7 +284,7 @@ struct ConnectionsView: View {
         _ item: T3ConnectEnvironmentPresentation
     ) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: "cloud")
+            Image(systemName: item.savedEnvironment?.systemImage ?? "cloud")
                 .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(T3Colors.textSecondary)
                 .frame(width: 25)
@@ -506,6 +506,7 @@ private struct ConnectionDetailView: View {
     let onRemove: () -> Void
 
     @State private var showingRemoval = false
+    @State private var isUpdatingAutomaticSettlement = false
 
     var body: some View {
         List {
@@ -528,6 +529,33 @@ private struct ConnectionDetailView: View {
                     Text(environment.endpoint)
                         .textSelection(.enabled)
                     LabeledContent("Projects", value: "\(projectCount)")
+                    if environment.canCustomizeIcon == true || automaticSettlement != nil {
+                        NavigationLink("Preferences") {
+                            EnvironmentPreferencesView(model: model, environmentID: environmentID)
+                        }
+                    }
+                }
+
+                if let automaticSettlement {
+                    Section("Automatic settlement") {
+                        Toggle("When a pull request merges", isOn: mergeBinding)
+                            .tint(T3Colors.success)
+                        Toggle("After inactivity", isOn: inactivityEnabledBinding)
+                            .tint(T3Colors.success)
+                        if automaticSettlement.afterDays != nil {
+                            Stepper(
+                                value: inactivityDaysBinding,
+                                in: 1...90,
+                                step: 1
+                            ) {
+                                LabeledContent(
+                                    "Days",
+                                    value: formattedDays(automaticSettlement.afterDays ?? 3)
+                                )
+                            }
+                        }
+                    }
+                    .disabled(automaticSettlementControlsDisabled)
                 }
 
                 Section {
@@ -566,6 +594,56 @@ private struct ConnectionDetailView: View {
 
     private var projectCount: Int {
         model.snapshot.projects.count { $0.environmentID == environmentID }
+    }
+
+    private var automaticSettlement: FeatureAutomaticSettlementSettings? {
+        model.snapshot.preferencesByEnvironment?[environmentID]?.automaticSettlement
+    }
+
+    private var automaticSettlementControlsDisabled: Bool {
+        isUpdatingAutomaticSettlement
+            || pendingEnabledValues[environmentID] != nil
+            || environment?.isEnabled != true
+            || environment?.connectionState != .connected
+    }
+
+    private var mergeBinding: Binding<Bool> {
+        Binding(
+            get: { automaticSettlement?.onMerge ?? false },
+            set: { updateAutomaticSettlement(.onMerge($0)) }
+        )
+    }
+
+    private var inactivityEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { automaticSettlement?.afterDays != nil },
+            set: { enabled in
+                updateAutomaticSettlement(.afterDays(enabled ? 3 : nil))
+            }
+        )
+    }
+
+    private var inactivityDaysBinding: Binding<Double> {
+        Binding(
+            get: { automaticSettlement?.afterDays ?? 3 },
+            set: { updateAutomaticSettlement(.afterDays($0)) }
+        )
+    }
+
+    private func updateAutomaticSettlement(_ change: FeatureAutomaticSettlementChange) {
+        guard !automaticSettlementControlsDisabled else { return }
+        isUpdatingAutomaticSettlement = true
+        Task {
+            _ = await model.updateAutomaticSettlement(
+                environmentID: environmentID,
+                change: change
+            )
+            isUpdatingAutomaticSettlement = false
+        }
+    }
+
+    private func formattedDays(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0...2)))
     }
 
     private var removalMessage: String {

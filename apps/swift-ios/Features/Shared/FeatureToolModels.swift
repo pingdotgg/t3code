@@ -17,6 +17,18 @@ public struct FeatureCapabilityUnavailable: LocalizedError, Sendable, Equatable 
 @MainActor
 public protocol FeatureWorkspaceAssetResolving: AnyObject {
     func workspaceAssetURL(threadID: String, path: String) async throws -> URL
+    func mediaAssetURL(threadID: String, path: String) async throws -> URL
+    func nativeAppIconURL(threadID: String, app: ToolNativeAppReference) async throws -> URL
+}
+
+public extension FeatureWorkspaceAssetResolving {
+    func nativeAppIconURL(threadID: String, app: ToolNativeAppReference) async throws -> URL {
+        throw FeatureCapabilityUnavailable("Native app icons")
+    }
+
+    func mediaAssetURL(threadID: String, path: String) async throws -> URL {
+        try await workspaceAssetURL(threadID: threadID, path: path)
+    }
 }
 
 @MainActor
@@ -94,6 +106,9 @@ public struct FeatureFileContent: Sendable, Equatable, Codable {
 
 public enum FeatureFilePreviewKind: Sendable, Equatable {
     case image
+    case pdf
+    case video
+    case document
     case markdown
     case source
     case plainText
@@ -101,6 +116,9 @@ public enum FeatureFilePreviewKind: Sendable, Equatable {
     public static func infer(path: String, language: String? = nil) -> Self {
         let fileExtension = URL(fileURLWithPath: path).pathExtension.lowercased()
         if imageExtensions.contains(fileExtension) { return .image }
+        if fileExtension == "pdf" { return .pdf }
+        if videoExtensions.contains(fileExtension) { return .video }
+        if documentExtensions.contains(fileExtension) { return .document }
         if language?.lowercased() == "markdown" || ["md", "mdx"].contains(fileExtension) {
             return .markdown
         }
@@ -110,6 +128,14 @@ public enum FeatureFilePreviewKind: Sendable, Equatable {
 
     private static let imageExtensions: Set<String> = [
         "avif", "gif", "ico", "jpeg", "jpg", "png", "webp",
+    ]
+
+    private static let videoExtensions: Set<String> = [
+        "m4v", "mov", "mp4", "mpeg", "mpg", "webm",
+    ]
+
+    private static let documentExtensions: Set<String> = [
+        "doc", "docx", "key", "numbers", "pages", "ppt", "pptx", "rtf", "xls", "xlsx",
     ]
 
     private static let sourceExtensions: Set<String> = [

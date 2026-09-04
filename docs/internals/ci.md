@@ -8,7 +8,8 @@ and pushes to `main`:
 - **Check**: `vp check` (format and lint; this repo sets `typeCheck: false` in its lint options),
   then `vpr typecheck` for the workspace type check. The same job
   builds the desktop pipeline (`vp run build:desktop`) and verifies the preload bundle exists and
-  still exports its expected symbols.
+  uses only imports that Electron's sandbox can load. The verifier parses imports, then executes the
+  trusted artifact with controlled bridge stubs to confirm that its required APIs are callable.
 - **Test**: `vp run test` across the workspace.
 - **Mobile Native Static Analysis**: `vp run lint:mobile` on macOS, wrapping
   `scripts/mobile-native-static-check.ts`. A cheap Linux **Mobile Native Changes** job gates it:
@@ -26,5 +27,10 @@ desktop artifacts from a single `v*.*.*` tag and publishes one GitHub release. I
 signing only when platform credentials are present. macOS passkey builds additionally require
 `APPLE_TEAM_ID` and the `MACOS_PROVISIONING_PROFILE` secret; Windows uses Azure Trusted Signing.
 Without the core signing credentials, it still releases unsigned artifacts.
+
+Preflight shares pnpm's lockfile verification results with the desktop build jobs through a small
+artifact. This avoids repeating dependency checks, especially on Windows, without transferring the
+large registry metadata cache. pnpm checks the current lockfile and policy before it reuses a result.
+If the artifact is unavailable, installation runs the checks again.
 
 See [Release Checklist](../operations/release.md) for the full release/signing setup checklist.

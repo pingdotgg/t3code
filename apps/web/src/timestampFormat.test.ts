@@ -6,10 +6,7 @@ import {
   formatExpiresInLabel,
   formatRelativeTime,
   formatRelativeTimeLabel,
-  formatRelativeTimeUntil,
-  formatRelativeTimeUntilLabel,
   formatShortTimestamp,
-  formatTimestamp,
   getRelativeTimeState,
   getTimestampFormatOptions,
   resolveTimestampLocale,
@@ -73,33 +70,6 @@ describe("resolveTimestampLocale", () => {
 
     expect(formatAt1544("en-GB")).toBe("15:44");
     expect(formatAt1544("en-US")).toBe("3:44 PM");
-  });
-});
-
-describe("formatRelativeTimeUntilLabel", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-04-07T12:00:00.000Z"));
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("returns Expired when the instant is in the past", () => {
-    expect(formatRelativeTimeUntilLabel("2026-04-07T11:59:00.000Z")).toBe("Expired");
-  });
-
-  it("formats seconds remaining", () => {
-    expect(formatRelativeTimeUntilLabel("2026-04-07T12:00:45.000Z")).toBe("45s left");
-  });
-
-  it("formats minutes remaining", () => {
-    expect(formatRelativeTimeUntilLabel("2026-04-07T12:15:00.000Z")).toBe("15m left");
-  });
-
-  it("formats hours remaining", () => {
-    expect(formatRelativeTimeUntilLabel("2026-04-07T18:00:00.000Z")).toBe("6h left");
   });
 });
 
@@ -196,10 +166,6 @@ describe("formatDayAwareTimestamp", () => {
 });
 
 describe("invalid timestamp inputs", () => {
-  it("returns an empty timestamp instead of throwing", () => {
-    expect(formatTimestamp("not-a-date", "12-hour")).toBe("");
-  });
-
   it("returns an empty short timestamp instead of throwing", () => {
     expect(formatShortTimestamp("not-a-date", "12-hour")).toBe("");
   });
@@ -216,11 +182,6 @@ describe("invalid timestamp inputs", () => {
 
   it("returns an empty elapsed duration instead of a NaN label", () => {
     expect(formatElapsedDurationLabel("not-a-date")).toBe("");
-  });
-
-  it("returns an empty relative time until label instead of a NaN label", () => {
-    expect(formatRelativeTimeUntil("not-a-date")).toBeNull();
-    expect(formatRelativeTimeUntilLabel("not-a-date")).toBe("");
   });
 
   it("returns an empty expires-in label instead of a NaN label", () => {

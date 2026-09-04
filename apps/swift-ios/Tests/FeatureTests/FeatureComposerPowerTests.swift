@@ -6,6 +6,35 @@ import UniformTypeIdentifiers
 
 @Suite("Composer power features")
 struct FeatureComposerPowerTests {
+    @Test func workspaceSkillsStayInTheirWorkspace() {
+        var provider = FeatureProvider(id: "claude", name: "Claude", skills: [.init(name: "global")])
+        provider.workspaceSnapshots = [
+            FeatureProviderWorkspace(cwd: "/a", slashCommands: [], skills: [.init(name: "a-only")]),
+            FeatureProviderWorkspace(cwd: "/b", slashCommands: [], skills: [.init(name: "b-only")]),
+        ]
+        #expect(provider.workspaceCatalog(cwd: "/a").skills.map(\.name) == ["a-only"])
+        #expect(provider.workspaceCatalog(cwd: "/b").skills.map(\.name) == ["b-only"])
+        #expect(provider.workspaceCatalog(cwd: "/c").skills.isEmpty)
+        provider.workspaceSnapshots = nil
+        #expect(provider.workspaceCatalog(cwd: "/c").skills.map(\.name) == ["global"])
+    }
+
+    @Test func skillInvocationHonorsProviderRules() {
+        var userOnly = FeatureProviderSkill(name: "deploy")
+        userOnly.userInvocationOnly = true
+        var agentOnly = FeatureProviderSkill(name: "internal")
+        agentOnly.userInvocable = false
+        #expect(userOnly.invocation == "/deploy ")
+        #expect(agentOnly.invocation == "$internal ")
+        let items = FeatureComposerMenuBuilder.items(
+            trigger: .init(kind: .slashCommand, query: "", range: 0..<1),
+            providers: [], currentSelection: nil, threadSelection: nil,
+            powerFeatures: .init(skills: [userOnly, agentOnly]), pathEntries: []
+        )
+        #expect(items.contains { $0.id == "skill:deploy" })
+        #expect(!items.contains { $0.id == "skill:internal" })
+    }
+
     @Test(
         "Composer input grows past the former seven-line cap",
         .bug("https://github.com/saphid/t3code-personal/issues/105")
@@ -52,8 +81,102 @@ struct FeatureComposerPowerTests {
                 fittingHeight: 440,
                 lineHeight: 22,
                 availableHeight: 80
-            ) == 110
+            ) == 80
         )
+        #expect(
+            FeatureComposerTextInputSizing.height(
+                fittingHeight: 440,
+                lineHeight: 22,
+                availableHeight: 0
+            ) == 0
+        )
+    }
+
+    @Test
+    @MainActor
+    func compressedComposerViewportKeepsItsLastLineAboveTheFooter() throws {
+        let textView = FeatureComposerUITextView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 1)
+        )
+        textView.configureComposerViewport()
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.text = (1...30).map { "Attachment draft line \($0)" }
+            .joined(separator: "\n")
+        textView.selectedRange = NSRange(location: textView.text.utf16.count, length: 0)
+
+        let measured = textView.sizeThatFits(
+            CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)
+        )
+        let font = try #require(textView.font)
+        let keyboardAndAttachmentBound: CGFloat = 80
+        let viewportHeight = FeatureComposerTextInputSizing.height(
+            fittingHeight: measured.height,
+            lineHeight: font.lineHeight,
+            availableHeight: keyboardAndAttachmentBound
+        )
+        textView.frame.size.height = viewportHeight
+        textView.setNeedsLayout()
+        textView.layoutIfNeeded()
+        textView.scrollSelectionIntoView()
+
+        #expect(textView.bounds.height == keyboardAndAttachmentBound)
+        #expect(textView.contentOverflows)
+        let selection = try #require(textView.selectedTextRange)
+        let caret = textView.caretRect(for: selection.end)
+        let visibleTop = textView.contentOffset.y
+        let visibleBottom = visibleTop + textView.bounds.height
+        #expect(caret.minY >= visibleTop)
+        #expect(caret.maxY <= visibleBottom - 1)
+    }
+
+    @Test
+    @MainActor
+    func uiTextViewMeasurementGrowsBeforeTheViewportCap() throws {
+        let textView = FeatureComposerUITextView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 1)
+        )
+        textView.configureComposerViewport()
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        let font = try #require(textView.font)
+
+        textView.text = "First line\nSecond line"
+        let shortMeasurement = textView.sizeThatFits(
+            CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)
+        )
+        textView.text = (1...8).map { "Draft line \($0)" }.joined(separator: "\n")
+        let tallMeasurement = textView.sizeThatFits(
+            CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)
+        )
+
+        let shortHeight = FeatureComposerTextInputSizing.height(
+            fittingHeight: shortMeasurement.height,
+            lineHeight: font.lineHeight,
+            availableHeight: 400
+        )
+        let tallHeight = FeatureComposerTextInputSizing.height(
+            fittingHeight: tallMeasurement.height,
+            lineHeight: font.lineHeight,
+            availableHeight: 400
+        )
+
+        #expect(tallHeight > shortHeight)
+        #expect(tallHeight == tallMeasurement.height)
+    }
+
+    @Test
+    func newTaskUsesCompactContextForDraftsAndAttachments() {
+        #expect(!NewThreadComposerLayout.usesCompactContext(
+            prompt: "", isFocused: false, hasAttachments: false
+        ))
+        #expect(NewThreadComposerLayout.usesCompactContext(
+            prompt: "", isFocused: true, hasAttachments: false
+        ))
+        #expect(NewThreadComposerLayout.usesCompactContext(
+            prompt: "A draft", isFocused: false, hasAttachments: false
+        ))
+        #expect(NewThreadComposerLayout.usesCompactContext(
+            prompt: "", isFocused: false, hasAttachments: true
+        ))
     }
 
     @Test
@@ -314,6 +437,73 @@ struct FeatureComposerPowerTests {
     }
 
     @Test
+    func skillMenusDedupeEnabledNamesBeforeSearchAndSorting() throws {
+        let skills = [
+            FeatureProviderSkill(name: " deploy ", displayName: "First deploy", isEnabled: false),
+            FeatureProviderSkill(name: "Deploy", displayName: "Enabled deploy"),
+            FeatureProviderSkill(name: " DEPLOY ", displayName: "Duplicate matching search"),
+            FeatureProviderSkill(name: "review", displayName: "Review"),
+        ]
+        let allSkillsTrigger = try #require(FeatureComposerTriggerParser.detect(in: "$"))
+        let searchedSkillsTrigger = try #require(
+            FeatureComposerTriggerParser.detect(in: "$matching")
+        )
+        let searchedSlashTrigger = try #require(
+            FeatureComposerTriggerParser.detect(in: "/skill:matching")
+        )
+
+        let allItems = FeatureComposerMenuBuilder.items(
+            trigger: allSkillsTrigger,
+            providers: [],
+            currentSelection: nil,
+            threadSelection: nil,
+            powerFeatures: FeatureComposerPowerFeatures(skills: skills),
+            pathEntries: []
+        )
+        let searchedItems = FeatureComposerMenuBuilder.items(
+            trigger: searchedSkillsTrigger,
+            providers: [],
+            currentSelection: nil,
+            threadSelection: nil,
+            powerFeatures: FeatureComposerPowerFeatures(skills: skills),
+            pathEntries: []
+        )
+        let searchedSlashItems = FeatureComposerMenuBuilder.items(
+            trigger: searchedSlashTrigger,
+            providers: [],
+            currentSelection: nil,
+            threadSelection: nil,
+            powerFeatures: FeatureComposerPowerFeatures(skills: skills),
+            pathEntries: []
+        )
+
+        #expect(allItems.map(\.label) == ["Enabled deploy", "Review"])
+        #expect(searchedItems.isEmpty)
+        #expect(searchedSlashItems.isEmpty)
+    }
+
+    @Test
+    func slashCommandsUseNormalizedNamesAndAllEnabledSkillsForSuppression() throws {
+        let trigger = try #require(FeatureComposerTriggerParser.detect(in: "/"))
+        let items = FeatureComposerMenuBuilder.items(
+            trigger: trigger,
+            providers: [],
+            currentSelection: nil,
+            threadSelection: nil,
+            powerFeatures: FeatureComposerPowerFeatures(
+                slashCommands: [
+                    FeatureProviderSlashCommand(name: " DEPLOY "),
+                    FeatureProviderSlashCommand(name: " MODEL "),
+                ],
+                skills: [FeatureProviderSkill(name: "deploy", displayName: "Release project")]
+            ),
+            pathEntries: []
+        )
+
+        #expect(items.map(\.label) == ["/model", "Release project"])
+    }
+
+    @Test
     func slashSkillPrefixFiltersSkillsWithoutProviderCommands() throws {
         let trigger = try #require(FeatureComposerTriggerParser.detect(in: "/skill:fix"))
         let items = FeatureComposerMenuBuilder.items(
@@ -457,6 +647,36 @@ struct FeatureComposerPowerTests {
         } else {
             Issue.record("Expected a model menu item")
         }
+    }
+
+    @Test
+    func establishedThreadsKeepModelChoicesOnTheirProvider() throws {
+        let currentProvider = FeatureProvider(
+            id: "codex",
+            name: "Codex",
+            models: [
+                FeatureModel(id: "current", name: "Current"),
+                FeatureModel(id: "other", name: "Other"),
+            ]
+        )
+        let otherProvider = FeatureProvider(
+            id: "claude",
+            name: "Claude",
+            models: [FeatureModel(id: "sonnet", name: "Sonnet")]
+        )
+        let selection = FeatureSelection(providerID: "codex", modelID: "current")
+        let trigger = try #require(FeatureComposerTriggerParser.detect(in: "/model"))
+
+        let items = FeatureComposerMenuBuilder.items(
+            trigger: trigger,
+            providers: [currentProvider, otherProvider],
+            currentSelection: selection,
+            threadSelection: selection,
+            powerFeatures: .disabled,
+            pathEntries: []
+        )
+
+        #expect(items.map(\.label) == ["Current", "Other"])
     }
 
     @Test
