@@ -142,6 +142,9 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const legacySidebarEnabled = useLegacySidebarEnabled();
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
+  // The thread sidebar unmounts while settings owns this slot, so its active
+  // project scope lives in the route-spanning layout.
+  const [projectScopeKey, setProjectScopeKey] = useState<string | null>(null);
   // Settings routes show the settings nav in place of whichever thread
   // sidebar is active.
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -243,7 +246,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         ) : legacySidebarEnabled ? (
           <LegacyThreadSidebar />
         ) : (
-          <ThreadSidebar />
+          <ThreadSidebar
+            projectScopeKey={projectScopeKey}
+            onProjectScopeKeyChange={setProjectScopeKey}
+          />
         )}
         <SidebarRail onDoubleClick={resetSidebarWidth} />
       </Sidebar>
