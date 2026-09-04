@@ -100,6 +100,12 @@ export const ProjectionStoreV2Error = Schema.Union([
 ]);
 export type ProjectionStoreV2Error = typeof ProjectionStoreV2Error.Type;
 
+export type ProjectionRecoveryKind =
+  | "queued-runs"
+  | "runtime"
+  | "subagent-results"
+  | "delegated-completions";
+
 export interface ProjectionStoreV2Shape {
   readonly apply: (
     event: OrchestrationV2DomainEvent,
@@ -113,6 +119,13 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error>;
+  readonly getRecoveryThreadIds: (
+    kind: ProjectionRecoveryKind,
+  ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
+  readonly getUnreadableThreadIds: () => Effect.Effect<
+    ReadonlyArray<ThreadId>,
+    ProjectionStoreV2Error
+  >;
   readonly getThreadSnapshot: (threadId: ThreadId) => Effect.Effect<
     {
       readonly schemaVersion: number;
@@ -144,6 +157,61 @@ export class ProjectionStoreV2 extends Context.Service<ProjectionStoreV2, Projec
 ) {}
 
 export const ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION = 2;
+
+function needsRecovery(
+  projection: OrchestrationV2ThreadProjection,
+  kind: ProjectionRecoveryKind,
+): boolean {
+  if (projection.thread.deletedAt !== null) return false;
+  switch (kind) {
+    case "queued-runs":
+      return (
+        projection.thread.archivedAt === null &&
+        projection.runs.some((run) => run.status === "queued") &&
+        !projection.runs.some((run) =>
+          ["preparing", "starting", "running", "waiting"].includes(run.status),
+        )
+      );
+    case "delegated-completions":
+      return projection.runs.some((run) => run.delegatedCompletion?.delivery != null);
+    case "subagent-results": {
+      const parentThreadId = projection.thread.lineage.parentThreadId;
+      return (
+        projection.thread.lineage.relationshipToParent === "subagent" &&
+        parentThreadId !== null &&
+        projection.thread.forkedFrom?.type === "node" &&
+        ["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
+          projection.runs.at(-1)?.status ?? "idle",
+        ) &&
+        !projection.contextTransfers.some(
+          (transfer) =>
+            transfer.type === "subagent_result" &&
+            transfer.sourceThreadId === projection.thread.id &&
+            transfer.targetThreadId === parentThreadId,
+        )
+      );
+    }
+    case "runtime":
+      return (
+        projection.runs.some((run) =>
+          ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
+        ) ||
+        projection.runtimeRequests.some((request) => request.status === "pending") ||
+        projection.providerSessions.some(
+          (session) => session.status !== "stopped" && session.status !== "error",
+        ) ||
+        projection.providerThreads.some(
+          (thread) =>
+            thread.status === "active" || (thread.pendingBackgroundTasks?.length ?? 0) > 0,
+        ) ||
+        projection.turnItems.some(
+          (item) =>
+            ["command_execution", "dynamic_tool", "subagent"].includes(item.type) &&
+            ["pending", "running", "waiting"].includes(item.status),
+        )
+      );
+  }
+}
 
 function upsertById<T extends { readonly id: string }>(items: ReadonlyArray<T>, next: T): Array<T> {
   const index = items.findIndex((item) => item.id === next.id);
@@ -2595,6 +2663,264 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
       );
 
+    const getRecoveryThreadIds = Effect.fn("ProjectionStore.getRecoveryThreadIds")(
+      function* (kind: ProjectionRecoveryKind) {
+        const candidates = (() => {
+          switch (kind) {
+            case "queued-runs":
+              return sql`
+                SELECT thread_id FROM orchestration_v2_projection_runs
+                WHERE status = 'queued'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs AS active
+                    WHERE active.thread_id = orchestration_v2_projection_runs.thread_id
+                      AND active.status IN ('preparing', 'starting', 'running', 'waiting')
+                  )
+              `;
+            case "delegated-completions":
+              return sql`
+                SELECT thread_id FROM orchestration_v2_projection_runs
+                WHERE CASE WHEN json_valid(payload_json)
+                  THEN json_type(payload_json, '$.delegatedCompletion.delivery') = 'object'
+                  ELSE 0 END
+              `;
+            case "subagent-results":
+              return sql`
+                SELECT child.thread_id FROM orchestration_v2_projection_threads AS child
+                WHERE CASE WHEN json_valid(child.payload_json) THEN
+                  json_extract(child.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+                  AND json_extract(child.payload_json, '$.lineage.parentThreadId') IS NOT NULL
+                  AND json_extract(child.payload_json, '$.forkedFrom.type') = 'node'
+                  AND (
+                    SELECT status FROM orchestration_v2_projection_runs
+                    WHERE thread_id = child.thread_id
+                    ORDER BY ordinal DESC LIMIT 1
+                  ) IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_context_transfers
+                    WHERE source_thread_id = child.thread_id
+                      AND target_thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
+                      AND type = 'subagent_result'
+                  )
+                  ELSE 0 END
+              `;
+            case "runtime":
+              return sql`
+                WITH pending_provider_threads AS (
+                  SELECT provider_thread_id, thread_id, owner_node_id
+                  FROM orchestration_v2_projection_provider_threads
+                  WHERE status = 'active'
+                    OR CASE WHEN json_valid(payload_json)
+                      THEN json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
+                      ELSE 0 END
+                )
+                SELECT thread_id FROM orchestration_v2_projection_runs
+                WHERE status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+                UNION
+                SELECT thread_id FROM orchestration_v2_projection_runtime_requests
+                WHERE status = 'pending'
+                UNION
+                SELECT bindings.thread_id
+                FROM orchestration_v2_projection_provider_session_bindings AS bindings
+                JOIN orchestration_v2_projection_provider_sessions AS sessions
+                  ON sessions.provider_session_id = bindings.provider_session_id
+                WHERE sessions.status NOT IN ('stopped', 'error')
+                UNION
+                SELECT thread_id FROM pending_provider_threads
+                UNION
+                SELECT nodes.thread_id FROM orchestration_v2_projection_nodes AS nodes
+                JOIN pending_provider_threads ON pending_provider_threads.owner_node_id = nodes.node_id
+                UNION
+                SELECT subagents.thread_id FROM orchestration_v2_projection_subagents AS subagents
+                JOIN pending_provider_threads
+                  ON pending_provider_threads.provider_thread_id = subagents.provider_thread_id
+                UNION
+                SELECT thread_id FROM orchestration_v2_projection_turn_items
+                WHERE type IN ('command_execution', 'dynamic_tool', 'subagent')
+                  AND status IN ('pending', 'running', 'waiting')
+                UNION
+                SELECT thread_id FROM orchestration_v2_effect_outbox
+                WHERE status IN ('pending', 'running')
+              `;
+          }
+        })();
+        const rows = yield* sql<{ readonly thread_id: string }>`
+          SELECT thread_id FROM orchestration_v2_projection_threads
+          WHERE deleted_at IS NULL
+            AND thread_id IN (${candidates})
+            ${kind === "queued-runs" ? sql`AND archived_at IS NULL` : sql``}
+          ORDER BY updated_at ASC, thread_id ASC
+        `;
+        return rows.map((row) => ThreadId.make(row.thread_id));
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
+    // Decode every canonical row once. Full thread reads repeat shared sessions,
+    // provider threads, transfers, and inherited fork histories for each owner.
+    const getUnreadableThreadIds = Effect.fn("ProjectionStore.getUnreadableThreadIds")(
+      function* () {
+        const actualThreadIds = new Set<ThreadId>();
+        const unreadable = new Set<ThreadId>();
+        const forkChildren = new Map<ThreadId, Array<ThreadId>>();
+        const tables: ReadonlyArray<{
+          readonly name: string;
+          readonly id: string;
+          readonly decode: (payload: string, entityId: string) => Effect.Effect<unknown, unknown>;
+        }> = [
+          {
+            name: "threads",
+            id: "thread_id",
+            decode: (payload: string, entityId: string) =>
+              decodeThreadPayload(payload).pipe(
+                Effect.tap((thread) =>
+                  Effect.sync(() => {
+                    if (thread.forkedFrom?.type !== "run") return;
+                    const sourceId = thread.forkedFrom.threadId;
+                    const children = forkChildren.get(sourceId) ?? [];
+                    children.push(ThreadId.make(entityId));
+                    forkChildren.set(sourceId, children);
+                  }),
+                ),
+              ),
+          },
+          { name: "runs", id: "run_id", decode: (payload) => decodeRunPayload(payload) },
+          {
+            name: "run_attempts",
+            id: "attempt_id",
+            decode: (payload) => decodeRunAttemptPayload(payload),
+          },
+          { name: "nodes", id: "node_id", decode: (payload) => decodeNodePayload(payload) },
+          {
+            name: "subagents",
+            id: "subagent_id",
+            decode: (payload) => decodeSubagentPayload(payload),
+          },
+          {
+            name: "provider_sessions",
+            id: "provider_session_id",
+            decode: (payload) => decodeProviderSessionPayload(payload),
+          },
+          {
+            name: "provider_threads",
+            id: "provider_thread_id",
+            decode: (payload) => decodeProviderThreadPayload(payload),
+          },
+          {
+            name: "provider_turns",
+            id: "provider_turn_id",
+            decode: (payload) => decodeProviderTurnPayload(payload),
+          },
+          {
+            name: "runtime_requests",
+            id: "runtime_request_id",
+            decode: (payload) => decodeRuntimeRequestPayload(payload),
+          },
+          {
+            name: "messages",
+            id: "message_id",
+            decode: (payload) => decodeMessagePayload(payload),
+          },
+          { name: "plans", id: "plan_id", decode: decodePlanPayload },
+          {
+            name: "turn_items",
+            id: "turn_item_id",
+            decode: (payload) => decodeTurnItemPayload(payload),
+          },
+          {
+            name: "checkpoint_scopes",
+            id: "scope_id",
+            decode: (payload) => decodeCheckpointScopePayload(payload),
+          },
+          {
+            name: "checkpoints",
+            id: "checkpoint_id",
+            decode: (payload) => decodeCheckpointPayload(payload),
+          },
+          {
+            name: "context_handoffs",
+            id: "context_handoff_id",
+            decode: (payload) => decodeContextHandoffPayload(payload),
+          },
+          {
+            name: "context_transfers",
+            id: "context_transfer_id",
+            decode: (payload) => decodeContextTransferPayload(payload),
+          },
+        ];
+        const pageSize = 500;
+        for (const table of tables) {
+          let afterRowId = 0;
+          while (true) {
+            const rows = yield* sql<{
+              readonly row_id: number;
+              readonly entity_id: string;
+              readonly thread_id: string | null;
+              readonly target_thread_id: string | null;
+              readonly payload_json: string;
+            }>`
+              SELECT rowid AS row_id, ${sql(table.id)} AS entity_id,
+                ${sql(table.name === "context_transfers" ? "source_thread_id" : "thread_id")} AS thread_id,
+                ${table.name === "context_transfers" ? sql`target_thread_id` : sql`NULL`} AS target_thread_id,
+                payload_json
+              FROM ${sql(`orchestration_v2_projection_${table.name}`)}
+              WHERE rowid > ${afterRowId}
+              ORDER BY rowid ASC LIMIT ${pageSize}
+            `;
+            for (const row of rows) {
+              if (table.name === "threads") actualThreadIds.add(ThreadId.make(row.entity_id));
+              const decoded = yield* Effect.exit(
+                Effect.suspend(() => table.decode(row.payload_json, row.entity_id)),
+              );
+              if (decoded._tag === "Success") continue;
+              if (table.name === "provider_sessions") {
+                const bindings = yield* sql<{ readonly thread_id: string }>`
+                  SELECT thread_id FROM orchestration_v2_projection_provider_session_bindings
+                  WHERE provider_session_id = ${row.entity_id}
+                `;
+                for (const binding of bindings) unreadable.add(ThreadId.make(binding.thread_id));
+              } else {
+                if (row.thread_id !== null) unreadable.add(ThreadId.make(row.thread_id));
+                if (row.target_thread_id !== null)
+                  unreadable.add(ThreadId.make(row.target_thread_id));
+              }
+              if (table.name === "provider_threads") {
+                const owners = yield* sql<{ readonly thread_id: string }>`
+                  SELECT thread_id FROM orchestration_v2_projection_nodes
+                  WHERE node_id = (
+                    SELECT owner_node_id FROM orchestration_v2_projection_provider_threads
+                    WHERE provider_thread_id = ${row.entity_id}
+                  )
+                  UNION
+                  SELECT thread_id FROM orchestration_v2_projection_subagents
+                  WHERE provider_thread_id = ${row.entity_id}
+                `;
+                for (const owner of owners) unreadable.add(ThreadId.make(owner.thread_id));
+              }
+            }
+            if (rows.length < pageSize) break;
+            afterRowId = rows[rows.length - 1]!.row_id;
+            yield* Effect.yieldNow;
+          }
+        }
+        // A full fork projection also reads its source. Propagate decode failures
+        // and missing sources through the same ancestry without loading history.
+        const pending = [
+          ...unreadable,
+          ...[...forkChildren.keys()].filter((sourceId) => !actualThreadIds.has(sourceId)),
+        ];
+        for (let index = 0; index < pending.length; index += 1) {
+          for (const childId of forkChildren.get(pending[index]!) ?? []) {
+            if (unreadable.has(childId)) continue;
+            unreadable.add(childId);
+            pending.push(childId);
+          }
+        }
+        return [...unreadable].filter((threadId) => actualThreadIds.has(threadId)).sort();
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
     const getThreadProjection: ProjectionStoreV2Shape["getThreadProjection"] = (threadId) =>
       readProjection(threadId, new Set());
 
@@ -3164,6 +3490,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getShellSnapshot,
       getThreadShell,
       getThreadProjection,
+      getRecoveryThreadIds,
+      getUnreadableThreadIds,
       getThreadSnapshot,
       getThreadSnapshotWindow,
     } satisfies ProjectionStoreV2Shape;
@@ -3232,6 +3560,20 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             .pipe(Effect.map(threadShellFromProjection));
           return shell.deletedAt === null ? shell : null;
         }),
+      getRecoveryThreadIds: (kind) =>
+        Effect.gen(function* () {
+          const projections = (yield* Ref.get(replayState)).projections;
+          return [...projections.values()]
+            .filter((projection) => needsRecovery(projection, kind))
+            .toSorted(
+              (left, right) =>
+                DateTime.toEpochMillis(left.thread.updatedAt) -
+                  DateTime.toEpochMillis(right.thread.updatedAt) ||
+                left.thread.id.localeCompare(right.thread.id),
+            )
+            .map((projection) => projection.thread.id);
+        }),
+      getUnreadableThreadIds: () => Effect.succeed([]),
       getThreadProjection: (threadId) =>
         Effect.gen(function* () {
           const existing = (yield* Ref.get(replayState)).projections;
