@@ -756,11 +756,13 @@ const isWslAdapterName = (name: string): boolean => name.toLowerCase().includes(
 
 // Ranked selection, strongest signal first, so a weak match on an early
 // candidate can never shadow a strong match on a later one:
-// 1. A candidate equal to a Windows interface address is the mirrored-mode
-//    signature (DesktopBackendConfiguration then swaps the renderer URL to
-//    loopback).
-// 2. A candidate inside the subnet of a WSL-named adapter ("vEthernet (WSL)",
+// 1. A candidate inside the subnet of a WSL-named adapter ("vEthernet (WSL)",
 //    "vEthernet (WSL (Hyper-V firewall))") is the NAT-mode eth0 address.
+//    Checked before equality so a Docker bridge address that happens to
+//    coincide with some other Windows adapter cannot pose as mirrored mode.
+// 2. A candidate equal to a Windows interface address is the mirrored-mode
+//    signature (DesktopBackendConfiguration then swaps the renderer URL to
+//    loopback); mirrored networking has no WSL NAT adapter to match above.
 // 3. A candidate inside any other Windows interface's subnet covers renamed
 //    or custom Hyper-V switches — ranked last so a Windows-side VPN whose
 //    10.x/172.x space overlaps an in-distro tunnel or Docker bridge cannot
@@ -774,8 +776,8 @@ export const pickDistroIp = (
   windowsInterfaces: ReadonlyArray<WindowsIpv4Interface>,
 ): string | null => {
   const passes: ReadonlyArray<(candidate: string, iface: WindowsIpv4Interface) => boolean> = [
-    (candidate, iface) => candidate === iface.address,
     (candidate, iface) => isWslAdapterName(iface.name) && inInterfaceSubnet(candidate, iface),
+    (candidate, iface) => candidate === iface.address,
     (candidate, iface) => inInterfaceSubnet(candidate, iface),
   ];
   for (const pass of passes) {

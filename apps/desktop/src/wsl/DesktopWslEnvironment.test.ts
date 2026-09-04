@@ -163,6 +163,20 @@ describe("pickDistroIp", () => {
     );
   });
 
+  it("prefers the WSL subnet match over a Docker bridge that equals another Windows adapter", () => {
+    // Docker's default bridge (172.17.0.1) can coincide with a Hyper-V
+    // adapter address on Windows; that equality must not pose as mirrored
+    // mode while eth0 sits inside the real WSL adapter's subnet.
+    const defaultSwitch = {
+      name: "vEthernet (Default Switch)",
+      address: "172.17.0.1",
+      netmask: "255.255.240.0",
+    };
+    expect(pickDistroIp(["172.17.0.1", "172.27.5.44"], [defaultSwitch, wslVEthernet])).toBe(
+      "172.27.5.44",
+    );
+  });
+
   it("outranks a Windows VPN whose address space overlaps an in-distro tunnel", () => {
     // A corporate VPN adapter on Windows can share 10.x/172.x space with an
     // in-distro tunnel or Docker bridge; the WSL adapter match must win even
