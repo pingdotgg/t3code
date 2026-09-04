@@ -1612,6 +1612,12 @@ const make = Effect.gen(function* () {
           : false;
 
       const shouldApplyThreadLifecycle = (() => {
+        if (event.type === "turn.aborted") {
+          // Delayed or duplicate aborts must not overwrite newer lifecycle state.
+          return (
+            activeTurnId !== null && eventTurnId !== undefined && sameId(activeTurnId, eventTurnId)
+          );
+        }
         if (!STRICT_PROVIDER_LIFECYCLE_GUARD) {
           return true;
         }
@@ -1654,7 +1660,8 @@ const make = Effect.gen(function* () {
         event.type === "session.exited" ||
         event.type === "thread.started" ||
         event.type === "turn.started" ||
-        event.type === "turn.completed"
+        event.type === "turn.completed" ||
+        event.type === "turn.aborted"
       ) {
         const status = (() => {
           switch (event.type) {
@@ -1670,6 +1677,9 @@ const make = Effect.gen(function* () {
               return normalizeRuntimeTurnState(event.payload.state) === "failed"
                 ? "error"
                 : "ready";
+            case "turn.aborted":
+              // The provider session remains alive and reusable after an abort.
+              return "ready";
             case "session.started":
             case "thread.started":
               // Provider thread/session start notifications can arrive during an
@@ -1680,7 +1690,9 @@ const make = Effect.gen(function* () {
         const nextActiveTurnId =
           event.type === "turn.started"
             ? (eventTurnId ?? null)
-            : event.type === "turn.completed" || event.type === "session.exited"
+            : event.type === "turn.completed" ||
+                event.type === "turn.aborted" ||
+                event.type === "session.exited"
               ? null
               : event.type === "session.state.changed" &&
                   !sessionStatusAllowsActiveTurn(
@@ -1922,7 +1934,10 @@ const make = Effect.gen(function* () {
         });
       }
 
-      if (event.type === "turn.completed") {
+      if (
+        event.type === "turn.completed" ||
+        (event.type === "turn.aborted" && shouldApplyThreadLifecycle)
+      ) {
         const detailedThread = yield* getLoadedThreadDetail();
         const messages = detailedThread?.messages ?? [];
         const proposedPlans = detailedThread?.proposedPlans ?? [];
@@ -2055,7 +2070,10 @@ const make = Effect.gen(function* () {
       } else if (!conflictsWithActiveTurn) {
         if (event.type === "turn.plan.updated") {
           threadPlanProgress.recordPlanProgress(thread.id, event.payload.plan);
-        } else if (event.type === "turn.completed" || event.type === "turn.aborted") {
+        } else if (
+          event.type === "turn.completed" ||
+          (event.type === "turn.aborted" && shouldApplyThreadLifecycle)
+        ) {
           threadPlanProgress.clearThreadPlanProgress(thread.id);
         }
       }

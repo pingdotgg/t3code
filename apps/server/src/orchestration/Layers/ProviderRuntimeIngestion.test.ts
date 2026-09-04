@@ -923,6 +923,189 @@ describe("ProviderRuntimeIngestion", () => {
     await waitForThread(harness.readModel, (thread) => thread.session?.status === "ready");
   });
 
+  it("closes the session lifecycle when the active turn is aborted", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // Regression: an interrupt whose abort lands while the provider is already
+    // idle emits `turn.aborted` instead of `turn.completed`. Without an
+    // ingestion handler the thread stayed "running" with a dangling active
+    // turn forever: stop looked like a no-op and settling was refused.
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-abort-lifecycle"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-abort-lifecycle"),
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-abort-lifecycle",
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-abort-lifecycle"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-abort-lifecycle"),
+      itemId: asItemId("item-abort-lifecycle"),
+      payload: { streamKind: "assistant_text", delta: "partial answer" },
+    });
+    harness.emit({
+      type: "turn.proposed.delta",
+      eventId: asEventId("evt-plan-delta-abort-lifecycle"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-abort-lifecycle"),
+      payload: { delta: "## Partial plan\n\n- keep this" },
+    });
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-aborted-lifecycle"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-abort-lifecycle"),
+      payload: { reason: "Interrupted by user." },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "ready" &&
+        entry.session?.activeTurnId === null &&
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-abort-lifecycle" && !message.streaming,
+        ) &&
+        entry.proposedPlans.some(
+          (plan: ProviderRuntimeTestProposedPlan) =>
+            plan.id === "plan:thread-1:turn:turn-abort-lifecycle",
+        ),
+    );
+    expect(
+      thread.messages.find(
+        (message: ProviderRuntimeTestMessage) => message.id === "assistant:item-abort-lifecycle",
+      )?.text,
+    ).toBe("partial answer");
+    expect(
+      thread.proposedPlans.find(
+        (plan: ProviderRuntimeTestProposedPlan) =>
+          plan.id === "plan:thread-1:turn:turn-abort-lifecycle",
+      )?.planMarkdown,
+    ).toBe("## Partial plan\n\n- keep this");
+  });
+
+  it("ignores stale turn.aborted events", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-abort-guarded"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-abort-guarded-main"),
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-abort-guarded-main",
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-abort-guarded"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-abort-guarded-main"),
+      itemId: asItemId("item-abort-guarded-main"),
+      payload: { streamKind: "assistant_text", delta: "still running" },
+    });
+    harness.emit({
+      type: "turn.proposed.delta",
+      eventId: asEventId("evt-plan-delta-abort-guarded"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-abort-guarded-main"),
+      payload: { delta: "## Active plan\n\n- do not finalize" },
+    });
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-aborted-guarded-stale"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-abort-guarded-stale"),
+      payload: { reason: "Interrupted by user." },
+    });
+
+    await harness.drain();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.activeTurnId).toBe("turn-abort-guarded-main");
+    expect(
+      thread?.messages.some(
+        (message: ProviderRuntimeTestMessage) => message.id === "assistant:item-abort-guarded-main",
+      ),
+    ).toBe(false);
+    expect(
+      thread?.proposedPlans.some(
+        (plan: ProviderRuntimeTestProposedPlan) =>
+          plan.id === "plan:thread-1:turn:turn-abort-guarded-main",
+      ),
+    ).toBe(false);
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-session-exited-abort-guarded"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: { reason: "Provider stopped", exitKind: "graceful" },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "stopped" && entry.session?.activeTurnId === null,
+    );
+
+    // The formerly active turn is no longer authoritative after session exit.
+    // A delayed or duplicate abort must not revive the stopped session as ready.
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-aborted-guarded-late"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-abort-guarded-main"),
+      payload: { reason: "Interrupted by user." },
+    });
+
+    await harness.drain();
+    const finalReadModel = await harness.readModel();
+    const finalThread = finalReadModel.threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    expect(finalThread?.session?.status).toBe("stopped");
+    expect(finalThread?.session?.activeTurnId).toBeNull();
+  });
+
   it("ignores non-active turn completion when runtime omits thread id", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
