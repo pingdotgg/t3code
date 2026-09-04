@@ -1,3 +1,5 @@
+import { AuthFilesystemReadScope } from "@t3tools/contracts";
+import { useEnvironmentScope } from "../../state/session";
 import { useCallback, useEffect, useMemo } from "react";
 import * as DateTime from "effect/DateTime";
 
@@ -36,9 +38,10 @@ export function useReviewSections(input: {
   const { environmentId, reviewCache, threadId } = input;
   const enabled = input.enabled ?? true;
   const selectedThread = useSelectedThreadProjection();
+  const canReadFiles = useEnvironmentScope(environmentId ?? null, AuthFilesystemReadScope);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const diffPreview = useEnvironmentQuery(
-    enabled && environmentId !== undefined && selectedThreadCwd !== null
+    canReadFiles && enabled && environmentId !== undefined && selectedThreadCwd !== null
       ? reviewEnvironment.diffPreview({
           environmentId,
           input: { cwd: selectedThreadCwd },

@@ -1,3 +1,5 @@
+import { AuthFilesystemReadScope } from "@t3tools/contracts";
+import { useEnvironmentScope } from "../../state/session";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -370,13 +372,13 @@ function useThreadFilesWorkspace(params: {
   };
 }
 
-function FilesUnavailable() {
+function FilesUnavailable({ detail = "This thread does not have an active workspace path." }: { detail?: string }) {
   return (
     <View className="flex-1 items-center justify-center bg-sheet px-6">
       <NativeStackScreenOptions options={{ title: "Files" }} />
       <EmptyState
         title="Files unavailable"
-        detail="This thread does not have an active workspace path."
+        detail={detail}
       />
     </View>
   );
@@ -420,9 +422,10 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     props.route.params,
   );
   const revealedInspectorRef = useRef(false);
+  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const entriesQuery = useFileTreeEntries({
     environmentId,
-    cwd: fileInspector.supported ? null : cwd,
+    cwd: !canReadFiles || fileInspector.supported ? null : cwd,
     searchQuery,
   });
   const handleReturnToThread = useCallback(() => {
@@ -509,6 +512,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     return <LoadingScreen message="Opening files..." messagePlacement="above-spinner" />;
   }
 
+  if (!canReadFiles) return <FilesUnavailable detail="This connection cannot read host files." />;
   if (cwd === null) {
     return <FilesUnavailable />;
   }
@@ -656,8 +660,9 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     !isVideoFile &&
     !isAudioFile &&
     (resolvedActiveMode === "source" || isMarkdownPreviewFile(relativePath));
+  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const fileQuery = useEnvironmentQuery(
-    environmentId !== null && cwd !== null && relativePath !== null && needsFileContents
+    canReadFiles && environmentId !== null && cwd !== null && relativePath !== null && needsFileContents
       ? projectEnvironment.readFile({
           environmentId,
           input: { cwd, relativePath },
@@ -861,6 +866,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     return <LoadingScreen message="Opening file..." messagePlacement="above-spinner" />;
   }
 
+  if (!canReadFiles) return <FilesUnavailable detail="This connection cannot read host files." />;
   if (cwd === null) {
     return <FilesUnavailable />;
   }

@@ -1,4 +1,5 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { AuthFilesystemReadScope } from "@t3tools/contracts";
 import {
   type EnvironmentId,
   type ProjectListEntriesResult,
@@ -14,9 +15,13 @@ import { useCallback } from "react";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { useProjectPathSearch } from "~/state/queries";
+import { useEnvironmentScope } from "~/state/session";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 
 const EMPTY_PROJECT_FILE_PATH = "";
+const EMPTY_PROJECT_ENTRIES_QUERY_ATOM = Atom.make(
+  AsyncResult.initial<ProjectListEntriesResult, never>(false),
+);
 const EMPTY_PROJECT_FILE_QUERY_ATOM = Atom.make(
   AsyncResult.initial<ProjectReadFileResult, never>(false),
 ).pipe(Atom.withLabel("project-file-query:empty"));
@@ -101,6 +106,15 @@ export function getProjectFileContents(
   return Option.getOrUndefined(AsyncResult.value(result))?.contents;
 }
 
+export function getUnsavedProjectFileQueryData(
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string,
+): ProjectReadFileResult | null {
+  const optimistic = appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath));
+  return optimistic?.confirmedAgainst === undefined ? (optimistic?.data ?? null) : null;
+}
+
 export function confirmProjectFileQueryData(
   environmentId: EnvironmentId,
   cwd: string,
@@ -163,13 +177,16 @@ export function useProjectEntriesQuery(
   cwd: string,
   directoryPath?: string,
 ): ProjectQueryState<ProjectListEntriesResult> {
-  const atom = getProjectEntriesQueryAtom(environmentId, cwd, directoryPath);
+  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
+  const atom = canReadFiles
+    ? getProjectEntriesQueryAtom(environmentId, cwd, directoryPath)
+    : EMPTY_PROJECT_ENTRIES_QUERY_ATOM;
   const result = useAtomValue(atom);
   const refreshAtom = useAtomRefresh(atom);
   const refresh = useCallback(() => refreshAtom(), [refreshAtom]);
   return {
     data: Option.getOrNull(AsyncResult.value(result)),
-    error: errorMessage(failureCause(result)),
+    error: canReadFiles ? errorMessage(failureCause(result)) : "This connection cannot read host files.",
     isPending: result.waiting,
     refresh,
   };
@@ -218,7 +235,8 @@ export function useProjectFileQuery(
 ): ProjectFileQueryState {
   // The caller decides what to read. A media path is not skipped here: a folder
   // named `assets.png` is only knowable as a folder from the read failure.
-  const atom = enabled
+  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
+  const atom = enabled && canReadFiles
     ? getProjectFileQueryAtom(environmentId, cwd, relativePath)
     : EMPTY_PROJECT_FILE_QUERY_ATOM;
   const result = useAtomValue(atom);
@@ -233,8 +251,8 @@ export function useProjectFileQuery(
   const readError = isProjectReadFileError(cause) ? cause : null;
 
   return {
-    data: optimisticFile?.data ?? data,
-    error: errorMessage(cause),
+    data: canReadFiles ? (optimisticFile?.data ?? data) : null,
+    error: canReadFiles ? errorMessage(cause) : "This connection cannot read host files.",
     readError,
     isNotFile: readError?.failure === "path_not_file",
     isPending: result.waiting,
