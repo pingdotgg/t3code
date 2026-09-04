@@ -7724,6 +7724,10 @@ function ChatViewContent(props: ChatViewProps) {
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
+            providers={providerStatuses}
+            activeProviderInstanceId={
+              activeThread.session?.providerInstanceId ?? activeProviderInstanceId
+            }
             onNewThreadInProject={handleNewThreadInActiveProject}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}
