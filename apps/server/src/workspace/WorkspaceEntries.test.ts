@@ -218,7 +218,10 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           kind: "file",
         });
 
-        expect(result.entries).toEqual([{ path: "src/index.ts", kind: "file" }]);
+        // Native ranking can put either matching file first.
+        expect(result.entries).toHaveLength(1);
+        expect(result.entries[0]?.kind).toBe("file");
+        expect(["src/index.ts", "src/internal.ts"]).toContain(result.entries[0]?.path);
         expect(result.truncated).toBe(true);
       }),
     );
