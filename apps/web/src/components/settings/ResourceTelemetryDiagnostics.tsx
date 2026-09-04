@@ -540,24 +540,36 @@ function ProcessActions({
   const isSignaling = signalingKeys.has(processIdentityKey(process));
   return (
     <div className="flex items-center justify-end gap-1.5">
-      <button
-        type="button"
-        disabled={isSignaling || !canMaintainEnvironment}
-        title={canMaintainEnvironment ? "Send SIGINT" : "This connection cannot manage processes."}
-        className="cursor-pointer text-[10px] font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
-        onClick={() => onSignal(process, "SIGINT")}
-      >
-        INT
-      </button>
-      <button
-        type="button"
-        disabled={isSignaling || !canMaintainEnvironment}
-        title={canMaintainEnvironment ? "Send SIGKILL" : "This connection cannot manage processes."}
-        className="cursor-pointer text-[10px] font-semibold text-destructive hover:underline disabled:opacity-50"
-        onClick={() => onSignal(process, "SIGKILL")}
-      >
-        KILL
-      </button>
+      <Tooltip>
+        <TooltipTrigger render={<span className="inline-flex" />}>
+          <button
+            type="button"
+            disabled={isSignaling || !canMaintainEnvironment}
+            className="cursor-pointer text-[10px] font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+            onClick={() => onSignal(process, "SIGINT")}
+          >
+            INT
+          </button>
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          {canMaintainEnvironment ? "Send SIGINT" : "This connection cannot manage processes."}
+        </TooltipPopup>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger render={<span className="inline-flex" />}>
+          <button
+            type="button"
+            disabled={isSignaling || !canMaintainEnvironment}
+            className="cursor-pointer text-[10px] font-semibold text-destructive hover:underline disabled:opacity-50"
+            onClick={() => onSignal(process, "SIGKILL")}
+          >
+            KILL
+          </button>
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          {canMaintainEnvironment ? "Send SIGKILL" : "This connection cannot manage processes."}
+        </TooltipPopup>
+      </Tooltip>
     </div>
   );
 }
@@ -1118,20 +1130,24 @@ export function ResourceTelemetryDiagnostics({
         icon={<GaugeIcon className="size-4 text-muted-foreground" />}
         headerAction={
           collectorNeedsRetry ? (
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={isRetrying || !canMaintainEnvironment}
-              title={
-                canMaintainEnvironment
-                  ? undefined
-                  : "This connection cannot restart the resource monitor."
-              }
-              onClick={retryCollector}
-            >
-              <RefreshIcon className="size-3" refreshing={isRetrying} />
-              Retry monitor
-            </Button>
+            <Tooltip>
+              <TooltipTrigger render={<span className="inline-flex" />}>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={isRetrying || !canMaintainEnvironment}
+                  onClick={retryCollector}
+                >
+                  <RefreshIcon className="size-3" refreshing={isRetrying} />
+                  Retry monitor
+                </Button>
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {canMaintainEnvironment
+                  ? "Restart the resource monitor."
+                  : "This connection cannot restart the resource monitor."}
+              </TooltipPopup>
+            </Tooltip>
           ) : null
         }
       >
