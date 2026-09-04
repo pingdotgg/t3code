@@ -80,12 +80,10 @@ export const boundedThreadSnapshotLoaderLayer: Layer.Layer<
           threadId,
           signer,
         }).pipe(
-          Effect.map(
-            (snapshot): ThreadSnapshotLoadResult => ({
-              _tag: "present",
-              snapshot,
-            }),
-          ),
+          Effect.map((snapshot): ThreadSnapshotLoadResult => ({
+            _tag: "present",
+            snapshot,
+          })),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.catchTags({
             EnvironmentResourceNotFoundError: () =>
@@ -107,21 +105,19 @@ export const boundedThreadSnapshotLoaderLayer: Layer.Layer<
         );
 
         return fetchEnvironmentBoundedThreadSnapshot({ prepared, threadId, signer }).pipe(
-          Effect.map(
-            (bounded): ThreadSnapshotLoadResult => ({
-              _tag: "present",
-              snapshot: {
-                snapshotSequence: bounded.snapshotSequence,
-                projection: bounded.projection,
-                latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
-              },
-              history: {
-                historyCursor: bounded.historyCursor,
-                hasMoreHistory: bounded.hasMoreHistory,
-                latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
-              },
-            }),
-          ),
+          Effect.map((bounded): ThreadSnapshotLoadResult => ({
+            _tag: "present",
+            snapshot: {
+              snapshotSequence: bounded.snapshotSequence,
+              projection: bounded.projection,
+              latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
+            },
+            history: {
+              historyCursor: bounded.historyCursor,
+              hasMoreHistory: bounded.hasMoreHistory,
+              latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
+            },
+          })),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.catchTags({
             EnvironmentResourceNotFoundError: () =>
