@@ -4315,6 +4315,74 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("releases an interrupted resume start instead of leaking its query", () => {
+    const deadSessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const started = yield* Stream.take(adapter.streamEvents, 1).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const starting = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: { threadId: RESUME_THREAD_ID, resume: deadSessionId, turnCount: 0 },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkChild);
+      yield* Fiber.join(started);
+
+      // Nothing is emitted: the CLI never answers, and the start is cancelled
+      // while still waiting on it.
+      yield* Fiber.interrupt(starting);
+
+      assert.equal(harness.query.closeCalls, 1);
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("settles the resume wait even when closing the query throws", () => {
+    const deadSessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      harness.query.closeError = new Error("close failed");
+
+      const started = yield* Stream.take(adapter.streamEvents, 1).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const starting = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: { threadId: RESUME_THREAD_ID, resume: deadSessionId, turnCount: 0 },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Fiber.join(started);
+
+      // A close that throws must still settle the wait, or this join hangs.
+      yield* adapter.stopSession(RESUME_THREAD_ID).pipe(Effect.result);
+
+      const result = yield* Fiber.join(starting);
+      assert.equal(result._tag, "Failure");
+      assert.equal(harness.query.closeCalls, 1);
+      // The close failed, so the session stays addressable by design; the bug
+      // was the start never being released at all.
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("tears down a rejected resume even when startSession is interrupted", () => {
     const deadSessionId = "550e8400-e29b-41d4-a716-446655440000";
     const harness = makeHarness();
@@ -4388,6 +4456,9 @@ describe("ClaudeAdapterLive", () => {
         return;
       }
       assert.equal(result.failure._tag, "ProviderAdapterSessionClosedError");
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
       assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

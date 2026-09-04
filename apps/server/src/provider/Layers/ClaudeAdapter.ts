@@ -279,6 +279,12 @@ function rememberPendingTaskModel(
   }
 }
 
+/**
+ * How a `--resume` start ended: the CLI took it, refused it, or the session was
+ * stopped before it answered.
+ */
+type ClaudeResumeOutcome = "accepted" | "rejected" | "aborted";
+
 interface ClaudeSessionContext {
   session: ProviderSession;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
@@ -291,8 +297,8 @@ interface ClaudeSessionContext {
    * effort override inherit this. */
   currentEffort: string | undefined;
   resumeSessionId: string | undefined;
-  /** Pending only while startSession waits; resolves `true` on a rejected resume. */
-  resumeVerification: Deferred.Deferred<boolean> | undefined;
+  /** Pending only while startSession waits for the CLI to answer the resume. */
+  resumeVerification: Deferred.Deferred<ClaudeResumeOutcome> | undefined;
   resumeRejected: boolean;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
@@ -2068,7 +2074,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const rejected = isMissingConversationResult(message);
     context.resumeRejected = rejected;
     context.resumeVerification = undefined;
-    yield* Deferred.succeed(verification, rejected);
+    yield* Deferred.succeed(verification, rejected ? "rejected" : "accepted");
     return rejected;
   });
 
@@ -3775,6 +3781,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   ) {
     if (context.stopped) return;
 
+    // Ahead of the close, which by design aborts the rest of this function when
+    // it throws: a start still waiting on the resume answer must never be left
+    // behind that failure.
+    if (context.resumeVerification !== undefined) {
+      const verification = context.resumeVerification;
+      context.resumeVerification = undefined;
+      yield* Deferred.succeed(verification, "aborted");
+    }
+
     // Schedule process termination before any cleanup that can wait on the
     // provider. The SDK closes stdin, then escalates from SIGTERM to SIGKILL.
     yield* Effect.try({
@@ -3789,14 +3804,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     });
 
     context.stopped = true;
-
-    // A session that dies before its first durable message never answers the
-    // resume question; release startSession instead of leaving it waiting.
-    if (context.resumeVerification !== undefined) {
-      const verification = context.resumeVerification;
-      context.resumeVerification = undefined;
-      yield* Deferred.succeed(verification, false);
-    }
 
     for (const taskId of Array.from(context.liveTaskIds)) {
       if (!context.liveTaskIds.delete(taskId)) {
@@ -3940,7 +3947,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const newSessionId = existingResumeSessionId === undefined ? yield* randomUUIDv4 : undefined;
       const sessionId = existingResumeSessionId ?? newSessionId;
       const resumeVerification =
-        existingResumeSessionId === undefined ? undefined : yield* Deferred.make<boolean>();
+        existingResumeSessionId === undefined
+          ? undefined
+          : yield* Deferred.make<ClaudeResumeOutcome>();
 
       const runtimeContext = yield* Effect.context<never>();
       const runFork = Effect.runForkWith(runtimeContext);
@@ -4615,10 +4624,20 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // Hold a resume start open until the CLI says whether it has the
       // transcript, so startSession's retry lands before any prompt is queued.
       if (resumeVerification !== undefined) {
-        yield* Deferred.await(resumeVerification);
-        // A stop or a stream death settles the wait too, and the snapshot
-        // below would describe a session that no longer exists.
-        if (context.stopped && !context.resumeRejected) {
+        // The context is registered and its query already running, so an
+        // interrupted wait has to take both down with it.
+        const outcome = yield* Deferred.await(resumeVerification).pipe(
+          Effect.onExitIf(Exit.isFailure, () =>
+            stopSessionInternal(context, { emitExitEvent: false }).pipe(
+              Effect.catch((cause) =>
+                Effect.logError("Failed to close an interrupted Claude resume start.", { cause }),
+              ),
+            ),
+          ),
+        );
+        // A stop or a stream death settles the wait too, and the snapshot below
+        // would describe a session that is already gone.
+        if (outcome === "aborted") {
           return yield* new ProviderAdapterSessionClosedError({
             provider: PROVIDER,
             threadId,
