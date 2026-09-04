@@ -4,6 +4,11 @@ Messages can contain up to 120,000 characters. If a draft is longer, T3 Code kee
 composer and shows how many characters need to be removed. Shorten the draft or split it into
 multiple messages, then send again in the same thread.
 
+On web and desktop, press Up Arrow to recall up to ten recent prompts from the current thread.
+Press Up Arrow or Down Arrow to move through them. Moving past the newest prompt restores the
+unfinished draft. Press Left Arrow or Right Arrow, or edit the recalled prompt, to stop moving
+through prompt history.
+
 On mobile, an empty composer shows an interrupt button while the agent is working. Adding text
 or an attachment replaces it with the send button. This applies to both compact and expanded
 composers.

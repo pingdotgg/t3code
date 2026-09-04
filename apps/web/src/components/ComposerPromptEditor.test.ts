@@ -10,6 +10,10 @@ import {
   $isRangeSelection,
   COMMAND_PRIORITY_EDITOR,
   createEditor,
+  KEY_ARROW_DOWN_COMMAND,
+  KEY_ARROW_LEFT_COMMAND,
+  KEY_ARROW_RIGHT_COMMAND,
+  KEY_ARROW_UP_COMMAND,
   PASTE_COMMAND,
 } from "lexical";
 
@@ -22,6 +26,7 @@ import {
 } from "./ComposerCitationNode";
 import { splitPromptIntoComposerSegments } from "../composer-editor-mentions";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
+import { registerComposerCommandKeys } from "./ComposerPromptEditor";
 
 vi.mock("./chat/AssistantCitationChip", () => ({ AssistantCitationChip: () => null }));
 
@@ -85,6 +90,36 @@ class TestClipboardEvent extends Event {
     } as unknown as DataTransfer;
   }
 }
+
+class TestKeyboardEvent extends Event {
+  readonly isComposing = false;
+  readonly keyCode = 0;
+}
+
+describe("registerComposerCommandKeys", () => {
+  it("handles history navigation and lets history-exit arrows reach the editor", () => {
+    const editor = createEditor();
+    const keys: string[] = [];
+    const unregister = registerComposerCommandKeys(editor, (key) => {
+      keys.push(key);
+      return key === "ArrowUp" || key === "ArrowDown";
+    });
+    const left = new TestKeyboardEvent("keydown", { cancelable: true });
+    const right = new TestKeyboardEvent("keydown", { cancelable: true });
+    const up = new TestKeyboardEvent("keydown", { cancelable: true });
+    const down = new TestKeyboardEvent("keydown", { cancelable: true });
+
+    expect(editor.dispatchCommand(KEY_ARROW_LEFT_COMMAND, left as KeyboardEvent)).toBe(false);
+    expect(editor.dispatchCommand(KEY_ARROW_RIGHT_COMMAND, right as KeyboardEvent)).toBe(false);
+    expect(editor.dispatchCommand(KEY_ARROW_UP_COMMAND, up as KeyboardEvent)).toBe(true);
+    expect(editor.dispatchCommand(KEY_ARROW_DOWN_COMMAND, down as KeyboardEvent)).toBe(true);
+    expect(keys).toEqual(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]);
+    expect([left.defaultPrevented, right.defaultPrevented]).toEqual([false, false]);
+    expect([up.defaultPrevented, down.defaultPrevented]).toEqual([true, true]);
+
+    unregister();
+  });
+});
 
 describe("registerComposerInlineTokenPaste", () => {
   afterEach(() => {

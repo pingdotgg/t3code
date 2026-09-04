@@ -40,10 +40,13 @@ import {
   type ComposerSubmissionIntent,
   type ComposerTrigger,
   collapseExpandedComposerCursor,
+  composerPromptHistoryDirectionForKey,
   composerSubmissionIntentForEnter,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   formatAssistantCitationForComposer,
+  navigateComposerPromptHistory,
+  type ComposerPromptHistoryNavigation,
   replaceTextRange,
 } from "../../composer-logic";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
@@ -1145,6 +1148,7 @@ export interface ChatComposerProps {
   activeThreadId: ThreadId | null;
   activeThreadEnvironmentId: EnvironmentId | undefined;
   activeThread: Thread | undefined;
+  promptHistory: ReadonlyArray<string>;
   isServerThread: boolean;
   isLocalDraftThread: boolean;
   forceExpandedOnMobile: boolean;
@@ -1279,6 +1283,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadId,
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
+    promptHistory,
     isServerThread: _isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
     forceExpandedOnMobile,
@@ -1809,6 +1814,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * the next draft.
    */
   const pendingImageCompressionsRef = useRef<Map<ThreadId, number>>(new Map());
+  const promptHistoryNavigationRef = useRef<ComposerPromptHistoryNavigation | null>(null);
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -2467,6 +2473,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       cursorAdjacentToMention: boolean,
       terminalContextIds: string[],
     ) => {
+      promptHistoryNavigationRef.current = null;
       expandComposerForEditorChange();
       if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
         if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;
@@ -2809,6 +2816,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       setComposerSubmissionError(submission.validationMessage);
       if (!submission.didDispatch) return;
+      promptHistoryNavigationRef.current = null;
       if (shouldBlurMobileComposerOnSubmit()) {
         blurMobileComposerAfterSend();
       }
@@ -2902,14 +2910,42 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Callbacks: command key
   // ------------------------------------------------------------------
+  const navigatePromptHistory = (key: "ArrowDown" | "ArrowLeft" | "ArrowRight" | "ArrowUp") => {
+    const targetKey = composerTargetKey(composerDraftTarget);
+    const direction = composerPromptHistoryDirectionForKey(key);
+    if (!direction) return false;
+    const next = navigateComposerPromptHistory({
+      direction,
+      history: promptHistory,
+      navigation: promptHistoryNavigationRef.current,
+      prompt: promptRef.current,
+      targetKey,
+    });
+    if (!next) return false;
+
+    promptHistoryNavigationRef.current = next.navigation;
+    if (direction === "exit") return false;
+    promptRef.current = next.prompt;
+    setComposerDraftPrompt(composerDraftTarget, next.prompt);
+    setComposerCursor(collapseExpandedComposerCursor(next.prompt, next.prompt.length));
+    setComposerTrigger(null);
+    return true;
+  };
+
   const onComposerCommandKey = (
-    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
+    key: "ArrowDown" | "ArrowLeft" | "ArrowRight" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
   ) => {
     if (key === "Tab" && event.shiftKey) {
       if (!planModeUiEnabled) return false;
       toggleInteractionMode();
       return true;
+    }
+    if (
+      (key === "ArrowDown" || key === "ArrowLeft" || key === "ArrowRight" || key === "ArrowUp") &&
+      promptHistoryNavigationRef.current !== null
+    ) {
+      return navigatePromptHistory(key);
     }
     const { trigger } = resolveActiveComposerTrigger();
     const menuIsActive = composerMenuOpenRef.current || trigger !== null;
@@ -2928,6 +2964,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         onSelectComposerItem(selectedItem);
         return true;
       }
+    }
+    if (
+      (key === "ArrowDown" || key === "ArrowUp") &&
+      !activePendingProgress &&
+      !isComposerApprovalState
+    ) {
+      return navigatePromptHistory(key);
     }
     const submissionIntent =
       key === "Enter"

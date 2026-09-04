@@ -7,13 +7,17 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
+  composerPromptHistoryDirectionForKey,
   composerSubmissionIntentForEnter,
   detectComposerTrigger,
+  deriveComposerPromptHistory,
   expandCollapsedComposerCursor,
   formatAssistantCitationForComposer,
   isCollapsedCursorAdjacentToInlineToken,
+  navigateComposerPromptHistory,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
@@ -106,6 +110,134 @@ describe("composerSubmissionIntentForEnter", () => {
         isDraftThread: false,
       }),
     ).toBe("foreground");
+  });
+});
+
+describe("navigateComposerPromptHistory", () => {
+  it.each([
+    ["ArrowUp", "previous"],
+    ["ArrowDown", "next"],
+    ["ArrowLeft", "exit"],
+    ["ArrowRight", "exit"],
+    ["Enter", null],
+  ])("maps %s to %s", (key, direction) => {
+    expect(composerPromptHistoryDirectionForKey(key)).toBe(direction);
+  });
+
+  it("does not start with Down Arrow or without history", () => {
+    expect(
+      navigateComposerPromptHistory({
+        direction: "next",
+        history: ["first"],
+        navigation: null,
+        prompt: "unfinished",
+        targetKey: "thread",
+      }),
+    ).toBeNull();
+    expect(
+      navigateComposerPromptHistory({
+        direction: "previous",
+        history: [],
+        navigation: null,
+        prompt: "unfinished",
+        targetKey: "thread",
+      }),
+    ).toBeNull();
+  });
+
+  it("moves backward, stops at the oldest prompt, and restores the draft", () => {
+    const history = ["first", "second"];
+    const latest = navigateComposerPromptHistory({
+      direction: "previous",
+      history,
+      navigation: null,
+      prompt: "unfinished",
+      targetKey: "thread",
+    });
+    expect(latest).toEqual({
+      navigation: { draft: "unfinished", index: 1, targetKey: "thread" },
+      prompt: "second",
+    });
+
+    const previous = navigateComposerPromptHistory({
+      direction: "previous",
+      history,
+      navigation: latest?.navigation ?? null,
+      prompt: latest?.prompt ?? "",
+      targetKey: "thread",
+    });
+    expect(previous?.prompt).toBe("first");
+    expect(
+      navigateComposerPromptHistory({
+        direction: "previous",
+        history,
+        navigation: previous?.navigation ?? null,
+        prompt: previous?.prompt ?? "",
+        targetKey: "thread",
+      }),
+    ).toEqual(previous);
+
+    const next = navigateComposerPromptHistory({
+      direction: "next",
+      history,
+      navigation: previous?.navigation ?? null,
+      prompt: previous?.prompt ?? "",
+      targetKey: "thread",
+    });
+    const draft = navigateComposerPromptHistory({
+      direction: "next",
+      history,
+      navigation: next?.navigation ?? null,
+      prompt: next?.prompt ?? "",
+      targetKey: "thread",
+    });
+    expect(draft).toEqual({ navigation: null, prompt: "unfinished" });
+  });
+
+  it("exits without changing the recalled prompt", () => {
+    expect(
+      navigateComposerPromptHistory({
+        direction: "exit",
+        history: ["first"],
+        navigation: { draft: "unfinished", index: 0, targetKey: "thread" },
+        prompt: "first",
+        targetKey: "thread",
+      }),
+    ).toEqual({ navigation: null, prompt: "first" });
+  });
+
+  it("starts a new history session after the thread changes", () => {
+    expect(
+      navigateComposerPromptHistory({
+        direction: "previous",
+        history: ["new thread prompt"],
+        navigation: { draft: "old draft", index: 0, targetKey: "thread-a" },
+        prompt: "new draft",
+        targetKey: "thread-b",
+      }),
+    ).toEqual({
+      navigation: { draft: "new draft", index: 0, targetKey: "thread-b" },
+      prompt: "new thread prompt",
+    });
+  });
+});
+
+describe("deriveComposerPromptHistory", () => {
+  it("returns only the ten most recent non-empty user prompts", () => {
+    const messages = [
+      { role: "user", text: "too old" },
+      { role: "assistant", text: "response" },
+      { role: "user", text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT },
+      { role: "user", text: "   " },
+      ...Array.from({ length: 10 }, (_, index) => ({
+        role: "user",
+        text: `prompt ${String(index + 1)}`,
+      })),
+    ];
+
+    expect(deriveComposerPromptHistory(messages)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `prompt ${String(index + 1)}`),
+    );
   });
 });
 

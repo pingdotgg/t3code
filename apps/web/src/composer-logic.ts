@@ -7,11 +7,25 @@ import {
   splitPromptIntoComposerSegments,
   type ComposerPromptSegment,
 } from "./composer-editor-mentions";
-import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
+import {
+  deriveDisplayedUserMessageState,
+  INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
+} from "./lib/terminalContext";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 export type ComposerSubmissionIntent = "foreground" | "background";
+
+export interface ComposerPromptHistoryNavigation {
+  draft: string;
+  index: number;
+  targetKey: string;
+}
+
+export type ComposerPromptHistoryDirection = "exit" | "next" | "previous";
+
+export const ATTACHMENT_ONLY_BOOTSTRAP_PROMPT =
+  "[User attached one or more files without additional text. Respond using the conversation context and the attached files.]";
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -34,6 +48,61 @@ export function composerSubmissionIntentForEnter(input: {
     return null;
   }
   return input.modifierKey && input.isDraftThread ? "background" : "foreground";
+}
+
+export function composerPromptHistoryDirectionForKey(
+  key: string,
+): ComposerPromptHistoryDirection | null {
+  if (key === "ArrowUp") return "previous";
+  if (key === "ArrowDown") return "next";
+  return key === "ArrowLeft" || key === "ArrowRight" ? "exit" : null;
+}
+
+export function deriveComposerPromptHistory(
+  messages: ReadonlyArray<{ role: string; text: string }>,
+): string[] {
+  const history: string[] = [];
+  for (let index = messages.length - 1; index >= 0 && history.length < 10; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role !== "user" || message.text === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT) {
+      continue;
+    }
+    const text = deriveDisplayedUserMessageState(message.text).visibleText;
+    if (text.trim()) history.push(text);
+  }
+  return history.toReversed();
+}
+
+export function navigateComposerPromptHistory(input: {
+  direction: ComposerPromptHistoryDirection;
+  history: ReadonlyArray<string>;
+  navigation: ComposerPromptHistoryNavigation | null;
+  prompt: string;
+  targetKey: string;
+}): { navigation: ComposerPromptHistoryNavigation | null; prompt: string } | null {
+  const activeNavigation =
+    input.navigation?.targetKey === input.targetKey ? input.navigation : null;
+  if (input.direction === "exit") {
+    return activeNavigation ? { navigation: null, prompt: input.prompt } : null;
+  }
+  if (input.history.length === 0 || (input.direction === "next" && activeNavigation === null)) {
+    return null;
+  }
+
+  const navigation = activeNavigation ?? {
+    draft: input.prompt,
+    index: input.history.length - 1,
+    targetKey: input.targetKey,
+  };
+  if (input.direction === "previous") {
+    const index = Math.max(0, navigation.index - (activeNavigation === null ? 0 : 1));
+    return { navigation: { ...navigation, index }, prompt: input.history[index] ?? "" };
+  }
+  if (navigation.index === input.history.length - 1) {
+    return { navigation: null, prompt: navigation.draft };
+  }
+  const index = navigation.index + 1;
+  return { navigation: { ...navigation, index }, prompt: input.history[index] ?? "" };
 }
 
 const isInlineTokenSegment = (segment: ComposerPromptSegment): boolean => segment.type !== "text";

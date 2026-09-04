@@ -39,6 +39,7 @@ import {
   SKIP_DOM_SELECTION_TAG,
   DecoratorNode,
   type ElementNode,
+  type LexicalEditor,
   type LexicalNode,
   type SerializedLexicalNode,
   type EditorState,
@@ -898,6 +899,14 @@ export interface ComposerPromptEditorHandle {
   };
 }
 
+export type ComposerCommandKey =
+  | "ArrowDown"
+  | "ArrowLeft"
+  | "ArrowRight"
+  | "ArrowUp"
+  | "Enter"
+  | "Tab";
+
 interface ComposerPromptEditorProps {
   value: string;
   cursor: number;
@@ -917,10 +926,7 @@ interface ComposerPromptEditorProps {
     terminalContextIds: string[],
   ) => void;
   onVisibleSelectionChange?: () => void;
-  onCommandKeyDown?: (
-    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
-    event: KeyboardEvent,
-  ) => boolean;
+  onCommandKeyDown?: (key: ComposerCommandKey, event: KeyboardEvent) => boolean;
   onPageScrollKeyDown?: (key: "PageUp" | "PageDown") => void;
   onPageScrollKeyUp?: (key: string) => void;
   onPageScrollRelease?: () => void;
@@ -928,64 +934,74 @@ interface ComposerPromptEditorProps {
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }
 
+export function registerComposerCommandKeys(
+  editor: LexicalEditor,
+  onCommandKeyDown?: (key: ComposerCommandKey, event: KeyboardEvent) => boolean,
+) {
+  const handleCommand = (key: ComposerCommandKey, event: KeyboardEvent | null): boolean => {
+    if (!onCommandKeyDown || !event) return false;
+    if (key === "Enter" && (event.isComposing || event.keyCode === 229)) {
+      event.stopPropagation();
+      return true;
+    }
+    const handled = onCommandKeyDown(key, event);
+    if (handled) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    return handled;
+  };
+
+  const unregisterArrowDown = editor.registerCommand(
+    KEY_ARROW_DOWN_COMMAND,
+    (event) => handleCommand("ArrowDown", event),
+    COMMAND_PRIORITY_HIGH,
+  );
+  const unregisterArrowUp = editor.registerCommand(
+    KEY_ARROW_UP_COMMAND,
+    (event) => handleCommand("ArrowUp", event),
+    COMMAND_PRIORITY_HIGH,
+  );
+  const unregisterArrowLeft = editor.registerCommand(
+    KEY_ARROW_LEFT_COMMAND,
+    (event) => handleCommand("ArrowLeft", event),
+    COMMAND_PRIORITY_HIGH,
+  );
+  const unregisterArrowRight = editor.registerCommand(
+    KEY_ARROW_RIGHT_COMMAND,
+    (event) => handleCommand("ArrowRight", event),
+    COMMAND_PRIORITY_HIGH,
+  );
+  const unregisterEnter = editor.registerCommand(
+    KEY_ENTER_COMMAND,
+    (event) => handleCommand("Enter", event),
+    COMMAND_PRIORITY_HIGH,
+  );
+  const unregisterTab = editor.registerCommand(
+    KEY_TAB_COMMAND,
+    (event) => handleCommand("Tab", event),
+    COMMAND_PRIORITY_HIGH,
+  );
+
+  return () => {
+    unregisterArrowDown();
+    unregisterArrowUp();
+    unregisterArrowLeft();
+    unregisterArrowRight();
+    unregisterEnter();
+    unregisterTab();
+  };
+}
+
 function ComposerCommandKeyPlugin(props: {
-  onCommandKeyDown?: (
-    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
-    event: KeyboardEvent,
-  ) => boolean;
+  onCommandKeyDown?: (key: ComposerCommandKey, event: KeyboardEvent) => boolean;
 }) {
   const [editor] = useLexicalComposerContext();
 
-  useEffect(() => {
-    const handleCommand = (
-      key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
-      event: KeyboardEvent | null,
-    ): boolean => {
-      if (!props.onCommandKeyDown || !event) {
-        return false;
-      }
-
-      if (key === "Enter" && (event.isComposing || event.keyCode === 229)) {
-        event.stopPropagation();
-        return true;
-      }
-
-      const handled = props.onCommandKeyDown(key, event);
-      if (handled) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-      return handled;
-    };
-
-    const unregisterArrowDown = editor.registerCommand(
-      KEY_ARROW_DOWN_COMMAND,
-      (event) => handleCommand("ArrowDown", event),
-      COMMAND_PRIORITY_HIGH,
-    );
-    const unregisterArrowUp = editor.registerCommand(
-      KEY_ARROW_UP_COMMAND,
-      (event) => handleCommand("ArrowUp", event),
-      COMMAND_PRIORITY_HIGH,
-    );
-    const unregisterEnter = editor.registerCommand(
-      KEY_ENTER_COMMAND,
-      (event) => handleCommand("Enter", event),
-      COMMAND_PRIORITY_HIGH,
-    );
-    const unregisterTab = editor.registerCommand(
-      KEY_TAB_COMMAND,
-      (event) => handleCommand("Tab", event),
-      COMMAND_PRIORITY_HIGH,
-    );
-
-    return () => {
-      unregisterArrowDown();
-      unregisterArrowUp();
-      unregisterEnter();
-      unregisterTab();
-    };
-  }, [editor, props]);
+  useEffect(
+    () => registerComposerCommandKeys(editor, props.onCommandKeyDown),
+    [editor, props.onCommandKeyDown],
+  );
 
   return null;
 }
