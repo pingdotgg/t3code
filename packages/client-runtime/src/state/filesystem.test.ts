@@ -1,11 +1,84 @@
 import { describe, expect, it } from "vite-plus/test";
+import { AuthFilesystemReadScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
 
 import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
   filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
+  resolveFilesystemReadAccess,
 } from "./filesystem.ts";
+
+describe("filesystem read access", () => {
+  it.each(["available", "offline", "error", null] as const)(
+    "stops waiting for an unresolved session when the connection is %s",
+    (phase) => {
+      expect(
+        resolveFilesystemReadAccess({
+          connection: phase === null ? null : { phase, error: null },
+          session: null,
+          sessionError: null,
+        }),
+      ).toEqual({
+        canReadFiles: false,
+        isPending: false,
+        error: "This environment is not connected.",
+      });
+    },
+  );
+
+  it.each(["connected", "connecting", "reconnecting"] as const)(
+    "waits for the session check while %s",
+    (phase) => {
+      expect(
+        resolveFilesystemReadAccess({
+          connection: { phase, error: null },
+          session: null,
+          sessionError: null,
+        }),
+      ).toEqual({ canReadFiles: false, isPending: true, error: null });
+    },
+  );
+
+  it("reports the transport failure when the session cannot be checked", () => {
+    expect(
+      resolveFilesystemReadAccess({
+        connection: { phase: "error", error: "The relay is unavailable." },
+        session: null,
+        sessionError: null,
+      }),
+    ).toEqual({ canReadFiles: false, isPending: false, error: "The relay is unavailable." });
+  });
+
+  it("preserves a cached file grant offline unless the session check failed", () => {
+    const input = {
+      connection: { phase: "offline", error: null },
+      session: { authenticated: true, scopes: [AuthFilesystemReadScope] },
+      sessionError: null,
+    } as const;
+    expect(resolveFilesystemReadAccess(input)).toEqual({
+      canReadFiles: true,
+      isPending: false,
+      error: null,
+    });
+    expect(
+      resolveFilesystemReadAccess({ ...input, sessionError: "The session has expired." }),
+    ).toEqual({ canReadFiles: false, isPending: false, error: "The session has expired." });
+  });
+
+  it.each([
+    { authenticated: true, scopes: [AuthOrchestrationReadScope] },
+    { authenticated: false, scopes: [AuthFilesystemReadScope] },
+  ] as const)("does not infer file access from an ungranted session", (session) => {
+    expect(
+      resolveFilesystemReadAccess({
+        connection: { phase: "connected", error: null },
+        session,
+        sessionError: null,
+      }),
+    ).toEqual({ canReadFiles: false, isPending: false, error: null });
+  });
+});
 
 describe("filesystem browse model", () => {
   it("derives the browse target and navigation state", () => {
