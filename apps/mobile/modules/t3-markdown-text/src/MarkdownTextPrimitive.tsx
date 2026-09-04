@@ -28,15 +28,13 @@ export type ContextMenuActionEvent = {
   nativeEvent: { target: number; actionIdentifier: string };
 };
 
-/**
- * `onTextLayout` is not offered: the native view reports plain line strings
- * while the React Native Text fallback reports measured `TextLayoutLine`s.
- */
 export type MarkdownTextPrimitiveProps = Omit<TextProps, "onTextLayout"> & {
   nativeTextRef?: Ref<RNText>;
   uiTextView?: boolean;
   contextMenuConfig?: string;
   onContextMenuAction?: (event: ContextMenuActionEvent) => void;
+  /** Native iOS line strings; the React Native Text fallback does not emit this event. */
+  onNativeTextLayout?: React.ComponentProps<typeof T3MarkdownTextNativeComponent>["onTextLayout"];
   /**
    * Fired when the native text selection changes. Only fires on iOS when
    * `uiTextView` is true. Note: fires on every selection-edge adjustment
@@ -50,6 +48,7 @@ function MarkdownTextPrimitiveChild({
   style,
   children,
   nativeTextRef: _nativeTextRef,
+  onNativeTextLayout,
   ...rest
 }: MarkdownTextPrimitiveProps) {
   const [isAncestor, rootStyle] = useTextAncestorContext();
@@ -92,6 +91,7 @@ function MarkdownTextPrimitiveChild({
         <T3MarkdownTextNativeComponent
           {...textDefaults}
           {...containerProps}
+          onTextLayout={onNativeTextLayout}
           style={[flattenedStyle]}
         >
           {nativeChildren}
@@ -103,7 +103,11 @@ function MarkdownTextPrimitiveChild({
   return <>{nativeChildren}</>;
 }
 
-function MarkdownTextPrimitiveInner({ nativeTextRef, ...props }: MarkdownTextPrimitiveProps) {
+function MarkdownTextPrimitiveInner({
+  nativeTextRef,
+  onNativeTextLayout,
+  ...props
+}: MarkdownTextPrimitiveProps) {
   const [isAncestor] = useTextAncestorContext();
 
   // Even if the uiTextView prop is set, we can still default to using
@@ -112,12 +116,12 @@ function MarkdownTextPrimitiveInner({ nativeTextRef, ...props }: MarkdownTextPri
   if ((!props.selectable || !props.uiTextView) && !isAncestor) {
     return <RNText ref={nativeTextRef} {...props} />;
   }
-  return <MarkdownTextPrimitiveChild {...props} />;
+  return <MarkdownTextPrimitiveChild {...props} onNativeTextLayout={onNativeTextLayout} />;
 }
 
 export function MarkdownTextPrimitive(props: MarkdownTextPrimitiveProps) {
   if (Platform.OS !== "ios") {
-    const { nativeTextRef, ...textProps } = props;
+    const { nativeTextRef, onNativeTextLayout: _onNativeTextLayout, ...textProps } = props;
     return <RNText ref={nativeTextRef} {...textProps} />;
   }
   return <MarkdownTextPrimitiveInner {...props} />;

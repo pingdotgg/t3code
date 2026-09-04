@@ -364,6 +364,11 @@ T3MarkdownOutsideTapCoordinatorForWindow(UIWindow *window)
   if (frameChanged) {
     _textView.frame = _view.frame;
   }
+  const CGFloat layoutWidth = CGRectGetWidth(_view.bounds);
+  if (layoutWidth > 0) {
+    _textView.textContainer.size = CGSizeMake(layoutWidth, CGFLOAT_MAX);
+    [_textView.layoutManager ensureLayoutForTextContainer:_textView.textContainer];
+  }
 
   __block std::vector<std::string> lines;
   const int maxLines = props.numberOfLines;

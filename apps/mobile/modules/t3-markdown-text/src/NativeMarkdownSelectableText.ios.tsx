@@ -1,8 +1,9 @@
-import { createContext, useCallback, useContext } from "react";
+import { createContext, useCallback, useContext, useState } from "react";
 import {
   findNodeHandle,
   Image,
   Linking,
+  PixelRatio,
   Platform,
   StyleSheet,
   Text as RNText,
@@ -212,6 +213,7 @@ export function NativeMarkdownSelectableText(props: {
 
     return { key: `${signature}:${occurrence}`, run, text };
   });
+  const [minHeight, setMinHeight] = useState(0);
   // T3MarkdownText only rebuilds its attributed string during native layout. A
   // color-only child update can otherwise leave the previous appearance cached.
   const appearanceKey = [
@@ -239,9 +241,19 @@ export function NativeMarkdownSelectableText(props: {
       nativeTextRef={attachAndroidText}
       uiTextView
       selectable
+      onNativeTextLayout={(event) => {
+        const lines = event.nativeEvent.lines;
+        if (!Array.isArray(lines) || lines.length === 0) {
+          return;
+        }
+        setMinHeight(
+          Math.ceil(lines.length * props.textStyle.lineHeight * PixelRatio.getFontScale()),
+        );
+      }}
       style={{
         flexShrink: 1,
         minWidth: 0,
+        minHeight: minHeight > 0 ? minHeight : undefined,
         color: props.textStyle.color,
         fontFamily: props.textStyle.fontFamily,
         fontSize: props.textStyle.fontSize,
