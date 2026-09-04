@@ -16,6 +16,7 @@ import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
+  AuthDiagnosticsReadScope,
   type ServerProcessDiagnosticsEntry,
   type ServerProcessResourceHistorySummary,
   type ServerProcessSignal,
@@ -789,6 +790,7 @@ export function DiagnosticsSettingsPanel() {
   const environmentId = primaryEnvironment?.environmentId ?? null;
   const canMaintainEnvironment = useEnvironmentScope(environmentId, AuthEnvironmentMaintainScope);
   const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const canReadDiagnostics = useEnvironmentScope(environmentId, AuthDiagnosticsReadScope);
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
     reportFailure: false,
   });
@@ -798,7 +800,7 @@ export function DiagnosticsSettingsPanel() {
     RESOURCE_HISTORY_WINDOWS.find((option) => option.windowMs === resourceWindowMs) ??
     RESOURCE_HISTORY_WINDOWS[1];
   const { data, error, isPending, refresh } = useEnvironmentQuery(
-    environmentId === null
+    environmentId === null || !canReadDiagnostics
       ? null
       : serverEnvironment.traceDiagnostics({ environmentId, input: {} }),
   );
@@ -808,7 +810,7 @@ export function DiagnosticsSettingsPanel() {
     isPending: isProcessPending,
     refresh: refreshProcesses,
   } = useEnvironmentQuery(
-    environmentId === null
+    environmentId === null || !canReadDiagnostics
       ? null
       : serverEnvironment.processDiagnostics({ environmentId, input: {} }),
   );
@@ -818,7 +820,7 @@ export function DiagnosticsSettingsPanel() {
     isPending: isResourcePending,
     refresh: refreshResources,
   } = useEnvironmentQuery(
-    environmentId === null
+    environmentId === null || !canReadDiagnostics
       ? null
       : serverEnvironment.processResourceHistory({
           environmentId,
@@ -965,6 +967,16 @@ export function DiagnosticsSettingsPanel() {
   const traceDiagnosticsPartialFailure = data
     ? Option.getOrElse(data.partialFailure, () => false)
     : false;
+
+  if (!canReadDiagnostics) {
+    return (
+      <SettingsPageContainer>
+        <p className="text-sm text-muted-foreground">
+          This connection does not have access to diagnostics.
+        </p>
+      </SettingsPageContainer>
+    );
+  }
 
   return (
     <SettingsPageContainer width="expanded" className="gap-10">

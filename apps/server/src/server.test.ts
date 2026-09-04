@@ -16,6 +16,7 @@ import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
   type DpopFailureReason,
+  EnvironmentAuthorizationError,
   EnvironmentId,
   EventId,
   GitCommandError,
@@ -4264,6 +4265,71 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
+
+  for (const scope of ["orchestration:read", "diagnostics:read"] as const) {
+    it.effect(`separates diagnostics RPC access for ${scope} sessions`, () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest();
+        const { response, body } = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+          scope,
+        });
+        assert.equal(response.status, 200);
+        assert.equal(body.scope, scope);
+        const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+          headers: { authorization: `Bearer ${body.access_token ?? ""}` },
+        });
+        const { ticket } = (yield* ticketResponse.json) as { readonly ticket: string };
+        const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              const diagnosticsReads: ReadonlyArray<Effect.Effect<unknown, unknown>> = [
+                client[WS_METHODS.serverGetTraceDiagnostics]({}),
+                client[WS_METHODS.serverGetProcessDiagnostics]({}),
+                client[WS_METHODS.serverGetProcessResourceHistory]({
+                  windowMs: 60_000,
+                  bucketMs: 10_000,
+                }),
+                client[WS_METHODS.serverGetResourceTelemetryHistory]({
+                  windowMs: 60_000,
+                  bucketMs: 10_000,
+                }),
+                client[WS_METHODS.subscribeResourceTelemetry]({}).pipe(Stream.runHead),
+                client[WS_METHODS.serverGetUsageSummary]({
+                  sinceDay: "2026-09-01",
+                  untilDay: "2026-09-01",
+                  timeZone: "UTC",
+                }),
+                client[WS_METHODS.serverRefreshUsageRates]({}),
+              ];
+              for (const read of diagnosticsReads) {
+                if (scope === "diagnostics:read") {
+                  yield* read;
+                } else {
+                  const error = yield* Effect.flip(read);
+                  if (!Schema.is(EnvironmentAuthorizationError)(error)) {
+                    assert.fail(`Expected a diagnostics authorization error, got ${String(error)}`);
+                  }
+                  assert.equal(error.requiredScope, "diagnostics:read");
+                }
+              }
+              if (scope === "orchestration:read") {
+                yield* client[WS_METHODS.serverGetConfig]({});
+              } else {
+                const error = yield* Effect.flip(client[WS_METHODS.serverGetConfig]({}));
+                assert.equal(error._tag, "EnvironmentAuthorizationError");
+                const mutationError = yield* Effect.flip(
+                  client[WS_METHODS.serverRetryResourceTelemetry]({}),
+                );
+                assert.equal(mutationError._tag, "EnvironmentAuthorizationError");
+              }
+            }),
+          ),
+        );
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
 
   it.effect("includes CORS headers on remote auth success responses", () =>
     Effect.gen(function* () {
