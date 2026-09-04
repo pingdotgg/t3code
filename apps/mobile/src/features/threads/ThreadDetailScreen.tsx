@@ -94,6 +94,7 @@ import { ThreadFeed, type ThreadFeedHistoryControls } from "./ThreadFeed";
 import { ThreadRelationshipsBanner } from "./ThreadRelationshipsBanner";
 import { ThreadQueueControl } from "./ThreadQueueControl";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
+import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 
 export interface ThreadDetailScreenProps {
   readonly selectedThread: EnvironmentThreadShell;
@@ -279,9 +280,18 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const listRef = useRef<LegendListRef>(null);
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
   const selectedThreadKeyRef = useRef(selectedThreadKey);
-  const lastScrolledAnchorMessageIdRef = useRef<MessageId | null>(null);
+  const lastScrolledSubmittedMessageIdRef = useRef<MessageId | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
+  const [composerFocused, setComposerFocused] = useState(false);
+  const handleComposerFocusChange = useCallback(
+    (focused: boolean) => {
+      setComposerFocused(focused);
+      handleOwnedInputFocusChange(focused);
+    },
+    [handleOwnedInputFocusChange],
+  );
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
+  const [submittedMessageId, setSubmittedMessageId] = useState<MessageId | null>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
   // Android keys the safe-area padding on keyboard visibility (#5988): the
   // back gesture closes the keyboard while the editor stays focused, and a
@@ -290,7 +300,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // animation, so the composer would ride down flush to the screen edge and
   // then snap up into the inset. On iOS blur precedes the hide, so the
   // focus-keyed inset is already in place while the composer rides down.
-  const composerBottomInset = (Platform.OS === "android" ? isKeyboardVisible : composerExpanded)
+  // Dictation keeps that focus while the composer switches to its compact pill.
+  const composerBottomInset = (
+    Platform.OS === "android" ? isKeyboardVisible : composerExpanded || composerFocused
+  )
     ? 0
     : Math.max(insets.bottom, 12);
   const contentPresentationKind = props.contentPresentation.kind;
@@ -542,6 +555,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
   useLayoutEffect(() => {
     selectedThreadKeyRef.current = selectedThreadKey;
+    // A replaced or unmounted native editor may not emit a blur event.
+    setComposerFocused(false);
   }, [selectedThreadKey, showContent]);
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
@@ -579,17 +594,20 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
   useEffect(() => {
     setAnchorMessageId(null);
-    lastScrolledAnchorMessageIdRef.current = null;
+    setSubmittedMessageId(null);
+    lastScrolledSubmittedMessageIdRef.current = null;
     setEndFollowEnabled(true);
     freeze.set(false);
   }, [freeze, selectedThreadKey]);
 
   useEffect(() => {
     if (
-      anchorMessageId === null ||
-      lastScrolledAnchorMessageIdRef.current === anchorMessageId ||
+      submittedMessageId === null ||
+      lastScrolledSubmittedMessageIdRef.current === submittedMessageId ||
       contentPresentationKind !== "ready" ||
-      !selectedThreadFeed.some((entry) => entry.type === "message" && entry.id === anchorMessageId)
+      !selectedThreadFeed.some(
+        (entry) => entry.type === "message" && entry.id === submittedMessageId,
+      )
     ) {
       return;
     }
@@ -599,7 +617,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       if (selectedThreadKeyRef.current !== targetThreadKey) {
         return;
       }
-      lastScrolledAnchorMessageIdRef.current = anchorMessageId;
+      lastScrolledSubmittedMessageIdRef.current = submittedMessageId;
       // Wait for the keyboard dismissal (started by blur() on send) to finish
       // before scrolling: scrollMessageToEnd freezes keyboard-driven inset
       // updates while it runs, and a close event swallowed by that freeze
@@ -609,7 +627,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         .then(() => {
           if (
             selectedThreadKeyRef.current !== targetThreadKey ||
-            lastScrolledAnchorMessageIdRef.current !== anchorMessageId
+            lastScrolledSubmittedMessageIdRef.current !== submittedMessageId
           ) {
             return;
           }
@@ -618,17 +636,17 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         .catch(() => {
           if (
             selectedThreadKeyRef.current !== targetThreadKey ||
-            lastScrolledAnchorMessageIdRef.current !== anchorMessageId
+            lastScrolledSubmittedMessageIdRef.current !== submittedMessageId
           ) {
             return;
           }
-          lastScrolledAnchorMessageIdRef.current = null;
+          lastScrolledSubmittedMessageIdRef.current = null;
           freeze.set(false);
         });
     });
     return () => cancelAnimationFrame(frame);
   }, [
-    anchorMessageId,
+    submittedMessageId,
     freeze,
     contentPresentationKind,
     selectedThreadFeed,
@@ -638,15 +656,34 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
   const handleSendMessage = useCallback(async () => {
     const targetThreadKey = selectedThreadKey;
+    const hasUserMessage = selectedThreadFeed.some(
+      (entry) => entry.type === "message" && entry.message.role === "user",
+    );
     const messageId = await props.onSendMessage();
     if (messageId === null || selectedThreadKeyRef.current !== targetThreadKey) {
       return messageId;
     }
 
-    setAnchorMessageId(messageId);
+    setSubmittedMessageId(messageId);
+    setAnchorMessageId(
+      resolveThreadFeedSubmissionAnchor({
+        currentAnchorMessageId: anchorMessageId,
+        submittedMessageId: messageId,
+        hasStartedTurn: props.selectedThread.latestRun !== null,
+        hasUserMessage,
+        queuedMessageCount: props.selectedThreadQueueCount,
+      }),
+    );
     composerEditorRef.current?.blur();
     return messageId;
-  }, [props.onSendMessage, selectedThreadKey]);
+  }, [
+    anchorMessageId,
+    props.onSendMessage,
+    props.selectedThread.latestRun,
+    props.selectedThreadQueueCount,
+    selectedThreadFeed,
+    selectedThreadKey,
+  ]);
 
   const collapseComposer = useCallback(() => {
     composerEditorRef.current?.blur();
@@ -733,6 +770,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             listRef={listRef}
             freeze={freeze}
             anchorMessageId={anchorMessageId}
+            submittedMessageId={submittedMessageId}
             contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
             contentTopInset={0}
             contentBottomInset={
@@ -868,7 +906,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                   onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
                   onExpandedChange={setComposerExpanded}
-                  onEditorFocusChange={handleOwnedInputFocusChange}
+                  onEditorFocusChange={handleComposerFocusChange}
                 />
               </View>
             </View>
