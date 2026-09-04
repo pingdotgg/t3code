@@ -1,4 +1,5 @@
 import {
+  ANTIGRAVITY_DEFAULT_MODEL,
   CheckpointRef,
   EnvironmentId,
   MessageId,
@@ -793,14 +794,20 @@ describe("resolveComposerProviderSelection", () => {
     );
   });
 
-  it("blocks sends until Antigravity confirms authentication", () => {
+  it("lets Antigravity check saved credentials when resuming after a restart", () => {
     const provider = entry("antigravity", "google_work", {
+      status: "warning",
       auth: { status: "unknown" },
-      models: catalogModels,
+      models: [],
     }).snapshot;
 
-    expect(getAntigravitySendBlockReason(provider, "gemini-pro")).toBe(
-      "Sign in to Antigravity in provider settings before sending.",
+    expect(getAntigravitySendBlockReason(provider, "gemini-pro")).toBeNull();
+    expect(getAntigravitySendBlockReason(provider, ANTIGRAVITY_DEFAULT_MODEL)).toBeNull();
+    expect(
+      getAntigravitySendBlockReason({ ...provider, models: catalogModels }, "gemini-pro"),
+    ).toBeNull();
+    expect(getAntigravitySendBlockReason(provider, "")).toBe(
+      "Choose an Antigravity model before sending.",
     );
   });
 
