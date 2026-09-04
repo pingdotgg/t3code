@@ -3,6 +3,8 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { projectEnvironment } from "~/state/projects";
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
 import {
   clearProjectFileQueryData,
@@ -22,9 +24,21 @@ describe("project files queries", () => {
     vi.unstubAllGlobals();
   });
 
-  it("resumes an unsaved draft after write access returns and the editor reopens", async () => {
+  it("resumes an open preview's unsaved draft when write access returns and its editor remounts", async ({
+    onTestFinished,
+  }) => {
     vi.stubGlobal("window", {});
     vi.useFakeTimers();
+    // The preview keeps its optimistic file subscription while its editor becomes read-only.
+    onTestFinished(
+      appAtomRegistry.mount(
+        projectEnvironment.optimisticFile({
+          environmentId,
+          cwd: "/repo",
+          relativePath: "convex.json",
+        }),
+      ),
+    );
     let canWrite = true;
     const persist = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
     const onPendingChange = vi.fn();
