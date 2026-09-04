@@ -14,6 +14,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const ProjectLayer = WorkspaceFileSystem.layer.pipe(
   Layer.provide(WorkspacePaths.layer),
@@ -138,34 +139,36 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
-    it.effect("rejects symlinks that resolve outside the workspace root", () =>
-      Effect.gen(function* () {
-        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const cwd = yield* makeTempDir;
-        const outsideDir = yield* makeTempDir;
-        yield* writeTextFile(outsideDir, "secret.txt", "outside\n");
-        yield* fileSystem.symlink(
-          path.join(outsideDir, "secret.txt"),
-          path.join(cwd, "linked-secret.txt"),
-        );
+    it.effect.skipIf(!symlinksSupported)(
+      "rejects symlinks that resolve outside the workspace root",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          const outsideDir = yield* makeTempDir;
+          yield* writeTextFile(outsideDir, "secret.txt", "outside\n");
+          yield* fileSystem.symlink(
+            path.join(outsideDir, "secret.txt"),
+            path.join(cwd, "linked-secret.txt"),
+          );
 
-        const error = yield* workspaceFileSystem
-          .readFile({ cwd, relativePath: "linked-secret.txt" })
-          .pipe(Effect.flip);
-        const resolvedWorkspaceRoot = yield* fileSystem.realPath(cwd);
-        const resolvedPath = yield* fileSystem.realPath(path.join(outsideDir, "secret.txt"));
+          const error = yield* workspaceFileSystem
+            .readFile({ cwd, relativePath: "linked-secret.txt" })
+            .pipe(Effect.flip);
+          const resolvedWorkspaceRoot = yield* fileSystem.realPath(cwd);
+          const resolvedPath = yield* fileSystem.realPath(path.join(outsideDir, "secret.txt"));
 
-        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFilePathEscapeError);
-        expect(error).toMatchObject({
-          workspaceRoot: cwd,
-          relativePath: "linked-secret.txt",
-          resolvedWorkspaceRoot,
-          resolvedPath,
-        });
-        expect("cause" in error).toBe(false);
-      }),
+          expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFilePathEscapeError);
+          expect(error).toMatchObject({
+            workspaceRoot: cwd,
+            relativePath: "linked-secret.txt",
+            resolvedWorkspaceRoot,
+            resolvedPath,
+          });
+          expect("cause" in error).toBe(false);
+        }),
     );
 
     it.effect("rejects directories without manufacturing an I/O cause", () =>

@@ -13,6 +13,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const encodeThemeFile = Schema.encodeSync(Schema.fromJsonString(EnvironmentThemeFile));
 
@@ -188,7 +189,7 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
 
   // A symlinked themes directory stays usable, but a symlinked file inside it
   // must not publish whatever it points at.
-  it.effect("ignores a symlinked theme file", () =>
+  it.effect.skipIf(!symlinksSupported)("ignores a symlinked theme file", () =>
     withEnvironmentThemes(
       {},
       Effect.gen(function* () {

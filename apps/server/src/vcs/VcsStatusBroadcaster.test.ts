@@ -27,6 +27,7 @@ import { GitManagerError } from "@t3tools/contracts";
 import * as VcsStatusBroadcaster from "./VcsStatusBroadcaster.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
@@ -144,7 +145,7 @@ function makeBackgroundPolicyLayer(shouldRunScopeWork: (scope: BackgroundScope) 
 }
 
 describe("VcsStatusBroadcaster", () => {
-  it.effect(
+  it.effect.skipIf(!symlinksSupported)(
     "automatically pulls an enabled clean default branch when status detects it is behind",
     () => {
       let remoteStatus: VcsStatusRemoteResult = { ...baseRemoteStatus, behindCount: 2 };
@@ -522,67 +523,70 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
-  it.effect("normalizes symlinked CWDs before cache lookup and workflow calls", () => {
-    const seenCwds: string[] = [];
-    const state = {
-      currentLocalStatus: baseLocalStatus,
-      currentRemoteStatus: baseRemoteStatus,
-      localStatusCalls: 0,
-      remoteStatusCalls: 0,
-      localInvalidationCalls: 0,
-      remoteInvalidationCalls: 0,
-    };
-    const testLayer = VcsStatusBroadcaster.layer.pipe(
-      Layer.provideMerge(NodeServices.layer),
-      Layer.provide(makeBackgroundPolicyLayer(() => true)),
-      Layer.provide(
-        Layer.mock(GitWorkflowService.GitWorkflowService)({
-          localStatus: (input) =>
-            Effect.sync(() => {
-              seenCwds.push(input.cwd);
-              state.localStatusCalls += 1;
-              return state.currentLocalStatus;
-            }),
-          remoteStatus: (input) =>
-            Effect.sync(() => {
-              seenCwds.push(input.cwd);
-              state.remoteStatusCalls += 1;
-              return state.currentRemoteStatus;
-            }),
-          invalidateLocalStatus: () =>
-            Effect.sync(() => {
-              state.localInvalidationCalls += 1;
-            }),
-          invalidateRemoteStatus: () =>
-            Effect.sync(() => {
-              state.remoteInvalidationCalls += 1;
-            }),
-        } satisfies Partial<GitWorkflowService.GitWorkflowService["Service"]>),
-      ),
-    );
+  it.effect.skipIf(!symlinksSupported)(
+    "normalizes symlinked CWDs before cache lookup and workflow calls",
+    () => {
+      const seenCwds: string[] = [];
+      const state = {
+        currentLocalStatus: baseLocalStatus,
+        currentRemoteStatus: baseRemoteStatus,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+      };
+      const testLayer = VcsStatusBroadcaster.layer.pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(makeBackgroundPolicyLayer(() => true)),
+        Layer.provide(
+          Layer.mock(GitWorkflowService.GitWorkflowService)({
+            localStatus: (input) =>
+              Effect.sync(() => {
+                seenCwds.push(input.cwd);
+                state.localStatusCalls += 1;
+                return state.currentLocalStatus;
+              }),
+            remoteStatus: (input) =>
+              Effect.sync(() => {
+                seenCwds.push(input.cwd);
+                state.remoteStatusCalls += 1;
+                return state.currentRemoteStatus;
+              }),
+            invalidateLocalStatus: () =>
+              Effect.sync(() => {
+                state.localInvalidationCalls += 1;
+              }),
+            invalidateRemoteStatus: () =>
+              Effect.sync(() => {
+                state.remoteInvalidationCalls += 1;
+              }),
+          } satisfies Partial<GitWorkflowService.GitWorkflowService["Service"]>),
+        ),
+      );
 
-    return Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const realDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-vcs-status-real-",
-      });
-      const linkParent = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-vcs-status-link-",
-      });
-      const linkDir = path.join(linkParent, "repo-link");
-      yield* fileSystem.symlink(realDir, linkDir);
-      const realPath = yield* fileSystem.realPath(realDir);
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const realDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-vcs-status-real-",
+        });
+        const linkParent = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-vcs-status-link-",
+        });
+        const linkDir = path.join(linkParent, "repo-link");
+        yield* fileSystem.symlink(realDir, linkDir);
+        const realPath = yield* fileSystem.realPath(realDir);
 
-      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
-      yield* broadcaster.getStatus({ cwd: linkDir });
-      yield* broadcaster.getStatus({ cwd: realDir });
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        yield* broadcaster.getStatus({ cwd: linkDir });
+        yield* broadcaster.getStatus({ cwd: realDir });
 
-      assert.deepStrictEqual(seenCwds, [realPath, realPath]);
-      assert.equal(state.localStatusCalls, 1);
-      assert.equal(state.remoteStatusCalls, 1);
-    }).pipe(Effect.provide(testLayer));
-  });
+        assert.deepStrictEqual(seenCwds, [realPath, realPath]);
+        assert.equal(state.localStatusCalls, 1);
+        assert.equal(state.remoteStatusCalls, 1);
+      }).pipe(Effect.provide(testLayer));
+    },
+  );
 
   it.effect("streams a local snapshot first and remote updates later", () => {
     const state = {

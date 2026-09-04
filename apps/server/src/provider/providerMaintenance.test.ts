@@ -20,6 +20,7 @@ import {
   resolveLatestProviderVersion,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "./providerMaintenance.ts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const driver = (value: string) => ProviderDriverKind.make(value);
 // These write `#!/bin/sh` stubs and resolve them through a darwin-mocked
@@ -456,100 +457,110 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
-  it.effect("keeps npm updates for binaries symlinked into npm's global node_modules tree", () =>
-    Effect.gen(function* () {
-      const tempDir = yield* makeTempDir("t3-npm-capabilities");
-      const binDir = NodePath.join(tempDir, "bin");
-      const packageBinDir = NodePath.join(
-        tempDir,
-        "lib",
-        "node_modules",
-        "@example",
-        "package-tool",
-        "bin",
-      );
-      NodeFS.mkdirSync(binDir, { recursive: true });
-      NodeFS.mkdirSync(packageBinDir, { recursive: true });
-      const packageBinPath = NodePath.join(packageBinDir, "package-tool.js");
-      const symlinkPath = NodePath.join(binDir, "package-tool");
-      NodeFS.writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
-      NodeFS.chmodSync(packageBinPath, 0o755);
-      NodeFS.symlinkSync(packageBinPath, symlinkPath);
+  it.effect.skipIf(!symlinksSupported)(
+    "keeps npm updates for binaries symlinked into npm's global node_modules tree",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-npm-capabilities");
+        const binDir = NodePath.join(tempDir, "bin");
+        const packageBinDir = NodePath.join(
+          tempDir,
+          "lib",
+          "node_modules",
+          "@example",
+          "package-tool",
+          "bin",
+        );
+        NodeFS.mkdirSync(binDir, { recursive: true });
+        NodeFS.mkdirSync(packageBinDir, { recursive: true });
+        const packageBinPath = NodePath.join(packageBinDir, "package-tool.js");
+        const symlinkPath = NodePath.join(binDir, "package-tool");
+        NodeFS.writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
+        NodeFS.chmodSync(packageBinPath, 0o755);
+        NodeFS.symlinkSync(packageBinPath, symlinkPath);
 
-      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
-        binaryPath: symlinkPath,
-        env: {
-          PATH: "",
-        },
-      });
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          {
+            binaryPath: symlinkPath,
+            env: {
+              PATH: "",
+            },
+          },
+        );
 
-      expect(capabilities).toEqual({
-        provider: driver("packageTool"),
-        packageName: "@example/package-tool",
-        update: {
-          command:
-            "npm install -g --allow-scripts=@example/package-tool @example/package-tool@latest",
+        expect(capabilities).toEqual({
+          provider: driver("packageTool"),
+          packageName: "@example/package-tool",
+          update: {
+            command:
+              "npm install -g --allow-scripts=@example/package-tool @example/package-tool@latest",
 
-          executable: "npm",
+            executable: "npm",
 
-          args: [
-            "install",
-            "-g",
-            "--allow-scripts=@example/package-tool",
-            "@example/package-tool@latest",
-          ],
+            args: [
+              "install",
+              "-g",
+              "--allow-scripts=@example/package-tool",
+              "@example/package-tool@latest",
+            ],
 
-          lockKey: "npm-global",
-        },
-      });
-    }),
+            lockKey: "npm-global",
+          },
+        });
+      }),
   );
 
-  it.effect("uses Effect FileSystem realPath when detecting pnpm global symlinks", () =>
-    Effect.gen(function* () {
-      const tempDir = yield* makeTempDir("t3-pnpm-realpath-capabilities");
-      const binDir = NodePath.join(tempDir, "bin");
-      const packageBinDir = NodePath.join(
-        tempDir,
-        ".local",
-        "share",
-        "pnpm",
-        "global",
-        "5",
-        "node_modules",
-        "@example",
-        "package-tool",
-        "bin",
-      );
-      NodeFS.mkdirSync(binDir, { recursive: true });
-      NodeFS.mkdirSync(packageBinDir, { recursive: true });
-      const packageBinPath = NodePath.join(packageBinDir, "package-tool.js");
-      const symlinkPath = NodePath.join(binDir, "package-tool");
-      NodeFS.writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
-      NodeFS.chmodSync(packageBinPath, 0o755);
-      NodeFS.symlinkSync(packageBinPath, symlinkPath);
+  it.effect.skipIf(!symlinksSupported)(
+    "uses Effect FileSystem realPath when detecting pnpm global symlinks",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-pnpm-realpath-capabilities");
+        const binDir = NodePath.join(tempDir, "bin");
+        const packageBinDir = NodePath.join(
+          tempDir,
+          ".local",
+          "share",
+          "pnpm",
+          "global",
+          "5",
+          "node_modules",
+          "@example",
+          "package-tool",
+          "bin",
+        );
+        NodeFS.mkdirSync(binDir, { recursive: true });
+        NodeFS.mkdirSync(packageBinDir, { recursive: true });
+        const packageBinPath = NodePath.join(packageBinDir, "package-tool.js");
+        const symlinkPath = NodePath.join(binDir, "package-tool");
+        NodeFS.writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
+        NodeFS.chmodSync(packageBinPath, 0o755);
+        NodeFS.symlinkSync(packageBinPath, symlinkPath);
 
-      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
-        binaryPath: symlinkPath,
-        env: {
-          PATH: "",
-        },
-      });
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          {
+            binaryPath: symlinkPath,
+            env: {
+              PATH: "",
+            },
+          },
+        );
 
-      expect(capabilities).toEqual({
-        provider: driver("packageTool"),
-        packageName: "@example/package-tool",
-        update: {
-          command: "pnpm add -g @example/package-tool@latest",
+        expect(capabilities).toEqual({
+          provider: driver("packageTool"),
+          packageName: "@example/package-tool",
+          update: {
+            command: "pnpm add -g @example/package-tool@latest",
 
-          executable: "pnpm",
+            executable: "pnpm",
 
-          args: ["add", "-g", "@example/package-tool@latest"],
+            args: ["add", "-g", "@example/package-tool@latest"],
 
-          lockKey: "pnpm-global",
-        },
-      });
-    }),
+            lockKey: "pnpm-global",
+          },
+        });
+      }),
   );
 
   it("allows the package's own install scripts in npm global updates", () => {
