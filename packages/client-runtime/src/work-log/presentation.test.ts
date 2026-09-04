@@ -15,6 +15,40 @@ import {
 } from "./presentation.js";
 
 describe("summarizeToolGroup", () => {
+  it.each(["command", "file-read", "file-change"])(
+    "keeps %s approvals out of tool execution counts",
+    (requestKind) => {
+      const approvals = [
+        {
+          label: "Approval requested",
+          sourceActivityKind: "approval.requested",
+          tone: "info",
+          requestKind,
+        },
+        {
+          label: "Approval resolved",
+          sourceActivityKind: "approval.resolved",
+          tone: "info",
+          requestKind,
+        },
+        {
+          label: "Provider approval response failed",
+          sourceActivityKind: "provider.approval.respond.failed",
+          tone: "error",
+        },
+      ] satisfies WorkLogPresentationEntry[];
+
+      expect(
+        summarizeToolGroup([
+          ...approvals,
+          { label: "Read", tone: "tool", itemType: "dynamic_tool_call" },
+        ]),
+      ).toBe("Received 3 updates and used 1 tool");
+      expect(summarizeToolGroup(approvals)).toBe("Received 3 updates");
+      expect(toolGroupSummaryKind(approvals)).toBe("update");
+    },
+  );
+
   it("deduplicates named sources ahead of ordinary actions", () => {
     const source = { key: "browser-use:chrome", name: "Chrome", kind: "integration" as const };
     expect(
