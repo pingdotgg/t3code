@@ -17,14 +17,45 @@ With a server URL, T3 Code connects to that external server and uses only the pa
 provider settings. It does not send a local `OPENCODE_SERVER_PASSWORD` to an external server.
 OpenCode uses this password for HTTP Basic authentication.
 
+## Approvals
+
+In **Supervised** and **Auto** modes, OpenCode can read normal project files, search files, load
+skills, and update its task list without approval. Files such as `.env` and `.env.local` still
+require approval. `.env.example` does not. OpenCode does not have an AI approval reviewer, so
+**Auto** uses the same permission rules as **Supervised**.
+
+OpenCode asks before it runs commands, edits files, accesses the web, or accesses directories
+outside the workspace. **Auto-accept edits** also permits file edits without approval.
+**Full access** permits all these actions. Questions that need your answer can still appear.
+
+An **Approval** badge means OpenCode needs a decision. Open the thread to see the action and
+choose one of these options:
+
+- **Allow once** permits this request.
+- **Allow for workspace** permits matching requests in other OpenCode sessions in the same
+  workspace. It is not limited to the current thread.
+- **Deny** rejects this request. Use **Stop** to stop the whole turn.
+
+If a connection error prevents the reply, the approval stays available so you can try again.
+
+## Progress
+
+T3 Code shows OpenCode's response text and tool results while work runs. The web and desktop apps
+also show its task-list progress. A task-list update does not require approval.
+
+If the OpenCode connection closes unexpectedly, T3 Code shows an error. Send another prompt to
+reconnect to the same OpenCode session.
+
 ## Stop a turn
 
 When you select **Stop**, T3 Code stops the main OpenCode session and all nested child sessions.
 T3 Code waits for this cleanup before it marks the turn as stopped or sends the next prompt. It
-does not stop unrelated OpenCode sessions.
+does not stop unrelated OpenCode sessions. After Stop succeeds, pending approvals and questions
+are cleared.
 
-Stop reports an error if OpenCode cannot list or stop a child session. When T3 Code closes an
-OpenCode session, it also tries to stop the child sessions, but this teardown is best effort.
+Stop reports an error if OpenCode cannot stop the main session or list or stop a child session.
+When T3 Code closes an OpenCode session, it also tries to stop the child sessions, but this
+teardown is best effort.
 
 ## Refresh the model list
 

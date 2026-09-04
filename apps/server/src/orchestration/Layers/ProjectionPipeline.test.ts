@@ -1,4 +1,5 @@
 import {
+  ApprovalRequestId,
   CheckpointRef,
   CommandId,
   CorrelationId,
@@ -2533,7 +2534,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
-  it.effect("maintains shell summary fields across message and activity streams", () =>
+  it.effect("maintains shell summaries without reading message bodies", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;
       const eventStore = yield* OrchestrationEventStore;
@@ -2741,10 +2742,110 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           updatedAt: "2026-03-01T08:00:05.000Z",
         },
       ]);
+
+      // Summary refreshes must not decode message bodies or attachment metadata.
+      yield* sql`
+        UPDATE projection_thread_messages
+        SET attachments_json = '{not-json'
+        WHERE thread_id = 'thread-shell-summary'
+      `;
+      yield* sql`
+        INSERT INTO projection_pending_approvals (
+          request_id, thread_id, turn_id, status, decision, created_at, resolved_at
+        ) VALUES
+          ('summary-pending', 'thread-shell-summary', NULL, 'pending', NULL,
+           '2026-03-01T08:00:06.000Z', NULL),
+          ('summary-resolved', 'thread-shell-summary', NULL, 'resolved', 'accept',
+           '2026-03-01T08:00:06.000Z', '2026-03-01T08:00:06.000Z'),
+          ('summary-other-thread', 'thread-shell-summary-other', NULL, 'pending', NULL,
+           '2026-03-01T08:00:06.000Z', NULL)
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_proposed_plans (
+          plan_id, thread_id, turn_id, plan_markdown, implemented_at,
+          implementation_thread_id, created_at, updated_at
+        ) VALUES (
+          'summary-plan', 'thread-shell-summary', 'turn-shell-summary-1', '# Plan', NULL,
+          NULL, '2026-03-01T08:00:06.000Z', '2026-03-01T08:00:06.000Z'
+        )
+      `;
+
+      const refreshEvents = [
+        {
+          type: "thread.session-set",
+          eventId: EventId.make("evt-shell-summary-7"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-shell-summary"),
+          occurredAt: "2026-03-01T08:00:07.000Z",
+          commandId: CommandId.make("cmd-shell-summary-7"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-shell-summary-7"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("thread-shell-summary"),
+            session: {
+              threadId: ThreadId.make("thread-shell-summary"),
+              status: "ready",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: "2026-03-01T08:00:07.000Z",
+            },
+          },
+        },
+        {
+          type: "thread.turn-diff-completed",
+          eventId: EventId.make("evt-shell-summary-8"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-shell-summary"),
+          occurredAt: "2026-03-01T08:00:08.000Z",
+          commandId: CommandId.make("cmd-shell-summary-8"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-shell-summary-8"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("thread-shell-summary"),
+            turnId: TurnId.make("turn-shell-summary-1"),
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-shell-summary/1"),
+            status: "ready",
+            files: [],
+            assistantMessageId: MessageId.make("message-shell-summary-assistant"),
+            completedAt: "2026-03-01T08:00:08.000Z",
+          },
+        },
+      ] satisfies ReadonlyArray<Parameters<typeof eventStore.append>[0]>;
+
+      for (const event of refreshEvents) {
+        yield* appendAndProject(event);
+        const summary = yield* sql<{
+          readonly latestUserMessageAt: string | null;
+          readonly pendingApprovalCount: number;
+          readonly pendingUserInputCount: number;
+          readonly hasActionableProposedPlan: number;
+        }>`
+          SELECT
+            latest_user_message_at AS "latestUserMessageAt",
+            pending_approval_count AS "pendingApprovalCount",
+            pending_user_input_count AS "pendingUserInputCount",
+            has_actionable_proposed_plan AS "hasActionableProposedPlan"
+          FROM projection_threads
+          WHERE thread_id = 'thread-shell-summary'
+        `;
+        assert.deepEqual(summary, [
+          {
+            latestUserMessageAt: "2026-03-01T08:00:02.000Z",
+            pendingApprovalCount: 1,
+            pendingUserInputCount: 1,
+            hasActionableProposedPlan: 1,
+          },
+        ]);
+      }
     }),
   );
 
-  it.effect("ignores non-stale provider approval response failures", () =>
+  it.effect("restores pending approvals when a provider reply fails", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;
       const eventStore = yield* OrchestrationEventStore;
@@ -2826,6 +2927,24 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             turnId: null,
             createdAt: "2026-02-26T12:45:02.000Z",
           },
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.approval-response-requested",
+        eventId: EventId.make("evt-nonstale-approval-response"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-nonstale-approval"),
+        occurredAt: "2026-02-26T12:45:02.500Z",
+        commandId: CommandId.make("cmd-nonstale-approval-response"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-nonstale-approval-response"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-nonstale-approval"),
+          requestId: ApprovalRequestId.make("approval-request-nonstale-existing"),
+          decision: "accept",
+          createdAt: "2026-02-26T12:45:02.500Z",
         },
       });
 
@@ -2921,6 +3040,67 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         WHERE thread_id = 'thread-nonstale-approval'
       `;
       assert.deepEqual(threadRows, [{ pendingApprovalCount: 1 }]);
+
+      yield* appendAndProject({
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-nonstale-approval-resolved"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-nonstale-approval"),
+        occurredAt: "2026-02-26T12:45:05.000Z",
+        commandId: CommandId.make("cmd-nonstale-approval-resolved"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-nonstale-approval-resolved"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-nonstale-approval"),
+          activity: {
+            id: EventId.make("activity-nonstale-approval-resolved"),
+            tone: "approval",
+            kind: "approval.resolved",
+            summary: "Approval resolved",
+            payload: {
+              requestId: "approval-request-nonstale-existing",
+              decision: "accept",
+            },
+            turnId: null,
+            createdAt: "2026-02-26T12:45:05.000Z",
+          },
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-nonstale-approval-late-failure"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-nonstale-approval"),
+        occurredAt: "2026-02-26T12:45:06.000Z",
+        commandId: CommandId.make("cmd-nonstale-approval-late-failure"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-nonstale-approval-late-failure"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-nonstale-approval"),
+          activity: {
+            id: EventId.make("activity-nonstale-approval-late-failure"),
+            tone: "error",
+            kind: "provider.approval.respond.failed",
+            summary: "Provider approval response failed",
+            payload: {
+              requestId: "approval-request-nonstale-existing",
+              detail: "Provider timed out while responding to approval request",
+            },
+            turnId: null,
+            createdAt: "2026-02-26T12:45:06.000Z",
+          },
+        },
+      });
+
+      const resolvedThreadRows = yield* sql<{ readonly pendingApprovalCount: number }>`
+        SELECT pending_approval_count AS "pendingApprovalCount"
+        FROM projection_threads
+        WHERE thread_id = 'thread-nonstale-approval'
+      `;
+      assert.deepEqual(resolvedThreadRows, [{ pendingApprovalCount: 0 }]);
     }),
   );
 

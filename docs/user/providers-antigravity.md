@@ -179,10 +179,14 @@ paid-plan tier or remaining subscription quota. See Google's [Antigravity plans]
 [personal Google sign-in guide][google-setup].
 
 After an environment restarts, Google sign-in can show as not checked until an authenticated
-session succeeds. To check account access and reload models, use **Refresh provider status**
-in web or desktop provider settings, or **Refresh models** in the mobile model picker. Refresh
-uses saved Google sign-in and does not open a login page. If sign-in is required, use the
-provider's setup controls. Automatic status checks verify the installation only.
+session succeeds. You can continue an existing thread. Antigravity checks saved Google sign-in
+when the session starts. An unchecked status does not require signing in again.
+
+To check account access and reload models on web or desktop, open **Settings** > **Providers**
+and select the circular arrow beside **Checked** at the top of the page. Its tooltip says
+**Refresh provider status**. On mobile, use **Refresh models** in the model picker.
+Refresh uses saved Google sign-in and does not open a login page. If sign-in is required,
+use the provider's setup controls. Automatic status checks verify the installation only.
 
 The packaged runtime can be slow to start, especially on Windows. Health checks, model refresh,
 and sign-out each allow up to 90 seconds before reporting a timeout.
