@@ -607,14 +607,11 @@ describe("RpcSessionFactory", () => {
             payload: { themes: [] },
           },
         ];
-        const settingsEvents = Array.from(
-          { length: 65 },
-          (): ServerConfigStreamEventType => ({
-            version: 1,
-            type: "settingsUpdated",
-            payload: { settings: DEFAULT_SERVER_SETTINGS },
-          }),
-        );
+        const settingsEvents = Array.from({ length: 65 }, (): ServerConfigStreamEventType => ({
+          version: 1,
+          type: "settingsUpdated",
+          payload: { settings: DEFAULT_SERVER_SETTINGS },
+        }));
         const allEvents = [...themeEvents, ...settingsEvents];
         const observedByFastSubscriber = yield* Queue.unbounded<ServerConfigStreamEventType>();
         yield* session.subscribeServerConfig({ environmentThemes: true }).pipe(
@@ -717,7 +714,9 @@ describe("RpcSessionFactory", () => {
             clearVcsRefs: () => Effect.void,
             clear: () => Effect.void,
           });
-          const configState = yield* makeEnvironmentServerConfigState(true).pipe(
+          const configState = yield* makeEnvironmentServerConfigState({
+            environmentThemes: true,
+          }).pipe(
             Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
             Effect.provideService(Persistence.EnvironmentCacheStore, cache),
           );

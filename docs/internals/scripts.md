@@ -27,6 +27,11 @@ authenticated.
   Shared runs default to Vite's bundled dev mode (`T3CODE_BUNDLED_DEV=1`): a remote browser pays a
   network round trip per import level in unbundled dev, which turns a cold module graph into
   minutes of waterfall. Set `T3CODE_BUNDLED_DEV=0` to opt a shared run back out.
+  The web entry loads the app with a dynamic import so React refresh starts before shared UI
+  chunks run. Keep app imports out of that entry. A static import can work on the first load
+  and then fail on reload after Vite splits code for lazy routes.
+  Bundled dev uses Tailwind's watched files to rebuild CSS. Its Vite-only hot-update hook is
+  disabled in this mode because Rolldown does not supply the Vite server or module graph.
 - `vp run dev --browser`: Auto-opens a browser. Off by default. The dev runner writes
   `T3CODE_NO_BROWSER` itself from this flag, so setting `T3CODE_NO_BROWSER=0` in your environment has
   no effect; use `--browser`.
@@ -73,6 +78,89 @@ authenticated.
 - `vp run dist:desktop:linux`: Builds a Linux AppImage into `./release`.
 - `vp run dist:desktop:win`: Builds a Windows NSIS installer into `./release`. `:arm64` and `:x64`
   variants exist.
+
+### Linux AppImage prerequisites
+
+Linux AppImage packaging compiles the Rust resource monitor and the libsecret browser import
+helper. Install a Rust toolchain, the standard C/C++ build tools, libsecret development headers,
+pkg-config, and ImageMagick before running `vp run dist:desktop:linux`.
+
+Ubuntu and Debian:
+
+```bash
+sudo apt-get update
+sudo apt-get install cargo rustc build-essential libsecret-1-dev pkg-config imagemagick
+```
+
+Fedora:
+
+```bash
+sudo dnf install rust cargo gcc gcc-c++ make libsecret-devel pkgconf-pkg-config ImageMagick
+```
+
+Arch Linux:
+
+```bash
+sudo pacman -S rust base-devel libsecret pkgconf imagemagick
+```
+
+Linux desktop development also needs the C compiler, pkg-config, and libsecret headers. Its build
+and launch commands compile `native/browser-secret/main.c` into the gitignored native build
+directory. Releases place the executable in `resources/browser-secret`, outside `app.asar`.
+The helper performs a read-only Chromium schema lookup through libsecret and writes the exact
+secret bytes to its stdout pipe. Exit codes are 2 for a missing key, 3 for denied/locked access,
+and 4 for other keyring failures; the desktop importer preserves these distinctions.
+
+The artifact script checks these capabilities before starting the web and desktop builds. If
+anything is unavailable, it reports every failed check together and prints the Ubuntu/Debian
+installation command. The check compiles and links tiny temporary programs, so it also catches
+installed runtime X11 libraries that are missing their development headers or linker symlinks.
+
+### macOS DMG prerequisites
+
+Install the Xcode Command Line Tools and Rust before building a DMG:
+
+```bash
+xcode-select --install
+```
+
+Install Rust from [rustup.rs](https://rustup.rs). The artifact script checks Cargo, Clang, Make,
+`sips`, and `iconutil`. Universal builds additionally require `lipo`. It also verifies that Rust
+has every requested target; add missing targets with:
+
+```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+```
+
+Unsigned local builds need no Apple credentials. Builds using `--signed` additionally require the
+certificate, provisioning profile, team ID, and notarization configuration described below.
+
+### Windows installer prerequisites
+
+Install Rust from [rustup.rs](https://rustup.rs), Python 3, and Visual Studio Build Tools. In the
+Visual Studio Installer, select **Desktop development with C++** and include:
+
+- MSVC x64/x86 build tools
+- A Windows 10 or Windows 11 SDK
+- MSVC Spectre-mitigated libraries
+
+ARM64 installers require the corresponding MSVC ARM64 build tools and Spectre-mitigated libraries
+instead of the x64/x86 components.
+
+Add the Rust target matching the installer architecture:
+
+```powershell
+rustup target add x86_64-pc-windows-msvc
+# For an arm64 installer:
+rustup target add aarch64-pc-windows-msvc
+```
+
+Windows supplies `tar.exe`; it is checked when `--wsl-prebuild` makes the artifact include the WSL
+runtime. NSIS is downloaded by electron-builder and does not need a separate installation.
+When `T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR=true` points the build at an existing resource monitor,
+the artifact script skips the Rust and Visual Studio checks because it does not compile the monitor.
+Unsigned local builds need no Azure credentials. Builds using `--signed` additionally require the
+Azure Trusted Signing configuration described below.
 
 ### Desktop `.dmg` packaging notes
 

@@ -2,6 +2,33 @@
 
 Use this when you want to connect to a T3 Code server from another device such as a phone, tablet, or separate desktop app.
 
+## T3 Connect troubleshooting
+
+Run `t3 connect` on the server machine to authorize it and optionally install the background service.
+The authorization message means your sign-in was saved. The server must then start and establish its
+relay link before the machine is reachable.
+
+`t3 connect status` reports saved authorization and link configuration, not a live reachability
+check. If the machine appears offline, run `t3 service status` on it and read the displayed log.
+On Linux, a service that works while SSH is open but stops after logout usually has lingering
+disabled. See [background service troubleshooting](./background-service.md#troubleshooting).
+
+Relay errors include the returned reason and trace ID when available:
+
+| Error                                                            | Next step                                                                                                                                                                   |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `environment_link_limit_exceeded` / managed tunnel limit reached | Unlink an unused environment in T3 Connect, then restart T3 Code on this machine.                                                                                           |
+| `auth_invalid` / `invalid_bearer`                                | Run `t3 connect login`. If the stored credential was revoked, run `t3 connect logout`, then `t3 connect` and restart the server.                                            |
+| Expired or invalid link proof                                    | Check the server's date and time, update T3 Code, and restart it. Include the reason and trace ID if it still fails.                                                        |
+| HTTP 403 without a recognized error response                     | Check relay access and any proxy or firewall restrictions. Include the Cloudflare Ray ID if one was returned; an HTTP status alone does not identify the cause.             |
+| HTTP 408, 429, or 5xx                                            | The server retries temporary failures during startup for up to ten minutes. Check network and relay availability; include the trace ID when reporting a persistent failure. |
+
+Authorization and other permanent 4xx rejections stop the startup link attempt immediately.
+After correcting them, restart the server. For the Linux background service, use
+`systemctl --user restart t3code.service`; for a foreground server, stop it and run `t3 serve` again.
+Keep the diagnostic message and trace ID when reporting a problem. Do not post authorization codes,
+pairing URLs, or the contents of the secrets directory.
+
 ## Quick Pairing for a Running Server
 
 If a server is already running on this machine, mint a fresh pairing token and QR code without restarting anything:
@@ -45,6 +72,11 @@ If you are already running the desktop app and want to make it reachable from ot
 2. Under **This environment**, toggle **Network access** on. This will restart the app and run the backend on all network interfaces.
 3. The settings panel will show the default reachable endpoint, with a `+N` control when more endpoints are available. Expand it to inspect alternatives such as loopback, LAN, private-network, or HTTPS endpoints.
 4. Use **Create Link** to generate a pairing link you can share with another device.
+
+Pairing codes and share links are available only in the client that created them,
+while its Connections page remains open. After you leave the page or reload it,
+create a new link to share. Other clients can see the active link's name, scopes,
+and expiry, and can revoke it if they have access management permission.
 
 The default endpoint controls the QR code and primary copy action for pairing links. You can change it from the expanded endpoint list. The preference is stored by endpoint type, so choosing the local LAN endpoint survives normal IP address changes when you move between networks.
 
@@ -166,6 +198,21 @@ nvm alias default 24
 With mise, asdf, fnm, or nodenv, make sure the tool's shim directory is installed and resolves to a Node version satisfying the range above without an interactive shell.
 
 If reconnecting after an app update fails, retry the SSH launch once. The launcher now compares its generated runner script, stops stale launcher-managed remote servers, clears the SSH launch PID/port state, and starts a fresh remote server. You should not normally need to delete `~/.t3/ssh-launch` or kill `t3` processes manually.
+
+## Antigravity Google sign-in
+
+Antigravity runs and saves its Google credentials on the selected environment. You can install
+it and sign in from a remote web, desktop, or mobile client without an SSH login.
+
+Start in **Settings** > **Providers** on web or desktop. On mobile, open **Settings** >
+**Environments**, expand the environment, then choose **Set up Antigravity**.
+
+After Google sign-in, a remote browser usually reaches a `127.0.0.1` page that cannot load.
+Copy that full address into the return URL field in the same T3 Code client. Choose
+**Continue** on web or desktop, or **Complete sign-in** on mobile. Keep the address unchanged.
+Do not paste the return URL into a thread or bug report.
+
+See [Antigravity setup](./providers-antigravity.md) for installation, expiry, and account changes.
 
 ## Updating a Remote Server
 

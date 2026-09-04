@@ -41,6 +41,7 @@ import {
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
+import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import {
   buildOpenCodePermissionRules,
@@ -328,6 +329,7 @@ interface OpenCodeSessionContext {
   readonly openCodeSessionId: string;
   readonly relatedSessionIds: Set<string>;
   readonly resolvedRequestIds: Set<string>;
+  readonly autoRepliedRequestIds: Set<string>;
   readonly emittedTerminalRequestIds: Set<string>;
   readonly requestRelationRetries: Map<string, OpenCodeRequestRelationRetry>;
   readonly pendingPermissions: Map<string, PermissionRequest>;
@@ -1000,6 +1002,12 @@ export function makeOpenCodeAdapter(
 
     const emit = (event: ProviderRuntimeEvent) =>
       Queue.offer(runtimeEvents, event).pipe(Effect.asVoid);
+    // Synchronous publish for callers that must not yield between a state
+    // check and the enqueue, e.g. reopening an approval only if its terminal
+    // event has not landed yet.
+    const emitUnsafe = (event: ProviderRuntimeEvent) => {
+      Queue.offerUnsafe(runtimeEvents, event);
+    };
     const writeNativeEvent = (
       threadId: ThreadId,
       event: {
@@ -1602,6 +1610,39 @@ export function makeOpenCodeAdapter(
       return false;
     });
 
+    // Full access means the user already granted everything, but two upstream
+    // paths never consult the session ruleset we send: doom-loop detection
+    // (evaluated against the agent ruleset only) and subagent sessions (which
+    // keep only deny and external-directory rules). Answer those asks here.
+    //
+    // Reply "once", not "always": OpenCode stores "always" grants per
+    // directory, so on a shared external server an "always" from a full-access
+    // thread would silently widen what a supervised thread on the same
+    // directory is allowed to do.
+    const autoReplyFullAccess = Effect.fn("autoReplyFullAccess")(function* (
+      context: OpenCodeSessionContext,
+      request: PermissionRequest,
+    ) {
+      // Mark before awaiting: retry and recovery fibers re-enter the ask path,
+      // and the matching `permission.replied` can arrive, while the SDK call
+      // is in flight. Marked ids skip the ask and swallow the terminal event.
+      context.resolvedRequestIds.add(request.id);
+      context.autoRepliedRequestIds.add(request.id);
+      const replied = yield* runOpenCodeSdk("permission.reply", () =>
+        context.client.permission.reply({ requestID: request.id, reply: "once" }),
+      ).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!replied) {
+        // Fall back to the dialog. The id stays resolved so a recovered copy
+        // of this ask cannot reopen after the user answers;
+        // `pendingPermissions` gates re-asks while the dialog is open.
+        context.autoRepliedRequestIds.delete(request.id);
+      }
+      return replied;
+    });
+
     const emitPendingOpenCodeRequest = Effect.fn("emitPendingOpenCodeRequest")(function* (
       context: OpenCodeSessionContext,
       event: OpenCodeAskedRequestEvent,
@@ -1615,14 +1656,27 @@ export function makeOpenCodeAdapter(
         if (context.pendingPermissions.has(request.id)) {
           return;
         }
+        if (
+          context.session.runtimeMode === "full-access" &&
+          (yield* autoReplyFullAccess(context, request))
+        ) {
+          return;
+        }
+        const base = yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId: context.activeTurnId,
+          requestId: request.id,
+          raw,
+        });
+        // No yield between this check and the publish: a terminal
+        // `permission.replied` delivered on the pump in between would leave a
+        // dialog that can never close.
+        if (context.emittedTerminalRequestIds.has(request.id)) {
+          return;
+        }
         context.pendingPermissions.set(request.id, request);
-        yield* emit({
-          ...(yield* buildEventBase({
-            threadId: context.session.threadId,
-            turnId: context.activeTurnId,
-            requestId: request.id,
-            raw,
-          })),
+        emitUnsafe({
+          ...base,
           type: "request.opened",
           payload: {
             requestType: mapPermissionToRequestType(request.permission),
@@ -1671,6 +1725,9 @@ export function makeOpenCodeAdapter(
         return;
       }
       context.emittedTerminalRequestIds.add(requestId);
+      if (context.autoRepliedRequestIds.delete(requestId)) {
+        return;
+      }
       if (event.type === "permission.replied") {
         yield* emit({
           ...(yield* buildEventBase({
@@ -2012,6 +2069,21 @@ export function makeOpenCodeAdapter(
               },
             });
           }
+          break;
+        }
+        case "session.compacted": {
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId: context.session.threadId,
+              turnId,
+              raw: event,
+            })),
+            type: "thread.state.changed",
+            payload: {
+              state: "compacted",
+              detail: event,
+            },
+          });
           break;
         }
 
@@ -2554,6 +2626,7 @@ export function makeOpenCodeAdapter(
           openCodeSessionId: started.openCodeSession.id,
           relatedSessionIds: new Set([started.openCodeSession.id]),
           resolvedRequestIds: new Set(),
+          autoRepliedRequestIds: new Set(),
           emittedTerminalRequestIds: new Set(),
           requestRelationRetries: new Map(),
           pendingPermissions: new Map(),
@@ -2784,6 +2857,11 @@ export function makeOpenCodeAdapter(
                 model: parsedModel,
                 ...(context.activeAgent ? { agent: context.activeAgent } : {}),
                 ...(context.activeVariant ? { variant: context.activeVariant } : {}),
+                // OpenCode appends this after its own agent/provider prompts.
+                system: buildRuntimeInstructions({
+                  harness: "OpenCode",
+                  model: `${parsedModel.providerID}/${parsedModel.modelID}`,
+                }),
                 parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
               },
               { signal },
@@ -2984,6 +3062,71 @@ export function makeOpenCodeAdapter(
       );
     });
 
+    const compactThread: NonNullable<OpenCodeAdapterShape["compactThread"]> = Effect.fn(
+      "compactThread",
+    )(function* (threadId, requestedModelSelection) {
+      const context = yield* ensureSessionContext(sessions, threadId);
+      yield* awaitOpenCodeContextReady(context);
+      const modelSelection =
+        requestedModelSelection ??
+        (context.session.model
+          ? { instanceId: boundInstanceId, model: context.session.model }
+          : undefined);
+      if (modelSelection !== undefined && modelSelection.instanceId !== boundInstanceId) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "compactThread",
+          issue: `OpenCode model selection is bound to instance '${modelSelection.instanceId}', expected '${boundInstanceId}'.`,
+        });
+      }
+      const parsedModel = parseOpenCodeModelSlug(modelSelection?.model);
+      if (!parsedModel) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "compactThread",
+          issue: "OpenCode compaction requires an active 'provider/model' selection.",
+        });
+      }
+      yield* context.promptSemaphore.withPermit(
+        Effect.gen(function* () {
+          if (sessions.get(threadId) !== context || (yield* Ref.get(context.stopped))) {
+            return yield* Effect.interrupt;
+          }
+          if (context.activeTurnId !== undefined) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "compactThread",
+              issue: "OpenCode cannot compact while a turn is running.",
+            });
+          }
+          yield* runOpenCodeSdk("session.summarize", (signal) =>
+            context.client.session.summarize(
+              {
+                sessionID: context.openCodeSessionId,
+                ...parsedModel,
+                auto: false,
+              },
+              { signal },
+            ),
+          ).pipe(
+            Effect.timeout("10 minutes"),
+            Effect.catchTags({
+              OpenCodeRuntimeError: (cause) => Effect.fail(toRequestError(cause)),
+              TimeoutError: (cause) =>
+                Effect.fail(
+                  new ProviderAdapterRequestError({
+                    provider: PROVIDER,
+                    method: "session.summarize",
+                    detail: "OpenCode session compaction did not complete within 10 minutes.",
+                    cause,
+                  }),
+                ),
+            }),
+            Effect.asVoid,
+          );
+        }),
+      );
+    });
     const interruptTurn: OpenCodeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
       function* (threadId, turnId) {
         const context = yield* ensureSessionContext(sessions, threadId);
@@ -3268,6 +3411,7 @@ export function makeOpenCodeAdapter(
       },
       startSession,
       sendTurn,
+      compactThread,
       interruptTurn,
       respondToRequest,
       respondToUserInput,

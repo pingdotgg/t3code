@@ -34,11 +34,31 @@ In an existing Codex thread, send `/feedback` or `/feedback` followed by a descr
 issue. T3 Code uploads the thread and Codex logs to OpenAI and shows a thread ID that you can copy
 and share with OpenAI employees.
 
+## Answer questions while Codex works
+
+Codex can ask questions without stopping its work. Choose a suggested answer or enter your own
+in the question panel. Questions without suggested answers accept text.
+
+Your answers are sent as a new message. They reach the current turn while Codex is working, or
+start a new turn if it has finished. Unanswered questions stay available after you reconnect.
+This works in the web, desktop, and mobile apps. Codex must support async questions.
+
 ## Sub-agent models
 
 The web and desktop Agents panel shows each sub-agent's model and reasoning effort when Codex
 reports them. If Codex does not report either value, T3 Code leaves it out instead of using the
 parent agent's settings.
+
+## Browser and computer activity
+
+Browser and Computer Use calls show their user-facing task title when Codex provides one. Expanded
+activity groups show an icon for every call. Website calls use the active page's favicon when it is
+available, and desktop app calls use the app's native icon on macOS when available. Other hosts use
+a generic fallback glyph.
+
+Collapsed activity groups are summarized by source, such as `Used Chrome integration`, instead of
+showing the underlying tool name. Website favicons and native app icons keep their original colors;
+integrations that provide separate light and dark logos use the logo for the current appearance.
 
 ## Approve access to other apps
 
