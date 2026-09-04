@@ -80,7 +80,6 @@ Run Metro from `apps/mobile`.
    APP_VARIANT=development vp exec expo start \
      --dev-client \
      --scheme t3code-dev \
-     --clear \
      --lan \
      --port <metro-port>
    ```
@@ -179,6 +178,7 @@ Keep local verification focused. Do not turn this workflow into a full repositor
 ## Troubleshoot predictable failures
 
 - **Old UI or an old error appears:** verify Metro's worktree, variant, URL, and port before diagnosing the app.
+- **Metro serves stale or invalid transforms after those checks:** stop the owned Metro process and run `vp run dev:client:reset` once on the standard port. For a custom port, add `--clear` to the complete explicit `expo start` command above.
 - **The environment remains empty:** verify the platform-specific HTTP origin, use a fresh token, and confirm project seeding used the identical base directory.
 - **A second client cannot pair:** pairing tokens are single-use; issue another token.
 - **The pairing form opens but does not connect:** confirm the deep link uses the existing `connections/new` route, includes `autoConnect=1`, and carries a freshly minted encoded `pairingUrl`.

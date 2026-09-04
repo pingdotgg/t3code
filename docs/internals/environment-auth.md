@@ -22,11 +22,59 @@ OAuth-style scope strings:
 | `relay:read`            | Inspect managed relay connectivity.                                      |
 | `relay:write`           | Link, configure, or unlink managed relay connectivity.                   |
 
+Pairing-link lists and access-stream snapshots and updates contain metadata only.
+The raw credential is returned only by the creation request, after the server checks
+`access:write` and the delegated scopes. Web and desktop clients keep that response
+in memory for sharing. They do not recover credentials from access read models.
+
 Ordinary pairing links grant the four client-operation scopes and read access to
 managed relay connectivity:
 `orchestration:read orchestration:operate terminal:operate review:write relay:read`.
 The desktop bootstrap credential and command-line administrative bootstrap
 credentials additionally grant `access:read access:write relay:write`.
+
+## Host file access
+
+Clients with `orchestration:read` can read files anywhere the environment's server account can
+read, following the environment-wide authorization model rather than introducing per-project
+filesystem permissions. `projects.readFile` accepts an absolute path and returns the text of that
+host file; only workspace-relative paths pass its root check, and `projects.writeFile` never
+accepts an absolute path. Clients use this to show files an agent wrote outside the workspace, such
+as a report in a temp directory, read-only.
+
+## Media preview access
+
+Clients with `orchestration:read` can request a `media-file` URL through `assets.createUrl` for
+supported images, videos, HTML, and PDF files anywhere the environment's server account can read.
+A thread ID supplies the workspace for relative paths; absolute paths refer to the environment
+host, not the client.
+
+[`AssetAccess.ts`](../../apps/server/src/assets/AssetAccess.ts) resolves symlinks, requires a regular
+file, and validates the resolved file's literal extension. It opens the file and signs its canonical
+path and device/inode identity for one hour. The token grants access to that exact file, not adjacent
+files or its containing directory. Serving rechecks the canonical path, media type, and opened
+descriptor's identity, then streams full or partial responses from that descriptor. Replacing a
+file atomically requires a freshly signed URL; editing it in place does not. Because the token names
+one file, an HTML document served this way cannot load sibling assets; the directory-scoped
+`workspace-file` resource remains the route for HTML inside the workspace. Uploaded attachments keep
+their separate asset resource.
+
+Signed asset URLs are bearer credentials. Anyone who obtains a URL and can reach the environment
+can fetch that file until it expires. Clients should copy the authored reference, not the temporary
+URL. Responses use `nosniff`; SVG responses retain their restrictive sandbox policy. Video reads
+support byte ranges so playback does not require a complete download first.
+
+Host videos can change in place, so their responses use `private, no-store` and omit `ETag`
+and `Last-Modified`. File metadata cannot prove byte-for-byte identity for `If-Range`; advertising
+those validators would encourage native players to send conditional seeks that require a full
+response. Ordinary range requests receive partial responses. An explicitly supplied `If-Range`
+still falls back to a full response because no strong validator is available. Host image previews
+keep their private cache policy and weak metadata validators.
+
+The server serves media in place without importing it into attachment storage. Deletion makes
+future server reads fail, though an already loaded client or its cache can retain bytes. Native
+viewers may use temporary client-side files for display or explicit sharing; those are not durable
+environment copies.
 
 ## Authentication Flows
 
@@ -73,6 +121,12 @@ Sessions issued from a plain bearer exchange use the store's
 only to DPoP-bound exchanges, where the token is additionally constrained by a
 proof key. See `SessionStore.ts` and `EnvironmentAuth.ts`.
 
+The reusable `desktop-bootstrap` grant replaces active sessions with the same
+subject and authentication method. Revocation and insertion share one database
+transaction, so a failed insertion preserves the previous credential. This also
+removes stale local desktop entries from earlier launches. Browser-cookie sessions
+and sessions issued through pairing links are not replaced.
+
 Requested scopes must be a subset of the one-time bootstrap credential grant.
 An ordinary paired client therefore cannot exchange its grant for
 `access:read`, `access:write`, or `relay:write`.
@@ -84,7 +138,9 @@ that sends a `DPoP` header has its proof verified by `verifyRequestDpopProof`;
 the resulting JWK thumbprint is stored on the session, which is then issued with
 method `dpop-access-token` and a one-hour TTL instead of the bearer default. An
 invalid proof gets a DPoP challenge header and a credential error rather than a
-bearer token.
+bearer token. Newer servers include a safe `dpopFailureReason` category in that
+error. When an older server omits the category, clients mention clock skew as
+one possible cause rather than presenting it as confirmed.
 
 `dpop-access-token` is advertised alongside `browser-session-cookie` and
 `bearer-access-token` in the descriptor's `sessionMethods`
