@@ -300,3 +300,82 @@ describe("context strip labels and resting composer controls", () => {
     ).toEqual({ hiddenCount: 2, visible: true });
   });
 });
+
+describe("resolveRestingComposerControlsLayout hysteresis", () => {
+  // Same cluster as above: picker 140 natural / 96 minimum plus a 9px
+  // separator, traits 60, mode 140, overflow 24, gap 4.
+  const base = {
+    gap: 4,
+    naturalFixedWidth: 149,
+    minimumFixedWidth: 105,
+    blockWidths: [60, 140],
+    overflowWidth: 24,
+  };
+
+  it("keeps a block in overflow when re-showing it would leave no slack", () => {
+    // 149 + 60 + 140 + 4 * 2 = 357 fills the host exactly.
+    expect(
+      resolveRestingComposerControlsLayout({
+        ...base,
+        hostWidth: 357,
+        previous: { hiddenCount: 1, visible: true },
+      }),
+    ).toEqual({ hiddenCount: 1, visible: true });
+  });
+
+  it("re-shows a block once the host clears the slack margin", () => {
+    expect(
+      resolveRestingComposerControlsLayout({
+        ...base,
+        hostWidth: 358,
+        previous: { hiddenCount: 1, visible: true },
+      }),
+    ).toEqual({ hiddenCount: 0, visible: true });
+  });
+
+  it("still resolves from scratch when there is no previous layout", () => {
+    expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 357 })).toEqual({
+      hiddenCount: 0,
+      visible: true,
+    });
+  });
+
+  it("settles when the measured picker width jitters below a pixel", () => {
+    // Regression guard for React error #185 ("Maximum update depth
+    // exceeded"). The composer re-measures on every render, so the picker's
+    // recovered natural width can land a fraction of a pixel apart between
+    // renders. Without hysteresis that flips hiddenCount forever.
+    let layout = { hiddenCount: 0, visible: true };
+    const settled: string[] = [];
+    for (let index = 0; index < 10; index += 1) {
+      layout = resolveRestingComposerControlsLayout({
+        ...base,
+        // The picker's recovered natural width lands a half pixel apart
+        // between renders.
+        naturalFixedWidth: index % 2 === 0 ? 149 : 149.5,
+        hostWidth: 357,
+        previous: layout,
+      });
+      if (index >= 2) settled.push(`${layout.hiddenCount}:${layout.visible}`);
+    }
+    expect(new Set(settled).size).toBe(1);
+  });
+
+  it("keeps the cluster hidden until its minimum width clears the slack", () => {
+    // 105 + 24 + 4 = 133 is the exact minimum for the hidden cluster.
+    expect(
+      resolveRestingComposerControlsLayout({
+        ...base,
+        hostWidth: 133,
+        previous: { hiddenCount: 2, visible: false },
+      }),
+    ).toEqual({ hiddenCount: 2, visible: false });
+    expect(
+      resolveRestingComposerControlsLayout({
+        ...base,
+        hostWidth: 134,
+        previous: { hiddenCount: 2, visible: false },
+      }),
+    ).toEqual({ hiddenCount: 2, visible: true });
+  });
+});

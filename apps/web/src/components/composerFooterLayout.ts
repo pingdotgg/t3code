@@ -111,10 +111,15 @@ export function resolveRestingComposerControlsNaturalWidth(
  * the overflow menu, the picker may contract to its minimum readable width;
  * below that the whole cluster hides rather than clipping.
  */
+const RESTING_CONTROLS_SLACK_PX = 1;
+
 export function resolveRestingComposerControlsLayout(
-  input: RestingComposerControlsMeasurement & { hostWidth: number },
+  input: RestingComposerControlsMeasurement & {
+    hostWidth: number;
+    previous?: { hiddenCount: number; visible: boolean };
+  },
 ): { hiddenCount: number; visible: boolean } {
-  const { blockWidths, hostWidth } = input;
+  const { blockWidths, hostWidth, previous } = input;
   let hiddenCount = 0;
   while (
     hiddenCount < blockWidths.length &&
@@ -122,7 +127,22 @@ export function resolveRestingComposerControlsLayout(
   ) {
     hiddenCount += 1;
   }
+  // Growing the overflow menu is unconditional, or the controls would clip.
+  // Shrinking it has to earn a pixel of slack first: the picker is flexible,
+  // so its natural width is recovered from a truncated label whose
+  // scrollWidth is integral while the rendered box is fractional. The
+  // composer re-measures on every render, so without that margin a host
+  // sitting exactly on a threshold flips a block in and out until React
+  // gives up with "Maximum update depth exceeded".
+  if (previous && hiddenCount < previous.hiddenCount) {
+    if (restingComposerControlsWidth(input, hiddenCount) > hostWidth - RESTING_CONTROLS_SLACK_PX) {
+      hiddenCount = Math.min(previous.hiddenCount, blockWidths.length);
+    }
+  }
+  const minimumWidth = restingComposerControlsWidth(input, hiddenCount, input.minimumFixedWidth);
   const visible =
-    restingComposerControlsWidth(input, hiddenCount, input.minimumFixedWidth) <= hostWidth;
+    previous && !previous.visible
+      ? minimumWidth <= hostWidth - RESTING_CONTROLS_SLACK_PX
+      : minimumWidth <= hostWidth;
   return { hiddenCount, visible };
 }
