@@ -65,9 +65,12 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
           label: presentation.entry.target.label,
           isPending: isCheckingAccess,
           canReadDiagnostics: false,
-          error: isCheckingAccess
-            ? null
-            : "This connection does not have access to diagnostics and usage.",
+          error:
+            sessionResult._tag === "Failure"
+              ? "Could not check this connection's access to diagnostics and usage."
+              : isCheckingAccess
+                ? null
+                : "This connection does not have access to diagnostics and usage.",
           summary: null,
         });
         continue;

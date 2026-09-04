@@ -167,11 +167,6 @@ export function UsageRouteScreen() {
                 className="w-36"
               />
             </View>
-            <UsageCoverageNotice
-              environments={environments}
-              merged={merged}
-              isPartial={isPartial}
-            />
             {isPending ? (
               <Text className="py-16 text-center text-base text-foreground-muted">
                 Scanning provider transcripts…
@@ -181,11 +176,24 @@ export function UsageRouteScreen() {
                 Connect an environment to see usage.
               </Text>
             ) : !canReadDiagnostics ? (
-              <Text className="py-16 text-center text-base text-foreground-muted">
-                This connection does not have access to diagnostics and usage.
-              </Text>
+              <View className="gap-2 py-16">
+                {environments.map((environment) => (
+                  <Text
+                    key={environment.environmentId}
+                    className="text-center text-base text-foreground-muted"
+                  >
+                    {environments.length > 1 ? `${environment.label}: ` : null}
+                    {environment.error}
+                  </Text>
+                ))}
+              </View>
             ) : (
               <>
+                <UsageCoverageNotice
+                  environments={environments}
+                  merged={merged}
+                  isPartial={isPartial}
+                />
                 <ChartCard
                   merged={merged}
                   days={chartDays}
