@@ -153,6 +153,9 @@ describe("resolveAutoSettlementAt", () => {
     expect(decide(makeThread({ snoozedUntil: "2026-08-29T00:00:00.000Z" }))).toBe(false);
     expect(decide(makeThread({ hasPendingApprovals: true }))).toBe(false);
     expect(decide(makeThread({ hasPendingUserInput: true }))).toBe(false);
+    expect(
+      decide(makeThread({ attention: { kind: "question", raisedAt: "2026-08-20T00:00:00.000Z" } })),
+    ).toBe(false);
     expect(decide(makeThread({ backgroundLiveness: "working" }))).toBe(false);
     expect(decide(makeThread({ backgroundLiveness: "monitoring" }))).toBe(false);
     expect(

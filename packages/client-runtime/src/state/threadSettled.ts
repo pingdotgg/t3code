@@ -52,6 +52,7 @@ export function hasQueuedTurnStart(
  */
 export type ThreadSnoozeShell = Pick<
   OrchestrationThreadShell,
+  | "attention"
   | "snoozedUntil"
   | "snoozedAt"
   | "hasPendingApprovals"
@@ -69,6 +70,7 @@ export type ThreadSnoozeShell = Pick<
  * the thread from classifying as snoozed.
  */
 export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean {
+  if (shell.attention?.kind === "question") return true;
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return true;
   // Only a FRESH failure raises the hand: a thread snoozed while already
   // failed stays snoozed — that snooze was the user saying "I saw it, not
@@ -102,11 +104,21 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
 export function canSnooze(
   shell: Pick<
     OrchestrationThreadShell,
-    "hasPendingApprovals" | "hasPendingUserInput" | "latestUserMessageAt" | "latestTurn" | "session"
+    | "attention"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "latestUserMessageAt"
+    | "latestTurn"
+    | "session"
   >,
   options: { readonly now: string },
 ): boolean {
-  if (shell.hasPendingApprovals || shell.hasPendingUserInput) return false;
+  if (
+    shell.hasPendingApprovals ||
+    shell.hasPendingUserInput ||
+    shell.attention?.kind === "question"
+  )
+    return false;
   if (hasQueuedTurnStart(shell, options)) return false;
   return true;
 }
@@ -153,6 +165,9 @@ export function threadWokeAt(
   // indicator the user already cleared by visiting (snoozedUntil is newer
   // than that visit's lastVisitedAt).
   if (threadRaisedHandWhileSnoozed(shell)) {
+    if (shell.attention?.kind === "question") {
+      return shell.attention.raisedAt;
+    }
     if (
       shell.snoozedAt != null &&
       shell.latestTurn?.state === "completed" &&

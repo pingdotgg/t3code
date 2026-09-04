@@ -24,6 +24,15 @@ const invocation = {
   capabilities: new Set(["preview"] as const),
   issuedAt: 1,
 };
+
+it("keeps attention-only credentials off the full MCP endpoint", () => {
+  const attentionOnlyInvocation = { ...invocation, capabilities: new Set<"preview">() };
+
+  expect(McpHttpServer.canInvokeMcpEndpoint("/mcp", attentionOnlyInvocation)).toBe(false);
+  expect(McpHttpServer.canInvokeMcpEndpoint("/mcp/thread", attentionOnlyInvocation)).toBe(true);
+  expect(McpHttpServer.canInvokeMcpEndpoint("/mcp", invocation)).toBe(true);
+});
+
 const client = McpSchema.McpServerClient.of({
   clientId: 1,
   protocolVersion: "2025-06-18",

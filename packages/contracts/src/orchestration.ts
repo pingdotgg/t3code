@@ -474,6 +474,14 @@ export const ThreadTitleRegeneration = Schema.Struct({
 });
 export type ThreadTitleRegeneration = typeof ThreadTitleRegeneration.Type;
 
+/** Agent-managed attention raised on a thread. Add new kinds here as the UI
+ * gains distinct, user-actionable statuses. */
+export const ThreadAttention = Schema.Struct({
+  kind: Schema.Literal("question"),
+  raisedAt: IsoDateTime,
+});
+export type ThreadAttention = typeof ThreadAttention.Type;
+
 export const ThreadLinkedPullRequest = Schema.Struct({
   projectId: ProjectId,
   repository: TrimmedNonEmptyString,
@@ -524,6 +532,8 @@ export const OrchestrationThread = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  // Optional on the wire so cached snapshots from older servers still decode.
+  attention: Schema.optional(Schema.NullOr(ThreadAttention)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -587,6 +597,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  attention: Schema.optional(Schema.NullOr(ThreadAttention)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,
@@ -1152,6 +1163,21 @@ const ThreadActivityAppendCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadAttentionSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.attention.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  attention: ThreadAttention,
+  createdAt: IsoDateTime,
+});
+
+const ThreadAttentionClearCommand = Schema.Struct({
+  type: Schema.Literal("thread.attention.clear"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  createdAt: IsoDateTime,
+});
+
 const ThreadRevertCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.revert.complete"),
   commandId: CommandId,
@@ -1176,6 +1202,8 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
+  ThreadAttentionSetCommand,
+  ThreadAttentionClearCommand,
   ThreadRevertCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
 ]);
@@ -1217,6 +1245,8 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "thread.attention-set",
+  "thread.attention-cleared",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1455,6 +1485,17 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
   activity: OrchestrationThreadActivity,
 });
 
+export const ThreadAttentionSetPayload = Schema.Struct({
+  threadId: ThreadId,
+  attention: ThreadAttention,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadAttentionClearedPayload = Schema.Struct({
+  threadId: ThreadId,
+  updatedAt: IsoDateTime,
+});
+
 /**
  * Which client connection dispatched the command that produced an event.
  * Stamped by the orchestration engine on client-dispatched commands; absent on
@@ -1634,6 +1675,16 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.attention-set"),
+    payload: ThreadAttentionSetPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.attention-cleared"),
+    payload: ThreadAttentionClearedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
@@ -1861,6 +1912,13 @@ export class OrchestrationDispatchCommandError extends Schema.TaggedErrorClass<O
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
     bootstrapThreadDisposition: Schema.optional(Schema.Literal("deleted")),
+  },
+) {}
+
+export class ThreadAttentionToolError extends Schema.TaggedErrorClass<ThreadAttentionToolError>()(
+  "ThreadAttentionToolError",
+  {
+    message: TrimmedNonEmptyString,
   },
 ) {}
 

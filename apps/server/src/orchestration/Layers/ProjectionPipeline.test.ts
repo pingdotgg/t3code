@@ -324,6 +324,58 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           unsettledAt: "2026-01-01T00:00:02.000Z",
         },
       ]);
+
+      const raisedAt = "2026-01-01T00:00:03.000Z";
+      yield* eventStore.append({
+        type: "thread.attention-set",
+        eventId: EventId.make("evt-attention-set"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        occurredAt: raisedAt,
+        commandId: CommandId.make("cmd-attention-set"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-attention-set"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          attention: { kind: "question", raisedAt },
+          updatedAt: raisedAt,
+        },
+      });
+      yield* projectionPipeline.bootstrap;
+
+      let attentionRows = yield* sql<{ readonly attention: string | null }>`
+        SELECT attention_json AS "attention"
+        FROM projection_threads
+        WHERE thread_id = 'thread-1'
+      `;
+      assert.deepEqual(attentionRows, [
+        { attention: '{"kind":"question","raisedAt":"2026-01-01T00:00:03.000Z"}' },
+      ]);
+
+      yield* eventStore.append({
+        type: "thread.attention-cleared",
+        eventId: EventId.make("evt-attention-clear"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        occurredAt: "2026-01-01T00:00:04.000Z",
+        commandId: CommandId.make("cmd-attention-clear"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-attention-clear"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          updatedAt: "2026-01-01T00:00:04.000Z",
+        },
+      });
+      yield* projectionPipeline.bootstrap;
+
+      attentionRows = yield* sql<{ readonly attention: string | null }>`
+        SELECT attention_json AS "attention"
+        FROM projection_threads
+        WHERE thread_id = 'thread-1'
+      `;
+      assert.deepEqual(attentionRows, [{ attention: null }]);
     }),
   );
 });

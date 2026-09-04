@@ -36,6 +36,19 @@ by older clients on one device no longer control this behavior.
 When you un-settle a thread, it returns to the top of the active list so you can find it right
 away. Its timestamps do not change. Other threads keep their positions.
 
+## Questions from agents
+
+Agents can mark a thread when their latest response contains a question that blocks further work.
+The sidebar shows a violet `?`, or **Question** when long status labels are enabled, so the thread
+does not get lost among other conversations. Sending a reply clears the marker automatically.
+Settling the thread yourself also dismisses it; automatic settlement waits until the question has
+been answered or cleared.
+
+This marker is separate from a provider's structured approval and input prompts. Those keep their
+existing, higher-priority status. The agent can currently raise only the `question` attention kind;
+the stored attention record is typed so future user-actionable kinds can be added without treating
+terminal output as an API.
+
 Right-click a pull request link in a thread and choose **Link to thread** to show that pull request
 in the sidebar. The thread settles when the linked pull request merges if **Auto-settle merged
 threads** is enabled. Right-click the same link and choose **Unlink from thread** to remove it.

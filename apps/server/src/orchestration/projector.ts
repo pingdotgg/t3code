@@ -16,6 +16,8 @@ import {
   ProjectDeletedPayload,
   ProjectMetaUpdatedPayload,
   ThreadActivityAppendedPayload,
+  ThreadAttentionClearedPayload,
+  ThreadAttentionSetPayload,
   ThreadArchivedPayload,
   ThreadCreatedPayload,
   ThreadDeletedPayload,
@@ -335,6 +337,7 @@ export function projectEvent(
             unsettledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
+            attention: null,
             deletedAt: null,
             messages: [],
             activities: [],
@@ -478,6 +481,33 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             pinOrderKey: payload.orderKey,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.attention-set":
+      return decodeForEvent(ThreadAttentionSetPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            attention: payload.attention,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.attention-cleared":
+      return decodeForEvent(
+        ThreadAttentionClearedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            attention: null,
             updatedAt: payload.updatedAt,
           }),
         })),

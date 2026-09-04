@@ -5,6 +5,7 @@ import { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 export type ThreadStatusKind =
   | "pending-approval"
   | "awaiting-input"
+  | "question"
   | "working"
   | "connecting"
   | "error"
@@ -58,6 +59,18 @@ export function resolveThreadStatus(
       textClassName: "text-adaptive-indigo-700-300",
       iconColor: "#5e5ce6",
       iconBackground: "rgba(94,92,230,0.22)",
+      pulse: false,
+    };
+  }
+
+  if (thread.attention?.kind === "question") {
+    return {
+      kind: "question",
+      label: "Question",
+      pillClassName: "bg-adaptive-violet-500-a12-a16",
+      textClassName: "text-adaptive-violet-700-300",
+      iconColor: "#bf5af2",
+      iconBackground: "rgba(191,90,242,0.22)",
       pulse: false,
     };
   }

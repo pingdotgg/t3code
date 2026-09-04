@@ -75,6 +75,7 @@ describe("orchestration projector", () => {
     expect(next.threads).toEqual([
       {
         id: "thread-1",
+        attention: null,
         projectId: "project-1",
         title: "demo",
         modelSelection: {

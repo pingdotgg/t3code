@@ -74,6 +74,21 @@ it.effect("builds MCP endpoints from the bound server host", () =>
   }),
 );
 
+it.effect("uses the attention-only endpoint when preview access is disabled", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("thread-attention-only"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      enablePreview: false,
+    });
+    expect(issued.config.endpoint).toBe("http://127.0.0.1:43123/mcp/thread");
+
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    expect((yield* registry.resolve(token))?.capabilities.has("preview")).toBe(false);
+  }),
+);
+
 it.effect("expires credentials once their session stops showing signs of life", () =>
   Effect.gen(function* () {
     let timestamp = 1_000;

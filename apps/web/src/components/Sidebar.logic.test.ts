@@ -1170,6 +1170,26 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Awaiting Input", pulse: false });
   });
 
+  it("shows a question after native input and before active work", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          attention: { kind: "question", raisedAt: "2026-03-09T10:00:00.000Z" },
+        },
+      }),
+    ).toMatchObject({ label: "Question", marker: "?", pulse: false });
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          hasPendingApprovals: true,
+          attention: { kind: "question", raisedAt: "2026-03-09T10:00:00.000Z" },
+        },
+      }),
+    ).toMatchObject({ label: "Pending Approval" });
+  });
+
   it("falls back to working when the thread is actively running without blockers", () => {
     expect(
       resolveThreadStatusPill({
