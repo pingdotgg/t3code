@@ -219,6 +219,7 @@ describe("ProviderSessionReaper", () => {
           getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
           getThreadCheckpointContext: () => Effect.die("unused"),
           getFullThreadDiffContext: () => Effect.die("unused"),
+          getThreadRuntimeContext: () => Effect.die("unused"),
           getThreadShellById: (threadId) =>
             Effect.succeed(
               input.readModel.threads.find((thread) => thread.id === threadId)
