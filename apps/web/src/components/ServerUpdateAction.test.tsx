@@ -1,7 +1,8 @@
 import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { AuthSessionState, type EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -9,7 +10,8 @@ const testState = vi.hoisted(() => ({
   updateServer: vi.fn(),
   toast: vi.fn(),
   continueThreadsAfterServerUpdate: false,
-  canMaintain: true,
+  session: null as AsyncResult.AsyncResult<AuthSessionState, Error> | null,
+  sessionAtom: Symbol("session"),
 }));
 
 vi.mock("~/hooks/useCopyToClipboard", () => ({
@@ -21,11 +23,12 @@ vi.mock("~/hooks/useSettings", () => ({
     selector: (settings: { continueThreadsAfterServerUpdate: boolean }) => unknown,
   ) => selector({ continueThreadsAfterServerUpdate: testState.continueThreadsAfterServerUpdate }),
 }));
+vi.mock("@effect/atom-react", () => ({ useAtomValue: () => testState.session }));
+vi.mock("~/rpc/atomRegistry", () => ({
+  appAtomRegistry: { get: () => testState.session },
+}));
 vi.mock("~/state/session", () => ({
-  useEnvironmentScope: (environmentId: EnvironmentId, scope: string) =>
-    testState.canMaintain && environmentId === "env-test" && scope === "environment:maintain",
-  readEnvironmentScope: (environmentId: EnvironmentId, scope: string) =>
-    testState.canMaintain && environmentId === "env-test" && scope === "environment:maintain",
+  environmentSession: { sessionStateAtom: () => testState.sessionAtom },
 }));
 vi.mock("~/state/server", () => ({
   serverEnvironment: { updateServer: Symbol("updateServer") },
@@ -38,6 +41,8 @@ vi.mock("./ui/toast", () => ({
 }));
 
 import { ServerUpdateAction, ServerUpdateProgress } from "./ServerUpdateAction";
+
+const decodeSessionState = Schema.decodeUnknownSync(AuthSessionState);
 
 type ActionElement = ReactElement<{
   readonly onClick?: () => void;
@@ -57,17 +62,82 @@ async function flushPromises(): Promise<void> {
   await Promise.resolve();
 }
 
+const legacyAuth = {
+  policy: "remote-reachable",
+  bootstrapMethods: ["one-time-token"],
+  sessionMethods: ["bearer-access-token"],
+  sessionCookieName: "t3_session",
+} as const;
+
+const currentSession = {
+  authenticated: true,
+  scopes: ["environment:maintain"],
+  auth: {
+    ...legacyAuth,
+    serverUpdateScope: "environment:maintain",
+  },
+} as const satisfies AuthSessionState;
+
 describe("ServerUpdateAction", () => {
   beforeEach(() => {
     testState.updateServer.mockReset();
     testState.toast.mockReset();
     testState.continueThreadsAfterServerUpdate = false;
-    testState.canMaintain = true;
+    testState.session = AsyncResult.success(currentSession);
+  });
+
+  it.each([
+    { serverUpdateScope: undefined, scopes: ["orchestration:operate"], allowed: true },
+    { serverUpdateScope: undefined, scopes: ["orchestration:read"], allowed: false },
+    {
+      serverUpdateScope: "environment:maintain",
+      scopes: ["orchestration:operate"],
+      allowed: false,
+    },
+    {
+      serverUpdateScope: "environment:maintain",
+      scopes: ["environment:maintain"],
+      allowed: true,
+    },
+  ] as const)(
+    "uses the advertised update scope $serverUpdateScope with grant $scopes",
+    async ({ serverUpdateScope, scopes, allowed }) => {
+      testState.session = AsyncResult.success(
+        decodeSessionState({
+          ...currentSession,
+          scopes,
+          auth: {
+            ...legacyAuth,
+            ...(serverUpdateScope === undefined ? {} : { serverUpdateScope }),
+          },
+        }),
+      );
+      testState.updateServer.mockResolvedValue(
+        AsyncResult.success({ targetVersion: "0.0.31", method: "boot-service" as const }),
+      );
+
+      renderAction().props.onClick?.();
+      await flushPromises();
+
+      expect(testState.updateServer).toHaveBeenCalledTimes(allowed ? 1 : 0);
+    },
+  );
+
+  it("keeps a known grant usable while the session refreshes", async () => {
+    testState.session = AsyncResult.waiting(AsyncResult.success(currentSession));
+    testState.updateServer.mockResolvedValue(
+      AsyncResult.success({ targetVersion: "0.0.31", method: "boot-service" as const }),
+    );
+
+    renderAction().props.onClick?.();
+    await flushPromises();
+
+    expect(testState.updateServer).toHaveBeenCalledOnce();
   });
 
   it("does not dispatch an update after maintenance access is removed", async () => {
     const action = renderAction();
-    testState.canMaintain = false;
+    testState.session = AsyncResult.success({ ...currentSession, scopes: [] });
     action.props.onClick?.();
     await flushPromises();
     expect(testState.updateServer).not.toHaveBeenCalled();

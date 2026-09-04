@@ -1,5 +1,7 @@
-import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
-import { useEnvironmentScope, readEnvironmentScope } from "~/state/session";
+import { useAtomValue } from "@effect/atom-react";
+import { AuthOrchestrationOperateScope, type AuthSessionState } from "@t3tools/contracts";
+import type { AsyncResult } from "effect/unstable/reactivity";
+import { environmentSession } from "~/state/session";
 import type { EnvironmentId, ServerSelfUpdateCapability } from "@t3tools/contracts";
 import type { ServerUpdateStage, ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import {
@@ -12,6 +14,7 @@ import { requestConfirmDialog } from "~/confirmDialog";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { serverEnvironment } from "~/state/server";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { manualServerUpdateCommand } from "~/versionSkew";
 import { Button } from "./ui/button";
@@ -34,6 +37,17 @@ export function serverUpdateStageLabel(stage: ServerUpdateStage): string {
 
 function updateFailureMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Server update failed.";
+}
+
+function canUpdateServer(result: AsyncResult.AsyncResult<AuthSessionState, unknown>): boolean {
+  if (result._tag !== "Success" || !result.value.authenticated) return false;
+  const session = result.value;
+  // Only self-update bridges the old authorization protocol. Upgraded servers
+  // advertise the new scope even when this client's grant predates it.
+  return (
+    session.scopes?.includes(session.auth.serverUpdateScope ?? AuthOrchestrationOperateScope) ===
+    true
+  );
 }
 
 /**
@@ -101,7 +115,8 @@ export function ServerUpdateAction({
   readonly size?: ComponentProps<typeof Button>["size"];
 }) {
   const isDesktopAppUpdate = selfUpdate === "desktop-managed";
-  const canMaintain = useEnvironmentScope(environmentId, AuthEnvironmentMaintainScope);
+  const sessionStateAtom = environmentSession.sessionStateAtom(environmentId);
+  const canUpdate = canUpdateServer(useAtomValue(sessionStateAtom));
   const continueThreadsAfterServerUpdate = useEnvironmentSettings(
     environmentId,
     (settings) => settings.continueThreadsAfterServerUpdate,
@@ -129,7 +144,7 @@ export function ServerUpdateAction({
 
   const handleUpdate = async () => {
     if (
-      !readEnvironmentScope(environmentId, AuthEnvironmentMaintainScope) ||
+      !canUpdateServer(appAtomRegistry.get(sessionStateAtom)) ||
       pendingUpdateEnvironmentIds.has(environmentId)
     ) {
       return;
@@ -147,7 +162,7 @@ export function ServerUpdateAction({
       }
     }
     if (
-      !readEnvironmentScope(environmentId, AuthEnvironmentMaintainScope) ||
+      !canUpdateServer(appAtomRegistry.get(sessionStateAtom)) ||
       pendingUpdateEnvironmentIds.has(environmentId)
     ) {
       return;
@@ -204,12 +219,7 @@ export function ServerUpdateAction({
   }
 
   return (
-    <Button
-      size={size}
-      variant={variant}
-      disabled={!canMaintain}
-      onClick={() => void handleUpdate()}
-    >
+    <Button size={size} variant={variant} disabled={!canUpdate} onClick={() => void handleUpdate()}>
       {label}
     </Button>
   );
