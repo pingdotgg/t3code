@@ -11,10 +11,14 @@ import {
   type OrchestrationThreadStreamItem,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
@@ -134,6 +138,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly cached?: OrchestrationThread;
   readonly httpSnapshot?: Option.Option<OrchestrationThreadDetailSnapshot>;
   readonly completionMarker?: boolean;
+  readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
+  readonly loadCached?: Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>>;
 }) {
   const inputs = yield* Queue.unbounded<TestThreadInput>();
   const observed = yield* Queue.unbounded<EnvironmentThreadState>();
@@ -202,6 +208,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     loadShell: () => Effect.succeed(Option.none()),
     saveShell: () => Effect.void,
     loadThread: (_environmentId, threadId) =>
+      options?.loadCached ??
       Effect.succeed(
         threadId === THREAD_ID && options?.cached !== undefined
           ? Option.some({
@@ -222,7 +229,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     clearVcsRefs: () => Effect.void,
     clear: () => Effect.void,
   });
-  const threadState = yield* makeEnvironmentThreadState(THREAD_ID).pipe(
+  const threadState = yield* makeEnvironmentThreadState(THREAD_ID, options?.resumeCache).pipe(
     Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
     Effect.provideService(Persistence.EnvironmentCacheStore, cache),
     Effect.provideService(ThreadSnapshotLoader, snapshotLoader),
@@ -239,6 +246,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   );
 
   return {
+    threadState,
     inputs,
     observed,
     latest,
@@ -316,6 +324,159 @@ const deleted = (): OrchestrationThreadStreamItem => ({
 });
 
 describe("EnvironmentThreads", () => {
+  it.effect("does not resume past a canceled event whose data was not applied", () =>
+    Effect.gen(function* () {
+      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+        snapshot: undefined,
+        owner: undefined,
+      };
+      const scope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+        Scope.close(scope, Exit.void),
+      );
+      const first = yield* makeHarness({ cached: BASE_THREAD, resumeCache }).pipe(
+        Effect.provideService(Scope.Scope, scope),
+      );
+      yield* awaitThreadState(first.observed, (value) => value.status === "live");
+      const applying = yield* Deferred.make<void>();
+      const update = titleUpdated("Not applied", 8);
+      if (update.kind !== "event") return yield* Effect.die("Expected an event");
+      Object.defineProperty(update.event.payload, "title", {
+        get: () => {
+          Deferred.doneUnsafe(applying, Exit.void);
+          return "Not applied";
+        },
+      });
+      // The reducer reads the title after it advances the cursor. Hold only
+      // the data write so closing the scope interrupts that exact interval.
+      yield* first.threadState.semaphore.take(1);
+      yield* Queue.offer(first.inputs, update);
+      yield* Deferred.await(applying);
+      yield* Scope.close(scope, Exit.void);
+      yield* first.threadState.semaphore.release(1);
+
+      const resumed = yield* makeHarness({ resumeCache });
+      const state = yield* awaitThreadState(resumed.observed, (value) => value.status === "live");
+      expect(Option.getOrThrow(state.data).title).toBe(BASE_THREAD.title);
+      expect(yield* Ref.get(resumed.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE);
+      expect(yield* Ref.get(first.savedThreads)).toEqual([
+        {
+          thread: BASE_THREAD,
+          snapshotSequence: CACHED_SNAPSHOT_SEQUENCE,
+        },
+      ]);
+    }),
+  );
+
+  it.effect("prevents an old scope from replacing its successor's cached data", () =>
+    Effect.gen(function* () {
+      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+        snapshot: undefined,
+        owner: undefined,
+      };
+      const oldScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+        Scope.close(scope, Exit.void),
+      );
+      const old = yield* makeHarness({ cached: BASE_THREAD, resumeCache }).pipe(
+        Effect.provideService(Scope.Scope, oldScope),
+      );
+      yield* awaitThreadState(old.observed, (value) => value.status === "live");
+      const successor = yield* makeHarness({ resumeCache });
+      yield* Queue.offer(successor.inputs, titleUpdated("Successor title", 9));
+      yield* awaitThreadState(
+        successor.observed,
+        (value) => Option.getOrNull(value.data)?.title === "Successor title",
+      );
+      yield* Queue.offer(old.inputs, titleUpdated("Old scope title", 8));
+      yield* awaitThreadState(
+        old.observed,
+        (value) => Option.getOrNull(value.data)?.title === "Old scope title",
+      );
+      yield* Scope.close(oldScope, Exit.void);
+
+      expect(resumeCache.snapshot?.sequence).toBe(9);
+      expect(Option.getOrThrow(resumeCache.snapshot!.state.data).title).toBe("Successor title");
+      expect(yield* Ref.get(old.savedThreads)).toEqual([]);
+    }),
+  );
+
+  it.effect("does not let a delayed cache read replace an initialized successor", () =>
+    Effect.gen(function* () {
+      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+        snapshot: undefined,
+        owner: undefined,
+      };
+      const loading = yield* Deferred.make<void>();
+      const response = yield* Deferred.make<Option.Option<OrchestrationThreadDetailSnapshot>>();
+      const oldFiber = yield* makeHarness({
+        resumeCache,
+        loadCached: Deferred.succeed(loading, undefined).pipe(
+          Effect.andThen(Deferred.await(response)),
+        ),
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(loading);
+      const successor = yield* makeHarness({ cached: BASE_THREAD, resumeCache });
+      yield* awaitThreadState(successor.observed, (value) => value.status === "live");
+      yield* Deferred.succeed(
+        response,
+        Option.some({ snapshotSequence: 3, thread: { ...BASE_THREAD, title: "Old disk data" } }),
+      );
+      const old = yield* Fiber.join(oldFiber);
+      yield* awaitThreadState(old.observed, (value) => value.status === "live");
+
+      expect(resumeCache.snapshot?.sequence).toBe(CACHED_SNAPSHOT_SEQUENCE);
+      expect(Option.getOrThrow(resumeCache.snapshot!.state.data).title).toBe(BASE_THREAD.title);
+    }),
+  );
+
+  it.effect("does not let an old deletion remove its successor's persisted cache", () =>
+    Effect.gen(function* () {
+      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+        snapshot: undefined,
+        owner: undefined,
+      };
+      const old = yield* makeHarness({ cached: BASE_THREAD, resumeCache });
+      yield* awaitThreadState(old.observed, (value) => value.status === "live");
+      const successor = yield* makeHarness({ resumeCache });
+      yield* Queue.offer(successor.inputs, titleUpdated("Successor title", 9));
+      yield* awaitThreadState(
+        successor.observed,
+        (value) => Option.getOrNull(value.data)?.title === "Successor title",
+      );
+      const update = deleted();
+      if (update.kind !== "event") return yield* Effect.die("Expected an event");
+      yield* Queue.offer(old.inputs, { ...update, event: { ...update.event, sequence: 8 } });
+      yield* awaitThreadState(old.observed, (value) => value.status === "deleted");
+
+      expect(resumeCache.snapshot?.sequence).toBe(9);
+      expect(yield* Ref.get(old.removedThreads)).toEqual([]);
+    }),
+  );
+
+  it.effect("retains a deletion instead of restoring the old disk snapshot", () =>
+    Effect.gen(function* () {
+      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+        snapshot: undefined,
+        owner: undefined,
+      };
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const first = yield* makeHarness({ cached: BASE_THREAD, resumeCache });
+          const update = deleted();
+          if (update.kind !== "event") return yield* Effect.die("Expected an event");
+          yield* Queue.offer(first.inputs, { ...update, event: { ...update.event, sequence: 8 } });
+          yield* awaitThreadState(first.observed, (value) => value.status === "deleted");
+        }),
+      );
+      const resumed = yield* makeHarness({ cached: BASE_THREAD, resumeCache });
+      const state = yield* awaitThreadState(
+        resumed.observed,
+        (value) => value.status === "deleted",
+      );
+      expect(Option.isNone(state.data)).toBe(true);
+      expect(yield* Ref.get(resumed.loaderCalls)).toBe(0);
+    }),
+  );
+
   it.effect("publishes cached data immediately from a warm cache", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_THREAD });
