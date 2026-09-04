@@ -124,27 +124,24 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus?.isDefaultRef ?? false;
 
-  const quickAction = useMemo(
-    () => {
-      if (!isRepo) {
-        return {
-          label: "Git unavailable",
+  const quickAction = useMemo(() => {
+    if (!isRepo) {
+      return {
+        label: "Git unavailable",
+        disabled: true,
+        kind: "show_hint" as const,
+        hint: "This workspace is not a git repository.",
+      };
+    }
+    const action = resolveQuickAction(gitStatus, busy, isDefaultRef, hasPrimaryRemote);
+    return !canWriteSourceControl && (action.kind === "run_pull" || action.kind === "run_action")
+      ? {
+          ...action,
           disabled: true,
-          kind: "show_hint" as const,
-          hint: "This workspace is not a git repository.",
-        };
-      }
-      const action = resolveQuickAction(gitStatus, busy, isDefaultRef, hasPrimaryRemote);
-      return !canWriteSourceControl && (action.kind === "run_pull" || action.kind === "run_action")
-        ? {
-            ...action,
-            disabled: true,
-            hint: "This connection cannot change source control.",
-          }
-        : action;
-    },
-    [busy, canWriteSourceControl, gitStatus, hasPrimaryRemote, isDefaultRef, isRepo],
-  );
+          hint: "This connection cannot change source control.",
+        }
+      : action;
+  }, [busy, canWriteSourceControl, gitStatus, hasPrimaryRemote, isDefaultRef, isRepo]);
 
   const quickActionHint = quickAction.disabled
     ? (quickAction.hint ?? "This action is unavailable.")
@@ -203,7 +200,15 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
 
       await onRunAction(input);
     },
-    [canWriteSourceControl, environmentId, gitStatus, isDefaultRef, onRunAction, navigation, threadId],
+    [
+      canWriteSourceControl,
+      environmentId,
+      gitStatus,
+      isDefaultRef,
+      onRunAction,
+      navigation,
+      threadId,
+    ],
   );
 
   const runQuickAction = useCallback(async () => {
