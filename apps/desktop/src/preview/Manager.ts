@@ -112,7 +112,7 @@ const MAX_SCREENSHOT_WIDTH = 1280;
 /** How long an armed tab keeps the exclusive display-media slot before another tab may take it. */
 const RECORDING_ARM_GRACE_MS = 10_000;
 const PICTURE_IN_PICTURE_FRAME_INTERVAL_MS = Math.ceil(1_000 / 12);
-const PICTURE_IN_PICTURE_JPEG_QUALITY = 80;
+const PICTURE_IN_PICTURE_JPEG_QUALITY = 90;
 const PICTURE_IN_PICTURE_INITIAL_WIDTH = 480;
 const PICTURE_IN_PICTURE_INITIAL_HEIGHT = 320;
 const PICTURE_IN_PICTURE_MIN_WIDTH = 240;
@@ -2816,9 +2816,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               tabId,
             );
             const aspectRatio = frame.width / frame.height;
+            const isEnlarged =
+              pictureInPictureWindow.isMaximized?.() === true ||
+              pictureInPictureWindow.isFullScreen?.() === true;
             if (
-              previousAspectRatio === undefined ||
-              Math.abs(previousAspectRatio - aspectRatio) > PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON
+              !isEnlarged &&
+              (previousAspectRatio === undefined ||
+                Math.abs(previousAspectRatio - aspectRatio) >
+                  PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON)
             ) {
               yield* attempt(
                 {
@@ -3077,8 +3082,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               show: false,
               alwaysOnTop: true,
               autoHideMenuBar: true,
-              fullscreenable: false,
-              maximizable: false,
+              fullscreenable: true,
+              maximizable: true,
               minimizable: false,
               resizable: true,
               skipTaskbar: true,
