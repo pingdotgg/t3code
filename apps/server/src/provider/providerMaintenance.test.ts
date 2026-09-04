@@ -22,6 +22,10 @@ import {
 } from "./providerMaintenance.ts";
 
 const driver = (value: string) => ProviderDriverKind.make(value);
+// These write `#!/bin/sh` stubs and resolve them through a darwin-mocked
+// PATH walk; a Windows temp path cannot be split on `:`.
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+
 const makeTempDir = (name: string) =>
   Crypto.Crypto.pipe(
     Effect.flatMap((crypto) => crypto.randomUUIDv4),
@@ -199,7 +203,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
-  it.effect(
+  it.effect.skipIf(windowsHost)(
     "switches package-managed providers to vite-plus updates when the resolved binary lives in vite-plus global bin",
     () =>
       Effect.gen(function* () {
@@ -272,7 +276,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       }),
   );
 
-  it.effect(
+  it.effect.skipIf(windowsHost)(
     "switches package-managed providers to pnpm updates when the resolved binary lives in pnpm's global bin",
     () =>
       Effect.gen(function* () {
@@ -332,7 +336,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
-  it.effect(
+  it.effect.skipIf(windowsHost)(
     "switches native-package-tool to native updates when the binary resolves through the native installer",
     () =>
       Effect.gen(function* () {
@@ -369,7 +373,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       }),
   );
 
-  it.effect(
+  it.effect.skipIf(windowsHost)(
     "switches scoped-package-tool to native upgrades when the binary resolves through the standalone installer",
     () =>
       Effect.gen(function* () {
