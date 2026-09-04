@@ -49,6 +49,7 @@ import {
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
+  SearchIcon,
   SettingsIcon,
   SquarePenIcon,
   TextSearchIcon,
@@ -149,6 +150,7 @@ import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
+import { openChatFind } from "./chat/chatFindBus";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
 import { searchSettings, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
 import {
@@ -1654,6 +1656,20 @@ function OpenCommandPaletteDialog(props: {
       openOverlayMode("content");
     },
   });
+
+  if (activeThread != null) {
+    actionItems.push({
+      kind: "action",
+      value: "action:find-in-chat",
+      searchTerms: ["find in chat", "find in thread", "search chat", "search messages", "find"],
+      title: "Find in chat",
+      icon: <SearchIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "chat.find",
+      run: async () => {
+        openChatFind();
+      },
+    });
+  }
 
   actionItems.push({
     kind: "action",

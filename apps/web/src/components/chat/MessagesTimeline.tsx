@@ -113,6 +113,7 @@ import { CHAT_TIMELINE_ANCHOR_OFFSET } from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
+import { ChatFindBar } from "./ChatFindBar";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import {
   AssistantCitationSource,
@@ -735,6 +736,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               onCite={onCiteAssistantText}
             />
           ) : null}
+          <ChatFindBar
+            rows={rows}
+            listRef={listRef}
+            topFadeEnabled={topFadeEnabled}
+            onManualNavigation={onManualNavigation}
+          />
           <LegendList<MessagesTimelineRow>
             ref={listRef}
             data={rows}

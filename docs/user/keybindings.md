@@ -40,6 +40,11 @@ Commands are IDs like `terminal.toggle`, `commandPalette.toggle`, `preview.refre
 `filePicker.toggle` opens file search for the active project and defaults to `mod+p`.
 `projectSearch.toggle` searches inside the active project's files and defaults to `mod+shift+f`.
 Repeating either shortcut closes that search, and switching shortcuts replaces the open search.
+`chat.find` opens a find bar over the open thread and defaults to `mod+f`. Any text selected when
+you press it becomes the search. Type to highlight every message that contains the text, then press
+`Enter` or `Shift+Enter` to step between matches and `Escape` to close it. The `Aa` and `ab` toggles
+match case and whole words only. On the pull requests page the same shortcut focuses the list
+search instead.
 `themeEditor.toggle` opens or closes the floating theme editor and defaults to
 `mod+alt+shift+t`. Select a color label to spotlight the elements that use it; select the label
 again to clear the spotlight. The swatch and hex field keep that color selected while you edit it.

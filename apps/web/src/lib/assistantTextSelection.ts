@@ -128,7 +128,7 @@ export function findAssistantCitationText(
   return match ?? (quoteCount === 1 ? onlyQuote : null);
 }
 
-type TextChunk = { node: Text; start: number; end: number };
+export type TextChunk = { node: Text; start: number; end: number };
 
 /**
  * Uses DOM text order, with a line break between HTML blocks and at <br>.
@@ -137,7 +137,7 @@ type TextChunk = { node: Text; start: number; end: number };
  * reads, CSS-generated content, or soft-wrap line breaks enter the stream, so
  * reflow cannot move it.
  */
-function readAssistantText(root: HTMLElement) {
+export function readAssistantText(root: HTMLElement) {
   const parts: string[] = [];
   const chunks: TextChunk[] = [];
   let length = 0;
