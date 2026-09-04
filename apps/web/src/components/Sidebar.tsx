@@ -568,7 +568,6 @@ function SidebarSectionPlaceholder(props: {
 function SidebarDragBoundary(props: {
   marker: "pinned-header" | "pinned-divider";
   label: string;
-  hint: string | null;
   visible: boolean;
   isDropTarget: boolean;
 }) {
@@ -587,7 +586,6 @@ function SidebarDragBoundary(props: {
             )}
           >
             {props.label}
-            {props.hint ? <span className="font-normal">{props.hint}</span> : null}
           </span>
           <span
             aria-hidden
@@ -603,7 +601,6 @@ function SidebarDragBoundary(props: {
 function SidebarSectionHeader(props: {
   marker: "snoozed-header" | "settled-header";
   label: string;
-  hint?: string | null;
   isDropTarget?: boolean;
   toggle: { expanded: boolean; onToggle: () => void };
 }) {
@@ -624,7 +621,6 @@ function SidebarSectionHeader(props: {
           props.isDropTarget && "bg-primary/30",
         )}
       />
-      {props.hint ? <span className="truncate text-[11px] font-normal">{props.hint}</span> : null}
       <ChevronDownIcon
         aria-hidden
         className={cn(
@@ -910,7 +906,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // sortable bag applied to the row root so the whole row drags (the
   // pointer sensor's distance constraint keeps plain clicks working).
   sortable?: SortableThreadRowBag | undefined;
-  dropSection: SidebarSection | null;
+  dropSection: Exclude<SidebarSection, "snoozed"> | null;
   // Compact wake countdown ("2h") for rows in the snoozed shelf.
   snoozeWakeLabelText: string | null;
   // When a snooze ended (timer or early wake); drives the Woke pill until
@@ -1374,14 +1370,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         role="status"
         className="pointer-events-none ml-auto inline-flex h-5 shrink-0 items-center gap-1 rounded-sm border border-primary/30 bg-sidebar px-1.5 text-[11px] font-medium text-primary"
       >
+        <span className="sr-only">Move to </span>
         <span aria-hidden>→</span>
         {props.dropSection === "pinned"
           ? "Pinned"
           : props.dropSection === "active"
             ? "Active"
-            : props.dropSection === "settled"
-              ? "Settled"
-              : "Snoozed"}
+            : "Settled"}
       </span>
     ) : null;
 
@@ -1485,31 +1480,32 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       <TooltipPopup side="top">Unsent draft</TooltipPopup>
     </Tooltip>
   ) : null;
-  const pinIndicator = props.isPinned ? (
-    props.pinningSupported ? (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              aria-label="Unpin thread"
-              onClick={handleUnpinClick}
-              className="inline-flex cursor-pointer items-center rounded-sm text-muted-foreground/65 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          }
-        >
-          <PinIcon aria-hidden className="size-3 shrink-0" />
-        </TooltipTrigger>
-        <TooltipPopup>Unpin thread</TooltipPopup>
-      </Tooltip>
-    ) : (
-      <PinIcon
-        aria-label="Pinned"
-        role="img"
-        className="size-3 shrink-0 text-muted-foreground/65"
-      />
-    )
-  ) : null;
+  const pinIndicator =
+    props.isPinned && !sortable?.isDragging ? (
+      props.pinningSupported ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label="Unpin thread"
+                onClick={handleUnpinClick}
+                className="inline-flex cursor-pointer items-center rounded-sm text-muted-foreground/65 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            }
+          >
+            <PinIcon aria-hidden className="size-3 shrink-0" />
+          </TooltipTrigger>
+          <TooltipPopup>Unpin thread</TooltipPopup>
+        </Tooltip>
+      ) : (
+        <PinIcon
+          aria-label="Pinned"
+          role="img"
+          className="size-3 shrink-0 text-muted-foreground/65"
+        />
+      )
+    ) : null;
 
   if (variant === "slim") {
     return (
@@ -4569,7 +4565,11 @@ export default function Sidebar() {
                             isPinned={thread.pinnedAt != null}
                             sortable={sortable}
                             dropSection={
-                              dragState?.activeKey === threadKey ? dragTargetSection : null
+                              dragState?.activeKey === threadKey &&
+                              dragTargetSection !== dragState.activeSection &&
+                              dragTargetSection !== "snoozed"
+                                ? dragTargetSection
+                                : null
                             }
                             snoozeWakeLabelText={
                               section === "snoozed" && thread.snoozedUntil != null
@@ -4673,14 +4673,6 @@ export default function Sidebar() {
                         dragTargetSection !== "pinned"
                           ? 1
                           : 0);
-                      const activeHint =
-                        from === "pinned"
-                          ? "Drop to unpin"
-                          : from === "settled"
-                            ? "Drop to un-settle"
-                            : from === "snoozed"
-                              ? "Drop to wake"
-                              : null;
                       const items: ReactNode[] = [
                         <SidebarDraftBlock
                           key="draft-sessions"
@@ -4706,7 +4698,6 @@ export default function Sidebar() {
                                 key="pinned-header"
                                 marker="pinned-header"
                                 label="Pinned"
-                                hint={from !== null && from !== "pinned" ? "Drop to pin" : null}
                                 isDropTarget={dragTargetSection === "pinned"}
                                 visible={from !== null}
                               />,
@@ -4718,7 +4709,6 @@ export default function Sidebar() {
                                 key="pinned-divider"
                                 marker="pinned-divider"
                                 label="Active"
-                                hint={dragTargetSection === "active" ? activeHint : null}
                                 isDropTarget={dragTargetSection === "active"}
                                 visible={from !== null && previewPinnedCount > 0}
                               />,
@@ -4729,7 +4719,7 @@ export default function Sidebar() {
                               <SidebarSectionPlaceholder
                                 key="active-placeholder"
                                 marker="active-placeholder"
-                                label={activeHint ?? "Drop here"}
+                                label="Active"
                                 showHint={from !== null}
                                 isDropTarget={dragTargetSection === "active"}
                               />,
@@ -4762,11 +4752,6 @@ export default function Sidebar() {
                                     ? "Settled"
                                     : `Settled (${settledThreads.length})`
                                 }
-                                hint={
-                                  dragTargetSection === "settled" && from !== "settled"
-                                    ? "Drop to settle"
-                                    : null
-                                }
                                 isDropTarget={dragTargetSection === "settled"}
                                 toggle={{
                                   expanded: settledShelfExpanded,
@@ -4780,7 +4765,7 @@ export default function Sidebar() {
                               <SidebarSectionPlaceholder
                                 key="settled-placeholder"
                                 marker="settled-placeholder"
-                                label="Drop to settle"
+                                label="Settled"
                                 showHint={from !== null && from !== "settled"}
                                 isDropTarget={dragTargetSection === "settled"}
                               />,
