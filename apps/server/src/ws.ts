@@ -64,6 +64,7 @@ import {
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   RpcClientId,
+  requiredScopesForServerSettingsPatch,
   EnvironmentAuthorizationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -655,12 +656,13 @@ const makeWsRpcLayer = (
         method: string,
         effect: Effect.Effect<A, E, R>,
         traceAttributes?: Readonly<Record<string, unknown>>,
-      ) =>
-        instrumentRpcEffect(
-          method,
-          authorizeEffect(requiredScopeForRpcMethod(method), effect),
-          traceAttributes,
-        );
+        requiredScopes: ReadonlyArray<AuthEnvironmentScope> = [requiredScopeForRpcMethod(method)],
+      ) => {
+        const missingScope = requiredScopes.find((scope) => !currentSession.scopes.includes(scope));
+        const authorized: Effect.Effect<A, E | EnvironmentAuthorizationError, R> =
+          missingScope === undefined ? effect : Effect.fail(authorizationError(missingScope));
+        return instrumentRpcEffect(method, authorized, traceAttributes);
+      };
       const observeRpcStream = <A, E, R>(
         method: string,
         stream: Stream.Stream<A, E, R>,
@@ -2020,6 +2022,7 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+            requiredScopesForServerSettingsPatch(patch),
           ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(

@@ -1,3 +1,7 @@
+import { requiredScopesForServerSettingsPatch, EnvironmentAuthorizationError } from "@t3tools/contracts";
+import { readEnvironmentScope } from "../../state/session";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 import {
   DEFAULT_SERVER_SETTINGS,
   type ProjectScopedServerSettingKey,
@@ -63,7 +67,11 @@ function useRunScopedPlan() {
         });
         return;
       }
-      void persistScopedSettingsPatch(plan, persistServer, persistClientSettingsPatch).then(
+      void persistScopedSettingsPatch(plan, async (request) => {
+        const missing = requiredScopesForServerSettingsPatch(request.input.patch).find((scope) => !readEnvironmentScope(request.environmentId, scope));
+        if (missing) return AsyncResult.failure(Cause.fail(new EnvironmentAuthorizationError({ requiredScope: missing, message: "This connection cannot change these settings." })));
+        return persistServer(request);
+      }, persistClientSettingsPatch).then(
         ({ failedEnvironments, savedEnvironmentCount }) => {
           if (failedEnvironments.length === 0) return;
           toastManager.add({

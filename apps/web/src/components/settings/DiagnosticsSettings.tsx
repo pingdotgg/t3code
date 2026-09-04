@@ -1,3 +1,5 @@
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   AlertTriangleIcon,
@@ -311,10 +313,12 @@ function ProcessNameCell({
 
 function ProcessSignalActions({
   process,
+  canMaintainEnvironment,
   isSignaling,
   onSignal,
 }: {
   process: ServerProcessDiagnosticsEntry;
+  canMaintainEnvironment: boolean;
   isSignaling: boolean;
   onSignal: (pid: number, signal: ServerProcessSignal) => void;
 }) {
@@ -325,7 +329,7 @@ function ProcessSignalActions({
           render={
             <button
               type="button"
-              disabled={isSignaling}
+              disabled={isSignaling || !canMaintainEnvironment}
               className="cursor-pointer text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:pointer-events-none disabled:opacity-50"
               onClick={() => onSignal(process.pid, "SIGINT")}
             >
@@ -333,14 +337,16 @@ function ProcessSignalActions({
             </button>
           }
         />
-        <TooltipPopup side="top">Send SIGINT</TooltipPopup>
+        <TooltipPopup side="top">
+          {canMaintainEnvironment ? "Send SIGINT" : "This connection cannot manage processes."}
+        </TooltipPopup>
       </Tooltip>
       <Tooltip>
         <TooltipTrigger
           render={
             <button
               type="button"
-              disabled={isSignaling}
+              disabled={isSignaling || !canMaintainEnvironment}
               className="cursor-pointer text-[11px] font-medium text-destructive underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
               onClick={() => onSignal(process.pid, "SIGKILL")}
             >
@@ -348,7 +354,9 @@ function ProcessSignalActions({
             </button>
           }
         />
-        <TooltipPopup side="top">Send SIGKILL</TooltipPopup>
+        <TooltipPopup side="top">
+          {canMaintainEnvironment ? "Send SIGKILL" : "This connection cannot manage processes."}
+        </TooltipPopup>
       </Tooltip>
     </div>
   );
@@ -356,11 +364,13 @@ function ProcessSignalActions({
 
 function ProcessDiagnosticsTable({
   processes,
+  canMaintainEnvironment,
   signalingPid,
   onSignal,
   emptyLabel,
 }: {
   processes: ReadonlyArray<ServerProcessDiagnosticsEntry>;
+  canMaintainEnvironment: boolean;
   signalingPid: number | null;
   onSignal: (pid: number, signal: ServerProcessSignal) => void;
   emptyLabel?: string;
@@ -470,6 +480,7 @@ function ProcessDiagnosticsTable({
               <td className="p-2 align-middle sm:pr-4">
                 <ProcessSignalActions
                   process={process}
+                  canMaintainEnvironment={canMaintainEnvironment}
                   isSignaling={signalingPid === process.pid}
                   onSignal={onSignal}
                 />
@@ -775,6 +786,7 @@ export function DiagnosticsSettingsPanel() {
   // The boundary only mounts this page when the selection resolves to one
   // connected environment, so the representative is the one to inspect.
   const environmentId = environment?.environmentId ?? null;
+  const canMaintainEnvironment = useEnvironmentScope(environmentId, AuthEnvironmentMaintainScope);
   const observability = environment?.serverConfig?.observability;
   const availableEditors = environment?.serverConfig?.availableEditors;
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
@@ -874,7 +886,7 @@ export function DiagnosticsSettingsPanel() {
     async (pid: number, signal: ServerProcessSignal) => {
       const targetEnvironmentId = environmentIdRef.current;
       const process = processDataRef.current?.processes.find((entry) => entry.pid === pid);
-      if (targetEnvironmentId === null || process === undefined) return;
+      if (targetEnvironmentId === null || process === undefined || !readEnvironmentScope(targetEnvironmentId, AuthEnvironmentMaintainScope)) return;
       if (signalingPidRef.current !== null) return;
       signalingPidRef.current = pid;
       setSignalingPid(pid);
@@ -903,7 +915,12 @@ export function DiagnosticsSettingsPanel() {
           return;
         }
       }
-      if (environmentIdRef.current !== targetEnvironmentId) {
+      const currentEnvironmentId = environmentIdRef.current;
+      if (
+        currentEnvironmentId === null ||
+        currentEnvironmentId !== targetEnvironmentId ||
+        !readEnvironmentScope(currentEnvironmentId, AuthEnvironmentMaintainScope)
+      ) {
         clearSignaling();
         return;
       }
@@ -1021,6 +1038,7 @@ export function DiagnosticsSettingsPanel() {
         ) : null}
         <ProcessDiagnosticsTable
           processes={processData?.processes ?? []}
+          canMaintainEnvironment={canMaintainEnvironment}
           signalingPid={signalingPid}
           onSignal={signalProcess}
           emptyLabel={

@@ -13,6 +13,8 @@ import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   DEFAULT_SERVER_SETTINGS,
+  AuthSettingsWriteScope,
+  requiredScopesForServerSettingsPatch,
   type EnvironmentId,
   ServerSettings,
   type ServerSettingsPatch,
@@ -39,12 +41,15 @@ import {
   themeAllowsSidebarArtwork,
 } from "~/themePalette";
 import * as Struct from "effect/Struct";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { toastManager } from "~/components/ui/toast";
 import { isHostedStaticApp } from "~/hostedPairing";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useTheme } from "./useTheme";
+import { environmentSession, readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -409,6 +414,27 @@ export function usePrimarySettingsAvailable(): boolean {
   return primaryEnvironment !== null || !isHostedStaticApp();
 }
 
+/** Environments that can receive a shared settings write right now. */
+function useSharedSettingsSyncTargetIds(): ReadonlyArray<EnvironmentId> {
+  const { environments } = useEnvironments();
+  const writableTargetsAtom = useMemo(
+    () =>
+      Atom.make((get) =>
+        environments.filter(supportsSharedSettingsSync).flatMap((environment) => {
+          // Subscribe before offering sync so the first action sees each target's grant.
+          const result = get(environmentSession.sessionStateAtom(environment.environmentId));
+          const session =
+            result._tag === "Failure" ? null : Option.getOrNull(AsyncResult.value(result));
+          return session?.authenticated && session.scopes?.includes(AuthSettingsWriteScope)
+            ? [environment.environmentId]
+            : [];
+        }),
+      ),
+    [environments],
+  );
+  return useAtomValue(writableTargetsAtom);
+}
+
 /**
  * Returns an updater that routes each key to the correct backing store.
  *
@@ -419,6 +445,8 @@ export function usePrimarySettingsAvailable(): boolean {
  * through client persistence.
  */
 function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
+  // Mount this session even on pages without a visible permission-gated control.
+  useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const persistServerSettings = useAtomCommand(
     serverEnvironment.updateSettings,
     "server settings update",
@@ -428,7 +456,19 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
     (patch: UnifiedSettingsPatch) => {
       const { serverPatch, clientPatch } = splitPatch(patch);
 
-      if (Object.keys(serverPatch).length > 0) {
+      const canWriteServerPatch =
+        environmentId === null ||
+        requiredScopesForServerSettingsPatch(serverPatch).every((scope) =>
+          readEnvironmentScope(environmentId, scope),
+        );
+      if (Object.keys(serverPatch).length > 0 && !canWriteServerPatch) {
+        toastManager.add({
+          type: "warning",
+          title: "Setting not saved",
+          description: "This connection does not have permission to change these settings.",
+        });
+      }
+      if (Object.keys(serverPatch).length > 0 && canWriteServerPatch) {
         const { sharedPatch, localPatch } = splitSharedServerPatch(serverPatch);
         // Dropping the write silently leaves the control looking saved.
         const warnUnsaved = (description = PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE) =>
@@ -468,6 +508,12 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
               targetId === environmentId,
             );
             if (Object.keys(targetPatch).length === 0) continue;
+            if (
+              !requiredScopesForServerSettingsPatch(sharedPatch).every((scope) =>
+                readEnvironmentScope(targetId, scope),
+              )
+            )
+              continue;
             wroteToTarget = true;
             void persistServerSettings({
               environmentId: targetId,

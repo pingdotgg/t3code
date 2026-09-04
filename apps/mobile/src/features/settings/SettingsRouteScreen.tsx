@@ -6,7 +6,7 @@ import { useNavigation } from "@react-navigation/native";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import * as Effect from "effect/Effect";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Alert, Linking, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -35,9 +35,11 @@ import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
+import { environmentSession, readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironments } from "../../state/environments";
 import {
+  AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
@@ -594,8 +596,30 @@ function AutoSettleSettingsRows() {
     reportFailure: true,
   });
 
-  const syncTargets = environments.filter(supportsSharedSettingsSync);
-  const reference = syncTargets[0] ?? null;
+  const writableEnvironmentIdsAtom = useMemo(
+    () =>
+      Atom.make(
+        (get) =>
+          new Set(
+            environments.filter(supportsSharedSettingsSync).flatMap((environment) => {
+              const result = get(environmentSession.sessionStateAtom(environment.environmentId));
+              const session = result._tag === "Success" ? result.value : null;
+              return session?.authenticated === true &&
+                session.scopes?.includes(AuthSettingsWriteScope)
+                ? [environment.environmentId]
+                : [];
+            }),
+          ),
+      ),
+    [environments],
+  );
+  const writableEnvironmentIds = useAtomValue(writableEnvironmentIdsAtom);
+  const availableTargets = environments.filter(supportsSharedSettingsSync);
+  const syncTargets = availableTargets.filter((environment) =>
+    writableEnvironmentIds.has(environment.environmentId),
+  );
+  const canWriteSettings = syncTargets.length > 0;
+  const reference = syncTargets[0] ?? availableTargets[0] ?? null;
   const referenceSettings = reference?.serverConfig?.settings ?? null;
 
   const [daysDraft, setDaysDraft] = useState<string | null>(null);
@@ -606,6 +630,7 @@ function AutoSettleSettingsRows() {
 
   const writeToAll = (patch: Partial<AutoSettleSettings>) => {
     for (const environment of syncTargets) {
+      if (!readEnvironmentScope(environment.environmentId, AuthSettingsWriteScope)) continue;
       void updateSettings({ environmentId: environment.environmentId, input: { patch } });
     }
   };
@@ -639,12 +664,14 @@ function AutoSettleSettingsRows() {
   return (
     <>
       <SettingsSwitchRow
+        disabled={!canWriteSettings}
         icon="arrow.triangle.branch"
         label="Auto-settle merged threads"
         value={referenceSettings.sidebarAutoSettleOnMerge}
         onValueChange={(value) => writeToAll({ sidebarAutoSettleOnMerge: value })}
       />
       <SettingsSwitchRow
+        disabled={!canWriteSettings}
         icon="clock"
         label="Auto-settle inactive threads"
         subtitle={afterDays === null ? undefined : `After ${afterDays} days without activity`}
@@ -657,6 +684,7 @@ function AutoSettleSettingsRows() {
         <View className="flex-row items-center gap-4 border-t border-border-subtle p-4">
           <Text className="flex-1 text-lg text-foreground">Days before auto-settle</Text>
           <TextInput
+            editable={canWriteSettings}
             className="min-h-10 w-20 rounded-xl px-3 py-2 text-center text-base"
             keyboardType="number-pad"
             returnKeyType="done"
@@ -666,6 +694,15 @@ function AutoSettleSettingsRows() {
             onSubmitEditing={commitDays}
             accessibilityLabel="Days before auto-settle"
           />
+        </View>
+      ) : null}
+      {syncTargets.length < availableTargets.length ? (
+        <View className="border-t border-border-subtle p-4">
+          <Text className="text-sm text-foreground-muted">
+            {canWriteSettings
+              ? "Changes apply only to environments this connection can configure."
+              : "This connection cannot change environment settings."}
+          </Text>
         </View>
       ) : null}
       {mismatches.length > 0 ? (
@@ -680,6 +717,7 @@ function AutoSettleSettingsRows() {
             accessibilityRole="button"
             onPress={() => {
               for (const mismatch of mismatches) {
+                if (!readEnvironmentScope(mismatch.environmentId, AuthSettingsWriteScope)) continue;
                 void updateSettings({
                   environmentId: mismatch.environmentId,
                   input: { patch: autoSettlePatch },

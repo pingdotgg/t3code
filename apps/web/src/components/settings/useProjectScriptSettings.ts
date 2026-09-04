@@ -1,3 +1,5 @@
+import { AuthSettingsWriteScope, EnvironmentAuthorizationError } from "@t3tools/contracts";
+import { readEnvironmentScope } from "../../state/session";
 import {
   isAtomCommandInterrupted,
   mapAtomCommandResult,
@@ -79,6 +81,9 @@ export function useProjectScriptSettings(
       const message = "No available machine, or another action change is saving.";
       toastManager.add({ type: "error", title: "Actions not saved", description: message });
       return AsyncResult.failure(Cause.fail(new Error(message)));
+    }
+    if (targets.some(({ environmentId }) => !readEnvironmentScope(environmentId, AuthSettingsWriteScope))) {
+      return reportScriptFailure(AsyncResult.failure(Cause.fail(new EnvironmentAuthorizationError({ requiredScope: AuthSettingsWriteScope, message: "This connection cannot change environment settings." }))));
     }
     savingRef.current = true;
     setSaving(true);

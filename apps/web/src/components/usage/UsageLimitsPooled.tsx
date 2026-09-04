@@ -198,7 +198,7 @@ function SegmentPopover({
             <Button
               size="xs"
               variant="outline"
-              disabled={redeem.busy}
+              disabled={redeem.busy || !redeem.canManageProviders}
               className="ms-auto"
               onClick={onRedeem}
             >
@@ -415,6 +415,7 @@ function RedeemableSegmentPopup({
         open={redeem.confirming}
         onOpenChange={redeem.setConfirming}
         onConfirm={() => void redeem.redeem()}
+        disabled={!redeem.canManageProviders}
       />
       {/* The popover closed before the confirm, so the outcome needs a home outside it. */}
       {redeem.status ? (
