@@ -790,6 +790,24 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it.each(["Dead", "Unidentified", "`"])(
+    "toggles the terminal with Ctrl+Backquote when the browser reports %s",
+    (key) => {
+      const keybindings = compile([{ shortcut: modShortcut("`"), command: "terminal.toggle" }]);
+      assert.strictEqual(
+        resolveShortcutCommand(event({ key, code: "Backquote", ctrlKey: true }), keybindings, {
+          platform: "Linux",
+        }),
+        "terminal.toggle",
+      );
+      assert.isNull(
+        resolveShortcutCommand(event({ key, code: "Backquote" }), keybindings, {
+          platform: "Linux",
+        }),
+      );
+    },
+  );
+
   it("matches bracket shortcuts using the physical key code", () => {
     assert.strictEqual(
       resolveShortcutCommand(
