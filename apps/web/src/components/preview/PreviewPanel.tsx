@@ -1,6 +1,10 @@
 "use client";
 
-import { AuthPreviewOperateScope, type PreviewAnnotationPayload, type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  AuthPreviewOperateScope,
+  type PreviewAnnotationPayload,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 
 import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
