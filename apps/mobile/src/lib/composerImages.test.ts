@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
 
 const files = new Map<string, { base64: string; deleted: boolean }>();
-const paths = { documentUri: "file:///documents" };
 
 vi.mock("expo-file-system", () => ({
   File: class {
@@ -31,114 +30,13 @@ vi.mock("expo-file-system", () => ({
       }
     }
   },
-  Paths: {
-    get document() {
-      return { uri: paths.documentUri };
-    },
-  },
 }));
 
 vi.mock("./uuid", () => ({
   uuidv4: () => "attachment-id",
 }));
 
-import {
-  composerImageAttachmentDataUrl,
-  convertPastedImagesToAttachments,
-  isOwnedPastedImageUri,
-  toUploadChatImageAttachments,
-} from "./composerImages";
-
-describe("toUploadChatImageAttachments", () => {
-  beforeEach(() => {
-    files.clear();
-    paths.documentUri = "file:///documents";
-  });
-
-  it("strips client draft id and previewUri for the startTurn wire shape", async () => {
-    await expect(
-      toUploadChatImageAttachments([
-        {
-          id: "client-draft-id",
-          type: "image",
-          name: "pasted-image.png",
-          mimeType: "image/png",
-          sizeBytes: 12,
-          dataUrl: "data:image/png;base64,AA==",
-          previewUri: "file:///tmp/preview.png",
-        },
-      ]),
-    ).resolves.toEqual([
-      {
-        type: "image",
-        name: "pasted-image.png",
-        mimeType: "image/png",
-        sizeBytes: 12,
-        dataUrl: "data:image/png;base64,AA==",
-      },
-    ]);
-  });
-
-  it("reads file-backed image bytes lazily from the owned copy", async () => {
-    const fileUri = "file:///documents/t3-composer-attachments/attachment-id-photo.png";
-    files.set(fileUri, { base64: "aGVsbG8=", deleted: false });
-
-    await expect(
-      toUploadChatImageAttachments([
-        {
-          id: "client-draft-id",
-          type: "image",
-          name: "photo.png",
-          mimeType: "image/png",
-          sizeBytes: 5,
-          fileUri,
-          previewUri: fileUri,
-        },
-      ]),
-    ).resolves.toEqual([
-      {
-        type: "image",
-        name: "photo.png",
-        mimeType: "image/png",
-        sizeBytes: 5,
-        dataUrl: "data:image/png;base64,aGVsbG8=",
-      },
-    ]);
-  });
-
-  it("resolves a restored image from the current iOS document container", async () => {
-    const fileName = "33333333-3333-4333-8333-333333333333-photo.png";
-    paths.documentUri =
-      "file:///var/mobile/Containers/Data/Application/22222222-2222-4222-8222-222222222222/Documents";
-    const currentUri = `${paths.documentUri}/t3-composer-attachments/${fileName}`;
-    files.set(currentUri, { base64: "aGVsbG8=", deleted: false });
-
-    await expect(
-      composerImageAttachmentDataUrl({
-        id: "client-draft-id",
-        type: "image",
-        name: "photo.png",
-        mimeType: "image/png",
-        sizeBytes: 5,
-        fileUri: `file:///var/mobile/Containers/Data/Application/11111111-1111-4111-8111-111111111111/Documents/t3-composer-attachments/${fileName}`,
-        previewUri: currentUri,
-      }),
-    ).resolves.toBe("data:image/png;base64,aGVsbG8=");
-  });
-
-  it("rejects an attachment that lost both its bytes and its file", async () => {
-    await expect(
-      composerImageAttachmentDataUrl({
-        id: "client-draft-id",
-        type: "image",
-        name: "photo.png",
-        mimeType: "image/png",
-        sizeBytes: 5,
-        previewUri: "file:///tmp/preview.png",
-      }),
-    ).rejects.toThrow("'photo.png' is no longer available. Attach the image again.");
-  });
-});
+import { convertPastedImagesToAttachments, isOwnedPastedImageUri } from "./composerImages";
 
 describe("native pasted image cleanup", () => {
   beforeEach(() => {

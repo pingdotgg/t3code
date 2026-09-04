@@ -54,43 +54,6 @@ export function isFileBackedComposerAttachment(
   return attachment.fileUri !== undefined;
 }
 
-/**
- * Wire shape for startTurn on servers without attachment uploads: pure inline
- * uploads without client draft id / previewUri. File-backed images read their
- * base64 from disk lazily, only when this legacy path is actually taken.
- */
-export async function toUploadChatImageAttachments(
-  attachments: ReadonlyArray<DraftComposerImageAttachment>,
-): Promise<ReadonlyArray<UploadChatImageAttachment>> {
-  return Promise.all(
-    attachments.map(async (attachment) => ({
-      type: attachment.type,
-      name: attachment.name,
-      mimeType: attachment.mimeType,
-      sizeBytes: attachment.sizeBytes,
-      dataUrl: await composerImageAttachmentDataUrl(attachment),
-    })),
-  );
-}
-
-/** Inline bytes for one image: legacy drafts carry them, file-backed ones read them from disk. */
-export async function composerImageAttachmentDataUrl(
-  attachment: DraftComposerImageAttachment,
-): Promise<string> {
-  if (attachment.dataUrl !== undefined) {
-    return attachment.dataUrl;
-  }
-  if (attachment.fileUri === undefined) {
-    throw new Error(`'${attachment.name}' is no longer available. Attach the image again.`);
-  }
-  const { File, Paths } = await import("expo-file-system");
-  const uri =
-    resolveOwnedComposerAttachmentFileUri(attachment.fileUri, Paths.document.uri) ??
-    attachment.fileUri;
-  const base64 = await new File(uri).base64();
-  return `data:${attachment.mimeType};base64,${base64}`;
-}
-
 const OWNED_PASTED_IMAGE_DIRECTORY = "t3-composer-paste";
 const ATTACHMENT_COPY_CHUNK_BYTES = 64 * 1024;
 

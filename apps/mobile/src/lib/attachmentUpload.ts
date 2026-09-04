@@ -20,8 +20,13 @@ import { appAtomRegistry } from "../state/atom-registry";
 import { assetEnvironment } from "../state/assets";
 import { attachmentEnvironment } from "../state/attachments";
 import { environmentSession } from "../state/session";
+import { retainComposerAttachmentFileForPreview } from "../state/use-composer-drafts";
 import { resolveOwnedComposerAttachmentFileUri } from "./composerAttachmentFiles";
-import { toUploadChatImageAttachments, type DraftComposerAttachment } from "./composerImages";
+import {
+  isFileBackedComposerAttachment,
+  type DraftComposerAttachment,
+  type DraftComposerImageAttachment,
+} from "./composerImages";
 import { uuidv4 } from "./uuid";
 
 /**
@@ -179,6 +184,48 @@ function attachmentUploadInput(attachment: DraftComposerAttachment) {
   return { ...fields, mimeType };
 }
 
+/**
+ * Wire shape for startTurn on servers without attachment uploads: pure inline
+ * uploads without client draft id / previewUri. File-backed images read their
+ * base64 from disk lazily, only when this legacy path is actually taken.
+ */
+async function toUploadChatImageAttachments(
+  attachments: ReadonlyArray<DraftComposerImageAttachment>,
+): Promise<ReadonlyArray<UploadChatImageAttachment>> {
+  return Promise.all(
+    attachments.map(async (attachment) => ({
+      type: attachment.type,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      dataUrl: await composerImageAttachmentDataUrl(attachment),
+    })),
+  );
+}
+
+/** Inline bytes for one image: legacy drafts carry them, file-backed ones read them from disk. */
+async function composerImageAttachmentDataUrl(
+  attachment: DraftComposerImageAttachment,
+): Promise<string> {
+  if (attachment.dataUrl !== undefined) {
+    return attachment.dataUrl;
+  }
+  if (!isFileBackedComposerAttachment(attachment)) {
+    throw new Error(`'${attachment.name}' is no longer available. Attach the image again.`);
+  }
+  const release = retainComposerAttachmentFileForPreview(attachment);
+  try {
+    const { File, Paths } = await import("expo-file-system");
+    const uri =
+      resolveOwnedComposerAttachmentFileUri(attachment.fileUri, Paths.document.uri) ??
+      attachment.fileUri;
+    const base64 = await new File(uri).base64();
+    return `data:${attachment.mimeType};base64,${base64}`;
+  } finally {
+    release();
+  }
+}
+
 async function uploadFileBytes(
   attachment: DraftComposerAttachment,
   url: string,
@@ -263,11 +310,16 @@ export async function prepareTurnAttachments(input: {
   });
 
   if (input.attachments.length === 0 || (files.length === 0 && !input.supportsImageUploads)) {
-    const imageAttachments = await toUploadChatImageAttachments(
-      input.attachments.filter((attachment) => attachment.type === "image"),
-    );
-    if (input.signal?.aborted) return { status: "abandoned" };
-    return ready(imageAttachments, [], input.attachments);
+    try {
+      const imageAttachments = await toUploadChatImageAttachments(
+        input.attachments.filter((attachment) => attachment.type === "image"),
+      );
+      if (input.signal?.aborted) return { status: "abandoned" };
+      return ready(imageAttachments, [], input.attachments);
+    } catch (error) {
+      if (input.signal?.aborted) return { status: "abandoned" };
+      throw error;
+    }
   }
 
   const connection = appAtomRegistry.get(

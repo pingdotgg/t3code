@@ -31,6 +31,11 @@ vi.mock("../state/atom-registry", () => ({
   appAtomRegistry: { get: mocks.readAtom },
 }));
 
+// The real read lease and cleanup are covered by the composer ownership suite.
+vi.mock("../state/use-composer-drafts", () => ({
+  retainComposerAttachmentFileForPreview: () => () => {},
+}));
+
 vi.mock("../state/assets", () => ({
   assetEnvironment: { createUrl: mocks.createAssetUrl },
 }));
@@ -246,25 +251,51 @@ describe("prepareTurnAttachments", () => {
     expect(mocks.upload).not.toHaveBeenCalled();
   });
 
-  it("abandons a legacy send canceled while reading image bytes", async () => {
-    const readStarted = Promise.withResolvers<void>();
-    const read = Promise.withResolvers<string>();
-    const controller = new AbortController();
-    mocks.readBase64.mockImplementation(() => {
-      readStarted.resolve();
-      return read.promise;
-    });
-    const preparing = prepareTurnAttachments({
+  it("reads restored images from the current iOS document container for legacy sends", async () => {
+    const fileName = "33333333-3333-4333-8333-333333333333-photo.png";
+    mocks.documentUri =
+      "file:///var/mobile/Containers/Data/Application/22222222-2222-4222-8222-222222222222/Documents";
+    const oldUri = `file:///var/mobile/Containers/Data/Application/11111111-1111-4111-8111-111111111111/Documents/t3-composer-attachments/${fileName}`;
+    const prepared = await prepareTurnAttachments({
       environmentId,
-      attachments: [fileBackedImage],
-      signal: controller.signal,
+      attachments: [{ ...fileBackedImage, fileUri: oldUri, previewUri: oldUri }],
     });
-    await readStarted.promise;
-    controller.abort();
-    read.resolve("YWJj");
-
-    await expect(preparing).resolves.toEqual({ status: "abandoned" });
+    expect(prepared.status).toBe("ready");
+    expect(mocks.readBase64).toHaveBeenCalledExactlyOnceWith(
+      `${mocks.documentUri}/t3-composer-attachments/${fileName}`,
+    );
   });
+
+  it("rejects a legacy image without inline bytes or a file", async () => {
+    const { fileUri: _, ...missingImage } = fileBackedImage;
+    await expect(
+      prepareTurnAttachments({ environmentId, attachments: [missingImage] }),
+    ).rejects.toThrow("'photo.png' is no longer available. Attach the image again.");
+  });
+
+  it.each(["resolve", "reject"] as const)(
+    "abandons a canceled legacy image read that later %ss",
+    async (outcome) => {
+      const readStarted = Promise.withResolvers<void>();
+      const read = Promise.withResolvers<string>();
+      const controller = new AbortController();
+      mocks.readBase64.mockImplementation(() => {
+        readStarted.resolve();
+        return read.promise;
+      });
+      const preparing = prepareTurnAttachments({
+        environmentId,
+        attachments: [fileBackedImage],
+        signal: controller.signal,
+      });
+      await readStarted.promise;
+      controller.abort();
+      if (outcome === "resolve") read.resolve("YWJj");
+      else read.reject(new Error("Native read failed after cancellation"));
+
+      await expect(preparing).resolves.toEqual({ status: "abandoned" });
+    },
+  );
 
   it("uploads a file-backed image from its owned copy without staging base64", async () => {
     const prepared = await prepareTurnAttachments({
