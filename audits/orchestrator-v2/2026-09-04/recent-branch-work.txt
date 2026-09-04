@@ -1,0 +1,24 @@
+8af5734365f7c45bc08b57066dbae42f9f7d4235 fix: reconcile main updates with orchestration v2
+d98f1d5e38fb7dac334193d1cd7e103997b486e8 fix(server): reduce v2 recovery and runtime resource usage
+96aff3564b3c2a9a543fed654388d2741fb6de9f fix: reconcile main's round-20 features after the rebase
+4f924bfd310d5d673f038ed9ce3be3fe50fba959 fix(web): realign the composer and timeline with main
+4199e9db5169f6a88a04457a1bd6224deaf2853e fix(web): right-align the stash shoulder tab again
+dc4cd901af59e732c06ff60bfea9d8c730f2146e fix: reconcile main's round-19 features after the rebase
+702ef5e5851264ea231c9cb4ecfd0b5f9c016042 feat(server): evaluate automatic thread settlement in the v2 orchestrator
+ddf58d90d47e2b6aaefc61bc15e6c3028b61c3e0 fix: reconcile main's round-18 features after the rebase
+38f3e4d0e02cd58f79fa7ebe37250ee93c973f60 feat(web): port working and thinking timeline rows to orchestration v2
+27ef79dc301dc4400e3fafe834d514fa3b8de942 fix: reconcile main's round-17 features after the rebase
+42dee149f7861f9d84650c04e047f5fd48b3466b fix(mobile): keep scroll bounds current after animations
+8b2f951e68a7f5effa16201263e4b47cbf517ad0 fix(chat): remove added tool summary status counts
+6bc5b0f798228f387e9e42cabe51ae3d99a1cfa1 feat(mobile): port chat summaries and transitions to orchestration v2
+cafacd53b80eb399df5ad0cac37d9f6777d46e80 feat(web): summarize T3 orchestration actions
+5145881d4c23094f7ca14deea1ee0cc8c2603219 fix(web): keep composer shortcut tooltip stable on Mod
+f8ed1f080ddec3c13eed613927178b0614cbf696 fix(web): match composer actions to draft and modifier state
+5d5f370ad678f933e66b215eaef856656a464b9f fix(web): keep queued messages in place while editing
+1a56fa6768fdd7ef063e291bcfc8900f07926995 fix(web): keep queued message editing inside the queue panel
+b952c574d5350c880f1f2f805d39839baeae3845 refactor(web): use shared banner rows for queued messages
+1a600882893faf73f596d57ddba72a5b239482b2 fix(web): keep stash separate from the composer activity column
+f21af84a704c3435c461a199468f7ce56232741f fix(web): share the outline for joined composer tabs
+61e3568dac81141fa3d5e7c90a78eb4cb485207c fix(web): align queue headers and prevent stash overlap
+7efa4e84b1a52583fcc3249293e92e94d0fadab4 fix(web): port composer activity and grouping to orchestration v2
+93620dfab0f877d204b97c5b5c3d9ea5352f080e fix(orchestration): select visible history before limiting SQL

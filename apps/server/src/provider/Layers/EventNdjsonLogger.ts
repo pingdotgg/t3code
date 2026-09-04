@@ -57,6 +57,7 @@ const transientNativeMethods = new Set([
   "item/reasoning/textDelta",
   "thread/realtime/outputAudio/delta",
   "thread/realtime/transcript/delta",
+  "turn/diff/updated",
 ]);
 const transientAcpUpdates = new Set(["agent_message_chunk", "agent_thought_chunk"]);
 
