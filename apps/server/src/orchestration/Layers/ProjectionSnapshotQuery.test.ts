@@ -318,6 +318,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",
+            initiatingUserMessageId: null,
             requestedAt: "2026-02-24T00:00:08.000Z",
             startedAt: "2026-02-24T00:00:08.000Z",
             completedAt: "2026-02-24T00:00:08.000Z",
@@ -446,6 +447,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",
+            initiatingUserMessageId: null,
             requestedAt: "2026-02-24T00:00:08.000Z",
             startedAt: "2026-02-24T00:00:08.000Z",
             completedAt: "2026-02-24T00:00:08.000Z",
@@ -1415,6 +1417,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.equal(threadShell._tag, "Some");
       if (threadShell._tag === "Some") {
         assert.equal(threadShell.value.latestTurn?.turnId, asTurnId("turn-running"));
+        assert.equal(
+          threadShell.value.latestTurn?.initiatingUserMessageId,
+          asMessageId("message-user-2"),
+        );
         assert.equal(threadShell.value.latestTurn?.state, "running");
         assert.equal(threadShell.value.latestTurn?.startedAt, "2026-04-02T00:00:30.000Z");
       }
@@ -1423,6 +1429,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.equal(threadDetail._tag, "Some");
       if (threadDetail._tag === "Some") {
         assert.equal(threadDetail.value.latestTurn?.turnId, asTurnId("turn-running"));
+        assert.equal(
+          threadDetail.value.latestTurn?.initiatingUserMessageId,
+          asMessageId("message-user-2"),
+        );
         assert.equal(threadDetail.value.latestTurn?.state, "running");
         assert.equal(threadDetail.value.latestTurn?.startedAt, "2026-04-02T00:00:30.000Z");
       }

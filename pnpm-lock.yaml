@@ -608,6 +608,9 @@ importers:
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
+      cuelume:
+        specifier: ^0.2.1
+        version: 0.2.1
       culori:
         specifier: ^4.0.2
         version: 4.0.2
@@ -6091,6 +6094,9 @@ packages:
 
   csstype@3.2.3:
     resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
+
+  cuelume@0.2.1:
+    resolution: {integrity: sha512-UFN5GtPRhnkL55r5rz7oalgy72XTtV50QqOec3+wHer0O1hlwOteej99dlRxeFX2ViLUD/CpCu47v5XCTa2tEQ==}
 
   culori@4.0.2:
     resolution: {integrity: sha512-1+BhOB8ahCn4O0cep0Sh2l9KCOfOdY+BXJnKMHFFzDEouSr/el18QwXEMRlOj9UY5nCeA8UN3a/82rUWRBeyBw==}
@@ -16045,6 +16051,8 @@ snapshots:
       css-tree: 2.2.1
 
   csstype@3.2.3: {}
+
+  cuelume@0.2.1: {}
 
   culori@4.0.2: {}
 

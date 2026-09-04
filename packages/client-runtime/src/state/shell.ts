@@ -369,6 +369,30 @@ export function createEnvironmentShellSummaryAtom(input: {
   }).pipe(Atom.withLabel("environment-shell-summary"));
 }
 
+export function createLiveEnvironmentIdsAtom(input: {
+  readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
+  readonly shellStateValueAtom: (environmentId: EnvironmentId) => Atom.Atom<EnvironmentShellState>;
+  readonly label: string;
+}) {
+  let previousLiveEnvironmentIds: ReadonlySet<EnvironmentId> = new Set();
+  return Atom.make((get): ReadonlySet<EnvironmentId> => {
+    const next = new Set<EnvironmentId>();
+    for (const environmentId of get(input.catalogValueAtom).entries.keys()) {
+      if (get(input.shellStateValueAtom(environmentId)).status === "live") {
+        next.add(environmentId);
+      }
+    }
+    if (
+      next.size === previousLiveEnvironmentIds.size &&
+      [...next].every((environmentId) => previousLiveEnvironmentIds.has(environmentId))
+    ) {
+      return previousLiveEnvironmentIds;
+    }
+    previousLiveEnvironmentIds = next;
+    return previousLiveEnvironmentIds;
+  }).pipe(Atom.withLabel(input.label));
+}
+
 export function createEnvironmentServerConfigsAtom(input: {
   readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
   readonly serverConfigValueAtom: (environmentId: EnvironmentId) => Atom.Atom<ServerConfig | null>;

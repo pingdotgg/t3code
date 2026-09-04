@@ -272,6 +272,18 @@ describe("ServerSettings thread settlement", () => {
   });
 });
 
+describe("ClientSettings completion sound", () => {
+  it("defaults the completion sound on", () => {
+    expect(decodeClientSettings({}).enableCompletionSounds).toBe(true);
+  });
+
+  it("preserves an explicit disabled preference", () => {
+    expect(decodeClientSettings({ enableCompletionSounds: false }).enableCompletionSounds).toBe(
+      false,
+    );
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults text generation to Luna at low reasoning effort", () => {
     expect(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection).toEqual({

@@ -6,6 +6,7 @@ import {
   createEnvironmentShellAtoms,
   createEnvironmentShellSummaryAtom,
   createEnvironmentSnapshotAtom,
+  createLiveEnvironmentIdsAtom,
   createShellEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/shell";
 import * as Option from "effect/Option";
@@ -20,6 +21,12 @@ export const environmentSnapshotAtom = createEnvironmentSnapshotAtom(environment
 export const environmentShellSummaryAtom = createEnvironmentShellSummaryAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   shellStateValueAtom: environmentShell.stateValueAtom,
+});
+
+export const liveEnvironmentIdsAtom = createLiveEnvironmentIdsAtom({
+  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  shellStateValueAtom: environmentShell.stateValueAtom,
+  label: "web-live-environment-ids",
 });
 
 export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
