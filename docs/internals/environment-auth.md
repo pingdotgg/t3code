@@ -123,7 +123,8 @@ proof key. See `SessionStore.ts` and `EnvironmentAuth.ts`.
 
 Requested scopes must be a subset of the one-time bootstrap credential grant.
 An ordinary paired client therefore cannot exchange its grant for
-`access:read`, `access:write`, or `relay:write`.
+`access:read`, `access:write`, or `relay:write`. A request that asks for
+scopes the grant does not include is rejected and the grant is left unused.
 
 ### DPoP-Bound Access Token
 

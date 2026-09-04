@@ -214,6 +214,12 @@ export class PairingGrantStore extends Context.Service<
     >;
     readonly streamChanges: Stream.Stream<BootstrapCredentialChange>;
     readonly revoke: (id: string) => Effect.Effect<boolean, BootstrapCredentialInternalError>;
+    readonly inspect: (
+      credential: string,
+      input?: {
+        readonly proofKeyThumbprint?: string;
+      },
+    ) => Effect.Effect<BootstrapGrant, BootstrapCredentialError>;
     readonly consume: (
       credential: string,
       input?: {
@@ -564,6 +570,66 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const inspect: PairingGrantStore["Service"]["inspect"] = Effect.fn("PairingGrantStore.inspect")(
+    function* (credential, input) {
+      const now = yield* DateTime.now;
+      const seeded = (yield* Ref.get(seededGrantsRef)).get(credential);
+      if (seeded) {
+        if (DateTime.isGreaterThanOrEqualTo(now, seeded.expiresAt)) {
+          return yield* new ExpiredBootstrapCredentialError({});
+        }
+        if (seeded.proofKeyThumbprint && seeded.proofKeyThumbprint !== input?.proofKeyThumbprint) {
+          return yield* new BootstrapCredentialProofKeyMismatchError({});
+        }
+        return {
+          method: seeded.method,
+          scopes: seeded.scopes,
+          subject: seeded.subject,
+          ...(seeded.label ? { label: seeded.label } : {}),
+          ...(seeded.proofKeyThumbprint ? { proofKeyThumbprint: seeded.proofKeyThumbprint } : {}),
+          expiresAt: seeded.expiresAt,
+        } satisfies BootstrapGrant;
+      }
+
+      const matching = yield* pairingLinks
+        .getByCredential({ credential })
+        .pipe(Effect.mapError((cause) => new BootstrapCredentialLookupError({ cause })));
+      if (Option.isNone(matching)) {
+        return yield* new UnknownBootstrapCredentialError({});
+      }
+
+      if (matching.value.revokedAt !== null) {
+        return yield* new UnavailableBootstrapCredentialError({});
+      }
+
+      if (matching.value.consumedAt !== null) {
+        return yield* new UnknownBootstrapCredentialError({});
+      }
+
+      if (DateTime.isGreaterThanOrEqualTo(now, matching.value.expiresAt)) {
+        return yield* new ExpiredBootstrapCredentialError({});
+      }
+
+      if (
+        matching.value.proofKeyThumbprint !== null &&
+        matching.value.proofKeyThumbprint !== input?.proofKeyThumbprint
+      ) {
+        return yield* new BootstrapCredentialProofKeyMismatchError({});
+      }
+
+      return {
+        method: matching.value.method,
+        scopes: matching.value.scopes,
+        subject: matching.value.subject,
+        ...(matching.value.label ? { label: matching.value.label } : {}),
+        ...(matching.value.proofKeyThumbprint
+          ? { proofKeyThumbprint: matching.value.proofKeyThumbprint }
+          : {}),
+        expiresAt: matching.value.expiresAt,
+      } satisfies BootstrapGrant;
+    },
+  );
+
   return PairingGrantStore.of({
     issueOneTimeToken,
     listActive,
@@ -571,6 +637,7 @@ export const make = Effect.gen(function* () {
       return Stream.fromPubSub(changesPubSub);
     },
     revoke,
+    inspect,
     consume,
   });
 });

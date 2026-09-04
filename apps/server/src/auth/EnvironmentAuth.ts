@@ -731,37 +731,40 @@ export const make = Effect.gen(function* () {
 
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) =>
-      bootstrapCredentials.consume(credential, input).pipe(
-        Effect.mapError(toBootstrapExchangeError),
-        Effect.flatMap((grant) =>
-          Effect.gen(function* () {
-            const grantedScopes = requestedScopes ?? grant.scopes;
-            if (!grantedScopes.every((scope) => grant.scopes.includes(scope))) {
-              return yield* new ServerAuthScopeNotGrantedError({});
-            }
-            return yield* sessions
-              .issue({
-                method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
-                subject: grant.subject,
-                scopes: grantedScopes,
-                ...(input?.proofKeyThumbprint
-                  ? {
-                      proofKeyThumbprint: input.proofKeyThumbprint,
-                      ttl: Duration.hours(1),
-                    }
-                  : {}),
-                client: {
-                  ...requestMetadata,
-                  ...(grant.label ? { label: grant.label } : {}),
-                },
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
-                ),
-              );
-          }),
-        ),
+      Effect.gen(function* () {
+        if (requestedScopes !== undefined) {
+          const inspected = yield* bootstrapCredentials
+            .inspect(credential, input)
+            .pipe(Effect.mapError(toBootstrapExchangeError));
+          if (!requestedScopes.every((scope) => inspected.scopes.includes(scope))) {
+            return yield* new ServerAuthScopeNotGrantedError({});
+          }
+        }
+
+        const grant = yield* bootstrapCredentials
+          .consume(credential, input)
+          .pipe(Effect.mapError(toBootstrapExchangeError));
+        const grantedScopes = requestedScopes ?? grant.scopes;
+        return yield* sessions
+          .issue({
+            method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
+            subject: grant.subject,
+            scopes: grantedScopes,
+            ...(input?.proofKeyThumbprint
+              ? {
+                  proofKeyThumbprint: input.proofKeyThumbprint,
+                  ttl: Duration.hours(1),
+                }
+              : {}),
+            client: {
+              ...requestMetadata,
+              ...(grant.label ? { label: grant.label } : {}),
+            },
+          })
+          .pipe(
+            Effect.mapError((cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause })),
+          );
+      }).pipe(
         Effect.flatMap((session) =>
           DateTime.now.pipe(
             Effect.map(

@@ -91,6 +91,19 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
     }).pipe(Effect.provide(makePairingGrantStoreLayer())),
   );
 
+  it.effect("inspects a pairing grant without consuming it", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const issued = yield* bootstrapCredentials.issueOneTimeToken({ label: "Inspect me" });
+      const inspected = yield* bootstrapCredentials.inspect(issued.credential);
+      const consumed = yield* bootstrapCredentials.consume(issued.credential);
+
+      expect(inspected.scopes).toEqual(consumed.scopes);
+      expect(inspected.label).toBe("Inspect me");
+      expect(consumed.label).toBe("Inspect me");
+    }).pipe(Effect.provide(makePairingGrantStoreLayer())),
+  );
+
   it.effect("atomically consumes a one-time token when multiple requests race", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
