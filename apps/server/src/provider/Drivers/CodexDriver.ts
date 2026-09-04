@@ -22,8 +22,12 @@
  * @module provider/Drivers/CodexDriver
  */
 import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
+import * as NodeCrypto from "node:crypto";
+
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -40,6 +44,7 @@ import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
   probeCodexSkillsForCwd,
+  withCodexAppServerClient,
 } from "../Layers/CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "../Layers/codexLaunchArgs.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
@@ -229,6 +234,49 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
               ),
             );
 
+      // Redemption spends something on the user's account, so it is
+      // single-flight per instance and keeps one idempotency key until Codex
+      // reports an outcome: a retry after a timeout re-sends the same
+      // attempt instead of opening a second one.
+      const consumeResetLock = yield* Semaphore.make(1);
+      const pendingResetKey = yield* Ref.make<string | null>(null);
+      const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = () =>
+        consumeResetLock.withPermits(1)(
+          Effect.gen(function* () {
+            const idempotencyKey = yield* Ref.modify(pendingResetKey, (existing) => {
+              const key = existing ?? NodeCrypto.randomUUID();
+              return [key, key] as const;
+            });
+            const { client } = yield* withCodexAppServerClient({
+              binaryPath: effectiveConfig.binaryPath,
+              homePath: effectiveConfig.homePath,
+              launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+              // Account-level request; any directory serves, same as the status probe.
+              cwd: process.cwd(),
+              environment: processEnv,
+            });
+            const response = yield* client.request("account/rateLimitResetCredit/consume", {
+              idempotencyKey,
+            });
+            yield* Ref.set(pendingResetKey, null);
+            return response.outcome;
+          }).pipe(
+            Effect.scoped,
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.mapError(
+              (cause) =>
+                new ProviderDriverError({
+                  driver: DRIVER_KIND,
+                  instanceId,
+                  detail: "Codex could not redeem the reset credit.",
+                  cause,
+                }),
+            ),
+            // The windows just changed; re-probe so the snapshot says so.
+            Effect.tap(() => snapshot.refresh),
+          ),
+        );
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -238,6 +286,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         enabled,
         snapshot,
         snapshotForCwd,
+        consumeResetCredit,
         adapter,
         textGeneration,
       } satisfies ProviderInstance;

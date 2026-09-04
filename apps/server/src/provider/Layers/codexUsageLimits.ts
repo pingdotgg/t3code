@@ -8,6 +8,7 @@
  */
 import type {
   ProviderUsageLimitsUpdate,
+  ServerProviderResetCredits,
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
@@ -28,6 +29,15 @@ export interface CodexRateLimitSnapshot {
   readonly planType?: string | null;
   readonly primary?: CodexRateLimitWindow | null;
   readonly secondary?: CodexRateLimitWindow | null;
+}
+
+/** Structural view of the read response's `rateLimitResetCredits`. */
+export interface CodexResetCreditsSummary {
+  readonly availableCount: number;
+  readonly credits?: ReadonlyArray<{
+    readonly status: string;
+    readonly expiresAt?: number | null;
+  }> | null;
 }
 
 const SESSION_MINS = 5 * 60;
@@ -82,14 +92,35 @@ export function codexRateLimitsToWindows(
   return windows;
 }
 
+export function codexResetCreditsToContract(
+  summary: CodexResetCreditsSummary | null | undefined,
+): ServerProviderResetCredits | undefined {
+  if (!summary) return undefined;
+  const expiries = (summary.credits ?? [])
+    .filter((credit) => credit.status === "available")
+    .map((credit) => credit.expiresAt)
+    .filter((value): value is number => typeof value === "number");
+  const nextExpiresAt =
+    expiries.length > 0 ? isoFromEpochSeconds(Math.min(...expiries)) : undefined;
+  return {
+    availableCount: Math.max(0, summary.availableCount),
+    ...(nextExpiresAt ? { nextExpiresAt } : {}),
+  };
+}
+
 export function codexRateLimitsToLimits(input: {
   readonly snapshot: CodexRateLimitSnapshot;
+  readonly resetCredits?: CodexResetCreditsSummary | null | undefined;
   readonly checkedAt: string;
 }): ServerProviderUsageLimits {
-  return makeUsageLimits({
-    checkedAt: input.checkedAt,
-    windows: codexRateLimitsToWindows(input.snapshot),
-  });
+  const resetCredits = codexResetCreditsToContract(input.resetCredits);
+  return {
+    ...makeUsageLimits({
+      checkedAt: input.checkedAt,
+      windows: codexRateLimitsToWindows(input.snapshot),
+    }),
+    ...(resetCredits ? { resetCredits } : {}),
+  };
 }
 
 export function codexRateLimitsToUpdate(

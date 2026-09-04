@@ -5,6 +5,7 @@ import {
   codexRateLimitsFailureMessage,
   codexRateLimitsToLimits,
   codexRateLimitsToUpdate,
+  codexResetCreditsToContract,
 } from "./codexUsageLimits.ts";
 
 const checkedAt = "2026-07-18T10:00:00.000Z";
@@ -99,5 +100,32 @@ describe("codexRateLimitsFailureMessage", () => {
     expect(
       codexRateLimitsFailureMessage(new CodexErrors.CodexAppServerProcessExitedError({ code: 1 })),
     ).toBe("Codex exited before it could report usage.");
+  });
+});
+
+describe("codexResetCreditsToContract", () => {
+  it("counts available credits and reports the soonest expiry", () => {
+    expect(
+      codexResetCreditsToContract({
+        availableCount: 2,
+        credits: [
+          { status: "available", expiresAt: 1_784_500_000 },
+          { status: "redeemed", expiresAt: 1_700_000_000 },
+          { status: "available", expiresAt: 1_784_000_000 },
+        ],
+      }),
+    ).toEqual({ availableCount: 2, nextExpiresAt: "2026-07-14T03:33:20.000Z" });
+    expect(codexResetCreditsToContract({ availableCount: 0 })).toEqual({ availableCount: 0 });
+    expect(codexResetCreditsToContract(null)).toBeUndefined();
+  });
+
+  it("rides along on the probe's limits", () => {
+    expect(
+      codexRateLimitsToLimits({
+        checkedAt,
+        snapshot: { primary: { usedPercent: 5, windowDurationMins: 300 } },
+        resetCredits: { availableCount: 1 },
+      }).resetCredits,
+    ).toEqual({ availableCount: 1 });
   });
 });

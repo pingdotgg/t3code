@@ -6,7 +6,7 @@ import {
   NonNegativeInt,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { ProviderDriverKind } from "./providerInstance.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 
 /**
@@ -28,6 +28,17 @@ export const ServerProviderUsageWindow = Schema.Struct({
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 
 /**
+ * Reset credits a provider banks on the account. Codex grants these when it
+ * has rate-limited the user unfairly; redeeming one clears the current
+ * windows. Only present when the provider reports them at all.
+ */
+export const ServerProviderResetCredits = Schema.Struct({
+  availableCount: NonNegativeInt,
+  nextExpiresAt: Schema.optional(IsoDateTime),
+});
+export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
+
+/**
  * Subscription usage the provider knows about the signed-in account.
  *
  * `unavailable` distinguishes an account that can never report windows (API
@@ -37,6 +48,7 @@ export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 export const ServerProviderUsageLimits = Schema.Struct({
   checkedAt: IsoDateTime,
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
+  resetCredits: Schema.optional(ServerProviderResetCredits),
   unavailable: Schema.optional(
     Schema.Struct({
       reason: Schema.Literals(["unsupported", "probeFailed"]),
@@ -90,3 +102,22 @@ export type UsageLimitSourceSnapshot = typeof UsageLimitSourceSnapshot.Type;
 
 export const UsageLimitSourceSnapshots = ForwardCompatibleArray(UsageLimitSourceSnapshot);
 export type UsageLimitSourceSnapshots = typeof UsageLimitSourceSnapshots.Type;
+
+export const ProviderConsumeResetCreditInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+});
+export type ProviderConsumeResetCreditInput = typeof ProviderConsumeResetCreditInput.Type;
+
+/** Mirrors Codex's own outcome set; other providers map onto it. */
+export const ProviderConsumeResetCreditOutcome = Schema.Literals([
+  "reset",
+  "nothingToReset",
+  "noCredit",
+  "alreadyRedeemed",
+]);
+export type ProviderConsumeResetCreditOutcome = typeof ProviderConsumeResetCreditOutcome.Type;
+
+export const ProviderConsumeResetCreditResult = Schema.Struct({
+  outcome: ProviderConsumeResetCreditOutcome,
+});
+export type ProviderConsumeResetCreditResult = typeof ProviderConsumeResetCreditResult.Type;

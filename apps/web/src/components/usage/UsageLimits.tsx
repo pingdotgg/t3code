@@ -1,5 +1,9 @@
 import type {
+  EnvironmentId,
+  ProviderConsumeResetCreditOutcome,
+  ProviderInstanceId,
   ServerProvider,
+  ServerProviderResetCredits,
   ServerProviderUsageWindow,
   UsageLimitSourceAccount,
   UsageLimitSourceId,
@@ -11,6 +15,7 @@ import {
   collectLimitSources,
   collectLimitsGroups,
   elapsedShare,
+  formatDuration,
   formatResetsIn,
   limitsNotice,
   type LimitPace,
@@ -27,6 +32,8 @@ import {
 } from "../../hooks/useSettings";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { environmentPresentations } from "../../state/presentation";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../settings/providerDriverMeta";
@@ -245,9 +252,11 @@ function AccountHeading({
 
 function ProviderLimits({
   provider,
+  environmentId,
   now,
 }: {
   readonly provider: ServerProvider;
+  readonly environmentId: EnvironmentId;
   readonly now: number;
 }) {
   const limits = provider.usageLimits;
@@ -267,7 +276,98 @@ function ProviderLimits({
       ) : (
         <LimitWindows driver={provider.driver} windows={limits.windows} now={now} />
       )}
+      {limits.resetCredits ? (
+        <ResetCredits
+          environmentId={environmentId}
+          instanceId={provider.instanceId}
+          credits={limits.resetCredits}
+          now={now}
+        />
+      ) : null}
     </section>
+  );
+}
+
+const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
+  reset: "Reset applied. Your windows have cleared.",
+  nothingToReset: "Nothing to reset right now.",
+  noCredit: "No reset credit left.",
+  alreadyRedeemed: "That credit was already redeemed.",
+};
+
+/**
+ * Banked reset credits with a confirmed redeem action. Redeeming spends a
+ * credit the provider granted the user, so it never fires on a bare click.
+ */
+function ResetCredits({
+  environmentId,
+  instanceId,
+  credits,
+  now,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly instanceId: ProviderInstanceId;
+  readonly credits: ServerProviderResetCredits;
+  readonly now: number;
+}) {
+  const consume = useAtomCommand(serverEnvironment.consumeResetCredit, { reportFailure: false });
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  if (credits.availableCount === 0 && status === null) return null;
+
+  const expiresIn = credits.nextExpiresAt
+    ? formatDuration(Date.parse(credits.nextExpiresAt) - now)
+    : null;
+  const summary =
+    credits.availableCount === 0
+      ? "No reset credits banked"
+      : `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
+          expiresIn ? ` · next expires in ${expiresIn}` : ""
+        }`;
+
+  const redeem = async () => {
+    setConfirming(false);
+    setBusy(true);
+    setStatus(null);
+    const result = await consume({ environmentId, input: { instanceId } });
+    setBusy(false);
+    if (result._tag === "Success") {
+      setStatus(OUTCOME_TEXT[result.value.outcome]);
+      return;
+    }
+    setStatus(
+      "error" in result.cause && result.cause.error instanceof Error
+        ? result.cause.error.message
+        : "Could not use the reset credit.",
+    );
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+      <span className="tabular-nums">{summary}</span>
+      {credits.availableCount > 0 ? (
+        <Button size="xs" variant="outline" disabled={busy} onClick={() => setConfirming(true)}>
+          {busy ? "Using credit…" : "Use a reset credit"}
+        </Button>
+      ) : null}
+      {status ? <span className="text-foreground">{status}</span> : null}
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Use a reset credit?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This redeems one credit on your account and clears the current rate-limit windows. It
+              cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button onClick={() => void redeem()}>Use credit</Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
+    </div>
   );
 }
 
@@ -447,7 +547,12 @@ export function UsageLimitsSection() {
             </h2>
           ) : null}
           {group.providers.map((provider) => (
-            <ProviderLimits key={provider.instanceId} provider={provider} now={now} />
+            <ProviderLimits
+              key={provider.instanceId}
+              provider={provider}
+              environmentId={group.environmentId}
+              now={now}
+            />
           ))}
         </div>
       ))}
