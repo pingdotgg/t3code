@@ -24,14 +24,25 @@ import {
 import { GaugeIcon, PlusIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, useState } from "react";
 
+import { isElectron } from "../../env";
+import { usePrimarySessionState } from "../../environments/primary";
 import { usePrimarySettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
-import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import {
+  type EnvironmentPresentation,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "../../state/environments";
+import { useEnvironmentSessionState } from "../../state/session";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../settings/providerDriverMeta";
+import {
+  resolvePrimaryOperateAccess,
+  resolveRemoteOperateAccess,
+} from "../settings/ProviderSettingsPanel.logic";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import {
   AlertDialog,
@@ -482,6 +493,36 @@ function SourceLimits({
   );
 }
 
+/**
+ * Whether this client's credential may write settings on an environment,
+ * resolved the way Settings → Providers does: the desktop app owns its
+ * primary outright; a browser session checks the scopes it was granted;
+ * a remote environment reports scopes over its own session endpoint.
+ */
+function useCanOperateEnvironment(environment: EnvironmentPresentation | null): boolean {
+  const isPrimary = environment?.entry.target._tag === "PrimaryConnectionTarget";
+  const primarySession = usePrimarySessionState();
+  const remoteSession = useEnvironmentSessionState(
+    environment?.environmentId ?? EnvironmentId.make("none"),
+  );
+  if (environment === null || environment.connection.phase !== "connected") return false;
+  if (isPrimary && isElectron) return true;
+  const access = isPrimary
+    ? resolvePrimaryOperateAccess({
+        isPrimary: true,
+        hasDesktopBridge: false,
+        session: primarySession.data,
+        isPending: primarySession.isPending,
+        hasError: primarySession.error !== null,
+      })
+    : resolveRemoteOperateAccess({
+        session: remoteSession.data,
+        isPending: remoteSession.isPending,
+        hasError: remoteSession.hasError,
+      });
+  return access === "granted";
+}
+
 /** One source with a remove control bound to the environment it lives in. */
 function SourceLimitsRow({
   source,
@@ -494,19 +535,14 @@ function SourceLimitsRow({
   readonly now: number;
 }) {
   const updateSettings = useUpdateEnvironmentSettings(source.environmentId);
-  const connection = useAtomValue(environmentPresentations.presentationsAtom).get(
-    source.environmentId,
-  )?.connection;
+  const { environments } = useEnvironments();
+  const environment =
+    environments.find((entry) => entry.environmentId === source.environmentId) ?? null;
+  const canOperate = useCanOperateEnvironment(environment);
   // The patch names only this entry, so two edits in flight cannot clobber
   // each other's map.
   const remove = () => updateSettings({ usageLimitSources: { [source.id]: null } });
-  return (
-    <SourceLimits
-      source={source}
-      now={now}
-      onRemove={connection?.phase === "connected" ? remove : null}
-    />
-  );
+  return <SourceLimits source={source} now={now} onRemove={canOperate ? remove : null} />;
 }
 
 /**
@@ -541,6 +577,7 @@ export function UsageLimitsSection() {
       : undefined) ??
     connected[0] ??
     null;
+  const canOperateTarget = useCanOperateEnvironment(targetEnvironment);
 
   return (
     <div className="flex flex-col gap-8">
@@ -553,7 +590,7 @@ export function UsageLimitsSection() {
             Quota from a CLIProxyAPI hub shows beside the providers signed in on this machine.
           </p>
         </div>
-        {targetEnvironment ? (
+        {targetEnvironment && canOperateTarget ? (
           <div className="flex items-center gap-2">
             {connected.length > 1 ? (
               <Select
@@ -611,8 +648,12 @@ export function UsageLimitsSection() {
           ))}
         </div>
       ))}
-      {targetEnvironment ? (
+      {targetEnvironment && canOperateTarget ? (
+        // Keyed on the target: if it disconnects or the primary changes while
+        // the dialog is open, a fresh dialog mounts empty rather than carrying
+        // a typed key over to a different environment.
         <AddUsageLimitSourceDialog
+          key={targetEnvironment.environmentId}
           open={adding}
           onOpenChange={setAdding}
           environmentId={targetEnvironment.environmentId}
