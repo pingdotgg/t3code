@@ -7,12 +7,14 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult, type Atom } from "effect/unstable/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 
 const state = vi.hoisted(() => ({
   grantedEnvironments: new Set<string>(),
+  draftText: "Keep this draft separate",
   cleanups: [] as Array<() => void>,
   start: vi.fn(),
   metadata: vi.fn(),
@@ -129,8 +131,10 @@ vi.mock("./use-composer-drafts", async () => {
     removeDeliveredCloudQueuedMessage: async () => {},
     appendComposerDraftAttachments: vi.fn(),
     flushComposerDrafts: vi.fn(),
-    getComposerDraftSnapshot: vi.fn(),
-    mergeComposerDraftContent: vi.fn(),
+    getComposerDraftSnapshot: vi.fn(() => ({ text: state.draftText, attachments: [] })),
+    mergeComposerDraftContent: vi.fn(async (_key: string, input: { text: string }) => {
+      state.draftText += `\n${input.text}`;
+    }),
     replaceComposerDraftAttachments: vi.fn(),
     undoComposerDraftMerge: vi.fn(),
     updateComposerDraftSettings: vi.fn(),
@@ -166,6 +170,7 @@ function runDrain() {
 
 beforeEach(() => {
   state.grantedEnvironments = new Set(["primary"]);
+  state.draftText = "Keep this draft separate";
   appAtomRegistry.set(state.manager.queuedMessagesByThreadKeyAtom, {});
   appAtomRegistry.set(dispatchingQueuedMessageIdAtom, null);
   for (const command of [state.start, state.metadata, state.runtime, state.interaction]) {
@@ -216,6 +221,59 @@ describe("queued task operation access", () => {
     expect(state.start).not.toHaveBeenCalled();
     expect(remaining()).toEqual([queued]);
   });
+
+  it.each([
+    { isCreation: false, accepted: false },
+    { isCreation: true, accepted: false },
+    { isCreation: false, accepted: true },
+    { isCreation: true, accepted: true },
+  ])(
+    "preserves a rejected queue but removes an accepted turn after access loss (new task: $isCreation, accepted: $accepted)",
+    async ({ isCreation, accepted }) => {
+      state.grantedEnvironments.add("secondary");
+      const queued = message(
+        isCreation
+          ? {
+              threadId: ThreadId.make("new-thread"),
+              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+              creation: {
+                projectId: ProjectId.make("project"),
+                projectCwd: "/repo",
+                workspaceMode: "local",
+                branch: null,
+                worktreePath: null,
+              },
+            }
+          : {},
+      );
+      await state.manager.enqueue(queued);
+      const started = Promise.withResolvers<void>();
+      const delivery = Promise.withResolvers<AsyncResult.AsyncResult<void, Error>>();
+      state.start.mockImplementationOnce(() => {
+        started.resolve();
+        return delivery.promise;
+      });
+      const drained = runDrain();
+      await started.promise;
+      state.grantedEnvironments.delete("secondary");
+      delivery.resolve(
+        accepted
+          ? AsyncResult.success(undefined)
+          : AsyncResult.failure(Cause.fail(new Error("This connection cannot control this task."))),
+      );
+      await drained;
+
+      expect(remaining()).toEqual(accepted ? [] : [queued]);
+      expect(state.draftText).toBe("Keep this draft separate");
+      if (!accepted) {
+        state.grantedEnvironments.add("secondary");
+        await runDrain();
+        expect(state.start).toHaveBeenCalledTimes(2);
+        expect(remaining()).toEqual([]);
+        expect(state.draftText).toBe("Keep this draft separate");
+      }
+    },
+  );
 
   it.each([
     { isCreation: false, uploadFails: false },
