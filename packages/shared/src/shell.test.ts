@@ -2,11 +2,15 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   extractPathFromShellOutput,
   CommandAvailability,
+  CommandResolutionCache,
   type CommandAvailabilityChecker,
   isCommandAvailable,
   listLoginShellCandidates,
@@ -373,6 +377,123 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       }).pipe(Effect.provideService(HostProcessPlatform, "win32"), Effect.result);
 
       expect(result._tag).toBe("Failure");
+    }),
+  );
+
+  // Records every path the scan stats, without ever reporting a match, so the
+  // walk runs to exhaustion and the probe set can be inspected. Assertions
+  // below count probes rather than naming paths: `Path` is the host's, so the
+  // separator differs between a Windows and a Linux CI runner.
+  const recordProbes = (env: NodeJS.ProcessEnv) =>
+    Effect.gen(function* () {
+      const probed: Array<string> = [];
+      const result = yield* resolveCommandPath("definitely-not-installed", { env }).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(CommandResolutionCache, new Map()),
+        Effect.provide(
+          FileSystem.layerNoop({
+            stat: (filePath) =>
+              Effect.sync(() => {
+                probed.push(filePath);
+                return { type: "Directory" } as FileSystem.File.Info;
+              }),
+          }),
+        ),
+        Effect.result,
+      );
+
+      expect(result._tag).toBe("Failure");
+      return probed;
+    });
+
+  it.effect("visits a repeated PATH directory only once", () =>
+    Effect.gen(function* () {
+      const probed = yield* recordProbes({
+        PATH: "C:\\bin;C:\\other;C:\\bin;C:\\other",
+        PATHEXT: ".COM;.EXE",
+      });
+
+      // Two directories, two extensions, upper and lowercase spellings.
+      expect(probed).toHaveLength(8);
+      expect(new Set(probed).size).toBe(probed.length);
+    }),
+  );
+
+  it.effect("still visits a PATH entry that differs only in case", () =>
+    Effect.gen(function* () {
+      const probed = yield* recordProbes({
+        PATH: "C:\\bin;C:\\BIN",
+        PATHEXT: ".COM;.EXE",
+      });
+
+      // Deliberately not folded together. Windows 10+ can mark a directory
+      // case-sensitive, so the two spellings are not provably one directory and
+      // skipping the second could hide a command that is really there.
+      expect(probed).toHaveLength(8);
+    }),
+  );
+
+  it.effect.each(["audit-command", "audit-command.CMD"])(
+    "resolves lowercase executable files for %s in a case-sensitive Windows PATH directory",
+    (command) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-case-sensitive-path-" });
+        const executable = path.join(cwd, "audit-command.cmd");
+        yield* fs.writeFileString(executable, "@echo off\n");
+
+        const resolved = yield* resolveCommandPath(command, {
+          env: { PATH: cwd, PATHEXT: ".CMD" },
+        }).pipe(
+          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.provideService(CommandResolutionCache, new Map()),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            // Keep this case-sensitive fixture portable to case-insensitive hosts.
+            stat: (filePath) =>
+              fs.stat(filePath === executable ? filePath : path.join(cwd, "missing")),
+          }),
+        );
+
+        expect(resolved).toBe(executable);
+      }),
+  );
+
+  it.effect("keeps cached misses until expiry while allowing explicit paths", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-path-cache-" });
+      const executable = path.join(cwd, "appeared.CMD");
+      const options = { env: { PATH: `${cwd};${cwd}`, PATHEXT: ".CMD" } };
+
+      expect((yield* resolveCommandPath("appeared", options).pipe(Effect.result))._tag).toBe(
+        "Failure",
+      );
+      yield* fs.writeFileString(executable, "@echo off\n");
+      expect((yield* resolveCommandPath("appeared", options).pipe(Effect.result))._tag).toBe(
+        "Failure",
+      );
+      expect(yield* resolveCommandPath(executable, options)).toBe(executable);
+      yield* TestClock.adjust("30 seconds");
+      expect(yield* resolveCommandPath("appeared", options)).toBe(executable);
+    }).pipe(
+      Effect.provideService(HostProcessPlatform, "win32"),
+      Effect.provideService(CommandResolutionCache, new Map()),
+    ),
+  );
+
+  it.effect("keeps upper and lowercase PATHEXT candidates", () =>
+    Effect.gen(function* () {
+      const probed = yield* recordProbes({
+        PATH: "C:\\bin",
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      });
+
+      expect(probed).toHaveLength(8);
+      expect(probed.filter((filePath) => /\.(COM|EXE|BAT|CMD)$/.test(filePath))).toHaveLength(4);
+      expect(probed.filter((filePath) => /\.(com|exe|bat|cmd)$/.test(filePath))).toHaveLength(4);
     }),
   );
 });

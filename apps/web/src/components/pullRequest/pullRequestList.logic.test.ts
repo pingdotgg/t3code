@@ -69,8 +69,30 @@ function entry(
 }
 
 describe("visible pull request line-count targets", () => {
+  it("reuses counts supplied by the listing and only requests missing counts", () => {
+    const entries = [
+      entry({ number: 1, additions: 12, deletions: 0 }),
+      entry({ number: 2, additions: 0, deletions: 7 }),
+      entry({ number: 3, additions: 0, deletions: 0 }),
+    ];
+    const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
+    const keys = pullRequestStatsKeysToRequest(
+      entriesByKey,
+      new Set(entries.map(pullRequestEntryKey)),
+      [],
+      new Map(),
+    );
+
+    expect(pullRequestStatsBatches(entriesByKey, keys)[0]?.input.refs).toEqual([
+      { projectId: "project-1", repository: "pingdotgg/t3code", number: 3 },
+    ]);
+  });
+
   it("does not request a row again after its received batch is pruned", () => {
-    const entries = [entry({ number: 1 }), entry({ number: 2 })];
+    const entries = [
+      entry({ additions: 0, deletions: 0, number: 1 }),
+      entry({ additions: 0, deletions: 0, number: 2 }),
+    ];
     const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
     const firstKey = pullRequestEntryKey(entries[0]!);
     const secondKey = pullRequestEntryKey(entries[1]!);
@@ -97,7 +119,9 @@ describe("visible pull request line-count targets", () => {
   });
 
   it("drops historical rows after a long scroll so refresh stays bounded to the viewport", () => {
-    const entries = Array.from({ length: 500 }, (_, index) => entry({ number: index + 1 }));
+    const entries = Array.from({ length: 500 }, (_, index) =>
+      entry({ additions: 0, deletions: 0, number: index + 1 }),
+    );
     const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
     const batches = entries.map(
       (item) => pullRequestStatsBatches(entriesByKey, new Set([pullRequestEntryKey(item)]))[0]!,
@@ -112,7 +136,9 @@ describe("visible pull request line-count targets", () => {
   });
 
   it("keeps every per-environment batch within the stats contract limit", () => {
-    const entries = Array.from({ length: 501 }, (_, index) => entry({ number: index + 1 }));
+    const entries = Array.from({ length: 501 }, (_, index) =>
+      entry({ additions: 0, deletions: 0, number: index + 1 }),
+    );
     const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
     const batches = pullRequestStatsBatches(
       entriesByKey,
@@ -125,9 +151,9 @@ describe("visible pull request line-count targets", () => {
 
   it("selects visible rows for date modes and every uncached row for size modes", () => {
     const entries = [
-      entry({ number: 1 }),
-      entry({ number: 2 }),
-      entry({ number: 3, environmentId: "env-2" as EnvironmentId }),
+      entry({ additions: 0, deletions: 0, number: 1 }),
+      entry({ additions: 0, deletions: 0, number: 2 }),
+      entry({ additions: 0, deletions: 0, number: 3, environmentId: "env-2" as EnvironmentId }),
     ];
     const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
     const [firstKey, secondKey] = entries.map(pullRequestEntryKey);
@@ -162,7 +188,11 @@ describe("visible pull request line-count targets", () => {
   });
 
   it("refreshes only visible rows unless size sorting needs every loaded row", () => {
-    const entries = [entry({ number: 1 }), entry({ number: 2 }), entry({ number: 3 })];
+    const entries = [
+      entry({ additions: 0, deletions: 0, number: 1 }),
+      entry({ additions: 0, deletions: 0, number: 2 }),
+      entry({ additions: 0, deletions: 0, number: 3 }),
+    ];
     const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
     const visibleKeys = new Set([pullRequestEntryKey(entries[1]!)]);
     const cachedStats = mergePullRequestDiffStats(
@@ -198,7 +228,10 @@ describe("visible pull request line-count targets", () => {
   });
 
   it("ignores a late refresh after the filter or stats policy changes", () => {
-    const entries = [entry({ number: 1 }), entry({ number: 2 })];
+    const entries = [
+      entry({ additions: 0, deletions: 0, number: 1 }),
+      entry({ additions: 0, deletions: 0, number: 2 }),
+    ];
     const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
     const visibleKeys = new Set([pullRequestEntryKey(entries[1]!)]);
     const requestedScope = { key: "open", policy: "visible" } as const;
@@ -217,7 +250,10 @@ describe("visible pull request line-count targets", () => {
   });
 
   it("does not add request batches again while rows are active or cached", () => {
-    const entries = [entry({ number: 1 }), entry({ number: 2 })];
+    const entries = [
+      entry({ additions: 0, deletions: 0, number: 1 }),
+      entry({ additions: 0, deletions: 0, number: 2 }),
+    ];
     const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
     const first = pullRequestStatsRequestBatches({
       entriesByKey,
@@ -724,7 +760,7 @@ describe("default merge-readiness ranking", () => {
     ]);
   });
 
-  it("puts the smallest measured change first inside a readiness tier", () => {
+  it("keeps readiness order stable when optional diff counts arrive", () => {
     const larger = entry({
       number: 1,
       checksState: "passing",
@@ -752,7 +788,14 @@ describe("default merge-readiness ranking", () => {
 
     expect(
       rankPullRequestsByMergeReadiness([larger, unknown, smaller]).map((row) => row.number),
-    ).toEqual([2, 1, 3]);
+    ).toEqual([3, 1, 2]);
+    expect(
+      rankPullRequestsByMergeReadiness([
+        larger,
+        { ...unknown, additions: 500, deletions: 200 },
+        smaller,
+      ]).map((row) => row.number),
+    ).toEqual([3, 1, 2]);
   });
 
   it("keeps authored work first and ranks each group by readiness", () => {
