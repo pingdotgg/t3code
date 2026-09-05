@@ -3196,7 +3196,9 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         : "text-foreground/80";
   const accessibleDisplayText = showFailedIndicator
     ? `${previewText}, tool call failed`
-    : previewText;
+    : workEntry.userInputSummary
+      ? `${previewText}: ${workEntry.userInputSummary}`
+      : previewText;
   const rowToggleProps = canExpand
     ? {
         role: "button" as const,
@@ -3241,7 +3243,8 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
             <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
               <span
                 className={cn(
-                  "min-w-0 flex-1",
+                  "min-w-0",
+                  workEntry.userInputSummary ? "shrink-0" : "flex-1",
                   expanded || (commandMatchesVisibleLabel && !canExpand)
                     ? "whitespace-pre-wrap break-words select-text"
                     : "truncate",
@@ -3252,6 +3255,11 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
               >
                 {previewText}
               </span>
+              {workEntry.userInputSummary ? (
+                <span className="min-w-0 truncate text-secondary-label">
+                  {workEntry.userInputSummary}
+                </span>
+              ) : null}
             </p>
           </div>
           {showFailedIndicator &&

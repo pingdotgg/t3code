@@ -52,6 +52,7 @@ export interface WorkLogEntry {
   toolCallId?: string;
   label: string;
   detail?: string;
+  userInputSummary?: string;
   viewedImagePath?: string;
   command?: string;
   rawCommand?: string;
@@ -783,6 +784,7 @@ export function deriveWorkLogEntries(
 ): WorkLogEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const entries: DerivedWorkLogEntry[] = [];
+  const questionsByRequestId = new Map<string, ReadonlyArray<UserInputQuestion>>();
   for (const activity of ordered) {
     if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) continue;
     if (activity.kind === "tool.started") continue;
@@ -799,7 +801,62 @@ export function deriveWorkLogEntries(
     if (isNoContentRuntimeWarning(activity)) continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
     if (isAgentInternalActivity(activity)) continue;
-    entries.push(toDerivedWorkLogEntry(activity));
+    const entry = toDerivedWorkLogEntry(activity);
+    if (activity.kind === "user-input.requested" || activity.kind === "user-input.resolved") {
+      const payload = asRecord(activity.payload);
+      const requestId = asTrimmedString(payload?.requestId);
+      if (activity.kind === "user-input.requested" && requestId) {
+        const questions = parseUserInputQuestions(payload);
+        if (questions) questionsByRequestId.set(requestId, questions);
+      } else if (activity.kind === "user-input.resolved") {
+        const answers = asRecord(payload?.answers);
+        if (answers) {
+          const questions = requestId ? questionsByRequestId.get(requestId) : undefined;
+          const submittedAnswers = Object.entries(answers).flatMap(([id, value]) => {
+            const question = questions?.find((question) => question.id === id);
+            const values =
+              typeof value === "string"
+                ? [value]
+                : Array.isArray(value)
+                  ? value
+                  : asRecord(value)?.answers;
+            const answer = Array.isArray(values)
+              ? values
+                  .filter((part): part is string => typeof part === "string")
+                  .map(
+                    (part) =>
+                      question?.options.find((option) => (option.value ?? option.label) === part)
+                        ?.label ?? part,
+                  )
+                  .join(", ")
+              : "";
+            return answer.trim() ? [{ id, answer }] : [];
+          });
+          const detail = submittedAnswers
+            .map(({ id, answer }) => {
+              const question = questions?.find((question) => question.id === id);
+              if (!question) return `${id}\nAnswer: ${answer}`;
+              const options = question.options.map(
+                (option) =>
+                  `- ${option.label}${option.description ? `: ${option.description}` : ""}`,
+              );
+              return [question.header, question.question, ...options, `Answer: ${answer}`].join(
+                "\n",
+              );
+            })
+            .join("\n\n");
+          if (detail) {
+            entries.push({
+              ...entry,
+              userInputSummary: submittedAnswers.map(({ answer }) => answer).join("; "),
+              detail: [detail, entry.detail].filter(Boolean).join("\n\n"),
+            });
+            continue;
+          }
+        }
+      }
+    }
+    entries.push(entry);
   }
   return collapseDerivedWorkLogEntries(entries);
 }

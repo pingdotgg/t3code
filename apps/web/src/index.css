@@ -2052,3 +2052,14 @@ code {
     transform: scaleX(0.9);
   }
 }
+
+/* Static emphasis keeps pending questions visible without ongoing animation. */
+.sidebar-question-pending::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  border: 1px solid var(--color-indigo-400);
+  border-radius: inherit;
+}
