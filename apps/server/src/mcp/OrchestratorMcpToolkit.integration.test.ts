@@ -709,45 +709,6 @@ describe("orchestrator MCP toolkit", () => {
               model: "opencode/test",
             }),
           ]);
-          const projectLayer = Layer.mock(ProjectService.ProjectService)({
-            getById: (requestedProjectId, options) => {
-              if (requestedProjectId === deletionRaceProjectId) {
-                return Ref.get(deletionRaceProjectState).pipe(
-                  Effect.map((project) =>
-                    project.deletedAt === null || options?.includeDeleted === true
-                      ? Option.some(project)
-                      : Option.none(),
-                  ),
-                );
-              }
-              return Effect.succeed(
-                requestedProjectId === projectId || requestedProjectId === targetProjectId
-                  ? Option.some({
-                      id: requestedProjectId,
-                      title:
-                        requestedProjectId === projectId ? "MCP project" : "MCP target project",
-                      workspaceRoot: requestedProjectId === projectId ? cwd : targetWorkspace,
-                      repositoryIdentity: null,
-                      faviconPath: null,
-                      defaultModelSelection: codexSelection,
-                      defaultThreadEnvMode: "worktree",
-                      scripts: [],
-                      createdAt: "2026-08-29T12:00:00.000Z",
-                      updatedAt: "2026-08-29T12:00:00.000Z",
-                      deletedAt: null,
-                    })
-                  : Option.none(),
-              );
-            },
-            delete: ({ projectId: deletedProjectId }) =>
-              deletedProjectId === deletionRaceProjectId
-                ? Ref.updateAndGet(deletionRaceProjectState, (project) => ({
-                    ...project,
-                    deletedAt: "2026-08-30T00:01:00.000Z",
-                    updatedAt: "2026-08-30T00:01:00.000Z",
-                  }))
-                : Effect.die(`Unexpected project deletion: ${deletedProjectId}`),
-          });
           // In-memory ScheduledTaskService stub so the schedule/list/update/
           // delete tools can be exercised without SQL/launch wiring.
           const scheduledStore = yield* Ref.make<ReadonlyArray<ScheduledTask>>([]);
@@ -783,7 +744,14 @@ describe("orchestrator MCP toolkit", () => {
                 create: () => Effect.die("unused"),
                 bootstrap: () => Effect.die("unused"),
                 update: () => Effect.die("unused"),
-                delete: () => Effect.die("unused"),
+                delete: ({ projectId: deletedProjectId }) =>
+                  deletedProjectId === deletionRaceProjectId
+                    ? Ref.updateAndGet(deletionRaceProjectState, (project) => ({
+                        ...project,
+                        deletedAt: "2026-08-30T00:01:00.000Z",
+                        updatedAt: "2026-08-30T00:01:00.000Z",
+                      }))
+                    : Effect.die(`Unexpected project deletion: ${deletedProjectId}`),
                 deleteDetailed: ({ commandId, projectId: deletedProjectId }) =>
                   Effect.gen(function* () {
                     if (deletedProjectId !== deletionRaceProjectId) {
@@ -833,16 +801,35 @@ describe("orchestrator MCP toolkit", () => {
                     yield* Deferred.succeed(deletionLockAttemptSettled, undefined);
                     return yield* Fiber.join(deletion);
                   }).pipe(Effect.orDie),
-                getById: (requestedProjectId, options) =>
-                  requestedProjectId === deletionRaceProjectId
-                    ? Ref.get(deletionRaceProjectState).pipe(
-                        Effect.map((project) =>
-                          project.deletedAt === null || options?.includeDeleted === true
-                            ? Option.some(project)
-                            : Option.none(),
-                        ),
-                      )
-                    : Effect.succeed(Option.none()),
+                getById: (requestedProjectId, options) => {
+                  if (requestedProjectId === deletionRaceProjectId) {
+                    return Ref.get(deletionRaceProjectState).pipe(
+                      Effect.map((project) =>
+                        project.deletedAt === null || options?.includeDeleted === true
+                          ? Option.some(project)
+                          : Option.none(),
+                      ),
+                    );
+                  }
+                  return Effect.succeed(
+                    requestedProjectId === projectId || requestedProjectId === targetProjectId
+                      ? Option.some({
+                          id: requestedProjectId,
+                          title:
+                            requestedProjectId === projectId ? "MCP project" : "MCP target project",
+                          workspaceRoot: requestedProjectId === projectId ? cwd : targetWorkspace,
+                          repositoryIdentity: null,
+                          faviconPath: null,
+                          defaultModelSelection: codexSelection,
+                          defaultThreadEnvMode: "worktree",
+                          scripts: [],
+                          createdAt: "2026-08-29T12:00:00.000Z",
+                          updatedAt: "2026-08-29T12:00:00.000Z",
+                          deletedAt: null,
+                        })
+                      : Option.none(),
+                  );
+                },
                 getByWorkspaceRoot: () => Effect.die("unused"),
                 snapshot: Effect.die("unused"),
               });
@@ -3925,6 +3912,9 @@ describe("orchestrator MCP toolkit", () => {
           Layer.provideMerge(orchestrationLayer),
           Layer.provide(providerRegistryLayer),
           Layer.provide(unusedScheduledTaskStubLayer),
+          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
+          Layer.provide(Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({})),
           Layer.provide(NodeServices.layer),
         );
 
