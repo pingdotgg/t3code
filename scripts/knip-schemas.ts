@@ -59,8 +59,14 @@ const preprocess: Preprocessor = (options) => {
       if (!source || !module) continue;
       const schemas = new Set(
         checker.getExportsOfModule(module).flatMap((symbol) => {
-          const target =
+          const exported =
             symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
+          // Duplicate exports can name a private value with a public type of the same name.
+          const target =
+            exported.flags & ts.SymbolFlags.Value
+              ? exported
+              : checker.resolveName(symbol.name, source, ts.SymbolFlags.Value, false);
+          if (!target) return [];
           const type = checker.getTypeOfSymbolAtLocation(target, target.valueDeclaration ?? source);
           const marker = type.getProperty(schemaTypeId);
           if (!marker) return [];

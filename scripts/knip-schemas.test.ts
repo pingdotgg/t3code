@@ -25,6 +25,8 @@ it("allows types and schemas through the real Knip CLI without hiding runtime or
         "--config",
         NodePath.join(cwd, "knip.json"),
         "--no-config-hints",
+        "--include",
+        "files,dependencies,exports,nsExports,types,nsTypes,duplicates",
         "--reporter",
         "json",
         ...(filtered ? ["--preprocessor", preprocessor] : []),
@@ -55,7 +57,7 @@ it("allows types and schemas through the real Knip CLI without hiding runtime or
           "files",
           "dependencies",
         ],
-        exclude: ["types", "nsTypes"],
+        rules: { types: "off", nsTypes: "off" },
       }),
     );
     write(
@@ -67,6 +69,9 @@ it("allows types and schemas through the real Knip CLI without hiding runtime or
       export { Remote as Reexported } from "./remote.ts";
       export const Text = S.String;
       export const Alias = Text;
+      const Internal = S.Boolean;
+      export type Internal = typeof Internal.Type;
+      export const PublicAlias = Internal;
       export default Text;
       export const Record = S.Struct({ name: Text }).annotate({ title: "record" });
       export const Branded = S.String.pipe(S.brand("Name"));
@@ -116,7 +121,7 @@ it("allows types and schemas through the real Knip CLI without hiding runtime or
       JSON.stringify({
         private: true,
         type: "module",
-        dependencies: { effect: "*", typescript: "*" },
+        dependencies: { effect: "*", "unused-knip-fixture-dependency": "*" },
       }),
     );
     const rejected = run(true);
@@ -139,7 +144,7 @@ it("allows types and schemas through the real Knip CLI without hiding runtime or
     );
     expect(
       issues.find((issue: { file: string }) => issue.file === "package.json").dependencies,
-    ).toEqual([expect.objectContaining({ name: "typescript" })]);
+    ).toEqual([expect.objectContaining({ name: "unused-knip-fixture-dependency" })]);
   } finally {
     NodeFS.rmSync(cwd, { recursive: true, force: true });
   }
