@@ -162,23 +162,27 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   return limits.windows.length === 0 ? "No limits reported." : null;
 }
 
+/** No real currency has more than four decimals; past this, precision only breaks formatting. */
+const MAX_SPEND_EXPONENT = 20;
+
 /**
  * `$46.31 of $500.00`: a spending budget in the provider's currency and
  * precision. A currency code Intl does not know falls back to `46.31 USD`.
  */
 export function formatSpend(spend: ServerProviderUsageSpend): string {
-  const scale = 10 ** spend.exponent;
+  const exponent = Math.min(spend.exponent, MAX_SPEND_EXPONENT);
+  const scale = 10 ** exponent;
   let format: (minor: number) => string;
   try {
     const currency = new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: spend.currency,
-      minimumFractionDigits: spend.exponent,
-      maximumFractionDigits: spend.exponent,
+      minimumFractionDigits: exponent,
+      maximumFractionDigits: exponent,
     });
     format = (minor) => currency.format(minor / scale);
   } catch {
-    format = (minor) => `${(minor / scale).toFixed(spend.exponent)} ${spend.currency}`;
+    format = (minor) => `${(minor / scale).toFixed(exponent)} ${spend.currency}`;
   }
   return `${format(spend.usedMinor)} of ${format(spend.limitMinor)}`;
 }
