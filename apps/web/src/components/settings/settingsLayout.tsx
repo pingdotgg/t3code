@@ -235,20 +235,24 @@ export function SettingsRow({
   title,
   description,
   status,
+  leading,
   resetAction,
   control,
   serverScoped = false,
   children,
+  layout = "default",
   className,
   ...rowProps
 }: Omit<ComponentPropsWithoutRef<"div">, "title"> & {
   title: ReactNode;
   description?: ReactNode;
   status?: ReactNode;
+  leading?: ReactNode;
   resetAction?: ReactNode;
   control?: ReactNode;
   serverScoped?: boolean;
   children?: ReactNode;
+  layout?: "default" | "inline";
 }) {
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
   const primarySettingsAvailable = usePrimarySettingsAvailable();
@@ -286,23 +290,39 @@ export function SettingsRow({
       data-slot="settings-row"
       className={cn("rounded-xl px-3 sm:px-4", children ? "pt-3 pb-1" : "py-3", className)}
     >
-      <div className="flex flex-col gap-3 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)] sm:items-center sm:gap-8">
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex min-h-5 items-center gap-1.5">
-            <h3 className="text-sm font-medium tracking-[-0.005em] text-foreground">{title}</h3>
-            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-              {renderedReset}
-            </span>
+      <div
+        className={cn(
+          layout === "inline"
+            ? "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2"
+            : "flex flex-col gap-3 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)] sm:items-center sm:gap-8",
+        )}
+      >
+        <div className="flex min-w-0 flex-1 items-start gap-2">
+          {leading ? <span className="flex min-h-5 shrink-0 items-center">{leading}</span> : null}
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className="flex min-h-5 items-center gap-1.5">
+              <h3 className="min-w-0 text-sm font-medium tracking-[-0.005em] text-foreground">
+                {title}
+              </h3>
+              <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
+                {renderedReset}
+              </span>
+            </div>
+            {description ? (
+              <p className="max-w-xl text-[13px] leading-[1.45] text-muted-foreground/80">
+                {description}
+              </p>
+            ) : null}
+            {status ? <div className="pt-0.5 text-xs text-muted-foreground">{status}</div> : null}
           </div>
-          {description ? (
-            <p className="max-w-xl text-[13px] leading-[1.45] text-muted-foreground/80">
-              {description}
-            </p>
-          ) : null}
-          {status ? <div className="pt-0.5 text-xs text-muted-foreground">{status}</div> : null}
         </div>
         {renderedControl ? (
-          <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+          <div
+            className={cn(
+              "flex shrink-0 items-center gap-2",
+              layout === "inline" ? "w-auto justify-end" : "w-full sm:w-auto sm:justify-end",
+            )}
+          >
             {renderedControl}
           </div>
         ) : null}
