@@ -102,4 +102,120 @@ it.layer(testLayer)("CodexDriver", (it) => {
       expect((yield* instance.snapshot.resolveMaintenance()).update).toBeNull();
     }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn), Effect.scoped),
   );
+
+  for (const fixture of [
+    {
+      name: "leaves mise npm-backend installations manual-only",
+      installSegments: ["mise", "installs", "npm-openai-codex", "0.110.0"],
+      npmOwned: false,
+    },
+    {
+      name: "leaves mise tool aliases backed by npm manual-only",
+      installSegments: ["mise", "installs", "codex", "0.110.0"],
+      npmOwned: false,
+    },
+    {
+      name: "keeps npm updates for globals in a mise Node installation",
+      installSegments: ["mise", "installs", "node", "24.0.0"],
+      npmOwned: true,
+    },
+    {
+      name: "keeps npm updates for ordinary global installations",
+      installSegments: ["npm-global"],
+      npmOwned: true,
+    },
+  ] as const) {
+    it.effect.skipIf(windowsHost)(fixture.name, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-installer-" });
+        const installPath = NodePath.join(tempDir, ...fixture.installSegments);
+        const realBinaryPath = NodePath.join(
+          installPath,
+          "lib",
+          "node_modules",
+          "@openai",
+          "codex",
+          "bin",
+          "codex.js",
+        );
+        const binaryPath = NodePath.join(tempDir, "bin", "codex");
+        yield* fs.makeDirectory(NodePath.dirname(realBinaryPath), { recursive: true });
+        yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
+        yield* fs.writeFileString(realBinaryPath, "#!/bin/sh\n");
+        yield* fs.chmod(realBinaryPath, 0o755);
+        yield* fs.symlink(realBinaryPath, binaryPath);
+
+        const instance = yield* CodexDriver.create({
+          instanceId: ProviderInstanceId.make("codex-installer"),
+          displayName: "Codex installer test",
+          enabled: false,
+          environment: [],
+          config: {
+            ...CodexDriver.defaultConfig(),
+            binaryPath,
+            homePath: NodePath.join(tempDir, "codex-home"),
+          },
+        });
+
+        const update = (yield* instance.snapshot.resolveMaintenance()).update;
+        if (fixture.npmOwned) {
+          expect(update).toMatchObject({
+            executable: "npm",
+            args: [
+              "install",
+              "-g",
+              "--prefix",
+              installPath,
+              "--allow-scripts=@openai/codex",
+              "@openai/codex@latest",
+            ],
+          });
+        } else {
+          expect(update).toBeNull();
+        }
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        Effect.scoped,
+      ),
+    );
+  }
+
+  for (const layout of ["direct", "wrapper"] as const) {
+    it.effect.skipIf(windowsHost)(`leaves a mise ${layout} installation manual-only`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: `t3-codex-mise-${layout}-` });
+        const binaryPath =
+          layout === "direct"
+            ? NodePath.join(tempDir, "mise", "installs", "codex", "0.110.0", "codex")
+            : NodePath.join(tempDir, "omarchy", "bin", "codex");
+        yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
+        yield* fs.writeFileString(
+          binaryPath,
+          layout === "direct"
+            ? "#!/bin/sh\n"
+            : '#!/bin/sh\nmise use -g --quiet "codex" || exit 1\nexec mise x "codex" -- "codex" "$@"\n',
+        );
+        yield* fs.chmod(binaryPath, 0o755);
+
+        const instance = yield* CodexDriver.create({
+          instanceId: ProviderInstanceId.make(`codex-mise-${layout}`),
+          displayName: "Codex mise test",
+          enabled: false,
+          environment: [],
+          config: {
+            ...CodexDriver.defaultConfig(),
+            binaryPath,
+            homePath: NodePath.join(tempDir, "codex-home"),
+          },
+        });
+
+        expect((yield* instance.snapshot.resolveMaintenance()).update).toBeNull();
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        Effect.scoped,
+      ),
+    );
+  }
 });

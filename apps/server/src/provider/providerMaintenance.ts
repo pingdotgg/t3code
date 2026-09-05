@@ -240,6 +240,12 @@ export function npmGlobalPrefixFromCommandPath(
   if (packageIndex < 0 || normalized.slice(0, packageIndex).includes("/node_modules/")) {
     return null;
   }
+  // Mise's npm backend uses a global-looking layout inside a tool version.
+  // Globals under its Node installation still belong to npm.
+  const miseTool = /\/mise\/installs\/([^/]+)\/[^/]+$/.exec(normalized.slice(0, packageIndex))?.[1];
+  if (miseTool && miseTool !== "node") {
+    return null;
+  }
   return packageIndex === 0 ? "/" : slashPath.slice(0, packageIndex);
 }
 
