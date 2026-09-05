@@ -766,6 +766,15 @@ describe("transcriptFileMayMatchThread", () => {
     assert.isTrue(
       matchesTarget("/claude/C--Users-Alex-App--wt-Thread-1/legacy-session.jsonl", windowsTarget),
     );
+    assert.isTrue(
+      matchesTarget("/claude/c--users-alex-app--wt-thread-1/legacy-session.jsonl", windowsTarget),
+    );
+    assert.isTrue(
+      matchesTarget("/claude/C--Users-Alex-App--wt-Thread-1/legacy-session.jsonl", {
+        ...windowsTarget,
+        worktrees: new Set(["c:/users/alex/app/.wt/thread-1"]),
+      }),
+    );
     assert.isFalse(matchesTarget("/claude/-Work-App--wt-thread-1/legacy-session.jsonl", target));
   });
 
