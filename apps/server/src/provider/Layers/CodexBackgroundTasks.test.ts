@@ -148,6 +148,29 @@ describe("Codex background tasks", () => {
     expect(tasks.takeWake()).toBeUndefined();
   });
 
+  it.each([false, true])("unsubscribe invalidates an in-flight wake (exited: %s)", (exited) => {
+    const tasks = new CodexBackgroundTasks();
+    tasks.started(command());
+    tasks.subscribe("process-watch");
+    tasks.output("watch", "old event\n");
+    if (exited) tasks.completed(command());
+    const wake = tasks.takeWake()!;
+    tasks.unsubscribe("process-watch");
+    tasks.subscribe("process-watch");
+    tasks.restoreWake(wake);
+    expect(tasks.takeWake()).toBeUndefined();
+  });
+
+  it("retains a rejected process-exit event when it has not been unsubscribed", () => {
+    const tasks = new CodexBackgroundTasks();
+    tasks.started(command());
+    tasks.subscribe("process-watch");
+    tasks.completed(command());
+    const wake = tasks.takeWake()!;
+    tasks.restoreWake(wake);
+    expect(tasks.takeWake()?.output).toBe("Watcher exited with code 0.");
+  });
+
   it.each([
     ["t3/0.146.0 (linux)", false],
     ["t3/0.153.1 (linux)", false],
