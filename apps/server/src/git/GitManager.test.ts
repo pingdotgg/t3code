@@ -1004,6 +1004,29 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("a branch tracking origin resolves each remote context from one read", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/single-origin-read"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/single-origin-read"]);
+
+      const gitConfigReads: string[] = [];
+      const { manager } = yield* makeManager({ gitConfigReads });
+
+      yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/single-origin-read" });
+
+      // The repository identity check and the branch head context each resolve
+      // the branch's remote alongside origin. For a branch tracking origin both
+      // sides name the same remote, so each resolves from a single read rather
+      // than racing two identical `git config` spawns: two reads here, not four.
+      expect(gitConfigReads.filter((key) => key === "remote.origin.url")).toHaveLength(2);
+    }),
+  );
+
   it.effect("turn-end refresh finds a new PR and keeps known PRs cached", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

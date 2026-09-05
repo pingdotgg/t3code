@@ -135,6 +135,11 @@ const PR_LOOKUP_CACHE_TTL = Duration.seconds(60);
 const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
+const EMPTY_REPOSITORY_CONTEXT = {
+  remoteUrlKey: null,
+  repositoryNameWithOwner: null,
+  ownerLogin: null,
+} as const;
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
 /**
@@ -1244,11 +1249,7 @@ export const make = Effect.gen(function* () {
     remoteName: string | null,
   ) {
     if (!remoteName) {
-      return {
-        remoteUrlKey: null,
-        repositoryNameWithOwner: null,
-        ownerLogin: null,
-      };
+      return EMPTY_REPOSITORY_CONTEXT;
     }
 
     const remoteUrl = yield* readConfigValueNullable(cwd, `remote.${remoteName}.url`);
@@ -1260,17 +1261,34 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  /** Resolve a branch's remote and `origin` together, collapsing the pair to a
+   * single lookup when they name the same remote. Deliberately not cached
+   * across calls: `branchPullRequest` compares this identity against the one
+   * recorded in a cached pull request to notice a repointed remote, and a
+   * stale answer would let a cached pull request survive that check. */
+  const resolveHeadAndOriginContexts = (cwd: string, remoteName: string | null) =>
+    remoteName === "origin" || remoteName === null
+      ? resolveRemoteRepositoryContext(cwd, "origin").pipe(
+          Effect.map(
+            (origin) => [remoteName === null ? EMPTY_REPOSITORY_CONTEXT : origin, origin] as const,
+          ),
+        )
+      : Effect.all(
+          [
+            resolveRemoteRepositoryContext(cwd, remoteName),
+            resolveRemoteRepositoryContext(cwd, "origin"),
+          ],
+          { concurrency: "unbounded" },
+        );
+
   const resolvePrLookupRepositoryIdentity = Effect.fn("resolvePrLookupRepositoryIdentity")(
     function* (cwd: string, branch: string, remoteNameOverride?: string) {
       const remoteName =
         remoteNameOverride ?? (yield* readConfigValueNullable(cwd, `branch.${branch}.remote`));
-      const [headRemote, targetRemote] = yield* Effect.all(
-        [
-          resolveRemoteRepositoryContext(cwd, remoteName),
-          resolveRemoteRepositoryContext(cwd, "origin"),
-        ],
-        { concurrency: "unbounded" },
-      );
+      // Both contexts resolve at the same instant from the same checkout, so a
+      // branch tracking origin - the common case - reads remote.origin.url once
+      // instead of racing two identical `git config` spawns against each other.
+      const [headRemote, targetRemote] = yield* resolveHeadAndOriginContexts(cwd, remoteName);
       return {
         remoteName,
         headRemoteUrlKey:
@@ -1294,12 +1312,9 @@ export const make = Effect.gen(function* () {
     const shouldProbeLocalBranchSelector =
       headBranchFromUpstream.length === 0 || headBranch === details.branch;
 
-    const [remoteRepository, originRepository] = yield* Effect.all(
-      [
-        resolveRemoteRepositoryContext(cwd, remoteName),
-        resolveRemoteRepositoryContext(cwd, "origin"),
-      ],
-      { concurrency: "unbounded" },
+    const [remoteRepository, originRepository] = yield* resolveHeadAndOriginContexts(
+      cwd,
+      remoteName,
     );
 
     const isCrossRepository =
