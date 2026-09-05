@@ -266,6 +266,10 @@
     "./nodeSqliteClient": {
       "types": "./src/nodeSqliteClient.ts",
       "import": "./src/nodeSqliteClient.ts"
+    },
+    "./hostClassification": {
+      "types": "./src/hostClassification.ts",
+      "import": "./src/hostClassification.ts"
     }
   },
   "scripts": {

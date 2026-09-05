@@ -72,6 +72,37 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   return button.props as ComponentProps<typeof Button>;
 }
 
+describe("ChatMarkdown favicon privacy", () => {
+  it("suppresses private link images while preserving public links across updates", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const markdown = (url: string) => <ChatMarkdown cwd="/tmp/project" text={`[Link](${url})`} />;
+    try {
+      await act(async () => {
+        renderer = create(markdown("https://github.com"));
+      });
+      expect(renderer!.root.findAllByType("img").map((image) => image.props.src)).toEqual([
+        "https://www.google.com/s2/favicons?domain=github.com&sz=32",
+      ]);
+      for (const url of ["http://192.168.1.10:8080", "http://localhost:3000", "http://home.arpa"]) {
+        await act(async () => {
+          renderer!.update(markdown(url));
+        });
+        expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+      }
+      await act(async () => {
+        renderer!.update(markdown("https://github.com"));
+      });
+      expect(renderer!.root.findAllByType("img")).toHaveLength(1);
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe("ChatMarkdown streaming", () => {
   it("preserves code controls and details without highlighting an unchanged fence again", async () => {
     const highlighter = await getSyntaxHighlighterPromise("text");
