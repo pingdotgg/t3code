@@ -11,10 +11,16 @@ binds the transcriber and resolved locale for the whole recording. Draft ownersh
 text, and revision are captured before recording and checked before insertion, so
 a late transcript cannot overwrite a draft that was edited or replaced.
 
-Cancellation invalidates a result immediately, but resources stay owned until the
-underlying work settles. Apple's native transcription call cannot be interrupted
-once started. Releasing the session or deleting its recording when the abort signal
-fires would race that work. The [transcription contract](../../packages/client-runtime/src/voice-input/transcription.ts)
-therefore requires implementations to settle only after their work has stopped;
-the [Apple binding](../../apps/mobile/src/native/voiceTranscription.ios.ts) checks
-cancellation between native calls and discards late results.
+Live transcription owns microphone capture and streams complete hypotheses into
+the captured selection. Each hypothesis replaces the preceding one. The client
+acknowledges these writes synchronously because native events can arrive before
+React renders; unrelated text or ownership changes invalidate the session.
+
+React Native iOS uses `DictationTranscriber` with progressive long dictation for
+frequent word updates and corrections. Preparation resolves and downloads that
+engine's language assets before microphone capture begins.
+
+Cancellation invalidates results immediately, but resources stay owned until
+native work settles. Preparation and finalization must finish or cancel before
+another composer can acquire the audio session. The file-based transcription
+contract remains available for clients without streaming capture.

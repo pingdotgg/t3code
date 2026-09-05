@@ -10,7 +10,12 @@ import {
   type VoiceInputControllerDependencies,
   type VoiceRecorder,
 } from "./controller.ts";
-import type { PreparedVoiceTranscription, VoiceTranscriber } from "./transcription.ts";
+import type {
+  PreparedVoiceTranscription,
+  VoiceTranscriber,
+  VoiceStreamingOptions,
+  VoiceStreamingSession,
+} from "./transcription.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -532,4 +537,184 @@ describe("VoiceInputController", () => {
     expect(harness.recorder.record).not.toHaveBeenCalled();
     expect(harness.controller.currentState.error).toContain("background");
   });
+});
+
+describe("live voice input", () => {
+  it("writes interim speech into the draft before stopping capture", async () => {
+    const stop = vi.fn(async () => "new words");
+    const transcribe = vi.fn(async () => "new words");
+    const harness = createHarness({
+      getTranscriber: () => ({
+        prepare: async () => ({
+          locale: "en-US",
+          transcribe,
+          startStreaming: async (options: { onTranscript: (text: string) => void }) => {
+            options.onTranscript("new");
+            return { stop, cancel: async () => undefined, getStatus: () => null };
+          },
+        }),
+      }),
+    });
+
+    await harness.controller.start();
+
+    expect(harness.controller.currentState.phase).toBe("recording");
+    expect(harness.commits.at(-1)?.text).toBe("hello new");
+    expect(stop).not.toHaveBeenCalled();
+    expect(transcribe).not.toHaveBeenCalled();
+    harness.controller.cancel();
+  });
+});
+
+function createLiveHarness() {
+  let callbacks!: VoiceStreamingOptions;
+  let current = draft();
+  const stop = vi.fn(async () => "new words.");
+  const cancel = vi.fn(async () => undefined);
+  const harness = createHarness({
+    readDraft: () => current,
+    commitDraft: (text, selection) => {
+      current = { ...current, text, selection, revision: current.revision + 1 };
+    },
+    getTranscriber: () => ({
+      prepare: async () => ({
+        locale: "en-US",
+        transcribe: async () => {
+          throw new Error("Must stream");
+        },
+        startStreaming: async (options) => {
+          callbacks = options;
+          return { stop, cancel, getStatus: () => null };
+        },
+      }),
+    }),
+  });
+  return {
+    ...harness,
+    stop,
+    cancel,
+    get text() {
+      return current.text;
+    },
+    emit: (text: string) => callbacks.onTranscript(text),
+    fail: () => callbacks.onError("Interrupted"),
+    end: () => callbacks.onEnd(),
+    edit: (text: string) => {
+      current = { ...current, text, revision: current.revision + 1 };
+    },
+    changeOwner: () => {
+      current = { ...draft(), ownerKey: "other" };
+    },
+  };
+}
+
+describe("streaming draft ownership", () => {
+  it("revises interim words in place and flushes final punctuation once", async () => {
+    const h = createLiveHarness();
+    await h.controller.start();
+    h.emit("knew");
+    expect(h.text).toBe("hello knew");
+    h.emit("new words");
+    expect(h.text).toBe("hello new words");
+    expect(h.recorder.record).not.toHaveBeenCalled();
+    await h.controller.stop();
+    expect(h.text).toBe("hello new words.");
+    expect(h.controller.currentState.phase).toBe("idle");
+  });
+
+  it("restores the original selection on cancellation and ignores late speech", async () => {
+    const h = createLiveHarness();
+    await h.controller.start();
+    h.emit("new");
+    h.controller.cancel();
+    h.emit("late text");
+    expect(h.text).toBe("hello world");
+    expect(h.cancel).toHaveBeenCalled();
+  });
+
+  it("never overwrites a manual edit or replacement owner", async () => {
+    for (const change of ["edit", "owner"] as const) {
+      resetVoiceInputGlobalsForTests();
+      const h = createLiveHarness();
+      await h.controller.start();
+      h.emit("new");
+      if (change === "edit") h.edit("my edit");
+      else h.changeOwner();
+      h.emit("late text");
+      expect(h.text).toBe(change === "edit" ? "my edit" : "hello world");
+      expect(h.controller.currentState.phase).toBe("error");
+    }
+  });
+
+  it("retains recognized words on interruption and rejects later callbacks", async () => {
+    const h = createLiveHarness();
+    await h.controller.start();
+    h.emit("new");
+    h.fail();
+    h.emit("late text");
+    expect(h.text).toBe("hello new");
+    expect(h.controller.currentState.phase).toBe("error");
+  });
+
+  it("restores the draft if the recognizer retracts all speech", async () => {
+    const h = createLiveHarness();
+    h.stop.mockResolvedValue("");
+    await h.controller.start();
+    h.emit("noise");
+    h.emit("");
+    expect(h.text).toBe("hello world");
+    await h.controller.stop();
+    expect(h.controller.currentState.error).toBe("No speech was detected.");
+  });
+
+  it("cancels finalization without adding the late final text", async () => {
+    const h = createLiveHarness();
+    const final = deferred<string>();
+    h.stop.mockReturnValue(final.promise);
+    await h.controller.start();
+    h.emit("new");
+    const finishing = h.controller.stop();
+    h.controller.cancel();
+    final.resolve("late final words");
+    await finishing;
+    expect(h.text).toBe("hello world");
+    expect(h.controller.currentState.phase).toBe("idle");
+  });
+});
+
+it("holds streaming ownership through cancellation during startup", async () => {
+  const entered = deferred<void>();
+  const start = deferred<VoiceStreamingSession>();
+  const released = deferred<void>();
+  const cancel = vi.fn(async () => undefined);
+  const h = createHarness({
+    getTranscriber: () => ({
+      prepare: async () => ({
+        locale: "en-US",
+        transcribe: async () => "",
+        startStreaming: () => {
+          entered.resolve();
+          return start.promise;
+        },
+      }),
+    }),
+    releaseRecording: async () => {
+      released.resolve();
+    },
+  });
+  const starting = h.controller.start();
+  await entered.promise;
+  h.controller.cancel();
+  const blocked = createHarness();
+  await blocked.controller.start();
+  expect(blocked.controller.currentState.error).toBe("Another voice recording is already active.");
+  start.resolve({ stop: async () => "", cancel, getStatus: () => null });
+  await starting;
+  await released.promise;
+  expect(cancel).toHaveBeenCalledOnce();
+  expect(h.controller.currentState.phase).toBe("idle");
+  const next = createHarness();
+  await next.controller.start();
+  expect(next.controller.currentState.phase).toBe("recording");
+  await next.controller.stop();
 });

@@ -69,17 +69,19 @@ and use **Attach again** or remove the missing file before sending.
 
 ## Voice input on iPhone
 
-On supported iPhones with iOS 26 or later, use the composer's microphone to record,
-then confirm to transcribe. Text is inserted where your selection was when
-recording started, ready for you to review and edit before sending.
+On supported iPhones with iOS 26 or later, tap the composer's microphone and speak.
+Your words appear in the draft as you speak and may be corrected as recognition
+continues. Confirm to finish dictation, then review or edit the text before sending.
+Text replaces the selection you had when dictation started.
 
 The first use may download Apple's speech model and needs a network connection.
-Later transcription works offline for that language. Recordings can be up to five
-minutes long. Canceling, leaving the screen, or an audio interruption discards the
-recording and preserves your existing draft.
+Later transcription works offline for that language. Dictation can last up to five
+minutes. Cancel removes the current dictation and restores your previous draft.
+Leaving the screen or an audio interruption stops capture and keeps words already
+shown in the draft.
 
-Transcription runs on your device. T3 Code deletes the temporary audio after
-transcription or cancellation; only the message text is sent when you submit.
+Transcription runs on your device without saving an audio recording. Only the
+message text is sent when you submit.
 
 ## Commands and skills
 

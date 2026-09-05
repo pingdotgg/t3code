@@ -18,6 +18,12 @@ vi.mock("@react-native-ai/apple/src/NativeAppleTranscription", () => ({
   },
 }));
 
+vi.mock("./voiceStreaming.ios", () => ({
+  isVoiceStreamingAvailable: () => true,
+  prepareVoiceStreaming: (locale: string) => mocks.prepare(locale),
+  startVoiceStreaming: vi.fn(),
+}));
+
 vi.mock("expo-file-system", () => ({
   File: class {
     arrayBuffer = mocks.readAudio;

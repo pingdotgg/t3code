@@ -1,8 +1,14 @@
+import {
+  isVoiceStreamingAvailable,
+  prepareVoiceStreaming,
+  startVoiceStreaming,
+} from "./voiceStreaming.ios";
 import AppleTranscription from "@react-native-ai/apple/src/NativeAppleTranscription";
 import { File } from "expo-file-system";
 
 import {
   VoiceTranscriptionError,
+  VOICE_RECORDING_LIMIT_SECONDS,
   throwIfVoiceTranscriptionAborted,
   type PreparedVoiceTranscription,
   type VoiceTranscriber,
@@ -35,7 +41,7 @@ function getNativeErrorCode(error: unknown): string | undefined {
 
 export function getLocalVoiceTranscriber(): VoiceTranscriber | null {
   const locale = getDeviceLocale();
-  if (!AppleTranscription.isAvailable(locale)) return null;
+  if (!isVoiceStreamingAvailable()) return null;
   return { prepare: (options) => prepareVoiceTranscription(locale, options) };
 }
 
@@ -44,7 +50,7 @@ async function prepareVoiceTranscription(
   { signal }: VoiceTranscriptionOptions,
 ): Promise<PreparedVoiceTranscription> {
   throwIfVoiceTranscriptionAborted(signal);
-  if (!AppleTranscription.isAvailable(locale)) {
+  if (!isVoiceStreamingAvailable()) {
     throw new VoiceTranscriptionError(
       "unavailable",
       "Voice transcription requires a supported device with iOS 26 or later.",
@@ -52,10 +58,12 @@ async function prepareVoiceTranscription(
   }
 
   try {
-    const supportedLocale = await AppleTranscription.prepare(locale);
+    const supportedLocale = await prepareVoiceStreaming(locale, { signal });
     throwIfVoiceTranscriptionAborted(signal);
     return {
       locale: supportedLocale,
+      startStreaming: (options) =>
+        startVoiceStreaming(supportedLocale, VOICE_RECORDING_LIMIT_SECONDS, options),
       transcribe: (uri, options) => transcribeVoiceRecording(uri, supportedLocale, options),
     };
   } catch (error) {

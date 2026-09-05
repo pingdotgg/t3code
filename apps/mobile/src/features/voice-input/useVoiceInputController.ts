@@ -120,6 +120,11 @@ export function useVoiceInputController(input: {
       },
       commitDraft: (text, selection) => {
         const current = latestInputRef.current;
+        // Native hypotheses may arrive before React renders the previous one.
+        // Acknowledge our own write synchronously, preserving stale-edit detection.
+        revisionRef.current += 1;
+        previousDraftRef.current = { ownerKey: current.ownerKey, text };
+        latestInputRef.current = { ...current, draftMessage: text, selection };
         current.onChangeSelection(selection);
         current.onChangeDraftMessage(text);
       },
@@ -171,7 +176,7 @@ export function useVoiceInputController(input: {
 
     const sampleRecording = () => {
       if (controller.currentState.phase !== "recording") return;
-      const status = recorder.getStatus();
+      const status = controller.streamingStatus ?? recorder.getStatus();
       if (!status.isRecording) return;
 
       const level = normalizeVoiceInputDecibels(status.metering);
