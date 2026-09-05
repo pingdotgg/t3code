@@ -136,9 +136,11 @@ A session with an open connection stays listed after its access credential
 expires.
 
 To remove an environment from T3 Connect, open your account menu's **T3 Connect**
-page, or **Settings → T3 Connect** on mobile, and choose **Deregister**. This
-revokes its cloud access and frees its host space even when the environment is
-offline or has been wiped.
+page and choose **Deregister**. On mobile, open **Settings → Environments** and
+find the environment under **T3 Connect**. If its connection switch is on, turn
+it off first, then choose **Deregister**. This revokes its cloud access, removes
+its managed tunnel, and frees its host space even when the environment is offline
+or has been wiped.
 
 On a command-line host, `t3 connect unlink` disables exposure while retaining
 your login; `t3 connect logout` also clears that login. Background-service
