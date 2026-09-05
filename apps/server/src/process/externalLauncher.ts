@@ -19,7 +19,11 @@ import {
   type LaunchEditorInput,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
+import {
+  isCommandAvailable,
+  resolveCommandPaths,
+  resolveSpawnCommand,
+} from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -173,6 +177,40 @@ const resolveAvailableCommand = Effect.fn("externalLauncher.resolveAvailableComm
     }
   }
   return Option.none();
+});
+
+// Zed's stable, preview, and nightly channels each install a `zed` CLI, so
+// PATH order alone can open a prerelease build when the user picked "Zed".
+// Prefer the first install whose location does not name a prerelease channel
+// and, when that is not the first on PATH, launch it by absolute path.
+// A prerelease install is recognized by a single path component that names
+// both Zed and the channel (`Zed Preview`, `Zed Nightly.app`,
+// `zed-nightly.app`), so a user or folder called "preview" elsewhere in the
+// path does not count.
+export function isPrereleaseZedPath(filePath: string): boolean {
+  return filePath.split(/[\\/]/).some((component) => {
+    const normalized = component.toLowerCase();
+    return (
+      normalized.includes("zed") &&
+      (normalized.includes("nightly") || normalized.includes("preview"))
+    );
+  });
+}
+
+const resolveZedCommand = Effect.fn("externalLauncher.resolveZedCommand")(function* (
+  commands: ReadonlyArray<string>,
+  env: NodeJS.ProcessEnv,
+): Effect.fn.Return<Option.Option<string>, never, FileSystem.FileSystem | Path.Path> {
+  const installs: Array<{ readonly command: string; readonly path: string }> = [];
+  for (const command of commands) {
+    for (const resolvedPath of yield* resolveCommandPaths(command, { env })) {
+      installs.push({ command, path: resolvedPath });
+    }
+  }
+  const first = installs[0];
+  if (!first) return Option.none();
+  const preferred = installs.find((install) => !isPrereleaseZedPath(install.path)) ?? first;
+  return Option.some(preferred === first ? first.command : preferred.path);
 });
 
 function encodeUtf16LeBase64(input: string): string {
@@ -540,7 +578,9 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
 
   if (editorDef.commands) {
     const command = Option.getOrElse(
-      yield* resolveAvailableCommand(editorDef.commands, env),
+      editorDef.id === "zed"
+        ? yield* resolveZedCommand(editorDef.commands, env)
+        : yield* resolveAvailableCommand(editorDef.commands, env),
       () => editorDef.commands[0],
     );
     return {

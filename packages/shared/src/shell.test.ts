@@ -20,6 +20,7 @@ import {
   readPathFromLaunchctl,
   readPathFromLoginShell,
   resolveCommandPath,
+  resolveCommandPaths,
   resolveKnownWindowsCliDirs,
   resolveSpawnCommand,
   resolveWindowsEnvironment,
@@ -343,6 +344,43 @@ effectIt.layer(NodeServices.layer)("isCommandAvailable", (it) => {
         }).pipe(Effect.provideService(HostProcessPlatform, "win32")),
       ).toBe(false);
     }),
+  );
+});
+
+effectIt.layer(NodeServices.layer)("resolveCommandPaths", (it) => {
+  it.effect("lists every PATH match in order and yields nothing for an empty PATH", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-command-paths-" });
+      const firstDir = path.join(root, "first");
+      const secondDir = path.join(root, "second");
+      const emptyDir = path.join(root, "empty");
+      yield* fileSystem.makeDirectory(firstDir, { recursive: true });
+      yield* fileSystem.makeDirectory(secondDir, { recursive: true });
+      yield* fileSystem.makeDirectory(emptyDir, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(firstDir, "zed.CMD"), "@echo off\r\n");
+      yield* fileSystem.writeFileString(path.join(secondDir, "zed.EXE"), "");
+      const env = {
+        PATH: [firstDir, emptyDir, secondDir].join(";"),
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      };
+
+      const resolved = yield* resolveCommandPaths("zed", { env }).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+      expect(resolved).toEqual([path.join(firstDir, "zed.CMD"), path.join(secondDir, "zed.EXE")]);
+
+      const explicit = yield* resolveCommandPaths(path.join(secondDir, "zed.EXE"), { env }).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+      expect(explicit).toEqual([path.join(secondDir, "zed.EXE")]);
+
+      const none = yield* resolveCommandPaths("zed", { env: { PATH: "" } }).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+      expect(none).toEqual([]);
+    }).pipe(Effect.scoped),
   );
 });
 
