@@ -25,6 +25,9 @@
     "typecheck": "vp run -r --concurrency-limit 2 typecheck",
     "tc": "vp run -r --concurrency-limit 2 typecheck",
     "lint": "vp lint --report-unused-disable-directives",
+    "knip": "knip",
+    "knip:check": "knip --include files,dependencies --no-config-hints && knip --workspace packages/tailscale --workspace packages/effect-codex-app-server --workspace packages/ssh --exports --no-config-hints",
+    "knip:production": "knip --production",
     "lint:mobile": "node scripts/mobile-native-static-check.ts",
     "test": "vp run -r test",
     "test:resource-monitor": "cargo test --locked --manifest-path native/resource-monitor/Cargo.toml",
@@ -44,11 +47,10 @@
     "sync:repos": "node scripts/sync-reference-repos.ts"
   },
   "devDependencies": {
-    "@babel/plugin-transform-react-jsx": "7.28.6",
     "@effect/tsgo": "catalog:",
-    "@oxlint/plugins": "^1.63.0",
     "@types/node": "catalog:",
     "@typescript/native-preview": "catalog:",
+    "knip": "6.34.0",
     "vite-plus": "catalog:"
   },
   "engines": {

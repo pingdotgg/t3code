@@ -238,10 +238,6 @@ export function decodePersistedComposerState(value: unknown): {
   };
 }
 
-export function decodePersistedComposerDrafts(value: unknown): Record<string, ComposerDraft> {
-  return decodePersistedComposerState(value).drafts;
-}
-
 async function getComposerDraftsFile() {
   const { Directory, File, Paths } = await import("expo-file-system");
   const directory = new Directory(Paths.document, COMPOSER_DRAFTS_DIRECTORY);
