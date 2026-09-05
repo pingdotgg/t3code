@@ -10,6 +10,14 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
 const state = vi.hoisted(() => ({
   scopes: new Map<string, Set<string>>(),
   threads: [] as {
@@ -254,7 +262,7 @@ describe("thread action permissions", () => {
     "%s rechecks after the confirmation",
     async (action) => {
       state.scopes.get(secondary)!.add(AuthOrchestrationOperateScope);
-      const confirmation = Promise.withResolvers<boolean>();
+      const confirmation = deferred<boolean>();
       state.confirm.mockReturnValue(confirmation.promise);
       const result = useThreadActions()[action](target);
       expect(state.confirm).toHaveBeenCalledOnce();

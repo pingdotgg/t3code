@@ -9,6 +9,14 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
 const state = vi.hoisted(() => ({
   grants: new Map<string, Set<string>>(),
   run: vi.fn(),
@@ -95,7 +103,7 @@ it.each(["close", "reopen"])(
   async (action) => {
     state.grants.set(secondary, new Set([AuthSourceControlWriteScope]));
     const commentReceipt = AsyncResult.success("comment receipt");
-    const posted = Promise.withResolvers<typeof commentReceipt>();
+    const posted = deferred<typeof commentReceipt>();
     state.run.mockReturnValueOnce(posted.promise);
     const mutate = useSourceControlCommand(command);
     const commentThenAction = async () => {
