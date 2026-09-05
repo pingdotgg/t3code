@@ -228,7 +228,15 @@ function ProjectSettingsBreadcrumb({ projectKey }: { projectKey: string }) {
 
   return (
     <WorkspaceBreadcrumb ariaLabel="Project settings breadcrumb">
-      <WorkspaceBreadcrumbItem>Projects</WorkspaceBreadcrumbItem>
+      <WorkspaceBreadcrumbItem>
+        <button
+          type="button"
+          onClick={() => void navigate({ to: "/projects" })}
+          className="rounded-sm transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          Projects
+        </button>
+      </WorkspaceBreadcrumbItem>
       <WorkspaceBreadcrumbSeparator />
       <WorkspaceBreadcrumbItem current>
         {selected ? (
