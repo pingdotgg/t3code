@@ -1273,12 +1273,17 @@ it.layer(
       yield* sql`DELETE FROM projection_thread_messages WHERE thread_id = ${threadId}`;
       yield* sql`DELETE FROM projection_thread_activities WHERE thread_id = ${threadId}`;
       yield* sql`UPDATE projection_state SET last_applied_sequence = 0
-        WHERE projector IN ('projection.thread-messages', 'projection.thread-activities')`;
+        WHERE projector IN ('projection.thread-messages', 'projection.thread-activities', 'projection.threads')`;
       yield* fileSystem.writeFileString(removePath, "remove");
       yield* fileSystem.writeFileString(
         path.join(attachmentsDir, `${answerRemoveId}.txt`),
         "answer",
       );
+      yield* sql`CREATE TRIGGER fail_bootstrap_thread BEFORE UPDATE ON projection_threads
+        BEGIN SELECT RAISE(FAIL, 'forced bootstrap failure'); END`;
+      yield* projectionPipeline.bootstrap.pipe(Effect.flip);
+      assert.isTrue(yield* exists(removePath));
+      yield* sql`DROP TRIGGER fail_bootstrap_thread`;
       yield* projectionPipeline.bootstrap;
       assert.isTrue(yield* exists(keepPath));
       assert.isTrue(yield* exists(laterPath));

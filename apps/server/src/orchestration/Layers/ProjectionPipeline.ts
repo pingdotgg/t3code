@@ -1911,33 +1911,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         ),
     );
 
-    const applyProjectorForEvent = Effect.fn("applyProjectorForEvent")(function* (
-      projector: ProjectorDefinition,
-      event: OrchestrationEvent,
-      attachmentSideEffects: AttachmentSideEffects,
-    ) {
-      yield* projector.apply(event, attachmentSideEffects);
-      yield* projectionStateRepository.upsert({
-        projector: projector.name,
-        lastAppliedSequence: event.sequence,
-        updatedAt: event.occurredAt,
-      });
-    });
-
     const runProjectorForEvent = Effect.fn("runProjectorForEvent")(function* (
       projector: ProjectorDefinition,
       event: OrchestrationEvent,
       pendingPrunes: Map<string, OrchestrationEvent>,
+      pendingCursors: Map<string, OrchestrationEvent>,
     ) {
       const attachmentSideEffects: AttachmentSideEffects = {
         deletedThreadIds: new Set<string>(),
         prunedThreadRelativePaths: new Map<string, Set<string>>(),
       };
 
-      yield* sql.withTransaction(applyProjectorForEvent(projector, event, attachmentSideEffects));
-      for (const threadId of attachmentSideEffects.prunedThreadRelativePaths.keys()) {
-        pendingPrunes.set(threadId, event);
-      }
+      yield* sql.withTransaction(projector.apply(event, attachmentSideEffects));
+      pendingCursors.set(projector.name, event);
+      // A retry can replay an already-applied revert whose rows no longer change.
+      if (event.type === "thread.reverted") pendingPrunes.set(event.payload.threadId, event);
       attachmentSideEffects.prunedThreadRelativePaths.clear();
       yield* applyAttachmentSideEffects(event, attachmentSideEffects);
     });
@@ -1945,6 +1933,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const bootstrapProjector = (
       projector: ProjectorDefinition,
       pendingPrunes: Map<string, OrchestrationEvent>,
+      pendingCursors: Map<string, OrchestrationEvent>,
     ) =>
       projectionStateRepository
         .getByProjector({
@@ -1957,7 +1946,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                 Option.isSome(stateRow) ? stateRow.value.lastAppliedSequence : 0,
                 Number.MAX_SAFE_INTEGER,
               ),
-              (event) => runProjectorForEvent(projector, event, pendingPrunes),
+              (event) => runProjectorForEvent(projector, event, pendingPrunes, pendingCursors),
             ),
           ),
         );
@@ -2007,9 +1996,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
     const bootstrap: OrchestrationProjectionPipelineShape["bootstrap"] = Effect.gen(function* () {
       const pendingPrunes = new Map<string, OrchestrationEvent>();
+      const pendingCursors = new Map<string, OrchestrationEvent>();
       yield* Effect.forEach(
         projectors,
-        (projector) => bootstrapProjector(projector, pendingPrunes),
+        (projector) => bootstrapProjector(projector, pendingPrunes, pendingCursors),
         { concurrency: 1, discard: true },
       );
       // Both message and activity references must finish replaying before files are pruned.
@@ -2019,6 +2009,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           prunedThreadRelativePaths: new Map([[threadId, new Set()]]),
         });
       }
+      // Failed replay or process exit must leave the revert events eligible for replay.
+      yield* projectionStateRepository.upsertMany(
+        Array.from(pendingCursors, ([projector, event]) => ({
+          projector,
+          lastAppliedSequence: event.sequence,
+          updatedAt: event.occurredAt,
+        })),
+      );
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),

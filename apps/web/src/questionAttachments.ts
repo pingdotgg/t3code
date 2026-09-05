@@ -38,7 +38,12 @@ export function changeQuestionAttachmentPreparation(key: DraftId, delta: number)
 export function clearQuestionAttachmentDraft(key: DraftId): void {
   const store = useComposerDraftStore.getState();
   const draft = store.getComposerDraft(key);
-  if (draft) releaseDraftAttachments([...draft.images, ...draft.files]);
+  if (draft) {
+    releaseDraftAttachments([...draft.images, ...draft.files]);
+    for (const image of draft.images) {
+      if (image.previewUrl.startsWith("blob:")) URL.revokeObjectURL(image.previewUrl);
+    }
+  }
   store.clearComposerContent(key);
   useQuestionAttachmentPreparation.setState(({ counts }) => {
     const next = { ...counts };

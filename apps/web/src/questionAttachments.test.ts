@@ -20,6 +20,7 @@ beforeEach(() => {
   release.mockClear();
 });
 it("keeps question files separate from the normal draft and other questions", () => {
+  const revoke = vi.spyOn(URL, "revokeObjectURL");
   const store = useComposerDraftStore.getState();
   const first = questionAttachmentDraftId(environmentId, threadId, requestId, "first");
   const second = questionAttachmentDraftId(environmentId, threadId, requestId, "second");
@@ -53,6 +54,8 @@ it("keeps question files separate from the normal draft and other questions", ()
   expect(store.getComposerDraft({ environmentId, threadId })?.prompt).toBe("Unsent prompt");
   expect(useQuestionAttachmentPreparation.getState().counts[first]).toBeUndefined();
   expect(release).toHaveBeenCalledWith([image]);
+  expect(revoke).toHaveBeenCalledWith(image.previewUrl);
+  revoke.mockRestore();
 });
 it("scopes provider request ids to their environment and thread", () => {
   const keys = [
