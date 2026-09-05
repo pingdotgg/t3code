@@ -184,6 +184,8 @@ interface GrokSessionContext {
   readonly backgroundTasks: Map<string, GrokBackgroundTaskRecord>;
   /** `x.ai/tool` stamps keyed by ACP toolCallId. Completed updates drop `_meta`. */
   readonly xaiToolMetaByToolCallId: Map<string, XAiToolMeta>;
+  /** Turn that started each background task; later events attach to it only while it is still active. */
+  readonly backgroundTaskTurnIds: Map<string, TurnId>;
 }
 
 function settlePendingApprovalsAsCancelled(
@@ -1317,6 +1319,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             stopped: false,
             backgroundTasks: new Map(),
             xaiToolMetaByToolCallId: new Map(),
+            backgroundTaskTurnIds: new Map(),
           };
 
           const nf = yield* Stream.runDrain(
@@ -1366,16 +1369,35 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       toolCallId: event.toolCall.toolCallId,
                       rawInput: event.toolCall.data.rawInput,
                       rawOutput: event.toolCall.data.rawOutput,
+                      toolCallStatus: event.toolCall.status,
                     });
                     for (const backgroundEvent of backgroundEvents) {
                       const taskStamp = yield* makeEventStamp();
+                      const rawTaskId = backgroundEvent.payload.taskId;
+                      if (
+                        backgroundEvent.type === "task.started" &&
+                        notificationTurnId !== undefined
+                      ) {
+                        ctx.backgroundTaskTurnIds.set(rawTaskId, notificationTurnId);
+                      }
+                      // Attribute to the originating turn only while that turn
+                      // is still the active one; a task that outlives its turn
+                      // must not be billed to whatever turn runs next.
+                      const originTurnId = ctx.backgroundTaskTurnIds.get(rawTaskId);
+                      const taskTurnId =
+                        originTurnId !== undefined && originTurnId === notificationTurnId
+                          ? originTurnId
+                          : undefined;
+                      if (backgroundEvent.type === "task.completed") {
+                        ctx.backgroundTaskTurnIds.delete(rawTaskId);
+                      }
                       const taskBase = {
                         ...taskStamp,
                         provider: PROVIDER,
                         threadId: ctx.threadId,
-                        ...(notificationTurnId !== undefined ? { turnId: notificationTurnId } : {}),
+                        ...(taskTurnId !== undefined ? { turnId: taskTurnId } : {}),
                       };
-                      const taskId = RuntimeTaskId.make(backgroundEvent.payload.taskId);
+                      const taskId = RuntimeTaskId.make(rawTaskId);
                       switch (backgroundEvent.type) {
                         case "task.started":
                           yield* offerRuntimeEvent({

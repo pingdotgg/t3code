@@ -254,6 +254,22 @@ describe("XAiBackgroundTasks", () => {
     }
   });
 
+  it("ignores a failed kill call and keeps the task live", () => {
+    const tasks = new Map([
+      ["shell-1", { taskType: "shell", description: "sleep 40", toolUseId: "call-1" }],
+    ]);
+    const events = buildGrokBackgroundTaskEvents({
+      tasks,
+      toolMeta: { name: "kill_command_or_subagent", kind: "kill_task_action" },
+      toolCallId: "call-kill-failed",
+      rawInput: { task_ids: ["shell-1"] },
+      rawOutput: { error: "no such task" },
+      toolCallStatus: "failed",
+    });
+    expect(events).toEqual([]);
+    expect(tasks.has("shell-1")).toBe(true);
+  });
+
   it("evicts the task map on kill completions", () => {
     const tasks = new Map();
     tasks.set("shell-1", { taskType: "shell", description: "sleep 40" });
@@ -263,6 +279,7 @@ describe("XAiBackgroundTasks", () => {
       toolCallId: "call-kill",
       rawInput: { task_ids: ["shell-1"] },
       rawOutput: {},
+      toolCallStatus: "completed",
     });
     expect(events).toEqual([
       {

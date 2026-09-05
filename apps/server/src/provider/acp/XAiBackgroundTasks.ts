@@ -428,8 +428,10 @@ export function buildGrokBackgroundTaskEvents(input: {
   readonly toolCallId: string;
   readonly rawInput: unknown;
   readonly rawOutput: unknown;
+  /** ACP tool-call status. A failed kill call must not retire the task. */
+  readonly toolCallStatus?: "pending" | "inProgress" | "completed" | "failed" | undefined;
 }): ReadonlyArray<GrokBackgroundTaskRuntimeEvent> {
-  const { tasks, toolMeta, toolCallId, rawInput, rawOutput } = input;
+  const { tasks, toolMeta, toolCallId, rawInput, rawOutput, toolCallStatus } = input;
 
   const backgroundStarted = parseBackgroundTaskStarted(rawOutput);
   if (backgroundStarted) {
@@ -519,6 +521,9 @@ export function buildGrokBackgroundTaskEvents(input: {
         return events;
       });
     case "kill_command_or_subagent":
+      if (toolCallStatus !== "completed") {
+        return [];
+      }
       return parseKillTaskIds(rawInput).map((taskId) =>
         evictCompletedTask(tasks, taskId, undefined, "stopped", undefined),
       );
