@@ -303,7 +303,11 @@ import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { resolveComposerTimelineInset } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
-import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
+import {
+  PanelLayoutControls,
+  RightPanelMaximizeControl,
+  TerminalDrawerToggle,
+} from "./chat/PanelLayoutControls";
 import { expandedImageKey, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
@@ -824,6 +828,8 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef),
   );
   const visible = active && terminalUiState.terminalOpen;
+  const { active: animateDrawer, durationMs: drawerAnimationDurationMs } =
+    usePanelAnimationSettings(200);
   const knownTerminalSessions = useKnownTerminalSessions({
     environmentId: threadRef.environmentId,
     threadId,
@@ -1117,10 +1123,11 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       className={cn(
         "grid shrink-0 overflow-clip",
         active ? (visible ? "grid-rows-[1fr]" : "grid-rows-[0fr]") : "hidden",
-        active &&
-          "[[data-panel-animations=true]_&]:transition-[grid-template-rows] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
-        active && visible && "[[data-panel-animations=true]_&]:starting:grid-rows-[0fr]!",
+        active && animateDrawer && "transition-[grid-template-rows] ease-out",
+        active && animateDrawer && visible && "starting:grid-rows-[0fr]!",
       )}
+      style={{ transitionDuration: animateDrawer ? `${drawerAnimationDurationMs}ms` : undefined }}
+      inert={!visible}
     >
       <div className="min-h-0 overflow-clip">
         <ThreadTerminalDrawer
@@ -7514,6 +7521,7 @@ export default function ChatView(props: ChatViewProps) {
 
   const panelToggleControls = (
     <PanelLayoutControls
+      showTerminalControl={false}
       terminalAvailable={activeProject !== null}
       terminalOpen={terminalUiState.terminalOpen}
       terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
@@ -7704,7 +7712,7 @@ export default function ChatView(props: ChatViewProps) {
   });
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background pb-[calc(env(safe-area-inset-bottom)+2.5rem)]">
       {rightPanelControlsAtRoot ? panelLayoutControls : null}
       <div
         className={cn(
@@ -8253,6 +8261,17 @@ export default function ChatView(props: ChatViewProps) {
           onClose={closeExpandedImage}
         />
       )}
+      <div
+        className="absolute inset-x-0 bottom-0 flex h-[calc(env(safe-area-inset-bottom)+2.5rem)] items-center justify-end border-t border-border/60 bg-background pr-[calc(env(safe-area-inset-right)+0.75rem)] pb-[env(safe-area-inset-bottom)]"
+        data-terminal-drawer-controls
+      >
+        <TerminalDrawerToggle
+          terminalAvailable={activeProject !== null}
+          terminalOpen={terminalUiState.terminalOpen}
+          terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
+          onToggleTerminal={toggleTerminalVisibility}
+        />
+      </div>
     </div>
   );
 }
