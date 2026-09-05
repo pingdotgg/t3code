@@ -561,6 +561,9 @@ export function projectEvent(
             id: payload.messageId,
             role: payload.role,
             text: payload.text,
+            ...(payload.composerRecall !== undefined
+              ? { composerRecall: payload.composerRecall }
+              : {}),
             ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
             turnId: payload.turnId,
             streaming: payload.streaming,
@@ -583,6 +586,12 @@ export function projectEvent(
                         ? message.text
                         : entry.text,
                     streaming: message.streaming,
+                    composerRecall:
+                      message.composerRecall ??
+                      (message.text.length === 0 ||
+                      (!message.streaming && message.text === entry.text)
+                        ? entry.composerRecall
+                        : undefined),
                     updatedAt: message.updatedAt,
                     turnId: message.turnId,
                     ...(message.attachments !== undefined

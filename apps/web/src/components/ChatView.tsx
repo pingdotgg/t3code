@@ -1,7 +1,9 @@
+import { offsetComposerRecall } from "@t3tools/shared/composerRecall";
 import {
   type AssistantCitation,
   type ApprovalRequestId,
   type ChatFileAttachment,
+  type ComposerRecall,
   DEFAULT_MODEL,
   type EnvironmentId,
   type MessageId,
@@ -253,7 +255,8 @@ import {
   type DraftId,
 } from "../composerDraftStore";
 import {
-  appendTerminalContextsToPrompt,
+  composeTerminalContextPrompt,
+  createDraftComposerRecall,
   formatTerminalContextLabel,
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -6325,6 +6328,8 @@ export default function ChatView(props: ChatViewProps) {
       composerRef.current?.resetCursorState();
       await onSubmitPlanFollowUp({
         text: followUp.text,
+        composerRecall:
+          trimmed.length > 0 ? createDraftComposerRecall(promptForSend) : { ranges: [] },
         interactionMode: followUp.interactionMode,
       });
       return;
@@ -6396,8 +6401,12 @@ export default function ChatView(props: ChatViewProps) {
     const composerElementContextsSnapshot = [...composerElementContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
+    const terminalPrompt = composeTerminalContextPrompt(
+      promptForSend,
+      composerTerminalContextsSnapshot,
+    );
     const messageTextWithContexts = appendElementContextsToPrompt(
-      appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
+      terminalPrompt.text,
       composerElementContextsSnapshot,
     );
     const messageTextWithPreviewAnnotations = composerPreviewAnnotationsSnapshot.reduce(
@@ -6415,6 +6424,15 @@ export default function ChatView(props: ChatViewProps) {
       effort: ctxSelectedPromptEffort,
       text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
     });
+    const outgoingComposerRecall =
+      appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+        .composerRecall === true
+        ? offsetComposerRecall(
+            terminalPrompt.composerRecall,
+            outgoingMessageText.length -
+              (messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT).trim().length,
+          )
+        : undefined;
     if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
       return;
     }
@@ -6574,6 +6592,7 @@ export default function ChatView(props: ChatViewProps) {
         id: messageIdForSend,
         role: "user",
         text: outgoingMessageText,
+        ...(outgoingComposerRecall !== undefined ? { composerRecall: outgoingComposerRecall } : {}),
         ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
         turnId: null,
         createdAt: messageCreatedAt,
@@ -6717,6 +6736,9 @@ export default function ChatView(props: ChatViewProps) {
             messageId: messageIdForSend,
             role: "user",
             text: outgoingMessageText,
+            ...(outgoingComposerRecall !== undefined
+              ? { composerRecall: outgoingComposerRecall }
+              : {}),
             attachments: turnAttachmentsResult.value,
           },
           modelSelection: ctxSelectedModelSelection,
@@ -7042,9 +7064,11 @@ export default function ChatView(props: ChatViewProps) {
   const onSubmitPlanFollowUp = useCallback(
     async ({
       text,
+      composerRecall,
       interactionMode: nextInteractionMode,
     }: {
       text: string;
+      composerRecall: ComposerRecall;
       interactionMode: "default" | "plan";
     }) => {
       if (
@@ -7084,6 +7108,11 @@ export default function ChatView(props: ChatViewProps) {
         effort: ctxSelectedPromptEffort,
         text: trimmed,
       });
+      const outgoingComposerRecall =
+        appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
+          .capabilities.composerRecall === true
+          ? offsetComposerRecall(composerRecall, outgoingMessageText.length - trimmed.length)
+          : undefined;
 
       sendInFlightRef.current = true;
       beginLocalDispatch({ preparingWorktree: false });
@@ -7097,6 +7126,9 @@ export default function ChatView(props: ChatViewProps) {
           id: messageIdForSend,
           role: "user",
           text: outgoingMessageText,
+          ...(outgoingComposerRecall !== undefined
+            ? { composerRecall: outgoingComposerRecall }
+            : {}),
           turnId: null,
           createdAt: messageCreatedAt,
           updatedAt: messageCreatedAt,
@@ -7133,6 +7165,9 @@ export default function ChatView(props: ChatViewProps) {
               messageId: messageIdForSend,
               role: "user",
               text: outgoingMessageText,
+              ...(outgoingComposerRecall !== undefined
+                ? { composerRecall: outgoingComposerRecall }
+                : {}),
               attachments: [],
             },
             modelSelection: ctxSelectedModelSelection,
@@ -7269,6 +7304,10 @@ export default function ChatView(props: ChatViewProps) {
             messageId: newMessageId(),
             role: "user",
             text: outgoingImplementationPrompt,
+            ...(appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
+              .capabilities.composerRecall === true
+              ? { composerRecall: { ranges: [] } }
+              : {}),
             attachments: [],
           },
           modelSelection: ctxSelectedModelSelection,

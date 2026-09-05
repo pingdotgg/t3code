@@ -13,6 +13,7 @@ import {
 import type { OrchestrationThread } from "@t3tools/contracts";
 
 import { applyThreadDetailEvent } from "./threadReducer.ts";
+import { recallComposerText } from "@t3tools/shared/composerRecall";
 
 const baseEventFields = {
   eventId: EventId.make("event-1"),
@@ -46,6 +47,94 @@ const baseThread: OrchestrationThread = {
 };
 
 describe("applyThreadDetailEvent", () => {
+  it("preserves recall on acknowledgement but invalidates it when message text is replaced", () => {
+    const text = "Ultrathink:\nKeep this prefix";
+    const composerRecall = { ranges: [[12, text.length]] } as const;
+    const message = {
+      id: MessageId.make("recall"),
+      role: "user" as const,
+      text,
+      composerRecall,
+      turnId: null,
+      streaming: false,
+      createdAt: baseThread.createdAt,
+      updatedAt: baseThread.updatedAt,
+    };
+    const event = {
+      ...baseEventFields,
+      sequence: 1,
+      occurredAt: baseThread.updatedAt,
+      aggregateKind: "thread" as const,
+      aggregateId: baseThread.id,
+      type: "thread.message-sent" as const,
+      payload: {
+        threadId: baseThread.id,
+        messageId: message.id,
+        role: message.role,
+        text,
+        turnId: null,
+        streaming: false,
+        createdAt: message.createdAt,
+        updatedAt: message.updatedAt,
+      },
+    };
+    const ack = applyThreadDetailEvent({ ...baseThread, messages: [message] }, event);
+    if (ack.kind !== "updated") throw new Error("Expected acknowledgement");
+    expect(ack.thread.messages).toHaveLength(1);
+    expect(recallComposerText(ack.thread.messages[0]!)).toBe("Keep this prefix");
+    const replacement = applyThreadDetailEvent(ack.thread, {
+      ...event,
+      payload: { ...event.payload, text: "An unrelated longer replacement" },
+    });
+    if (replacement.kind !== "updated") throw new Error("Expected replacement");
+    expect(replacement.thread.messages[0]?.composerRecall).toBeUndefined();
+    expect(recallComposerText(replacement.thread.messages[0]!)).toBe(
+      "An unrelated longer replacement",
+    );
+    const streamed = applyThreadDetailEvent(ack.thread, {
+      ...event,
+      payload: { ...event.payload, text: "extra", streaming: true },
+    });
+    if (streamed.kind !== "updated") throw new Error("Expected append");
+    expect(streamed.thread.messages[0]?.composerRecall).toBeUndefined();
+    const empty = applyThreadDetailEvent(ack.thread, {
+      ...event,
+      payload: { ...event.payload, text: "" },
+    });
+    if (empty.kind !== "updated") throw new Error("Expected empty completion");
+    expect(empty.thread.messages[0]?.composerRecall).toEqual(composerRecall);
+  });
+
+  it("retains distinct literal and generated recall from live events", () => {
+    const text = "Ultrathink:\nKeep this prefix";
+    for (const [ranges, expected] of [
+      [[[0, text.length]], text],
+      [[[12, text.length]], "Keep this prefix"],
+      [[], ""],
+    ] as const) {
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 1,
+        occurredAt: baseThread.updatedAt,
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.message-sent",
+        payload: {
+          threadId: baseThread.id,
+          messageId: MessageId.make("recall"),
+          role: "user",
+          text,
+          composerRecall: { ranges },
+          turnId: null,
+          streaming: false,
+          createdAt: baseThread.createdAt,
+          updatedAt: baseThread.updatedAt,
+        },
+      });
+      if (result.kind !== "updated") throw new Error("Expected message");
+      expect(recallComposerText(result.thread.messages[0]!)).toBe(expected);
+    }
+  });
   describe("project events", () => {
     it("returns unchanged for project.created", () => {
       const result = applyThreadDetailEvent(baseThread, {

@@ -229,6 +229,54 @@ it.effect("rejects command fields that become empty after trim", () =>
   }),
 );
 
+it.effect("preserves optional composer provenance across client and internal command codecs", () =>
+  Effect.gen(function* () {
+    for (const composerRecall of [
+      undefined,
+      { ranges: [] },
+      { ranges: [[0, 5]], leadingWhitespace: " \n" },
+    ]) {
+      const command = {
+        type: "thread.turn.start",
+        commandId: "recall-command",
+        threadId: "recall-thread",
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        message: {
+          messageId: "recall-message",
+          role: "user",
+          text: "hello",
+          attachments: [],
+          ...(composerRecall === undefined ? {} : { composerRecall }),
+        },
+        createdAt: "2026-09-05T00:00:00Z",
+      };
+      const client = yield* decodeClientOrchestrationCommand(JSON.parse(JSON.stringify(command)));
+      assert.strictEqual(client.type, "thread.turn.start");
+      if (client.type !== "thread.turn.start") return;
+      const persisted = yield* decodeThreadTurnStartCommand(client);
+      assert.strictEqual(persisted.message.text, "hello");
+      assert.deepEqual(persisted.message.composerRecall, composerRecall);
+    }
+    const invalid = yield* Effect.exit(
+      decodeThreadTurnStartCommand({
+        type: "thread.turn.start",
+        commandId: "invalid",
+        threadId: "recall-thread",
+        message: {
+          messageId: "invalid",
+          role: "user",
+          text: "hello",
+          attachments: [],
+          composerRecall: { ranges: [[-1, 5]] },
+        },
+        createdAt: "2026-09-05T00:00:00Z",
+      }),
+    );
+    assert.strictEqual(invalid._tag, "Failure");
+  }),
+);
+
 it.effect("decodes thread.turn.start defaults for provider and runtime mode", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({

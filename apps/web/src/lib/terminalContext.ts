@@ -1,4 +1,5 @@
 import { type ThreadId } from "@t3tools/contracts";
+import { createComposerRecall } from "@t3tools/shared/composerRecall";
 
 import { extractTrailingElementContexts, type ParsedElementContextEntry } from "./elementContext";
 
@@ -177,12 +178,49 @@ export function appendTerminalContextsToPrompt(
   prompt: string,
   contexts: ReadonlyArray<TerminalContextSelection>,
 ): string {
-  const trimmedPrompt = materializeInlineTerminalContextPrompt(prompt, contexts).trim();
-  const contextBlock = buildTerminalContextBlock(contexts);
-  if (contextBlock.length === 0) {
-    return trimmedPrompt;
+  return composeTerminalContextPrompt(prompt, contexts).text;
+}
+
+/** Plan follow-ups keep placeholders in provider text but do not recall the chip nodes. */
+export function createDraftComposerRecall(prompt: string) {
+  let offset = 0;
+  const ranges: Array<[number, number]> = [];
+  for (const part of prompt.split(INLINE_TERMINAL_CONTEXT_PLACEHOLDER)) {
+    if (part.length > 0) ranges.push([offset, offset + part.length]);
+    offset += part.length + INLINE_TERMINAL_CONTEXT_PLACEHOLDER.length;
   }
-  return trimmedPrompt.length > 0 ? `${trimmedPrompt}\n\n${contextBlock}` : contextBlock;
+  return createComposerRecall(prompt, ranges);
+}
+
+/** Keep origin while expanding chips; a typed identical label remains authored text. */
+export function composeTerminalContextPrompt(
+  prompt: string,
+  contexts: ReadonlyArray<TerminalContextSelection>,
+) {
+  const parts = prompt.split(INLINE_TERMINAL_CONTEXT_PLACEHOLDER);
+  const ranges: Array<[number, number]> = [];
+  let materialized = "";
+  for (const [index, part] of parts.entries()) {
+    const start = materialized.length;
+    materialized += part;
+    if (part.length > 0) ranges.push([start, materialized.length]);
+    const context = contexts[index];
+    if (index < parts.length - 1 && context) {
+      materialized += formatInlineTerminalContextLabel(context);
+    }
+  }
+  const composerRecall = createComposerRecall(materialized, ranges);
+  const trimmedPrompt = materialized.trim();
+  const contextBlock = buildTerminalContextBlock(contexts);
+  return {
+    text:
+      contextBlock.length === 0
+        ? trimmedPrompt
+        : trimmedPrompt.length > 0
+          ? `${trimmedPrompt}\n\n${contextBlock}`
+          : contextBlock,
+    composerRecall,
+  };
 }
 
 export function extractTrailingTerminalContexts(prompt: string): ExtractedTerminalContexts {

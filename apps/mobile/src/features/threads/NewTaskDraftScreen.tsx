@@ -987,7 +987,7 @@ export function NewTaskDraftScreen(props: {
       startFromOrigin,
       runtimeMode,
       interactionMode,
-      initialMessageText,
+      initialMessageText: draft.text,
       initialAttachments: draft.attachments,
       onAttachmentsUploaded: async (attachments) => {
         flow.replaceAttachments(attachments);

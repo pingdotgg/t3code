@@ -2,6 +2,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 
 import {
   ApprovalRequestId,
@@ -53,6 +54,7 @@ import {
 } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
+import { createEmptyReadModel, projectEvent } from "../projector.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
@@ -93,6 +95,8 @@ async function createOrchestrationSystem(databasePath?: string) {
     readModel: () => runtime.runPromise(snapshotQuery.getSnapshot()),
     readThread: (threadId: ThreadId) =>
       runtime.runPromise(snapshotQuery.getThreadDetailById(threadId)),
+    readWindow: (threadId: ThreadId) =>
+      runtime.runPromise(snapshotQuery.getThreadDetailSnapshot(threadId, { turnLimit: 10 })),
     run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
     dispose: () => runtime.dispose(),
   };
@@ -114,6 +118,141 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  it("persists composer recall through committed events, SQLite, window reads and restart", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-composer-recall-"));
+    const databasePath = NodePath.join(directory, "state.sqlite");
+    let system = await createOrchestrationSystem(databasePath);
+    const projectId = ProjectId.make("recall-project");
+    const text = "Ultrathink:\nKeep this prefix in my example";
+    const cases = [
+      { id: "literal", composerRecall: { ranges: [[0, text.length]] } },
+      { id: "generated", composerRecall: { ranges: [[12, text.length]] } },
+      { id: "none", composerRecall: { ranges: [] } },
+      { id: "legacy" },
+      { id: "invalid", composerRecall: { ranges: [[0, text.length + 1]] } },
+      { id: "large", text: "x".repeat(50_000), composerRecall: { ranges: [[0, 50_000]] } },
+    ] as const;
+    try {
+      await system.run(
+        system.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("recall-project"),
+          projectId,
+          title: "Recall",
+          workspaceRoot: directory,
+          createdAt: now(),
+        }),
+      );
+      for (const entry of cases) {
+        const messageText = "text" in entry ? entry.text : text;
+        const threadId = ThreadId.make(`recall-${entry.id}`);
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`create-${entry.id}`),
+            threadId,
+            projectId,
+            title: entry.id,
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now(),
+          }),
+        );
+        const message = {
+          messageId: MessageId.make(entry.id),
+          role: "user" as const,
+          text: messageText,
+          attachments: [],
+          ...("composerRecall" in entry ? { composerRecall: entry.composerRecall } : {}),
+        };
+        const receipt = await system.run(
+          system.engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make(`send-${entry.id}`),
+            threadId,
+            message,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: now(),
+          }),
+        );
+        const events = await system.run(
+          Stream.runCollect(system.engine.readEvents(receipt.sequence - 2)),
+        );
+        const sent = events.find((event) => event.type === "thread.message-sent");
+        expect(sent?.payload.text).toBe(messageText);
+        expect(sent?.payload.composerRecall).toEqual(
+          entry.id !== "invalid" && "composerRecall" in entry ? entry.composerRecall : undefined,
+        );
+      }
+      const assertSnapshot = async () => {
+        const snapshot = await system.readModel();
+        for (const entry of cases) {
+          const threadId = ThreadId.make(`recall-${entry.id}`);
+          const expected =
+            entry.id !== "invalid" && "composerRecall" in entry ? entry.composerRecall : undefined;
+          const snapshotMessage = snapshot.threads.find((thread) => thread.id === threadId)
+            ?.messages[0];
+          expect(snapshotMessage?.text).toBe("text" in entry ? entry.text : text);
+          expect(snapshotMessage).toHaveProperty("id", entry.id);
+          expect(snapshotMessage?.composerRecall).toEqual(expected);
+          const detail = Option.getOrThrow(await system.readThread(threadId));
+          expect(detail.messages[0]?.composerRecall).toEqual(expected);
+          const window = Option.getOrThrow(await system.readWindow(threadId));
+          expect(window.thread.messages[0]?.composerRecall).toEqual(expected);
+        }
+      };
+      await assertSnapshot();
+      const db = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
+      try {
+        const rows = db
+          .prepare(
+            "SELECT message_id, text, composer_recall_json FROM projection_thread_messages ORDER BY message_id",
+          )
+          .all();
+        expect(rows.map((row) => [row.message_id, row.text, row.composer_recall_json])).toEqual([
+          ["generated", text, JSON.stringify({ ranges: [[12, text.length]] })],
+          ["invalid", text, null],
+          ["large", "x".repeat(50_000), JSON.stringify({ ranges: [[0, 50_000]] })],
+          ["legacy", text, null],
+          ["literal", text, JSON.stringify({ ranges: [[0, text.length]] })],
+          ["none", text, JSON.stringify({ ranges: [] })],
+        ]);
+        const large = rows.find((row) => row.message_id === "large")!;
+        expect(Buffer.byteLength(String(large.composer_recall_json))).toBe(22);
+        expect(
+          Buffer.byteLength(
+            JSON.stringify({
+              text: large.text,
+              composerRecall: JSON.parse(String(large.composer_recall_json)),
+            }),
+          ) - Buffer.byteLength(JSON.stringify({ text: large.text })),
+        ).toBe(40);
+      } finally {
+        db.close();
+      }
+      const events = await system.run(Stream.runCollect(system.engine.readEvents(0)));
+      let replay = createEmptyReadModel(now());
+      for (const event of events) replay = await Effect.runPromise(projectEvent(replay, event));
+      for (const entry of cases) {
+        expect(
+          replay.threads.find((thread) => thread.id === `recall-${entry.id}`)?.messages[0]
+            ?.composerRecall,
+        ).toEqual(
+          entry.id !== "invalid" && "composerRecall" in entry ? entry.composerRecall : undefined,
+        );
+      }
+      await system.dispose();
+      system = await createOrchestrationSystem(databasePath);
+      await assertSnapshot();
+    } finally {
+      await system.dispose();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
   it.each(["running", "stopped"] as const)(
     "sends async answers with a %s session and rejects old duplicate replies",
     async (status) => {

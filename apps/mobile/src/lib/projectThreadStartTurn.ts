@@ -3,6 +3,7 @@ import {
   MessageId,
   ThreadId,
   type ModelSelection,
+  type ComposerRecall,
   type ProjectId,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -29,6 +30,7 @@ export interface ProjectThreadStartTurnSpec {
   readonly messageId: string;
   readonly createdAt: string;
   readonly text: string;
+  readonly composerRecall?: ComposerRecall;
   /** Wire attachments from `prepareTurnAttachments`, in composer order. */
   readonly uploadedAttachments: ReadonlyArray<UploadedMobileAttachment>;
   readonly modelSelection: ModelSelection;
@@ -57,6 +59,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
       messageId: MessageId.make(spec.messageId),
       role: "user" as const,
       text: spec.text,
+      ...(spec.composerRecall !== undefined ? { composerRecall: spec.composerRecall } : {}),
       attachments: spec.uploadedAttachments,
     },
     modelSelection: spec.modelSelection,

@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/unstable/reactivity";
 import { onTestFinished, vi } from "vite-plus/test";
+import { createComposerRecall, recallComposerText } from "@t3tools/shared/composerRecall";
 
 const outboxFiles = vi.hoisted(() => new Map<string, string | Error>());
 
@@ -107,6 +108,75 @@ function queuedMessage(input: {
 }
 
 describe("thread outbox", () => {
+  it("preserves recall through durable queue restart, attachment rewrite and edit", async () => {
+    onTestFinished(() => outboxFiles.clear());
+    const registry = AtomRegistry.make();
+    onTestFinished(() => registry.dispose());
+    const manager = createThreadOutboxManager({ registry, storage: expoThreadOutboxStorage });
+    const raw = "  Ultrathink:\nKeep this literal 😀\n";
+    const message = {
+      ...queuedMessage({ messageId: "recall", createdAt: "2026-09-05T00:00:00Z" }),
+      text: raw.trim(),
+      composerRecall: createComposerRecall(raw),
+    };
+    await manager.enqueue(message);
+    expect(JSON.parse(String(outboxFiles.get("recall.json"))).schemaVersion).toBe(3);
+    const restartedRegistry = AtomRegistry.make();
+    onTestFinished(() => restartedRegistry.dispose());
+    const restarted = createThreadOutboxManager({
+      registry: restartedRegistry,
+      storage: expoThreadOutboxStorage,
+    });
+    await restarted.load();
+    const restored = Object.values(
+      restartedRegistry.get(restarted.queuedMessagesByThreadKeyAtom),
+    ).flat()[0]!;
+    expect(restored.composerRecall).toEqual(message.composerRecall);
+    expect(recallComposerText(restored)).toBe(raw);
+    const revision = restarted.revisionOf(restored.messageId);
+    const uploaded = {
+      ...restored,
+      attachments: [
+        {
+          id: "image",
+          type: "image" as const,
+          name: "photo.png",
+          mimeType: "image/png",
+          sizeBytes: 3,
+          fileUri: "file:///documents/photo.png",
+          previewUri: "file:///documents/photo.png",
+          uploadedAttachmentId: "pending-photo",
+          uploadEnvironmentId: message.environmentId,
+        },
+      ],
+    };
+    expect(await restarted.update(uploaded, revision)).toBe(true);
+    const uploadedRecord = (await expoThreadOutboxStorage.load()).messages[0]!;
+    expect(uploadedRecord.attachments).toEqual(uploaded.attachments);
+    expect(recallComposerText(uploadedRecord)).toBe(raw);
+    const editedRaw = "\tA different edited literal\n";
+    const edited = {
+      ...restored,
+      text: editedRaw.trim(),
+      composerRecall: createComposerRecall(editedRaw),
+    };
+    expect(await restarted.update(edited, restarted.revisionOf(restored.messageId))).toBe(true);
+    expect(await restarted.update(restored, revision)).toBe(false);
+    const persisted = (await expoThreadOutboxStorage.load()).messages[0]!;
+    expect(recallComposerText(persisted)).toBe(editedRaw);
+    const legacy = decodeQueuedThreadMessage({
+      ...(encodeQueuedThreadMessage(
+        queuedMessage({
+          messageId: "legacy",
+          createdAt: "2026-09-05T00:00:00Z",
+        }),
+      ) as object),
+      text: raw,
+      schemaVersion: 3,
+    });
+    expect(legacy.composerRecall).toBeUndefined();
+    expect(recallComposerText(legacy)).toBe(raw);
+  });
   it.each(["read", "json", "schema"] as const)(
     "recovers usable messages without permitting cleanup after a record %s failure",
     async (failure) => {

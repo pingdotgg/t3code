@@ -12,6 +12,42 @@ const layer = it.layer(
 );
 
 layer("ProjectionThreadMessageRepository", (it) => {
+  it.effect("keeps recall for empty updates and discards it when text changes", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const message = {
+        messageId: MessageId.make("recall-update"),
+        threadId: ThreadId.make("recall-thread"),
+        turnId: null,
+        role: "user" as const,
+        text: "literal",
+        isStreaming: false,
+        createdAt: "2026-09-05T00:00:00Z",
+        updatedAt: "2026-09-05T00:00:00Z",
+        composerRecall: { ranges: [[0, 7]] } as const,
+      };
+      yield* repository.upsert(message);
+      yield* repository.appendStreaming({ ...message, text: "" });
+      assert.deepEqual(
+        (yield* repository.listByThreadId(message))[0]?.composerRecall,
+        message.composerRecall,
+      );
+      yield* repository.appendStreaming({
+        ...message,
+        text: " changed",
+        composerRecall: undefined,
+      });
+      const appended = (yield* repository.listByThreadId(message))[0];
+      assert.strictEqual(appended?.text, "literal changed");
+      assert.strictEqual(appended?.composerRecall, undefined);
+      yield* repository.upsert(message);
+      yield* repository.upsert({ ...message, text: "replacement", composerRecall: undefined });
+      const replaced = (yield* repository.listByThreadId(message))[0];
+      assert.strictEqual(replaced?.text, "replacement");
+      assert.strictEqual(replaced?.composerRecall, undefined);
+    }),
+  );
+
   it.effect("finds the latest live user-message time within one thread", () =>
     Effect.gen(function* () {
       const repository = yield* ProjectionThreadMessageRepository;

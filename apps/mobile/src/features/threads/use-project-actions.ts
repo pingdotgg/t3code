@@ -10,6 +10,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import { createComposerRecall } from "@t3tools/shared/composerRecall";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 
@@ -138,6 +139,9 @@ export function useCreateProjectThread() {
           messageId: metadata.messageId,
           createdAt: metadata.createdAt,
           text: initialMessageText,
+          ...(serverConfig.environment.capabilities.composerRecall === true
+            ? { composerRecall: createComposerRecall(input.initialMessageText) }
+            : {}),
           uploadedAttachments: prepared.attachments,
           modelSelection: input.modelSelection,
           runtimeMode: input.runtimeMode,

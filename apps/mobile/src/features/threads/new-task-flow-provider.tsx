@@ -1,3 +1,4 @@
+import { createComposerRecall, recallComposerText } from "@t3tools/shared/composerRecall";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
@@ -841,7 +842,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     const draftKey = pendingTaskDraftKey(message.messageId);
     // Only hydrate a fresh editing draft; reopening mid-edit keeps newer edits.
     if (isComposerDraftEmpty(getComposerDraftSnapshot(draftKey))) {
-      setComposerDraftText(draftKey, message.text);
+      setComposerDraftText(draftKey, recallComposerText(message));
       replaceComposerDraftAttachments(draftKey, message.attachments);
       updateComposerDraftSettings(draftKey, {
         modelSelection: message.modelSelection,
@@ -904,6 +905,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         messageId: MessageId.make(metadata.messageId),
         commandId: CommandId.make(metadata.commandId),
         text,
+        composerRecall: createComposerRecall(draft.text),
         attachments: draft.attachments,
         modelSelection: draftModelSelection,
         runtimeMode: draft.runtimeMode ?? DEFAULT_RUNTIME_MODE,

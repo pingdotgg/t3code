@@ -308,6 +308,9 @@ export function applyThreadDetailEvent(
         id: event.payload.messageId,
         role: event.payload.role,
         text: event.payload.text,
+        ...(event.payload.composerRecall !== undefined
+          ? { composerRecall: event.payload.composerRecall }
+          : {}),
         ...(event.payload.attachments !== undefined
           ? { attachments: event.payload.attachments }
           : {}),
@@ -330,6 +333,12 @@ export function applyThreadDetailEvent(
                       ? message.text
                       : entry.text,
                   streaming: message.streaming,
+                  composerRecall:
+                    message.composerRecall ??
+                    (message.text.length === 0 ||
+                    (!message.streaming && message.text === entry.text)
+                      ? entry.composerRecall
+                      : undefined),
                   ...(message.turnId !== undefined ? { turnId: message.turnId } : {}),
                   ...(message.streaming ? {} : { updatedAt: message.updatedAt }),
                   ...(message.attachments !== undefined
