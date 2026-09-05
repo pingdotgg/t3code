@@ -25,7 +25,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
-import { GitManager } from "../git/GitManager.ts";
+import { GitManager, type GitBranchPullRequest } from "../git/GitManager.ts";
 import {
   PullRequestService,
   type PullRequestMergeEvent,
@@ -130,6 +130,22 @@ function makePullRequestSummary(input: {
   };
 }
 
+function makeBranchPullRequest(
+  state: GitBranchPullRequest["state"],
+  updatedAt: string | null = NOW,
+): GitBranchPullRequest {
+  return {
+    number: 42,
+    title: "Branch pull request",
+    url: "https://example.test/owner/repository/pull/42",
+    baseRef: "main",
+    headRef: "saved-feature",
+    repositoryKey: "example.test/owner/repository",
+    state,
+    updatedAt,
+  };
+}
+
 interface HarnessOptions {
   readonly snapshot: OrchestrationShellSnapshot;
   readonly settings?: ServerSettings;
@@ -171,9 +187,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       return next;
     });
 
-  const branchPullRequest: GitManager["Service"]["branchPullRequest"] = (input) =>
+  const branchPullRequest: GitManager["Service"]["branchPullRequest"] = (input, readOptions) =>
     Ref.update(branchCalls, (calls) => [...calls, input]).pipe(
-      Effect.andThen(options.branchPullRequest?.(input) ?? Effect.succeed(null)),
+      Effect.andThen(options.branchPullRequest?.(input, readOptions) ?? Effect.succeed(null)),
     );
   const pullRequestSummary: PullRequestService["Service"]["summary"] = (input, readOptions) =>
     Effect.gen(function* () {
@@ -279,6 +295,70 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementReactor", () => {
+  it.effect("uses saved branch PRs and does not settle a branch with a newer open PR", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const previous = {
+          projectId: PROJECT_ID,
+          repository: "owner/repository",
+          number: 1,
+          url: "https://example.test/owner/repository/pull/1",
+        };
+        const project = {
+          ...makeProject(),
+          repositoryIdentity: {
+            canonicalKey: "example.test/owner/repository",
+            rootPath: "/workspace/project",
+            displayName: "owner/repository",
+            locator: {
+              source: "git-remote" as const,
+              remoteName: "origin",
+              remoteUrl: "https://example.test/owner/repository.git",
+            },
+          },
+        };
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(
+            [
+              makeThread("retained-terminal", { branch: "main", branchPullRequest: previous }),
+              makeThread("reused-manual", { branch: "reused", linkedPullRequest: previous }),
+              makeThread("reused-detected", { branch: "reused", branchPullRequest: previous }),
+              makeThread("foreign-branch-pr", { branch: "foreign", linkedPullRequest: previous }),
+            ],
+            [project],
+          ),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: true,
+          },
+          branchPullRequest: ({ branch }, options) =>
+            Effect.succeed(
+              branch === "reused"
+                ? makeBranchPullRequest(options?.refresh ? "open" : "merged")
+                : branch === "foreign"
+                  ? {
+                      ...makeBranchPullRequest("open"),
+                      repositoryKey: "example.test/another/repository",
+                    }
+                  : null,
+            ),
+          pullRequestSummary: (input) =>
+            Effect.succeed(makePullRequestSummary({ ...input, state: "merged" })),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(
+            new Set((yield* Ref.get(fixture.commands)).map((command) => command.threadId)),
+            new Set([ThreadId.make("retained-terminal"), ThreadId.make("foreign-branch-pr")]),
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("starts without clients and skips protected threads before pull request lookup", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -372,7 +452,7 @@ describe("ThreadSettlementReactor", () => {
             }),
           ]),
           branchPullRequest: () =>
-            Ref.get(pullRequest).pipe(Effect.map((state) => ({ state, updatedAt: NOW }))),
+            Ref.get(pullRequest).pipe(Effect.map((state) => makeBranchPullRequest(state))),
         });
 
         yield* Effect.gen(function* () {
@@ -425,10 +505,10 @@ describe("ThreadSettlementReactor", () => {
             Ref.updateAndGet(branchLookupCount, (count) => count + 1).pipe(
               Effect.flatMap((count) =>
                 count === 1
-                  ? Effect.succeed({ state: "open" as const, updatedAt: NOW })
+                  ? Effect.succeed(makeBranchPullRequest("open"))
                   : Deferred.succeed(periodicLookupStarted, undefined).pipe(
                       Effect.andThen(Deferred.await(releasePeriodicLookup)),
-                      Effect.as({ state: "open" as const, updatedAt: NOW }),
+                      Effect.as(makeBranchPullRequest("open")),
                     ),
               ),
             ),
@@ -472,7 +552,7 @@ describe("ThreadSettlementReactor", () => {
             ]),
             branchPullRequest: () =>
               Ref.get(state).pipe(
-                Effect.map((pullRequestState) => ({ state: pullRequestState, updatedAt: NOW })),
+                Effect.map((pullRequestState) => makeBranchPullRequest(pullRequestState)),
               ),
             onDispatch: () => Deferred.succeed(mergedThreadSettled, undefined),
           });
@@ -603,7 +683,7 @@ describe("ThreadSettlementReactor", () => {
                     : Effect.void,
               ),
               Effect.andThen(Ref.get(state)),
-              Effect.map((pullRequestState) => ({ state: pullRequestState, updatedAt: NOW })),
+              Effect.map((pullRequestState) => makeBranchPullRequest(pullRequestState)),
             ),
         });
 
@@ -749,7 +829,7 @@ describe("ThreadSettlementReactor", () => {
               makeProject(LINKED_PROJECT_ID, "/workspace/linked-root"),
             ],
           ),
-          branchPullRequest: () => Effect.succeed({ state: "closed", updatedAt: NOW }),
+          branchPullRequest: () => Effect.succeed(makeBranchPullRequest("closed")),
           pullRequestSummary: (input) =>
             Effect.succeed(makePullRequestSummary({ ...input, state: "merged" })),
         });
