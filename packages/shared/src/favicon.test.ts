@@ -1,11 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import {
-  explicitFaviconUrl,
-  faviconUrlForOrigin,
-  faviconUrlForPage,
-  toolActivityFaviconUrl,
-} from "./favicon.ts";
+import { faviconUrlForOrigin, toolActivityFaviconUrl } from "./favicon.ts";
 
 describe("faviconUrlForOrigin", () => {
   it.each([
@@ -46,12 +41,12 @@ describe("faviconUrlForOrigin", () => {
   );
 });
 
-describe("faviconUrlForPage", () => {
+describe("toolActivityFaviconUrl", () => {
   it("uses the page origin instead of a third-party favicon service", () => {
-    expect(faviconUrlForPage("https://example.com/docs/page?q=1")).toBe(
+    expect(toolActivityFaviconUrl({ pageUrl: "https://example.com/docs/page?q=1" }, "light")).toBe(
       "https://example.com/favicon.ico",
     );
-    expect(faviconUrlForPage("http://localhost:5173/app")).toBe(
+    expect(toolActivityFaviconUrl({ pageUrl: "http://localhost:5173/app" }, "light")).toBe(
       "http://localhost:5173/favicon.ico",
     );
   });
@@ -86,7 +81,17 @@ describe("faviconUrlForPage", () => {
   });
 
   it("accepts provider-supplied image URLs but rejects extension URLs", () => {
-    expect(explicitFaviconUrl("https://example.com/icon.png")).toBe("https://example.com/icon.png");
-    expect(explicitFaviconUrl("chrome-extension://example/_favicon/")).toBeNull();
+    expect(
+      toolActivityFaviconUrl(
+        { pageUrl: "https://example.com/docs", faviconUrl: "https://example.com/icon.png" },
+        "light",
+      ),
+    ).toBe("https://example.com/icon.png");
+    expect(
+      toolActivityFaviconUrl(
+        { pageUrl: "https://example.com/docs", faviconUrl: "chrome-extension://example/_favicon/" },
+        "light",
+      ),
+    ).toBe("https://example.com/favicon.ico");
   });
 });

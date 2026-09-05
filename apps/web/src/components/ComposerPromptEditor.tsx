@@ -896,6 +896,13 @@ export interface ComposerPromptEditorHandle {
     expandedCursor: number;
     terminalContextIds: string[];
   };
+  /**
+   * True when a collapsed caret sits on the first ("start") or last ("end")
+   * visual line, counting soft wraps. Prompt history only claims ArrowUp and
+   * ArrowDown at these edges so arrows still move the caret inside multiline
+   * text.
+   */
+  isCaretOnVisualEdge: (edge: "start" | "end") => boolean;
 }
 
 interface ComposerPromptEditorProps {
@@ -927,6 +934,66 @@ interface ComposerPromptEditorProps {
   onCitationSubmitAndSend?: () => void;
   onPaste: React.ClipboardEventHandler<HTMLElement>;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
+}
+
+/**
+ * Client rect of the line the collapsed caret is on, as seen from `edge`.
+ * A caret at a soft-wrap boundary belongs to two visual lines and the
+ * range reports a rect for each, so take the one farthest from the edge
+ * under test: an ambiguous caret then never claims the key and the arrow
+ * moves the caret as usual. A collapsed range reports zero-height rects at
+ * some positions, so probe the adjacent character on the same side. When
+ * the range container is the paragraph itself (an empty line, or a caret
+ * beside an inline chip) measure the child next to the caret before
+ * falling back to the paragraph.
+ */
+function caretLineRect(range: Range, edge: "start" | "end"): DOMRect | null {
+  const collapsedRects = Array.from(range.getClientRects()).filter((rect) => rect.height > 0);
+  const collapsedRect = edge === "start" ? collapsedRects.at(-1) : collapsedRects[0];
+  if (collapsedRect) return collapsedRect;
+
+  const container = range.startContainer;
+  if (container.nodeType === Node.TEXT_NODE) {
+    const textNode = container as Text;
+    if (textNode.data.length === 0) return null;
+    const probeStart = Math.max(
+      0,
+      Math.min(
+        edge === "start" ? range.startOffset : range.startOffset - 1,
+        textNode.data.length - 1,
+      ),
+    );
+    const probeRange = document.createRange();
+    probeRange.setStart(textNode, probeStart);
+    probeRange.setEnd(textNode, probeStart + 1);
+    const probeRect = Array.from(probeRange.getClientRects()).find((rect) => rect.height > 0);
+    if (probeRect) return probeRect;
+    const boundingRect = probeRange.getBoundingClientRect();
+    return boundingRect.height > 0 ? boundingRect : null;
+  }
+
+  if (!(container instanceof HTMLElement)) return null;
+  // The caret sits between the paragraph's children, which is where Lexical
+  // puts it next to an inline chip. Measure the neighbouring child.
+  const neighbour =
+    container.childNodes[Math.max(0, range.startOffset - 1)] ??
+    container.childNodes[range.startOffset];
+  if (neighbour instanceof HTMLElement) {
+    const neighbourRect = neighbour.getBoundingClientRect();
+    if (neighbourRect.height > 0) return neighbourRect;
+  } else if (neighbour instanceof Text && neighbour.data.length > 0) {
+    // Probe the character on the caret's side. A soft-wrapped text node's
+    // first rect is its first visual line, which may not be the caret's.
+    const isBeforeCaret = neighbour === container.childNodes[range.startOffset - 1];
+    const probeStart = isBeforeCaret ? neighbour.data.length - 1 : 0;
+    const probeRange = document.createRange();
+    probeRange.setStart(neighbour, probeStart);
+    probeRange.setEnd(neighbour, probeStart + 1);
+    const probeRect = Array.from(probeRange.getClientRects()).find((rect) => rect.height > 0);
+    if (probeRect) return probeRect;
+  }
+  const containerRect = container.getBoundingClientRect();
+  return containerRect.height > 0 ? containerRect : null;
 }
 
 function ComposerCommandKeyPlugin(props: {
@@ -1799,6 +1866,36 @@ function ComposerPromptEditorInner({
         if (target) setOpenCitationComment(target);
       },
       readSnapshot,
+      isCaretOnVisualEdge: (edge) => {
+        const snapshot = readSnapshot();
+        if (snapshot.value.length === 0) return true;
+        const beforeCaret = snapshot.value.slice(0, snapshot.expandedCursor);
+        const afterCaret = snapshot.value.slice(snapshot.expandedCursor);
+        if (edge === "start" ? beforeCaret.includes("\n") : afterCaret.includes("\n")) {
+          return false;
+        }
+        const rootElement = editor.getRootElement();
+        const selection = window.getSelection();
+        if (
+          !rootElement ||
+          !selection ||
+          !selection.isCollapsed ||
+          selection.rangeCount === 0 ||
+          !selection.anchorNode ||
+          !rootElement.contains(selection.anchorNode)
+        ) {
+          return false;
+        }
+        const caretRect = caretLineRect(selection.getRangeAt(0), edge);
+        if (!caretRect) return false;
+        const edgeElement =
+          edge === "start" ? rootElement.firstElementChild : rootElement.lastElementChild;
+        const edgeRect = (edgeElement ?? rootElement).getBoundingClientRect();
+        const threshold = caretRect.height / 2;
+        return edge === "start"
+          ? caretRect.top - edgeRect.top < threshold
+          : edgeRect.bottom - caretRect.bottom < threshold;
+      },
     }),
     [editor, focusAt, readSnapshot],
   );
