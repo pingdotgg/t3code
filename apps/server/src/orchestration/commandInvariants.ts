@@ -18,7 +18,7 @@ function invariantError(commandType: string, detail: string): OrchestrationComma
   });
 }
 
-export function findThreadById(
+function findThreadById(
   readModel: OrchestrationReadModel,
   threadId: ThreadId,
 ): OrchestrationThread | undefined {
