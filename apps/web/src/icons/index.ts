@@ -192,6 +192,7 @@ export {
   SettingsIcon,
   ShieldCheckIcon,
   ShoppingBagIcon,
+  SlidersHorizontalIcon,
   SmartphoneIcon,
   SmilePlusIcon,
   SparklesIcon,
