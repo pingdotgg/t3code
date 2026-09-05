@@ -46,6 +46,13 @@ describe("resolveT3McpToolPresentation", () => {
     });
   });
 
+  it("pretty prints environment T3 MCP tool names", () => {
+    expect(resolveT3McpToolPresentation("mcp__t3-code__t3_environment_read")).toEqual({
+      displayName: "Read current T3 environment",
+      logo: "t3-code",
+    });
+  });
+
   it("keeps unknown MCP tools on the generic renderer path", () => {
     expect(resolveT3McpToolPresentation("mcp__github__search_issues")).toBeNull();
   });
