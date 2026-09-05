@@ -1,3 +1,4 @@
+import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { AuthOrchestrationOperateScope, EnvironmentAuthorizationError } from "@t3tools/contracts";
 import { useEnvironmentsWithScope, readEnvironmentScope } from "../../state/session";
 import {
@@ -177,8 +178,8 @@ function ProjectDetail({
       (member) => environmentById.get(member.environmentId)?.serverConfig != null,
     ) ?? group.memberProjects[0]!;
   const threads = useThreadShells();
-  const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
-  const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
+  const updateProject = useOrchestrationCommand(projectEnvironment.update, { reportFailure: false });
+  const deleteProject = useOrchestrationCommand(projectEnvironment.delete, { reportFailure: false });
   const projectNameEditedRef = useRef(false);
 
   const faviconPath = representative.faviconPath ?? null;
