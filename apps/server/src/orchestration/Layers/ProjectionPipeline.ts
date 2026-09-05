@@ -17,7 +17,10 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
-import { ProjectionPendingApprovalRepository } from "../../persistence/Services/ProjectionPendingApprovals.ts";
+import {
+  type ProjectionPendingApproval,
+  ProjectionPendingApprovalRepository,
+} from "../../persistence/Services/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
 import { ProjectionStateRepository } from "../../persistence/Services/ProjectionState.ts";
 import { ProjectionThreadActivityRepository } from "../../persistence/Services/ProjectionThreadActivities.ts";
@@ -351,6 +354,26 @@ function retainProjectionProposedPlansAfterRevert(
   );
   return proposedPlans.filter(
     (proposedPlan) => proposedPlan.turnId === null || retainedTurnIds.has(proposedPlan.turnId),
+  );
+}
+
+function retainProjectionPendingApprovalsAfterRevert(
+  approvals: ReadonlyArray<ProjectionPendingApproval>,
+  turns: ReadonlyArray<ProjectionTurn>,
+  turnCount: number,
+): ReadonlyArray<ProjectionPendingApproval> {
+  const retainedTurnIds = new Set<string>(
+    turns
+      .filter(
+        (turn) =>
+          turn.turnId !== null &&
+          turn.checkpointTurnCount !== null &&
+          turn.checkpointTurnCount <= turnCount,
+      )
+      .flatMap((turn) => (turn.turnId === null ? [] : [turn.turnId])),
+  );
+  return approvals.filter(
+    (approval) => approval.turnId === null || retainedTurnIds.has(approval.turnId),
   );
 }
 
@@ -1810,6 +1833,40 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               : event.payload.createdAt,
             resolvedAt: event.payload.createdAt,
           });
+          return;
+        }
+
+        case "thread.reverted": {
+          const existingRows = yield* projectionPendingApprovalRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          if (existingRows.length === 0) {
+            return;
+          }
+
+          const existingTurns = yield* projectionTurnRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const keptRows = retainProjectionPendingApprovalsAfterRevert(
+            existingRows,
+            existingTurns,
+            event.payload.turnCount,
+          );
+          if (keptRows.length === existingRows.length) {
+            return;
+          }
+
+          const keptRequestIds = new Set(keptRows.map((row) => row.requestId));
+          yield* Effect.forEach(
+            existingRows,
+            (row) =>
+              keptRequestIds.has(row.requestId)
+                ? Effect.void
+                : projectionPendingApprovalRepository.deleteByRequestId({
+                    requestId: row.requestId,
+                  }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
           return;
         }
 
