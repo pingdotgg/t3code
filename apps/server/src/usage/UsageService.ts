@@ -287,7 +287,7 @@ export const make = Effect.gen(function* () {
   const resolveProjects = Effect.fn("UsageService.resolveProjects")(function* () {
     const projects = yield* projectRepository
       .listAll()
-      .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+      .pipe(Effect.catch(() => Effect.succeed<readonly never[]>([])));
     return makeProjectResolver(
       projects.map((project) => ({
         projectId: project.projectId,

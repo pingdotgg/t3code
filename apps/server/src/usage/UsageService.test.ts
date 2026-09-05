@@ -8,6 +8,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -20,6 +21,8 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
 import { ProjectionProjectRepositoryLive } from "../persistence/Layers/ProjectionProjects.ts";
+import { PersistenceSqlError } from "../persistence/Errors.ts";
+import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "./UsageService.ts";
@@ -78,6 +81,7 @@ const serviceLayers = (input: {
   readonly onRatesFetch?: () => void;
   /** Defaults to an unparsable document so every scan retries the fetch. */
   readonly ratesDocument?: unknown;
+  readonly projectRepository?: ProjectionProjectRepository["Service"];
 }) =>
   ServerConfig.layerTest(process.cwd(), { prefix: input.prefix }).pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -100,7 +104,9 @@ const serviceLayers = (input: {
     ),
     Layer.provideMerge(
       Layer.mergeAll(
-        ProjectionProjectRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
+        input.projectRepository === undefined
+          ? ProjectionProjectRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory))
+          : Layer.succeed(ProjectionProjectRepository, input.projectRepository),
         SqlitePersistenceMemory,
       ),
     ),
@@ -111,6 +117,60 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 }
 
 describe("UsageService", () => {
+  it.live("degrades a typed project repository failure without hiding defects", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const typedFailure = Effect.fail(
+        new PersistenceSqlError({ operation: "ProjectionProjectRepository.listAll:test" }),
+      );
+      const typedRepository: ProjectionProjectRepository["Service"] = {
+        upsert: () => typedFailure,
+        getById: () => typedFailure,
+        listAll: () => typedFailure,
+        deleteById: () => typedFailure,
+      };
+      const summary = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        return yield* service.readSummary(WINDOW);
+      }).pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-project-typed-failure-test",
+            home,
+            settings,
+            projectRepository: typedRepository,
+          }),
+        ),
+      );
+      assert.strictEqual(totalOutputTokens(summary), 5);
+
+      const defect = new Error("project repository defect");
+      const repositoryDefect = Effect.die(defect);
+      const defectRepository: ProjectionProjectRepository["Service"] = {
+        upsert: () => repositoryDefect,
+        getById: () => repositoryDefect,
+        listAll: () => repositoryDefect,
+        deleteById: () => repositoryDefect,
+      };
+      const exit = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        return yield* Effect.exit(service.readSummary(WINDOW));
+      }).pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-project-defect-test",
+            home,
+            settings,
+            projectRepository: defectRepository,
+          }),
+        ),
+      );
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) assert.strictEqual(Cause.squash(exit.cause), defect);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reprices unchanged transcripts when custom prices are added, edited, or removed", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
