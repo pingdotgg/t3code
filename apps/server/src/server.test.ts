@@ -6059,6 +6059,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       yield* buildAppUnderTest({
         config: {
+          traceMinLevel: "None",
           otlpTracesUrl: "http://localhost:4318/v1/traces",
           otlpMetricsUrl: "http://localhost:4318/v1/metrics",
         },
@@ -6091,7 +6092,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.deepEqual(first.config.issues, []);
         assert.deepEqual(first.config.providers, providers);
         assert.equal(path.basename(first.config.observability.logsDirectoryPath), "logs");
-        assert.equal(first.config.observability.localTracingEnabled, true);
+        assert.equal(first.config.observability.localTracingEnabled, false);
         assert.equal(first.config.observability.otlpTracesUrl, "http://localhost:4318/v1/traces");
         assert.equal(first.config.observability.otlpTracesEnabled, true);
         assert.equal(first.config.observability.otlpMetricsUrl, "http://localhost:4318/v1/metrics");

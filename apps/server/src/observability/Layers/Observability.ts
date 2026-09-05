@@ -1,5 +1,5 @@
 import { httpHeaderRedactionLayer } from "@t3tools/shared/httpObservability";
-import { makeLocalFileTracer, makeTraceSink } from "@t3tools/shared/observability";
+import { makeLocalFileTracer, makeTraceSink, type TraceSink } from "@t3tools/shared/observability";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as References from "effect/References";
@@ -16,6 +16,13 @@ import * as BrowserTraceCollector from "../BrowserTraceCollector.ts";
 
 const otlpSerializationLayer = OtlpSerialization.layerJson;
 
+const makeNoopTraceSink = (filePath: string): TraceSink => ({
+  filePath,
+  push: () => undefined,
+  flush: Effect.void,
+  close: () => Effect.void,
+});
+
 export const ObservabilityLive = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
@@ -29,20 +36,23 @@ export const ObservabilityLive = Layer.unwrap(
 
     const tracerLayer = Layer.unwrap(
       Effect.gen(function* () {
-        const sink = yield* makeTraceSink({
-          filePath: config.serverTracePath,
-          maxBytes: config.traceMaxBytes,
-          maxFiles: config.traceMaxFiles,
-          batchWindowMs: config.traceBatchWindowMs,
-          onFlush: (stats) =>
-            attribution.record({
-              component: "server-trace",
-              operation: "append",
-              logicalWriteBytes: stats.logicalWriteBytes,
-              count: stats.count,
-              durationMs: stats.durationMs,
-            }),
-        });
+        const sink =
+          config.traceMinLevel === "None"
+            ? makeNoopTraceSink(config.serverTracePath)
+            : yield* makeTraceSink({
+                filePath: config.serverTracePath,
+                maxBytes: config.traceMaxBytes,
+                maxFiles: config.traceMaxFiles,
+                batchWindowMs: config.traceBatchWindowMs,
+                onFlush: (stats) =>
+                  attribution.record({
+                    component: "server-trace",
+                    operation: "append",
+                    logicalWriteBytes: stats.logicalWriteBytes,
+                    count: stats.count,
+                    durationMs: stats.durationMs,
+                  }),
+              });
         const delegate =
           config.otlpTracesUrl === undefined
             ? undefined
