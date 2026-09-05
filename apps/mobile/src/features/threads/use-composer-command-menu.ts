@@ -27,7 +27,7 @@ import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
 
 const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
 
-export function composerSelectionAtEnd(draftMessage: string): ComposerEditorSelection {
+function composerSelectionAtEnd(draftMessage: string): ComposerEditorSelection {
   return { start: draftMessage.length, end: draftMessage.length };
 }
 
