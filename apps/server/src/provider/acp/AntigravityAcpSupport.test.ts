@@ -13,6 +13,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
@@ -31,6 +33,85 @@ const runtimeTempDirectoryMarkerContents = (directory: string, ownerProcessId: n
   `${JSON.stringify({ schemaVersion: 1, ownerProcessId, directory })}\n`;
 
 it.layer(NodeServices.layer)("makeAntigravityAcpRuntime", (it) => {
+  it.effect(
+    "preserves ownership after exhausted cleanup retries so a later sweep can recover",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const orphan = yield* Effect.acquireRelease(
+          fileSystem.makeTempDirectory({ prefix: "t3-antigravity-runtime-2147483647-" }),
+          (directory) =>
+            fileSystem.remove(directory, { recursive: true, force: true }).pipe(Effect.orDie),
+        );
+        const marker = path.join(orphan, runtimeTempDirectoryMarkerName);
+        const markerContents = runtimeTempDirectoryMarkerContents(
+          path.basename(orphan),
+          2147483647,
+        );
+        yield* fileSystem.writeFileString(marker, markerContents);
+        const payload = path.join(orphan, "_MEIlocked");
+        yield* fileSystem.makeDirectory(payload);
+        yield* fileSystem.writeFileString(path.join(payload, "payload"), "locked fixture");
+        const attempts = yield* Effect.forEach([0, 1, 2, 3, 4, 5], () => Deferred.make<void>());
+        const lockedError = PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "remove",
+          description: "EPERM: extraction is in use",
+        });
+        let locked = true;
+        let failures = 0;
+        const runtimeFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          readDirectory: (directory) =>
+            directory === path.dirname(orphan)
+              ? Effect.succeed([path.basename(orphan)])
+              : fileSystem.readDirectory(directory),
+          remove: (directory, options) =>
+            Effect.gen(function* () {
+              if (locked && (directory === orphan || directory === payload)) {
+                // Whole-directory removal can unlink the marker before a locked sibling fails.
+                if (directory === orphan && options?.recursive) {
+                  yield* fileSystem.remove(marker, { force: true });
+                }
+                yield* Deferred.succeed(attempts[failures++]!, undefined);
+                return yield* lockedError;
+              }
+              return yield* fileSystem.remove(directory, options);
+            }),
+          // Stop after the sweep, before allocating or launching an unrelated runtime.
+          makeTempDirectory: () => Effect.fail(lockedError),
+        });
+        const sweep = makeAntigravityAcpRuntime({
+          childProcessSpawner,
+          fileSystem: runtimeFileSystem,
+          path,
+          platform: "win32",
+          spawn: { command: process.execPath, args: [], cwd: process.cwd() },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-code-test", version: "0.0.0" },
+        }).pipe(Effect.provideService(Crypto.Crypto, crypto), Effect.scoped, Effect.exit);
+        const firstSweep = yield* sweep.pipe(Effect.forkChild);
+        for (const [index, attempt] of attempts.entries()) {
+          yield* Deferred.await(attempt);
+          if (index < attempts.length - 1) {
+            yield* TestClock.adjust(`${100 * 2 ** index} millis`);
+          }
+        }
+        yield* Fiber.join(firstSweep);
+        expect(failures).toBe(6);
+        expect(yield* fileSystem.exists(payload)).toBe(true);
+        expect(yield* fileSystem.readFileString(marker)).toBe(markerContents);
+
+        locked = false;
+        yield* sweep;
+        expect(yield* fileSystem.exists(orphan)).toBe(false);
+      }),
+  );
+
   it.effect("reclaims only owned orphans and removes the current extraction when interrupted", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

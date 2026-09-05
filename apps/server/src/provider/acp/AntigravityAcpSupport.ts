@@ -82,9 +82,20 @@ function withWindowsRuntimeTempDirectory(
 
 const removeRuntimeTempDirectory = Effect.fn("removeRuntimeTempDirectory")(function* (
   fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
   directory: string,
 ) {
-  yield* fileSystem.remove(directory, { recursive: true, force: true }).pipe(
+  yield* Effect.gen(function* () {
+    const entries = yield* fileSystem
+      .readDirectory(directory)
+      .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed([])));
+    // Keep proof of ownership if a locked payload survives all cleanup retries.
+    for (const entry of entries) {
+      if (entry === runtimeTempDirectoryMarkerName) continue;
+      yield* fileSystem.remove(path.join(directory, entry), { recursive: true, force: true });
+    }
+    yield* fileSystem.remove(directory, { recursive: true, force: true });
+  }).pipe(
     Effect.retry({ times: 5, schedule: Schedule.exponential("100 millis") }),
     Effect.catch((cause) =>
       Effect.logWarning("antigravity runtime temp cleanup failed", { directory, cause }),
@@ -117,7 +128,7 @@ const reclaimOrphanedRuntimeTempDirectories = Effect.fn("reclaimOrphanedRuntimeT
           Effect.orElseSucceed(() => false),
         );
       if (!markerMatches) continue;
-      yield* removeRuntimeTempDirectory(fileSystem, candidate);
+      yield* removeRuntimeTempDirectory(fileSystem, path, candidate);
     }
   },
 );
@@ -139,7 +150,7 @@ const makeWindowsRuntimeTempDirectory = Effect.fn("makeWindowsRuntimeTempDirecto
           }),
       ),
     );
-  yield* Effect.addFinalizer(() => removeRuntimeTempDirectory(fileSystem, directory));
+  yield* Effect.addFinalizer(() => removeRuntimeTempDirectory(fileSystem, path, directory));
   yield* fileSystem
     .writeFileString(
       path.join(directory, runtimeTempDirectoryMarkerName),
