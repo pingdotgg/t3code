@@ -226,10 +226,16 @@ export function usageLimitSnoozePreset(resetsAt: string, now: Date): SnoozePrese
   if (Number.isNaN(resetsAtMs) || resetsAtMs <= now.getTime()) return null;
   const wake = new Date(resetsAtMs + USAGE_LIMIT_SNOOZE_GRACE_MS);
   if (Number.isNaN(wake.getTime())) return null;
+  // Day-aware like "Next week": a weekly reset days out must not read as
+  // a time today.
+  const time = snoozeTimeOfDayLabel(wake);
   return {
     id: "limits-reset",
     label: "Until limits reset",
-    whenLabel: snoozeTimeOfDayLabel(wake),
+    whenLabel:
+      wake.toDateString() === now.toDateString()
+        ? time
+        : `${wake.toLocaleDateString(undefined, { weekday: "short" })} ${time}`,
     snoozedUntil: wake.toISOString(),
   };
 }
@@ -298,41 +304,6 @@ export function resolveSnoozePresets(
   const limitsResetAt = options?.limitsResetAt;
   const limitsPreset = limitsResetAt != null ? usageLimitSnoozePreset(limitsResetAt, now) : null;
   return limitsPreset != null ? [limitsPreset, ...presets] : presets;
-}
-
-export interface UsageLimitSnoozeOffer {
-  /** The reset the provider reported, for the "limits reset at" label. */
-  readonly resetsAt: string;
-  /** Wake time to snooze to, a minute past the reset. */
-  readonly snoozedUntil: string;
-  /**
-   * Whether snoozing is available right now. Telling the user about the limit
-   * matters even when it is not — the canonical case is a message the provider
-   * rejected, which leaves a queued turn start that snooze refuses for its
-   * grace window, exactly while the user is staring at the stall.
-   */
-  readonly snoozable: boolean;
-}
-
-/**
- * The usage-limit offer for a thread, or null when there is nothing to say. A
- * reset in the past is stale provider state, and a thread the user already
- * parked has answered the offer.
- */
-export function usageLimitSnoozeOffer(
-  shell: ThreadSnoozeShell & Pick<OrchestrationThreadShell, "latestUserMessageAt">,
-  options: { readonly resetsAt: string | null; readonly now: string },
-): UsageLimitSnoozeOffer | null {
-  const { resetsAt } = options;
-  if (resetsAt == null) return null;
-  if (effectiveSnoozed(shell, options)) return null;
-  const preset = usageLimitSnoozePreset(resetsAt, new Date(options.now));
-  if (preset === null) return null;
-  return {
-    resetsAt,
-    snoozedUntil: preset.snoozedUntil,
-    snoozable: canSnooze(shell, options),
-  };
 }
 
 /**

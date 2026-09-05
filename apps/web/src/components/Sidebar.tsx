@@ -31,6 +31,7 @@ import {
   type EnvironmentMachineKind,
   type ProjectIconOverride,
   type ScopedThreadRef,
+  type ServerProviderUsageLimits,
   type ThreadId,
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
@@ -427,14 +428,19 @@ function SnoozePopoverButton(props: {
   onOpenChange: (open: boolean) => void;
   onSnooze: (preset: SnoozePreset) => void;
   timestampFormat: TimestampFormat;
-  limitsResetAt: string | null;
+  usageLimits: ServerProviderUsageLimits | undefined;
 }) {
-  const { open, onOpenChange, onSnooze, timestampFormat, limitsResetAt } = props;
+  const { open, onOpenChange, onSnooze, timestampFormat, usageLimits } = props;
   // Presets resolve at open time so "In 1 hour" is relative to the click,
   // not to when the row mounted.
   const presets = useMemo(
-    () => (open ? resolveSnoozePresets(new Date(), timestampFormat, { limitsResetAt }) : []),
-    [open, timestampFormat, limitsResetAt],
+    () =>
+      open
+        ? resolveSnoozePresets(new Date(), timestampFormat, {
+            limitsResetAt: exhaustedUntil(usageLimits, Date.now()),
+          })
+        : [],
+    [open, timestampFormat, usageLimits],
   );
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
@@ -1339,12 +1345,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   useEffect(() => {
     if (!showSnoozeButton) setSnoozeMenuOpen(false);
   }, [showSnoozeButton]);
-  // Only worth reading while the popover is actually open — same lazy
-  // pattern as the presets themselves resolving at open time.
-  const snoozeLimitsResetAt = useMemo(
-    () => (snoozeMenuOpen ? exhaustedUntil(providerEntry?.snapshot.usageLimits, Date.now()) : null),
-    [snoozeMenuOpen, providerEntry],
-  );
   const handlePrClick = useCallback(
     (event: ReactMouseEvent<HTMLAnchorElement>) => {
       if (!pr?.url) return;
@@ -1848,7 +1848,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                           onOpenChange={setSnoozeMenuOpen}
                           onSnooze={handleSnoozePreset}
                           timestampFormat={props.timestampFormat}
-                          limitsResetAt={snoozeLimitsResetAt}
+                          usageLimits={providerEntry?.snapshot.usageLimits}
                         />
                       ) : null}
                       {props.settlementSupported ? (
