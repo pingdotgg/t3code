@@ -132,7 +132,7 @@ function SettingsSubmenuCollapse({
 }) {
   return (
     <Collapsible open={open}>
-      <CollapsiblePanel className="duration-150 ease-out motion-reduce:transition-none">
+      <CollapsiblePanel className="duration-150 ease-out motion-reduce:transition-none [[data-panel-animations=false]_&]:transition-none!">
         {children}
       </CollapsiblePanel>
     </Collapsible>
