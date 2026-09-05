@@ -135,6 +135,22 @@ describe("DesktopPreReadyPlatform", () => {
     }),
   );
 
+  it.effect("uses the packaged distribution name for the Linux window class", () =>
+    Effect.gen(function* () {
+      packagedState.value = true;
+      readFileMock.mockReturnValue(
+        '{"t3codeDesktopIdentity":{"appId":"com.t3tools.t3code.fork-abc","packageName":"t3code-fork-abc","productName":"T3 Code (Fork)","displayName":"T3 Code (Fork Alpha)","distributionName":"Fork","distributionId":"fork-abc"}}',
+      );
+
+      yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions.pipe(
+        Effect.provide(DesktopPreReadyPlatform.layer),
+        Effect.provideService(HostProcessPlatform, "linux"),
+      );
+
+      assert.deepEqual(appendSwitchMock.mock.calls[0], ["class", "t3code-fork-abc"]);
+    }),
+  );
+
   it.effect(
     "acquires a synchronous pre-ready layer before an asynchronous Clerk-shaped layer",
     () =>

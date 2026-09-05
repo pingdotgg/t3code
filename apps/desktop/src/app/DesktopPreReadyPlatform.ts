@@ -58,7 +58,7 @@ const decodeEarlyDesktopPackageMetadata = Schema.decodeSync(
 );
 
 /** Reads packaged identity synchronously before Electron can emit ready. */
-export function resolveEarlyDesktopSchemeFromProcess(): string | null {
+function resolveEarlyDesktopIdentityFromProcess() {
   // Identity must be known before any asynchronous runtime layer can let
   // Electron become ready. Clerk later registers the same renderer scheme.
   const packagedIdentity = Electron.app.isPackaged
@@ -66,22 +66,28 @@ export function resolveEarlyDesktopSchemeFromProcess(): string | null {
         NodeFS.readFileSync(NodePath.join(Electron.app.getAppPath(), "package.json"), "utf8"),
       ).t3codeDesktopIdentity
     : undefined;
-  const distributionId = Electron.app.isPackaged
+  return Electron.app.isPackaged
     ? resolveDesktopRuntimeIdentity({
         isDevelopment: false,
         isPackaged: true,
         stageLabel: isNightlyDesktopVersion(Electron.app.getVersion()) ? "Nightly" : "Alpha",
         appName: Electron.app.getName(),
         ...(packagedIdentity === undefined ? {} : { packagedIdentity }),
-      }).distributionId
+      })
     : null;
-  return distributionId === null ? null : resolveDesktopUrlScheme(false, distributionId);
+}
+
+export function resolveEarlyDesktopSchemeFromProcess(): string | null {
+  const identity = resolveEarlyDesktopIdentityFromProcess();
+  return identity === null ? null : resolveDesktopUrlScheme(false, identity.distributionId);
 }
 
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
   return yield* Effect.sync((): DesktopPreReadyElectronOptions["Service"] => {
-    const distributionScheme = resolveEarlyDesktopSchemeFromProcess();
+    const identity = resolveEarlyDesktopIdentityFromProcess();
+    const distributionScheme =
+      identity === null ? null : resolveDesktopUrlScheme(false, identity.distributionId);
     ElectronProtocol.registerDesktopSchemePrivilegesSync(
       distributionScheme === null ? [] : [distributionScheme],
     );
@@ -93,7 +99,7 @@ export const make = Effect.gen(function* () {
     const linux = platform === "linux" ? resolveEarlyLinuxElectronOptionsFromProcess() : null;
 
     if (linux !== null) {
-      Electron.app.commandLine.appendSwitch("class", linux.linuxWmClass);
+      Electron.app.commandLine.appendSwitch("class", identity?.packageName ?? linux.linuxWmClass);
       if (linux.passwordStore !== null && linuxPasswordStoreCommandLine === null) {
         Electron.app.commandLine.appendSwitch("password-store", linux.passwordStore);
       }
