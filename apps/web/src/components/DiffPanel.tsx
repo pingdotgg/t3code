@@ -30,7 +30,13 @@ import { type DraftId } from "../composerDraftStore";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
-import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
+import {
+  type DiffBaseline,
+  getCheckpointDiffRange,
+  THREAD_START_DIFF_BASELINE,
+  selectThreadDiffPanelSelection,
+  useDiffPanelStore,
+} from "../diffPanelStore";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useTheme } from "../hooks/useTheme";
 import {
@@ -193,14 +199,26 @@ export default function DiffPanel({
   );
 
   useEffect(() => {
-    if (!routeThreadRef || diffSelection.kind !== "turn") return;
+    if (!routeThreadRef || !activeThread || diffSelection.kind !== "turn") return;
     useDiffPanelStore.getState().reconcileTurnSelection(
       routeThreadRef,
       orderedTurnDiffSummaries.map((summary) => summary.turnId),
     );
-  }, [diffSelection, orderedTurnDiffSummaries, routeThreadRef]);
+  }, [activeThread, diffSelection, orderedTurnDiffSummaries, routeThreadRef]);
 
-  const selectedTurnId = diffSelection.kind === "turn" ? diffSelection.turnId : null;
+  const selectedTurnId =
+    diffSelection.kind === "turn"
+      ? diffSelection.followLatest
+        ? (orderedTurnDiffSummaries[0]?.turnId ?? diffSelection.turnId)
+        : diffSelection.turnId
+      : null;
+  const baselineTurnId = diffSelection.kind === "turn" ? diffSelection.baselineTurnId : undefined;
+  const baselineTurn = orderedTurnDiffSummaries.find(
+    (summary) => summary.turnId === baselineTurnId,
+  );
+  const baselineTurnCount =
+    baselineTurnId === THREAD_START_DIFF_BASELINE ? 0 : baselineTurn?.checkpointTurnCount;
+  const followsLatest = diffSelection.kind === "turn" && diffSelection.followLatest === true;
   const selectedGitScope = diffSelection.kind === "unstaged" ? "unstaged" : "branch";
   const selectedBaseRef = diffSelection.kind === "branch" ? diffSelection.baseRef : null;
   const selectedFilePath = diffSelection.kind === "turn" ? diffSelection.filePath : null;
@@ -215,15 +233,41 @@ export default function DiffPanel({
     selectedTurn &&
     (selectedTurn.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[selectedTurn.turnId]);
   const latestTurn = orderedTurnDiffSummaries[0];
+  const [baselineMenuOpen, setBaselineMenuOpen] = useState(false);
+  const firstCheckpoint = orderedTurnDiffSummaries.findLast(
+    (summary) => summary.status === "ready" && summary.checkpointTurnCount > 0,
+  );
+  // A completion checkpoint can exist without Turn 0 when Git was initialized mid-turn.
+  // Check the earliest available range only when the baseline menu is opened.
+  const initialCheckpointDiff = useCheckpointDiff(
+    {
+      environmentId: activeThread?.environmentId ?? null,
+      threadId: activeThread?.id ?? null,
+      fromTurnCount: 0,
+      toTurnCount: firstCheckpoint?.checkpointTurnCount ?? null,
+      ignoreWhitespace: true,
+    },
+    { enabled: baselineMenuOpen && isGitRepo },
+  );
+  const isLatestTurnSelection =
+    baselineTurnCount === undefined ? selectedTurn?.turnId === latestTurn?.turnId : followsLatest;
   const selectedScopeLabel =
     selectedTurnId === null
       ? selectedGitScope === "unstaged"
         ? "Working tree"
         : "Branch changes"
-      : selectedTurn?.turnId === latestTurn?.turnId
+      : isLatestTurnSelection
         ? "Latest turn"
         : `Turn ${selectedCheckpointTurnCount ?? "?"}`;
-  const reviewSectionId = selectedTurn ? `turn:${selectedTurn.turnId}` : selectedGitScope;
+  const comparisonLabel =
+    baselineTurnCount !== undefined
+      ? `Turn ${baselineTurnCount} → ${selectedScopeLabel}`
+      : selectedScopeLabel;
+  const reviewSectionId = selectedTurn
+    ? baselineTurnCount !== undefined
+      ? `turn:${baselineTurnId}:${selectedTurn.turnId}`
+      : `turn:${selectedTurn.turnId}`
+    : selectedGitScope;
   const collapseScopeKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
     : null;
@@ -233,19 +277,15 @@ export default function DiffPanel({
       ? collapsedDiffFiles.fileKeys
       : EMPTY_COLLAPSED_DIFF_FILE_KEYS;
   const reviewSectionTitle = selectedTurn
-    ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
+    ? baselineTurnCount !== undefined
+      ? comparisonLabel
+      : `Turn ${selectedCheckpointTurnCount ?? "?"}`
     : selectedGitScope === "unstaged"
       ? "Working tree"
       : "Branch changes";
-  const selectedCheckpointRange = useMemo(
-    () =>
-      typeof selectedCheckpointTurnCount === "number"
-        ? {
-            fromTurnCount: Math.max(0, selectedCheckpointTurnCount - 1),
-            toTurnCount: selectedCheckpointTurnCount,
-          }
-        : null,
-    [selectedCheckpointTurnCount],
+  const selectedCheckpointRange = getCheckpointDiffRange(
+    selectedCheckpointTurnCount,
+    baselineTurnCount,
   );
   const activeCheckpointDiff = useCheckpointDiff(
     {
@@ -254,7 +294,7 @@ export default function DiffPanel({
       fromTurnCount: selectedCheckpointRange?.fromTurnCount ?? null,
       toTurnCount: selectedCheckpointRange?.toTurnCount ?? null,
       ignoreWhitespace: diffIgnoreWhitespace,
-      cacheScope: selectedTurn ? `turn:${selectedTurn.turnId}` : null,
+      cacheScope: selectedTurn ? reviewSectionId : null,
     },
     { enabled: isGitRepo && selectedTurn !== undefined },
   );
@@ -532,7 +572,11 @@ export default function DiffPanel({
 
   const selectTurn = (turnId: TurnId) => {
     if (!routeThreadRef) return;
-    useDiffPanelStore.getState().selectTurn(routeThreadRef, turnId);
+    useDiffPanelStore.getState().selectTurn(routeThreadRef, turnId, undefined, { baselineTurnId });
+  };
+  const pinBaseline = (baseline: DiffBaseline | null) => {
+    if (routeThreadRef && latestTurn)
+      useDiffPanelStore.getState().pinBaseline(routeThreadRef, baseline, latestTurn.turnId);
   };
   const selectGitScope = (scope: "branch" | "unstaged") => {
     if (!routeThreadRef) return;
@@ -549,9 +593,9 @@ export default function DiffPanel({
         <DropdownMenu>
           <DropdownMenuTrigger
             className="inline-flex h-6 max-w-full items-center gap-1 rounded-md bg-accent px-2 text-xs font-medium text-accent-foreground outline-none transition-colors hover:bg-accent/80 focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label={`Diff scope: ${selectedScopeLabel}`}
+            aria-label={`Diff scope: ${comparisonLabel}`}
           >
-            <span className="truncate">{selectedScopeLabel}</span>
+            <span className="truncate">{comparisonLabel}</span>
             <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-60">
@@ -577,12 +621,13 @@ export default function DiffPanel({
             </DropdownMenuItem>
             <DropdownMenuItem
               className={
-                selectedTurnId !== null && selectedTurn?.turnId === latestTurn?.turnId
+                selectedTurnId !== null && isLatestTurnSelection
                   ? "bg-foreground/[0.08]"
                   : undefined
               }
               onClick={() => {
-                if (latestTurn) selectTurn(latestTurn.turnId);
+                if (latestTurn && routeThreadRef)
+                  useDiffPanelStore.getState().selectLatestTurn(routeThreadRef, latestTurn.turnId);
               }}
             >
               <span>Latest turn</span>
@@ -598,12 +643,26 @@ export default function DiffPanel({
                   return (
                     <DropdownMenuItem
                       key={summary.turnId}
-                      className={
-                        summary.turnId === selectedTurn?.turnId ? "bg-foreground/[0.08]" : undefined
+                      className={cn(
+                        summary.turnId === selectedTurn?.turnId &&
+                          !followsLatest &&
+                          "bg-foreground/[0.08]",
+                        summary.status === "ready" &&
+                          summary.files.length === 0 &&
+                          "text-muted-foreground",
+                      )}
+                      disabled={
+                        baselineTurnCount !== undefined &&
+                        summary.checkpointTurnCount < baselineTurnCount
                       }
                       onClick={() => selectTurn(summary.turnId)}
                     >
-                      <span>Turn {turnCount}</span>
+                      <span>
+                        Turn {turnCount}
+                        {summary.status === "ready" && summary.files.length === 0
+                          ? " · No changes"
+                          : ""}
+                      </span>
                       <span className="ml-auto text-xs tabular-nums text-muted-foreground">
                         {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}
                       </span>
@@ -612,6 +671,35 @@ export default function DiffPanel({
                 })}
               </DropdownMenuSubContent>
             </DropdownMenuSub>
+            <DropdownMenuSub onOpenChange={setBaselineMenuOpen}>
+              <DropdownMenuSubTrigger>Pin baseline</DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-64">
+                <DropdownMenuItem
+                  disabled={
+                    initialCheckpointDiff.data === null || initialCheckpointDiff.error !== null
+                  }
+                  onClick={() => pinBaseline(THREAD_START_DIFF_BASELINE)}
+                >
+                  Start of thread (Turn 0){baselineTurnCount === 0 ? " (pinned)" : ""}
+                  {initialCheckpointDiff.error ? " (unavailable)" : ""}
+                </DropdownMenuItem>
+                {orderedTurnDiffSummaries.map((summary) => (
+                  <DropdownMenuItem
+                    key={summary.turnId}
+                    disabled={summary.status !== "ready"}
+                    onClick={() => pinBaseline(summary.turnId)}
+                  >
+                    Turn {summary.checkpointTurnCount}
+                    {summary.turnId === baselineTurnId ? " (pinned)" : ""}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            {baselineTurnCount !== undefined && (
+              <DropdownMenuItem onClick={() => pinBaseline(null)}>
+                Unpin baseline (Turn {baselineTurnCount})
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
         {selectedTurnId === null && selectedGitScope === "branch" && selectedGitSource?.baseRef && (
