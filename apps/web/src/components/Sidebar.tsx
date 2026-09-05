@@ -148,6 +148,7 @@ import {
   resolveAdjacentThreadId,
   resolveSidebarThreadStatus,
   searchSidebarThreadsByTitle,
+  sidebarListAnimationDuration,
   shouldCreateNewThreadInCurrentProject,
   shouldRecedeSidebarThread,
   resolveWorkingStartedAt,
@@ -501,8 +502,13 @@ const sidebarThreadListAnimation: AutoAnimationPlugin = (
 ) => {
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const pinInFlight = document.body.dataset.pinFlight === "true";
+  const pinnedDragInFlight = element.parentElement?.dataset.pinnedDrag === "true";
   const timing: KeyframeEffectOptions = {
-    duration: reduceMotion ? 0 : pinInFlight ? 550 : 150,
+    duration: sidebarListAnimationDuration({
+      reduceMotion,
+      pinInFlight,
+      pinnedDragInFlight,
+    }),
     easing: pinInFlight ? "cubic-bezier(.22,.68,.18,1)" : "ease-out",
   };
 
@@ -1370,6 +1376,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item
+        data-thread-key={scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))}
         className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
       >
         <Tooltip>
@@ -2360,6 +2367,8 @@ export default function Sidebar() {
   const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
   const [pinMotionThreadKey, setPinMotionThreadKey] = useState<string | null>(null);
   const pinFlightRef = useRef<PinFlight | null>(null);
+  const sidebarThreadListRef = useRef<HTMLUListElement | null>(null);
+  const pinnedThreadListRef = useRef<HTMLUListElement | null>(null);
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
   const searchableThreads = useMemo(
     () => [...pinnedThreads, ...activeThreads, ...snoozedThreads, ...settledThreads],
@@ -2882,8 +2891,8 @@ export default function Sidebar() {
     flight.clone.remove();
     flight.sourceElement.style.removeProperty("visibility");
     delete document.body.dataset.pinFlight;
-    document
-      .querySelector<HTMLElement>(`[data-thread-key="${window.CSS.escape(threadKey)}"]`)
+    sidebarThreadListRef.current
+      ?.querySelector<HTMLElement>(`[data-thread-key="${window.CSS.escape(threadKey)}"]`)
       ?.style.removeProperty("visibility");
     pinFlightRef.current = null;
     setPinMotionThreadKey((current) => (current === threadKey ? null : current));
@@ -2893,9 +2902,10 @@ export default function Sidebar() {
       const threadKey = scopedThreadKey(threadRef);
       const activeFlight = pinFlightRef.current;
       if (activeFlight !== null) finishPinFlight(activeFlight.threadKey);
-      const sourceElement = document.querySelector<HTMLElement>(
-        `[data-thread-key="${window.CSS.escape(threadKey)}"]`,
-      );
+      const sourceElement =
+        sidebarThreadListRef.current?.querySelector<HTMLElement>(
+          `[data-thread-key="${window.CSS.escape(threadKey)}"]`,
+        ) ?? null;
       if (
         sourceElement !== null &&
         !window.matchMedia("(prefers-reduced-motion: reduce)").matches
@@ -2972,9 +2982,10 @@ export default function Sidebar() {
       return;
     }
     if (flight.animation !== null) return;
-    const destination = document.querySelector<HTMLElement>(
-      `[data-thread-key="${window.CSS.escape(pinMotionThreadKey)}"]`,
-    );
+    const destination =
+      sidebarThreadListRef.current?.querySelector<HTMLElement>(
+        `[data-thread-key="${window.CSS.escape(pinMotionThreadKey)}"]`,
+      ) ?? null;
     if (destination === null) {
       finishPinFlight(pinMotionThreadKey);
       return;
@@ -3024,6 +3035,9 @@ export default function Sidebar() {
 
   const handlePinnedDragEnd = useCallback(
     (event: DragEndEvent) => {
+      window.requestAnimationFrame(() => {
+        pinnedThreadListRef.current?.removeAttribute("data-pinned-drag");
+      });
       const activeKey = String(event.active.id);
       const overKey = event.over === null ? null : String(event.over.id);
       if (overKey === null || activeKey === overKey) return;
@@ -3088,6 +3102,12 @@ export default function Sidebar() {
     },
     [orderedPinnedThreads, reorderPinnedThread, reorderablePinnedKeys],
   );
+  const handlePinnedDragStart = useCallback(() => {
+    pinnedThreadListRef.current?.setAttribute("data-pinned-drag", "true");
+  }, []);
+  const handlePinnedDragCancel = useCallback(() => {
+    pinnedThreadListRef.current?.removeAttribute("data-pinned-drag");
+  }, []);
   // One snooze per thread at a time — same double-dispatch guard as settle.
   const snoozingThreadKeysRef = useRef(new Set<string>());
   const performSnooze = useCallback(
@@ -3738,6 +3758,28 @@ export default function Sidebar() {
       else controller.disable();
     };
   }, []);
+  const attachSidebarListAutoAnimateRef = useCallback(
+    (node: HTMLUListElement | null) => {
+      sidebarThreadListRef.current = node;
+      const cleanup = attachListAutoAnimateRef(node);
+      return () => {
+        if (sidebarThreadListRef.current === node) sidebarThreadListRef.current = null;
+        cleanup?.();
+      };
+    },
+    [attachListAutoAnimateRef],
+  );
+  const attachPinnedListAutoAnimateRef = useCallback(
+    (node: HTMLUListElement | null) => {
+      pinnedThreadListRef.current = node;
+      const cleanup = attachListAutoAnimateRef(node);
+      return () => {
+        if (pinnedThreadListRef.current === node) pinnedThreadListRef.current = null;
+        cleanup?.();
+      };
+    },
+    [attachListAutoAnimateRef],
+  );
 
   // New thread defaults to the project you're in (active thread's project,
   // falling back to the top project) — same resolution the command palette
@@ -4098,7 +4140,11 @@ export default function Sidebar() {
               closeDelay={0}
               timeout={400}
             >
-              <ul ref={attachListAutoAnimateRef} role="list" className="flex flex-col gap-px">
+              <ul
+                ref={attachSidebarListAutoAnimateRef}
+                role="list"
+                className="flex flex-col gap-px"
+              >
                 {(() => {
                   const renderThreadRow = (
                     thread: EnvironmentThreadShell,
@@ -4241,6 +4287,8 @@ export default function Sidebar() {
                           collisionDetection={closestCenter}
                           modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
                           onDragEnd={handlePinnedDragEnd}
+                          onDragStart={handlePinnedDragStart}
+                          onDragCancel={handlePinnedDragCancel}
                         >
                           <SortableContext
                             items={orderedPinnedThreads
@@ -4251,7 +4299,7 @@ export default function Sidebar() {
                             strategy={verticalListSortingStrategy}
                           >
                             <ul
-                              ref={attachListAutoAnimateRef}
+                              ref={attachPinnedListAutoAnimateRef}
                               role="list"
                               aria-label="Pinned threads"
                               className="flex flex-col gap-px"

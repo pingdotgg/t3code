@@ -26,6 +26,7 @@ import {
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreadsByTitle,
+  sidebarListAnimationDuration,
   formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
@@ -81,6 +82,28 @@ describe("animatePinnedLayoutChanges", () => {
 
   it("keeps layout movement while the user is sorting", () => {
     expect(animatePinnedLayoutChanges({ ...baseArgs, isSorting: true })).toBe(true);
+  });
+});
+
+describe("sidebarListAnimationDuration", () => {
+  it("suppresses the list FLIP while a pinned drag commits", () => {
+    expect(
+      sidebarListAnimationDuration({
+        reduceMotion: false,
+        pinInFlight: false,
+        pinnedDragInFlight: true,
+      }),
+    ).toBe(0);
+  });
+
+  it("preserves the longer pin-flight motion", () => {
+    expect(
+      sidebarListAnimationDuration({
+        reduceMotion: false,
+        pinInFlight: true,
+        pinnedDragInFlight: false,
+      }),
+    ).toBe(550);
   });
 });
 

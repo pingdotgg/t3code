@@ -83,6 +83,15 @@ export function useRetainedValue<T>(key: string | null, value: T | null): T | nu
 export const animatePinnedLayoutChanges: AnimateLayoutChanges = (args) =>
   args.isSorting ? defaultAnimateLayoutChanges(args) : false;
 
+export function sidebarListAnimationDuration(input: {
+  readonly reduceMotion: boolean;
+  readonly pinInFlight: boolean;
+  readonly pinnedDragInFlight: boolean;
+}): number {
+  if (input.reduceMotion || input.pinnedDragInFlight) return 0;
+  return input.pinInFlight ? 550 : 150;
+}
+
 type SidebarProject = {
   id: string;
   title: string;
