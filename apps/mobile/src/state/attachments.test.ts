@@ -1,5 +1,10 @@
-import { AuthOrchestrationOperateScope, EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  EnvironmentAuthorizationError,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import { runAttachmentUploadCycle } from "@t3tools/client-runtime/state/attachments";
+import * as Cause from "effect/Cause";
 import { AsyncResult, AtomRegistry } from "effect/unstable/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -42,22 +47,21 @@ afterEach(() => {
 
 describe("attachment mutation grants", () => {
   it("uses the attachment environment for both mint and deletion", async () => {
-    expect(
-      (
-        await attachmentEnvironment.createUploadUrl.run(registry, {
-          environmentId,
-          input: { name: "image.png", mimeType: "image/png", sizeBytes: 1 },
-        })
-      )._tag,
-    ).toBe("Failure");
-    expect(
-      (
-        await attachmentEnvironment.remove.run(registry, {
-          environmentId,
-          input: { attachmentId: "pending" },
-        })
-      )._tag,
-    ).toBe("Failure");
+    const mintResult = await attachmentEnvironment.createUploadUrl.run(registry, {
+      environmentId,
+      input: { name: "image.png", mimeType: "image/png", sizeBytes: 1 },
+    });
+    const removeResult = await attachmentEnvironment.remove.run(registry, {
+      environmentId,
+      input: { attachmentId: "pending" },
+    });
+    for (const result of [mintResult, removeResult]) {
+      expect(result._tag).toBe("Failure");
+      if (result._tag !== "Failure") throw new Error("Expected permission denial");
+      const error = Cause.squash<unknown>(result.cause);
+      expect(error).toBeInstanceOf(EnvironmentAuthorizationError);
+      expect(error).toMatchObject({ requiredScope: AuthOrchestrationOperateScope });
+    }
     expect(state.create).not.toHaveBeenCalled();
     expect(state.remove).not.toHaveBeenCalled();
     state.grantedEnvironments.add("secondary");
