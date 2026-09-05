@@ -631,21 +631,21 @@ export const layerWithOptions = (
                 })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause, failureCode)))
             : nonRetryable
-            ? yield* outbox
-                .succeed({ effectId: effect.id, workerId })
-                .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts
               ? yield* outbox
-                  .fail({ effectId: effect.id, workerId, error })
+                  .succeed({ effectId: effect.id, workerId })
                   .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-              : yield* outbox
-                  .retry({
-                    effectId: effect.id,
-                    workerId,
-                    error,
-                    delayMs: Math.min(30_000, 100 * 2 ** Math.max(0, effect.attemptCount - 1)),
-                  })
-                  .pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
+              : effect.attemptCount >= maxAttempts
+                ? yield* outbox
+                    .fail({ effectId: effect.id, workerId, error })
+                    .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
+                : yield* outbox
+                    .retry({
+                      effectId: effect.id,
+                      workerId,
+                      error,
+                      delayMs: Math.min(30_000, 100 * 2 ** Math.max(0, effect.attemptCount - 1)),
+                    })
+                    .pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
           if (!updated) {
             if (yield* wasCancelled(effect.id)) return true;
             return yield* new OrchestrationEffectWorkerError({
