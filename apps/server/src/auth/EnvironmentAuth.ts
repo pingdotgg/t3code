@@ -772,8 +772,10 @@ export const make = Effect.gen(function* () {
 
   type ResolvedBootstrapGrant = Pick<
     PairingGrantStore.BootstrapGrant,
-    "method" | "scopes" | "subject" | "label"
-  >;
+    "scopes" | "subject" | "label"
+  > & {
+    readonly method: PairingGrantStore.BootstrapGrant["method"] | "reusable-dev-token";
+  };
   const resolveBootstrapGrant = (
     credential: string,
     input?: { readonly proofKeyThumbprint?: string },
@@ -791,7 +793,7 @@ export const make = Effect.gen(function* () {
       Effect.map(
         (session) =>
           ({
-            method: "one-time-token",
+            method: "reusable-dev-token",
             scopes: session.scopes,
             subject: "reusable-dev-token-child",
           }) satisfies ResolvedBootstrapGrant,
