@@ -128,7 +128,7 @@ export const make = ElectronApp.of({
           cause,
         }),
     });
-    const packagedIdentity = Electron.app.isPackaged
+    const packageMetadata = Electron.app.isPackaged
       ? yield* Effect.tryPromise({
           try: () => NodeFSP.readFile(NodePath.join(appPath, "package.json"), "utf8"),
           catch: (cause) =>
@@ -136,18 +136,21 @@ export const make = ElectronApp.of({
               property: "package-metadata",
               cause,
             }),
-        }).pipe(
-          Effect.flatMap(decodeDesktopPackageMetadata),
-          Effect.map((metadata) => metadata.t3codeDesktopIdentity),
-          Effect.mapError(
-            (cause) =>
-              new ElectronAppMetadataReadError({
-                property: "package-metadata",
-                cause,
-              }),
-          ),
-        )
+        })
       : undefined;
+    const packagedIdentity =
+      packageMetadata === undefined
+        ? undefined
+        : yield* decodeDesktopPackageMetadata(packageMetadata).pipe(
+            Effect.map((metadata) => metadata.t3codeDesktopIdentity),
+            Effect.mapError(
+              (cause) =>
+                new ElectronAppMetadataReadError({
+                  property: "package-metadata",
+                  cause,
+                }),
+            ),
+          );
     return {
       appVersion,
       appPath,

@@ -145,6 +145,20 @@ describe("ElectronApp", () => {
     }).pipe(Effect.provide(ElectronApp.layer));
   });
 
+  it.effect("preserves the underlying package metadata read failure", () => {
+    const cause = new Error("manifest unavailable");
+    readFileMock.mockRejectedValueOnce(cause);
+
+    return Effect.gen(function* () {
+      const electronApp = yield* ElectronApp.ElectronApp;
+      const error = yield* electronApp.metadata.pipe(Effect.flip);
+
+      assert.instanceOf(error, ElectronApp.ElectronAppMetadataReadError);
+      assert.equal(error.property, "package-metadata");
+      assert.strictEqual(error.cause, cause);
+    }).pipe(Effect.provide(ElectronApp.layer));
+  });
+
   it.effect("rejects malformed packaged desktop identity metadata", () => {
     readFileMock.mockResolvedValueOnce(
       JSON.stringify({
