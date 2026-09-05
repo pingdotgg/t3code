@@ -438,6 +438,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     primaryOnly: true,
   },
   {
+    id: "pull-request-review-instructions",
+    title: "Pull request review checklist",
+    to: "/settings/source-control",
+    searchTerms: ["review this pr agent checklist prompt instructions"],
+    primaryOnly: true,
+  },
+  {
     id: "environment-icon",
     title: "Environment icon",
     to: "/settings/connections",

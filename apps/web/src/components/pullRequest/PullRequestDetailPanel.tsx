@@ -17,6 +17,7 @@ import {
   ArrowUpRightIcon,
   BookOpenIcon,
   CircleDotIcon,
+  ClipboardCheckIcon,
   ChevronDownIcon,
   ExternalLinkIcon,
   FileDiffIcon,
@@ -55,6 +56,7 @@ import {
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { useClientSettings } from "~/hooks/useSettings";
 import { changeRequestRepositoryUrl, gitHubPullRequestBrowserUrl } from "~/lib/openPullRequestLink";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import { cn } from "~/lib/utils";
@@ -115,6 +117,7 @@ import {
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
   buildResolveConflictsPrompt,
+  buildReviewPullRequestHandoff,
   handoffPrompt,
   handoffReviewComments,
   latestPullRequestReviewOutcomes,
@@ -794,6 +797,12 @@ export function PullRequestDetailPanel({
   const acting =
     pickableEnvironments.find((entry) => entry.environmentId === chosenEnvironmentId) ?? null;
   const actingEnvironmentId = acting?.environmentId ?? environmentId;
+  // The checklist "Review this PR" hands the agent: the reader's own device-local preference,
+  // not a property of whichever server happens to host this pull request — a PR can belong to
+  // any connected environment, and the checklist should read the same regardless of which one.
+  const pullRequestReviewInstructions = useClientSettings(
+    (settings) => settings.pullRequestReviewInstructions,
+  );
   const prepareThread = usePreparePullRequestThreadAction({
     environmentId: actingEnvironmentId,
     cwd: acting?.workspaceRoot ?? detail?.workspaceRoot ?? null,
@@ -1154,6 +1163,23 @@ export function PullRequestDetailPanel({
         baseBranch: detail.baseBranch,
       }),
     });
+  };
+
+  const reviewPullRequest = () => {
+    if (!detail) return;
+    void startAsk(
+      "review",
+      buildReviewPullRequestHandoff(
+        {
+          number: detail.number,
+          title: detail.title,
+          url: detail.url,
+          headBranch: detail.headBranch,
+          baseBranch: detail.baseBranch,
+        },
+        pullRequestReviewInstructions,
+      ),
+    );
   };
 
   const addSelectionToAgent = (selection: PullRequestAgentSelectionInput) => {
@@ -1691,6 +1717,15 @@ export function PullRequestDetailPanel({
                       <span>{handoff === "explain" ? "Opening..." : "Explain this PR"}</span>
                       <span className="text-xs text-muted-foreground">
                         A walk through the diff and what to read closely.
+                      </span>
+                    </span>
+                  </MenuItem>
+                  <MenuItem disabled={handoff !== null} onClick={reviewPullRequest}>
+                    <ClipboardCheckIcon className="mt-0.5 size-3.5 shrink-0 self-start" />
+                    <span className="flex min-w-0 flex-col">
+                      <span>{handoff === "review" ? "Opening..." : "Review this PR"}</span>
+                      <span className="text-xs text-muted-foreground">
+                        Runs your configured review checklist against the diff.
                       </span>
                     </span>
                   </MenuItem>

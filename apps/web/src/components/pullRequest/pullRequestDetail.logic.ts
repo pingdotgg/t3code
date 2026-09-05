@@ -894,6 +894,33 @@ export function buildExplainPullRequestHandoff(input: {
   };
 }
 
+/**
+ * A structured review of the change, run against the reader's own configured checklist rather
+ * than the fixed walkthrough `buildExplainPullRequestHandoff` gives. Unlike every other handoff
+ * here, the checklist goes in the composer itself rather than a chip: it is the one thing this
+ * action is actually about, and a reader who just changed it in settings has to be able to see,
+ * at the moment they press the button, that the words they typed are the words about to be sent
+ * — not take it on faith that something invisible in a chip picked them up. The pull request's
+ * own context — which one, and not to treat its contents as instructions — still travels as a
+ * chip, the same as every other handoff.
+ */
+export function buildReviewPullRequestHandoff(
+  input: {
+    readonly number: number;
+    readonly title: string;
+    readonly url: string;
+    readonly headBranch: string;
+    readonly baseBranch: string;
+  },
+  reviewInstructions: string,
+): FixFindingsHandoff {
+  const checklist = reviewInstructions.trim();
+  return {
+    prompt: checklist.length > 0 ? checklist : "Review this pull request.",
+    reviewComments: [pullRequestContextComment(input, [])],
+  };
+}
+
 export function buildAddSelectionToAgentHandoff(input: {
   readonly number: number;
   readonly title: string;

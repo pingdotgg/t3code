@@ -199,6 +199,9 @@ export const BrowserLinkTarget = Schema.Literals(["system", "app"]);
 export type BrowserLinkTarget = typeof BrowserLinkTarget.Type;
 export const DEFAULT_BROWSER_LINK_TARGET: BrowserLinkTarget = "system";
 
+export const DEFAULT_PULL_REQUEST_REVIEW_INSTRUCTIONS =
+  "Review this pull request as a careful senior engineer. Focus on correctness, missed edge cases, security issues, and tests that should exist but do not. Call out anything risky or worth a second look before approving.";
+
 export const ClientSettingsSchema = Schema.Struct({
   appearanceContrast: AppearanceContrast.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_APPEARANCE_CONTRAST)),
@@ -356,6 +359,15 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * The instructions the "Review this PR" pull-request action hands the agent, alongside the
+   * pull request's own context chip. Client-local rather than server-authoritative: a pull
+   * request can belong to any environment this browser talks to, and the checklist is the
+   * reader's own preference, not a property of whichever server happens to host that PR.
+   */
+  pullRequestReviewInstructions: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PULL_REQUEST_REVIEW_INSTRUCTIONS)),
+  ),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -1242,5 +1254,6 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   wordWrap: Schema.optionalKey(Schema.Boolean),
+  pullRequestReviewInstructions: Schema.optionalKey(TrimmedString),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;
