@@ -5,7 +5,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverClaudeSkills, skillOverrideSettingsPaths } from "./ClaudeSkills.ts";
+import {
+  claudeManagedMcpConfigPath,
+  discoverClaudeSkills,
+  skillOverrideSettingsPaths,
+} from "./ClaudeSkills.ts";
 
 const writeSkill = Effect.fn(function* (
   skillsDir: string,
@@ -552,6 +556,27 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           "/etc/claude-code/managed-settings.json",
         ],
       );
+    }),
+  );
+
+  it.effect("locates the enterprise MCP config beside the managed policy file", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path.pipe(Effect.provide(NodePath.layerPosix));
+      const win32Path = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
+
+      assert.equal(
+        claudeManagedMcpConfigPath(path, "darwin", {}),
+        "/Library/Application Support/ClaudeCode/managed-mcp.json",
+      );
+      assert.equal(
+        claudeManagedMcpConfigPath(path, "linux", {}),
+        "/etc/claude-code/managed-mcp.json",
+      );
+      assert.equal(
+        claudeManagedMcpConfigPath(win32Path, "win32", { PROGRAMDATA: "C:\\ProgramData" }),
+        "C:\\ProgramData\\ClaudeCode\\managed-mcp.json",
+      );
+      assert.equal(claudeManagedMcpConfigPath(win32Path, "win32", {}), undefined);
     }),
   );
 
