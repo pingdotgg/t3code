@@ -18,7 +18,11 @@ import { ProjectService, type ProjectServiceError } from "./ProjectService.ts";
 export const failProjectMutation = Effect.fn("environment.projects.failMutation")(function* (
   cause: ProjectServiceError | ServerRuntimeStartup.ServerRuntimeStartupError,
 ) {
-  if (cause._tag === "ProjectNotFoundError" || cause._tag === "ProjectConflictError") {
+  if (
+    cause._tag === "ProjectNotFoundError" ||
+    cause._tag === "ProjectConflictError" ||
+    cause._tag === "ProjectNotEmptyError"
+  ) {
     return yield* failEnvironmentInvalidRequest("invalid_command");
   }
   return yield* failEnvironmentInternal("project_mutation_failed", cause);
@@ -76,6 +80,7 @@ export const projectHttpApiLayer = HttpApiBuilder.group(
                 : projects.delete({
                     commandId: mutation.commandId,
                     projectId: mutation.projectId,
+                    ...(mutation.force === undefined ? {} : { force: mutation.force }),
                   });
           return yield* startup.enqueueCommand(operation).pipe(Effect.catch(failProjectMutation));
         }),

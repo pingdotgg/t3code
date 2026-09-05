@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   type ApplicationStoredEvent,
   CommandId,
@@ -19,6 +20,8 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -42,6 +45,7 @@ import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceR
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { WorkspacePaths } from "../workspace/WorkspacePaths.ts";
 import { LegacyV1ThreadImporter, LegacyV1ThreadImportError } from "./LegacyV1ThreadImporter.ts";
 import {
   OrchestratorDispatchError,
@@ -52,10 +56,18 @@ import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { ProjectionMaintenanceV2 } from "./ProjectionMaintenance.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
-import { OrchestrationV2EventSinkLayerLive, OrchestrationV2LayerLive } from "./runtimeLayer.ts";
+import {
+  OrchestrationV2EventSinkLayerLive,
+  OrchestrationV2LayerLive,
+  ProjectServiceLayerLive,
+} from "./runtimeLayer.ts";
 import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
+import {
+  ThreadCommandExecutor,
+  layer as threadCommandExecutorLayer,
+} from "./ThreadCommandExecutor.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-orchestration-v2-runtime-layer-",
@@ -137,6 +149,145 @@ const LegacyImportTestLayer = OrchestrationV2LayerLive.pipe(
   Layer.provide(ProjectServiceTestLayer),
   Layer.provide(NodeServices.layer),
 );
+
+const ProjectDeletionTestLayer = Layer.mergeAll(
+  OrchestrationV2LayerLive.pipe(Layer.provide(ProjectServiceLayerLive)),
+  ProjectServiceLayerLive,
+  OrchestrationV2EventSinkLayerLive,
+  threadCommandExecutorLayer,
+).pipe(
+  Layer.provide(
+    Layer.mock(ProjectEnrichmentService)({
+      peek: () =>
+        Effect.succeed({
+          repositoryIdentity: null,
+          faviconPath: null,
+          repositoryIdentityResolved: false,
+        }),
+      getAvailable: () =>
+        Effect.succeed({
+          repositoryIdentity: null,
+          faviconPath: null,
+          repositoryIdentityResolved: false,
+        }),
+      invalidate: () => Effect.void,
+    }),
+  ),
+  Layer.provide(
+    Layer.mock(WorkspacePaths)({
+      normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),
+    }),
+  ),
+  Layer.provide(mcpSessionRegistryTestLayer),
+  Layer.provide(SqlitePersistenceMemory),
+  Layer.provide(CheckpointStoreTestLayer),
+  Layer.provide(ServerConfigLayer),
+  Layer.provide(ServerSettingsService.layerTest()),
+  Layer.provide(TestProviderInstanceRegistry),
+  Layer.provide(GitWorkflowTestLayer),
+  Layer.provide(NodeServices.layer),
+);
+
+it.layer(ProjectDeletionTestLayer)("project deletion during thread commands", (it) => {
+  it.effect("waits for an in-flight thread update before planning deletion", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* OrchestratorV2;
+      const eventSink = yield* EventSinkV2;
+      const executor = yield* ThreadCommandExecutor;
+      const projectId = ProjectId.make("runtime-project-delete-concurrent");
+      const threadId = ThreadId.make("runtime-thread-delete-concurrent");
+      const updateCommandId = CommandId.make("runtime-thread-delete-concurrent-update");
+      yield* projects.create({
+        commandId: CommandId.make("runtime-project-delete-concurrent-create"),
+        projectId,
+        title: "Concurrent deletion",
+        workspaceRoot: "/work/concurrent-deletion",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("runtime-thread-delete-concurrent-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId,
+        projectId,
+        title: "Original title",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+
+      const updateReady = yield* Deferred.make<void>();
+      const releaseUpdate = yield* Deferred.make<void>();
+      const deletionQueued = yield* Deferred.make<void>();
+      const commitCommand = eventSink.commitCommand;
+      const withLock = executor.withLock;
+      let threadLockRequests = 0;
+      const commitSpy = vi
+        .spyOn(eventSink, "commitCommand")
+        .mockImplementation((input) =>
+          input.commandId === updateCommandId
+            ? Deferred.succeed(updateReady, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseUpdate)),
+                Effect.andThen(commitCommand(input)),
+              )
+            : commitCommand(input),
+        );
+      const observeLock: ThreadCommandExecutor["Service"]["withLock"] = (key, effect) => {
+        if (key !== threadId || ++threadLockRequests !== 2) return withLock(key, effect);
+        return Deferred.succeed(deletionQueued, undefined).pipe(
+          Effect.andThen(withLock(key, effect)),
+        );
+      };
+      const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(observeLock);
+      yield* Effect.gen(function* () {
+        const updateFiber = yield* orchestrator
+          .dispatch({
+            type: "thread.metadata.update",
+            commandId: updateCommandId,
+            threadId,
+            title: "Updated before deletion",
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.raceFirst(
+          Deferred.await(updateReady),
+          Fiber.join(updateFiber).pipe(
+            Effect.andThen(Effect.die("The update completed before reaching its commit barrier.")),
+          ),
+        );
+        const deleteFiber = yield* projects
+          .delete({
+            commandId: CommandId.make("runtime-project-delete-concurrent-delete"),
+            projectId,
+            force: true,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.raceFirst(
+          Deferred.await(deletionQueued),
+          Fiber.join(deleteFiber).pipe(
+            Effect.andThen(Effect.die("Project deletion bypassed the in-flight thread command.")),
+          ),
+        );
+        yield* Deferred.succeed(releaseUpdate, undefined);
+        yield* Fiber.join(updateFiber);
+        const deletedProject = yield* Fiber.join(deleteFiber);
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.isNotNull(deletedProject.deletedAt);
+        assert.isNotNull(projection.thread.deletedAt);
+        assert.equal(projection.thread.title, "Updated before deletion");
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            commitSpy.mockRestore();
+            lockSpy.mockRestore();
+          }),
+        ),
+      );
+    }),
+  );
+});
 
 const SharedApplicationDataPlaneTestLayer = Layer.merge(
   OrchestrationLayerLive,
