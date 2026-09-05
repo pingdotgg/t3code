@@ -9,7 +9,10 @@
  * the shared Net service.
  *
  * Listening ports are published only after a bounded HTTP(S) probe finds a
- * successful HTML document or a redirect to one.
+ * successful HTML document or a redirect to one. Discovered listeners are
+ * probed only when they sit on a curated dev port, belong to a registered T3
+ * terminal, or were named in a configured Preview URL. Other sockets are left
+ * alone so binary RPC listeners are not sent HTTP.
  * Positive and negative results are cached briefly by candidate URL and listener identity,
  * limiting repeated requests without leaving stale classifications around.
  *
@@ -69,6 +72,9 @@ export class PortDiscovery extends Context.Service<
 export const COMMON_DEV_PORTS: ReadonlyArray<number> = Object.freeze([
   3000, 3001, 3333, 4173, 4200, 4321, 5000, 5173, 5174, 5175, 5500, 8000, 8080, 8081, 8888, 9000,
 ]);
+
+const isEligibleDiscoveredWebProbe = (server: DiscoveredLocalServer): boolean =>
+  COMMON_DEV_PORTS.includes(server.port) || server.terminal !== null;
 
 const POLL_INTERVAL = Duration.seconds(3);
 const LSOF_TIMEOUT_MS = 5_000;
@@ -379,6 +385,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     }
 
     for (const server of servers) {
+      if (!isEligibleDiscoveredWebProbe(server)) continue;
       groups.push({
         server,
         urls: [`http://${server.host}:${server.port}`, `https://${server.host}:${server.port}`],
