@@ -165,6 +165,72 @@ describe("serializeRenderedMarkdownFragment", () => {
     );
   });
 
+  it("copies the rendered ordinals of a literal-numbered list", () => {
+    const list = new FakeElement("OL").append(
+      new FakeElement("LI", [], { value: "1" }).append(new FakeText("one")),
+      new FakeElement("LI", [], { value: "5" }).append(new FakeText("five")),
+      new FakeElement("LI", [], { value: "15" }).append(new FakeText("fifteen")),
+    );
+    const container = new FakeElement("DIV").append(list);
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "1. one\n5. five\n15. fifteen",
+    );
+  });
+
+  it("continues counting after a value reset like the browser counter", () => {
+    const list = new FakeElement("OL").append(
+      new FakeElement("LI", [], { value: "5" }).append(new FakeText("five")),
+      new FakeElement("LI").append(new FakeText("six")),
+    );
+    const container = new FakeElement("DIV").append(list);
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("5. five\n6. six");
+  });
+
+  it.each([
+    ["ordinary non-one start", "5", [undefined, undefined], "5. first\n6. second"],
+    ["repeated literal ones", "1", ["1", "1"], "1. first\n1. second"],
+    ["explicit zero", "5", ["0", undefined], "0. first\n1. second"],
+    ["negative HTML value", "5", ["-2", undefined], "-2. first\n-1. second"],
+    ["later HTML reset", "5", [undefined, "15"], "5. first\n15. second"],
+  ])("copies %s", (_name, start, values, expected) => {
+    const list = new FakeElement("OL", [], { start }).append(
+      ...values.map((value, index) =>
+        new FakeElement("LI", [], value === undefined ? {} : { value }).append(
+          new FakeText(index === 0 ? "first" : "second"),
+        ),
+      ),
+    );
+    expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(list)))).toBe(
+      expected,
+    );
+  });
+
+  it("keeps nested list resets independent of their outer list", () => {
+    const nested = new FakeElement("OL").append(
+      new FakeElement("LI", [], { value: "8" }).append(new FakeText("nested")),
+      new FakeElement("LI", [], { value: "2" }).append(new FakeText("reset")),
+    );
+    const list = new FakeElement("OL", [], { start: "3" }).append(
+      new FakeElement("LI", [], { value: "3" }).append(new FakeText("outer\n"), nested),
+      new FakeElement("LI", [], { value: "9" }).append(new FakeText("tail")),
+    );
+    expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(list)))).toBe(
+      "3. outer\n   8. nested\n   2. reset\n9. tail",
+    );
+  });
+
+  it("does not turn bullet items into numbered items", () => {
+    const list = new FakeElement("UL").append(
+      new FakeElement("LI", [], { value: "8" }).append(new FakeText("first")),
+      new FakeElement("LI").append(new FakeText("second")),
+    );
+    expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(list)))).toBe(
+      "- first\n- second",
+    );
+  });
+
   it("keeps a multi-line code selection plain instead of inline-wrapping it", () => {
     const code = new FakeElement("CODE").append(new FakeText("first line\nsecond line"));
     const container = new FakeElement("DIV").append(code);

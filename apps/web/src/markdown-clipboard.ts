@@ -141,7 +141,15 @@ function serializeList(list: Element, ordered: boolean): string {
   const start = Number.parseInt(list.getAttribute("start") ?? "1", 10) || 1;
   const items = [...list.children].filter((child) => child.tagName === "LI");
   if (items.length === 0) return "";
-  return `${items.map((item, index) => serializeListItem(item, ordered, start + index)).join("\n")}\n\n`;
+  // An li's `value` resets the visible numbering (literal chat ordinals), so
+  // the copied markdown follows it the same way the browser counter does.
+  let ordinal = start - 1;
+  const lines = items.map((item) => {
+    const value = Number.parseInt(item.getAttribute("value") ?? "", 10);
+    ordinal = Number.isNaN(value) ? ordinal + 1 : value;
+    return serializeListItem(item, ordered, ordinal);
+  });
+  return `${lines.join("\n")}\n\n`;
 }
 
 function serializeBlockquote(quote: Element): string {
