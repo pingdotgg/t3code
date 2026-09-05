@@ -22,6 +22,7 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
+import { isOrchestrationThreadNotFoundError } from "../errors/orchestration.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import { ThreadSnapshotLoader, type ThreadSnapshotWindow } from "./threadSnapshotHttp.ts";
@@ -266,10 +267,21 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     readonly epoch: number;
   } | null>(null);
   const persistence = yield* Queue.sliding<OrchestrationThreadDetailSnapshot>(1);
+  // Cache removal must finish after any save that already passed its state
+  // check. Keep storage I/O separate from the stream/history application lock.
+  const persistenceLock = yield* Semaphore.make(1);
+  // Latch set when the server reports the thread missing (subscribe fails
+  // with OrchestrationThreadNotFoundError). Gates the outer foreground/probe
+  // resubscribe path below so a deleted thread stops after its single
+  // terminal attempt instead of retrying on every app wakeup.
+  const terminalNotFound = yield* Ref.make(false);
 
   const persist = Effect.fn("EnvironmentThreadState.persist")(function* (
     snapshot: OrchestrationThreadDetailSnapshot,
   ) {
+    // Under persistenceLock, delayed writes skip deleted snapshots and
+    // deletion waits for saves that have already passed this check.
+    if ((yield* SubscriptionRef.get(state)).status === "deleted") return;
     if (resumeCache !== undefined && resumeCache.owner !== owner) return;
     if (
       committed.persisted &&
@@ -302,7 +314,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         ),
       ),
     );
-  });
+  }, persistenceLock.withPermits(1));
 
   yield* Stream.fromQueue(persistence).pipe(
     Stream.debounce("500 millis"),
@@ -402,17 +414,25 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       page: Option.none(),
     });
     yield* remember;
-    if (resumeCache !== undefined && resumeCache.owner !== owner) return;
-    yield* cache.removeThread(environmentId, threadId).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Could not remove the cached thread.").pipe(
-          Effect.annotateLogs({
-            environmentId,
-            threadId,
-            error: error.message,
-          }),
-        ),
-      ),
+    // Drop the queued cache write before removing the entry so a debounced
+    // snapshot cannot re-save the thread after deletion. The queue is
+    // sliding(1), so a single poll discards the whole backlog.
+    yield* Queue.poll(persistence);
+    yield* persistenceLock.withPermits(1)(
+      Effect.gen(function* () {
+        if (resumeCache !== undefined && resumeCache.owner !== owner) return;
+        yield* cache.removeThread(environmentId, threadId).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Could not remove the cached thread.").pipe(
+              Effect.annotateLogs({
+                environmentId,
+                threadId,
+                error: error.message,
+              }),
+            ),
+          ),
+        );
+      }),
     );
   });
 
@@ -652,7 +672,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const foregroundResubscriptions = Option.match(wakeups, {
     onNone: () => Stream.never,
     onSome: (service) =>
-      service.changes.pipe(Stream.filter(ConnectionWakeups.shouldResubscribeAfterWakeup)),
+      service.changes.pipe(
+        Stream.filter(ConnectionWakeups.shouldResubscribeAfterWakeup),
+        Stream.filterEffect(() =>
+          Ref.get(terminalNotFound).pipe(Effect.map((missing) => !missing)),
+        ),
+      ),
   });
 
   // Only the first subscription after a warm live resume keeps the retained
@@ -760,6 +785,19 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         onExpectedFailure: setStreamError,
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
+        terminalFailure: {
+          matches: isOrchestrationThreadNotFoundError,
+          handle: (cause) =>
+            Ref.set(terminalNotFound, true).pipe(
+              Effect.andThen(
+                Effect.logWarning("Subscribed thread is gone; stopping.", {
+                  threadId,
+                  cause: Cause.pretty(cause),
+                }),
+              ),
+              Effect.andThen(setDeleted()),
+            ),
+        },
       },
     ).pipe(Stream.runForEach(applyItem)),
   );
@@ -833,11 +871,12 @@ export function createEnvironmentThreadStateAtoms<R, E>(
 ) {
   // Cache definitions must outlive collectible live-atom definitions. The
   // registry retains these nodes without retaining environment or RPC scopes.
+  const makeThreadResumeCache = (): ThreadResumeCache => ({
+    snapshot: undefined,
+    owner: undefined,
+  });
   const resumeFamily = Atom.family((key: string) =>
-    Atom.make((): ThreadResumeCache => ({
-      snapshot: undefined,
-      owner: undefined,
-    })).pipe(
+    Atom.make(makeThreadResumeCache).pipe(
       Atom.setIdleTTL(THREAD_SNAPSHOT_IDLE_TTL_MS),
       Atom.withLabel(`environment-thread-resume:${key}`),
     ),

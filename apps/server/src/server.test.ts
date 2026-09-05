@@ -8951,7 +8951,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 );
                 if (oversized) {
                   assertTrue(threadResult._tag === "Failure");
-                  assert.equal(threadResult.failure._tag, "OrchestrationGetSnapshotError");
+                  assertTrue(threadResult.failure._tag === "OrchestrationThreadNotFoundError");
+                  assert.equal(threadResult.failure.threadId, defaultThreadId);
                   assert.equal(
                     threadResult.failure.message,
                     `Thread ${defaultThreadId} was not found`,
