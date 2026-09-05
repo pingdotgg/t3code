@@ -51,11 +51,41 @@ describe("usage pull refresh", () => {
         events.push("rescan-started");
       },
       () => events.push("window-committed"),
+      () => true,
     );
 
     expect(events).toEqual(["rates-started"]);
     releaseRates();
     await operation;
     expect(events).toEqual(["rates-started", "rescan-started", "window-committed"]);
+  });
+
+  it("does not restore a rebased window after a newer selection", async () => {
+    let releaseRates!: () => void;
+    const rates = new Promise<void>((resolve) => {
+      releaseRates = resolve;
+    });
+    const rebased = { sinceDay: "2026-09-04" } as UsageSummaryInput;
+    const newer = { sinceDay: "2026-08-07" } as UsageSummaryInput;
+    let selected = rebased;
+    let activeRequest = 1;
+    const request = activeRequest;
+    const operation = refreshRebasedUsageWindow(
+      rebased,
+      async () => {
+        await rates;
+      },
+      (input) => {
+        selected = input;
+      },
+      () => request === activeRequest,
+    );
+
+    selected = newer;
+    activeRequest += 1;
+    releaseRates();
+    await operation;
+
+    expect(selected).toBe(newer);
   });
 });
