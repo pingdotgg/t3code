@@ -214,6 +214,155 @@ afterEach(() => {
   harness.setPendingConnectionError.mockClear();
 });
 
+describe("thread outbox model choice recovery", () => {
+  const draftKey = "environment-1:thread-1";
+  const modelA = { instanceId: ProviderInstanceId.make("codex"), model: "ModelA" };
+  const modelB = { ...modelA, model: "ModelB" };
+
+  it.each(["unchanged", "different model", "same model"] as const)(
+    "releases only the delivered archived choice: %s",
+    async (choice) => {
+      await composerDrafts.waitForComposerDraftsLoaded();
+      composerDrafts.updateComposerDraftSettings(draftKey, { modelSelection: modelA });
+      const message = {
+        ...queuedMessage({
+          messageId: `archived-token-${choice}`,
+          text: "accepted during sign-out",
+        }),
+        modelSelection: modelA,
+        modelSelectionId: composerDrafts.getComposerDraftSnapshot(draftKey).modelSelectionId,
+      };
+      await harness.manager.enqueue(message);
+      composerDrafts.clearComposerDraftContent(draftKey);
+      if (choice !== "unchanged")
+        composerDrafts.updateComposerDraftSettings(draftKey, {
+          modelSelection: choice === "same model" ? modelA : modelB,
+        });
+      await composerDrafts.archiveCloudComposerDrafts(
+        "account-a",
+        new Set([message.environmentId]),
+      );
+      expect(composerDrafts.getComposerDraftSnapshot(draftKey).modelSelection).toBeUndefined();
+      await expect(
+        completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId)),
+      ).resolves.toBe("removed");
+      appAtomRegistry.set(composerDrafts.composerDraftsAtom, {});
+      appAtomRegistry.set(composerDrafts.composerCloudDraftsAtom, {
+        accountId: null,
+        signedOut: {},
+      });
+      composerDrafts.resetComposerDraftsLoadState();
+      await composerDrafts.restoreCloudComposerDrafts("account-a");
+      expect(remainingMessages()).toEqual([]);
+      expect(composerDrafts.getComposerDraftSnapshot(draftKey).modelSelection).toEqual(
+        choice === "unchanged" ? undefined : choice === "same model" ? modelA : modelB,
+      );
+    },
+  );
+
+  it("does not attach an archived choice token to an existing legacy model during cloud restore", async () => {
+    await composerDrafts.waitForComposerDraftsLoaded();
+    composerDrafts.updateComposerDraftSettings(draftKey, { modelSelection: modelA });
+    const message = {
+      ...queuedMessage({ messageId: "archive-token-merge", text: "old queued message" }),
+      modelSelection: modelA,
+      modelSelectionId: composerDrafts.getComposerDraftSnapshot(draftKey).modelSelectionId,
+    };
+    await harness.manager.enqueue(message);
+    await composerDrafts.archiveCloudComposerDrafts("account-a", new Set([message.environmentId]));
+    await harness.manager.clearEnvironment(message.environmentId);
+    const legacy = composerDrafts.decodePersistedComposerState({
+      schemaVersion: 1,
+      drafts: {
+        [draftKey]: { text: "legacy unsent text", attachments: [], modelSelection: modelB },
+      },
+    });
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, legacy.drafts);
+    await composerDrafts.restoreCloudComposerDrafts("account-a");
+    expect(composerDrafts.getComposerDraftSnapshot(draftKey).modelSelection).toEqual(modelB);
+    await completeQueuedMessageDelivery(
+      remainingMessages()[0]!,
+      harness.manager.revisionOf(message.messageId),
+    );
+    expect(composerDrafts.getComposerDraftSnapshot(draftKey).modelSelection).toEqual(modelB);
+  });
+
+  it.each([false, true])(
+    "preserves cloud restore model ownership when the live field is explicitly cleared: %s",
+    async (explicitlyCleared) => {
+      await composerDrafts.waitForComposerDraftsLoaded();
+      composerDrafts.updateComposerDraftSettings(draftKey, { modelSelection: modelA });
+      const archivedId = composerDrafts.getComposerDraftSnapshot(draftKey).modelSelectionId;
+      await composerDrafts.archiveCloudComposerDrafts(
+        "account-a",
+        new Set([EnvironmentId.make("environment-1")]),
+      );
+      composerDrafts.setComposerDraftText(draftKey, "live text");
+      if (explicitlyCleared) {
+        const before = composerDrafts.getComposerDraftSnapshot(draftKey);
+        composerDrafts.updateComposerDraftSettings(draftKey, { modelSelection: modelB });
+        const merged = composerDrafts.getComposerDraftSnapshot(draftKey);
+        composerDrafts.setComposerDraftText(draftKey, "new live text");
+        await composerDrafts.undoComposerDraftMerge(draftKey, before, merged);
+      }
+      expect(
+        Object.hasOwn(composerDrafts.getComposerDraftSnapshot(draftKey), "modelSelection"),
+      ).toBe(explicitlyCleared);
+      await composerDrafts.restoreCloudComposerDrafts("account-a");
+      expect(composerDrafts.getComposerDraftSnapshot(draftKey)).toMatchObject({
+        modelSelection: explicitlyCleared ? undefined : modelA,
+        modelSelectionId: explicitlyCleared ? undefined : archivedId,
+      });
+    },
+  );
+
+  it.each([false, true])(
+    "keeps a re-picked model and token coherent during rollback; text edited=%s",
+    async (editText) => {
+      await composerDrafts.waitForComposerDraftsLoaded();
+      composerDrafts.updateComposerDraftSettings(draftKey, { modelSelection: modelA });
+      const before = composerDrafts.getComposerDraftSnapshot(draftKey);
+      await composerDrafts.mergeComposerDraftContent(draftKey, {
+        text: "restored message",
+        attachments: [],
+      });
+      composerDrafts.updateComposerDraftSettings(draftKey, { modelSelection: modelB });
+      const merged = composerDrafts.getComposerDraftSnapshot(draftKey);
+      // The settings writer explicitly accepts repeated selection values and
+      // generates a fresh token, even if a caller retains the model object.
+      composerDrafts.updateComposerDraftSettings(draftKey, { modelSelection: modelB });
+      if (editText)
+        composerDrafts.setComposerDraftText(draftKey, "restored message plus newer typing");
+      const picked = composerDrafts.getComposerDraftSnapshot(draftKey);
+      expect(picked.modelSelectionId).not.toBe(merged.modelSelectionId);
+      await composerDrafts.undoComposerDraftMerge(draftKey, before, merged);
+      expect(composerDrafts.getComposerDraftSnapshot(draftKey)).toMatchObject({
+        modelSelection: modelB,
+        modelSelectionId: picked.modelSelectionId,
+      });
+    },
+  );
+
+  it("leaves an unmarked legacy choice unchanged after an ordinary accepted send", async () => {
+    await composerDrafts.waitForComposerDraftsLoaded();
+    const legacy = composerDrafts.decodePersistedComposerState({
+      schemaVersion: 1,
+      drafts: { [draftKey]: { text: "legacy send", attachments: [], modelSelection: modelA } },
+    });
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, legacy.drafts);
+    const draft = composerDrafts.getComposerDraftSnapshot(draftKey);
+    const message = {
+      ...queuedMessage({ messageId: "legacy-send", text: draft.text }),
+      modelSelection: draft.modelSelection,
+    };
+    await harness.manager.enqueue(message);
+    composerDrafts.clearComposerDraftContent(draftKey);
+    await completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId));
+    expect(composerDrafts.getComposerDraftSnapshot(draftKey).modelSelection).toEqual(modelA);
+    expect(composerDrafts.getComposerDraftSnapshot(draftKey).modelSelectionId).toBeUndefined();
+  });
+});
+
 describe("thread outbox attachment preparation", () => {
   it("abandons reused uploads when an editor saves changed text during verification", async () => {
     const message = withReusedFileUpload(
