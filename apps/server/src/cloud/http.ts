@@ -468,7 +468,10 @@ const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(fu
     endpointRuntimeStatus.status === "disabled" || endpointRuntimeStatus.status === "running";
   if (!ok) {
     return yield* new EnvironmentCloudEndpointUnavailableError({
-      message: "Managed endpoint runtime could not be started.",
+      message:
+        endpointRuntimeStatus.status === "failed"
+          ? `Managed endpoint runtime could not connect. ${endpointRuntimeStatus.reason}`
+          : "Managed endpoint runtime could not connect.",
       endpointRuntimeStatus,
     });
   }

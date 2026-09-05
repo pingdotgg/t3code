@@ -3628,17 +3628,32 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("fails relay config when the managed endpoint connector cannot start", () =>
+  it.effect.each([
+    "cloudflared missing",
+    "Relay client did not register a tunnel connection within 15 seconds. Check whether the network allows outbound TCP and UDP traffic on port 7844.",
+  ])("fails relay config when the managed endpoint connector cannot start: %s", (reason) =>
     Effect.gen(function* () {
+      const applied: Array<unknown> = [];
+      let ready = false;
       yield* buildAppUnderTest({
         layers: {
           cloudManagedEndpointRuntime: {
-            applyConfig: () =>
-              Effect.succeed({
-                status: "failed",
-                providerKind: "cloudflare_tunnel",
-                reason: "cloudflared missing",
-                tunnelId: "tunnel-1",
+            applyConfig: (config) =>
+              Effect.sync(() => {
+                applied.push(config);
+                return ready
+                  ? {
+                      status: "running",
+                      providerKind: "cloudflare_tunnel",
+                      pid: 100,
+                      tunnelId: "tunnel-1",
+                    }
+                  : {
+                      status: "failed",
+                      providerKind: "cloudflare_tunnel",
+                      reason,
+                      tunnelId: "tunnel-1",
+                    };
               }),
           },
         },
@@ -3650,23 +3665,24 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
       const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
+      const payload = {
+        relayUrl: "https://relay.example.test",
+        cloudUserId: "user_123",
+        environmentCredential: "t3env_test_credential",
+        cloudMintPublicKey: cloudKeyPair.publicKey,
+        endpointRuntime: {
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "connector-token",
+          tunnelId: "tunnel-1",
+        },
+      };
       const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
         method: "POST",
         headers: {
           cookie: ownerCookie,
           "content-type": "application/json",
         },
-        body: jsonRequestBody({
-          relayUrl: "https://relay.example.test",
-          cloudUserId: "user_123",
-          environmentCredential: "t3env_test_credential",
-          cloudMintPublicKey: cloudKeyPair.publicKey,
-          endpointRuntime: {
-            providerKind: "cloudflare_tunnel",
-            connectorToken: "connector-token",
-            tunnelId: "tunnel-1",
-          },
-        }),
+        body: jsonRequestBody(payload),
       });
 
       assert.equal(relayConfigResponse.status, 503);
@@ -3676,9 +3692,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         endpointRuntimeStatus?: { status?: string; reason?: string };
       }>(relayConfigResponse);
       assert.equal(relayConfigBody._tag, "EnvironmentCloudEndpointUnavailableError");
-      assert.equal(relayConfigBody.message, "Managed endpoint runtime could not be started.");
+      assert.equal(
+        relayConfigBody.message,
+        `Managed endpoint runtime could not connect. ${reason}`,
+      );
       assert.equal(relayConfigBody.endpointRuntimeStatus?.status, "failed");
-      assert.equal(relayConfigBody.endpointRuntimeStatus?.reason, "cloudflared missing");
+      assert.equal(relayConfigBody.endpointRuntimeStatus?.reason, reason);
+      assert.deepEqual(applied, [payload.endpointRuntime]);
 
       const now = yield* DateTime.now;
       const healthRequest = makeCloudEnvironmentHealthRequest({
@@ -3706,6 +3726,36 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         healthBody.message,
         "Cloud mint public key is not installed for this environment.",
       );
+
+      // A timeout does not trigger an implicit stop or persist a partial link.
+      // A successful retry installs credentials using the existing wire shape.
+      ready = true;
+      const retryResponse = yield* fetchEffect(relayConfigUrl, {
+        method: "POST",
+        headers: { cookie: ownerCookie, "content-type": "application/json" },
+        body: jsonRequestBody(payload),
+      });
+      assert.equal(retryResponse.status, 200);
+      assert.deepEqual(yield* responseJsonEffect(retryResponse), {
+        ok: true,
+        endpointRuntimeStatus: {
+          status: "running",
+          providerKind: "cloudflare_tunnel",
+          pid: 100,
+          tunnelId: "tunnel-1",
+        },
+      });
+      assert.deepEqual(applied, [payload.endpointRuntime, payload.endpointRuntime]);
+      const linkStateUrl = yield* getHttpServerUrl("/api/connect/link-state");
+      const linkStateResponse = yield* fetchEffect(linkStateUrl, {
+        headers: { cookie: ownerCookie },
+      });
+      const linkState = yield* responseJsonEffect<{
+        linked: boolean;
+        managedTunnelActive: boolean;
+      }>(linkStateResponse);
+      assert.equal(linkState.linked, true);
+      assert.equal(linkState.managedTunnelActive, true);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
