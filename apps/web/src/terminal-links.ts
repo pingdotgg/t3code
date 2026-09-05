@@ -14,16 +14,6 @@ export interface TerminalLinkMatch {
   end: number;
 }
 
-export interface TerminalLinkBufferPosition {
-  x: number;
-  y: number;
-}
-
-export interface TerminalLinkBufferRange {
-  start: TerminalLinkBufferPosition;
-  end: TerminalLinkBufferPosition;
-}
-
 export interface TerminalBufferLineLike {
   readonly isWrapped?: boolean;
   translateToString(trimRight?: boolean): string;
@@ -197,43 +187,6 @@ export function collectWrappedTerminalLinkLine(
     text: segments.map((segment) => segment.text).join(""),
     segments,
   };
-}
-
-function resolveCharacterPosition(
-  segments: ReadonlyArray<WrappedTerminalLinkLineSegment>,
-  characterIndex: number,
-): TerminalLinkBufferPosition {
-  for (const segment of segments) {
-    if (characterIndex < segment.endIndex) {
-      return {
-        x: characterIndex - segment.startIndex + 1,
-        y: segment.bufferLineNumber,
-      };
-    }
-  }
-
-  const lastSegment = segments[segments.length - 1];
-  return {
-    x: Math.max(lastSegment?.text.length ?? 0, 1),
-    y: lastSegment?.bufferLineNumber ?? 1,
-  };
-}
-
-export function resolveWrappedTerminalLinkRange(
-  wrappedLine: WrappedTerminalLinkLine,
-  match: Pick<TerminalLinkMatch, "start" | "end">,
-): TerminalLinkBufferRange {
-  return {
-    start: resolveCharacterPosition(wrappedLine.segments, match.start),
-    end: resolveCharacterPosition(wrappedLine.segments, match.end - 1),
-  };
-}
-
-export function wrappedTerminalLinkRangeIntersectsBufferLine(
-  range: TerminalLinkBufferRange,
-  bufferLineNumber: number,
-): boolean {
-  return range.start.y <= bufferLineNumber && bufferLineNumber <= range.end.y;
 }
 
 export function isTerminalLinkActivation(
