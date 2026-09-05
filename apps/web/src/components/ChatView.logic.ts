@@ -263,6 +263,7 @@ export function resolveThreadMetadataUpdateForNextTurn(input: {
   currentModelSelection: ModelSelection;
   nextModelSelection?: ModelSelection;
   currentBranch: string | null;
+  currentWorktreePath: string | null;
   nextBranch?: string;
 }): {
   modelSelection?: ModelSelection;
@@ -282,7 +283,12 @@ export function resolveThreadMetadataUpdateForNextTurn(input: {
   }
   return {
     ...(modelSelectionChanged ? { modelSelection: nextModelSelection } : {}),
-    ...(branchChanged ? { branch: input.nextBranch, worktreePath: null } : {}),
+    ...(branchChanged
+      ? {
+          branch: input.nextBranch,
+          ...(input.currentWorktreePath === null ? { worktreePath: null } : {}),
+        }
+      : {}),
   };
 }
 

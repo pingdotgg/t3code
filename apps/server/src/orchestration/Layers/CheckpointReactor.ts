@@ -540,8 +540,8 @@ const make = Effect.gen(function* () {
   // stale. Since #4460 the client only attributes PR state to a thread when
   // the checked-out branch equals the recorded one, so stale metadata silently
   // orphans the thread's PR. Follow the drift here: adopt the checked-out
-  // branch as the thread's branch, but only when the worktree belongs to
-  // exactly this thread — for shared cwds the strict matching is the point.
+  // branch as the completing thread's branch. Other threads that reference
+  // the same checkout keep their own recorded branch.
   const followWorktreeBranchDrift = Effect.fn("followWorktreeBranchDrift")(function* (input: {
     readonly threadId: ThreadId;
     readonly cwd: string;
@@ -569,23 +569,15 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      const shell = yield* projectionSnapshotQuery.getShellSnapshot();
-      const worktreeIsShared = shell.threads.some(
-        (other) => other.id !== thread.id && other.worktreePath === thread.worktreePath,
-      );
-      if (worktreeIsShared) {
-        return;
-      }
-
-      // expectedBranch makes this a compare-and-swap in the decider: if the
-      // recorded branch moved between our read and the dispatch (rename,
-      // concurrent drift-follow), the stale update is dropped.
+      // The decider checks the branch, checkout, and sibling activity atomically
+      // so a sibling starting after our read prevents stale drift adoption.
       yield* orchestrationEngine.dispatch({
         type: "thread.meta.update",
         commandId: yield* serverCommandId("worktree-branch-drift"),
         threadId: thread.id,
         branch: checkedOutBranch,
         expectedBranch: thread.branch,
+        requireIdleWorktreePath: input.cwd,
       });
       yield* Effect.logInfo("thread branch followed worktree checkout", {
         threadId: thread.id,

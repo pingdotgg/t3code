@@ -792,10 +792,21 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const worktreeGuardFailed =
+        command.requireIdleWorktreePath !== undefined &&
+        (thread.worktreePath !== command.requireIdleWorktreePath ||
+          readModel.threads.some(
+            (other) =>
+              other.id !== thread.id &&
+              other.worktreePath === command.requireIdleWorktreePath &&
+              (other.session?.activeTurnId != null ||
+                other.session?.status === "starting" ||
+                other.session?.status === "running"),
+          ));
       const branch =
         command.branch !== undefined &&
-        command.expectedBranch !== undefined &&
-        thread.branch !== command.expectedBranch
+        ((command.expectedBranch !== undefined && thread.branch !== command.expectedBranch) ||
+          worktreeGuardFailed)
           ? thread.branch
           : command.branch;
       const occurredAt = yield* nowIso;
