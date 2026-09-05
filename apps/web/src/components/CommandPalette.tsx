@@ -100,7 +100,7 @@ import {
   isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
-import { onOpenCommandPalette } from "../commandPaletteBus";
+import { onOpenCommandPalette, type FolderSelectionRequest } from "../commandPaletteBus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
@@ -416,6 +416,11 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   const openAddProject = useCallback(() => dispatch({ _tag: "OpenAddProject" }), []);
   const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
   const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
+  const completeFolderSelection = useCallback(
+    (request: FolderSelectionRequest, selected: boolean) =>
+      dispatch({ _tag: "CompleteFolderSelection", request, selected }),
+    [],
+  );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { theme, themeHalves, resolvedTheme } = useTheme();
   const composerHandleRef = useRef<ChatComposerHandle | null>(null);
@@ -521,6 +526,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           setOpen={setOpen}
           openOverlayMode={toggleMode}
           clearOpenIntent={clearOpenIntent}
+          completeFolderSelection={completeFolderSelection}
         />
       </CommandDialog>
     </ComposerHandleContext>
@@ -533,6 +539,7 @@ function CommandPaletteDialog(props: {
   readonly setOpen: (open: boolean) => void;
   readonly openOverlayMode: (mode: SearchOverlayMode) => void;
   readonly clearOpenIntent: () => void;
+  readonly completeFolderSelection: (request: FolderSelectionRequest, selected: boolean) => void;
 }) {
   const composerHandleRef = useComposerHandleContext();
 
@@ -567,6 +574,7 @@ function CommandPaletteDialog(props: {
           setOpen={props.setOpen}
           openOverlayMode={props.openOverlayMode}
           clearOpenIntent={props.clearOpenIntent}
+          completeFolderSelection={props.completeFolderSelection}
         />
       )}
     </CommandDialogPopup>
@@ -578,10 +586,11 @@ function OpenCommandPaletteDialog(props: {
   readonly setOpen: (open: boolean) => void;
   readonly openOverlayMode: (mode: SearchOverlayMode) => void;
   readonly clearOpenIntent: () => void;
+  readonly completeFolderSelection: (request: FolderSelectionRequest, selected: boolean) => void;
 }) {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
-  const { clearOpenIntent, openIntent, openOverlayMode, setOpen } = props;
+  const { clearOpenIntent, completeFolderSelection, openIntent, openOverlayMode, setOpen } = props;
   const folderSelection = openIntent?.kind === "select-folder" ? openIntent : null;
   const [isSelectingFolder, setIsSelectingFolder] = useState(false);
   const [query, setQuery] = useState("");
@@ -1979,7 +1988,7 @@ function OpenCommandPaletteDialog(props: {
         if (isSelectingFolder) return;
         setIsSelectingFolder(true);
         try {
-          if (await folderSelection.onSelect(rawCwd)) setOpen(false);
+          completeFolderSelection(folderSelection, await folderSelection.onSelect(rawCwd));
         } finally {
           setIsSelectingFolder(false);
         }
@@ -1999,7 +2008,7 @@ function OpenCommandPaletteDialog(props: {
       handleAddProjectForEnvironment,
       folderSelection,
       isSelectingFolder,
-      setOpen,
+      completeFolderSelection,
     ],
   );
 

@@ -57,6 +57,11 @@ export type CommandPaletteUiAction =
   | { readonly _tag: "OpenAddProject" }
   | { readonly _tag: "OpenNewThreadIn" }
   | { readonly _tag: "SelectFolder"; readonly request: FolderSelectionRequest }
+  | {
+      readonly _tag: "CompleteFolderSelection";
+      readonly request: FolderSelectionRequest;
+      readonly selected: boolean;
+    }
   | { readonly _tag: "ClearOpenIntent" };
 
 export function reduceCommandPaletteUiState(
@@ -82,6 +87,10 @@ export function reduceCommandPaletteUiState(
         mode: "command",
         openIntent: { ...action.request, kind: "select-folder" },
       };
+    case "CompleteFolderSelection":
+      return action.selected && state.openIntent === action.request
+        ? { ...state, open: false, openIntent: null }
+        : state;
     case "ClearOpenIntent":
       return state.openIntent ? { ...state, openIntent: null } : state;
   }
