@@ -1,7 +1,7 @@
 "use client";
 
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
-import { ChevronRightIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon } from "lucide-react";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
@@ -177,6 +177,23 @@ function MenuRadioItem({
   );
 }
 
+function MenuRadioItemIndicator({
+  className,
+  children,
+  ...props
+}: MenuPrimitive.RadioItemIndicator.Props) {
+  return (
+    <MenuPrimitive.RadioItemIndicator
+      aria-hidden
+      className={cn("flex shrink-0", className)}
+      data-slot="menu-radio-item-indicator"
+      {...props}
+    >
+      {children ?? <CheckIcon className="size-3.5" />}
+    </MenuPrimitive.RadioItemIndicator>
+  );
+}
+
 function MenuGroupLabel({
   className,
   inset,
@@ -300,6 +317,7 @@ export {
   MenuRadioGroup as DropdownMenuRadioGroup,
   MenuRadioItem,
   MenuRadioItem as DropdownMenuRadioItem,
+  MenuRadioItemIndicator,
   MenuGroupLabel,
   MenuGroupLabel as DropdownMenuLabel,
   MenuSeparator,

@@ -27,6 +27,7 @@ import {
   PrimaryConnectionTarget,
   type NetworkStatus,
   type PreparedConnection,
+  type SupervisorConnectionState,
 } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
@@ -73,8 +74,18 @@ const THREAD: OrchestrationThread = {
 };
 const SNAPSHOT: OrchestrationThreadDetailSnapshot = { snapshotSequence: 7, thread: THREAD };
 
+const CONNECTED_STATE: SupervisorConnectionState = {
+  ...AVAILABLE_CONNECTION_STATE,
+  desired: true,
+  network: "online",
+  phase: "connected",
+  attempt: 1,
+  generation: 1,
+};
+
 const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?: {
   readonly snapshot?: OrchestrationThreadDetailSnapshot;
+  readonly connected?: boolean;
 }) {
   const subscriptions = yield* Queue.unbounded<{
     readonly afterSequence: number | undefined;
@@ -123,10 +134,14 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
     probe: Effect.void,
     closed: Effect.never,
   };
+  const connectionState = yield* SubscriptionRef.make(
+    options?.connected ? CONNECTED_STATE : AVAILABLE_CONNECTION_STATE,
+  );
+  const sessionRef = yield* SubscriptionRef.make(Option.some(session));
   const supervisor = EnvironmentSupervisor.of({
     target: TARGET,
-    state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
-    session: yield* SubscriptionRef.make(Option.some(session)),
+    state: connectionState,
+    session: sessionRef,
     prepared: yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(
       Option.some({
         environmentId: TARGET.environmentId,
@@ -228,6 +243,9 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
     ref,
     subscriptions,
     olderLoads,
+    connectionState,
+    session,
+    sessionRef,
     counts: () => ({ httpLoads, diskLoads, opened, active }),
   };
 });
@@ -314,6 +332,75 @@ describe("createEnvironmentThreadStateAtoms", () => {
       const next = yield* Queue.take(h.subscriptions);
       expect(next.afterSequence).toBe(8);
       expect(h.counts()).toEqual({ httpLoads: 1, diskLoads: 1, opened: 2, active: 1 });
+      remount();
+      yield* Deferred.await(next.closed);
+    }),
+  );
+
+  it.effect.each([
+    { replayed: false, statuses: ["live"] },
+    { replayed: true, statuses: ["live", "synchronizing", "live"] },
+  ])(
+    "keeps a warm resume live until it replays events (replayed: $replayed)",
+    ({ replayed, statuses }) =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({ connected: true });
+        const unmount = h.registry.mount(h.stateAtom);
+        const first = yield* Queue.take(h.subscriptions);
+        yield* Queue.offer(first.events, { kind: "synchronized" });
+        yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+        unmount();
+        yield* Deferred.await(first.closed);
+
+        const observed: Array<EnvironmentThreadState["status"]> = [];
+        const stop = h.registry.subscribe(h.stateAtom, (state) => observed.push(state.status), {
+          immediate: true,
+        });
+        const remount = h.registry.mount(h.stateAtom);
+        const next = yield* Queue.take(h.subscriptions);
+        expect(next.afterSequence).toBe(7);
+        if (replayed) {
+          yield* Queue.offer(next.events, {
+            kind: "snapshot",
+            snapshot: { snapshotSequence: 9, thread: { ...THREAD, title: "Replayed" } },
+          });
+          yield* observeState(h.registry, h.stateAtom, (state) => state.status === "synchronizing");
+        }
+        yield* Queue.offer(next.events, { kind: "synchronized" });
+        yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+        expect(observed.filter((status, index) => observed[index - 1] !== status)).toEqual(
+          statuses,
+        );
+        stop();
+        remount();
+        yield* Deferred.await(next.closed);
+      }),
+  );
+
+  it.effect("downgrades a warm resume when the connection dropped while away", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({ connected: true });
+      const unmount = h.registry.mount(h.stateAtom);
+      const first = yield* Queue.take(h.subscriptions);
+      yield* Queue.offer(first.events, { kind: "synchronized" });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+      unmount();
+      yield* Deferred.await(first.closed);
+
+      yield* SubscriptionRef.set(h.sessionRef, Option.none());
+      yield* SubscriptionRef.set(h.connectionState, AVAILABLE_CONNECTION_STATE);
+      const remount = h.registry.mount(h.stateAtom);
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "cached");
+      expect(currentThread(h.registry, h.stateAtom)).toBe(THREAD);
+      expect(h.counts().opened).toBe(1);
+
+      yield* SubscriptionRef.set(h.connectionState, CONNECTED_STATE);
+      yield* SubscriptionRef.set(h.sessionRef, Option.some(h.session));
+      const next = yield* Queue.take(h.subscriptions);
+      expect(next.afterSequence).toBe(7);
+      expect(h.registry.get(h.stateAtom).status).toBe("synchronizing");
+      yield* Queue.offer(next.events, { kind: "synchronized" });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
       remount();
       yield* Deferred.await(next.closed);
     }),

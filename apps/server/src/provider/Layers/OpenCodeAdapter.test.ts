@@ -43,7 +43,6 @@ import {
   type OpenCodeRuntimeShape,
 } from "../opencodeRuntime.ts";
 import {
-  appendOpenCodeAssistantTextDelta,
   isOpenCodeNotFound,
   isSameOpenCodeDirectory,
   makeOpenCodeAdapter,
@@ -6430,20 +6429,17 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("appends raw assistant text deltas and reconciles part update snapshots", () =>
+  it.effect("reconciles assistant text snapshots", () =>
     Effect.sync(() => {
       const firstUpdate = mergeOpenCodeAssistantText(undefined, "Hello");
-      const overlapDelta = appendOpenCodeAssistantTextDelta(firstUpdate.latestText, "lo world");
-      const secondUpdate = mergeOpenCodeAssistantText(overlapDelta.nextText, "Hellolo world");
       const appendedUpdate = mergeOpenCodeAssistantText("Hello", "Hello world");
       const changedUpdate = mergeOpenCodeAssistantText("Hello world", "Hello there");
       const staleUpdate = mergeOpenCodeAssistantText("Hello world", "Hello");
 
-      NodeAssert.deepEqual(
-        [firstUpdate.deltaToEmit, overlapDelta.deltaToEmit, secondUpdate.deltaToEmit],
-        ["Hello", "lo world", ""],
-      );
-      NodeAssert.equal(secondUpdate.latestText, "Hellolo world");
+      NodeAssert.deepEqual(firstUpdate, {
+        latestText: "Hello",
+        deltaToEmit: "Hello",
+      });
       NodeAssert.deepEqual(appendedUpdate, {
         latestText: "Hello world",
         deltaToEmit: " world",
