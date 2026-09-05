@@ -1,6 +1,21 @@
 import type { ServerProvider, ServerProviderVersionAdvisory } from "@t3tools/contracts";
 
 /**
+ * Antigravity's local health check leaves auth unknown after a restart. Chat
+ * already treats that as "not a failure"; Settings and onboarding must too.
+ */
+export function isUncheckedAntigravityAuth(
+  provider: Pick<ServerProvider, "driver" | "installed" | "status" | "auth">,
+): boolean {
+  return (
+    provider.driver === "antigravity" &&
+    provider.installed &&
+    provider.status === "warning" &&
+    provider.auth.status === "unknown"
+  );
+}
+
+/**
  * Visual treatment for each server-reported provider status. Centralized so
  * the default-driver card and per-instance cards share the same language.
  */
@@ -55,7 +70,7 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
       detail: provider.message ?? null,
     };
   }
-  if (provider.status === "warning") {
+  if (provider.status === "warning" && !isUncheckedAntigravityAuth(provider)) {
     return {
       headline: "Needs attention",
       detail:

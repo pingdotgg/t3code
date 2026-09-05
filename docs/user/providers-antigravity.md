@@ -123,6 +123,9 @@ is refused while the runtime is in use.
 
 ## Check access and troubleshoot
 
+A server restart does not sign you out. Settings stays available until a session
+or a refresh checks the saved Google account.
+
 To check access and reload models, use **Refresh provider status** in web or desktop
 provider settings, or **Refresh models** in mobile thread settings. If asked to
 sign in again, use setup on web or desktop.

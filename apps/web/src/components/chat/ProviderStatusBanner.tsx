@@ -4,18 +4,12 @@ import { InfoIcon, XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { formatProviderDriverKindLabel } from "../../providerModels";
+import { isUncheckedAntigravityAuth } from "../settings/providerStatus";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export function getProviderStatusBannerKey(status: ServerProvider | null): string | null {
   if (!status || status.status === "ready" || status.status === "disabled") return null;
-  // Antigravity checks saved credentials when a session starts. Its local
-  // health check leaves auth unknown after a restart, which is not a failure.
-  if (
-    status.driver === "antigravity" &&
-    status.installed &&
-    status.status === "warning" &&
-    status.auth.status === "unknown"
-  ) {
+  if (isUncheckedAntigravityAuth(status)) {
     return null;
   }
   return [status.instanceId, status.status, status.auth.status, status.message ?? ""].join(

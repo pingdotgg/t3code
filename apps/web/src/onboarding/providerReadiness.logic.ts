@@ -8,6 +8,8 @@ import {
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { isUncheckedAntigravityAuth } from "../components/settings/providerStatus";
+
 const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
 const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
 const SAFE_SHELL_BINARY_PATTERN = /^[A-Za-z0-9_./:\\-]+$/;
@@ -38,7 +40,7 @@ export function getOnboardingProviderState(provider: ServerProvider | undefined)
   if (!provider.enabled || provider.status === "disabled") return "disabled";
   if (!provider.installed) return "install";
   if (provider.auth.status === "unauthenticated") return "signIn";
-  if (provider.status === "ready") return "ready";
+  if (provider.status === "ready" || isUncheckedAntigravityAuth(provider)) return "ready";
   return "attention";
 }
 

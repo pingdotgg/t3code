@@ -20,6 +20,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { isUncheckedAntigravityAuth } from "./providerStatus";
 
 interface ProviderSetupSectionProps {
   readonly environmentId: EnvironmentId;
@@ -154,6 +155,7 @@ function ProviderSetupActions({
   const installed =
     provider.installed || (!usesCustomBinary && installation?.installedVersion != null);
   const authenticated = provider.auth.status === "authenticated";
+  const uncheckedAntigravityAuth = isUncheckedAntigravityAuth(provider);
   const authStatusMessage =
     auth === null
       ? "Reading sign-in status."
@@ -163,9 +165,11 @@ function ProviderSetupActions({
           ? usesBrowser
             ? "Signed in with Google."
             : "Connected."
-          : auth.phase === "idle" && auth.message
-            ? auth.message
-            : phaseLabels.idle;
+          : uncheckedAntigravityAuth
+            ? (provider.message ?? "Google account access is checked when a session starts.")
+            : auth.phase === "idle" && auth.message
+              ? auth.message
+              : phaseLabels.idle;
   const authorizationUrl = auth?.phase === "waiting" ? auth.authorizationUrl : null;
   const queryError = authQuery.error ?? installQuery.error;
   const actionsDisabled = pendingLabel !== null || queryError !== null;
@@ -428,7 +432,10 @@ function ProviderSetupActions({
             >
               Cancel sign-in
             </Button>
-          ) : !authActive && !authenticated && provider.setup?.canAuthenticate ? (
+          ) : !authActive &&
+            !authenticated &&
+            !uncheckedAntigravityAuth &&
+            provider.setup?.canAuthenticate ? (
             <Button
               size="xs"
               variant="outline"

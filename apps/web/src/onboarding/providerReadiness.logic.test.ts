@@ -63,6 +63,27 @@ describe("getOnboardingProviderState", () => {
     expect(getOnboardingProviderState({ ...readyCodex, status: "warning" })).toBe("attention");
   });
 
+  it("treats installed Antigravity with unchecked auth after a restart as ready", () => {
+    const antigravity: ServerProvider = {
+      ...readyCodex,
+      instanceId: ProviderInstanceId.make("antigravity"),
+      driver: ProviderDriverKind.make("antigravity"),
+      status: "warning",
+      auth: { status: "unknown" },
+      message: "Antigravity is installed. Google account access is not checked yet.",
+    };
+
+    expect(getOnboardingProviderState(antigravity)).toBe("ready");
+    expect(
+      getOnboardingProviderState({
+        ...antigravity,
+        auth: { status: "unauthenticated" },
+      }),
+    ).toBe("signIn");
+    expect(getOnboardingProviderState({ ...antigravity, status: "error" })).toBe("attention");
+    expect(getOnboardingProviderState({ ...antigravity, installed: false })).toBe("install");
+  });
+
   it("does not offer installation or sign-in for disabled providers", () => {
     expect(getOnboardingProviderState({ ...readyCodex, enabled: false, installed: false })).toBe(
       "disabled",

@@ -338,6 +338,30 @@ describe("Antigravity setup", () => {
     expect(setup.removeInstall).toHaveBeenCalledWith({ environmentId, input: { instanceId } });
   });
 
+  it("does not offer Google sign-in while Antigravity auth is unchecked after a restart", () => {
+    setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
+    const message = "Antigravity is installed. Google account access is not checked yet.";
+    const view = renderSetup({
+      provider: {
+        ...provider,
+        installed: true,
+        status: "warning",
+        auth: { status: "unknown" },
+        message,
+      },
+    });
+
+    expect(button(view, "Sign in with Google")).toBeNull();
+    expect(button(view, "Sign out of Google")).not.toBeNull();
+    expect(
+      visitElements(
+        view,
+        (element) => element.props.children === "Sign in with your Google account.",
+      ),
+    ).toBeNull();
+    expect(visitElements(view, (element) => element.props.children === message)).not.toBeNull();
+  });
+
   it.each([true, false])(
     "can sign out an unchecked account when its instance is enabled=%s",
     async (enabled) => {
