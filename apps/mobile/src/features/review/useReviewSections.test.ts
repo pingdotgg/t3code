@@ -12,6 +12,7 @@ import { beforeEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   session: null as Pick<AuthSessionState, "authenticated" | "scopes"> | null,
+  sessionError: null as string | null,
   sessionAtom: {},
   effects: [] as Array<() => void>,
   checkpoints: [] as ReadonlyArray<OrchestrationCheckpointSummary>,
@@ -40,7 +41,7 @@ vi.mock("../../state/use-selected-thread-worktree", () => ({
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (atom: unknown) => ({
     data: atom === state.sessionAtom ? state.session : null,
-    error: null,
+    error: atom === state.sessionAtom ? state.sessionError : null,
     isPending: atom === state.sessionAtom && state.session === null,
     refresh: vi.fn(),
   }),
@@ -66,6 +67,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.effects = [];
   state.session = { authenticated: true, scopes: [AuthFilesystemReadScope] };
+  state.sessionError = null;
   state.checkpoints = [
     {
       turnId: TurnId.make("turn-1"),
@@ -170,4 +172,23 @@ it("falls back to a checkpoint when a pending grant resolves without file access
   expect(denied.reviewSections.map((section) => section.id)).toEqual(["turn:1"]);
   expect(denied.selectedSection?.diff).toBe(checkpointDiff);
   expect(setReviewSelectedSectionId).toHaveBeenCalledWith("environment:thread", "turn:1");
+});
+
+it("reports a failed access check when no checkpoint can replace the local review", () => {
+  state.checkpoints = [];
+  const input = makeInput();
+  expect(renderSections(input).selectedSection?.diff).toBe(localDiff);
+
+  state.sessionError = "The session request timed out.";
+  const unavailable = renderSections(input);
+  expect(unavailable.selectedSection).toBeNull();
+  expect(unavailable.reviewSections).toEqual([]);
+  expect(unavailable.error).toBe(state.sessionError);
+});
+
+it("keeps a cached checkpoint available when the filesystem access check fails", () => {
+  state.sessionError = "The session request timed out.";
+  const checkpoint = renderSections(makeInput());
+  expect(checkpoint.selectedSection?.diff).toBe(checkpointDiff);
+  expect(checkpoint.error).toBeNull();
 });
