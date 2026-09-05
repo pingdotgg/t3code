@@ -64,6 +64,7 @@ import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import * as ServerSingleton from "./serverSingleton.ts";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor.ts";
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
@@ -208,6 +209,20 @@ const RelayClientLive = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     return RelayClient.layerCloudflared({ baseDir: config.baseDir });
+  }),
+);
+
+/**
+ * Claims the data directory before anything binds a port or opens the database.
+ *
+ * Provided into `HttpServerLive` rather than merged alongside it so the ordering
+ * is structural: the lock is a dependency of the thing it protects, and a second
+ * server cannot reach a listening socket while another holds the directory.
+ */
+const ServerSingletonLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    yield* ServerSingleton.acquireServerSingleton(config.stateDir);
   }),
 );
 
@@ -589,6 +604,16 @@ export const makeServerLayer = Layer.unwrap(
             return;
           }
 
+          // Stamp the port onto the lock we already hold. It is only ever read
+          // by a *later* server's refusal message, which turns "something else
+          // is running" into an address the user can open.
+          yield* ServerSingleton.serverLockPath(config.stateDir).pipe(
+            Effect.flatMap((lockPath) =>
+              ServerSingleton.recordServerLockPort(lockPath, address.port),
+            ),
+            Effect.ignore,
+          );
+
           const state = yield* makePersistedServerRuntimeState({
             config,
             port: address.port,
@@ -760,7 +785,7 @@ export const makeServerLayer = Layer.unwrap(
       Layer.provideMerge(runtimeServicesLive),
       Layer.provide(activationLayer),
       Layer.provideMerge(serverRelayBrokerTracingLayer),
-      Layer.provideMerge(HttpServerLive),
+      Layer.provideMerge(HttpServerLive.pipe(Layer.provide(ServerSingletonLive))),
       Layer.provide(ApplicationObservabilityLive),
       Layer.provideMerge(FetchHttpClient.layer),
       // PR reads, Git operations, and WebSocket discovery share one process limiter.
