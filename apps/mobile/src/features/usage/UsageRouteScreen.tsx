@@ -161,17 +161,21 @@ export function UsageRouteScreen() {
   };
   const refreshWindow = () => {
     const request = ++refreshRequest.current;
-    refreshTargets.current = usagePullRefreshTargets(environments);
-    setIsPullRefreshing(true);
+    const targets = usagePullRefreshTargets(environments);
+    refreshTargets.current = targets;
+    setIsPullRefreshing(targets.size > 0);
     if (refreshIndicatorTimeout.current !== null) {
       clearTimeout(refreshIndicatorTimeout.current);
     }
-    refreshIndicatorTimeout.current = setTimeout(() => {
-      refreshRequest.current += 1;
-      setIsPullRefreshing(false);
-      refreshWasPending.current = false;
-      refreshIndicatorTimeout.current = null;
-    }, REFRESH_INDICATOR_TIMEOUT_MS);
+    refreshIndicatorTimeout.current =
+      targets.size > 0
+        ? setTimeout(() => {
+            refreshRequest.current += 1;
+            setIsPullRefreshing(false);
+            refreshWasPending.current = false;
+            refreshIndicatorTimeout.current = null;
+          }, REFRESH_INDICATOR_TIMEOUT_MS)
+        : null;
     const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
       nextWindow.sinceDay !== window.sinceDay ||
