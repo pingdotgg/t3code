@@ -125,6 +125,11 @@ states; recordings show transitions. Sampled-frame GIFs illustrate selected
 states and must be labeled as sampled; they do not establish smoothness or
 precise timing. Record durations and any speed changes when relevant.
 
+When capture is disabled, times out, reopens a dialog, or produces blank or
+inconsistent output, follow [capture recovery](references/capture-recovery.md)
+before declaring evidence unavailable. Continue authorized recovery and
+publication; a first recorder failure is not a completed PR handoff.
+
 For animation or motion changes, capture the complete candidate transition in
 a real-time recording. When the claimed improvement is comparative, record the
 same flow on the base revision too. Stills and sampled-frame GIFs can clarify
