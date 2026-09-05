@@ -61,6 +61,10 @@ const isCheckpointMcpFailure = Schema.is(CheckpointMcpFailure);
 const isOrchestratorProjectionError = Schema.is(OrchestratorProjectionError);
 const isProjectionStoreThreadNotFoundError = Schema.is(ProjectionStoreThreadNotFoundError);
 
+function isMissingThreadProjection(error: unknown): boolean {
+  return isOrchestratorProjectionError(error) && isProjectionStoreThreadNotFoundError(error.cause);
+}
+
 function providerTurnForRun(projection: OrchestrationV2ThreadProjection, runOrdinal: number) {
   const run = projection.runs.find((candidate) => candidate.ordinal === runOrdinal);
   if (run?.activeAttemptId === null || run === undefined) return undefined;
@@ -168,7 +172,7 @@ export const make = Effect.gen(function* () {
   ) {
     const caller = yield* threadManagement.getThreadProjection(scope.threadId).pipe(
       Effect.mapError((error) =>
-        isOrchestratorProjectionError(error) && isProjectionStoreThreadNotFoundError(error.cause)
+        isMissingThreadProjection(error)
           ? failure("thread_not_found", `Calling thread '${scope.threadId}' was not found.`)
           : failure(
               "operation_failed",
@@ -192,10 +196,15 @@ export const make = Effect.gen(function* () {
               `Thread '${threadId}' was not found in the calling thread's project.`,
             ),
           ThreadManagementProjectionLoadError: (error: ThreadManagementProjectionLoadError) =>
-            failure(
-              "operation_failed",
-              `Unable to load thread '${threadId}': ${errorMessage(error)}`,
-            ),
+            isMissingThreadProjection(error.cause)
+              ? failure(
+                  "thread_not_found",
+                  `Thread '${threadId}' was not found in the calling thread's project.`,
+                )
+              : failure(
+                  "operation_failed",
+                  `Unable to load thread '${threadId}': ${errorMessage(error)}`,
+                ),
         }),
         Effect.mapError((error) =>
           isCheckpointMcpFailure(error)

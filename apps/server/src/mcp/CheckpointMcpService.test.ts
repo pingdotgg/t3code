@@ -27,11 +27,15 @@ import {
   ClaudeProviderCapabilitiesV2,
 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import {
+  ThreadManagementProjectionLoadError,
   ThreadManagementService,
   ThreadManagementThreadNotFoundError,
 } from "../orchestration-v2/ThreadManagementService.ts";
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
-import { ProjectionStoreReadError } from "../orchestration-v2/ProjectionStore.ts";
+import {
+  ProjectionStoreReadError,
+  ProjectionStoreThreadNotFoundError,
+} from "../orchestration-v2/ProjectionStore.ts";
 import { CheckpointMcpService, layer } from "./CheckpointMcpService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
@@ -184,6 +188,7 @@ function makeHarness(
   input: {
     readonly projection?: OrchestrationV2ThreadProjection;
     readonly callerError?: OrchestratorProjectionError;
+    readonly targetError?: ThreadManagementProjectionLoadError;
     readonly hasCheckpointRef?: CheckpointStore.CheckpointStore["Service"]["hasCheckpointRef"];
     readonly diffCheckpoints?: CheckpointStore.CheckpointStore["Service"]["diffCheckpoints"];
   } = {},
@@ -193,6 +198,7 @@ function makeHarness(
   const diffCheckpoints = vi.fn(
     input.diffCheckpoints ?? (() => Effect.succeed("diff --git a/file b/file")),
   );
+  const dispatch = vi.fn(() => Effect.die("Checkpoint MCP read tests do not dispatch commands."));
   const serviceLayer = layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -204,18 +210,21 @@ function makeHarness(
           getProjectThread: ({ threadId: requested }) =>
             requested === projection.thread.id
               ? Effect.succeed(projection)
-              : Effect.fail(
-                  new ThreadManagementThreadNotFoundError({
-                    projectId,
-                    threadId: requested,
-                  }),
-                ),
+              : input.targetError !== undefined
+                ? Effect.fail(input.targetError)
+                : Effect.fail(
+                    new ThreadManagementThreadNotFoundError({
+                      projectId,
+                      threadId: requested,
+                    }),
+                  ),
+          dispatch,
         }),
         Layer.mock(CheckpointStore.CheckpointStore)({ hasCheckpointRef, diffCheckpoints }),
       ),
     ),
   );
-  return { serviceLayer, hasCheckpointRef, diffCheckpoints };
+  return { serviceLayer, hasCheckpointRef, diffCheckpoints, dispatch };
 }
 
 it.effect("pages before checking checkpoint refs and bounds file summaries", () => {
@@ -317,6 +326,48 @@ it.effect("keeps optional thread reads inside the caller's project", () => {
     const error = yield* service.list(invocation, { threadId: otherThreadId }).pipe(Effect.flip);
     expect(error.code).toBe("thread_not_found");
   }).pipe(Effect.provide(harness.serviceLayer));
+});
+
+it.effect("distinguishes a missing target projection from an operational failure", () => {
+  const missingHarness = makeHarness({
+    targetError: new ThreadManagementProjectionLoadError({
+      projectId,
+      threadId: otherThreadId,
+      cause: new OrchestratorProjectionError({
+        threadId: otherThreadId,
+        cause: new ProjectionStoreThreadNotFoundError({ threadId: otherThreadId }),
+      }),
+    }),
+  });
+  const failedHarness = makeHarness({
+    targetError: new ThreadManagementProjectionLoadError({
+      projectId,
+      threadId: otherThreadId,
+      cause: new OrchestratorProjectionError({
+        threadId: otherThreadId,
+        cause: new ProjectionStoreReadError({
+          threadId: otherThreadId,
+          cause: new Error("projection store unavailable"),
+        }),
+      }),
+    }),
+  });
+
+  return Effect.gen(function* () {
+    const missing = yield* Effect.gen(function* () {
+      const service = yield* CheckpointMcpService;
+      return yield* service.list(invocation, { threadId: otherThreadId }).pipe(Effect.flip);
+    }).pipe(Effect.provide(missingHarness.serviceLayer));
+    assert.equal(missing.code, "thread_not_found");
+    assert.equal(missingHarness.dispatch.mock.calls.length, 0);
+
+    const failed = yield* Effect.gen(function* () {
+      const service = yield* CheckpointMcpService;
+      return yield* service.list(invocation, { threadId: otherThreadId }).pipe(Effect.flip);
+    }).pipe(Effect.provide(failedHarness.serviceLayer));
+    assert.equal(failed.code, "operation_failed");
+    assert.equal(failedHarness.dispatch.mock.calls.length, 0);
+  });
 });
 
 it.effect("marks null provider targets ambiguous outside the root baseline", () => {
