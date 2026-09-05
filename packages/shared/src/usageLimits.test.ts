@@ -12,6 +12,7 @@ import {
   collectLimitSources,
   collectLimitsGroups,
   elapsedShare,
+  exhaustedUntil,
   formatResetsIn,
   limitsNotice,
   paceOf,
@@ -68,6 +69,53 @@ describe("pace", () => {
     expect(formatResetsIn({ ...window, resetsAt: "2026-09-03T11:00:00.000Z" }, now)).toBe(
       "resets now",
     );
+  });
+});
+
+describe("exhaustedUntil", () => {
+  it("reports the reset of an exhausted window", () => {
+    expect(
+      exhaustedUntil(
+        { checkedAt: now.toString(), windows: [{ ...window, usedPercent: 100 }] },
+        now,
+      ),
+    ).toBe(window.resetsAt);
+  });
+
+  it("picks the later reset when more than one window is exhausted", () => {
+    const later = {
+      ...window,
+      id: "seven_day",
+      usedPercent: 100,
+      resetsAt: "2026-09-06T15:30:00.000Z",
+    };
+    expect(
+      exhaustedUntil(
+        { checkedAt: now.toString(), windows: [{ ...window, usedPercent: 100 }, later] },
+        now,
+      ),
+    ).toBe(later.resetsAt);
+  });
+
+  it("ignores a model-scoped bucket, which limits one model and not the account", () => {
+    const scoped = { ...window, id: "seven_day_fable", usedPercent: 100 };
+    expect(exhaustedUntil({ checkedAt: now.toString(), windows: [scoped] }, now)).toBeNull();
+  });
+
+  it("is null when nothing is exhausted or the reset has already passed", () => {
+    expect(
+      exhaustedUntil({ checkedAt: now.toString(), windows: [{ ...window, usedPercent: 99 }] }, now),
+    ).toBeNull();
+    expect(
+      exhaustedUntil(
+        {
+          checkedAt: now.toString(),
+          windows: [{ ...window, usedPercent: 100, resetsAt: "2026-09-03T11:00:00.000Z" }],
+        },
+        now,
+      ),
+    ).toBeNull();
+    expect(exhaustedUntil(undefined, now)).toBeNull();
   });
 });
 
