@@ -12,6 +12,11 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
   ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
+  RunAttemptId,
+  RuntimeRequestId,
+  MessageId,
 } from "@t3tools/contracts";
 import {
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
@@ -160,6 +165,22 @@ const ProjectionCheckpointContext = Schema.Struct({
 export type ProjectionCheckpointContext = typeof ProjectionCheckpointContext.Type;
 const decodeCheckpointContext = Schema.decodeUnknownEffect(ProjectionCheckpointContext);
 
+/** Exact durable targets used by interrupt, restart, and steering effects. */
+export interface ProjectionProviderControlContext {
+  readonly providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] | undefined;
+  readonly providerTurn: OrchestrationV2ProviderTurn | undefined;
+  readonly attempt: OrchestrationV2ThreadProjection["attempts"][number] | undefined;
+  readonly message: OrchestrationV2ConversationMessage | undefined;
+  readonly run: OrchestrationV2Run | undefined;
+}
+
+export interface ProjectionProviderControlTarget {
+  readonly providerThreadId: ProviderThreadId;
+  readonly providerTurnId: ProviderTurnId;
+  readonly attemptId?: RunAttemptId;
+  readonly messageId?: MessageId;
+}
+
 export interface ProjectionStoreV2Shape {
   readonly apply: (
     event: OrchestrationV2DomainEvent,
@@ -180,6 +201,17 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error>;
+  readonly getRuntimeRequest: (
+    threadId: ThreadId,
+    requestId: RuntimeRequestId,
+  ) => Effect.Effect<
+    OrchestrationV2ThreadProjection["runtimeRequests"][number] | undefined,
+    ProjectionStoreV2Error
+  >;
+  readonly getProviderControlContext: (
+    threadId: ThreadId,
+    target: ProjectionProviderControlTarget,
+  ) => Effect.Effect<ProjectionProviderControlContext, ProjectionStoreV2Error>;
   readonly getCheckpointContext: (
     threadId: ThreadId,
   ) => Effect.Effect<ProjectionCheckpointContext, ProjectionStoreV2Error>;
@@ -3018,6 +3050,91 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
       );
 
+    const requireThread = (threadId: ThreadId) =>
+      Effect.gen(function* () {
+        const rows = yield* sql<{ readonly thread_id: string }>`
+        SELECT thread_id FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId} LIMIT 1
+      `;
+        if (rows.length === 0) return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+      });
+    const controlReadError = (threadId: ThreadId) => (cause: unknown) =>
+      isProjectionStoreThreadNotFoundError(cause)
+        ? cause
+        : new ProjectionStoreReadError({ threadId, cause });
+
+    const getRuntimeRequest: ProjectionStoreV2Shape["getRuntimeRequest"] = (threadId, requestId) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* requireThread(threadId);
+            const rows = yield* sql<PayloadRow>`
+          SELECT payload_json FROM orchestration_v2_projection_runtime_requests
+          WHERE thread_id = ${threadId} AND runtime_request_id = ${requestId}
+        `;
+            return rows[0] === undefined
+              ? undefined
+              : yield* decodeRuntimeRequestPayload(rows[0].payload_json);
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(threadId)));
+
+    const getProviderControlContext: ProjectionStoreV2Shape["getProviderControlContext"] = (
+      threadId,
+      target,
+    ) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* requireThread(threadId);
+            // Match the full projection's ownership scope, but fetch only the target
+            // records. Transcript items and fork ancestors are never read here.
+            const [threadRows, turnRows, attemptRows, messageRows] = yield* Effect.all([
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_threads
+            WHERE provider_thread_id = ${target.providerThreadId} AND (
+              thread_id = ${threadId}
+              OR owner_node_id IN (SELECT node_id FROM orchestration_v2_projection_nodes WHERE thread_id = ${threadId})
+              OR provider_thread_id IN (SELECT provider_thread_id FROM orchestration_v2_projection_subagents WHERE thread_id = ${threadId})
+            )`,
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_turns
+            WHERE thread_id = ${threadId} AND provider_turn_id = ${target.providerTurnId}`,
+              target.attemptId === undefined
+                ? Effect.succeed([] as ReadonlyArray<PayloadRow>)
+                : sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_run_attempts
+              WHERE thread_id = ${threadId} AND attempt_id = ${target.attemptId}`,
+              target.messageId === undefined
+                ? Effect.succeed([] as ReadonlyArray<PayloadRow>)
+                : sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_messages
+              WHERE thread_id = ${threadId} AND message_id = ${target.messageId}`,
+            ]);
+            const providerThread =
+              threadRows[0] === undefined
+                ? undefined
+                : yield* decodeProviderThreadPayload(threadRows[0].payload_json);
+            const providerTurn =
+              turnRows[0] === undefined
+                ? undefined
+                : yield* decodeProviderTurnPayload(turnRows[0].payload_json);
+            const attempt =
+              attemptRows[0] === undefined
+                ? undefined
+                : yield* decodeRunAttemptPayload(attemptRows[0].payload_json);
+            const message =
+              messageRows[0] === undefined
+                ? undefined
+                : yield* decodeMessagePayload(messageRows[0].payload_json);
+            let run: OrchestrationV2Run | undefined;
+            if (target.messageId !== undefined && providerTurn !== undefined) {
+              const rows =
+                yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_runs
+            WHERE thread_id = ${threadId} AND json_extract(payload_json, '$.activeAttemptId') IS ${providerTurn.runAttemptId}
+            ORDER BY ordinal ASC LIMIT 1`;
+              if (rows[0] !== undefined) run = yield* decodeRunPayload(rows[0].payload_json);
+            }
+            return { providerThread, providerTurn, attempt, message, run };
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(threadId)));
+
     const getCheckpointContext: ProjectionStoreV2Shape["getCheckpointContext"] = (threadId) =>
       sql
         .withTransaction(
@@ -3732,6 +3849,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getSettlementCandidates,
       getThreadProjection,
       getCheckpointContext,
+      getRuntimeRequest,
+      getProviderControlContext,
       getRecoveryThreadIds,
       getUnreadableThreadIds,
       getThreadSnapshot,
@@ -3844,6 +3963,40 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             .map((projection) => projection.thread.id);
         }),
       getUnreadableThreadIds: () => Effect.succeed([]),
+      getRuntimeRequest: (threadId, requestId) =>
+        Effect.gen(function* () {
+          const projection = (yield* Ref.get(replayState)).projections.get(threadId);
+          if (projection === undefined)
+            return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+          return projection.runtimeRequests.find((request) => request.id === requestId);
+        }),
+      getProviderControlContext: (threadId, target) =>
+        Effect.gen(function* () {
+          const projection = (yield* Ref.get(replayState)).projections.get(threadId);
+          if (projection === undefined)
+            return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+          const providerTurn = projection.providerTurns.find(
+            (turn) => turn.id === target.providerTurnId,
+          );
+          return {
+            providerThread: projection.providerThreads.find(
+              (thread) => thread.id === target.providerThreadId,
+            ),
+            providerTurn,
+            attempt:
+              target.attemptId === undefined
+                ? undefined
+                : projection.attempts.find((attempt) => attempt.id === target.attemptId),
+            message:
+              target.messageId === undefined
+                ? undefined
+                : projection.messages.find((message) => message.id === target.messageId),
+            run:
+              target.messageId === undefined || providerTurn === undefined
+                ? undefined
+                : projection.runs.find((run) => run.activeAttemptId === providerTurn.runAttemptId),
+          };
+        }),
       getCheckpointContext: (threadId) =>
         Effect.gen(function* () {
           const projection = (yield* Ref.get(replayState)).projections.get(threadId);
