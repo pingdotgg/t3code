@@ -133,7 +133,7 @@ const RECORDING_ARM_GRACE_MS = 10_000;
 const PICTURE_IN_PICTURE_FRAME_INTERVAL_MS = Math.ceil(1_000 / 12);
 const PICTURE_IN_PICTURE_JPEG_QUALITY = 80;
 /**
- * Cold guests can reject capturePage with UnknownVizError or never settle it.
+ * Chromium can reject cold screenshot captures or leave them pending.
  * Bound each attempt so snapshots release control even when Chromium stalls.
  */
 const CAPTURE_PAGE_RETRY_ATTEMPTS = 3;
@@ -147,6 +147,17 @@ const PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON = 0.002;
 const MAX_ARTIFACT_SITE_SLUG_LENGTH = 80;
 const requestRecordingCaptureExpression = (tabId: string): string =>
   `globalThis[${JSON.stringify(DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER)}]?.(${JSON.stringify(tabId)}) === true`;
+const decodeScreenshotLayout = Schema.decodeUnknownSync(
+  Schema.Struct({
+    cssVisualViewport: Schema.Struct({
+      pageX: Schema.Number,
+      pageY: Schema.Number,
+      clientWidth: Schema.Number,
+      clientHeight: Schema.Number,
+    }),
+  }),
+);
+const decodeScreenshot = Schema.decodeUnknownSync(Schema.Struct({ data: Schema.String }));
 const DEFAULT_ANNOTATION_THEME: DesktopPreviewAnnotationTheme = {
   colorScheme: "light",
   radius: "0.625rem",
@@ -609,42 +620,61 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       try: evaluate,
       catch: (cause) => new PreviewOperationError({ ...errorContext, cause }),
     });
-  const capturePageWithRetry = Effect.fn("PreviewManager.capturePageWithRetry")(function* (
-    errorContext: PreviewOperationContext,
-    tabId: string,
-    wc: Electron.WebContents,
-  ) {
-    const requireCurrentGuest = Effect.gen(function* () {
-      const tabs = yield* SynchronizedRef.get(tabsRef);
-      if (wc.isDestroyed() || tabs.get(tabId)?.webContentsId !== wc.id) {
-        return yield* new PreviewWebContentsNotFoundError({ tabId, webContentsId: wc.id });
-      }
-    });
-    const capture = Effect.gen(function* () {
-      // Check after the retry delay, and again before accepting its result.
-      yield* requireCurrentGuest;
-      const image = yield* Effect.tryPromise({
-        // An abort-signal parameter makes a stalled promise interruptible.
-        try: (_signal) => wc.capturePage(),
-        catch: (cause) => new PreviewOperationError({ ...errorContext, cause }),
-      }).pipe(
-        Effect.timeout(CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS),
-        Effect.catchTags({
-          TimeoutError: (cause) =>
-            Effect.fail(new PreviewOperationError({ ...errorContext, cause })),
+  const captureScreenshotWithRetry = Effect.fn("PreviewManager.captureScreenshotWithRetry")(
+    function* (errorContext: PreviewOperationContext, tabId: string, wc: Electron.WebContents) {
+      const control = yield* ensureControlSession(wc);
+      const requireCurrentGuest = Effect.gen(function* () {
+        const tabs = yield* SynchronizedRef.get(tabsRef);
+        if (wc.isDestroyed() || tabs.get(tabId)?.webContentsId !== wc.id) {
+          return yield* new PreviewWebContentsNotFoundError({ tabId, webContentsId: wc.id });
+        }
+      });
+      const capture = Effect.gen(function* () {
+        // Check after the retry delay, and again before accepting its result.
+        yield* requireCurrentGuest;
+        const image = yield* Effect.tryPromise({
+          // An abort-signal parameter makes a stalled promise interruptible.
+          try: async (_signal) => {
+            const { cssVisualViewport: viewport } = decodeScreenshotLayout(
+              await control.debugger.sendCommand("Page.getLayoutMetrics"),
+            );
+            // A fitted webview can extend past the host window. An explicit clip
+            // captures its whole viewport instead of the host's visible surface.
+            const { data } = decodeScreenshot(
+              await control.debugger.sendCommand("Page.captureScreenshot", {
+                format: "png",
+                captureBeyondViewport: true,
+                clip: {
+                  x: viewport.pageX,
+                  y: viewport.pageY,
+                  width: viewport.clientWidth,
+                  height: viewport.clientHeight,
+                  scale: 1,
+                },
+              }),
+            );
+            return nativeImage.createFromBuffer(Buffer.from(data, "base64"));
+          },
+          catch: (cause) => new PreviewOperationError({ ...errorContext, cause }),
+        }).pipe(
+          Effect.timeout(CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS),
+          Effect.catchTags({
+            TimeoutError: (cause) =>
+              Effect.fail(new PreviewOperationError({ ...errorContext, cause })),
+          }),
+        );
+        yield* requireCurrentGuest;
+        return image;
+      });
+      return yield* capture.pipe(
+        Effect.retry({
+          times: CAPTURE_PAGE_RETRY_ATTEMPTS - 1,
+          schedule: Schedule.spaced(CAPTURE_PAGE_RETRY_DELAY_MS),
+          while: isPreviewOperationError,
         }),
       );
-      yield* requireCurrentGuest;
-      return image;
-    });
-    return yield* capture.pipe(
-      Effect.retry({
-        times: CAPTURE_PAGE_RETRY_ATTEMPTS - 1,
-        schedule: Schedule.spaced(CAPTURE_PAGE_RETRY_DELAY_MS),
-        while: isPreviewOperationError,
-      }),
-    );
-  });
+    },
+  );
   const currentIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const currentMillis = Clock.currentTimeMillis;
   const replaceMap = <K, V>(
@@ -2491,14 +2521,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const [createdAt, millis, image] = yield* Effect.all([
       currentIso,
       currentMillis,
-      capturePageWithRetry(
-        {
-          operation: "captureScreenshot.capturePage",
+      withControlSession(tabId, wc, "screenshot", () =>
+        captureScreenshotWithRetry(
+          {
+            operation: "captureScreenshot.capturePage",
+            tabId,
+            webContentsId: wc.id,
+          },
           tabId,
-          webContentsId: wc.id,
-        },
-        tabId,
-        wc,
+          wc,
+        ),
       ),
     ]);
     const uuid = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
