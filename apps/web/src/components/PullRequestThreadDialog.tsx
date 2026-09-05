@@ -1,4 +1,8 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -12,6 +16,7 @@ import { cn } from "~/lib/utils";
 import { parsePullRequestReference } from "~/pullRequestReference";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
 import { useEnvironmentQuery } from "~/state/query";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { vcsEnvironment } from "~/state/vcs";
 import { Button } from "./ui/button";
 import {
@@ -102,6 +107,7 @@ export function PullRequestThreadDialog({
     );
   }, [parsedReference, sourceControlScope]);
   const preparePullRequestThreadAction = usePreparePullRequestThreadAction(sourceControlScope);
+  const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
 
   const liveResolvedPullRequest =
     parsedReference !== null && parsedReference === parsedDebouncedReference
@@ -132,6 +138,12 @@ export function PullRequestThreadDialog({
   const handleConfirm = useCallback(
     async (mode: "local" | "worktree") => {
       if (!preparePullRequestThreadAction.isAllowed) return;
+      if (
+        mode === "worktree" &&
+        !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+      ) {
+        return;
+      }
       if (!parsedReference) {
         setReferenceDirty(true);
         return;
@@ -160,6 +172,7 @@ export function PullRequestThreadDialog({
     },
     [
       cwd,
+      environmentId,
       onOpenChange,
       onPrepared,
       parsedReference,
@@ -271,9 +284,7 @@ export function PullRequestThreadDialog({
             type="button"
             size="sm"
             variant="outline"
-            onClick={() => {
-              void handleConfirm("local");
-            }}
+            onClick={() => handleConfirm("local")}
             disabled={
               !preparePullRequestThreadAction.isAllowed ||
               !cwd ||
@@ -287,11 +298,10 @@ export function PullRequestThreadDialog({
           <Button
             type="button"
             size="sm"
-            onClick={() => {
-              void handleConfirm("worktree");
-            }}
+            onClick={() => handleConfirm("worktree")}
             disabled={
               !preparePullRequestThreadAction.isAllowed ||
+              !canOperateThread ||
               !cwd ||
               !resolvedPullRequest ||
               isResolving ||
