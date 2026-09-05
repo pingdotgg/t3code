@@ -213,4 +213,18 @@ describe("useCloudLinkController", () => {
     expect(testState.link).not.toHaveBeenCalled();
     expect(testState.preferences).not.toHaveBeenCalled();
   });
+
+  it("unlinks if the link-state read fails while requesting the cloud token", async () => {
+    await mountController();
+    testState.getToken.mockImplementationOnce(async () => {
+      testState.snapshot = null;
+      throw new Error("Cloud sign-in unavailable");
+    });
+
+    expect(await reconcile({ managedTunnel: false, publish: false })).toBe(true);
+    expect(testState.unlink).toHaveBeenCalledExactlyOnceWith({ target, clerkToken: null });
+    expect(testState.link).not.toHaveBeenCalled();
+    expect(testState.preferences).not.toHaveBeenCalled();
+    expect(testState.refreshLink).toHaveBeenCalledOnce();
+  });
 });
