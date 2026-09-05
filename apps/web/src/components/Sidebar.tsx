@@ -146,6 +146,7 @@ import {
   planPinnedReorder,
   reduceSidebarProjectScopeMenuState,
   resolveAdjacentThreadId,
+  resolvePinFlightLandingAction,
   resolveSidebarThreadStatus,
   searchSidebarThreadsByTitle,
   sidebarListAnimationDuration,
@@ -2971,11 +2972,21 @@ export default function Sidebar() {
   );
   useEffect(() => {
     if (pinMotionThreadKey === null) return;
-    const pinLanded = pinnedThreads.some(
+    const appearsInPinnedList = pinnedThreads.some(
       (thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === pinMotionThreadKey,
     );
-    if (!pinLanded) return;
+    const pinPersisted = threads.some(
+      (thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === pinMotionThreadKey &&
+        thread.pinnedAt !== null,
+    );
+    const landingAction = resolvePinFlightLandingAction({ appearsInPinnedList, pinPersisted });
+    if (landingAction === "wait") return;
+    if (landingAction === "finish") {
+      finishPinFlight(pinMotionThreadKey);
+      return;
+    }
     const flight = pinFlightRef.current;
     if (flight?.threadKey !== pinMotionThreadKey) {
       setPinMotionThreadKey(null);
@@ -3001,7 +3012,7 @@ export default function Sidebar() {
     });
     flight.animation = animation;
     void animation.finished.catch(() => undefined).then(() => finishPinFlight(pinMotionThreadKey));
-  }, [finishPinFlight, pinMotionThreadKey, pinnedThreads]);
+  }, [finishPinFlight, pinMotionThreadKey, pinnedThreads, threads]);
   useEffect(
     () => () => {
       const flight = pinFlightRef.current;

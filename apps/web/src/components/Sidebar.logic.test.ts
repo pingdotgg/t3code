@@ -21,6 +21,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  resolvePinFlightLandingAction,
   resolveThreadRowClassName,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
@@ -104,6 +105,35 @@ describe("sidebarListAnimationDuration", () => {
         pinnedDragInFlight: false,
       }),
     ).toBe(550);
+  });
+});
+
+describe("resolvePinFlightLandingAction", () => {
+  it("waits while the pin command has not reached the thread shell", () => {
+    expect(
+      resolvePinFlightLandingAction({
+        appearsInPinnedList: false,
+        pinPersisted: false,
+      }),
+    ).toBe("wait");
+  });
+
+  it("animates a pin that moves into the pinned list", () => {
+    expect(
+      resolvePinFlightLandingAction({
+        appearsInPinnedList: true,
+        pinPersisted: true,
+      }),
+    ).toBe("animate");
+  });
+
+  it("finishes a persisted pin when snooze or settlement keeps the row on its shelf", () => {
+    expect(
+      resolvePinFlightLandingAction({
+        appearsInPinnedList: false,
+        pinPersisted: true,
+      }),
+    ).toBe("finish");
   });
 });
 
