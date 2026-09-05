@@ -349,6 +349,7 @@ describe("thread outbox model handoff", () => {
       composerDrafts.clearComposerDraftContent(draftKey);
       const sendingSelection = composerDrafts.getComposerDraftSnapshot(draftKey).modelSelection;
       composerDrafts.setComposerDraftText(draftKey, nextText);
+      await composerDrafts.flushComposerDrafts();
 
       // Offline/pending sends must retain the local choice until acknowledged.
       expect(composerDrafts.getComposerDraftSnapshot(draftKey).modelSelection).toEqual(mobileModel);
@@ -363,7 +364,7 @@ describe("thread outbox model handoff", () => {
         text: nextText,
         attachments: [],
       });
-      await composerDrafts.flushComposerDrafts();
+      // Simulate a restart immediately after removal, before any debounced write.
       appAtomRegistry.set(composerDrafts.composerDraftsAtom, {});
       composerDrafts.resetComposerDraftsLoadState();
       await composerDrafts.waitForComposerDraftsLoaded();
@@ -478,6 +479,45 @@ describe("thread outbox model handoff", () => {
       removeAcknowledgedExistingThreadMessage(message, new Set([message.messageId])),
     ).resolves.toBe(true);
     expect(composerDrafts.getComposerDraftSnapshot(draftKey).modelSelection).toBe(desktopModel);
+  });
+
+  it("keeps acknowledged cleanup recoverable until the draft write succeeds", async () => {
+    await composerDrafts.waitForComposerDraftsLoaded();
+    const message = {
+      ...queuedMessage({ messageId: "model-write-failure", text: "accepted" }),
+      modelSelection: mobileModel,
+    };
+    const draftKey = `${message.environmentId}:${message.threadId}`;
+    composerDrafts.updateComposerDraftSettings(draftKey, { modelSelection: mobileModel });
+    await composerDrafts.flushComposerDrafts();
+    await harness.manager.enqueue(message);
+    harness.draftFile.setWriteError(new Error("disk full"));
+    await expect(
+      completeQueuedMessageDelivery(
+        message,
+        harness.manager.revisionOf(message.messageId),
+        mobileModel,
+      ),
+    ).resolves.toBe("failed");
+    expect(remainingMessages()).toEqual([message]);
+    const acknowledged = new Set([message.messageId]);
+    await expect(removeAcknowledgedExistingThreadMessage(message, acknowledged)).resolves.toBe(
+      false,
+    );
+    expect(acknowledged.has(message.messageId)).toBe(true);
+    expect(remainingMessages()).toEqual([message]);
+
+    composerDrafts.updateComposerDraftSettings(draftKey, { modelSelection: desktopModel });
+    harness.draftFile.setWriteError(null);
+    await expect(removeAcknowledgedExistingThreadMessage(message, acknowledged)).resolves.toBe(
+      true,
+    );
+    expect(acknowledged.size).toBe(0);
+    expect(remainingMessages()).toEqual([]);
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {});
+    composerDrafts.resetComposerDraftsLoadState();
+    await composerDrafts.waitForComposerDraftsLoaded();
+    expect(composerDrafts.getComposerDraftSnapshot(draftKey).modelSelection).toEqual(desktopModel);
   });
 
   it("restores the model and content when the server rejects the message", async () => {

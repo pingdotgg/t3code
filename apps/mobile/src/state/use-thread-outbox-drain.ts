@@ -197,6 +197,9 @@ export async function completeQueuedMessageDelivery(
         scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId),
         draftModelSelection,
       );
+      // Persist before removing the outbox entry. A crash between the two
+      // writes can then retry cleanup instead of resurrecting the old model.
+      await flushComposerDrafts();
     }
     await removeDeliveredCloudQueuedMessage(queuedMessage).catch((error) => {
       console.warn("[thread-outbox] could not update sign-out snapshot after delivery", {
@@ -245,6 +248,8 @@ export async function removeAcknowledgedExistingThreadMessage(
   acknowledgedMessageIds: Set<MessageId>,
 ): Promise<boolean> {
   try {
+    // Delivery may have succeeded while persisting its cleared override failed.
+    await flushComposerDrafts();
     await removeDeliveredCloudQueuedMessage(queuedMessage).catch((error) => {
       console.warn("[thread-outbox] could not update sign-out snapshot after delivery", {
         messageId: queuedMessage.messageId,
