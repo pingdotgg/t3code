@@ -118,6 +118,68 @@ export const EnvironmentMcpPreferences = Schema.Struct({
 });
 export type EnvironmentMcpPreferences = typeof EnvironmentMcpPreferences.Type;
 
+const EnvironmentMcpWritingInstructions = Schema.String.check(
+  Schema.makeFilter((value) =>
+    Array.from(value).length <= ENVIRONMENT_MCP_MAX_WRITING_INSTRUCTIONS
+      ? undefined
+      : `customInstructions must not exceed ${ENVIRONMENT_MCP_MAX_WRITING_INSTRUCTIONS} Unicode characters.`,
+  ),
+);
+
+export const EnvironmentMcpPreferencesUpdateInput = Schema.Struct({
+  defaultThreadEnvMode: Schema.optional(ThreadEnvMode).annotate({
+    description: "Default execution environment for newly created threads.",
+  }),
+  newWorktreesStartFromOrigin: Schema.optional(Schema.Boolean).annotate({
+    description: "Whether newly created worktrees start from the configured origin branch.",
+  }),
+  enableProviderUpdateChecks: Schema.optional(Schema.Boolean).annotate({
+    description: "Whether the server performs its existing provider update checks.",
+  }),
+  backgroundActivity: Schema.optional(
+    Schema.Struct({
+      profile: BackgroundActivityProfile.annotate({
+        description:
+          "Apply one supported background-activity preset through the existing settings normalization path.",
+      }),
+    }),
+  ),
+  sourceControlWritingStyle: Schema.optional(
+    Schema.Struct({
+      mode: Schema.optional(SourceControlWritingStyleMode),
+      customInstructions: Schema.optional(EnvironmentMcpWritingInstructions).annotate({
+        description: `Replacement custom instructions, bounded to ${ENVIRONMENT_MCP_MAX_WRITING_INSTRUCTIONS} Unicode characters. An empty string clears them.`,
+      }),
+      followChangeRequestTemplates: Schema.optional(Schema.Boolean),
+    }).check(
+      Schema.makeFilter((value) =>
+        value.mode !== undefined ||
+        value.customInstructions !== undefined ||
+        value.followChangeRequestTemplates !== undefined
+          ? undefined
+          : "sourceControlWritingStyle must include at least one field.",
+      ),
+    ),
+  ),
+}).check(
+  Schema.makeFilter((value) =>
+    value.defaultThreadEnvMode !== undefined ||
+    value.newWorktreesStartFromOrigin !== undefined ||
+    value.enableProviderUpdateChecks !== undefined ||
+    value.backgroundActivity !== undefined ||
+    value.sourceControlWritingStyle !== undefined
+      ? undefined
+      : "Provide at least one preference field.",
+  ),
+);
+export type EnvironmentMcpPreferencesUpdateInput = typeof EnvironmentMcpPreferencesUpdateInput.Type;
+
+export const EnvironmentMcpPreferencesUpdateResult = Schema.Struct({
+  preferences: EnvironmentMcpPreferences,
+});
+export type EnvironmentMcpPreferencesUpdateResult =
+  typeof EnvironmentMcpPreferencesUpdateResult.Type;
+
 export const EnvironmentMcpReadResult = Schema.Struct({
   identity: Schema.Struct({
     environmentId: EnvironmentId,
@@ -144,6 +206,8 @@ export class EnvironmentMcpFailure extends Schema.TaggedErrorClass<EnvironmentMc
       "environment_mismatch",
       "provider_registry_unavailable",
       "settings_unavailable",
+      "thread_not_found",
+      "permission_denied",
       "operation_failed",
     ]),
   },
@@ -151,15 +215,19 @@ export class EnvironmentMcpFailure extends Schema.TaggedErrorClass<EnvironmentMc
   override get message(): string {
     switch (this.code) {
       case "capability_denied":
-        return "This MCP credential does not grant environment read capabilities.";
+        return "This MCP credential does not grant environment capabilities.";
       case "environment_unavailable":
-        return "The current environment descriptor is unavailable.";
+        return "The current environment service is unavailable.";
       case "environment_mismatch":
         return "The MCP credential does not belong to the running environment.";
       case "provider_registry_unavailable":
         return "The provider registry is unavailable.";
       case "settings_unavailable":
         return "Server-owned preferences are unavailable.";
+      case "thread_not_found":
+        return "The calling thread was not found.";
+      case "permission_denied":
+        return "Environment preference updates require a full-access caller with default interaction mode.";
       case "operation_failed":
         return "The environment operation failed.";
     }

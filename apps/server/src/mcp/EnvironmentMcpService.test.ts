@@ -15,6 +15,8 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { layer as threadCommandExecutorLayer } from "../orchestration-v2/ThreadCommandExecutor.ts";
+import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistryModule from "../provider/Services/ProviderRegistry.ts";
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -24,6 +26,10 @@ import type { McpInvocationScope } from "./McpInvocationContext.ts";
 const encodeEnvironmentMcpReadResult = Schema.encodeUnknownEffect(EnvironmentMcpReadResult);
 const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const environmentId = EnvironmentId.make("environment-test");
+const mutationDependencies = Layer.merge(
+  Layer.mock(ThreadManagementService)({}),
+  threadCommandExecutorLayer,
+);
 const scope: McpInvocationScope = {
   environmentId,
   threadId: ThreadId.make("thread-test"),
@@ -121,6 +127,7 @@ const serviceLayer = (input: {
             followChangeRequestTemplates: true,
           },
         }),
+        mutationDependencies,
       ),
     ),
   );
@@ -211,6 +218,7 @@ describe("EnvironmentMcpService", () => {
               environmentLayer("Test", "1.0.0"),
               providerLayer,
               ServerSettings.layerTest({}),
+              mutationDependencies,
             ),
           ),
         ),
@@ -235,6 +243,7 @@ describe("EnvironmentMcpService", () => {
               environmentLayer("Test", "1.0.0"),
               unavailableRegistry,
               ServerSettings.layerTest(DEFAULT_SERVER_SETTINGS),
+              mutationDependencies,
             ),
           ),
         ),
@@ -270,7 +279,12 @@ describe("EnvironmentMcpService", () => {
       Effect.provide(
         EnvironmentMcp.layer.pipe(
           Layer.provide(
-            Layer.mergeAll(environmentLayer("Test", "1.0.0"), providerLayer, settingsLayer),
+            Layer.mergeAll(
+              environmentLayer("Test", "1.0.0"),
+              providerLayer,
+              settingsLayer,
+              mutationDependencies,
+            ),
           ),
         ),
       ),

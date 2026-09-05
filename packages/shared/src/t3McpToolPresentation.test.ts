@@ -51,6 +51,12 @@ describe("resolveT3McpToolPresentation", () => {
       displayName: "Read current T3 environment",
       logo: "t3-code",
     });
+    expect(resolveT3McpToolPresentation("mcp__t3-code__t3_environment_preferences_update")).toEqual(
+      {
+        displayName: "Update T3 environment preferences",
+        logo: "t3-code",
+      },
+    );
   });
 
   it("keeps unknown MCP tools on the generic renderer path", () => {

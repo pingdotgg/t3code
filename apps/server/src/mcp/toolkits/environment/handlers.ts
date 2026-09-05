@@ -11,6 +11,12 @@ const handlers = {
       const service = yield* EnvironmentMcpService;
       return yield* service.read(scope, input);
     }),
+  t3_environment_preferences_update: (input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext;
+      const service = yield* EnvironmentMcpService;
+      return yield* service.updatePreferences(scope, input);
+    }),
 } satisfies Parameters<typeof EnvironmentToolkit.toLayer>[0];
 
 export const EnvironmentToolkitHandlersLive = EnvironmentToolkit.toLayer(handlers);

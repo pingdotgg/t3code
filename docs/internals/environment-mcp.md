@@ -22,3 +22,17 @@ The preference projection is a literal allowlist. It must be extended field by
 field; never spread a server settings or provider configuration object into an
 MCP result. Environment reads use cached provider state and do not call provider
 refresh or the usage service.
+
+`t3_environment_preferences_update` accepts a separate literal patch schema and
+constructs an existing `ServerSettingsPatch` field by field. The mutation runs
+under `ThreadDispatchLockV2` for the calling thread. It reloads the caller under
+that same lock, requires `full-access` plus `default`, and holds the lock through
+`ServerSettingsService.updateSettings`. Ordinary V2 policy writers use the same
+lock, so a concurrent downgrade is observed before persistence. The settings
+service remains responsible for normalization, durable storage, and existing
+cross-client notifications.
+
+The mutation exposes preset background profiles, not arbitrary timing
+overrides. Empty source-control instructions are an intentional clear; omitted
+fields remain unchanged. Its result is projected from the settings returned
+after persistence rather than from the request.

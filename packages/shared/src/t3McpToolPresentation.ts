@@ -54,6 +54,7 @@ const T3_MCP_TOOLS: Record<
   t3_worktree_handoff: { displayName: "Hand off thread to a git worktree" },
   t3_worktree_status: { displayName: "Get thread worktree status" },
   t3_environment_read: { displayName: "Read current T3 environment" },
+  t3_environment_preferences_update: { displayName: "Update T3 environment preferences" },
   preview_status: { displayName: "Get preview browser status" },
   preview_open: { displayName: "Open a page in the preview browser" },
   preview_navigate: { displayName: "Navigate the preview browser" },
