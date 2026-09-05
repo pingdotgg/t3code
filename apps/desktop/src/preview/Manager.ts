@@ -109,13 +109,12 @@ const ZOOM_EPSILON = 0.001;
 const MAX_EVALUATION_BYTES = 64_000;
 const MAX_VISIBLE_TEXT_LENGTH = 20_000;
 const MAX_INTERACTIVE_ELEMENTS = 200;
-const MAX_SCREENSHOT_WIDTH = 1280;
 /** How long an armed tab keeps the exclusive display-media slot before another tab may take it. */
 const RECORDING_ARM_GRACE_MS = 10_000;
 const PICTURE_IN_PICTURE_FRAME_INTERVAL_MS = Math.ceil(1_000 / 12);
 const PICTURE_IN_PICTURE_JPEG_QUALITY = 80;
 /**
- * Cold guests can reject capturePage with UnknownVizError or never settle it.
+ * Chromium can reject cold screenshot captures or leave them pending.
  * Bound each attempt so snapshots release control even when Chromium stalls.
  */
 const CAPTURE_PAGE_RETRY_ATTEMPTS = 3;
@@ -133,6 +132,18 @@ const AGENT_CURSOR_CLICK_LEAD_MS = 40;
 const requestRecordingCaptureExpression = (tabId: string): string =>
   `globalThis[${JSON.stringify(DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER)}]?.(${JSON.stringify(tabId)}) === true`;
 const encodeUnknownJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeScreenshotLayout = Schema.decodeUnknownSync(
+  Schema.Struct({
+    cssVisualViewport: Schema.Struct({
+      pageX: Schema.Number,
+      pageY: Schema.Number,
+      clientWidth: Schema.Number,
+      clientHeight: Schema.Number,
+      zoom: Schema.optional(Schema.Number),
+    }),
+  }),
+);
+const decodeScreenshot = Schema.decodeUnknownSync(Schema.Struct({ data: Schema.String }));
 const DEFAULT_ANNOTATION_THEME: DesktopPreviewAnnotationTheme = {
   colorScheme: "light",
   radius: "0.625rem",
@@ -683,6 +694,63 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }),
     );
   });
+  const captureScreenshotWithRetry = Effect.fn("PreviewManager.captureScreenshotWithRetry")(
+    function* (errorContext: PreviewOperationContext, tabId: string, wc: Electron.WebContents) {
+      const control = yield* ensureControlSession(wc);
+      const requireCurrentGuest = Effect.gen(function* () {
+        const tabs = yield* SynchronizedRef.get(tabsRef);
+        if (wc.isDestroyed() || tabs.get(tabId)?.webContentsId !== wc.id) {
+          return yield* new PreviewWebContentsNotFoundError({ tabId, webContentsId: wc.id });
+        }
+      });
+      const capture = Effect.gen(function* () {
+        // Check after the retry delay, and again before accepting its result.
+        yield* requireCurrentGuest;
+        const image = yield* Effect.tryPromise({
+          // An abort-signal parameter makes a stalled promise interruptible.
+          try: async (_signal) => {
+            const { cssVisualViewport: viewport } = decodeScreenshotLayout(
+              await control.debugger.sendCommand("Page.getLayoutMetrics"),
+            );
+            // Layout metrics use CSS pixels, while screenshot clips use DIP.
+            const zoom = viewport.zoom ?? 1;
+            // A fitted webview can extend past the host window. An explicit clip
+            // captures its whole viewport instead of the host's visible surface.
+            const { data } = decodeScreenshot(
+              await control.debugger.sendCommand("Page.captureScreenshot", {
+                format: "png",
+                captureBeyondViewport: true,
+                clip: {
+                  x: viewport.pageX * zoom,
+                  y: viewport.pageY * zoom,
+                  width: viewport.clientWidth * zoom,
+                  height: viewport.clientHeight * zoom,
+                  scale: 1,
+                },
+              }),
+            );
+            return nativeImage.createFromBuffer(Buffer.from(data, "base64"));
+          },
+          catch: (cause) => new PreviewOperationError({ ...errorContext, cause }),
+        }).pipe(
+          Effect.timeout(CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS),
+          Effect.catchTags({
+            TimeoutError: (cause) =>
+              Effect.fail(new PreviewOperationError({ ...errorContext, cause })),
+          }),
+        );
+        yield* requireCurrentGuest;
+        return image;
+      });
+      return yield* capture.pipe(
+        Effect.retry({
+          times: CAPTURE_PAGE_RETRY_ATTEMPTS - 1,
+          schedule: Schedule.spaced(CAPTURE_PAGE_RETRY_DELAY_MS),
+          while: isPreviewOperationError,
+        }),
+      );
+    },
+  );
   const currentIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const currentMillis = Clock.currentTimeMillis;
   const encodeJson = (errorContext: PreviewOperationContext, value: unknown) =>
@@ -3556,9 +3624,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         })()`,
         true,
       );
-      const [accessibility, sourceImage, diagnostics, timelines] = yield* Effect.all([
+      const [accessibility, image, diagnostics, timelines] = yield* Effect.all([
         send("Accessibility.getFullAXTree"),
-        capturePageWithRetry(
+        captureScreenshotWithRetry(
           {
             operation: "automationSnapshot.capturePage",
             tabId,
@@ -3570,11 +3638,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         Ref.get(diagnosticsRef),
         Ref.get(actionTimelineRef),
       ]);
-      const sourceSize = sourceImage.getSize();
-      const image =
-        sourceSize.width > MAX_SCREENSHOT_WIDTH
-          ? sourceImage.resize({ width: MAX_SCREENSHOT_WIDTH })
-          : sourceImage;
       const size = image.getSize();
       const browserDiagnostics = diagnostics.get(wc.id);
       return {

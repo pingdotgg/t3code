@@ -35,6 +35,7 @@ interface ElectronWebview extends HTMLElement {
   webpreferences?: string;
   getWebContentsId: () => number;
   executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>;
+  capturePage: () => Promise<{ toDataURL: () => string }>;
 }
 
 declare global {
