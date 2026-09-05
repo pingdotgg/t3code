@@ -6,7 +6,11 @@
  * hosts that have no pending review of their own. That also means a draft lives only as long
  * as the tab does, which is why this is deliberately not persisted.
  */
-import type { ProjectId, PullRequestRef, PullRequestReviewCommentDraft } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PullRequestRef,
+  PullRequestReviewCommentDraft,
+} from "@t3tools/contracts";
 import { create } from "zustand";
 
 export type PendingReviewComment = PullRequestReviewCommentDraft & { readonly id: string };
@@ -24,9 +28,12 @@ export function nextPendingReviewCommentId(): string {
   return `pending-review-comment-${pendingCommentSequence}`;
 }
 
-/** One pull request's draft, scoped by project as well as repository: a repository can be checked out twice. */
-export function pullRequestReviewKey(reference: PullRequestRef): string {
-  return `${reference.projectId}/${reference.repository}#${reference.number}`;
+/** Keep drafts separate across servers and checkouts, including PRs without a project. */
+export function pullRequestReviewKey(
+  environmentId: EnvironmentId,
+  reference: PullRequestRef,
+): string {
+  return `${environmentId}/${reference.projectId}/${reference.repository}#${reference.number}`;
 }
 
 interface PullRequestReviewStoreState {
@@ -81,12 +88,11 @@ export const usePullRequestReviewStore = create<PullRequestReviewStoreState>()((
 }));
 
 /** The comments a pull request's draft holds, stable across renders while it is empty. */
-export function usePendingReviewComments(reference: {
-  readonly projectId: ProjectId | null;
-  readonly repository: string;
-  readonly number: number;
-}): ReadonlyArray<PendingReviewComment> {
+export function usePendingReviewComments(
+  environmentId: EnvironmentId,
+  reference: PullRequestRef,
+): ReadonlyArray<PendingReviewComment> {
   return usePullRequestReviewStore(
-    (store) => store.drafts[pullRequestReviewKey(reference)] ?? EMPTY,
+    (store) => store.drafts[pullRequestReviewKey(environmentId, reference)] ?? EMPTY,
   );
 }

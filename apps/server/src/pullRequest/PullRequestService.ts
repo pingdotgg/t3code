@@ -2334,6 +2334,7 @@ export const make = Effect.gen(function* () {
       return detailUncached({ projectId, repository, number } as PullRequestRef).pipe(
         Effect.tap(
           Effect.fn("PullRequestService.recordDetailStats")(function* (value: PullRequestDetail) {
+            if (value.projectId === null) return;
             recordStats(
               statsKey,
               {

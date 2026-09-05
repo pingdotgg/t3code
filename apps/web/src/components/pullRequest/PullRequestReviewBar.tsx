@@ -58,8 +58,8 @@ export function PullRequestReviewBar({
   onSubmitted: () => void;
 }) {
   const [pending, setPending] = useState(false);
-  const comments = usePendingReviewComments(reference);
-  const reviewKey = pullRequestReviewKey(reference);
+  const comments = usePendingReviewComments(environmentId, reference);
+  const reviewKey = pullRequestReviewKey(environmentId, reference);
   // The panel stays mounted while the selected pull request changes. Keeping summaries beside
   // the keyed line-comment drafts makes the selected pull request's body correct on the first
   // render, before an effect could reset state left behind by the previous one.

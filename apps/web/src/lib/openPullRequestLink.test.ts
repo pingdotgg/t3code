@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   changeRequestRepositoryUrl,
   findProjectForChangeRequest,
+  findUnlinkedGitHubEnvironment,
   gitHubPullRequestBrowserUrl,
   matchesLinkedPullRequestUrl,
   openPullRequestLink,
@@ -12,7 +13,7 @@ import {
   PullRequestLinkOpenError,
   shouldOpenPullRequestExternally,
 } from "./openPullRequestLink";
-import { ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
 
 function repositoryIdentity(
   provider: string,
@@ -405,4 +406,19 @@ describe("unlinked PR link targets", () => {
       pullRequestRefForLink(undefined, { ...link, host: "github.com.evil.test" }, true),
     ).toBeNull();
   });
+});
+
+it("uses another capable server for unlinked page links, preferring the primary when supported", () => {
+  const old = EnvironmentId.make("old");
+  const capable = EnvironmentId.make("capable");
+  const configs = new Map([
+    [old, { environment: { capabilities: { pullRequests: true } } }],
+    [
+      capable,
+      { environment: { capabilities: { pullRequests: true, unlinkedGitHubPullRequests: true } } },
+    ],
+  ]);
+  expect(findUnlinkedGitHubEnvironment(configs, old)).toBe(capable);
+  expect(findUnlinkedGitHubEnvironment(configs, capable)).toBe(capable);
+  expect(findUnlinkedGitHubEnvironment(new Map([[old, configs.get(old)!]]), old)).toBeNull();
 });

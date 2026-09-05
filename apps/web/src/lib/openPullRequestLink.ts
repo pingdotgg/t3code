@@ -3,6 +3,7 @@ import type {
   LocalApi,
   PullRequestRef,
   RepositoryIdentity,
+  ServerConfig,
   ScopedThreadRef,
   ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
@@ -266,6 +267,32 @@ export function shouldOpenPullRequestExternally(
   return event.metaKey || event.ctrlKey;
 }
 
+/** A page-level link may use another capable server when the primary server is older. */
+export function findUnlinkedGitHubEnvironment(
+  configs: ReadonlyMap<
+    EnvironmentId,
+    {
+      readonly environment: {
+        readonly capabilities: Pick<
+          ServerConfig["environment"]["capabilities"],
+          "pullRequests" | "unlinkedGitHubPullRequests"
+        >;
+      };
+    }
+  >,
+  preferred: EnvironmentId | null,
+): EnvironmentId | null {
+  const supports = (id: EnvironmentId) => {
+    const capabilities = configs.get(id)?.environment.capabilities;
+    return capabilities?.pullRequests === true && capabilities.unlinkedGitHubPullRequests === true;
+  };
+  if (preferred !== null && supports(preferred)) return preferred;
+  for (const id of configs.keys()) {
+    if (supports(id)) return id;
+  }
+  return null;
+}
+
 /** Prefer a local project; otherwise the server can read public-host GitHub PRs directly. */
 export function pullRequestRefForLink(
   project: EnvironmentProject | undefined,
@@ -326,7 +353,7 @@ export function useOpenChangeRequestLink(
         project?.environmentId ??
         resolvedThreadRef?.environmentId ??
         targetEnvironmentId ??
-        primaryEnvironmentId;
+        findUnlinkedGitHubEnvironment(serverConfigs, primaryEnvironmentId);
       if (environmentId === null) return false;
       const reference = pullRequestRefForLink(
         project,
