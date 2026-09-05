@@ -52,6 +52,10 @@ export class PreviewAutomationBroker extends Context.Service<
     readonly respond: (
       response: PreviewAutomationResponse,
     ) => Effect.Effect<void, PreviewAutomationError>;
+    readonly forgetClosedTab: (
+      scope: McpInvocationContext.McpInvocationScope,
+      tabId: PreviewTabId,
+    ) => Effect.Effect<void>;
     readonly invoke: <A = unknown>(
       request: PreviewAutomationInvokeInput,
     ) => Effect.Effect<A, PreviewAutomationError>;
@@ -72,6 +76,9 @@ interface PendingRequest {
   readonly queue: ClientConnection["queue"];
   readonly deferred: Deferred.Deferred<unknown, PreviewAutomationError>;
   readonly context: PreviewAutomationRequestErrorContext;
+  readonly assignmentKey: string;
+  readonly requestSequence: number;
+  readonly tabIdExplicit: boolean;
 }
 
 /**
@@ -88,6 +95,7 @@ interface HostAssignment {
   readonly queue: ClientConnection["queue"];
   readonly tabId?: PreviewTabId;
   readonly tabSequence?: number;
+  readonly closedTabSequences?: ReadonlyMap<PreviewTabId, number>;
 }
 
 interface PreviewAutomationRequestErrorContext {
@@ -112,6 +120,31 @@ interface BrokerState {
   readonly requestSequence: number;
   readonly focusSequence: number;
 }
+
+const pruneClosedTabBarriers = (
+  assignments: ReadonlyMap<string, HostAssignment>,
+  pending: ReadonlyMap<string, PendingRequest>,
+  assignmentKey: string,
+): ReadonlyMap<string, HostAssignment> => {
+  const assignment = assignments.get(assignmentKey);
+  if (assignment?.closedTabSequences === undefined) return assignments;
+  const closedTabSequences = new Map(assignment.closedTabSequences);
+  for (const [closedTabId, barrier] of closedTabSequences) {
+    const olderInvocationCanCommit = Array.from(pending.values()).some(
+      (request) => request.assignmentKey === assignmentKey && request.requestSequence < barrier,
+    );
+    if (!olderInvocationCanCommit) closedTabSequences.delete(closedTabId);
+  }
+  const next = new Map(assignments);
+  const { closedTabSequences: _closedTabSequences, ...withoutClosedTabSequences } = assignment;
+  next.set(
+    assignmentKey,
+    closedTabSequences.size === 0
+      ? withoutClosedTabSequences
+      : { ...withoutClosedTabSequences, closedTabSequences },
+  );
+  return next;
+};
 
 const removeConnectionFromState = (
   current: BrokerState,
@@ -397,19 +430,19 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   const respond: PreviewAutomationBroker["Service"]["respond"] = Effect.fn(
     "PreviewAutomationBroker.respond",
   )(function* (response) {
-    const pending = yield* SynchronizedRef.modify(state, (current) => {
-      const entry = current.pending.get(response.requestId);
-      if (
-        !entry ||
-        entry.context.clientId !== response.clientId ||
-        entry.context.connectionId !== response.connectionId
-      ) {
-        return [undefined, current] as const;
-      }
-      const next = new Map(current.pending);
-      next.delete(response.requestId);
-      return [entry, { ...current, pending: next }] as const;
-    });
+    const pending = yield* SynchronizedRef.get(state).pipe(
+      Effect.map((current) => {
+        const entry = current.pending.get(response.requestId);
+        if (
+          !entry ||
+          entry.context.clientId !== response.clientId ||
+          entry.context.connectionId !== response.connectionId
+        ) {
+          return undefined;
+        }
+        return entry;
+      }),
+    );
     if (!pending) return;
     if (response.ok) {
       yield* Deferred.succeed(pending.deferred, response.result);
@@ -421,6 +454,93 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
           : new PreviewAutomationMalformedResponseError(pending.context),
       );
     }
+  });
+
+  const commitSuccessfulResponse = Effect.fn("PreviewAutomationBroker.commitSuccessfulResponse")(
+    function* (requestId: string, result: unknown) {
+      yield* SynchronizedRef.update(state, (current) => {
+        const entry = current.pending.get(requestId);
+        if (entry === undefined) return current;
+        const pending = new Map(current.pending);
+        pending.delete(requestId);
+        let assignments: ReadonlyMap<string, HostAssignment> = current.assignments;
+        const assignment = assignments.get(entry.assignmentKey);
+        const responseTabId = readResultTabId(result);
+        const resultTabId =
+          responseTabId === undefined && entry.tabIdExplicit ? entry.context.tabId : responseTabId;
+        if (
+          resultTabId !== undefined &&
+          assignment !== undefined &&
+          assignment.connectionId === entry.context.connectionId &&
+          assignment.queue === entry.queue &&
+          (assignment.tabSequence ?? -1) <= entry.requestSequence
+        ) {
+          const nextAssignments = new Map(assignments);
+          const closedAt =
+            resultTabId === null ? undefined : assignment.closedTabSequences?.get(resultTabId);
+          const responsePredatesClose = closedAt !== undefined && entry.requestSequence < closedAt;
+          if (resultTabId === null) {
+            const { tabId: _tabId, ...withoutTabId } = assignment;
+            nextAssignments.set(entry.assignmentKey, {
+              ...withoutTabId,
+              tabSequence: entry.requestSequence,
+            });
+          } else if (!responsePredatesClose) {
+            nextAssignments.set(entry.assignmentKey, {
+              ...assignment,
+              tabId: resultTabId,
+              tabSequence: entry.requestSequence,
+            });
+          }
+          assignments = nextAssignments;
+        }
+        assignments = pruneClosedTabBarriers(assignments, pending, entry.assignmentKey);
+        return { ...current, assignments, pending };
+      });
+    },
+  );
+
+  const forgetClosedTab: PreviewAutomationBroker["Service"]["forgetClosedTab"] = Effect.fn(
+    "PreviewAutomationBroker.forgetClosedTab",
+  )(function* (scope, tabId) {
+    yield* SynchronizedRef.update(state, (current) => {
+      const assignmentKey = hostAssignmentKey(scope);
+      const prunedAssignments = pruneClosedTabBarriers(
+        current.assignments,
+        current.pending,
+        assignmentKey,
+      );
+      const assignment = prunedAssignments.get(assignmentKey);
+      if (assignment === undefined) return current;
+      const assignments = new Map(prunedAssignments);
+      const closedTabSequences = new Map(assignment.closedTabSequences);
+      const olderInvocationCanCommit = Array.from(current.pending.values()).some(
+        (request) => request.assignmentKey === assignmentKey,
+      );
+      if (olderInvocationCanCommit) closedTabSequences.set(tabId, current.requestSequence);
+      else closedTabSequences.delete(tabId);
+      if (assignment.tabId === tabId) {
+        const { tabId: _tabId, ...withoutTabId } = assignment;
+        assignments.set(assignmentKey, {
+          ...withoutTabId,
+          ...(closedTabSequences.size === 0 ? {} : { closedTabSequences }),
+        });
+      } else {
+        const { closedTabSequences: _closedTabSequences, ...withoutClosedTabSequences } =
+          assignment;
+        assignments.set(
+          assignmentKey,
+          closedTabSequences.size === 0
+            ? withoutClosedTabSequences
+            : { ...withoutClosedTabSequences, closedTabSequences },
+        );
+      }
+      return {
+        ...current,
+        assignments,
+        requestSequence: current.requestSequence + 1,
+      };
+    });
   });
 
   const invoke = Effect.fn("PreviewAutomationBroker.invoke")(function* <A = unknown>(
@@ -481,6 +601,9 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         ...(canReuseAssignedTab && assigned.tabSequence !== undefined
           ? { tabSequence: assigned.tabSequence }
           : {}),
+        ...(canReuseAssignedTab && assigned.closedTabSequences !== undefined
+          ? { closedTabSequences: assigned.closedTabSequences }
+          : {}),
       });
 
       const requestSequence = current.requestSequence;
@@ -501,7 +624,14 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         ...selectorDiagnostics,
       };
       const pending = new Map(current.pending);
-      pending.set(requestId, { queue: connection.queue, deferred, context });
+      pending.set(requestId, {
+        queue: connection.queue,
+        deferred,
+        context,
+        assignmentKey,
+        requestSequence,
+        tabIdExplicit: input.tabId !== undefined,
+      });
       return [
         { connection, requestId, requestContext: context, requestSequence },
         { ...current, assignments, pending, requestSequence: current.requestSequence + 1 },
@@ -516,12 +646,14 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         providerInstanceId: input.scope.providerInstanceId,
       });
     }
-    const { connection, requestId, requestContext, requestSequence } = route;
+    const { connection, requestId, requestContext } = route;
     const removePending = SynchronizedRef.update(state, (next) => {
-      if (!next.pending.has(requestId)) return next;
+      const entry = next.pending.get(requestId);
+      if (entry === undefined) return next;
       const pending = new Map(next.pending);
       pending.delete(requestId);
-      return { ...next, pending };
+      const assignments = pruneClosedTabBarriers(next.assignments, pending, entry.assignmentKey);
+      return { ...next, assignments, pending };
     });
     const awaitResponse = Effect.fn("PreviewAutomationBroker.awaitResponse")(function* () {
       const offered = yield* Queue.offer(connection.queue, {
@@ -550,38 +682,14 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         onSome: (value) => Effect.succeed(value as A),
       });
     });
-    const result = yield* awaitResponse().pipe(Effect.ensuring(removePending));
-    const responseTabId = readResultTabId(result);
-    const resultTabId = responseTabId === undefined ? input.tabId : responseTabId;
-    if (resultTabId === undefined) return result;
-    const assignmentKey = hostAssignmentKey(input.scope);
-    yield* SynchronizedRef.update(state, (current) => {
-      const assignment = current.assignments.get(assignmentKey);
-      if (
-        !assignment ||
-        assignment.connectionId !== connection.connectionId ||
-        assignment.queue !== connection.queue ||
-        (assignment.tabSequence ?? -1) > requestSequence
-      ) {
-        return current;
-      }
-      const assignments = new Map(current.assignments);
-      if (resultTabId === null) {
-        const { tabId: _tabId, ...withoutTabId } = assignment;
-        assignments.set(assignmentKey, { ...withoutTabId, tabSequence: requestSequence });
-      } else {
-        assignments.set(assignmentKey, {
-          ...assignment,
-          ...(resultTabId === undefined ? {} : { tabId: resultTabId }),
-          tabSequence: requestSequence,
-        });
-      }
-      return { ...current, assignments };
-    });
+    const result = yield* awaitResponse().pipe(
+      Effect.tap((response) => commitSuccessfulResponse(requestId, response)),
+      Effect.ensuring(removePending),
+    );
     return result;
   });
 
-  return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke });
+  return PreviewAutomationBroker.of({ connect, focusHost, respond, forgetClosedTab, invoke });
 }).pipe(Effect.withSpan("PreviewAutomationBroker.make"));
 
 export const layer = Layer.effect(PreviewAutomationBroker, make);

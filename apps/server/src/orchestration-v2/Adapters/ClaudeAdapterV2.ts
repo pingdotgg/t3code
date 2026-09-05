@@ -801,13 +801,17 @@ export function makeClaudeQueryOptions(input: {
 
 export const CLAUDE_T3_MCP_TOOL_WILDCARD = "mcp__t3-code__*";
 
-// Must stay in sync with the Tool.Readonly annotations on OrchestratorToolkit;
-// ClaudeAdapterV2.test.ts cross-checks this list against the toolkit.
+// Must stay in sync with the Tool.Readonly annotations on the orchestration and
+// preview toolkits; ClaudeAdapterV2.test.ts cross-checks this list.
 export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__orchestrator_capabilities",
   "mcp__t3-code__list_scheduled_tasks",
   "mcp__t3-code__t3_thread_list",
   "mcp__t3-code__t3_thread_wait",
+  "mcp__t3-code__preview_status",
+  "mcp__t3-code__preview_list",
+  "mcp__t3-code__preview_snapshot",
+  "mcp__t3-code__preview_wait_for",
 ];
 
 // The SDK's `allowedTools` only pre-approves tool calls; availability is the

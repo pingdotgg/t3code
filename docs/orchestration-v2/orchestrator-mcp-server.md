@@ -142,6 +142,17 @@ selection model-visible without allowing a request that cannot run.
 
 The server exposes eleven orchestration tools.
 
+The same authenticated endpoint also exposes thread-scoped preview tools when the provider session
+has the `preview` capability. `preview_list` returns a bounded keyset page from the server's preview
+session manager. Its opaque cursor is bound to the calling thread, and closing an earlier tab does
+not shift the next page. `preview_close` requires an exact tab ID and uses the manager's ordinary
+closed event, which lets connected clients release the matching desktop tab. Missing, foreign, and
+already-closed tabs return `PreviewSessionLookupError`.
+
+Neither operation enables browser access. The server omits the preview capability from credentials
+created while `enableAgentBrowserAccess` is off. Listing does not select an automation host or
+create browser state.
+
 ### `orchestrator_capabilities`
 
 Returns:
