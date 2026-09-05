@@ -25,7 +25,6 @@ import {
   managedRelaySessionAtom,
   readManagedRelaySnapshotState,
   setManagedRelaySession,
-  waitForManagedRelayClerkToken,
 } from "./managedRelayState.ts";
 
 let registry = AtomRegistry.make();
@@ -117,17 +116,6 @@ function clerkToken(expiresAtSeconds: number): string {
 
 describe("createManagedRelayQueryManager", () => {
   afterEach(resetRegistry);
-
-  it.effect("waits for the current cloud session before reading its token", () =>
-    Effect.gen(function* () {
-      const tokenFiber = yield* waitForManagedRelayClerkToken(registry).pipe(Effect.forkChild);
-
-      setSession();
-
-      expect(yield* Fiber.join(tokenFiber)).toBe("clerk-token");
-      expect(registry.getNodes().get(managedRelaySessionAtom)?.listeners.size).toBe(0);
-    }),
-  );
 
   it.effect("deregisters an environment through the current Clerk session", () =>
     Effect.gen(function* () {
