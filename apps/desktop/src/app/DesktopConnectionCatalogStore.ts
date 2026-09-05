@@ -134,6 +134,20 @@ export class DesktopConnectionCatalogStoreMigrationError extends Schema.TaggedEr
   }
 }
 
+export class DesktopConnectionCatalogStorePromotionError extends Schema.TaggedErrorClass<DesktopConnectionCatalogStorePromotionError>()(
+  "DesktopConnectionCatalogStorePromotionError",
+  {
+    operation: Schema.Literal("promote-legacy-catalog"),
+    sourceCatalogPath: Schema.String,
+    catalogPath: Schema.String,
+    cause: Schema.instanceOf(DesktopConnectionCatalogStoreWriteError),
+  },
+) {
+  override get message(): string {
+    return `Desktop connection catalog promotion failed from ${this.sourceCatalogPath} to ${this.catalogPath}.`;
+  }
+}
+
 export class DesktopConnectionCatalogStoreProtectionError extends Schema.TaggedErrorClass<DesktopConnectionCatalogStoreProtectionError>()(
   "DesktopConnectionCatalogStoreProtectionError",
   {
@@ -156,6 +170,7 @@ export class DesktopConnectionCatalogStore extends Context.Service<
       | DesktopConnectionCatalogStoreDocumentDecodeError
       | DesktopConnectionCatalogStoreDecodeError
       | DesktopConnectionCatalogStoreMigrationError
+      | DesktopConnectionCatalogStorePromotionError
       | DesktopConnectionCatalogStoreProtectionError
     >;
     readonly set: (
@@ -519,13 +534,15 @@ export const make = Effect.gen(function* () {
       );
       if (readPath !== catalogPath) {
         yield* writeCatalog(decrypted).pipe(
-          Effect.mapError(
-            (cause) =>
-              new DesktopConnectionCatalogStoreMigrationError({
-                operation: "persist-catalog",
+          Effect.catchTag("DesktopConnectionCatalogStoreWriteError", (cause) =>
+            Effect.fail(
+              new DesktopConnectionCatalogStorePromotionError({
+                operation: "promote-legacy-catalog",
+                sourceCatalogPath: readPath,
                 catalogPath,
                 cause,
               }),
+            ),
           ),
         );
       }
