@@ -32,6 +32,7 @@ function environment(id: string, cost: number | null, hostId = id): EnvironmentU
             readAt: "2026-09-04T12:00:00Z",
             buckets: [
               {
+                sourceIndex: 0,
                 day: input.sinceDay,
                 provider: "codex",
                 model: id,

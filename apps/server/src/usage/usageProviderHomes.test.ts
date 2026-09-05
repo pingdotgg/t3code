@@ -84,13 +84,13 @@ it.layer(NodeServices.layer)("usageProviderHomes", (it) => {
       }),
     );
 
-    it.effect("ignores non-absolute environment homes, which the CLI gets verbatim", () =>
+    it.effect("expands configured tilde homes and ignores workspace-relative homes", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const settings = decodeSettings({
           providerInstances: {
-            // Env vars are never shell-expanded, so a tilde or relative value
-            // depends on each workspace's cwd and has no single scan dir.
+            // The runtime expands configured tilde homes before spawning the
+            // CLI, while other relative values still depend on workspace cwd.
             claude_tilde: {
               driver: "claudeAgent",
               environment: [{ name: "CLAUDE_CONFIG_DIR", value: "~/.claude-tilde" }],
@@ -99,13 +99,23 @@ it.layer(NodeServices.layer)("usageProviderHomes", (it) => {
               driver: "codex",
               environment: [{ name: "CODEX_HOME", value: "codex-home" }],
             },
+            codex_tilde: {
+              driver: "codex",
+              environment: [{ name: "CODEX_HOME", value: "~/.codex-tilde" }],
+            },
           },
         });
 
         const homes = yield* resolveUsageProviderHomes(settings, {});
 
-        expect(homes.claudeHomePaths).toEqual([path.resolve(NodeOS.homedir())]);
-        expect(homes.codexSessionDirs).toEqual([path.join(NodeOS.homedir(), ".codex", "sessions")]);
+        expect(homes.claudeHomePaths).toEqual([
+          path.join(NodeOS.homedir(), ".claude-tilde"),
+          path.resolve(NodeOS.homedir()),
+        ]);
+        expect(homes.codexSessionDirs).toEqual([
+          path.join(NodeOS.homedir(), ".codex", "sessions"),
+          path.join(NodeOS.homedir(), ".codex-tilde", "sessions"),
+        ]);
       }),
     );
 

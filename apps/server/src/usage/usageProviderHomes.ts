@@ -52,11 +52,10 @@ export const resolveUsageProviderHomes = Effect.fn("resolveUsageProviderHomes")(
   };
 
   /**
-   * Home taken from an instance environment variable. The spawned CLI
-   * receives env vars verbatim (never shell-expanded), so no tilde expansion
-   * here — see `resolveClaudeConfigDirPath` in ClaudeSkills. A relative value
-   * resolves against each workspace's own cwd and therefore has no single
-   * scan directory; only absolute values are honored.
+   * Home taken from the effective environment, after the shared environment
+   * merger expands tildes in configured provider-home overrides. Remaining
+   * relative values depend on each workspace's cwd and therefore have no
+   * single scan directory; only absolute values are honored.
    */
   const environmentHomePath = (value: string | undefined): string | null => {
     const trimmed = value?.trim() ?? "";
