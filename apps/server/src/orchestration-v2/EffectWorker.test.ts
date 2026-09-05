@@ -275,6 +275,9 @@ it.effect("classifies retry-unsafe rollback failures only for guarded MCP reques
       Effect.flip,
     );
 
+    assert.instanceOf(legacy, OrchestrationEffectExecutionError);
+    assert.instanceOf(guarded, OrchestrationEffectExecutionError);
+    assert.instanceOf(fingerprintOnly, OrchestrationEffectExecutionError);
     assert.isUndefined(legacy.failureCode);
     assert.equal(guarded.failureCode, "checkpoint_restore_partial");
     assert.equal(fingerprintOnly.failureCode, "checkpoint_restore_partial");
