@@ -337,13 +337,29 @@ interface ProjectContentSearchTarget {
 }
 
 export function useProjectContentSearch(target: ProjectContentSearchTarget) {
+  const hasTarget = target.environmentId !== null && target.cwd !== null;
+  const fileAccessSession = useEnvironmentQuery(
+    target.environmentId === null
+      ? null
+      : environmentSession.sessionStateAtom(target.environmentId),
+  );
+  const fileEnvironment = useEnvironmentPresentation(target.environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const canReadFiles = hasTarget && fileAccess.canReadFiles;
+  const isCheckingAccess = hasTarget && fileAccess.isPending;
   // Whitespace is significant in content queries; trimming is only used to
   // decide whether the input is blank.
   const query = target.query;
   const hasQuery = query.trim().length > 0;
   const debouncedQuery = useDebouncedValue(query, PROJECT_CONTENT_SEARCH_DEBOUNCE_MS);
   const result = useEnvironmentQuery(
-    target.environmentId !== null &&
+    canReadFiles &&
+      target.environmentId !== null &&
       target.cwd !== null &&
       hasQuery &&
       debouncedQuery.trim().length > 0
@@ -362,9 +378,18 @@ export function useProjectContentSearch(target: ProjectContentSearchTarget) {
   );
 
   return {
+    canReadFiles,
+    isCheckingAccess,
     matches: result.data?.matches ?? EMPTY_CONTENT_MATCHES,
-    error: result.error,
-    isPending: hasQuery && (query !== debouncedQuery || result.isPending),
+    error:
+      !hasTarget || isCheckingAccess
+        ? null
+        : canReadFiles
+          ? result.error
+          : (fileAccess.error ?? "This connection cannot search host files."),
+    isPending:
+      isCheckingAccess ||
+      (canReadFiles && hasQuery && (query !== debouncedQuery || result.isPending)),
     hasQuery,
     truncated: result.data?.truncated ?? false,
     invalidRegex: target.useRegex && result.data?.regexFallbackError !== undefined,
