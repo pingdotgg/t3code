@@ -129,10 +129,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         accentColor,
         enabled,
         snapshot: {
-          maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
-            provider: DRIVER_KIND,
-            packageName: null,
-          }),
+          resolveMaintenance: () =>
+            Effect.succeed(
+              makeManualOnlyProviderMaintenanceCapabilities({
+                provider: DRIVER_KIND,
+                packageName: null,
+              }),
+            ),
           getSnapshot: Effect.sync(currentSnapshot),
           refresh: Effect.sync(currentSnapshot),
           // Registry agents report no subscription usage.

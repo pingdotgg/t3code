@@ -28,7 +28,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { replayAndBufferLiveEvents } from "../../orchestration/LiveStreamBudget.ts";
+import { replayAndBufferProjectedLiveEvents } from "../../orchestration/LiveStreamBudget.ts";
 
 import {
   toPersistenceDecodeError,
@@ -616,25 +616,29 @@ const makeEventStore = Effect.gen(function* () {
     return loop(input.afterSequence);
   };
 
+  const streamProjectedApplicationEvents: OrchestrationEventStoreShape["streamProjectedApplicationEvents"] =
+    (input) =>
+      replayAndBufferProjectedLiveEvents({
+        subscribe: PubSub.subscribe(committedEvents),
+        latestSequence: latestApplicationSequence,
+        afterSequence: input.afterSequence ?? 0,
+        project: input.project,
+        replay: (throughSequence) =>
+          catchUpApplicationEvents({
+            afterSequence: input?.afterSequence ?? 0,
+            throughSequence,
+          }),
+      }).pipe(
+        Stream.catchTag("LiveStreamBufferError", (cause) =>
+          Stream.fail(
+            toPersistenceSqlError("OrchestrationEventStore.streamApplicationEvents:buffer")(cause),
+          ),
+        ),
+      );
+
   const streamApplicationEvents: OrchestrationEventStoreShape["streamApplicationEvents"] = (
     input,
-  ) =>
-    replayAndBufferLiveEvents({
-      subscribe: PubSub.subscribe(committedEvents),
-      latestSequence: latestApplicationSequence,
-      afterSequence: input?.afterSequence ?? 0,
-      replay: (throughSequence) =>
-        catchUpApplicationEvents({
-          afterSequence: input?.afterSequence ?? 0,
-          throughSequence,
-        }),
-    }).pipe(
-      Stream.catchTag("LiveStreamBufferError", (cause) =>
-        Stream.fail(
-          toPersistenceSqlError("OrchestrationEventStore.streamApplicationEvents:buffer")(cause),
-        ),
-      ),
-    );
+  ) => streamProjectedApplicationEvents({ ...input, project: (event) => event });
 
   const findEventAfter = SqlSchema.findOneOption({
     Request: HasEventAfterRequestSchema,
@@ -675,6 +679,7 @@ const makeEventStore = Effect.gen(function* () {
     readApplicationEvents: catchUpApplicationEvents,
     publishCommitted: (events) => PubSub.publishAll(committedEvents, events).pipe(Effect.asVoid),
     streamApplicationEvents,
+    streamProjectedApplicationEvents,
     hasEventAfter,
   } satisfies OrchestrationEventStoreShape;
 });

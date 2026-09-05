@@ -25,11 +25,33 @@ export function buildActiveShellSnapshot(input: {
   };
 }
 
+export type ShellApplicationEvent =
+  | Pick<
+      Extract<ApplicationStoredEvent, { readonly aggregateKind: "project" }>,
+      "aggregateKind" | "aggregateId" | "type" | "sequence"
+    >
+  | {
+      readonly sequence: number;
+      readonly event: Pick<OrchestrationV2StoredEvent["event"], "threadId">;
+    };
+
+/** Shell updates refetch an aggregate; drop transcript bodies before retaining an event. */
+export function toShellApplicationEvent(stored: ApplicationStoredEvent): ShellApplicationEvent {
+  return "aggregateKind" in stored
+    ? {
+        aggregateKind: stored.aggregateKind,
+        aggregateId: stored.aggregateId,
+        type: stored.type,
+        sequence: stored.sequence,
+      }
+    : { sequence: stored.sequence, event: { threadId: stored.event.threadId } };
+}
+
 /** Keep only the newest shell-relevant event per project/thread aggregate. */
-export function coalesceShellApplicationEvents(
-  events: ReadonlyArray<ApplicationStoredEvent>,
-): ReadonlyArray<ApplicationStoredEvent> {
-  const latestByAggregate = new Map<string, ApplicationStoredEvent>();
+export function coalesceShellApplicationEvents<A extends ShellApplicationEvent>(
+  events: ReadonlyArray<A>,
+): ReadonlyArray<A> {
+  const latestByAggregate = new Map<string, A>();
   for (const stored of events) {
     const key =
       "aggregateKind" in stored
@@ -137,7 +159,7 @@ export function coalesceStoredThreadEvents(
  * delta. `shell` is null when the thread is deleted or unknown.
  */
 export function shellStreamItemFromThreadShell(input: {
-  readonly stored: OrchestrationV2StoredEvent;
+  readonly stored: Extract<ShellApplicationEvent, { readonly event: unknown }>;
   readonly shell: OrchestrationV2ThreadShell | null;
 }): Exclude<OrchestrationV2ShellStreamItem, { readonly kind: "snapshot" }> {
   if (input.shell !== null) {
