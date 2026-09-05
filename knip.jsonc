@@ -16,6 +16,7 @@
         "src/bin.ts!",
         "src/service-launcher.ts!",
         "scripts/cli.ts",
+        "scripts/probe-claude-fork-local-rollback-replay.ts",
         "src/provider/testFixtures/*.mjs",
       ],
       // Native msgpack acceleration and the Vite+ web build prerequisite.
