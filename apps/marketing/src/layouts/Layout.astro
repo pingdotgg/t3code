@@ -1,6 +1,7 @@
 ---
 import { Image } from "astro:assets";
 import appIcon from "../assets/icon.webp";
+import appDesktop from "../assets/app-desktop.webp";
 import dmSansLatinUrl from "../assets/fonts/dm-sans-latin.woff2?url";
 import "../styles/fonts.css";
 import {
@@ -21,6 +22,9 @@ const {
   description = "T3 Code. The open-source control plane for coding agents.",
   pageClass,
 } = Astro.props;
+
+const canonical = new URL(Astro.url.pathname, Astro.site);
+const socialImage = new URL(appDesktop.src, Astro.site);
 ---
 
 <html lang="en">
@@ -28,6 +32,14 @@ const {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="T3 Code" />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={socialImage} />
+    <meta name="twitter:card" content="summary_large_image" />
     <link
       rel="preload"
       href={dmSansLatinUrl}
