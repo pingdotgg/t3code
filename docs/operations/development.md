@@ -35,15 +35,24 @@ different preference when needed.
 
 ### Sharing and remote debugging
 
-`vp run dev --share` publishes the web port over the machine's tailnet and prints a pairing URL
-for that origin. Give the tester the complete URL, including its token. The dev runner removes
-its mapping on exit.
+`vp run dev --share` shares through T3 Connect. Copy `.env.example` to `.env` for a source build,
+then run `node --env-file=.env apps/server/src/bin.ts connect login --base-dir ~/.t3` from the
+repository root once. The runner reuses that account login while keeping each worktree's
+environment and runtime state separate. Give the tester the complete printed pairing URL,
+including its token; `node --env-file=.env apps/server/src/bin.ts pair --connect` creates another.
+
+Each worktree uses a normal Connect environment and counts toward the account's tunnel limit.
+Shutdown releases its tunnel but keeps its registration and hostname for the next run.
+Deregister an unused worktree from T3 Connect to remove it. A killed process can leave its
+tunnel allocated until restart or deregistration. `--share-via tailscale` selects the existing
+tailnet sharing path instead.
 
 Leave `VITE_HTTP_URL` and `VITE_WS_URL` unset. Vite proxies the backend through the browser's
 origin so the same build works over localhost and remote connections.
 
 Shared runs enable bundled dev to avoid a network round trip for each import level.
-`T3CODE_BUNDLED_DEV=0` opts out when debugging bundler differences. Two reload traps matter
+Connect sharing requires bundled dev; `T3CODE_BUNDLED_DEV=0` opts out for other runs when
+debugging bundler differences. Two reload traps matter
 when changing this setup:
 
 - The web entry must dynamically import the app so React refresh initializes before application

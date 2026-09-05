@@ -8,6 +8,26 @@ import { isLocalLoopbackHost, isPrivateNetworkHost } from "@t3tools/shared/hostC
 
 import { readPreparedConnection } from "~/state/session";
 
+const forwardedOrigins = new Map<string, string>();
+
+export function rememberForwardedOrigin(
+  environmentId: EnvironmentId,
+  localOrigin: string,
+  requestedOrigin: string,
+) {
+  forwardedOrigins.set(`${environmentId}:${localOrigin}`, requestedOrigin);
+}
+
+export function restoreForwardedBrowserUrl(environmentId: EnvironmentId, rawUrl: string): string {
+  const url = new URL(rawUrl);
+  const origin = forwardedOrigins.get(`${environmentId}:${url.origin}`);
+  if (!origin) return rawUrl;
+  const restored = new URL(`${origin}${url.pathname}${url.search}${url.hash}`);
+  restored.username = url.username;
+  restored.password = url.password;
+  return restored.toString();
+}
+
 export {
   normalizeHostname,
   isLocalLoopbackHost,
@@ -45,7 +65,7 @@ const resolveEnvironmentPortTarget = (
       : normalizedEnvironmentHost;
   const resolved = sourceUrl
     ? new URL(sourceUrl)
-    : new URL(path, `${protocol}://${resolvedHost}:${target.port}`);
+    : new URL(`${protocol}://${resolvedHost}:${target.port}${path}`);
   if (sourceUrl) {
     resolved.hostname = resolvedHost;
     resolved.port = String(target.port);

@@ -16,6 +16,7 @@ import {
   useFaviconProjectRefForThread,
 } from "~/browserFaviconStore";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
+import { restoreForwardedBrowserUrl } from "~/browser/browserTargetResolver";
 import { applyPreviewDesktopState, type DesktopPreviewOverlay } from "~/previewStateStore";
 import { previewEnvironment } from "~/state/preview";
 import { usePreparedConnection } from "~/state/session";
@@ -64,6 +65,27 @@ export function usePreviewBridge(input: {
   const handleStateChange = useEffectEvent(
     (changedTabId: string, state: DesktopPreviewTabState): void => {
       if (changedTabId !== runtimeTabId) return;
+      if (state.navStatus.kind !== "Idle") {
+        state = {
+          ...state,
+          navStatus: {
+            ...state.navStatus,
+            url: restoreForwardedBrowserUrl(stableThreadRef.environmentId, state.navStatus.url),
+          },
+        };
+      }
+      if (state.favicon) {
+        state = {
+          ...state,
+          favicon: {
+            ...state.favicon,
+            pageUrl: restoreForwardedBrowserUrl(
+              stableThreadRef.environmentId,
+              state.favicon.pageUrl,
+            ),
+          },
+        };
+      }
       if (shouldClearBrowserPointer(lastDesktopNavStatus.current, state.navStatus)) {
         clearBrowserPointer(runtimeTabId);
       }

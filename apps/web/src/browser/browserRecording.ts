@@ -7,8 +7,10 @@ import { Atom } from "effect/unstable/reactivity";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { ensureClientSettingsHydrated, getClientSettings } from "~/hooks/useSettings";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { readPreparedConnection } from "~/state/session";
 
 import { acquireBrowserSurfaceActivity } from "./browserSurfaceStore";
+import { previewEnvironmentPost } from "./browserEnvironmentHttp";
 
 export class BrowserRecordingUnavailableError extends Schema.TaggedErrorClass<BrowserRecordingUnavailableError>()(
   "BrowserRecordingUnavailableError",
@@ -691,6 +693,36 @@ const finalizeBrowserRecording = async (
           mimeType,
           new Uint8Array(await blob.arrayBuffer()),
         );
+        if (
+          recording.threadRef &&
+          readPreparedConnection(recording.threadRef.environmentId)?.target._tag !==
+            "PrimaryConnectionTarget"
+        ) {
+          if (blob.size > 64 * 1024 * 1024) {
+            throw new Error(
+              "Recording saved on this desktop. Remote recordings must be under 64 MiB.",
+            );
+          }
+          const response = await previewEnvironmentPost(
+            recording.threadRef.environmentId,
+            "/api/preview/recordings",
+            blob,
+          );
+          if (!response.ok)
+            throw new Error(
+              `Recording saved on this desktop, but transfer failed (${response.status}).`,
+            );
+          const uploaded: unknown = await response.json();
+          if (
+            typeof uploaded !== "object" ||
+            uploaded === null ||
+            !("path" in uploaded) ||
+            typeof uploaded.path !== "string"
+          ) {
+            throw new Error("Invalid recording transfer response.");
+          }
+          artifact.environmentPath = uploaded.path;
+        }
         result = { _tag: "Success", artifact };
       } catch (cause) {
         throw new BrowserRecordingOperationError({

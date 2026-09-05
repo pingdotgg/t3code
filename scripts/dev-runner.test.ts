@@ -879,11 +879,15 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
     // lives in runDevRunnerWithInput; the env builder must not consult the
     // ambient variable on its own, or it would silently outrank the worktree
     // default and land dev state on the user's real database.
-    it.effect("ignores an ambient T3CODE_HOME when no home is resolved", () =>
+    it.effect("clears inherited home and sharing state when neither is requested", () =>
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
           mode: "dev",
-          baseEnv: { T3CODE_HOME: "/home/user/.t3" },
+          baseEnv: {
+            T3CODE_HOME: "/home/user/.t3",
+            T3CODE_DEV_SHARE: "connect",
+            T3CODE_CONNECT_AUTHORIZATION_HOME: "/another/environment",
+          },
           serverOffset: 0,
           webOffset: 0,
           t3Home: undefined,
@@ -896,13 +900,15 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         });
 
         assert.equal(env.T3CODE_HOME, undefined);
+        assert.equal(env.T3CODE_DEV_SHARE, undefined);
+        assert.equal(env.T3CODE_CONNECT_AUTHORIZATION_HOME, undefined);
       }),
     );
 
     // Sharing dev:desktop would publish a URL whose renderer dials the
     // visitor's own loopback, and would clobber the VITE_DEV_SERVER_URL that
     // Electron loads from. It must decline, not half-work.
-    it.effect("declines to share for dev:desktop and still starts the stack", () => {
+    it.effect("declines tailscale sharing for dev:desktop and still starts the stack", () => {
       let spawnCount = 0;
       const spawnerLayer = Layer.succeed(
         ChildProcessSpawner.ChildProcessSpawner,
@@ -918,6 +924,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           mode: "dev:desktop",
           port: undefined,
           share: true,
+          shareVia: "tailscale",
         }).pipe(
           Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
           Effect.provideService(HostProcessPlatform, "linux"),
@@ -1015,7 +1022,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
     // per-module waterfall pays a tailnet round trip per import level. The
     // runner defaults bundled dev on for the spawned stack, but only
     // defaults: an explicit T3CODE_BUNDLED_DEV (even "0") must pass through.
-    describe("--share bundled dev default", () => {
+    describe("--share-via tailscale bundled dev default", () => {
       const shareSpawnedEnv = (input: { readonly ambientBundledDev: string | undefined }) =>
         Effect.gen(function* () {
           let captured: Record<string, string | undefined> | undefined;
@@ -1062,6 +1069,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             mode: "dev",
             port: undefined,
             share: true,
+            shareVia: "tailscale",
           }).pipe(
             Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
             Effect.provideService(HostProcessPlatform, "linux"),
@@ -1120,7 +1128,54 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       );
     });
 
-    it.effect("spawns nothing when --dry-run is combined with --share", () => {
+    it.effect("shares through connect with stable account auth and isolated runtime state", () => {
+      const commands: string[] = [];
+      let captured: NodeJS.ProcessEnv | undefined;
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          const spawned = command as {
+            readonly command: string;
+            readonly options?: { readonly env?: NodeJS.ProcessEnv };
+          };
+          commands.push(spawned.command);
+          captured = spawned.options?.env;
+          return Effect.succeed(mockProcess(0));
+        }),
+      );
+
+      return Effect.gen(function* () {
+        for (const shareVia of [undefined, "connect"] as const) {
+          yield* runDevRunnerWithInput({
+            ...devServerInput,
+            mode: "dev",
+            share: true,
+            ...(shareVia ? { shareVia } : {}),
+          }).pipe(
+            Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+            Effect.provideService(HostProcessPlatform, "linux"),
+            Effect.provideService(HostProcessEnvironment, {
+              T3CODE_HOME: "/another/runtime",
+              T3CODE_CONNECT_AUTHORIZATION_HOME: "/another/account",
+              T3CODE_BUNDLED_DEV: "0",
+            }),
+          );
+          assert.equal(captured?.T3CODE_HOME, NodePath.resolve(devServerInput.t3Home));
+          assert.equal(
+            captured?.T3CODE_CONNECT_AUTHORIZATION_HOME,
+            NodePath.join(NodeOS.homedir(), ".t3"),
+          );
+          assert.equal(captured?.T3CODE_DEV_SHARE, "connect");
+          assert.equal(captured?.T3CODE_BUNDLED_DEV, "1");
+          assert.equal(captured?.T3CODE_SINGLE_ORIGIN_DEV, "1");
+          assert.equal(captured?.VITE_HTTP_URL, undefined);
+          assert.equal(captured?.VITE_WS_URL, undefined);
+        }
+        assert.deepStrictEqual(commands, ["vp", "vp"]);
+      });
+    });
+
+    it.effect("rejects unsupported connect configurations before spawning", () => {
       let spawnCount = 0;
       const spawnerLayer = Layer.succeed(
         ChildProcessSpawner.ChildProcessSpawner,
@@ -1131,16 +1186,54 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       );
 
       return Effect.gen(function* () {
-        yield* runDevRunnerWithInput({
-          ...devServerInput,
-          mode: "dev",
-          port: undefined,
-          dryRun: true,
-          share: true,
-        }).pipe(
-          Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcessPlatform, "linux"),
-        );
+        for (const invalid of [
+          { mode: "dev:server" },
+          { mode: "dev:web" },
+          { mode: "dev:desktop" },
+          { mode: "dev", devUrl: new URL("https://preview.example.com") },
+          { mode: "dev", host: "0.0.0.0" },
+          { mode: "dev", host: "::" },
+          { mode: "dev", host: "::1" },
+        ] as const) {
+          const error = yield* runDevRunnerWithInput({
+            ...devServerInput,
+            ...invalid,
+            share: true,
+          }).pipe(
+            Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+            Effect.provideService(HostProcessPlatform, "linux"),
+            Effect.flip,
+          );
+          assert.equal(error._tag, "DevRunnerConfigurationError");
+        }
+        assert.equal(spawnCount, 0);
+      });
+    });
+
+    it.effect("spawns nothing when --dry-run is combined with either sharing transport", () => {
+      let spawnCount = 0;
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => {
+          spawnCount += 1;
+          return Effect.succeed(mockProcess(0));
+        }),
+      );
+
+      return Effect.gen(function* () {
+        for (const shareVia of [undefined, "connect", "tailscale"] as const) {
+          yield* runDevRunnerWithInput({
+            ...devServerInput,
+            mode: "dev",
+            port: undefined,
+            dryRun: true,
+            share: true,
+            ...(shareVia ? { shareVia } : {}),
+          }).pipe(
+            Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+            Effect.provideService(HostProcessPlatform, "linux"),
+          );
+        }
 
         assert.equal(spawnCount, 0);
       });

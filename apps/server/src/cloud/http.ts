@@ -67,6 +67,7 @@ import {
   serviceStateHasPendingUpdate,
 } from "./serviceProtocol.ts";
 import {
+  CLOUD_ENDPOINT_HTTP_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINKED_USER_ID,
   CLOUD_MINT_PUBLIC_KEY,
@@ -603,7 +604,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
       schema: RelayEnvironmentLinkResponse,
     });
     yield* setCliDesiredCloudLink(true, mode);
-    return yield* applyCloudRelayConfig(dependencies, {
+    const result = yield* applyCloudRelayConfig(dependencies, {
       relayUrl,
       relayIssuer: link.relayIssuer,
       cloudUserId: link.cloudUserId,
@@ -611,6 +612,15 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
       cloudMintPublicKey: link.cloudMintPublicKey,
       endpointRuntime: link.endpointRuntime,
     });
+    if (managedTunnelsEnabled) {
+      yield* dependencies.secrets.set(
+        CLOUD_ENDPOINT_HTTP_ORIGIN,
+        stringToBytes(link.endpoint.httpBaseUrl),
+      );
+    } else {
+      yield* dependencies.secrets.remove(CLOUD_ENDPOINT_HTTP_ORIGIN);
+    }
+    return { ...result, endpoint: link.endpoint };
   },
   Effect.catchIf(
     ServerSecretStore.isSecretStoreError,

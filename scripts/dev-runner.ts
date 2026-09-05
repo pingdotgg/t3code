@@ -347,6 +347,8 @@ export function createDevRunnerEnv({
     // (serviceLauncherClient.ts resolveStartup).
     delete output.T3_SERVICE_LAUNCHER_CONTEXT;
     delete output.T3_BOOT_SERVICE_UNIT;
+    delete output.T3CODE_DEV_SHARE;
+    delete output.T3CODE_CONNECT_AUTHORIZATION_HOME;
 
     if (!isDesktopMode) {
       output.T3CODE_PORT = String(serverPort);
@@ -627,11 +629,13 @@ interface DevRunnerCliInput {
   readonly devUrl: URL | undefined;
   readonly dryRun: boolean;
   readonly share: boolean;
+  readonly shareVia?: "connect" | "tailscale";
   readonly runArgs: ReadonlyArray<string>;
 }
 
 export function runDevRunnerWithInput(input: DevRunnerCliInput) {
   return Effect.gen(function* () {
+    const host = input.host?.trim() || undefined;
     const { portOffset, devInstance } = yield* OffsetConfig.pipe(
       Effect.mapError(
         (cause) =>
@@ -649,10 +653,10 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
     // front instead. (dev:server and dev:desktop don't proxy — untouched.)
     if (
       (input.mode === "dev" || input.mode === "dev:web") &&
-      input.host !== undefined &&
-      !isProxiableBindHost(input.host)
+      host !== undefined &&
+      !isProxiableBindHost(host)
     ) {
-      return yield* new DevRunnerHostNotProxiableError({ mode: input.mode, host: input.host });
+      return yield* new DevRunnerHostNotProxiableError({ mode: input.mode, host });
     }
 
     const worktreePath = yield* resolveGitWorktreePath(yield* HostProcessWorkingDirectory);
@@ -670,7 +674,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       hasExplicitDevUrl: input.devUrl !== undefined,
       // A non-loopback bind host decides whether the backend can actually take
       // the port, so it has to be probed alongside loopback.
-      checkPortAvailability: makeDefaultCheckPortAvailability(input.host),
+      checkPortAvailability: makeDefaultCheckPortAvailability(host),
     });
 
     const hostEnvironment = yield* HostProcessEnvironment;
@@ -694,7 +698,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       browser: input.browser,
       autoBootstrapProjectFromCwd: input.autoBootstrapProjectFromCwd,
       logWebSocketEvents: input.logWebSocketEvents,
-      host: input.host,
+      host,
       port: input.port,
       devUrl: input.devUrl,
     });
@@ -704,6 +708,26 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         ? ` selectedOffset(server=${serverOffset},web=${webOffset})`
         : "";
     const baseDir = env.T3CODE_HOME ?? (yield* DEFAULT_T3_HOME);
+    const connectShare = input.share && input.shareVia !== "tailscale";
+    if (
+      connectShare &&
+      (input.mode !== "dev" ||
+        input.devUrl !== undefined ||
+        (host !== undefined && !["localhost", "127.0.0.1"].includes(host)))
+    ) {
+      return yield* new DevRunnerConfigurationError({
+        configKeys: ["--share", "--dev-url"],
+        cause: "Connect sharing requires the complete dev stack and its local Vite origin.",
+      });
+    }
+    if (connectShare) {
+      env.T3CODE_DEV_SHARE = "connect";
+      env.T3CODE_CONNECT_AUTHORIZATION_HOME = yield* DEFAULT_T3_HOME;
+      env.T3CODE_BUNDLED_DEV = "1";
+      yield* Effect.logInfo(
+        "[dev-runner] sharing through T3 Connect using this worktree's saved environment",
+      );
+    }
 
     yield* Effect.logInfo(
       `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${baseDir}`,
@@ -717,7 +741,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
     }
 
     const sharedWebPort = BASE_WEB_PORT + webOffset;
-    if (input.share) {
+    if (input.share && !connectShare) {
       if (input.mode === "dev:server") {
         yield* Effect.logInfo("[dev-runner] --share has no effect for dev:server (no web server).");
       } else if (input.mode === "dev:desktop") {
@@ -902,9 +926,13 @@ const devRunnerCli = Command.make("dev-runner", {
   ),
   share: Flag.boolean("share").pipe(
     Flag.withDescription(
-      "Publish the web dev server on this machine's tailnet over HTTPS (via `tailscale serve`) and print the pairing URL for it. Removed again on exit.",
+      "Share through T3 Connect and print a pairing URL. Reuses this worktree's saved environment; run `t3 connect login` once first.",
     ),
     Flag.withDefault(false),
+  ),
+  shareVia: Flag.choice("share-via", ["connect", "tailscale"]).pipe(
+    Flag.withDescription("Transport for --share (defaults to T3 Connect)."),
+    Flag.withDefault("connect"),
   ),
   runArgs: Argument.string("run-arg").pipe(
     Argument.withDescription("Additional Vite+ run args (pass after `--`)."),

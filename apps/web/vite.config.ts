@@ -9,7 +9,7 @@ import "vite-plus/test/config";
 import { defineConfig, type Connect, type Plugin } from "vite-plus";
 import pkg from "./package.json" with { type: "json" };
 
-import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
+import { DEV_PROXIED_PATH_PREFIXES, isDevProxiedPath } from "@t3tools/shared/devProxy";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { tailwindPlugins } from "./vite/tailwind";
@@ -31,8 +31,14 @@ const explicitHost = process.env.HOST?.trim();
 const host = explicitHost || "localhost";
 const configuredWsUrl = isSingleOriginDev ? undefined : process.env.VITE_WS_URL?.trim();
 const configuredHttpUrl = isSingleOriginDev ? undefined : process.env.VITE_HTTP_URL?.trim();
-const configuredRelayUrl = repoEnv.VITE_T3CODE_RELAY_URL?.trim() || "";
-const configuredClerkPublishableKey = repoEnv.VITE_CLERK_PUBLISHABLE_KEY?.trim() || "";
+// Shared dev uses direct pairing; Clerk's hosted sign-in is not configured
+// for each managed environment hostname.
+const configuredRelayUrl =
+  process.env.T3CODE_DEV_SHARE === "connect" ? "" : repoEnv.VITE_T3CODE_RELAY_URL?.trim() || "";
+const configuredClerkPublishableKey =
+  process.env.T3CODE_DEV_SHARE === "connect"
+    ? ""
+    : repoEnv.VITE_CLERK_PUBLISHABLE_KEY?.trim() || "";
 const configuredClerkJwtTemplate = repoEnv.VITE_CLERK_JWT_TEMPLATE?.trim() || "";
 const configuredClerkCliOAuthClientId = repoEnv.VITE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() || "";
 const configuredRelayTracingUrl = repoEnv.VITE_RELAY_OTLP_TRACES_URL?.trim() || "";
@@ -62,6 +68,11 @@ const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
 // round trip per import level in unbundled dev); T3CODE_BUNDLED_DEV=0 opts out.
 const bundledDevEnv = process.env.T3CODE_BUNDLED_DEV?.trim().toLowerCase();
 const bundledDev = bundledDevEnv === "1" || bundledDevEnv === "true";
+const connectDevShare = process.env.T3CODE_DEV_SHARE === "connect";
+
+if (connectDevShare && (!bundledDev || !["localhost", "127.0.0.1"].includes(host))) {
+  throw new Error("Connect dev sharing requires bundled dev and a loopback listener.");
+}
 
 const buildSourcemap: boolean | "hidden" =
   sourcemapEnv === "0" || sourcemapEnv === "false"
@@ -142,6 +153,115 @@ function devCompressionPlugin(): Plugin {
   };
 }
 
+function connectDevSharePlugin(): Plugin {
+  const publicFiles = new Set([
+    "/apple-touch-icon.png",
+    "/favicon-16x16.png",
+    "/favicon-32x32.png",
+    "/favicon.ico",
+    "/manifest.webmanifest",
+  ]);
+  return {
+    name: "t3code:connect-dev-share",
+    apply: "serve",
+    configureServer(server) {
+      // Bundled dev needs only these two inbound events. Vite's other custom
+      // handlers trust their payloads and must not receive public socket input.
+      server.ws.on("connection", (socket) => {
+        const listeners = socket.listeners("message");
+        socket.removeAllListeners("message");
+        let registered = false;
+        socket.on("message", (raw, isBinary) => {
+          if (isBinary || !Buffer.isBuffer(raw) || raw.length > 4096) return socket.terminate();
+          let message: unknown;
+          try {
+            message = JSON.parse(raw.toString());
+          } catch {
+            return socket.terminate();
+          }
+          if (
+            typeof message === "object" &&
+            message !== null &&
+            "type" in message &&
+            message.type === "ping"
+          )
+            return;
+          if (
+            typeof message !== "object" ||
+            message === null ||
+            !("type" in message) ||
+            message.type !== "custom" ||
+            !("event" in message) ||
+            !("data" in message) ||
+            typeof message.data !== "object" ||
+            message.data === null
+          )
+            return socket.terminate();
+          if (
+            message.event === "vite:client-connected" &&
+            !registered &&
+            "clientId" in message.data &&
+            typeof message.data.clientId === "string" &&
+            message.data.clientId.length > 0
+          )
+            registered = true;
+          else if (
+            message.event !== "vite:bundled-dev:reload-needed" ||
+            !registered ||
+            !("reason" in message.data) ||
+            typeof message.data.reason !== "string"
+          )
+            return socket.terminate();
+          for (const listener of listeners) listener.call(socket, raw, isBinary);
+        });
+      });
+      server.middlewares.use((request, response, next) => {
+        const [pathname = "/", query] = (request.url ?? "/").split("?", 2);
+        if (isDevProxiedPath(pathname)) return next();
+        response.setHeader("Cache-Control", "no-cache");
+        response.setHeader("Cloudflare-CDN-Cache-Control", "no-store");
+        const params = new URLSearchParams(query);
+        const safePath =
+          pathname.startsWith("/") &&
+          !/[%#\\]/u.test(pathname) &&
+          !pathname.includes("/.") &&
+          !pathname.endsWith(".map") &&
+          !/^\/(?:src|node_modules|@|__)/u.test(pathname) &&
+          !["raw", "url", "import", "direct", "sourcemap"].some((key) => params.has(key));
+        if (safePath && (request.method === "GET" || request.method === "HEAD")) {
+          // Only Vite's emitted files are public, never its source loader or
+          // compiler endpoints. HMR patches use the same in-memory file store.
+          const emitted = server.environments.client?.bundledDev?.memoryFiles.has(
+            pathname.slice(1),
+          );
+          const assetQuery = [...params].every(
+            ([key, value]) => key === "t" && /^\d+$/u.test(value),
+          );
+          if ((emitted || publicFiles.has(pathname)) && assetQuery) return next();
+          if (pathname === "/index.html" || /^\/[a-zA-Z0-9_/-]*$/u.test(pathname)) {
+            // Every navigation renders this app, even if another HTML file
+            // exists in the workspace. Pairing queries stay in the browser.
+            request.url = "/index.html";
+            return next();
+          }
+        }
+        response.writeHead(404).end();
+      });
+      server.httpServer?.prependListener("upgrade", (request, socket) => {
+        const pathname = request.url?.split("?", 1)[0];
+        const protocol = request.headers["sec-websocket-protocol"];
+        if (
+          pathname !== "/ws" &&
+          pathname !== "/api/preview/forward" &&
+          !(pathname === "/" && (protocol === "vite-hmr" || protocol === "vite-ping"))
+        ) {
+          socket.destroy();
+        }
+      });
+    },
+  };
+}
+
 // Vite rejects requests whose Host header isn't localhost, which blocks sharing
 // a dev server over Tailscale/LAN. Tailnet names are safe to allow wholesale:
 // the DNS is controlled by tailscale, so they can't be rebound by an attacker.
@@ -156,6 +276,7 @@ export default defineConfig(() => {
   return {
     assetsInclude: ["**/*.wasm"],
     plugins: [
+      ...(connectDevShare ? [connectDevSharePlugin()] : []),
       devCompressionPlugin(),
       // Route components load as split chunks so settings, pull-request, and
       // usage code stay out of the cold-start payload; the router prefetches
@@ -215,10 +336,14 @@ export default defineConfig(() => {
       bundledDev,
     },
     server: {
+      // The environment server owns credentialed API CORS, including Electron origins.
+      ...(connectDevShare ? { cors: { preflightContinue: true } } : {}),
       host,
       port,
       strictPort: true,
-      allowedHosts,
+      // The guarded public surface is intentional; the managed hostname is
+      // allocated after Vite starts and backend routes retain their own auth.
+      allowedHosts: connectDevShare ? (true as const) : allowedHosts,
       // Transform the whole module graph at server start instead of on the
       // first request. Without this, a cold worktree discovers and transforms
       // modules one import-level at a time while the browser waits — which
@@ -239,7 +364,7 @@ export default defineConfig(() => {
                 {
                   target: devProxyTarget,
                   changeOrigin: true,
-                  ...(prefix === "/ws" ? { ws: true } : {}),
+                  ...(prefix === "/ws" || prefix === "/api" ? { ws: true } : {}),
                 },
               ]),
             ),
@@ -251,7 +376,7 @@ export default defineConfig(() => {
       // page origin, which is what makes HMR work over Tailscale/LAN instead of
       // failing an attempt against the wrong machine's localhost first.
       // (Vite 8 logs connection state via console.debug — enable "Verbose".)
-      ...(explicitHost
+      ...(explicitHost && !connectDevShare
         ? {
             hmr: {
               protocol: "ws",
@@ -267,6 +392,24 @@ export default defineConfig(() => {
       devSourcemap: buildSourcemap !== false,
     },
     build: {
+      // Compile split chunks at startup instead of exposing Vite's arbitrary
+      // module compilation endpoint. Clients still load routes on demand.
+      ...(connectDevShare
+        ? {
+            rolldownOptions: {
+              experimental: { devMode: { lazy: false } },
+              output: {
+                codeSplitting: {
+                  groups: [
+                    { name: "refresh", test: /react-refresh/, priority: 30 },
+                    { name: "icons", test: /[\\/]lucide-react[\\/]/, priority: 20 },
+                    { name: "shared", minShareCount: 2, includeDependenciesRecursively: true },
+                  ],
+                },
+              },
+            },
+          }
+        : {}),
       outDir: "dist",
       emptyOutDir: true,
       manifest: true,

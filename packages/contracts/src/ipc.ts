@@ -707,6 +707,7 @@ export interface DesktopPreviewRecordingArtifact {
   id: string;
   tabId: string;
   path: string;
+  environmentPath?: string;
   mimeType: string;
   sizeBytes: number;
   createdAt: string;
@@ -717,6 +718,7 @@ export const DesktopPreviewRecordingArtifactSchema: Schema.Codec<DesktopPreviewR
     id: Schema.String,
     tabId: DesktopPreviewTabIdSchema,
     path: Schema.String,
+    environmentPath: Schema.optionalKey(Schema.String),
     mimeType: Schema.String,
     sizeBytes: Schema.Int,
     createdAt: Schema.String,
@@ -1168,6 +1170,7 @@ export interface DesktopBridge {
 export const DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER = "__t3DesktopPreviewRecordingCapture";
 
 export interface DesktopPreviewBridge {
+  ensurePortForward?: (key: string, websocketUrl: string) => Promise<number>;
   createTab: (tabId: string, defaults?: DesktopPreviewTabDefaults) => Promise<void>;
   closeTab: (tabId: string) => Promise<void>;
   registerWebview: (tabId: string, webContentsId: number) => Promise<void>;

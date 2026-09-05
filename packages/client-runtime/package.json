@@ -99,6 +99,10 @@
       "types": "./src/state/entities.ts",
       "default": "./src/state/entities.ts"
     },
+    "./state/environment-http-auth": {
+      "types": "./src/state/environmentHttpAuth.ts",
+      "default": "./src/state/environmentHttpAuth.ts"
+    },
     "./state/filesystem": {
       "types": "./src/state/filesystem.ts",
       "default": "./src/state/filesystem.ts"

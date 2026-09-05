@@ -106,6 +106,14 @@ const EnvServerConfig = Config.all({
   host: Config.string("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
   t3Home: Config.string("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devUrl: Config.url("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  connectDevShare: Config.string("T3CODE_DEV_SHARE").pipe(
+    Config.withDefault(""),
+    Config.map((value) => value === "connect"),
+  ),
+  connectAuthorizationHome: Config.string("T3CODE_CONNECT_AUTHORIZATION_HOME").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   devAllowedOrigins: Config.string("T3CODE_DEV_ALLOWED_ORIGINS").pipe(
     Config.withDefault(""),
     Config.map((value) =>
@@ -374,6 +382,10 @@ export const resolveServerConfig = (
       staticDir,
       devUrl,
       devAllowedOrigins: env.devAllowedOrigins,
+      ...(env.connectDevShare ? { connectDevShare: true } : {}),
+      ...(env.connectAuthorizationHome
+        ? { connectAuthorizationHome: env.connectAuthorizationHome }
+        : {}),
       noBrowser,
       startupPresentation,
       desktopBootstrapToken,

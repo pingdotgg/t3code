@@ -15,6 +15,7 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+import { CLOUD_ENDPOINT_RUNTIME_CONFIG } from "./config.ts";
 
 const relayClientAvailableLayer = Layer.succeed(
   RelayClient.RelayClient,
@@ -82,6 +83,46 @@ function makeHandle(input: {
 }
 
 describe("CloudManagedEndpointRuntime", () => {
+  it.effect(
+    "keeps a saved tunnel offline until explicitly applied when restoration is disabled",
+    () =>
+      Effect.gen(function* () {
+        let spawnCount = 0;
+        const saved = { providerKind: "cloudflare_tunnel", connectorToken: "saved-token" } as const;
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.sync(() => {
+            spawnCount += 1;
+            return makeHandle({ pid: 100, onKill: () => undefined });
+          }),
+        );
+        const context = yield* Layer.build(
+          ManagedEndpointRuntime.layerWithoutRestoring.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                relayClientAvailableLayer,
+                Layer.mock(ServerSecretStore.ServerSecretStore)({
+                  get: (name) =>
+                    Effect.succeed(
+                      name === CLOUD_ENDPOINT_RUNTIME_CONFIG
+                        ? Option.some(new TextEncoder().encode(JSON.stringify(saved)))
+                        : Option.none(),
+                    ),
+                }),
+              ),
+            ),
+          ),
+        );
+        const runtime = yield* Effect.service(
+          ManagedEndpointRuntime.CloudManagedEndpointRuntime,
+        ).pipe(Effect.provide(context));
+        expect(spawnCount).toBe(0);
+        expect((yield* runtime.applyConfig(saved)).status).toBe("running");
+        expect(spawnCount).toBe(1);
+        expect(yield* runtime.applyConfig(null)).toEqual({ status: "disabled" });
+      }),
+  );
+
   it("classifies Cloudflare connection and warning output", () => {
     expect(
       ManagedEndpointRuntime.classifyRelayClientOutput(

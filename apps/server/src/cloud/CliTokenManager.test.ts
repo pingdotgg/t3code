@@ -6,8 +6,10 @@ import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Terminal from "effect/Terminal";
@@ -16,6 +18,9 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import * as CliTokenManager from "./CliTokenManager.ts";
 import type { OutOfBandOAuthPromptInput } from "./CliTokenManager.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
+import * as ExternalLauncher from "../process/externalLauncher.ts";
 
 // pk_test_<base64 of "clerk.example.test$">
 const TEST_ENV = {
@@ -87,6 +92,111 @@ const provideTestEnv = Effect.provide(
 );
 
 const isAuthorizationError = Schema.is(CliTokenManager.CloudCliAuthorizationError);
+
+it.layer(NodeServices.layer)("CliTokenManager.layerWithSharedAuthorization", (it) => {
+  for (const scenario of [
+    {
+      name: "prefers the stored home over the dev-share home",
+      stored: true,
+      devShare: true,
+      configured: true,
+      expected: "stored",
+    },
+    {
+      name: "uses the stored home outside dev sharing",
+      stored: true,
+      devShare: false,
+      configured: true,
+      expected: "stored",
+    },
+    {
+      name: "uses the configured home for dev sharing",
+      stored: false,
+      devShare: true,
+      configured: true,
+      expected: "configured",
+    },
+    {
+      name: "ignores the configured home outside dev sharing",
+      stored: false,
+      devShare: false,
+      configured: true,
+      expected: "local",
+    },
+    {
+      name: "uses local credentials without an authorization home",
+      stored: false,
+      devShare: true,
+      configured: false,
+      expected: "local",
+    },
+  ]) {
+    it.effect(scenario.name, () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-auth-priority-" });
+        const storedHome = path.join(directory, "stored");
+        const configuredHome = path.join(directory, "configured");
+        const localConfig = ServerConfig.make({
+          ...config,
+          secretsDir: path.join(directory, "local"),
+          connectDevShare: scenario.devShare,
+          ...(scenario.configured ? { connectAuthorizationHome: configuredHome } : {}),
+        });
+        for (const [identity, secretsDir] of [
+          ["stored", path.join(storedHome, "userdata", "secrets")],
+          ["configured", path.join(configuredHome, "userdata", "secrets")],
+          ["local", localConfig.secretsDir],
+        ] as const) {
+          yield* Effect.gen(function* () {
+            const manager = yield* CliTokenManager.CloudCliTokenManager;
+            yield* manager.store({
+              accessToken: identity,
+              refreshToken: identity,
+              expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+            });
+          }).pipe(
+            Effect.provide(
+              CliTokenManager.layer.pipe(
+                Layer.provide(ServerSecretStore.layer),
+                Layer.provide(ServerConfig.layer({ ...localConfig, secretsDir })),
+              ),
+            ),
+          );
+        }
+        yield* Effect.gen(function* () {
+          const secrets = yield* ServerSecretStore.ServerSecretStore;
+          if (scenario.stored) {
+            yield* secrets.set(
+              CliTokenManager.CLOUD_CLI_AUTHORIZATION_HOME_SECRET,
+              new TextEncoder().encode(storedHome),
+            );
+          }
+          const token = yield* Effect.gen(function* () {
+            const manager = yield* CliTokenManager.CloudCliTokenManager;
+            return yield* manager.getExisting;
+          }).pipe(Effect.provide(CliTokenManager.layerWithSharedAuthorization));
+          assert.isTrue(Option.isSome(token));
+          assert.equal(Option.getOrThrow(token).accessToken, scenario.expected);
+        }).pipe(
+          Effect.provide(
+            ServerSecretStore.layer.pipe(Layer.provideMerge(ServerConfig.layer(localConfig))),
+          ),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-cli-auth-config-" }),
+            ExternalLauncher.layer,
+            makeTokenEndpointLayer([]),
+          ),
+        ),
+      ),
+    );
+  }
+});
 
 class PromptRejectedError extends Schema.TaggedErrorClass<PromptRejectedError>()(
   "PromptRejectedError",

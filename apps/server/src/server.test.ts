@@ -2,6 +2,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
+import * as NodeNet from "node:net";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
@@ -1634,6 +1635,140 @@ const NodeHttpServerTestWithWsDeflate = HttpServer.layerTestClient.pipe(
 );
 
 it.layer(NodeServices.layer)("server router seam", (it) => {
+  for (const host of ["127.0.0.1", "::1"]) {
+    it.effect(
+      `forwards preview TCP on ${host} through stream overflow, credit replenishment and request half-close`,
+      () =>
+        Effect.gen(function* () {
+          yield* buildAppUnderTest();
+          const response = Buffer.alloc(1024 * 1024, 71);
+          const upstream = NodeNet.createServer({ allowHalfOpen: true }, (socket) => {
+            const request: Buffer[] = [];
+            socket.on("data", (data: Buffer) => request.push(data));
+            socket.on("end", () => {
+              if (Buffer.concat(request).toString() === "preview request") socket.end(response);
+              else socket.destroy();
+            });
+          });
+          yield* Effect.addFinalizer(() => Effect.sync(() => upstream.close()));
+          yield* Effect.promise(
+            () => new Promise<void>((resolve) => upstream.listen(0, host, resolve)),
+          );
+          const address = upstream.address() as NodeNet.AddressInfo;
+          const { cookie, url } = parseSessionCookieFromWsUrl(
+            yield* getWsServerUrl(`/api/preview/forward?port=${address.port}`),
+          );
+          const received = yield* Effect.promise(
+            () =>
+              new Promise<Buffer>((resolve, reject) => {
+                const socket = new NodeSocket.NodeWS.WebSocket(url, {
+                  headers: { cookie: cookie! },
+                });
+                const chunks: Buffer[] = [];
+                let opened = 0;
+                const send = (op: number, payload = Buffer.alloc(0), id = 1) => {
+                  const frame = Buffer.alloc(5 + payload.length);
+                  frame.writeUInt32BE(id);
+                  frame[4] = op;
+                  payload.copy(frame, 5);
+                  socket.send(frame);
+                };
+                socket.once("error", reject);
+                socket.once("open", () => {
+                  for (let id = 1; id <= 32; id++) send(0, Buffer.alloc(0), id);
+                });
+                socket.on("message", (data) => {
+                  const frame = Buffer.from(data as Buffer);
+                  if (frame[4] === 0) {
+                    if (++opened === 32) send(0, Buffer.alloc(0), 33);
+                  } else if (frame[4] === 2 && frame.readUInt32BE(0) === 33) {
+                    send(1, Buffer.from("preview request"));
+                    send(4);
+                  } else if (frame[4] === 1) {
+                    chunks.push(frame.subarray(5));
+                    const credit = Buffer.alloc(4);
+                    credit.writeUInt32BE(frame.length - 5);
+                    send(3, credit);
+                  } else if (frame[4] === 4) {
+                    resolve(Buffer.concat(chunks));
+                    socket.close();
+                  }
+                });
+                socket.once("close", () =>
+                  reject(new Error("preview closed before response ended")),
+                );
+              }),
+          );
+          assert.deepEqual(received, response);
+        }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
+
+  it.effect("rejects preview forwarding without authentication and invalid ports", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const unauthorized = yield* HttpClient.get("/api/preview/forward?port=3000");
+      assert.equal(unauthorized.status, 401);
+      const invalid = yield* HttpClient.get("/api/preview/forward?port=65536", {
+        headers: { cookie: yield* getAuthenticatedSessionCookieHeader() },
+      });
+      assert.equal(invalid.status, 400);
+      const { cookie, url } = parseSessionCookieFromWsUrl(
+        yield* getWsServerUrl("/api/preview/forward?port=3000"),
+      );
+      const code = yield* Effect.promise(
+        () =>
+          new Promise<number>((resolve, reject) => {
+            const socket = new NodeSocket.NodeWS.WebSocket(url, { headers: { cookie: cookie! } });
+            socket.once("error", reject);
+            socket.once("open", () => socket.send(Buffer.from([0])));
+            socket.once("close", resolve);
+          }),
+      );
+      assert.equal(code, 1002);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("stores authenticated preview recordings in the owning environment", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const bytes = new Uint8Array([26, 69, 223, 163, 1, 2, 3]);
+      const unauthorized = yield* HttpClient.post("/api/preview/recordings", {
+        body: HttpBody.uint8Array(bytes, "video/webm"),
+      });
+      assert.equal(unauthorized.status, 401);
+      const cookie = yield* getAuthenticatedSessionCookieHeader();
+      const invalid = yield* HttpClient.post("/api/preview/recordings", {
+        headers: { cookie },
+        body: HttpBody.uint8Array(bytes, "text/plain"),
+      });
+      assert.equal(invalid.status, 415);
+      const uploaded = yield* HttpClient.post("/api/preview/recordings", {
+        headers: { cookie },
+        body: HttpBody.uint8Array(bytes, "video/webm;codecs=vp9"),
+      });
+      assert.equal(uploaded.status, 200);
+      const result = (yield* uploaded.json) as { path: string };
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      assert.equal(path.basename(path.dirname(result.path)), "browser-artifacts");
+      assert.isTrue(result.path.endsWith(".webm"));
+      assert.deepEqual(yield* fs.readFile(result.path), bytes);
+      const chunk = new Uint8Array(1024 * 1024);
+      const oversized = yield* HttpClient.post("/api/preview/recordings", {
+        headers: { cookie },
+        body: HttpBody.stream(
+          Stream.fromIterable(Array.from({ length: 65 }, () => chunk)),
+          "video/webm",
+        ),
+      });
+      assert.equal(oversized.status, 413);
+      assert.deepEqual(yield* fs.readDirectory(path.dirname(result.path)), [
+        path.basename(result.path),
+      ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("parks HTTP ingress until command readiness", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

@@ -55,6 +55,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL } from "../ipc/channels.ts";
 import * as BrowserSession from "./BrowserSession.ts";
+import { createPreviewPortForwards } from "./PortForward.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
@@ -584,6 +585,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
   const resolvedArtifactDirectory = path.resolve(artifactDirectory);
+  const portForwards = createPreviewPortForwards();
+  yield* Effect.addFinalizer(() => Effect.sync(() => portForwards.close()));
+  const ensurePortForward = (key: string, websocketUrl: string) =>
+    Effect.tryPromise({
+      try: () => portForwards.ensure(key, websocketUrl),
+      catch: (cause) => new PreviewOperationError({ operation: "ensurePortForward", cause }),
+    });
   const playwrightInstallExpression = yield* Effect.cached(
     playwrightInjectedRuntimeInstallExpression(),
   );
@@ -4144,6 +4152,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   return {
     automationClick,
+    ensurePortForward,
     automationEvaluate,
     automationPress,
     automationScroll,
@@ -4501,6 +4510,10 @@ export class PreviewManager extends Context.Service<
       webContentsId: number,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly navigate: (tabId: string, url: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly ensurePortForward: (
+      key: string,
+      websocketUrl: string,
+    ) => Effect.Effect<number, PreviewManagerError>;
     readonly goBack: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly goForward: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly refresh: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
@@ -4618,6 +4631,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     closeTab: operations.closeTab,
     registerWebview: operations.registerWebview,
     navigate: operations.navigate,
+    ensurePortForward: operations.ensurePortForward,
     goBack: operations.goBack,
     goForward: operations.goForward,
     refresh: operations.refresh,

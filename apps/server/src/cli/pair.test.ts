@@ -14,6 +14,7 @@ import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
 
 import { cli } from "../bin.ts";
+import { CLOUD_ENDPOINT_HTTP_ORIGIN } from "../cloud/config.ts";
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
@@ -144,6 +145,50 @@ const withDescriptorServer = <A, E, R>(run: (origin: string) => Effect.Effect<A,
   );
 
 describe("t3 pair", () => {
+  it.effect("refuses missing, invalid and unreachable connect endpoints before minting", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const baseDir = yield* Effect.acquireRelease(
+          Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-connect-"))),
+          (path) => Effect.sync(() => NodeFS.rmSync(path, { recursive: true, force: true })),
+        );
+        const stateDir = NodePath.join(baseDir, "userdata");
+        yield* persistServerRuntimeState({
+          path: NodePath.join(stateDir, "server-runtime.json"),
+          state: yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: Number(new URL(origin).port),
+          }),
+        });
+        const secretsDir = NodePath.join(stateDir, "secrets");
+        NodeFS.mkdirSync(secretsDir, { recursive: true });
+        for (const [endpoint, expectedMessage] of [
+          [undefined, "No saved Connect endpoint"],
+          ["not a url", "saved Connect endpoint is invalid"],
+          [origin, "saved Connect endpoint is invalid"],
+          ["https://user:password@example.com", "saved Connect endpoint is invalid"],
+          ["https://example.com/path", "saved Connect endpoint is invalid"],
+          ["https://127.0.0.1:1", "not reaching this environment"],
+        ] as const) {
+          if (endpoint !== undefined) {
+            NodeFS.writeFileSync(
+              NodePath.join(secretsDir, `${CLOUD_ENDPOINT_HTTP_ORIGIN}.bin`),
+              endpoint,
+            );
+          }
+          const error = yield* provideCliTestLayers(
+            runCli(["pair", "--base-dir", baseDir, "--connect"]).pipe(Effect.flip),
+          );
+          const rendered = String(
+            typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+          );
+          assert.include(rendered, expectedMessage);
+          assert.isFalse(NodeFS.existsSync(NodePath.join(stateDir, "state.sqlite")));
+        }
+      }),
+    ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("mints a token and prints a QR pairing URL for a live server", () =>
     withDescriptorServer((origin) =>
       Effect.gen(function* () {

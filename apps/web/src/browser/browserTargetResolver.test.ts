@@ -4,25 +4,76 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 const readPreparedConnection = vi.fn();
 
 vi.mock("~/state/session", () => ({ readPreparedConnection }));
+vi.mock("~/components/preview/previewBridge", () => ({
+  previewBridge: { ensurePortForward: vi.fn(async () => 41003) },
+}));
+vi.mock("./browserEnvironmentHttp", () => ({
+  previewEnvironmentPost: vi.fn(async () => Response.json({ ticket: "preview-ticket" })),
+}));
 
 describe("browser target resolver", () => {
   beforeEach(() => readPreparedConnection.mockReset());
 
-  it("maps environment ports onto a private network host", async () => {
-    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://192.168.1.25:3773" });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
+  it("preserves localhost TLS names, credentials, and environment-relative paths when forwarding", async () => {
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://environment.example.test" });
+    const { resolveForwardedBrowserTarget } = await import("./browserPortForward");
+    const environmentId = EnvironmentId.make("forwarded-targets");
     expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
+      await resolveForwardedBrowserTarget(environmentId, {
+        kind: "url",
+        url: "https://user:pass@localhost:5173/dashboard",
+      }),
+    ).toBe("https://user:pass@localhost:41003/dashboard");
+    expect(
+      await resolveForwardedBrowserTarget(environmentId, {
         kind: "environment-port",
         port: 5173,
-        path: "/dashboard",
+        path: "//example.test/x",
       }),
-    ).toEqual({
-      requestedUrl: "http://localhost:5173/dashboard",
-      resolvedUrl: "http://192.168.1.25:5173/dashboard",
-      resolutionKind: "direct-private-network",
-      environmentId: "environment-1",
-    });
+    ).toBe("http://localhost:41003//example.test/x");
+  });
+
+  it("restores forwarded URLs with credentials and their original hostname", async () => {
+    const { rememberForwardedOrigin, restoreForwardedBrowserUrl } =
+      await import("./browserTargetResolver");
+    const environmentId = EnvironmentId.make("forwarded-environment");
+    rememberForwardedOrigin(environmentId, "http://127.0.0.1:41001", "http://localhost:5173");
+    rememberForwardedOrigin(environmentId, "http://127.0.0.1:41002", "http://127.0.0.1:5173");
+    expect(
+      restoreForwardedBrowserUrl(
+        environmentId,
+        "http://user:p%40ss@127.0.0.1:41001/dashboard?q=1#section",
+      ),
+    ).toBe("http://user:p%40ss@localhost:5173/dashboard?q=1#section");
+    expect(restoreForwardedBrowserUrl(environmentId, "http://127.0.0.1:41002/")).toBe(
+      "http://127.0.0.1:5173/",
+    );
+  });
+
+  it.each(["/dashboard", "//example.test/x"])(
+    "maps environment paths %s onto a private network host",
+    async (path) => {
+      readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://192.168.1.25:3773" });
+      const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
+      expect(
+        resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
+          kind: "environment-port",
+          port: 5173,
+          path,
+        }),
+      ).toEqual({
+        requestedUrl: `http://localhost:5173${path}`,
+        resolvedUrl: `http://192.168.1.25:5173${path}`,
+        resolutionKind: "direct-private-network",
+        environmentId: "environment-1",
+      });
+    },
+  );
+
+  it("recognizes IPv4-mapped loopback without treating mapped public hosts as local", async () => {
+    const { isLocalLoopbackHost } = await import("./browserTargetResolver");
+    expect(isLocalLoopbackHost(new URL("http://[::ffff:127.0.0.1]:5173").hostname)).toBe(true);
+    expect(isLocalLoopbackHost(new URL("http://[::ffff:8.8.8.8]:5173").hostname)).toBe(false);
   });
 
   it("preserves explicit loopback URL navigation for a remote Tailscale environment", async () => {

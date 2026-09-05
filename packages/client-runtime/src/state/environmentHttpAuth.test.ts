@@ -14,7 +14,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { TestClock } from "effect/testing";
-import type { HttpClient } from "effect/unstable/http";
+import { HttpBody, HttpClient } from "effect/unstable/http";
 
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import {
@@ -34,6 +34,7 @@ import {
 import { fetchEnvironmentSessionState } from "./session.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import { fetchEnvironmentThreadSnapshot } from "./threadSnapshotHttp.ts";
+import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 
 const TARGET = new RelayConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -214,6 +215,37 @@ const LOADERS: ReadonlyArray<{
 ];
 
 describe("authenticated environment HTTP requests", () => {
+  it.effect("retries a preview upload with its body and renewed request URL", () =>
+    Effect.gen(function* () {
+      const body = new Blob(["recording bytes"], { type: "video/webm" });
+      const harness = makeHarness(
+        (attempt) => new Response("{}", { status: attempt === 1 ? 401 : 200 }),
+      );
+      const result = yield* Effect.gen(function* () {
+        const http = yield* HttpClient.HttpClient;
+        return yield* executeAuthenticatedEnvironmentHttpRequest({
+          ...harness.input,
+          method: "POST",
+          url: (base) => new URL("/api/preview/recordings", base).toString(),
+          timeoutMs: 120_000,
+          request: ({ url, headers }) =>
+            http.post(url, { headers: { ...headers }, body: HttpBody.raw(body) }),
+          isUnauthorizedResponse: (response) => response.status === 401,
+        });
+      }).pipe(Effect.provide(harness.httpLayer));
+      expect(result.status).toBe(200);
+      expect(harness.calls.map((call) => call.url)).toEqual([
+        `${CURRENT_ORIGIN}/api/preview/recordings`,
+        `${RENEWED_ORIGIN}/api/preview/recordings`,
+      ]);
+      expect(harness.calls.map((call) => call.init.body)).toEqual([body, body]);
+      expect(harness.proofs.map((proof) => proof.accessToken)).toEqual([
+        "current-token",
+        "renewed-token",
+      ]);
+    }),
+  );
+
   it.effect.each(LOADERS)("uses current relay authorization and endpoint for $name", (loader) =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json(loader.response));

@@ -94,6 +94,7 @@ export const executeAuthenticatedEnvironmentHttpRequest = Effect.fn(
   readonly url: (httpBaseUrl: string) => string;
   readonly timeoutMs: number;
   readonly request: (input: {
+    readonly url: string;
     readonly client: Effect.Success<ReturnType<typeof makeEnvironmentHttpApiClient>>;
     readonly headers: EnvironmentHttpAuthHeaders;
   }) => Effect.Effect<A, E, R>;
@@ -142,7 +143,10 @@ export const executeAuthenticatedEnvironmentHttpRequest = Effect.fn(
       const result = yield* executeEnvironmentHttpRequest(
         requestUrl,
         input.timeoutMs,
-        withEnvironmentCredentials(authorization, input.request({ client, headers })),
+        withEnvironmentCredentials(
+          authorization,
+          input.request({ client, headers, url: requestUrl }),
+        ),
       ).pipe(Effect.result);
 
       if (Result.isFailure(result)) {

@@ -111,7 +111,9 @@ const stopConnector = (connector: ActiveConnector | null) =>
       )
     : Effect.void;
 
-export const make = Effect.gen(function* () {
+const makeRuntime = Effect.fn("CloudManagedEndpointRuntime.make")(function* (
+  restorePersisted: boolean,
+) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const relayClient = yield* RelayClient.RelayClient;
   const activeRef = yield* Ref.make<ActiveConnector | null>(null);
@@ -358,16 +360,21 @@ export const make = Effect.gen(function* () {
     applyConfig,
   });
 
-  const initialConfig = yield* readRuntimeConfig.pipe(
-    Effect.catch((cause) =>
-      Effect.logWarning("Failed to read managed endpoint runtime config", { cause }).pipe(
-        Effect.as(null),
+  if (restorePersisted) {
+    const initialConfig = yield* readRuntimeConfig.pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Failed to read managed endpoint runtime config", { cause }).pipe(
+          Effect.as(null),
+        ),
       ),
-    ),
-  );
-  yield* runtime.applyConfig(initialConfig);
+    );
+    yield* runtime.applyConfig(initialConfig);
+  }
   yield* Effect.addFinalizer(() => runtime.applyConfig(null));
   return runtime;
 });
 
+export const make = makeRuntime(true);
 export const layer = Layer.effect(CloudManagedEndpointRuntime, make);
+// Local dev can retain a saved link without publishing its unguarded Vite origin.
+export const layerWithoutRestoring = Layer.effect(CloudManagedEndpointRuntime, makeRuntime(false));

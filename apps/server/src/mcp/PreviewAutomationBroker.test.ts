@@ -19,6 +19,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
@@ -203,6 +204,33 @@ it.effect("tracks the tab returned by a targeted recording stop", () =>
       yield* broker.invoke({ scope, operation: "snapshot", input: {} });
 
       expect(routedRequests.at(-1)?.tabId).toBe(recordingTabId);
+    }),
+  ),
+);
+
+it.effect("waits for recording transfer beyond the normal request deadline", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const received = yield* Deferred.make<RoutedRequest>();
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) => Deferred.succeed(received, request)).pipe(
+        Effect.forkScoped,
+      );
+      const pending = yield* broker
+        .invoke({ scope, operation: "recordingStop", input: {} })
+        .pipe(Effect.forkScoped);
+      const request = yield* Deferred.await(received);
+      yield* TestClock.adjust(120_000);
+      const artifact = { id: "recording-1", path: "/environment/browser-artifacts/recording.webm" };
+      yield* broker.respond({
+        clientId: "client-1",
+        connectionId: request.connectionId,
+        requestId: request.requestId,
+        ok: true,
+        result: artifact,
+      });
+      expect(yield* Fiber.join(pending)).toEqual(artifact);
     }),
   ),
 );

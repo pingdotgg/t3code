@@ -28,6 +28,7 @@ import {
   useThreadPreviewState,
 } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
+import { resolveForwardedBrowserTarget } from "~/browser/browserPortForward";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -101,6 +102,7 @@ export function PreviewView({
   const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
   const pickActiveRef = useRef(false);
   const isMountedRef = useRef(true);
+  const navigationRequestRef = useRef(0);
   // Kept in sync so the title effect can depend on the stable thread key
   // instead of the thread object, which is recreated on every update.
   const threadRefRef = useRef(threadRef);
@@ -135,6 +137,12 @@ export function PreviewView({
   const runtimeTabId = tabId
     ? previewRuntimeTabId(threadRef, previewState.serverEpoch, tabId)
     : null;
+  useEffect(
+    () => () => {
+      navigationRequestRef.current += 1;
+    },
+    [runtimeTabId],
+  );
   const recordingRuntimeTabId =
     tabId && runtimeTabId
       ? activeRecordingTabIds.has(runtimeTabId)
@@ -179,9 +187,16 @@ export function PreviewView({
 
   const navigateToResolvedUrl = useCallback(
     async (resolvedUrl: string) => {
+      const request = ++navigationRequestRef.current;
       if (runtimeTabId && previewBridge) {
         // The bridge mirrors the resolved URL back to the server.
-        await previewBridge.navigate(runtimeTabId, resolvedUrl);
+        const forwardedUrl = await resolveForwardedBrowserTarget(threadRef.environmentId, {
+          kind: "url",
+          url: resolvedUrl,
+        });
+        if (request !== navigationRequestRef.current) return false;
+        await previewBridge.navigate(runtimeTabId, forwardedUrl);
+        if (request !== navigationRequestRef.current) return false;
         rememberPreviewUrl(threadRef, resolvedUrl);
         return true;
       }
@@ -198,8 +213,12 @@ export function PreviewView({
         if (await navigateToResolvedUrl(normalized)) {
           recordVisitForThread(threadRef, normalized);
         }
-      } catch {
-        // Server-side `failed` event renders the unreachable view.
+      } catch (error) {
+        toastManager.add({
+          title: "Preview connection failed",
+          type: "error",
+          description: error instanceof Error ? error.message : "Could not open the preview.",
+        });
       }
     },
     [navigateToResolvedUrl, threadRef],
@@ -212,16 +231,28 @@ export function PreviewView({
         if (await navigateToResolvedUrl(resolved)) {
           recordVisitForThread(threadRef, next);
         }
-      } catch {
-        // Server-side `failed` event renders the unreachable view.
+      } catch (error) {
+        toastManager.add({
+          title: "Preview connection failed",
+          type: "error",
+          description: error instanceof Error ? error.message : "Could not open the preview.",
+        });
       }
     },
     [navigateToResolvedUrl, threadRef],
   );
 
   const handleRefresh = useCallback(() => {
-    if (previewBridge && runtimeTabId) void previewBridge.refresh(runtimeTabId);
-  }, [runtimeTabId]);
+    const bridge = previewBridge;
+    if (!url || !runtimeTabId || !bridge) return;
+    void navigateToResolvedUrl(url).catch((error: unknown) =>
+      toastManager.add({
+        title: "Preview connection failed",
+        type: "error",
+        description: error instanceof Error ? error.message : "Could not refresh the preview.",
+      }),
+    );
+  }, [navigateToResolvedUrl, runtimeTabId, url]);
 
   const handleZoomIn = useCallback(() => {
     if (previewBridge && runtimeTabId) void previewBridge.zoomIn(runtimeTabId);
@@ -292,8 +323,16 @@ export function PreviewView({
 
   const handleOpenInBrowser = useCallback(() => {
     if (!localApi || !url) return;
-    void localApi.shell.openExternal(url).catch(() => undefined);
-  }, [url]);
+    void resolveForwardedBrowserTarget(threadRef.environmentId, { kind: "url", url })
+      .then((resolvedUrl) => localApi.shell.openExternal(resolvedUrl))
+      .catch((error: unknown) =>
+        toastManager.add({
+          title: "Preview connection failed",
+          type: "error",
+          description: error instanceof Error ? error.message : "Could not open the browser.",
+        }),
+      );
+  }, [url, threadRef.environmentId]);
 
   const handlePictureInPicture = useCallback(() => {
     if (!tabId) return;

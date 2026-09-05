@@ -5,6 +5,8 @@ import { useShallow } from "zustand/react/shallow";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
+import { toastManager } from "~/components/ui/toast";
+import { resolveForwardedBrowserTarget } from "./browserPortForward";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { cn, isMacPlatform } from "~/lib/utils";
 
@@ -24,6 +26,7 @@ import { useBrowserViewportResize } from "./useBrowserViewportResize";
 import {
   INITIAL_WEBVIEW_CRASH_RECOVERY_STATE,
   planWebviewCrashRecovery,
+  WEBVIEW_CRASH_RECOVERY_MAX_ATTEMPTS,
   type WebviewCrashRecoveryState,
 } from "./webviewCrashRecovery";
 
@@ -67,7 +70,28 @@ export function HostedBrowserWebview(props: {
     profileId,
   } = props;
   const config = usePreviewWebviewConfig(threadRef.environmentId, profileId);
-  const [initialSrc] = useState(() => initialUrl ?? "about:blank");
+  const [mountUrl] = useState(initialUrl);
+  const [initialSrc, setInitialSrc] = useState<string | null>(mountUrl ? null : "about:blank");
+  useEffect(() => {
+    if (!mountUrl) return;
+    let disposed = false;
+    void resolveForwardedBrowserTarget(threadRef.environmentId, { kind: "url", url: mountUrl })
+      .then((url) => {
+        if (!disposed) setInitialSrc(url);
+      })
+      .catch((error: unknown) => {
+        if (disposed) return;
+        setInitialSrc("about:blank");
+        toastManager.add({
+          title: "Preview connection failed",
+          type: "error",
+          description: error instanceof Error ? error.message : "Could not connect to the preview.",
+        });
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [mountUrl, threadRef.environmentId]);
   const tabLeaseRef = useRef<AcquiredDesktopTab | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const webviewRef = useRef<ElectronWebview | null>(null);
@@ -121,6 +145,7 @@ export function HostedBrowserWebview(props: {
     if (!webview || !config || !bridge) return;
     let disposed = false;
     let recoveryTimeout: ReturnType<typeof setTimeout> | null = null;
+    let recoveryFailures = 0;
     const register = () => {
       const lease = tabLeaseRef.current;
       if (!lease) return;
@@ -148,8 +173,30 @@ export function HostedBrowserWebview(props: {
       recoveryTimeout = setTimeout(() => {
         recoveryTimeout = null;
         if (!disposed) {
-          setRecoverySrc(latestUrlRef.current ?? initialSrc);
-          setWebviewGeneration((generation) => generation + 1);
+          const requestedUrl = latestUrlRef.current ?? initialSrc;
+          void (
+            requestedUrl && requestedUrl !== "about:blank"
+              ? resolveForwardedBrowserTarget(threadRef.environmentId, {
+                  kind: "url",
+                  url: requestedUrl,
+                })
+              : Promise.resolve("about:blank")
+          )
+            .then((url) => {
+              if (disposed) return;
+              setRecoverySrc(url);
+              setWebviewGeneration((generation) => generation + 1);
+            })
+            .catch((error: unknown) => {
+              if (disposed) return;
+              toastManager.add({
+                title: "Preview connection failed",
+                type: "error",
+                description:
+                  error instanceof Error ? error.message : "Could not recover the preview.",
+              });
+              if (++recoveryFailures < WEBVIEW_CRASH_RECOVERY_MAX_ATTEMPTS) recoverGuest();
+            });
         }
       }, recovery.delayMs);
     };
@@ -164,7 +211,7 @@ export function HostedBrowserWebview(props: {
       webview.removeEventListener("dom-ready", register);
       webview.removeEventListener("render-process-gone", recoverGuest);
     };
-  }, [config, initialSrc, runtimeTabId, webviewGeneration]);
+  }, [config, initialSrc, runtimeTabId, webviewGeneration, threadRef.environmentId]);
 
   const active = presentation.visible && presentation.rect !== null;
   const lastRect = presentation.rect;
@@ -249,7 +296,7 @@ export function HostedBrowserWebview(props: {
     wrapper.scrollTo({ left: 0, top: 0 });
   }, [runtimeTabId, viewport._tag, viewportHeight, viewportWidth]);
 
-  if (!config) return null;
+  if (!config || !initialSrc) return null;
 
   const renderingActive = active || backgroundActivity || pictureInPicture || recordingActive;
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({
@@ -293,7 +340,7 @@ export function HostedBrowserWebview(props: {
           // boolean, but react-dom drops boolean values for unrecognized attributes,
           // so the literal string has to be spread past the type.
           {...({ allowpopups: "true" } as unknown as { readonly allowpopups?: boolean })}
-          src={webviewGeneration === 0 ? initialSrc : recoverySrc}
+          src={webviewGeneration === 0 ? initialSrc : (recoverySrc ?? initialSrc)}
           partition={config.partition}
           webpreferences={config.webPreferences}
           {...(config.preloadUrl ? { preload: config.preloadUrl } : {})}

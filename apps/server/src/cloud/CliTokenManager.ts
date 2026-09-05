@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -31,6 +32,7 @@ import {
 } from "@t3tools/shared/connectAuth";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
 import * as ExternalLauncher from "../process/externalLauncher.ts";
 import {
   cloudCliOAuthConfig,
@@ -40,6 +42,7 @@ import {
 import { renderLoopbackAuthorizationCompleteHtml } from "./cliAuthHtml.ts";
 
 const CLOUD_CLI_OAUTH_TOKEN_SECRET = "cloud-cli-oauth-token";
+export const CLOUD_CLI_AUTHORIZATION_HOME_SECRET = "cloud-cli-authorization-home";
 const CLOUD_CLI_OAUTH_CALLBACK_TIMEOUT = Duration.minutes(10);
 const CLOUD_CLI_OAUTH_REFRESH_EARLY_MS = Duration.toMillis(Duration.minutes(5));
 const boldTerminalText = (value: string): string => `\u001b[1m${value}\u001b[22m`;
@@ -492,3 +495,33 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(CloudCliTokenManager, make);
+
+// A dev environment retains its own link state while account commands use
+// the same login that originally authorized its shared endpoint.
+export const layerWithSharedAuthorization = Layer.unwrap(
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const localSecrets = yield* ServerSecretStore.ServerSecretStore;
+    const storedHome = yield* localSecrets.get(CLOUD_CLI_AUTHORIZATION_HOME_SECRET);
+    const authorizationHome =
+      (Option.isSome(storedHome) ? new TextDecoder().decode(storedHome.value).trim() : undefined) ||
+      (config.connectDevShare ? config.connectAuthorizationHome : undefined);
+    const path = yield* Path.Path;
+    return layer.pipe(
+      Layer.provide(
+        Layer.fresh(ServerSecretStore.layer).pipe(
+          Layer.provide(
+            ServerConfig.layer(
+              ServerConfig.make({
+                ...config,
+                secretsDir: authorizationHome
+                  ? path.join(authorizationHome, "userdata", "secrets")
+                  : config.secretsDir,
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+  }),
+);

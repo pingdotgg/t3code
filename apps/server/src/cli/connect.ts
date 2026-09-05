@@ -446,7 +446,7 @@ const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E
   const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
   const runtimeLayer = Layer.mergeAll(
     ServerSecretStore.layer,
-    CliTokenManager.layer.pipe(
+    CliTokenManager.layerWithSharedAuthorization.pipe(
       Layer.provide(ServerSecretStore.layer),
       Layer.provide(ExternalLauncher.layer),
     ),
