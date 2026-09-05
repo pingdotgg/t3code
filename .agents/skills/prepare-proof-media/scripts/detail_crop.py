@@ -1,6 +1,7 @@
 """Choose a stable, contextual detail crop for PNG and GIF evidence."""
 
 import argparse
+import json
 import math
 from pathlib import Path
 import re
@@ -33,14 +34,12 @@ def frame_metadata(magick, source):
     return [tuple(line.split("|")) for line in result.stdout.splitlines()]
 
 
-def gif_loop(source):
-    data = source.read_bytes()
-    marker = b"NETSCAPE2.0\x03\x01"
-    index = data.find(marker)
-    if index < 0:
-        return None
-    start = index + len(marker)
-    return int.from_bytes(data[start:start + 2], "little")
+def gif_loop(source, magick="magick"):
+    # Read decoded iteration semantics, including files with multiple application
+    # extensions. Searching raw bytes can mistake a comment for a loop setting.
+    metadata = json.loads(run([magick, str(source) + "[0]", "json:"], capture=True).stdout)
+    iterations = metadata[0]["image"].get("iterations", 1)
+    return None if iterations == 1 else max(0, iterations - 1)
 
 
 def difference_box(magick, anchor, frames, threshold):
@@ -112,6 +111,7 @@ def build_detail(args):
         if not metadata or metadata[0][0] not in ("PNG", "GIF"):
             raise ProofMediaError("Detail crops accept PNG screenshots and GIF animations")
         formats[name] = metadata[0][0].lower()
+    loops = {name: gif_loop(path, magick) for name, path in inputs.items() if formats[name] == "gif"}
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = safe_stem(args.stem or inputs["after"].stem)
@@ -155,14 +155,26 @@ def build_detail(args):
         artifacts = {}
         for name, destination in outputs.items():
             target = work / destination.name
+            loop_options = []
+            if name in loops:
+                repeats = loops[name]
+                iterations = 1 if repeats is None else (0 if repeats == 0 else repeats + 1)
+                loop_options = ["-loop", str(iterations)]
             run([
                 magick, str(frames[name]), "-crop", "{}x{}+{}+{}".format(crop_width, crop_height, x, y),
-                "+repage", "-resize", "{}x>".format(args.max_width), str(target),
+                "+repage", "-resize", "{}x>".format(args.max_width), *loop_options, str(target),
             ])
             rendered = frame_metadata(magick, target)
             if len(rendered) != len(metadata[name]) or [r[3] for r in rendered] != [r[3] for r in metadata[name]]:
                 raise ProofMediaError("Detail rendering changed frame count or timing")
-            if formats[name] == "gif" and gif_loop(inputs[name]) != gif_loop(target):
+            if name in loops and len(rendered) == 1 and loops[name] is not None and gif_loop(target, magick) is None:
+                # ImageMagick omits loop extensions for a single-frame GIF even
+                # with -loop. Restore that metadata after its global color table.
+                data = target.read_bytes()
+                offset = 13 + (3 * (2 ** ((data[10] & 7) + 1)) if data[10] & 128 else 0)
+                extension = b"\x21\xff\x0bNETSCAPE2.0\x03\x01" + loops[name].to_bytes(2, "little") + b"\x00"
+                target.write_bytes(b"GIF89a" + data[6:offset] + extension + data[offset:])
+            if name in loops and loops[name] != gif_loop(target, magick):
                 raise ProofMediaError("Detail rendering changed GIF looping")
             artifacts[name] = {
                 "path": str(destination), "sha256": sha256(target),
