@@ -46,6 +46,7 @@ import {
 } from "../logicalProject";
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
+import { useUnvisitedCompletionsUnread } from "../hooks/useUnvisitedCompletionsUnread";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
@@ -98,6 +99,9 @@ function RootRouteView() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
+  useUnvisitedCompletionsUnread(
+    primaryEnvironmentAuthenticated || authGateState.status === "hosted-static",
+  );
   const returningFromWelcomeRef = useRef(pathname === "/welcome");
 
   useEffect(() => {
