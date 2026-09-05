@@ -758,6 +758,74 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             detail: "git write-tree returned an empty tree oid.",
           });
         }
+        const prefixResult = yield* execute({
+          operation,
+          cwd,
+          args: ["rev-parse", "--show-prefix"],
+          maxOutputBytes: 16_384,
+        });
+        if (prefixResult.stdoutTruncated) {
+          return yield* new VcsProcessExitError({
+            operation,
+            command: "git rev-parse --show-prefix",
+            cwd,
+            exitCode: prefixResult.exitCode,
+            detail: "git rev-parse returned a truncated workspace prefix.",
+          });
+        }
+        const prefixWithTerminator = prefixResult.stdout.endsWith("\n")
+          ? prefixResult.stdout.slice(0, -1)
+          : prefixResult.stdout;
+        const workspacePrefix = prefixWithTerminator.endsWith("/")
+          ? prefixWithTerminator.slice(0, -1)
+          : prefixWithTerminator;
+        let workspaceTreeIdentity = treeOid;
+        if (workspacePrefix.length > 0) {
+          const subtreeResult = yield* execute({
+            operation,
+            cwd,
+            args: [
+              "ls-tree",
+              "-z",
+              "--full-tree",
+              treeOid,
+              "--",
+              `:(top,literal)${workspacePrefix}`,
+            ],
+            maxOutputBytes: 16_384,
+          });
+          if (subtreeResult.stdoutTruncated) {
+            return yield* new VcsProcessExitError({
+              operation,
+              command: "git ls-tree",
+              cwd,
+              exitCode: subtreeResult.exitCode,
+              detail: "git ls-tree returned a truncated workspace subtree entry.",
+            });
+          }
+          if (subtreeResult.stdout.length === 0) {
+            workspaceTreeIdentity = "absent";
+          } else {
+            const entries = subtreeResult.stdout.split("\0").filter((entry) => entry.length > 0);
+            const [metadata, entryPath] = entries[0]?.split("\t") ?? [];
+            const [, entryType, entryOid] = metadata?.split(" ") ?? [];
+            if (
+              entries.length !== 1 ||
+              entryType !== "tree" ||
+              entryOid === undefined ||
+              entryPath !== workspacePrefix
+            ) {
+              return yield* new VcsProcessExitError({
+                operation,
+                command: "git ls-tree",
+                cwd,
+                exitCode: subtreeResult.exitCode,
+                detail: "git ls-tree returned an invalid workspace subtree entry.",
+              });
+            }
+            workspaceTreeIdentity = entryOid;
+          }
+        }
         const index = yield* gitCommand(
           vcsProcess,
           operation,
@@ -776,7 +844,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         }
         return NodeCrypto.createHash("sha256")
           .update("worktree\0")
-          .update(treeOid)
+          .update(workspaceTreeIdentity)
           .update("\0index\0")
           .update(index.stdoutDigest)
           .digest("hex");

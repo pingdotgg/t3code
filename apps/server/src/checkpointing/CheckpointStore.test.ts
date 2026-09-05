@@ -321,9 +321,32 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         yield* writeTextFile(sibling, "sibling\n");
         expect(yield* checkpointStore.readWorkspaceFingerprint(nested)).toBe(initial);
 
+        yield* git(tmp, ["commit", "-m", "change committed sibling"]);
+        expect(yield* checkpointStore.readWorkspaceFingerprint(nested)).toBe(initial);
+
         yield* writeTextFile(nestedFile, "nested staged\n");
         yield* git(tmp, ["add", "packages/nested/file.txt"]);
         yield* writeTextFile(nestedFile, "nested\n");
+        expect(yield* checkpointStore.readWorkspaceFingerprint(nested)).not.toBe(initial);
+      }),
+    );
+
+    it.effect("fingerprints an absent nested worktree subtree", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const nested = NodePath.join(tmp, "packages", "nested");
+        const nestedFile = NodePath.join(nested, "file.txt");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(nested, { recursive: true });
+        yield* writeTextFile(nestedFile, "nested\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "add nested subtree"]);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+        const initial = yield* checkpointStore.readWorkspaceFingerprint(nested);
+        yield* fileSystem.remove(nestedFile);
+
         expect(yield* checkpointStore.readWorkspaceFingerprint(nested)).not.toBe(initial);
       }),
     );
