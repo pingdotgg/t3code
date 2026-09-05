@@ -27,6 +27,10 @@ export type ProviderStatusKey = keyof typeof PROVIDER_STATUS_STYLES;
  * falls back to generic phrasing when the server has not yet reported any
  * state — which happens before the first probe or when an instance names a
  * driver this build does not ship.
+ *
+ * A ready snapshot whose probe could not verify authentication (e.g. Grok,
+ * which has no auth check today) is healthy; render it neutrally instead of
+ * phrasing "unknown" as an auth failure.
  */
 export function getProviderSummary(provider: ServerProvider | undefined) {
   if (!provider) {
@@ -76,7 +80,7 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
   }
   return {
     headline: "Available",
-    detail: provider.message ?? "Installed and ready, but authentication could not be verified.",
+    detail: provider.message ?? null,
   };
 }
 
