@@ -8,15 +8,6 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
-const SIMPLE_MENTION_PATH_REGEX = /^[^\s@"\\]+$/;
-
-export function serializeComposerMentionPath(path: string): string {
-  if (SIMPLE_MENTION_PATH_REGEX.test(path)) {
-    return path;
-  }
-  return `"${path.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-}
-
 function composerFileLinkBasename(path: string): string {
   const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
@@ -122,18 +113,6 @@ export function detectComposerTrigger(
     rangeStart: tokenStart,
     rangeEnd: cursor,
   };
-}
-
-export function parseStandaloneComposerSlashCommand(
-  text: string,
-): Exclude<ComposerSlashCommand, "model"> | null {
-  const match = /^\/(plan|default)\s*$/i.exec(text.trim());
-  if (!match) {
-    return null;
-  }
-  const command = match[1]?.toLowerCase();
-  if (command === "plan") return "plan";
-  return "default";
 }
 
 export function replaceTextRange(

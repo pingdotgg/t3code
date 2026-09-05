@@ -69,6 +69,20 @@ Use `vp run lint:mobile` for native mobile changes. CI owns the full suite; see
 The [manual Windows lane](../../.github/workflows/windows-tests.yml) is available for focused
 Windows investigation while that suite is not a required gate.
 
+### Unused code
+
+`vp run knip:check` checks unused files and dependencies across the repo, then
+unused runtime exports in every internal package under `packages/`. CI enforces both checks.
+Exported types and Effect schemas are allowed without consumers. The schema preprocessor
+recognizes schema types, including aliases and schema classes; functions that create or decode
+schemas remain checked. Completely unused files remain checked too.
+Use `vp run knip --workspace apps/web` to audit one workspace, including exports,
+or `vp run knip:production --workspace apps/web` to find code kept alive only by tests.
+The full export audit still has findings and is not a repo-wide CI gate. Extend the
+export check's workspace selectors as more workspaces become clean. Review callers before
+deleting code; production mode can also report development scripts and test fixtures.
+Runtime-discovered entrypoints and dependency exceptions belong in [knip.jsonc](../../knip.jsonc).
+
 ## Desktop artifacts
 
 Local artifact builds are unsigned by default and write to `release/`:

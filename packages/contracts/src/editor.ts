@@ -203,5 +203,3 @@ export const ExternalLauncherError = Schema.Union([
   ExternalLauncherEditorSpawnError,
 ]);
 export type ExternalLauncherError = typeof ExternalLauncherError.Type;
-
-export const isExternalLauncherError = Schema.is(ExternalLauncherError);

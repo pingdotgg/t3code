@@ -390,31 +390,6 @@ export function createRuntimeCommand<R, ER, W, A, E>(
   };
 }
 
-export function createRuntimeStreamCommand<R, ER, W, A, E>(
-  runtime: Atom.AtomRuntime<R, ER>,
-  options: {
-    readonly label: string;
-    readonly execute: (input: W, registry: AtomRegistry.AtomRegistry) => Stream.Stream<A, E, R>;
-    readonly scheduler?: AtomCommandScheduler;
-    readonly concurrency?: AtomCommandConcurrency<W>;
-  },
-): AtomCommand<W, A, E | ER | Cause.NoSuchElementError> {
-  const scheduler = options.scheduler ?? createAtomCommandScheduler();
-  const concurrency = options.concurrency ?? { mode: "parallel" as const };
-  return {
-    label: options.label,
-    run: (registry, input) =>
-      settleAtomCommandResult(() =>
-        scheduler.schedule(registry, concurrency, input, () => {
-          const atom = runtime
-            .atom(options.execute(input, registry))
-            .pipe(Atom.withLabel(options.label));
-          return executeAtomQuery(registry, atom, { reportDefect: false, reportFailure: false });
-        }),
-      ),
-  };
-}
-
 export function reportAtomCommandResult(
   result: AtomCommandResult<unknown, unknown>,
   options: AtomCommandOptions = {},
@@ -462,7 +437,7 @@ function parseEnvironmentRpcKey<Input>(key: string): {
   };
 }
 
-export function runInEnvironment<A, E, R>(
+function runInEnvironment<A, E, R>(
   environmentId: EnvironmentIdType,
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<
