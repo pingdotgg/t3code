@@ -106,6 +106,10 @@ Show skills in slash menu**. Only skills enabled for the provider are listed.
 Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.
 
+With Codex, wait for the current turn to finish before sending a skill. Codex loads
+skills when starting a new turn; skill mentions sent while it is still working
+are treated as ordinary text.
+
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
 
