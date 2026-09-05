@@ -196,6 +196,11 @@ describe("DesktopConnectionCatalogStore", () => {
 
         assert.deepStrictEqual(yield* store.get, Option.some(catalog));
         assert.isTrue(yield* fileSystem.exists(stablePath));
+
+        yield* store.clear;
+        assert.deepStrictEqual(yield* store.get, Option.none());
+        assert.isFalse(yield* fileSystem.exists(stablePath));
+        assert.isFalse(yield* fileSystem.exists(legacyPath));
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );

@@ -538,16 +538,19 @@ export const make = Effect.gen(function* () {
       yield* writeCatalog(catalog);
       return true;
     }, mutex.withPermits(1)),
-    clear: fileSystem.remove(catalogPath, { force: true }).pipe(
-      mutex.withPermits(1),
-      Effect.catch((error) =>
-        Effect.logWarning("Could not clear the desktop connection catalog.", {
-          catalogPath,
-          error,
-        }),
-      ),
-      Effect.withSpan("desktop.connectionCatalogStore.clear"),
-    ),
+    clear: Effect.forEach(
+      [catalogPath, ...environment.legacyConnectionCatalogPaths],
+      (candidate) =>
+        fileSystem.remove(candidate, { force: true }).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Could not clear the desktop connection catalog.", {
+              catalogPath: candidate,
+              error,
+            }),
+          ),
+        ),
+      { discard: true },
+    ).pipe(mutex.withPermits(1), Effect.withSpan("desktop.connectionCatalogStore.clear")),
   });
 });
 
