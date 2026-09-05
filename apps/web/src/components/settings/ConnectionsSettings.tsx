@@ -2441,7 +2441,6 @@ export function ConnectionsSettings() {
     savedBackendMode,
     savedBackendPairingCode,
     savedBackendSshHost,
-    savedBackendSshEnvironmentVariables,
     savedBackendSshPort,
     savedBackendSshUsername,
   ]);
