@@ -921,6 +921,163 @@ describe("OpenCodeAdapterV2", () => {
     }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
   );
 
+  it.effect("times out and aborts an OpenCode permission reply without consuming the request", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const replyStarted = promiseGate<AbortSignal>();
+      let hangReply = true;
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "permission-reply-timeout",
+        "native-opencode-permission-reply-timeout",
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          session: {
+            create: async () => ({
+              data: {
+                id: "native-opencode-permission-reply-timeout",
+                time: { created: 1, updated: 1 },
+              },
+            }),
+            promptAsync: async () => ({ data: true }),
+          },
+          permission: {
+            reply: async (_input: unknown, options: { signal: AbortSignal }) => {
+              replyStarted.resolve(options.signal);
+              if (hangReply) await new Promise<void>(() => {});
+              return { data: true };
+            },
+          },
+        },
+      );
+      yield* harness.startTurn();
+      const requested = yield* harness.runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "permission.asked",
+          properties: {
+            id: "native-permission-timeout",
+            sessionID: "native-opencode-permission-reply-timeout",
+            permission: "bash",
+            patterns: ["pwd"],
+            always: [],
+            metadata: {},
+          },
+        }),
+      );
+      const requestEvent = Array.from(yield* Fiber.join(requested))[0]!;
+      assert.equal(requestEvent.type, "runtime_request.updated");
+      if (requestEvent.type !== "runtime_request.updated") return;
+      const response = yield* harness.runtime
+        .respondToRuntimeRequest({ requestId: requestEvent.runtimeRequest.id, decision: "accept" })
+        .pipe(Effect.exit, Effect.forkScoped);
+      const signal = yield* Effect.promise(() => replyStarted.promise);
+      yield* TestClock.adjust("10 seconds");
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(response)));
+      assert.isTrue(signal.aborted);
+
+      hangReply = false;
+      yield* harness.runtime.respondToRuntimeRequest({
+        requestId: requestEvent.runtimeRequest.id,
+        decision: "accept",
+      });
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
+  it.effect("times out and aborts an OpenCode question reply without consuming the request", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const replyStarted = promiseGate<AbortSignal>();
+      let hangReply = true;
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "question-reply-timeout",
+        "native-opencode-question-reply-timeout",
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          session: {
+            create: async () => ({
+              data: {
+                id: "native-opencode-question-reply-timeout",
+                time: { created: 1, updated: 1 },
+              },
+            }),
+            promptAsync: async () => ({ data: true }),
+          },
+          question: {
+            reply: async (_input: unknown, options: { signal: AbortSignal }) => {
+              replyStarted.resolve(options.signal);
+              if (hangReply) await new Promise<void>(() => {});
+              return { data: true };
+            },
+          },
+        },
+      );
+      yield* harness.startTurn();
+      const requested = yield* harness.runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "question.asked",
+          properties: {
+            id: "native-question-timeout",
+            sessionID: "native-opencode-question-reply-timeout",
+            questions: [
+              {
+                header: "Choice",
+                question: "Which option?",
+                options: [{ label: "One", description: "Choose one." }],
+                multiple: false,
+              },
+            ],
+          },
+        }),
+      );
+      const requestEvent = Array.from(yield* Fiber.join(requested))[0]!;
+      assert.equal(requestEvent.type, "runtime_request.updated");
+      if (requestEvent.type !== "runtime_request.updated") return;
+      const response = yield* harness.runtime
+        .respondToRuntimeRequest({
+          requestId: requestEvent.runtimeRequest.id,
+          answers: { "Which option?": "One" },
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      const signal = yield* Effect.promise(() => replyStarted.promise);
+      yield* TestClock.adjust("10 seconds");
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(response)));
+      assert.isTrue(signal.aborted);
+
+      hangReply = false;
+      yield* harness.runtime.respondToRuntimeRequest({
+        requestId: requestEvent.runtimeRequest.id,
+        answers: { "Which option?": "One" },
+      });
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
   it("holds stale idle through prompt admission until the new user message is observed", () => {
     const admission = {
       admissionPending: true,

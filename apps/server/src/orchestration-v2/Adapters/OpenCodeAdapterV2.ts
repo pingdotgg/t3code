@@ -3177,12 +3177,15 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 yield* sdkCall(
                   "question.reply",
                   { requestID: pending.nativeRequestId, answers },
-                  () =>
-                    client.question.reply({
-                      requestID: pending.nativeRequestId,
-                      answers,
-                    }),
-                );
+                  (signal) =>
+                    client.question.reply(
+                      {
+                        requestID: pending.nativeRequestId,
+                        answers,
+                      },
+                      { signal },
+                    ),
+                ).pipe(Effect.timeout("10 seconds"));
                 return;
               }
               if (requestInput.decision === undefined) {
@@ -3194,12 +3197,15 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               yield* sdkCall(
                 "permission.reply",
                 { requestID: pending.nativeRequestId, reply },
-                () =>
-                  client.permission.reply({
-                    requestID: pending.nativeRequestId,
-                    reply,
-                  }),
-              );
+                (signal) =>
+                  client.permission.reply(
+                    {
+                      requestID: pending.nativeRequestId,
+                      reply,
+                    },
+                    { signal },
+                  ),
+              ).pipe(Effect.timeout("10 seconds"));
             }).pipe(
               Effect.mapError(
                 (cause) =>
