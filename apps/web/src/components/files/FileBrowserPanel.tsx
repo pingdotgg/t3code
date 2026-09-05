@@ -12,6 +12,7 @@ import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { isBrowserPreviewFile } from "~/browser/openFileInPreview";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";
@@ -37,6 +38,8 @@ interface FileBrowserPanelProps {
   onOpenFile: (relativePath: string) => void;
   onRefreshSelectedFile?: () => void;
   workspaceMutationId: string | null;
+  /** Present when the runtime can open a workspace file in the integrated browser. */
+  onOpenInBrowser?: ((relativePath: string) => void) | undefined;
 }
 
 function treePath(entry: ProjectEntry): string {
@@ -101,6 +104,7 @@ export default function FileBrowserPanel({
   onOpenFile,
   onRefreshSelectedFile,
   workspaceMutationId,
+  onOpenInBrowser,
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
@@ -144,6 +148,10 @@ export default function FileBrowserPanel({
     }
     const relativePath = item.path.replace(/\/$/, "");
     const mention = serializeComposerFileLink(relativePath);
+    const canOpenInBrowser =
+      onOpenInBrowser !== undefined &&
+      entryKindsRef.current.get(relativePath) === "file" &&
+      isBrowserPreviewFile(relativePath);
     const pointer = contextMenuPointerRef.current;
     const pointerIsFresh = pointer !== null && performance.now() - pointer.at < 1000;
     const anchorRect = context.anchorElement.getBoundingClientRect();
@@ -153,11 +161,18 @@ export default function FileBrowserPanel({
     try {
       const clicked = await api.contextMenu.show(
         [
+          ...(canOpenInBrowser
+            ? [{ id: "open-in-browser" as const, label: "Open in browser" }]
+            : []),
           { id: "copy-mention", label: "Copy mention" },
           { id: "add-to-chat", label: "Add to chat" },
         ],
         position,
       );
+      if (clicked === "open-in-browser") {
+        onOpenInBrowser?.(relativePath);
+        return;
+      }
       if (clicked === "copy-mention") {
         try {
           await writeTextToClipboard(mention);

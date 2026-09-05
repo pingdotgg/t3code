@@ -37,7 +37,7 @@ import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffR
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
-import { isAbsolutePath, resolvePathLinkTarget } from "~/terminal-links";
+import { isAbsolutePath, resolveWorkspaceFilePath } from "~/terminal-links";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Toggle } from "~/components/ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -1038,7 +1038,7 @@ export default function FilePreviewPanel({
     isPreviewSupportedInRuntime() &&
     isBrowserPreviewFile(relativePath);
   const absolutePath =
-    relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
+    relativePath && attachment === undefined ? resolveWorkspaceFilePath(relativePath, cwd) : null;
   const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
   useWorkspaceMutationRefresh({
     enabled:
@@ -1071,30 +1071,35 @@ export default function FilePreviewPanel({
     });
   };
 
-  const handleOpenInBrowser = useCallback(() => {
-    if (!absolutePath || !environmentHttpBaseUrl) return;
-    void (async () => {
-      const result = await openFileInPreview({
-        threadRef,
-        filePath: absolutePath,
-        workspaceRoot: cwd,
-        httpBaseUrl: environmentHttpBaseUrl,
-        createAssetUrl,
-        openPreview,
-      });
-      if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
-        return;
-      }
-      const error = squashAtomCommandFailure(result);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Unable to open file in browser",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
-    })();
-  }, [absolutePath, createAssetUrl, cwd, environmentHttpBaseUrl, openPreview, threadRef]);
+  const handleOpenInBrowser = useCallback(
+    (filePath: string) => {
+      if (!environmentHttpBaseUrl) return;
+      void (async () => {
+        const result = await openFileInPreview({
+          threadRef,
+          // Tree and preview-header paths are workspace-relative; resolve them
+          // against the workspace root without terminal-link `~/` expansion.
+          filePath: resolveWorkspaceFilePath(filePath, cwd),
+          workspaceRoot: cwd,
+          httpBaseUrl: environmentHttpBaseUrl,
+          createAssetUrl,
+          openPreview,
+        });
+        if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+          return;
+        }
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to open file in browser",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      })();
+    },
+    [createAssetUrl, cwd, environmentHttpBaseUrl, openPreview, threadRef],
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
@@ -1177,7 +1182,7 @@ export default function FilePreviewPanel({
                   <Toggle
                     className="shrink-0"
                     pressed={false}
-                    onPressedChange={handleOpenInBrowser}
+                    onPressedChange={() => handleOpenInBrowser(relativePath)}
                     aria-label="Open file in preview browser"
                     variant="ghost"
                     size="sm"
@@ -1348,6 +1353,11 @@ export default function FilePreviewPanel({
               {...(relativePath && !isMedia && !isPdf
                 ? { onRefreshSelectedFile: file.refresh }
                 : {})}
+              onOpenInBrowser={
+                isPreviewSupportedInRuntime() && environmentHttpBaseUrl
+                  ? (browserPath) => handleOpenInBrowser(browserPath)
+                  : undefined
+              }
             />
           </aside>
         ) : null}
