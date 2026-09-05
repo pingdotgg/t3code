@@ -179,6 +179,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
   it.effect("exchanges the reusable dev token for a local scoped OAuth session", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
       const token = "reusable-dev-auth-token-that-is-long-enough";
       const exchanged = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
         token,
@@ -212,6 +213,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       );
       expect(firstSession.subject).toBe("reusable-dev-token-child");
       expect(secondSession.subject).toBe("reusable-dev-token-child");
+      expect((yield* sessions.verify(token)).subject).toBe("reusable-dev-token");
     }).pipe(
       Effect.provide(
         makeEnvironmentAuthLayer({

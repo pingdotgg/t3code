@@ -10,7 +10,7 @@ vp i
 vp run dev
 ```
 
-Open the one-time pairing URL printed by the dev runner. The bare origin does not authenticate
+Open the pairing URL printed by the dev runner. The bare origin does not authenticate
 a new browser.
 
 ## Choosing a dev process
@@ -38,6 +38,21 @@ different preference when needed.
 `vp run dev --share` publishes the web port over the machine's tailnet and prints a pairing URL
 for that origin. Give the tester the complete URL, including its token. The dev runner removes
 its mapping on exit.
+
+Leave `VITE_HTTP_URL` and `VITE_WS_URL` unset. Vite proxies the backend through the browser's
+origin so the same build works over localhost and remote connections.
+
+Shared runs enable bundled dev to avoid a network round trip for each import level.
+`T3CODE_BUNDLED_DEV=0` opts out when debugging bundler differences. Two reload traps matter
+when changing this setup:
+
+- The web entry must dynamically import the app so React refresh initializes before application
+  chunks. Static imports can work on first load and fail after a route split.
+- Bundled dev rebuilds Tailwind through watched files. Its ordinary Vite hot-update hook expects
+  a server/module graph that Rolldown does not provide.
+
+The workarounds live in the [web entry](../../apps/web/src/bootstrap.ts) and
+[Tailwind plugin](../../apps/web/vite/tailwind.ts).
 
 #### Reusable dev credential
 
@@ -74,21 +89,6 @@ commit, pull request, or public output. Every server still seeds its own auth da
 startup and keeps its own SQLite data, signing key, and revocation state. Desktop and non-dev
 servers ignore the value. See [environment authentication](../internals/environment-auth.md#reusable-dev-credential)
 for the security model.
-
-Leave `VITE_HTTP_URL` and `VITE_WS_URL` unset. Vite proxies the backend through the browser's
-origin so the same build works over localhost and remote connections.
-
-Shared runs enable bundled dev to avoid a network round trip for each import level.
-`T3CODE_BUNDLED_DEV=0` opts out when debugging bundler differences. Two reload traps matter
-when changing this setup:
-
-- The web entry must dynamically import the app so React refresh initializes before application
-  chunks. Static imports can work on first load and fail after a route split.
-- Bundled dev rebuilds Tailwind through watched files. Its ordinary Vite hot-update hook expects
-  a server/module graph that Rolldown does not provide.
-
-The workarounds live in the [web entry](../../apps/web/src/bootstrap.ts) and
-[Tailwind plugin](../../apps/web/vite/tailwind.ts).
 
 ## Checks
 
