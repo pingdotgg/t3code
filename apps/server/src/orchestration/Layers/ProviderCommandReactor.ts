@@ -34,6 +34,7 @@ import { increment, orchestrationEventsProcessedTotal } from "../../observabilit
 import {
   ProviderAdapterRequestError,
   ProviderAdapterValidationError,
+  ProviderWorkspaceMissingError,
 } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
@@ -56,6 +57,7 @@ import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderAdapterValidationError = Schema.is(ProviderAdapterValidationError);
+const isProviderWorkspaceMissingError = Schema.is(ProviderWorkspaceMissingError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
 type ProviderIntentEvent = Extract<
@@ -226,7 +228,7 @@ function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMessage>): 
   };
 }
 
-export function providerErrorLabel(value: string | undefined): string {
+function providerErrorLabel(value: string | undefined): string {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : "unknown";
 }
@@ -393,6 +395,9 @@ const make = Effect.gen(function* () {
     }
     if (isProviderAdapterValidationError(failReason?.error)) {
       return failReason.error.issue;
+    }
+    if (isProviderWorkspaceMissingError(failReason?.error)) {
+      return failReason.error.message;
     }
     return Cause.pretty(cause);
   };
