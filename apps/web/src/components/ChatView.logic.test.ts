@@ -60,6 +60,7 @@ import {
   shouldDockDraftHeroForSubmission,
   shouldReleaseTimelineAnchorForToolActivity,
   shouldOpenProactivePullRequest,
+  shouldRetargetThreadPullRequestPanel,
   shouldOpenProactiveTurnDiff,
   shouldRenderPreviewMiniPlayer,
   shouldShowBranchMismatchBanner,
@@ -247,6 +248,40 @@ describe("proactive panels", () => {
     expect(shouldOpenProactivePullRequest(null, "project:repo:42")).toBe(true);
     expect(shouldOpenProactivePullRequest("project:repo:42", "project:repo:42")).toBe(false);
     expect(shouldOpenProactivePullRequest("project:repo:42", null)).toBe(false);
+  });
+
+  it("follows a changed server PR link without replacing an unrelated open panel", () => {
+    const previous = {
+      projectId: ProjectId.make("project-1"),
+      repository: "pingdotgg/t3code",
+      number: 42,
+      url: "https://github.com/pingdotgg/t3code/pull/42",
+    };
+    const current = {
+      ...previous,
+      number: 43,
+      url: "https://github.com/pingdotgg/t3code/pull/43",
+    };
+    const surface = {
+      id: "pull-request:previous",
+      kind: "pull-request",
+      projectId: previous.projectId,
+      repository: "PingDotGG/T3Code",
+      number: previous.number,
+    } satisfies RightPanelSurface;
+
+    expect(shouldRetargetThreadPullRequestPanel(previous, current, surface)).toBe(true);
+    expect(shouldRetargetThreadPullRequestPanel(previous, previous, surface)).toBe(false);
+    expect(shouldRetargetThreadPullRequestPanel(previous, null, surface)).toBe(false);
+    expect(
+      shouldRetargetThreadPullRequestPanel(previous, current, { ...surface, number: 99 }),
+    ).toBe(false);
+    expect(
+      shouldRetargetThreadPullRequestPanel(previous, current, {
+        ...surface,
+        projectId: "another-project",
+      }),
+    ).toBe(false);
   });
 
   it("opens the diff only when the observed running turn settles", () => {

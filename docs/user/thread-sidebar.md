@@ -49,8 +49,12 @@ in the warning. Changing a rule does not reopen already settled threads.
 
 ## Link a pull request
 
+The server finds the PR for each thread's saved branch. Links update even when
+your apps are closed.
+
 On web and desktop, right-click a pull request link in a thread and choose
-**Link to thread**. Use **Unlink from thread** on the same link to remove it.
+**Link to thread** to select a different PR. Use **Unlink from thread** on the
+same link to return to the branch PR, if one exists.
 The linked pull request participates in automatic settlement.
 
 ## Find and reference work
