@@ -45,7 +45,10 @@ and framing; visual inspection establishes suitability.
 
 ## Recording
 
-Record the affected flow with the recorder owned by the current test surface.
+Before recording the full flow, complete the saved-file smoke check in
+[reliable capture setup](capture-recovery.md). Reuse the proven recorder and
+inspect each finalized export immediately. Record the affected flow with the
+recorder owned by the current test surface.
 Use the attached preview's recording capability for web when exposed.
 For iOS Simulator, use XcodeBuildMCP recording when available or
 `xcrun simctl io <verified-UDID> recordVideo <output.mp4>`; stop only the recorder

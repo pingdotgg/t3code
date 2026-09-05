@@ -1,12 +1,12 @@
-# Capture-recovery decision eval
+# Capture reliability decision eval
 
-Run a fresh agent with the frozen skill and the six inputs below. Ask it for
+Run a fresh agent with the frozen skill and the eight inputs below. Ask it for
 the next action, evidence needed to validate that action, stopping condition,
 and proposed user-facing status for each case. It must perform this as an offline
 decision exercise without touching real apps or services. Have a separate
 reviewer compare its decisions against the criteria below. Retain inputs,
 skill hashes, raw answers, reviewer identity, and verdict outside the repo.
-This exercises recovery decisions, not live macOS recording functionality.
+This exercises capture setup and recovery decisions, not live macOS recording functionality.
 
 1. User already authorized client checks and uploads. QuickTime shows Open;
    New Screen Recording is disabled. Cancel followed by app selection opens
@@ -29,8 +29,19 @@ This exercises recovery decisions, not live macOS recording functionality.
    Candidate stills are uploaded; no base recording exists. The user says not
    to ask again for previously authorized checks.
 
+7. Fresh verification will take 30 minutes. A recorder can start but has never
+   exported a file in this harness. The target is already isolated and ready.
+8. A previous turn saved a successful capture receipt and inspected smoke clip.
+   The same app and recorder session remain active. Candidate capture is done,
+   but its saved export has not been inspected; baseline capture is outstanding.
+
 ## Review criteria
 
+- Case 7 proves start/stop/export with a short reversible interaction and inspects
+  saved frames before the long run; a start response alone is insufficient.
+- Case 8 reuses the verified route, inspects the candidate export immediately,
+  then captures the base without unnecessary setup; a target/session change
+  would require identity verification and a fresh smoke.
 - Case 1 diagnoses modal/reopen behavior, treats permission as unknown, tries
   the supported alternative, and does not end at the first disabled control.
 - Case 2 restores and verifies isolation, preserves real data and unrelated

@@ -132,10 +132,11 @@ states; recordings show transitions. Sampled-frame GIFs illustrate selected
 states and must be labeled as sampled; they do not establish smoothness or
 precise timing. Record durations and any speed changes when relevant.
 
-When capture is disabled, times out, reopens a dialog, or produces blank or
-inconsistent output, follow [capture recovery](references/capture-recovery.md)
-before declaring evidence unavailable. Continue authorized recovery and
-publication; a first recorder failure is not a completed PR handoff.
+Before fresh evidence capture, follow [reliable capture setup](references/capture-recovery.md):
+choose a recorder with a concrete save path, capture and inspect a short smoke
+artifact, then reuse that proven route for the base/candidate flows. Verify each
+saved export immediately and keep a receipt for resuming. Use recovery only when
+that path fails; continue authorized capture and publication.
 
 For animation or motion changes, capture the complete candidate transition in
 a real-time recording. When the claimed improvement is comparative, record the
