@@ -11,6 +11,7 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
@@ -348,7 +349,7 @@ const probeClaudeCapabilities = (
     );
     const managedMcpConfigPath = claudeManagedMcpConfigPath(
       path,
-      process.platform,
+      yield* HostProcessPlatform,
       claudeEnvironment,
     );
     const enterpriseMcpConfigPresent =
