@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   UsageLimitSourceId,
@@ -9,14 +10,181 @@ import * as Duration from "effect/Duration";
 import { describe, expect, it } from "vite-plus/test";
 import { resolveServerBackgroundActivitySettings } from "./backgroundActivitySettings.ts";
 import { createModelSelection } from "./model.ts";
+import { resolveProjectScripts, projectScriptsInheritDefaults } from "./projectScripts.ts";
 import {
   applyServerSettingsPatch,
   isModelSelectionProviderEnabled,
   parsePersistedServerObservabilitySettings,
   resolveSourceControlWriterModelSelection,
+  resolveProjectAgentBrowserAccess,
+  resolveProjectAutoPull,
 } from "./serverSettings.ts";
 
 describe("serverSettings helpers", () => {
+  it("inherits actions, preserves existing actions, and supports empty overrides and reset", () => {
+    const project = { id: ProjectId.make("project-actions"), scripts: [] };
+    const action = {
+      id: "check",
+      name: "Check",
+      command: "npm test",
+      icon: "play" as const,
+      runOnWorktreeCreate: false,
+    };
+    const defaults = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      defaultProjectScripts: [action],
+    });
+    expect(resolveProjectScripts(defaults, project)).toEqual([action]);
+    expect(projectScriptsInheritDefaults(defaults, project)).toBe(true);
+    const existing = { ...project, scripts: [{ ...action, command: "npm run lint" }] };
+    expect(resolveProjectScripts(defaults, existing)).toEqual(existing.scripts);
+    expect(projectScriptsInheritDefaults(defaults, existing)).toBe(false);
+    const disabled = applyServerSettingsPatch(defaults, {
+      projectScriptOverrides: { [project.id]: [] },
+    });
+    expect(resolveProjectScripts(disabled, project)).toEqual([]);
+    expect(projectScriptsInheritDefaults(disabled, project)).toBe(false);
+    const changedDefault = applyServerSettingsPatch(disabled, {
+      defaultProjectScripts: [{ ...action, command: "npm run build" }],
+    });
+    expect(resolveProjectScripts(changedDefault, project)).toEqual([]);
+    const reset = applyServerSettingsPatch(changedDefault, {
+      projectScriptOverrides: { [project.id]: null },
+    });
+    expect(resolveProjectScripts(reset, existing)).toEqual(changedDefault.defaultProjectScripts);
+    expect(projectScriptsInheritDefaults(reset, existing)).toBe(true);
+    expect(
+      resolveProjectScripts(
+        applyServerSettingsPatch(reset, { defaultProjectScripts: [] }),
+        existing,
+      ),
+    ).toEqual([]);
+  });
+
+  it("preserves other projects' actions when overriding, clearing, or resetting one project", () => {
+    const firstProject = { id: ProjectId.make("first-project"), scripts: [] };
+    const secondProject = { id: ProjectId.make("second-project"), scripts: [] };
+    const defaultAction = {
+      id: "check",
+      name: "Check",
+      command: "npm test",
+      icon: "play" as const,
+      runOnWorktreeCreate: false,
+    };
+    const firstAction = { ...defaultAction, command: "npm run lint" };
+    const secondAction = { ...defaultAction, command: "npm run build" };
+    const firstUpdate = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      defaultProjectScripts: [defaultAction],
+      projectScriptOverrides: { [firstProject.id]: [firstAction] },
+    });
+    const secondUpdate = applyServerSettingsPatch(firstUpdate, {
+      projectScriptOverrides: { [secondProject.id]: [secondAction] },
+    });
+    expect(resolveProjectScripts(secondUpdate, firstProject)).toEqual([firstAction]);
+    expect(resolveProjectScripts(secondUpdate, secondProject)).toEqual([secondAction]);
+
+    const cleared = applyServerSettingsPatch(secondUpdate, {
+      projectScriptOverrides: { [firstProject.id]: [] },
+    });
+    expect(resolveProjectScripts(cleared, firstProject)).toEqual([]);
+    expect(resolveProjectScripts(cleared, secondProject)).toEqual([secondAction]);
+
+    const reset = applyServerSettingsPatch(cleared, {
+      projectScriptOverrides: { [firstProject.id]: null },
+    });
+    expect(resolveProjectScripts(reset, { ...firstProject, scripts: [firstAction] })).toEqual([
+      defaultAction,
+    ]);
+    expect(resolveProjectScripts(reset, secondProject)).toEqual([secondAction]);
+    expect(resolveProjectScripts(secondUpdate, firstProject)).toEqual([firstAction]);
+  });
+
+  it("inherits automatic pull while preserving legacy opt-ins and explicit overrides", () => {
+    const projectId = ProjectId.make("project-pull");
+    expect(resolveProjectAutoPull(DEFAULT_SERVER_SETTINGS, projectId, false)).toBe(false);
+    expect(resolveProjectAutoPull(DEFAULT_SERVER_SETTINGS, projectId, true)).toBe(true);
+    const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { defaultAutoPull: true });
+    expect(resolveProjectAutoPull(enabled, projectId, false)).toBe(true);
+    const overridden = applyServerSettingsPatch(enabled, {
+      projectAutoPullOverrides: { [projectId]: false },
+    });
+    expect(resolveProjectAutoPull(overridden, projectId, true)).toBe(false);
+    const reset = applyServerSettingsPatch(overridden, {
+      projectAutoPullOverrides: { [projectId]: null },
+    });
+    expect(resolveProjectAutoPull(reset, projectId, false)).toBe(true);
+    const disabled = applyServerSettingsPatch(reset, {
+      defaultAutoPull: false,
+      projectAutoPullOverrides: { [projectId]: true },
+    });
+    expect(resolveProjectAutoPull(disabled, projectId, false)).toBe(true);
+    expect(resolveProjectAutoPull(disabled, ProjectId.make("other-project"), false)).toBe(false);
+  });
+
+  it("inherits browser access and restores inheritance when a project override is removed", () => {
+    const projectId = ProjectId.make("project-browser");
+    const otherProjectId = ProjectId.make("other-project");
+    const overridden = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      projectAgentBrowserAccessOverrides: { [projectId]: false },
+    });
+    expect(resolveProjectAgentBrowserAccess(overridden, projectId)).toBe(false);
+    expect(resolveProjectAgentBrowserAccess(overridden, otherProjectId)).toBe(true);
+    const reset = applyServerSettingsPatch(overridden, {
+      projectAgentBrowserAccessOverrides: { [projectId]: null },
+    });
+    expect(resolveProjectAgentBrowserAccess(reset, projectId)).toBe(true);
+    const enabled = applyServerSettingsPatch(reset, {
+      enableAgentBrowserAccess: false,
+      projectAgentBrowserAccessOverrides: { [projectId]: true },
+    });
+    expect(resolveProjectAgentBrowserAccess(enabled, projectId)).toBe(true);
+    expect(resolveProjectAgentBrowserAccess(enabled, otherProjectId)).toBe(false);
+  });
+
+  it("preserves other projects' boolean overrides across separate updates and resets", () => {
+    const firstProjectId = ProjectId.make("first-project");
+    const secondProjectId = ProjectId.make("second-project");
+    const firstUpdate = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      defaultAutoPull: true,
+      projectAutoPullOverrides: { [firstProjectId]: false },
+      projectAgentBrowserAccessOverrides: { [firstProjectId]: false },
+    });
+    const secondUpdate = applyServerSettingsPatch(firstUpdate, {
+      projectAutoPullOverrides: { [secondProjectId]: false },
+      projectAgentBrowserAccessOverrides: { [secondProjectId]: false },
+    });
+    for (const projectId of [firstProjectId, secondProjectId]) {
+      expect(resolveProjectAutoPull(secondUpdate, projectId, false)).toBe(false);
+      expect(resolveProjectAgentBrowserAccess(secondUpdate, projectId)).toBe(false);
+    }
+
+    const reset = applyServerSettingsPatch(secondUpdate, {
+      projectAutoPullOverrides: { [firstProjectId]: null },
+      projectAgentBrowserAccessOverrides: { [firstProjectId]: null },
+    });
+    expect(resolveProjectAutoPull(reset, firstProjectId, false)).toBe(true);
+    expect(resolveProjectAgentBrowserAccess(reset, firstProjectId)).toBe(true);
+    expect(resolveProjectAutoPull(reset, secondProjectId, false)).toBe(false);
+    expect(resolveProjectAgentBrowserAccess(reset, secondProjectId)).toBe(false);
+    expect(reset.projectAutoPullOverrides[firstProjectId]).toBeUndefined();
+    expect(reset.projectAgentBrowserAccessOverrides[firstProjectId]).toBeUndefined();
+    expect(resolveProjectAutoPull(secondUpdate, firstProjectId, false)).toBe(false);
+    expect(resolveProjectAgentBrowserAccess(secondUpdate, firstProjectId)).toBe(false);
+  });
+
+  it("replaces and clears conversation model defaults without retaining old options", () => {
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      defaultModelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
+        { id: "reasoningEffort", value: "high" },
+      ]),
+    });
+    const selection = createModelSelection(ProviderInstanceId.make("claudeAgent"), "sonnet");
+    const updated = applyServerSettingsPatch(current, { defaultModelSelection: selection });
+    expect(updated.defaultModelSelection).toEqual(selection);
+    expect(
+      applyServerSettingsPatch(updated, { defaultModelSelection: null }).defaultModelSelection,
+    ).toBeNull();
+  });
+
   it("ignores missing and blank persisted observability URLs", () => {
     expect(parsePersistedServerObservabilitySettings("{}")).toEqual({
       otlpTracesUrl: undefined,

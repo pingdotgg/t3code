@@ -19,6 +19,8 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  OrchestrationThreadShell,
+  ProjectId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -75,6 +77,7 @@ import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
+import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 
 const defaultServerSettingsLayer = ServerSettings.ServerSettingsService.layerTest();
 const serverConfigTestLayer = ServerConfig.layerTest(process.cwd(), process.cwd()).pipe(
@@ -4302,10 +4305,17 @@ boundedListing.layer("ProviderServiceLive session listing", (it) => {
   );
 });
 
+const decodeBrowserAccessThreadShell = Schema.decodeUnknownEffect(OrchestrationThreadShell);
+
 describe("agent browser access", () => {
   const revokedThreads: Array<ThreadId> = [];
+  const projectId = ProjectId.make("project-browser-access");
 
-  const startSessionWith = (enableAgentBrowserAccess: boolean, threadId: ThreadId) =>
+  const startSessionWith = (
+    enableAgentBrowserAccess: boolean,
+    threadId: ThreadId,
+    projectOverride?: boolean,
+  ) =>
     Effect.gen(function* () {
       const issued: Array<ThreadId> = [];
       const codex = makeFakeCodexAdapter();
@@ -4319,6 +4329,49 @@ describe("agent browser access", () => {
       const directoryLayer = ProviderSessionDirectoryLive.pipe(
         Layer.provide(runtimeRepositoryLayer),
       );
+      const projectionLayer = Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+        getImportedAgentSessionSources: () => Effect.die("unused"),
+        getUserInputActivity: () => Effect.die("unused"),
+        getCommandReadModel: () => Effect.die("unused"),
+        getSnapshot: () => Effect.die("unused"),
+        getShellSnapshot: () => Effect.die("unused"),
+        getArchivedShellSnapshot: () => Effect.die("unused"),
+        getSnapshotSequence: () => Effect.die("unused"),
+        getCounts: () => Effect.die("unused"),
+        getEventReplayStats: () => Effect.die("unused"),
+        getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
+        getProjectShellById: () => Effect.die("unused"),
+        getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
+        getThreadCheckpointContext: () => Effect.die("unused"),
+        getFullThreadDiffContext: () => Effect.die("unused"),
+        getThreadRuntimeContext: () => Effect.die("unused"),
+        getThreadShellById: (requestedThreadId) =>
+          Effect.gen(function* () {
+            assert.equal(requestedThreadId, threadId);
+            return Option.some(
+              yield* decodeBrowserAccessThreadShell({
+                id: threadId,
+                projectId,
+                title: "Browser access test",
+                modelSelection: createModelSelection(codexInstanceId, "gpt-5.4"),
+                runtimeMode: "full-access",
+                branch: null,
+                worktreePath: null,
+                latestTurn: null,
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                session: null,
+                latestUserMessageAt: null,
+                hasPendingApprovals: false,
+                hasPendingUserInput: false,
+                hasActionableProposedPlan: false,
+              }),
+            );
+          }).pipe(Effect.orDie),
+        getThreadDetailById: () => Effect.die("unused"),
+        getThreadDetailSnapshot: () => Effect.die("unused"),
+        searchThreads: () => Effect.die("unused"),
+      });
       const providerLayer = makeProviderServiceLive({
         issueMcpCredential: (request) =>
           Effect.sync(() => {
@@ -4329,7 +4382,14 @@ describe("agent browser access", () => {
       }).pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
-        Layer.provide(ServerSettings.ServerSettingsService.layerTest({ enableAgentBrowserAccess })),
+        Layer.provide(projectionLayer),
+        Layer.provide(
+          ServerSettings.ServerSettingsService.layerTest({
+            enableAgentBrowserAccess,
+            projectAgentBrowserAccessOverrides:
+              projectOverride === undefined ? {} : { [projectId]: projectOverride },
+          }),
+        ),
         Layer.provide(serverConfigTestLayer),
         Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
@@ -4384,6 +4444,24 @@ describe("agent browser access", () => {
 
       const issued = yield* startSessionWith(true, threadId);
 
+      assert.deepEqual(issued, [threadId]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("withholds and revokes MCP credentials when the project disables browser access", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-project-browser-off");
+      revokedThreads.length = 0;
+      const issued = yield* startSessionWith(true, threadId, false);
+      assert.deepEqual(issued, []);
+      assert.deepEqual(revokedThreads, [threadId]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("requests an MCP credential when the project overrides browser access to on", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-project-browser-on");
+      const issued = yield* startSessionWith(false, threadId, true);
       assert.deepEqual(issued, [threadId]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
