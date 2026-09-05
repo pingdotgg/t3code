@@ -1372,6 +1372,50 @@ describe("orchestrator MCP toolkit", () => {
             if (Result.isFailure(malformedScheduledRunNowCall)) {
               expect(String(malformedScheduledRunNowCall.failure)).toContain("well-formed Unicode");
             }
+            expect(yield* Ref.get(scheduledManualRuns)).toHaveLength(1);
+
+            for (const malformedScheduledTaskId of [
+              "scheduled-task:\ud800",
+              "scheduled-task:\udc00",
+            ]) {
+              const malformedTaskRunNowCall = yield* Effect.result(
+                invoke("run_scheduled_task_now", {
+                  scheduledTaskId: malformedScheduledTaskId,
+                  clientRequestId: "run-scheduled-valid-unicode-key",
+                }),
+              );
+              expect(Result.isFailure(malformedTaskRunNowCall)).toBe(true);
+              if (Result.isFailure(malformedTaskRunNowCall)) {
+                expect(String(malformedTaskRunNowCall.failure)).toContain("well-formed Unicode");
+              }
+            }
+            expect(yield* Ref.get(scheduledManualRuns)).toHaveLength(1);
+
+            const validNonBmpScheduledTaskId = ScheduledTaskId.make("scheduled-task:🚀");
+            const scheduledTaskTemplate = storedAfterCreate[0];
+            if (scheduledTaskTemplate === undefined) {
+              return yield* Effect.die("Scheduled task fixture is missing");
+            }
+            const validNonBmpTask = {
+              ...scheduledTaskTemplate,
+              id: validNonBmpScheduledTaskId,
+              title: "run a Unicode task",
+              prompt: "run a Unicode task",
+            };
+            yield* Ref.update(scheduledStore, (tasks) => [...tasks, validNonBmpTask]);
+            const validNonBmpRunNowCall = yield* invoke("run_scheduled_task_now", {
+              scheduledTaskId: validNonBmpScheduledTaskId,
+              clientRequestId: "run-scheduled-🚀",
+            });
+            expect(validNonBmpRunNowCall.isError).toBe(false);
+            expect(validNonBmpRunNowCall.structuredContent).toMatchObject({
+              scheduledTaskId: validNonBmpScheduledTaskId,
+              threadId: parentThreadId,
+            });
+            expect(yield* Ref.get(scheduledManualRuns)).toHaveLength(2);
+            yield* Ref.update(scheduledStore, (tasks) =>
+              tasks.filter((task) => task.id !== validNonBmpScheduledTaskId),
+            );
 
             // delete_scheduled_task removes it entirely.
             const scheduledDeleteCall = yield* invoke("delete_scheduled_task", { scheduledTaskId });

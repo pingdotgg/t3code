@@ -28,13 +28,32 @@ const decodeThreadStartInput = Schema.decodeUnknownSync(OrchestratorMcpThreadSta
 const decodeThreadWaitInput = Schema.decodeUnknownSync(OrchestratorMcpThreadWaitInput);
 
 describe("orchestrator MCP contracts", () => {
-  it("rejects malformed Unicode in manual-run idempotency keys", () => {
+  it("accepts well-formed Unicode and rejects malformed manual-run identifiers", () => {
+    expect(
+      decodeRunScheduledTaskNowInput({
+        scheduledTaskId: "scheduled-task:🚀",
+        clientRequestId: "manual-run:🚀",
+      }),
+    ).toEqual({
+      scheduledTaskId: "scheduled-task:🚀",
+      clientRequestId: "manual-run:🚀",
+    });
+
     expect(() =>
       decodeRunScheduledTaskNowInput({
         scheduledTaskId: "scheduled-task:unicode-key",
         clientRequestId: "manual-run-\ud800",
       }),
     ).toThrow(/well-formed Unicode/);
+
+    for (const malformedScheduledTaskId of ["scheduled-task:\ud800", "scheduled-task:\udc00"]) {
+      expect(() =>
+        decodeRunScheduledTaskNowInput({
+          scheduledTaskId: malformedScheduledTaskId,
+          clientRequestId: "manual-run-valid-key",
+        }),
+      ).toThrow(/well-formed Unicode/);
+    }
   });
 
   it("decodes cross-provider delegated task requests and durable results", () => {
