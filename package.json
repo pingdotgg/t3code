@@ -18,20 +18,22 @@
     "screenshots:mobile": "node scripts/mobile-showcase.ts",
     "icons:export": "node scripts/export-brand-icons.ts",
     "icons:check": "node scripts/export-brand-icons.ts --check",
-    "build": "vp run --filter './apps/*' --filter './packages/*' --filter './oxlint-plugin-t3code' --filter './scripts' build",
+    "build": "vp run --filter './apps/*' build",
     "build:marketing": "vp run --filter @t3tools/marketing build",
     "build:desktop": "vp run --filter @t3tools/desktop --filter t3 build",
     "build:resource-monitor": "cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml",
     "typecheck": "vp run -r --concurrency-limit 2 typecheck",
     "tc": "vp run -r --concurrency-limit 2 typecheck",
     "lint": "vp lint --report-unused-disable-directives",
+    "knip": "knip",
+    "knip:check": "knip --include files,dependencies --no-config-hints && knip --workspace packages/tailscale --workspace packages/effect-codex-app-server --exports --no-config-hints",
+    "knip:production": "knip --production",
     "lint:mobile": "node scripts/mobile-native-static-check.ts",
     "test": "vp run -r test",
     "test:resource-monitor": "cargo test --locked --manifest-path native/resource-monitor/Cargo.toml",
     "test:desktop-smoke": "vp run --filter @t3tools/desktop smoke-test",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
-    "build:contracts": "vp run --filter @t3tools/contracts build",
     "dist:desktop:artifact": "node scripts/build-desktop-artifact.ts",
     "dist:desktop:dmg": "node scripts/build-desktop-artifact.ts --platform mac --target dmg",
     "dist:desktop:dmg:arm64": "node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64",
@@ -41,25 +43,18 @@
     "dist:desktop:win:arm64": "node scripts/build-desktop-artifact.ts --platform win --target nsis --arch arm64",
     "dist:desktop:win:x64": "node scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64",
     "release:smoke": "node scripts/release-smoke.ts",
-    "connect:announce-ga": "node scripts/announce-connect-ga.ts",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .vite-plus apps/*/.vite-plus packages/*/.vite-plus",
     "sync:repos": "node scripts/sync-reference-repos.ts"
   },
   "devDependencies": {
-    "@babel/plugin-transform-react-jsx": "7.28.6",
     "@effect/tsgo": "catalog:",
-    "@oxlint/plugins": "^1.63.0",
     "@types/node": "catalog:",
     "@typescript/native-preview": "catalog:",
+    "knip": "6.34.0",
     "vite-plus": "catalog:"
   },
   "engines": {
     "node": "^24.13.1"
   },
-  "packageManager": "pnpm@11.10.0",
-  "msw": {
-    "workerDirectory": [
-      "apps/web/public"
-    ]
-  }
+  "packageManager": "pnpm@11.10.0"
 }

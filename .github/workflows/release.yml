@@ -111,6 +111,8 @@ jobs:
           node-version-file: package.json
           cache: true
           run-install: true
+        env:
+          pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
 
       - id: release_meta
         name: Resolve release version
@@ -174,6 +176,14 @@ jobs:
             --current-tag "${{ steps.release_meta.outputs.tag }}" \
             --github-output
 
+      # Share only the verification results, not the large registry metadata cache.
+      - name: Upload dependency verification
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-dependency-verification
+          path: ${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl
+
   quality:
     name: Release quality checks
     needs: [preflight]
@@ -205,6 +215,11 @@ jobs:
 
       - name: Typecheck
         run: vp run typecheck
+
+      - uses: ./.github/actions/setup-apt-mirrors
+
+      - name: Install browser secret helper build libraries
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
 
       - name: Test
         run: vp run test
@@ -446,7 +461,18 @@ jobs:
           path: ${{ steps.package_cache_path.outputs.path }}
           key: windows-release-packages-v1-${{ matrix.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
 
+      # pnpm checks the lockfile and policy before reusing this result. A missing
+      # artifact leaves the cache empty, so installation runs the checks again.
+      - name: Download dependency verification
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: release-dependency-verification
+          path: ${{ runner.temp }}/pnpm-metadata
+
       - name: Install desktop dependencies
+        env:
+          pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
         run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
 
       - name: Cache resource monitor
@@ -495,7 +521,7 @@ jobs:
           $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
           $proc = Start-Process -FilePath $setupExe `
             -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
-            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64.Spectre", "--quiet", "--norestart" `
+            "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre", "--quiet", "--norestart" `
             -Wait -PassThru -NoNewWindow
           if ($null -eq $proc -or $proc.ExitCode -ne 0) {
             $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
@@ -503,12 +529,16 @@ jobs:
             exit $code
           }
 
-      - name: Install ImageMagick
+      - uses: ./.github/actions/setup-apt-mirrors
+        if: matrix.platform == 'linux'
+
+      - name: Install Linux desktop build libraries
         if: matrix.platform == 'linux'
         shell: bash
         run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config
           if ! command -v magick >/dev/null 2>&1 && ! command -v convert >/dev/null 2>&1; then
-              sudo apt-get update
               sudo apt-get install -y imagemagick
           fi
 
@@ -583,6 +613,7 @@ jobs:
       - name: Build desktop artifact
         shell: bash
         env:
+          pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
           T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -850,35 +881,6 @@ jobs:
               rm -f "$x64_manifest"
             fi
           done
-
-      # - name: Merge Windows updater manifests
-      #   run: |
-      #     shopt -s nullglob
-      #     found_windows_manifest=false
-      #     for x64_manifest in release-assets/*-win-x64.yml; do
-      #       if [[ "$(basename "$x64_manifest")" == builder-debug-* ]]; then
-      #         continue
-      #       fi
-
-      #       arm64_manifest="${x64_manifest/-x64.yml/-arm64.yml}"
-      #       output_manifest="${x64_manifest/-win-x64.yml/.yml}"
-      #       if [[ ! -f "$arm64_manifest" ]]; then
-      #         echo "Missing matching arm64 Windows manifest for $x64_manifest" >&2
-      #         exit 1
-      #       fi
-
-      #       found_windows_manifest=true
-      #       node scripts/merge-update-manifests.ts --platform win \
-      #         "$arm64_manifest" \
-      #         "$x64_manifest" \
-      #         "$output_manifest"
-      #       rm -f "$arm64_manifest" "$x64_manifest"
-      #     done
-
-      #     if [[ "$found_windows_manifest" != true ]]; then
-      #       echo "No Windows updater manifests found to merge." >&2
-      #       exit 1
-      #     fi
 
       - name: Publish release
         if: needs.preflight.outputs.previous_tag != ''

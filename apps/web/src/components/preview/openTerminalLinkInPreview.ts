@@ -1,8 +1,13 @@
-import type { LocalApi, ScopedThreadRef } from "@t3tools/contracts";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
-import { isPreviewableUrl } from "@t3tools/shared/preview";
 import * as Schema from "effect/Schema";
 
+import {
+  browserDefaultOpenProfileId,
+  browserDefaultOpenViewport,
+  resolveBrowserDefaults,
+} from "~/browser/browserDefaults";
+import { isWebUrl, resolveBrowserLinkTargetPreference } from "~/browser/browserLinkTarget";
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
 import { recordVisitForThread } from "~/browserHistoryStore";
 import { applyPreviewServerSnapshot, isPreviewSupportedInRuntime } from "~/previewStateStore";
@@ -15,15 +20,6 @@ const terminalLinkErrorContext = {
   cause: Schema.Defect(),
 };
 
-export class TerminalLinkContextMenuShowError extends Schema.TaggedErrorClass<TerminalLinkContextMenuShowError>()(
-  "TerminalLinkContextMenuShowError",
-  terminalLinkErrorContext,
-) {
-  override get message(): string {
-    return `Failed to show the context menu for terminal link ${this.targetOrigin}.`;
-  }
-}
-
 export class TerminalLinkPreviewOpenError extends Schema.TaggedErrorClass<TerminalLinkPreviewOpenError>()(
   "TerminalLinkPreviewOpenError",
   terminalLinkErrorContext,
@@ -35,20 +31,26 @@ export class TerminalLinkPreviewOpenError extends Schema.TaggedErrorClass<Termin
 
 interface OpenTerminalLinkInPreviewInput<E> {
   readonly url: string;
-  readonly position: { x: number; y: number };
   readonly threadRef: ScopedThreadRef;
   readonly openPreview: OpenPreviewMutation<E>;
-  readonly localApi: LocalApi;
   readonly fallbackToBrowser: () => void;
 }
 
+/**
+ * Opens a terminal hyperlink where the "Open links in" setting says. Terminal
+ * links are activated with the platform modifier already held, so unlike chat
+ * links the modifier cannot double as the system-browser override; the setting
+ * alone decides, and the system browser is the fallback whenever the in-app
+ * one cannot take the URL.
+ */
 export async function openTerminalLinkInPreview<E>(
   input: OpenTerminalLinkInPreviewInput<E>,
 ): Promise<void> {
   const supportsPreview =
-    isPreviewableUrl(input.url) &&
+    isWebUrl(input.url) &&
     isPreviewSupportedInRuntime() &&
-    input.threadRef.threadId.length > 0;
+    input.threadRef.threadId.length > 0 &&
+    (await resolveBrowserLinkTargetPreference()) === "app";
 
   if (!supportsPreview) {
     input.fallbackToBrowser();
@@ -61,51 +63,32 @@ export async function openTerminalLinkInPreview<E>(
     targetOrigin: new URL(input.url).origin,
   };
 
-  let choice: "open-in-preview" | "open-in-browser" | null;
-  try {
-    choice = await input.localApi.contextMenu.show(
-      [
-        { id: "open-in-preview", label: "Open in preview" },
-        { id: "open-in-browser", label: "Open in browser" },
-      ],
-      input.position,
-    );
-  } catch (cause) {
+  const defaults = await resolveBrowserDefaults();
+  const result = await input.openPreview({
+    environmentId: input.threadRef.environmentId,
+    input: {
+      threadId: input.threadRef.threadId,
+      url: input.url,
+      // Same reason as `openUrlInPreview`: this path handles its own result
+      // mapping, so the configured defaults are applied explicitly.
+      viewport: browserDefaultOpenViewport(defaults),
+      profileId: browserDefaultOpenProfileId(defaults),
+    },
+  });
+  if (result._tag === "Failure") {
+    if (isAtomCommandInterrupted(result)) {
+      return;
+    }
     console.error(
-      new TerminalLinkContextMenuShowError({
+      new TerminalLinkPreviewOpenError({
         ...errorContext,
-        cause,
+        cause: result.cause,
       }),
     );
     input.fallbackToBrowser();
     return;
   }
-
-  if (choice === "open-in-preview") {
-    const result = await input.openPreview({
-      environmentId: input.threadRef.environmentId,
-      input: { threadId: input.threadRef.threadId, url: input.url },
-    });
-    if (result._tag === "Failure") {
-      if (isAtomCommandInterrupted(result)) {
-        return;
-      }
-      console.error(
-        new TerminalLinkPreviewOpenError({
-          ...errorContext,
-          cause: result.cause,
-        }),
-      );
-      input.fallbackToBrowser();
-      return;
-    }
-    recordVisitForThread(input.threadRef, input.url);
-    applyPreviewServerSnapshot(input.threadRef, result.value);
-    useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
-    return;
-  }
-
-  if (choice === "open-in-browser") {
-    input.fallbackToBrowser();
-  }
+  recordVisitForThread(input.threadRef, input.url);
+  applyPreviewServerSnapshot(input.threadRef, result.value);
+  useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
 }

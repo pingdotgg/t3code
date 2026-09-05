@@ -67,6 +67,7 @@ import {
   type WhenVariableOption,
   unknownWhenVariables,
   whenAstToExpression,
+  whenNodeRemoveLabel,
 } from "./KeybindingsSettings.logic";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -130,12 +131,12 @@ function ExpandableHeaderSearch({
             render={
               <Button
                 type="button"
-                size="icon-micro"
+                size="icon-xs"
                 variant="ghost-muted"
                 onClick={() => onOpenChange(true)}
                 aria-label="Search keybindings"
               >
-                <SearchIcon className="size-3" />
+                <SearchIcon />
               </Button>
             }
           />
@@ -167,7 +168,7 @@ function ExpandableHeaderSearch({
         placeholder="Search keybindings"
         aria-label="Search keybindings"
         className="w-44 [&_[data-slot=input]]:pl-7"
-        size="compact"
+        size="sm"
       />
     </div>
   );
@@ -349,6 +350,37 @@ function WhenVariableSelect({
   );
 }
 
+function WhenExpressionRemoveButton({
+  label,
+  className,
+  onRemove,
+}: {
+  label: string;
+  className?: string | undefined;
+  onRemove: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        delay={200}
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className={cn("size-7", className)}
+            aria-label={label}
+            onClick={onRemove}
+          />
+        }
+      >
+        <MinusIcon aria-hidden className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 function WhenExpressionNodeEditor({
   node,
   variables,
@@ -388,16 +420,10 @@ function WhenExpressionNodeEditor({
           onChange={(value) => onChange(setConditionIdentifier(node, value))}
         />
         {onRemove ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="size-7"
-            aria-label="Remove condition"
-            onClick={onRemove}
-          >
-            <MinusIcon className="size-3.5" />
-          </Button>
+          <WhenExpressionRemoveButton
+            label={whenNodeRemoveLabel(node, depth)}
+            onRemove={onRemove}
+          />
         ) : null}
       </div>
     );
@@ -423,16 +449,11 @@ function WhenExpressionNodeEditor({
             Not
           </Toggle>
           {onRemove ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="ml-auto size-7"
-              aria-label="Remove negated group"
-              onClick={onRemove}
-            >
-              <MinusIcon className="size-3.5" />
-            </Button>
+            <WhenExpressionRemoveButton
+              label={whenNodeRemoveLabel(node, depth)}
+              className="ml-auto"
+              onRemove={onRemove}
+            />
           ) : null}
         </div>
         <div className="relative pl-4">
@@ -546,16 +567,11 @@ function WhenExpressionNodeEditor({
           Group
         </Button>
         {onRemove ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="ml-auto size-7"
-            aria-label="Remove group"
-            onClick={onRemove}
-          >
-            <MinusIcon className="size-3.5" />
-          </Button>
+          <WhenExpressionRemoveButton
+            label={whenNodeRemoveLabel(node, depth)}
+            className="ml-auto"
+            onRemove={onRemove}
+          />
         ) : null}
       </div>
       <div className="space-y-2">
@@ -834,7 +850,7 @@ function KeybindingKeyControl({
     <>
       {isDirty ? (
         <Button
-          size="compact"
+          size="sm"
           disabled={isSaving || keyDraft.trim().length === 0 || !isWhenDraftValid}
           onClick={save}
         >
@@ -847,7 +863,7 @@ function KeybindingKeyControl({
           onClick={() => setDraft({ isRecording: true })}
           aria-label={`Edit shortcut for ${commandLabel(row.command)}: ${formatShortcutLabel(row.binding.shortcut)}`}
           className={cn(
-            "inline-flex h-7 cursor-pointer items-center rounded-md border border-transparent px-1.5 outline-none transition-colors hover:border-border/70 hover:bg-accent focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24",
+            "inline-flex h-8 cursor-pointer items-center rounded-md border border-transparent px-1.5 sm:h-7 outline-none transition-colors hover:border-border/70 hover:bg-accent focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24",
             pillClassName,
           )}
         >
@@ -860,7 +876,7 @@ function KeybindingKeyControl({
           aria-label={`Keybinding for ${commandLabel(row.command)}`}
           value={isRecording ? "" : keyDraft}
           placeholder={isRecording ? "Press shortcut" : "Unassigned"}
-          size="compact"
+          size="sm"
           className={cn("w-44 font-mono", isRecording && "border-primary/70 bg-primary/5")}
           onFocus={() => setDraft({ isRecording: true })}
           onBlur={() => setDraft({ isRecording: false })}
@@ -938,7 +954,7 @@ function KeybindingRowMenu({
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="size-7 text-muted-foreground hover:text-foreground sm:size-7"
+            className="text-muted-foreground hover:text-foreground"
             disabled={isSaving}
             aria-label={`Actions for ${commandLabel(row.command)}`}
           />
@@ -1139,7 +1155,7 @@ function NewKeybindingCommandSelect({
       value={draft.commandDraft}
       onValueChange={(value) => draft.setCommandDraft(value as KeybindingCommand)}
     >
-      <SelectTrigger size="compact" className={className}>
+      <SelectTrigger size="sm" className={className}>
         <SelectValue placeholder="Command" />
       </SelectTrigger>
       <SelectContent
@@ -1173,7 +1189,7 @@ function NewKeybindingKeyInput({
       aria-label={`Keybinding for ${draft.commandLabelText}`}
       value={draft.isRecording ? "" : draft.keyDraft}
       placeholder={draft.isRecording ? "Press shortcut" : "Unassigned"}
-      size="compact"
+      size="sm"
       className={cn("font-mono", draft.isRecording && "border-primary/70 bg-primary/5", className)}
       onFocus={() => draft.setDraft({ isRecording: true })}
       onBlur={() => draft.setDraft({ isRecording: false })}
@@ -1217,7 +1233,7 @@ function NewKeybindingCancelIcon({
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="size-7 text-muted-foreground hover:text-foreground"
+            className="text-muted-foreground hover:text-foreground"
             disabled={isSaving}
             aria-label="Cancel new keybinding"
             onClick={onCancel}
@@ -1255,7 +1271,7 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
           />
           <KeybindingConflictWarning labels={draft.conflictLabels} />
           <NewKeybindingKeyInput draft={draft} className="w-44" />
-          <Button size="compact" disabled={isSaving || !draft.canSave} onClick={draft.save}>
+          <Button size="sm" disabled={isSaving || !draft.canSave} onClick={draft.save}>
             {isSaving ? "Saving" : "Save"}
           </Button>
           <NewKeybindingCancelIcon isSaving={isSaving} onCancel={onCancel} />
@@ -1308,7 +1324,7 @@ function KeybindingsList(props: KeybindingsListProps) {
 /** Shown in the browser build only; the desktop app receives every shortcut. */
 function BrowserKeybindingNotice() {
   return (
-    <div className="flex items-center gap-1.5 px-3 pb-2 text-[12px] text-muted-foreground sm:px-4">
+    <div className="flex items-center gap-2 px-3 py-2.5 text-[12px] leading-[1.45] text-muted-foreground sm:px-4">
       <TriangleAlertIcon className="size-3.5 shrink-0 text-warning" aria-hidden />
       <span>
         Some shortcuts may be claimed by the browser before T3 Code sees them. Use the desktop app
@@ -1498,12 +1514,12 @@ export function KeybindingsSettingsPanel() {
                 render={
                   <Button
                     type="button"
-                    size="icon-micro"
+                    size="icon-xs"
                     variant="ghost-muted"
                     onClick={() => setIsAddingBinding(true)}
                     aria-label="Add keybinding"
                   >
-                    <PlusIcon className="size-3" />
+                    <PlusIcon />
                   </Button>
                 }
               />
@@ -1514,13 +1530,13 @@ export function KeybindingsSettingsPanel() {
                 render={
                   <Button
                     type="button"
-                    size="icon-micro"
+                    size="icon-xs"
                     variant="ghost-muted"
                     disabled={!keybindingsConfigPath}
                     onClick={openKeybindingsFile}
                     aria-label="Open keybindings.json"
                   >
-                    <FileJsonIcon className="size-3" />
+                    <FileJsonIcon />
                   </Button>
                 }
               />

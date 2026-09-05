@@ -19,6 +19,22 @@
       "types": "./src/markdownImages.ts",
       "default": "./src/markdownImages.ts"
     },
+    "./markdown-links": {
+      "types": "./src/markdownLinks.ts",
+      "default": "./src/markdownLinks.ts"
+    },
+    "./media-reference": {
+      "types": "./src/mediaReference.ts",
+      "default": "./src/mediaReference.ts"
+    },
+    "./media-source": {
+      "types": "./src/mediaSource.ts",
+      "default": "./src/mediaSource.ts"
+    },
+    "./media-actions": {
+      "types": "./src/mediaActions.ts",
+      "default": "./src/mediaActions.ts"
+    },
     "./codex-file-citations": {
       "types": "./src/codexFileCitations.ts",
       "default": "./src/codexFileCitations.ts"
@@ -139,6 +155,10 @@
       "types": "./src/state/session.ts",
       "default": "./src/state/session.ts"
     },
+    "./state/shared-settings": {
+      "types": "./src/state/sharedSettings.ts",
+      "default": "./src/state/sharedSettings.ts"
+    },
     "./state/shell": {
       "types": "./src/state/shell.ts",
       "default": "./src/state/shell.ts"
@@ -179,9 +199,17 @@
       "types": "./src/work-log/presentation.ts",
       "default": "./src/work-log/presentation.ts"
     },
+    "./work-log/tool-presentation": {
+      "types": "./src/work-log/toolPresentation.ts",
+      "default": "./src/work-log/toolPresentation.ts"
+    },
     "./work-log/command-label": {
       "types": "./src/work-log/commandLabel.ts",
       "default": "./src/work-log/commandLabel.ts"
+    },
+    "./work-log/scroll-anchor": {
+      "types": "./src/work-log/scrollAnchor.ts",
+      "default": "./src/work-log/scrollAnchor.ts"
     }
   },
   "scripts": {

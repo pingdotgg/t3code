@@ -1,12 +1,18 @@
 import { SymbolView } from "../components/AppSymbol";
 import { videoMimeType } from "@t3tools/shared/video";
-import { useEffect, useRef, useState } from "react";
-import { Alert, Image, Pressable, ScrollView, View } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import { Image, Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "./AppText";
-import type { DraftComposerAttachment, DraftComposerFileAttachment } from "../lib/composerImages";
+import {
+  isFileBackedComposerAttachment,
+  type DraftComposerAttachment,
+  type DraftComposerFileAttachment,
+  type DraftComposerImageAttachment,
+} from "../lib/composerImages";
+import { resolveOwnedComposerAttachmentFileUri } from "../lib/composerAttachmentFiles";
 import { VideoAttachmentTile } from "./VideoAttachmentTile";
-import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
+import type { MediaActionsSource } from "../lib/mediaActions";
 import { PresentationSource } from "./NativePresentation";
 import type { FilePreviewSource } from "./FilePreviewModal";
 import { isPdfFile } from "../lib/filePreview";
@@ -87,35 +93,75 @@ export function ComposerAttachmentThumbnail(props: ComposerAttachmentThumbnailPr
   );
 }
 
+/**
+ * Thumbnail URI for a draft image. File-backed previews rebase into the
+ * current iOS data container (its UUID changes across installs); the raw
+ * persisted URI renders meanwhile, which is correct everywhere but after a
+ * container move.
+ */
+function useComposerImagePreviewUri(attachment: DraftComposerImageAttachment): string {
+  const { fileUri, previewUri } = attachment;
+  const [rebased, setRebased] = useState<{ fileUri: string; uri: string } | null>(null);
+  useEffect(() => {
+    if (fileUri === undefined) return;
+    let cancelled = false;
+    void (async () => {
+      const { Paths } = await import("expo-file-system");
+      const owned = resolveOwnedComposerAttachmentFileUri(fileUri, Paths.document.uri);
+      // Re-render only when the container actually moved.
+      if (!cancelled && owned !== null && owned !== previewUri) setRebased({ fileUri, uri: owned });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [fileUri, previewUri]);
+  return fileUri !== undefined && rebased?.fileUri === fileUri ? rebased.uri : previewUri;
+}
+
+function ComposerImageAttachment(
+  props: ComposerAttachmentThumbnailProps & { readonly attachment: DraftComposerImageAttachment },
+) {
+  const { attachment } = props;
+  const style = { width: props.size, height: props.size, borderRadius: props.borderRadius };
+  const previewUri = useComposerImagePreviewUri(attachment);
+  const sourceIdentifier = `draft-image:${attachment.id}`;
+  return (
+    <PresentationSource identifier={sourceIdentifier}>
+      <Pressable
+        accessibilityRole="imagebutton"
+        accessibilityLabel={`Open ${attachment.name}`}
+        disabled={!props.onPressPreview}
+        onPress={() =>
+          props.onPressPreview?.(
+            // File-backed images open through the retain-lease + container
+            // rebase path; legacy drafts still carry their inline bytes.
+            isFileBackedComposerAttachment(attachment)
+              ? { kind: "image", attachment, name: attachment.name, sourceIdentifier }
+              : {
+                  kind: "image",
+                  uri: attachment.dataUrl ?? attachment.previewUri,
+                  name: attachment.name,
+                  sourceIdentifier,
+                },
+          )
+        }
+      >
+        <Image
+          source={{ uri: previewUri }}
+          style={style}
+          className="bg-subtle"
+          resizeMode="cover"
+        />
+      </Pressable>
+    </PresentationSource>
+  );
+}
+
 function ComposerAttachmentContent(props: ComposerAttachmentThumbnailProps) {
   const { attachment } = props;
   const style = { width: props.size, height: props.size, borderRadius: props.borderRadius };
   if (attachment.type === "image") {
-    const sourceIdentifier = `draft-image:${attachment.id}`;
-    return (
-      <PresentationSource identifier={sourceIdentifier}>
-        <Pressable
-          accessibilityRole="imagebutton"
-          accessibilityLabel={`Open ${attachment.name}`}
-          disabled={!props.onPressPreview}
-          onPress={() =>
-            props.onPressPreview?.({
-              kind: "image",
-              uri: attachment.dataUrl,
-              name: attachment.name,
-              sourceIdentifier,
-            })
-          }
-        >
-          <Image
-            source={{ uri: attachment.previewUri }}
-            style={style}
-            className="bg-subtle"
-            resizeMode="cover"
-          />
-        </Pressable>
-      </PresentationSource>
-    );
+    return <ComposerImageAttachment {...props} attachment={attachment} />;
   }
   const onPressVideo = props.onPressVideo;
   if (onPressVideo && videoMimeType(attachment) !== null) {
@@ -175,45 +221,15 @@ function ComposerVideoAttachment(props: {
   const { attachment } = props;
   const sourceIdentifier = `draft:${attachment.id}`;
   const style = { width: props.size, height: props.size, borderRadius: props.borderRadius };
-  const shareRef = useRef<AbortController | null>(null);
-  const [sharing, setSharing] = useState(false);
-  useEffect(
-    () => () => {
-      shareRef.current?.abort();
-      shareRef.current = null;
-    },
-    [],
+  const actionsSource = useMemo<MediaActionsSource>(
+    () => ({
+      name: attachment.name,
+      mimeType: videoMimeType(attachment) ?? attachment.mimeType,
+      sourceIdentifier,
+      attachment,
+    }),
+    [attachment, sourceIdentifier],
   );
-
-  const onShare = () => {
-    if (shareRef.current) return;
-    const controller = new AbortController();
-    shareRef.current = controller;
-    setSharing(true);
-    void (async () => {
-      const preview = await loadLocalAttachmentPreview(attachment, controller.signal);
-      if (!preview) return;
-      try {
-        await preview.share(controller.signal, sourceIdentifier);
-      } finally {
-        preview.dispose();
-      }
-    })()
-      .catch((error: unknown) => {
-        if (!controller.signal.aborted) {
-          Alert.alert(
-            "Could not share video",
-            error instanceof Error ? error.message : "Try again.",
-          );
-        }
-      })
-      .finally(() => {
-        if (shareRef.current === controller) {
-          shareRef.current = null;
-          setSharing(false);
-        }
-      });
-  };
 
   return (
     <VideoAttachmentTile
@@ -222,8 +238,7 @@ function ComposerVideoAttachment(props: {
       thumbnailSource={attachment}
       compact={props.compact}
       onPress={() => props.onPressVideo(attachment, sourceIdentifier)}
-      onShare={onShare}
-      disabled={sharing}
+      actionsSource={actionsSource}
       style={style}
     />
   );

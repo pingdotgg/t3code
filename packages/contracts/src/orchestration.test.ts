@@ -1105,6 +1105,51 @@ it.effect("project favicon overrides accept only supported image files", () =>
   }),
 );
 
+it.effect("project icon overrides accept Lucide icons, colors, and emoji", () =>
+  Effect.gen(function* () {
+    const lucide = yield* decodeOrchestrationCommand({
+      type: "project.meta.update",
+      commandId: "cmd-project-lucide-icon",
+      projectId: "project-1",
+      projectIcon: { kind: "lucide", name: "alarm-clock", color: "violet" },
+    });
+    assert.strictEqual(lucide.type, "project.meta.update");
+
+    const emoji = yield* decodeOrchestrationCommand({
+      type: "project.meta.update",
+      commandId: "cmd-project-emoji-icon",
+      projectId: "project-1",
+      projectIcon: { kind: "emoji", emoji: "👩🏽‍💻" },
+    });
+    assert.strictEqual(emoji.type, "project.meta.update");
+
+    const invalid = yield* Effect.exit(
+      decodeOrchestrationCommand({
+        type: "project.meta.update",
+        commandId: "cmd-project-invalid-icon",
+        projectId: "project-1",
+        projectIcon: { kind: "lucide", name: "Alarm Clock", color: "ultraviolet" },
+      }),
+    );
+    assert.strictEqual(invalid._tag, "Failure");
+  }),
+);
+
+it.effect("rejects thread history imports without messages", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeOrchestrationCommand({
+        type: "thread.history.import",
+        commandId: "command-empty-history",
+        threadId: "thread-1",
+        messages: [],
+      }),
+    );
+
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
 it("isProviderSendTurnSupportedImageMimeType accepts raster formats and rejects svg", () => {
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("image/png"), true);
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("IMAGE/JPEG"), true);

@@ -34,15 +34,20 @@ import {
   type ProviderInstanceConfigMap,
   ProviderInstanceId,
 } from "@t3tools/contracts";
+import { isHostWindows } from "@t3tools/shared/hostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import type { BuiltInDriversEnv } from "../builtInDrivers.ts";
+import { AntigravityInstallation } from "../AntigravityInstallation.ts";
 import { ServerConfig } from "../../config.ts";
+import { expandHomePath } from "../../pathExpansion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver } from "../Drivers/CodexDriver.ts";
@@ -51,6 +56,7 @@ import { GrokDriver } from "../Drivers/GrokDriver.ts";
 import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
+import * as CodexResetCredit from "./codexResetCredit.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
 
@@ -136,6 +142,80 @@ const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSetti
   ...overrides,
 });
 
+const makeTildeProviderFixtures = Effect.fn(
+  "ProviderInstanceRegistryLive.test.makeTildeProviderFixtures",
+)(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const homePath = expandHomePath("~");
+  const fixtureDir = yield* fileSystem.makeTempDirectoryScoped({
+    directory: homePath,
+    prefix: ".t3-provider-path-test-",
+  });
+  const codexPath = path.join(fixtureDir, "codex");
+  const claudePath = path.join(fixtureDir, "claude");
+  const claudeHomePath = path.join(fixtureDir, "claude-home");
+  const codexScriptPath = path.join(fixtureDir, "codex-script.json");
+  const codexFixtureDir = path.join(import.meta.dirname, "../testFixtures");
+
+  yield* fileSystem.copyFile(path.join(codexFixtureDir, "codexCollabMockPeer.sh"), codexPath);
+  yield* fileSystem.copyFile(
+    path.join(codexFixtureDir, "codexCollabMockPeer.mjs"),
+    path.join(fixtureDir, "codexCollabMockPeer.mjs"),
+  );
+  yield* fileSystem.copyFile(
+    path.join(codexFixtureDir, "codexMultiAgentWire.json"),
+    path.join(fixtureDir, "codexMultiAgentWire.json"),
+  );
+  yield* fileSystem.writeFileString(
+    codexScriptPath,
+    // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed script document read by the external Codex mock peer.
+    JSON.stringify({ rootThreadId: "probe-thread", notifications: [] }),
+  );
+  yield* fileSystem.chmod(codexPath, 0o755);
+
+  yield* fileSystem.writeFileString(
+    claudePath,
+    [
+      "#!/usr/bin/env node",
+      'import * as NodeReadline from "node:readline";',
+      'if (process.argv.includes("--version")) {',
+      '  process.stdout.write("claude 2.1.219\\n");',
+      "  process.exit(0);",
+      "}",
+      "const lines = NodeReadline.createInterface({ input: process.stdin });",
+      'lines.on("line", (line) => {',
+      "  const message = JSON.parse(line);",
+      '  if (message.type !== "control_request" || message.request?.subtype !== "initialize") return;',
+      "  process.stdout.write(JSON.stringify({",
+      '    type: "control_response",',
+      "    response: {",
+      '      subtype: "success",',
+      "      request_id: message.request_id,",
+      "      response: {",
+      "        commands: [], agents: [], models: [],",
+      '        output_style: "default", available_output_styles: ["default"],',
+      '        account: { email: "test@example.com", subscriptionType: "pro", tokenSource: "oauth" },',
+      "      },",
+      "    },",
+      '  }) + "\\n");',
+      "});",
+      "setInterval(() => {}, 1_000);",
+      "",
+    ].join("\n"),
+  );
+  yield* fileSystem.chmod(claudePath, 0o755);
+  yield* fileSystem.makeDirectory(claudeHomePath);
+
+  const asTildePath = (filePath: string) => `~/${path.relative(homePath, filePath)}`;
+  return {
+    codexBinaryPath: asTildePath(codexPath),
+    claudeBinaryPath: asTildePath(claudePath),
+    claudeHomePath,
+    codexScriptPath,
+  };
+});
+
 describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
   // `ServerConfig.layerTest` needs `FileSystem` to materialize its scratch
   // directory. `Layer.merge` just unions requirements, so we have to push
@@ -151,6 +231,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
     Layer.provideMerge(TestHttpClientLive),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
     Layer.provideMerge(ModelManifest.layerTest),
+    Layer.provideMerge(CodexResetCredit.layerTest),
   );
 
   it.live("boots two independent codex instances from a ProviderInstanceConfigMap", () =>
@@ -211,15 +292,19 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(personalSnapshot.instanceId).toBe(personalId);
       expect(personalSnapshot.driver).toBe(codexDriverKind);
       expect(personalSnapshot.enabled).toBe(false);
+      // The layout resolves the configured home through the host Path.
+      const path = yield* Path.Path;
       expect(personalSnapshot.continuation?.groupKey).toBe(
-        "codex:home:/home/julius/.codex_personal",
+        `codex:home:${path.resolve("/home/julius/.codex_personal")}`,
       );
 
       const workSnapshot = yield* work!.snapshot.getSnapshot;
       expect(workSnapshot.instanceId).toBe(workId);
       expect(workSnapshot.driver).toBe(codexDriverKind);
       expect(workSnapshot.enabled).toBe(false);
-      expect(workSnapshot.continuation?.groupKey).toBe("codex:home:/home/julius/.codex");
+      expect(workSnapshot.continuation?.groupKey).toBe(
+        `codex:home:${path.resolve("/home/julius/.codex")}`,
+      );
 
       // Nothing goes to the unavailable bucket — both drivers are registered.
       const unavailable = yield* registry.listUnavailable;
@@ -250,6 +335,60 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(instance!.enabled).toBe(false);
       const snapshot = yield* instance!.snapshot.getSnapshot;
       expect(snapshot.enabled).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("runs Codex and Claude readiness probes from configured tilde paths", () =>
+    Effect.gen(function* () {
+      if (yield* isHostWindows) return;
+
+      const fixtures = yield* makeTildeProviderFixtures();
+
+      const codexId = ProviderInstanceId.make("codex_tilde");
+      const claudeId = ProviderInstanceId.make("claude_tilde");
+      const configMap: ProviderInstanceConfigMap = {
+        [codexId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          environment: [
+            {
+              name: "T3_CODEX_COLLAB_SCRIPT",
+              value: fixtures.codexScriptPath,
+              sensitive: false,
+            },
+          ],
+          config: makeCodexConfig({ enabled: true, binaryPath: fixtures.codexBinaryPath }),
+        },
+        [claudeId]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: true,
+          config: makeClaudeConfig({
+            enabled: true,
+            binaryPath: fixtures.claudeBinaryPath,
+            homePath: fixtures.claudeHomePath,
+          }),
+        },
+      };
+
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [CodexDriver, ClaudeDriver],
+        configMap,
+      });
+      const codex = yield* registry.getInstance(codexId);
+      const claude = yield* registry.getInstance(claudeId);
+      expect(codex).toBeDefined();
+      expect(claude).toBeDefined();
+
+      const [codexSnapshot, claudeSnapshot] = yield* Effect.all(
+        [codex!.snapshot.refresh, claude!.snapshot.refresh],
+        { concurrency: "unbounded" },
+      );
+      expect(codexSnapshot).toMatchObject({ status: "ready", installed: true, version: "0.0.0" });
+      expect(claudeSnapshot).toMatchObject({
+        status: "ready",
+        installed: true,
+        version: "2.1.219",
+      });
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -308,15 +447,19 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
   // surfaced; that merged layer then provides `ServerConfig.layerTest`'s
   // `FileSystem` dep while keeping everything else surfaced to the test.
   const infraLayer = OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer));
-  const testLayer = ServerConfig.layerTest(process.cwd(), {
-    prefix: "provider-instance-registry-all-drivers-test",
-  }).pipe(
+  const testLayer = AntigravityInstallation.layer.pipe(
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "provider-instance-registry-all-drivers-test",
+      }),
+    ),
     Layer.provideMerge(infraLayer),
     Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(TestHttpClientLive),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
     Layer.provideMerge(ModelManifest.layerTest),
+    Layer.provideMerge(CodexResetCredit.layerTest),
   );
 
   it.live("boots one instance of every shipped driver from a single config map", () =>
@@ -444,13 +587,17 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(codexSnapshot.instanceId).toBe(codexId);
       expect(codexSnapshot.driver).toBe(codexDriverKind);
       expect(codexSnapshot.enabled).toBe(false);
-      expect(codexSnapshot.continuation?.groupKey).toBe("codex:home:/home/julius/.codex");
+      expect(codexSnapshot.continuation?.groupKey).toBe(
+        `codex:home:${(yield* Path.Path).resolve("/home/julius/.codex")}`,
+      );
 
       const claudeSnapshot = yield* claude!.snapshot.getSnapshot;
       expect(claudeSnapshot.instanceId).toBe(claudeId);
       expect(claudeSnapshot.driver).toBe(claudeDriverKind);
       expect(claudeSnapshot.enabled).toBe(false);
-      expect(claudeSnapshot.continuation?.groupKey).toBe("claude:home:/home/julius/.claude-work");
+      expect(claudeSnapshot.continuation?.groupKey).toBe(
+        `claude:home:${(yield* Path.Path).resolve("/home/julius/.claude-work")}`,
+      );
 
       const cursorSnapshot = yield* cursor!.snapshot.getSnapshot;
       expect(cursorSnapshot.instanceId).toBe(cursorId);
