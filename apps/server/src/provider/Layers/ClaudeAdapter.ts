@@ -2700,6 +2700,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         context.lastKnownContextWindow,
         context.lastKnownTotalProcessedTokens,
       );
+      if (snapshot !== undefined && context.turnState) {
+        context.turnState.latestAssistantUsage = event.usage;
+        context.turnState.compactedSinceLatestAssistantUsage = false;
+      }
       yield* emitThreadTokenUsage(context, snapshot, {
         rawMethod: "claude/stream_event/message_delta",
         rawPayload: message,
