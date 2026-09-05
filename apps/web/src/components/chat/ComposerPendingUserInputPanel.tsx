@@ -12,6 +12,7 @@ import { ComposerBanner } from "./ComposerBanner";
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
+  disabled?: boolean;
   respondingRequestIds: ApprovalRequestId[];
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
@@ -21,6 +22,7 @@ interface PendingUserInputPanelProps {
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
   pendingUserInputs,
+  disabled = false,
   respondingRequestIds,
   answers,
   questionIndex,
@@ -35,6 +37,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
     <ComposerPendingUserInputCard
       key={activePrompt.requestId}
       prompt={activePrompt}
+      disabled={disabled}
       isResponding={respondingRequestIds.includes(activePrompt.requestId)}
       answers={answers}
       questionIndex={questionIndex}
@@ -46,6 +49,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
 
 const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard({
   prompt,
+  disabled,
   isResponding,
   answers,
   questionIndex,
@@ -53,6 +57,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onAdvance,
 }: {
   prompt: PendingUserInput;
+  disabled: boolean;
   isResponding: boolean;
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
@@ -79,6 +84,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   useEffect(() => {
     onAdvanceRef.current = onAdvance;
   }, [onAdvance]);
+
+  useEffect(() => {
+    if (disabled && autoAdvanceTimerRef.current !== null) {
+      window.clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
+    }
+  }, [disabled]);
 
   useEffect(() => {
     if (!activeQuestion || activeQuestion.multiSelect || !optimisticSingleSelect) {
@@ -112,6 +124,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 
   const handleOptionSelection = useCallback(
     (questionId: string, optionValue: string) => {
+      if (disabled || isResponding) return;
       if (activeQuestion?.multiSelect) {
         onToggleOption(questionId, optionValue);
         return;
@@ -126,7 +139,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         onAdvanceRef.current();
       }, 200);
     },
-    [activeQuestion, onToggleOption],
+    [activeQuestion, disabled, isResponding, onToggleOption],
   );
 
   // Keyboard shortcut: number keys 1-9 select corresponding options when focus is
@@ -134,7 +147,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   // select prompts keep the existing auto-advance behavior. Collapsed prompts opt
   // out, since the numbers they refer to are not on screen.
   useEffect(() => {
-    if (!activeQuestion || isResponding || isCollapsed) return;
+    if (!activeQuestion || disabled || isResponding || isCollapsed) return;
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
@@ -158,7 +171,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, handleOptionSelection, isCollapsed, isResponding]);
+  }, [activeQuestion, disabled, handleOptionSelection, isCollapsed, isResponding]);
 
   if (!activeQuestion) {
     return null;
@@ -221,8 +234,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 isSelected
                   ? "bg-muted/55 text-foreground"
                   : "bg-transparent text-foreground/85 hover:bg-muted/30",
-                isResponding && "opacity-50 cursor-not-allowed",
-                !isResponding && "cursor-pointer",
+                (disabled || isResponding) && "opacity-50 cursor-not-allowed",
+                !disabled && !isResponding && "cursor-pointer",
               );
               const content = (
                 <>
@@ -249,7 +262,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 <button
                   key={`${activeQuestion.id}:${optionValue}`}
                   type="button"
-                  disabled={isResponding}
+                  disabled={disabled || isResponding}
                   onClick={() => {
                     handleOptionSelection(activeQuestion.id, optionValue);
                   }}

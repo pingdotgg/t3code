@@ -1,4 +1,5 @@
 import {
+  AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   type AssistantCitation,
   type ApprovalRequestId,
@@ -419,8 +420,13 @@ import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/at
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { fileAttachmentCapabilityBlockReason } from "./chat/composerAttachmentFiles";
 import { assetEnvironment } from "../state/assets";
-import { readEnvironmentScope, readPreparedConnection } from "../state/session";
+import {
+  readEnvironmentScope,
+  readPreparedConnection,
+  useEnvironmentScope,
+} from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button } from "./ui/button";
 import {
@@ -1372,6 +1378,7 @@ export default function ChatView(props: ChatViewProps) {
     reserveTitleBarControlInset = true,
     forceExpandedMobileComposer = false,
   } = props;
+  const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
   const threadSyncPhase = routeKind === "server" ? (props.threadSyncPhase ?? null) : null;
   const threadDetailLoading = threadSyncPhase === "loading";
@@ -1382,7 +1389,9 @@ export default function ChatView(props: ChatViewProps) {
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
-  const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
+  const updateProject = useOrchestrationCommand(projectEnvironment.update, {
+    reportFailure: false,
+  });
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
   });
@@ -1392,36 +1401,38 @@ export default function ChatView(props: ChatViewProps) {
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
-  const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
-  const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
-  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+  const createThread = useOrchestrationCommand(threadEnvironment.create, { reportFailure: false });
+  const deleteThread = useOrchestrationCommand(threadEnvironment.delete, { reportFailure: false });
+  const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
-  const setThreadRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
+  const setThreadRuntimeMode = useOrchestrationCommand(threadEnvironment.setRuntimeMode, {
     reportFailure: false,
   });
-  const setThreadInteractionMode = useAtomCommand(threadEnvironment.setInteractionMode, {
+  const setThreadInteractionMode = useOrchestrationCommand(threadEnvironment.setInteractionMode, {
     reportFailure: false,
   });
-  const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
+    reportFailure: false,
+  });
   const createAttachmentAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     refresh: true,
   });
-  const uploadThreadFeedback = useAtomCommand(threadEnvironment.uploadFeedback, {
+  const uploadThreadFeedback = useOrchestrationCommand(threadEnvironment.uploadFeedback, {
     reportFailure: false,
   });
-  const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
+  const interruptThreadTurn = useOrchestrationCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
-  const respondToThreadApproval = useAtomCommand(threadEnvironment.respondToApproval, {
+  const respondToThreadApproval = useOrchestrationCommand(threadEnvironment.respondToApproval, {
     reportFailure: false,
   });
-  const respondToThreadUserInput = useAtomCommand(threadEnvironment.respondToUserInput, {
+  const respondToThreadUserInput = useOrchestrationCommand(threadEnvironment.respondToUserInput, {
     reportFailure: false,
   });
-  const revertThreadCheckpoint = useAtomCommand(threadEnvironment.revertCheckpoint, {
+  const revertThreadCheckpoint = useOrchestrationCommand(threadEnvironment.revertCheckpoint, {
     reportFailure: false,
   });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
@@ -2984,7 +2995,7 @@ export default function ChatView(props: ChatViewProps) {
   const revertTurnCountByUserMessageId = useMemo(() => {
     const next = buildRevertTurnCountByUserMessageId(
       {
-        supportsConversationRollback,
+        supportsConversationRollback: supportsConversationRollback && canOperateThread,
         timelineEntries,
         turnDiffSummaryByAssistantMessageId,
         inferredCheckpointTurnCountByTurnId,
@@ -2994,6 +3005,7 @@ export default function ChatView(props: ChatViewProps) {
     lastRevertTurnCountRef.current = next;
     return next;
   }, [
+    canOperateThread,
     supportsConversationRollback,
     inferredCheckpointTurnCountByTurnId,
     timelineEntries,
@@ -3894,7 +3906,6 @@ export default function ChatView(props: ChatViewProps) {
     }
     const relinkKey = `${replacementLinkedThreadPullRequest.projectId}:${replacementLinkedThreadPullRequest.repository}#${replacementLinkedThreadPullRequest.number}`;
     if (threadPrRelinkKeysRef.current.get(activeThreadKey) === relinkKey) return;
-    threadPrRelinkKeysRef.current.set(activeThreadKey, relinkKey);
     const openSurface = selectActiveRightPanelSurface(
       useRightPanelStore.getState().byThreadKey,
       activeThreadRef,
@@ -3912,8 +3923,14 @@ export default function ChatView(props: ChatViewProps) {
         .openPullRequest(activeThreadRef, replacementLinkedThreadPullRequest);
     }
 
+    if (!canOperateThread) return;
+    threadPrRelinkKeysRef.current.set(activeThreadKey, relinkKey);
     threadPrRelinkWriteRef.current = threadPrRelinkWriteRef.current.then(async () => {
       if (threadPrRelinkKeysRef.current.get(activeThreadKey) !== relinkKey) return;
+      if (!readEnvironmentScope(activeThreadRef.environmentId, AuthOrchestrationOperateScope)) {
+        threadPrRelinkKeysRef.current.delete(activeThreadKey);
+        return;
+      }
       const result = await updateThreadMetadata({
         environmentId: activeThreadRef.environmentId,
         input: {
@@ -3936,6 +3953,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     activeThreadKey,
     activeThreadRef,
+    canOperateThread,
     isServerThread,
     persistedLinkedThreadPullRequest,
     replacementLinkedThreadPullRequest,
@@ -5259,7 +5277,7 @@ export default function ChatView(props: ChatViewProps) {
   ]);
   const activeThreadSettled =
     supportsSettlement && activeThreadShell?.settledOverride === "settled";
-  const unsettleThreadMutation = useAtomCommand(threadEnvironment.unsettle, {
+  const unsettleThreadMutation = useOrchestrationCommand(threadEnvironment.unsettle, {
     reportFailure: false,
   });
   // Keyed by thread, not a boolean: the pending state must follow the thread
@@ -5268,7 +5286,11 @@ export default function ChatView(props: ChatViewProps) {
   const [unsettlingThreadKey, setUnsettlingThreadKey] = useState<string | null>(null);
   const isUnsettling = unsettlingThreadKey !== null && unsettlingThreadKey === activeThreadKey;
   const handleUnsettleActiveThread = useCallback(async () => {
-    if (!activeThreadRef) return;
+    if (
+      !activeThreadRef ||
+      !readEnvironmentScope(activeThreadRef.environmentId, AuthOrchestrationOperateScope)
+    )
+      return;
     const threadKey = scopedThreadKey(activeThreadRef);
     setUnsettlingThreadKey(threadKey);
     try {
@@ -5290,13 +5312,17 @@ export default function ChatView(props: ChatViewProps) {
       setUnsettlingThreadKey((current) => (current === threadKey ? null : current));
     }
   }, [activeThreadRef, unsettleThreadMutation]);
-  const unsnoozeThreadMutation = useAtomCommand(threadEnvironment.unsnooze, {
+  const unsnoozeThreadMutation = useOrchestrationCommand(threadEnvironment.unsnooze, {
     reportFailure: false,
   });
   const [unsnoozingThreadKey, setUnsnoozingThreadKey] = useState<string | null>(null);
   const isUnsnoozing = unsnoozingThreadKey !== null && unsnoozingThreadKey === activeThreadKey;
   const handleUnsnoozeActiveThread = useCallback(async () => {
-    if (!activeThreadRef) return;
+    if (
+      !activeThreadRef ||
+      !readEnvironmentScope(activeThreadRef.environmentId, AuthOrchestrationOperateScope)
+    )
+      return;
     const threadKey = scopedThreadKey(activeThreadRef);
     setUnsnoozingThreadKey(threadKey);
     try {
@@ -5434,7 +5460,8 @@ export default function ChatView(props: ChatViewProps) {
     setIsStoppingBackgroundWork(false);
   }, [activeThreadId]);
   const handleStopBackgroundWork = useCallback(async () => {
-    if (!activeThread) return;
+    if (!activeThread || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+      return;
     setIsStoppingBackgroundWork(true);
     const result = await interruptThreadTurn({
       environmentId,
@@ -5479,7 +5506,7 @@ export default function ChatView(props: ChatViewProps) {
         <Button
           size="xs"
           variant="ghost"
-          disabled={isStoppingBackgroundWork}
+          disabled={!canOperateThread || isStoppingBackgroundWork}
           onClick={() => void handleStopBackgroundWork()}
         >
           {isStoppingBackgroundWork ? "Stopping..." : "Stop"}
@@ -5490,6 +5517,7 @@ export default function ChatView(props: ChatViewProps) {
     activeBackgroundLiveness,
     activeThread,
     agentPanelModel.liveCount,
+    canOperateThread,
     handleStopBackgroundWork,
     isStoppingBackgroundWork,
   ]);
@@ -5525,7 +5553,7 @@ export default function ChatView(props: ChatViewProps) {
         <Button
           size="xs"
           variant="ghost"
-          disabled={isSnoozed ? isUnsnoozing : isUnsettling}
+          disabled={!canOperateThread || (isSnoozed ? isUnsnoozing : isUnsettling)}
           onClick={() =>
             void (isSnoozed ? handleUnsnoozeActiveThread() : handleUnsettleActiveThread())
           }
@@ -5544,6 +5572,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThread?.id,
     activeThreadSettled,
     activeThreadSnoozed,
+    canOperateThread,
     handleUnsnoozeActiveThread,
     handleUnsettleActiveThread,
     isUnsnoozing,
@@ -5564,6 +5593,7 @@ export default function ChatView(props: ChatViewProps) {
       (message) => message.role === "user" && !isCompactCommandMessage(message),
     ) ?? false;
   const compactThreadUnavailable =
+    !canOperateThread ||
     !activeThread ||
     !activeThreadHasCompactableConversation ||
     !activeProject ||
@@ -5579,13 +5609,15 @@ export default function ChatView(props: ChatViewProps) {
     showPlanFollowUpPrompt;
   const compactDisabled = compactThreadUnavailable || composerHasUnsentContent;
   const compactDisabledReason = compactDisabled
-    ? composerHasUnsentContent
-      ? "Send or clear your draft before compacting"
-      : !activeProject
-        ? "Choose a project before compacting"
-        : !manualCompactionProviderAvailable
-          ? "Compaction is unavailable for this provider"
-          : "Compacting is unavailable right now"
+    ? !canOperateThread
+      ? "This connection cannot change threads."
+      : composerHasUnsentContent
+        ? "Send or clear your draft before compacting"
+        : !activeProject
+          ? "Choose a project before compacting"
+          : !manualCompactionProviderAvailable
+            ? "Compaction is unavailable for this provider"
+            : "Compacting is unavailable right now"
     : null;
   const resumeCompactionBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (
@@ -5863,6 +5895,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (command === "thread.settle") {
+        if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
         event.preventDefault();
         event.stopPropagation();
         if (!isServerThread || !activeThreadRef || !supportsSettlement) return;
@@ -5886,6 +5919,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (command === "thread.pin") {
+        if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
         event.preventDefault();
         event.stopPropagation();
         if (!isServerThread || !activeThreadRef || !supportsPinning) return;
@@ -6072,7 +6106,13 @@ export default function ChatView(props: ChatViewProps) {
   const onRevertToTurnCount = useCallback(
     async (turnCount: number) => {
       const localApi = readLocalApi();
-      if (!localApi || !activeThread || isRevertingCheckpoint) return;
+      if (
+        !localApi ||
+        !activeThread ||
+        isRevertingCheckpoint ||
+        !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+      )
+        return;
 
       if (!supportsConversationRollback) {
         setThreadError(
@@ -6100,7 +6140,7 @@ export default function ChatView(props: ChatViewProps) {
         ].join("\n"),
         { variant: "destructive" },
       );
-      if (!confirmed) {
+      if (!confirmed || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
         return;
       }
 
@@ -6157,6 +6197,7 @@ export default function ChatView(props: ChatViewProps) {
       );
     };
     if (
+      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
       !activeThread ||
       isSendBusy ||
       isConnecting ||
@@ -6522,6 +6563,10 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
 
+    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+      sendInFlightRef.current = false;
+      return;
+    }
     const resolvedSubmissionIntent =
       submissionIntent === "background" && isLocalDraftThread ? "background" : "foreground";
     if (
@@ -6548,9 +6593,16 @@ export default function ChatView(props: ChatViewProps) {
     }
 
     const attachmentCapabilitiesBeforeDispatch = readLiveAttachmentCapabilities();
-    if (attachmentCapabilitiesBeforeDispatch.fileBlockReason !== null) {
+    if (
+      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
+      attachmentCapabilitiesBeforeDispatch.fileBlockReason !== null
+    ) {
       sendInFlightRef.current = false;
-      setThreadError(threadIdForSend, attachmentCapabilitiesBeforeDispatch.fileBlockReason);
+      setThreadError(
+        threadIdForSend,
+        attachmentCapabilitiesBeforeDispatch.fileBlockReason ??
+          "This connection cannot change threads.",
+      );
       setDockedDraftHeroThreadKey((currentThreadKey) =>
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
       );
@@ -6913,7 +6965,8 @@ export default function ChatView(props: ChatViewProps) {
   };
 
   const onInterrupt = async () => {
-    if (!activeThread) return;
+    if (!activeThread || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+      return;
     const result = await interruptThreadTurn({
       environmentId,
       input: buildThreadTurnInterruptInput(activeThread),
@@ -6929,7 +6982,8 @@ export default function ChatView(props: ChatViewProps) {
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
-      if (!activeThreadId) return;
+      if (!activeThreadId || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+        return;
 
       setRespondingRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
@@ -6957,7 +7011,8 @@ export default function ChatView(props: ChatViewProps) {
 
   const onRespondToUserInput = useCallback(
     async (requestId: ApprovalRequestId, answers: Record<string, unknown>) => {
-      if (!activeThreadId) return;
+      if (!activeThreadId || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+        return;
 
       setRespondingUserInputRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
@@ -7102,6 +7157,7 @@ export default function ChatView(props: ChatViewProps) {
       interactionMode: "default" | "plan";
     }) => {
       if (
+        !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
         !activeThread ||
         !isServerThread ||
         isSendBusy ||
@@ -7249,6 +7305,7 @@ export default function ChatView(props: ChatViewProps) {
 
   const onImplementPlanInNewThread = useCallback(async () => {
     if (
+      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
       !activeThread ||
       !activeProject ||
       !activeProposedPlan ||
@@ -8009,12 +8066,15 @@ export default function ChatView(props: ChatViewProps) {
                             phase={phase}
                             isConnecting={isConnecting}
                             isSendBusy={isSendBusy}
+                            canOperateThread={canOperateThread}
                             sendDisabledReason={
-                              feedbackUploading
-                                ? "Sending feedback"
-                                : threadDetailLoading
-                                  ? "Messages loading"
-                                  : null
+                              !canOperateThread
+                                ? "This connection cannot change threads."
+                                : feedbackUploading
+                                  ? "Sending feedback"
+                                  : threadDetailLoading
+                                    ? "Messages loading"
+                                    : null
                             }
                             isPreparingWorktree={isPreparingWorktree}
                             bannerItems={composerBannerItems}
