@@ -1,0 +1,193 @@
+import type { ServerProviderUsageLimits } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+
+import * as PtyAdapter from "../terminal/PtyAdapter.ts";
+import {
+  collectPtyProbeOutput,
+  defaultProbeClock,
+  type ProbeClock,
+  resolvePtyProbeCommand,
+  rollResetYearForward,
+  stripAnsi,
+} from "./ptyProbeSupport.ts";
+import {
+  clampPercent,
+  makeUnavailableUsageLimits,
+  makeUsageLimits,
+} from "./providerUsageLimits.ts";
+
+export type { ProbeClock } from "./ptyProbeSupport.ts";
+
+const GROK_USAGE_PROBE_TIMEOUT_MS = 10_000;
+const GROK_USAGE_OUTPUT_SETTLE_MS = 200;
+/**
+ * The Grok TUI drops input written before it finishes booting, so `/usage` is
+ * re-issued a few times rather than waiting out the full probe timeout on a
+ * single dropped keystroke.
+ */
+const GROK_USAGE_COMMAND_RESEND_MS = 750;
+const GROK_USAGE_COMMAND_MAX_RESENDS = 3;
+
+export interface GrokUsageProbeResult {
+  readonly usageLimits: ServerProviderUsageLimits;
+  readonly rawOutput: string;
+}
+
+export interface GrokUsageProbeInput {
+  readonly binaryPath: string;
+  readonly cwd: string;
+  readonly checkedAt: string;
+  readonly environment?: NodeJS.ProcessEnv;
+}
+
+function parsePercent(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function inferYearForGrokReset(checkedAt: string): number {
+  // checkedAt is always an ISO timestamp from DateTime.now in production.
+  const fromChecked = Number.parseInt(checkedAt.slice(0, 4), 10);
+  return Number.isFinite(fromChecked) && fromChecked >= 2000 ? fromChecked : 2000;
+}
+
+function parseGrokNextResetIso(checkedAt: string, resetLine: string): string | undefined {
+  const trimmed = resetLine.trim().replace(/\s+/g, " ");
+  if (!trimmed) return undefined;
+
+  const hasExplicitYear = /\b20\d{2}\b/.test(trimmed);
+  const withYear = hasExplicitYear ? trimmed : `${trimmed}, ${inferYearForGrokReset(checkedAt)}`;
+  const pacificTime = /\b(?:pt|pdt|pst)\b/i.test(withYear)
+    ? withYear.replace(/\b(?:pt|pdt|pst)\b/i, "")
+    : withYear;
+  const dt = DateTime.makeZoned(pacificTime, {
+    timeZone: "America/Los_Angeles",
+    adjustForTimeZone: true,
+  });
+  return Option.isSome(dt)
+    ? DateTime.formatIso(rollResetYearForward(dt.value, checkedAt, hasExplicitYear))
+    : undefined;
+}
+
+export function parseGrokUsageLimitsOutput(input: {
+  readonly output: string;
+  readonly checkedAt: string;
+}): ServerProviderUsageLimits {
+  const cleaned = stripAnsi(input.output);
+  const weeklyMatch = cleaned.match(/weekly\s*limit\s*:\s*(\d{1,3}(?:\.\d+)?)\s*%/i);
+  const usedPercent = parsePercent(weeklyMatch?.[1]);
+  const resetMatch = cleaned.match(/next\s*reset\s*:\s*([^\n\r]+)/i);
+  const resetsAt = resetMatch?.[1]
+    ? parseGrokNextResetIso(input.checkedAt, resetMatch[1])
+    : undefined;
+
+  if (usedPercent !== undefined) {
+    return makeUsageLimits({
+      checkedAt: input.checkedAt,
+      windows: [
+        {
+          id: "weekly",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: clampPercent(usedPercent),
+          windowDurationMins: 7 * 24 * 60,
+          ...(resetsAt ? { resetsAt } : {}),
+        },
+      ],
+    });
+  }
+
+  return makeUnavailableUsageLimits({
+    checkedAt: input.checkedAt,
+    reason: "probeFailed",
+    message: "Could not read usage limits for this Grok account.",
+  });
+}
+
+function runGrokUsageProbeLoop(
+  child: PtyAdapter.PtyProcess,
+  input: GrokUsageProbeInput,
+  clock: ProbeClock,
+  signal: AbortSignal,
+): Promise<GrokUsageProbeResult> {
+  return collectPtyProbeOutput({
+    child,
+    clock,
+    timeoutMs: GROK_USAGE_PROBE_TIMEOUT_MS,
+    signal,
+    onStart: () => child.write("/usage\r"),
+    resend: {
+      send: () => child.write("/usage\r"),
+      everyMs: GROK_USAGE_COMMAND_RESEND_MS,
+      maxAttempts: GROK_USAGE_COMMAND_MAX_RESENDS,
+    },
+    decideAfterOutput: (rawOutput) => {
+      const parsed = parseGrokUsageLimitsOutput({
+        output: rawOutput,
+        checkedAt: input.checkedAt,
+      });
+      if (parsed.unavailable === undefined && parsed.windows.every((window) => window.resetsAt)) {
+        return "finish";
+      }
+      return parsed.unavailable === undefined
+        ? { settleAfterMs: GROK_USAGE_OUTPUT_SETTLE_MS }
+        : "continue";
+    },
+  }).then((rawOutput) => {
+    return {
+      usageLimits: parseGrokUsageLimitsOutput({
+        output: rawOutput,
+        checkedAt: input.checkedAt,
+      }),
+      rawOutput,
+    };
+  });
+}
+
+export function probeGrokUsageLimits(
+  input: GrokUsageProbeInput,
+  clock: ProbeClock = defaultProbeClock,
+): Effect.Effect<GrokUsageProbeResult> {
+  return Effect.gen(function* () {
+    const ptyAdapter = Option.getOrUndefined(yield* Effect.serviceOption(PtyAdapter.PtyAdapter));
+    if (!ptyAdapter) {
+      return {
+        usageLimits: makeUnavailableUsageLimits({
+          checkedAt: input.checkedAt,
+          reason: "probeFailed",
+          message: "Usage limits unavailable for this Grok instance in the current runtime.",
+        }),
+        rawOutput: "",
+      };
+    }
+
+    const environment = input.environment ?? process.env;
+    const command = yield* resolvePtyProbeCommand(input.binaryPath, [], environment);
+    const child = yield* ptyAdapter
+      .spawn({
+        shell: command.shell,
+        args: command.args,
+        cwd: input.cwd,
+        cols: 120,
+        rows: 40,
+        env: environment,
+      })
+      .pipe(Effect.orElseSucceed(() => null as PtyAdapter.PtyProcess | null));
+
+    if (!child) {
+      return {
+        usageLimits: makeUnavailableUsageLimits({
+          checkedAt: input.checkedAt,
+          reason: "probeFailed",
+          message: "Failed to spawn Grok process for usage probe.",
+        }),
+        rawOutput: "",
+      };
+    }
+
+    return yield* Effect.promise((signal) => runGrokUsageProbeLoop(child, input, clock, signal));
+  });
+}
