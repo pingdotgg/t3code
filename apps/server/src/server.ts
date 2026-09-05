@@ -363,11 +363,15 @@ const CheckpointingLayerLive = Layer.empty.pipe(
   Layer.provideMerge(CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistryLayerLive))),
 );
 
-const PortScannerLayerLive = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
+const PortScannerLayerLive = PortScanner.layer.pipe(
+  Layer.provide(ProcessRunner.layer),
+  Layer.provide(NativeTelemetryLayerLive),
+);
 
 const TerminalLayerLive = TerminalManager.layer.pipe(
   Layer.provide(PtyAdapterLive),
   Layer.provide(PortScannerLayerLive),
+  Layer.provide(NativeTelemetryLayerLive),
 );
 
 const PreviewLayerLive = Layer.empty.pipe(

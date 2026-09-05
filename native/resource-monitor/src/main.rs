@@ -8,7 +8,7 @@ use sysinfo::{
     MINIMUM_CPU_UPDATE_INTERVAL, Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind,
 };
 
-const PROTOCOL_VERSION: u32 = 2;
+const PROTOCOL_VERSION: u32 = 4;
 const MIN_SAMPLE_INTERVAL_MS: u64 = 250;
 const MAX_SAMPLE_INTERVAL_MS: u64 = 60_000;
 const PROCESS_START_TIME_PRECISION_MS: u64 = 1_000;
@@ -66,6 +66,14 @@ enum Command {
         version: u32,
         request_id: String,
     },
+    ProcessTable {
+        version: u32,
+        request_id: String,
+    },
+    WindowsListeners {
+        version: u32,
+        request_id: String,
+    },
     ReadHistory {
         version: u32,
         request_id: String,
@@ -84,6 +92,8 @@ impl Command {
             | Self::SetSampleInterval { version, .. }
             | Self::SetStreaming { version, .. }
             | Self::SampleNow { version, .. }
+            | Self::ProcessTable { version, .. }
+            | Self::WindowsListeners { version, .. }
             | Self::ReadHistory { version, .. }
             | Self::Shutdown { version } => *version,
         }
@@ -144,6 +154,177 @@ struct ProcessSample {
     io_read_bytes: u64,
     io_write_bytes: u64,
     io_semantics: IoSemantics,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcessTableEntry {
+    pid: u32,
+    ppid: u32,
+    name: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcessTableEvent<'a> {
+    version: u32,
+    #[serde(rename = "type")]
+    event_type: &'static str,
+    request_id: &'a str,
+    processes: Vec<ProcessTableEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WindowsListener {
+    port: u16,
+    pid: u32,
+    process_name: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WindowsListenersEvent<'a> {
+    version: u32,
+    #[serde(rename = "type")]
+    event_type: &'static str,
+    request_id: &'a str,
+    listeners: Vec<WindowsListener>,
+    error: Option<String>,
+}
+
+#[cfg(target_os = "windows")]
+mod windows_listeners {
+    use std::ffi::c_void;
+    use std::io;
+    use std::mem::size_of;
+    use std::ptr;
+
+    const AF_INET: u32 = 2;
+    const AF_INET6: u32 = 23;
+    const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
+    const MAX_TABLE_READ_ATTEMPTS: usize = 3;
+    const TCP_TABLE_OWNER_PID_LISTENER: u32 = 3;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct TcpRow {
+        state: u32,
+        local_address: u32,
+        local_port: u32,
+        remote_address: u32,
+        remote_port: u32,
+        owning_pid: u32,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Tcp6Row {
+        local_address: [u8; 16],
+        local_scope_id: u32,
+        local_port: u32,
+        remote_address: [u8; 16],
+        remote_scope_id: u32,
+        remote_port: u32,
+        state: u32,
+        owning_pid: u32,
+    }
+
+    #[link(name = "iphlpapi")]
+    unsafe extern "system" {
+        fn GetExtendedTcpTable(
+            table: *mut c_void,
+            size: *mut u32,
+            order: i32,
+            family: u32,
+            table_class: u32,
+            reserved: u32,
+        ) -> u32;
+    }
+
+    unsafe fn rows<T: Copy>(family: u32) -> io::Result<Vec<T>> {
+        let mut size = 0u32;
+        let first = unsafe {
+            GetExtendedTcpTable(
+                ptr::null_mut(),
+                &mut size,
+                0,
+                family,
+                TCP_TABLE_OWNER_PID_LISTENER,
+                0,
+            )
+        };
+        if first != ERROR_INSUFFICIENT_BUFFER {
+            return Err(io::Error::from_raw_os_error(first as i32));
+        }
+        for _ in 0..MAX_TABLE_READ_ATTEMPTS {
+            let word_count = (size as usize).div_ceil(size_of::<u32>());
+            let mut buffer = vec![0u32; word_count];
+            let result = unsafe {
+                GetExtendedTcpTable(
+                    buffer.as_mut_ptr().cast(),
+                    &mut size,
+                    0,
+                    family,
+                    TCP_TABLE_OWNER_PID_LISTENER,
+                    0,
+                )
+            };
+            if result == ERROR_INSUFFICIENT_BUFFER {
+                continue;
+            }
+            if result != 0 {
+                return Err(io::Error::from_raw_os_error(result as i32));
+            }
+            let count = unsafe { ptr::read_unaligned(buffer.as_ptr()) } as usize;
+            let available_bytes =
+                (buffer.len() * size_of::<u32>()).saturating_sub(size_of::<u32>());
+            if count > available_bytes / size_of::<T>() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Windows TCP table exceeded its returned buffer",
+                ));
+            }
+            let first_row = unsafe { buffer.as_ptr().cast::<u8>().add(size_of::<u32>()) };
+            return Ok((0..count)
+                .map(|index| unsafe {
+                    ptr::read_unaligned(first_row.add(index * size_of::<T>()).cast::<T>())
+                })
+                .collect());
+        }
+        Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "Windows TCP table kept growing while it was read",
+        ))
+    }
+
+    fn port(value: u32) -> u16 {
+        u16::from_be(value as u16)
+    }
+
+    pub fn read() -> io::Result<Vec<(u16, u32)>> {
+        let ipv4 = unsafe { rows::<TcpRow>(AF_INET)? };
+        let ipv6 = unsafe { rows::<Tcp6Row>(AF_INET6)? };
+        let mut listeners = ipv4
+            .into_iter()
+            .filter(|row| {
+                row.local_address == 0 || row.local_address.to_ne_bytes().first() == Some(&127)
+            })
+            .map(|row| (port(row.local_port), row.owning_pid))
+            .chain(
+                ipv6.into_iter()
+                    .filter(|row| {
+                        row.local_address.iter().all(|byte| *byte == 0)
+                            || row.local_address == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+                    })
+                    .map(|row| (port(row.local_port), row.owning_pid)),
+            )
+            .filter(|(port, pid)| *port > 0 && *pid > 0)
+            .collect::<Vec<_>>();
+        listeners.sort_unstable();
+        listeners.dedup();
+        Ok(listeners)
+    }
 }
 
 impl ProcessSample {
@@ -349,6 +530,67 @@ impl Collector {
             process_discovery_refresh_kind(),
         );
         self.cpu_baseline_refreshed_at = Some(Instant::now());
+    }
+
+    fn process_table(&self) -> Vec<ProcessTableEntry> {
+        // Use a dedicated System so this refresh cannot reset the CPU
+        // baseline tracked by self.system for snapshots.
+        let mut process_table_system = System::new();
+        process_table_system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing().without_tasks(),
+        );
+        let mut processes = process_table_system
+            .processes()
+            .iter()
+            .filter_map(|(pid, process)| {
+                let pid = pid.as_u32();
+                // Pid 0 is the kernel idle process on some platforms. The
+                // processTable contract requires positive pids, and one zero
+                // would fail the whole event decode on the server, so drop it
+                // here. It can never be a terminal descendant.
+                if pid == 0 {
+                    return None;
+                }
+                Some(ProcessTableEntry {
+                    pid,
+                    ppid: process.parent().map(Pid::as_u32).unwrap_or(0),
+                    name: truncate_utf8(
+                        process.name().to_string_lossy().into_owned(),
+                        MAX_PROCESS_NAME_BYTES,
+                    ),
+                })
+            })
+            .collect::<Vec<_>>();
+        processes.sort_by_key(|process| process.pid);
+        processes
+    }
+
+    #[cfg(target_os = "windows")]
+    fn windows_listeners(&mut self) -> Result<Vec<WindowsListener>, String> {
+        let process_names = self
+            .process_table()
+            .into_iter()
+            .map(|process| (process.pid, process.name))
+            .collect::<HashMap<_, _>>();
+        windows_listeners::read()
+            .map(|listeners| {
+                listeners
+                    .into_iter()
+                    .map(|(port, pid)| WindowsListener {
+                        port,
+                        pid,
+                        process_name: process_names.get(&pid).cloned(),
+                    })
+                    .collect()
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn windows_listeners(&mut self) -> Result<Vec<WindowsListener>, String> {
+        Err("Windows listener discovery is unavailable on this platform".to_owned())
     }
 
     fn sample(&mut self, config: &CollectorConfig, request_id: Option<String>) -> SnapshotEvent {
@@ -871,6 +1113,26 @@ fn main() -> io::Result<()> {
                             )?;
                         }
                     }
+                    Command::ProcessTable { request_id, .. } => {
+                        let event = ProcessTableEvent {
+                            version: PROTOCOL_VERSION,
+                            event_type: "processTable",
+                            request_id: &request_id,
+                            processes: collector.process_table(),
+                        };
+                        write_event(&mut writer, &event)?;
+                    }
+                    Command::WindowsListeners { request_id, .. } => {
+                        let result = collector.windows_listeners();
+                        let event = WindowsListenersEvent {
+                            version: PROTOCOL_VERSION,
+                            event_type: "windowsListeners",
+                            request_id: &request_id,
+                            listeners: result.as_ref().cloned().unwrap_or_default(),
+                            error: result.err(),
+                        };
+                        write_event(&mut writer, &event)?;
+                    }
                     Command::ReadHistory {
                         request_id,
                         window_ms,
@@ -900,6 +1162,13 @@ fn main() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn reads_windows_listener_table() {
+        let listeners = windows_listeners::read().expect("Windows listener table");
+        assert!(listeners.iter().all(|(port, pid)| *port > 0 && *pid > 0));
+    }
 
     #[test]
     fn selects_roots_and_all_descendants() {
@@ -981,7 +1250,7 @@ mod tests {
     #[test]
     fn decodes_protocol_commands() {
         let configure = serde_json::from_str::<Command>(
-            r#"{"version":2,"type":"configure","rootPid":42,"sampleIntervalMs":1000,"externalProcesses":[{"pid":7}]}"#,
+            r#"{"version":4,"type":"configure","rootPid":42,"sampleIntervalMs":1000,"externalProcesses":[{"pid":7}]}"#,
         )
         .expect("configure command");
 
@@ -1001,7 +1270,7 @@ mod tests {
         }
 
         let read_history = serde_json::from_str::<Command>(
-            r#"{"version":2,"type":"readHistory","requestId":"history-1","windowMs":60000}"#,
+            r#"{"version":4,"type":"readHistory","requestId":"history-1","windowMs":60000}"#,
         )
         .expect("read history command");
         assert!(matches!(
@@ -1011,6 +1280,24 @@ mod tests {
                 window_ms: 60_000,
                 ..
             } if request_id == "history-1"
+        ));
+
+        let process_table = serde_json::from_str::<Command>(
+            r#"{"version":4,"type":"processTable","requestId":"processes-1"}"#,
+        )
+        .expect("process table command");
+        assert!(matches!(
+            process_table,
+            Command::ProcessTable { request_id, .. } if request_id == "processes-1"
+        ));
+
+        let windows_listeners = serde_json::from_str::<Command>(
+            r#"{"version":4,"type":"windowsListeners","requestId":"listeners-1"}"#,
+        )
+        .expect("Windows listeners command");
+        assert!(matches!(
+            windows_listeners,
+            Command::WindowsListeners { request_id, .. } if request_id == "listeners-1"
         ));
     }
 

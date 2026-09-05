@@ -5,8 +5,11 @@
  * stable line-prefixed field format; this is the only `lsof` flag set we rely
  * on).
  *
- * Windows / lsof missing: checks a curated list of common dev ports through
- * the shared Net service.
+ * Windows: asks the persistent resource monitor for the native TCP listener
+ * table. If the sidecar is unavailable, a backed-off PowerShell probe runs.
+ *
+ * lsof / Windows probe missing: checks a curated list of common dev ports
+ * through the shared Net service.
  *
  * Listening ports are published only after a bounded HTTP(S) probe finds a
  * successful HTML document or a redirect to one.
@@ -21,6 +24,7 @@ import {
   PREVIEW_URL_MAX_LENGTH,
   ThreadId,
   type DiscoveredLocalServer,
+  type ResourceMonitorWindowsListener,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Net from "@t3tools/shared/Net";
@@ -39,6 +43,7 @@ import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 
 import * as ProcessRunner from "../processRunner.ts";
+import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 
 export class PortDiscovery extends Context.Service<
   PortDiscovery,
@@ -73,6 +78,9 @@ export const COMMON_DEV_PORTS: ReadonlyArray<number> = Object.freeze([
 const POLL_INTERVAL = Duration.seconds(3);
 const LSOF_TIMEOUT_MS = 5_000;
 const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
+const WINDOWS_FALLBACK_MAX_RETRY_MS = 60_000;
+export const WINDOWS_LISTENER_COMMAND =
+  '$m = @{}; Get-Process | ForEach-Object { $m[$_.Id] = $_.ProcessName }; Get-NetTCPConnection -State Listen -ErrorAction Stop | ForEach-Object { Write-Output "$($_.LocalAddress)|$($_.LocalPort)|$($_.OwningProcess)|$($m[[int]$_.OwningProcess])" }';
 const WEB_PROBE_TIMEOUT = Duration.seconds(1);
 const WEB_PROBE_CACHE_TTL_MS = Duration.toMillis(Duration.seconds(15));
 const WEB_PROBE_CONCURRENCY = 16;
@@ -265,6 +273,38 @@ const parseWindowsListenerOutput = (
   return [...seen.values()].toSorted((left, right) => left.port - right.port);
 };
 
+const windowsListenersToServers = (
+  listeners: ReadonlyArray<ResourceMonitorWindowsListener>,
+  terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner> = new Map(),
+): ReadonlyArray<DiscoveredLocalServer> => {
+  const seen = new Map<number, DiscoveredLocalServer>();
+  for (const listener of listeners) {
+    if (seen.has(listener.port)) continue;
+    seen.set(listener.port, {
+      host: "localhost",
+      port: listener.port,
+      url: `http://localhost:${listener.port}`,
+      processName: listener.processName?.trim() || null,
+      pid: listener.pid,
+      terminal: terminalByProcessId.get(listener.pid) ?? null,
+    });
+  }
+  return [...seen.values()].toSorted((left, right) => left.port - right.port);
+};
+
+const withCurrentTerminalOwners = (
+  servers: ReadonlyArray<DiscoveredLocalServer>,
+  terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner>,
+): ReadonlyArray<DiscoveredLocalServer> =>
+  servers.map((server) => ({
+    ...server,
+    terminal: server.pid === null ? null : (terminalByProcessId.get(server.pid) ?? null),
+  }));
+
+export function windowsFallbackRetryDelayMs(failureCount: number): number {
+  return Math.min(3_000 * 2 ** Math.max(0, failureCount - 1), WINDOWS_FALLBACK_MAX_RETRY_MS);
+}
+
 const serversEqual = (
   left: ReadonlyArray<DiscoveredLocalServer>,
   right: ReadonlyArray<DiscoveredLocalServer>,
@@ -292,6 +332,7 @@ const serversEqual = (
 export const make = Effect.gen(function* PortDiscoveryMake() {
   const net = yield* Net.NetService;
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
   const hostPlatform = yield* HostProcessPlatform;
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const stateRef = yield* Ref.make<ScannerState>({
@@ -301,6 +342,11 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   });
   const webProbeCacheRef = yield* Ref.make<ReadonlyMap<string, WebProbeCacheEntry>>(new Map());
   const scanSemaphore = yield* Semaphore.make(1);
+  const windowsFallbackRef = yield* Ref.make({
+    failureCount: 0,
+    nextAttemptAtMillis: 0,
+    lastSnapshot: null as ReadonlyArray<DiscoveredLocalServer> | null,
+  });
 
   const probeCommonPorts = Effect.fn("PortDiscovery.probeCommonPorts")(function* () {
     const results = yield* Effect.forEach(
@@ -477,6 +523,56 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         platform: hostPlatform,
       }).pipe(Effect.as(null));
 
+  const probeWindowsFallback = Effect.fn("PortDiscovery.probeWindowsFallback")(function* (
+    terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner>,
+  ) {
+    const nowMillis = yield* Clock.currentTimeMillis;
+    const fallback = yield* Ref.get(windowsFallbackRef);
+    if (nowMillis < fallback.nextAttemptAtMillis) {
+      return fallback.lastSnapshot === null
+        ? yield* probeCommonPorts()
+        : withCurrentTerminalOwners(fallback.lastSnapshot, terminalByProcessId);
+    }
+
+    const recoverWindowsProbeFailure = recoverProcessProbeFailure("windows-listeners");
+    const listeners = yield* processRunner
+      .run({
+        command: "powershell.exe",
+        args: ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_LISTENER_COMMAND],
+        timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
+        maxOutputBytes: 1024 * 1024,
+        outputMode: "truncate",
+      })
+      .pipe(
+        Effect.map((result) => parseWindowsListenerOutput(result.stdout, terminalByProcessId)),
+        Effect.catchTags({
+          ProcessSpawnError: recoverWindowsProbeFailure,
+          ProcessStdinError: recoverWindowsProbeFailure,
+          ProcessOutputLimitError: recoverWindowsProbeFailure,
+          ProcessReadError: recoverWindowsProbeFailure,
+          ProcessTimeoutError: recoverWindowsProbeFailure,
+        }),
+      );
+    if (listeners !== null) {
+      yield* Ref.set(windowsFallbackRef, {
+        failureCount: 0,
+        nextAttemptAtMillis: 0,
+        lastSnapshot: listeners,
+      });
+      return listeners;
+    }
+
+    const failureCount = fallback.failureCount + 1;
+    yield* Ref.set(windowsFallbackRef, {
+      failureCount,
+      nextAttemptAtMillis: nowMillis + windowsFallbackRetryDelayMs(failureCount),
+      lastSnapshot: fallback.lastSnapshot,
+    });
+    return fallback.lastSnapshot === null
+      ? yield* probeCommonPorts()
+      : withCurrentTerminalOwners(fallback.lastSnapshot, terminalByProcessId);
+  });
+
   const scanUnlocked = Effect.fn("PortDiscovery.scanUnlocked")(function* (
     configuredUrls: ReadonlyArray<string>,
   ) {
@@ -488,29 +584,19 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       }
     }
     if (hostPlatform === "win32") {
-      const recoverWindowsProbeFailure = recoverProcessProbeFailure("windows-listeners");
-      const command =
-        'Get-NetTCPConnection -State Listen -ErrorAction Stop | ForEach-Object { $processName = (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName; Write-Output "$($_.LocalAddress)|$($_.LocalPort)|$($_.OwningProcess)|$processName" }';
-      const listeners = yield* processRunner
-        .run({
-          command: "powershell.exe",
-          args: ["-NoProfile", "-NonInteractive", "-Command", command],
-          timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
-          maxOutputBytes: 1024 * 1024,
-          outputMode: "truncate",
-        })
-        .pipe(
-          Effect.map((result) => parseWindowsListenerOutput(result.stdout, terminalByProcessId)),
-          Effect.catchTags({
-            ProcessSpawnError: recoverWindowsProbeFailure,
-            ProcessStdinError: recoverWindowsProbeFailure,
-            ProcessOutputLimitError: recoverWindowsProbeFailure,
-            ProcessReadError: recoverWindowsProbeFailure,
-            ProcessTimeoutError: recoverWindowsProbeFailure,
-          }),
-        );
-      if (listeners !== null) return yield* probeWebServers(listeners, configuredUrls);
-      return yield* probeWebServers(yield* probeCommonPorts(), configuredUrls);
+      const nativeListeners = yield* nativeTelemetry.windowsListeners.pipe(
+        Effect.map((listeners) => windowsListenersToServers(listeners, terminalByProcessId)),
+        Effect.catch((cause) =>
+          Effect.logDebug("native Windows listener discovery failed; using fallback", {
+            cause,
+          }).pipe(Effect.as(null)),
+        ),
+      );
+      const listeners =
+        nativeListeners === null
+          ? yield* probeWindowsFallback(terminalByProcessId)
+          : nativeListeners;
+      return yield* probeWebServers(listeners, configuredUrls);
     }
     const recoverLsofProbeFailure = recoverProcessProbeFailure("lsof");
     const lsofResult = yield* processRunner
