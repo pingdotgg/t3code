@@ -329,32 +329,6 @@ export function modelPickerJumpIndexFromCommand(command: string): number | null 
   return index === -1 ? null : index;
 }
 
-export function shouldShowModelPickerJumpHints(
-  event: ShortcutEventLike,
-  keybindings: ResolvedKeybindingsConfig,
-  options?: ShortcutMatchOptions,
-): boolean {
-  return shouldShowModelPickerJumpHintsForModifiers(event, keybindings, options);
-}
-
-export function shouldShowModelPickerJumpHintsForModifiers(
-  modifiers: ShortcutModifierStateLike,
-  keybindings: ResolvedKeybindingsConfig,
-  options?: ShortcutMatchOptions,
-): boolean {
-  const platform = resolvePlatform(options);
-
-  for (const command of MODEL_PICKER_JUMP_KEYBINDING_COMMANDS) {
-    const shortcut = findEffectiveShortcutForCommand(keybindings, command, options);
-    if (!shortcut) continue;
-    if (matchesShortcutModifiers(modifiers, shortcut, platform)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
 export function isTerminalToggleShortcut(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,
