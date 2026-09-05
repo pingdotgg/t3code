@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
 import * as NodeFS from "node:fs";
+import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { assert, it, describe } from "@effect/vitest";
@@ -1409,57 +1410,265 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         }),
     );
 
-    it.effect("checks out submodules in a new worktree", () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const pathService = yield* Path.Path;
+    for (const sourceState of [
+      "cached",
+      "populated",
+      "shallow",
+      "uninitialized",
+      "inactive",
+      "inactive-true",
+      "unreachable",
+      "update-none",
+    ] as const) {
+      it.effect(`checks out independent submodules from a ${sourceState} source worktree`, () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
 
-        // Git refuses `file:` submodule transports by default (CVE-2022-39253)
-        // and ignores repo-level config for it, so a local fixture needs the
-        // env allowance. Real submodules are https/ssh and need none of this.
-        const previousAllowedProtocol = process.env.GIT_ALLOW_PROTOCOL;
-        process.env.GIT_ALLOW_PROTOCOL = "file";
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            if (previousAllowedProtocol === undefined) {
-              delete process.env.GIT_ALLOW_PROTOCOL;
-            } else {
-              process.env.GIT_ALLOW_PROTOCOL = previousAllowedProtocol;
+          // Git refuses `file:` submodule transports by default (CVE-2022-39253)
+          // and ignores repo-level config for it, so a local fixture needs the
+          // env allowance. Real submodules are https/ssh and need none of this.
+          const previousAllowedProtocol = process.env.GIT_ALLOW_PROTOCOL;
+          process.env.GIT_ALLOW_PROTOCOL = "file";
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              if (previousAllowedProtocol === undefined) {
+                delete process.env.GIT_ALLOW_PROTOCOL;
+              } else {
+                process.env.GIT_ALLOW_PROTOCOL = previousAllowedProtocol;
+              }
+            }),
+          );
+
+          // A real submodule: `git worktree add` leaves these empty, which is
+          // what silently strips shared tooling out of every new worktree.
+          const submoduleRepo = yield* makeTmpDir("git-submodule-");
+          yield* initRepoWithCommit(submoduleRepo);
+          yield* writeTextFile(submoduleRepo, "SHARED.md", "# shared\n");
+          yield* git(submoduleRepo, ["add", "."]);
+          yield* git(submoduleRepo, ["commit", "-m", "shared"]);
+
+          const nestedRepo = yield* makeTmpDir("git-nested-submodule-");
+          yield* initRepoWithCommit(nestedRepo);
+          yield* git(submoduleRepo, [
+            "submodule",
+            "add",
+            NodeURL.pathToFileURL(nestedRepo).href,
+            "nested module",
+          ]);
+          yield* git(submoduleRepo, ["commit", "-am", "nested submodule"]);
+
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* git(cwd, [
+            "submodule",
+            "add",
+            "--name",
+            "shared tooling",
+            NodeURL.pathToFileURL(submoduleRepo).href,
+            "shared",
+          ]);
+          yield* git(cwd, [
+            "submodule",
+            "add",
+            NodeURL.pathToFileURL(nestedRepo).href,
+            "other module",
+          ]);
+          yield* git(cwd, ["commit", "-m", "add submodule"]);
+
+          const source = pathService.join(yield* makeTmpDir(), "source worktree");
+          yield* git(cwd, ["worktree", "add", "--detach", source, initialBranch]);
+          yield* git(source, ["submodule", "update", "--init", "--recursive"]);
+          if (sourceState === "shallow") {
+            yield* git(pathService.join(source, "shared"), ["fetch", "--depth=1", "origin"]);
+            assert.equal(
+              yield* git(pathService.join(source, "shared"), [
+                "rev-parse",
+                "--is-shallow-repository",
+              ]),
+              "true",
+            );
+          }
+          if (sourceState === "uninitialized") {
+            yield* git(source, ["submodule", "deinit", "--force", "--all"]);
+          }
+          let pinned = yield* git(submoduleRepo, ["rev-parse", "HEAD"]);
+          if (sourceState !== "cached") {
+            // The remote can advance after the source was populated. Clone references
+            // must not replace the gitlink with either the source or remote HEAD.
+            yield* writeTextFile(submoduleRepo, "LATER.md", "later remote commit\n");
+            yield* git(submoduleRepo, ["add", "."]);
+            yield* git(submoduleRepo, ["commit", "-m", "advance remote"]);
+            pinned = yield* git(submoduleRepo, ["rev-parse", "HEAD"]);
+            yield* git(cwd, ["update-index", "--cacheinfo", `160000,${pinned},shared`]);
+            yield* git(cwd, ["commit", "-m", "pin commit missing from source"]);
+            yield* writeTextFile(submoduleRepo, "NEWEST.md", "not the selected commit\n");
+            yield* git(submoduleRepo, ["add", "."]);
+            yield* git(submoduleRepo, ["commit", "-m", "advance beyond selected pin"]);
+          }
+          const excludesOther =
+            sourceState === "inactive" ||
+            sourceState === "inactive-true" ||
+            sourceState === "update-none";
+          if (sourceState === "inactive" || sourceState === "inactive-true") {
+            yield* git(cwd, ["config", "--unset", "submodule.other module.active"]);
+            yield* git(cwd, [
+              "config",
+              "submodule.active",
+              sourceState === "inactive-true" ? "true" : "shared",
+            ]);
+          }
+          if (sourceState === "update-none") {
+            yield* git(cwd, [
+              "config",
+              "--file",
+              ".gitmodules",
+              "submodule.other module.update",
+              "none",
+            ]);
+            yield* git(cwd, ["add", ".gitmodules"]);
+            yield* git(cwd, ["commit", "-m", "skip other module"]);
+          }
+          if (sourceState === "unreachable") {
+            const gitmodules = yield* fileSystem.readFileString(
+              pathService.join(cwd, ".gitmodules"),
+            );
+            yield* writeTextFile(
+              cwd,
+              ".gitmodules",
+              '[submodule "missing"]\n\tpath = missing\n\turl = /nonexistent/repo.git\n' +
+                gitmodules,
+            );
+            yield* git(cwd, ["update-index", "--add", "--cacheinfo", `160000,${pinned},missing`]);
+            yield* git(cwd, ["add", ".gitmodules"]);
+            yield* git(cwd, ["commit", "-m", "put unreachable submodule before healthy siblings"]);
+          }
+          const sourceSubmodule = pathService.join(source, "shared");
+          if (sourceState !== "uninitialized") {
+            yield* writeTextFile(sourceSubmodule, "SHARED.md", "uncommitted edit\n");
+            yield* writeTextFile(sourceSubmodule, "STAGED.md", "staged edit\n");
+            yield* git(sourceSubmodule, ["add", "STAGED.md"]);
+            yield* writeTextFile(sourceSubmodule, "UNTRACKED.md", "untracked edit\n");
+          }
+          const sourceCwd =
+            sourceState === "cached" ? pathService.join(source, "project subdirectory") : source;
+          yield* fileSystem.makeDirectory(sourceCwd, { recursive: true });
+          const sourceStatus = yield* git(source, ["status", "--porcelain"]);
+          const packetTrace = pathService.join(yield* makeTmpDir(), "packets.log");
+          if (sourceState === "cached") {
+            const previousPacketTrace = process.env.GIT_TRACE_PACKET;
+            process.env.GIT_TRACE_PACKET = packetTrace;
+            yield* Effect.addFinalizer(() =>
+              Effect.sync(() => {
+                if (previousPacketTrace === undefined) delete process.env.GIT_TRACE_PACKET;
+                else process.env.GIT_TRACE_PACKET = previousPacketTrace;
+              }),
+            );
+          }
+
+          const worktreePath = pathService.join(
+            yield* makeTmpDir("git-worktrees-"),
+            "submodule-worktree",
+          );
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* driver.createWorktree({
+            cwd: sourceCwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/submodules",
+          });
+
+          if (sourceState === "unreachable") {
+            // Git clones the remaining siblings before retrying the failed clone;
+            // it may abort before checking out their files.
+            for (const submodule of ["shared", "other module"]) {
+              assert.equal(
+                yield* fileSystem.exists(pathService.join(worktreePath, submodule, ".git")),
+                true,
+              );
             }
-          }),
-        );
+            assert.equal(yield* git(source, ["status", "--porcelain"]), sourceStatus);
+            return;
+          }
 
-        // A real submodule: `git worktree add` leaves these empty, which is
-        // what silently strips shared tooling out of every new worktree.
-        const submoduleRepo = yield* makeTmpDir("git-submodule-");
-        yield* initRepoWithCommit(submoduleRepo);
-        yield* writeTextFile(submoduleRepo, "SHARED.md", "# shared\n");
-        yield* git(submoduleRepo, ["add", "."]);
-        yield* git(submoduleRepo, ["commit", "-m", "shared"]);
-
-        const cwd = yield* makeTmpDir();
-        const { initialBranch } = yield* initRepoWithCommit(cwd);
-        yield* git(cwd, ["submodule", "add", submoduleRepo, "shared"]);
-        yield* git(cwd, ["commit", "-m", "add submodule"]);
-
-        const worktreePath = pathService.join(
-          yield* makeTmpDir("git-worktrees-"),
-          "submodule-worktree",
-        );
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* driver.createWorktree({
-          cwd,
-          path: worktreePath,
-          refName: initialBranch,
-          newRefName: "feature/submodules",
-        });
-
-        assert.equal(
-          yield* fileSystem.exists(pathService.join(worktreePath, "shared", "SHARED.md")),
-          true,
-        );
-      }),
-    );
+          assert.equal(
+            yield* fileSystem.exists(pathService.join(worktreePath, "shared", "SHARED.md")),
+            true,
+          );
+          assert.equal(
+            yield* git(pathService.join(worktreePath, "shared"), ["rev-parse", "HEAD"]),
+            pinned,
+          );
+          assert.equal(
+            yield* fileSystem.exists(pathService.join(worktreePath, "shared", "LATER.md")),
+            sourceState !== "cached",
+          );
+          assert.equal(
+            yield* fileSystem.exists(pathService.join(worktreePath, "shared", "NEWEST.md")),
+            false,
+          );
+          assert.equal(yield* git(source, ["status", "--porcelain"]), sourceStatus);
+          if (sourceState !== "uninitialized") {
+            assert.equal(
+              yield* fileSystem.readFileString(pathService.join(sourceSubmodule, "SHARED.md")),
+              "uncommitted edit\n",
+            );
+          }
+          assert.equal(
+            yield* fileSystem.exists(pathService.join(worktreePath, "shared", "STAGED.md")),
+            false,
+          );
+          assert.equal(
+            yield* fileSystem.exists(pathService.join(worktreePath, "shared", "UNTRACKED.md")),
+            false,
+          );
+          if (sourceState === "cached") {
+            // file:// forces the fetch transport rather than local hardlinks.
+            // A fully cached clone advertises refs but requests no object pack.
+            const packets = yield* fileSystem.readFileString(packetTrace);
+            assert.include(packets, "packet:");
+            assert.notMatch(packets, /\bwant [0-9a-f]{40}/);
+          }
+          // Remove the actual reference object stores, including the nested one.
+          // The destination must keep working after their lifetime ends.
+          for (const submodule of sourceState === "uninitialized"
+            ? []
+            : ["shared", "other module"]) {
+            const gitDir = yield* git(pathService.join(source, submodule), [
+              "rev-parse",
+              "--absolute-git-dir",
+            ]);
+            yield* fileSystem.remove(gitDir, { recursive: true });
+          }
+          assert.equal(
+            yield* fileSystem.exists(pathService.join(worktreePath, "other module", "README.md")),
+            !excludesOther,
+          );
+          for (const submodule of [
+            "shared",
+            "shared/nested module",
+            ...(excludesOther ? [] : ["other module"]),
+          ]) {
+            const destination = pathService.join(worktreePath, submodule);
+            const alternates = yield* git(destination, [
+              "rev-parse",
+              "--git-path",
+              "objects/info/alternates",
+            ]);
+            assert.equal(
+              yield* fileSystem.exists(pathService.resolve(destination, alternates)),
+              false,
+            );
+            yield* git(destination, ["fsck", "--full", "--no-dangling"]);
+            yield* git(destination, ["reset", "--hard", "HEAD"]);
+            assert.equal(
+              yield* fileSystem.exists(pathService.join(destination, "README.md")),
+              true,
+            );
+          }
+        }),
+      );
+    }
 
     it.effect("still creates the worktree when submodule checkout fails", () =>
       Effect.gen(function* () {

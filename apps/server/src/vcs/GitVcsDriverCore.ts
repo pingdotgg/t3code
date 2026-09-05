@@ -2831,6 +2831,79 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  const prepareSubmodules = Effect.fn("GitVcsDriver.prepareSubmodules")(function* (
+    source: string,
+    destination: string,
+  ): Effect.fn.Return<void, GitCommandError> {
+    const ordinaryUpdate = runGit("GitVcsDriver.createWorktree.updateSubmodules", destination, [
+      "submodule",
+      "update",
+      "--init",
+      "--recursive",
+    ]);
+    const submodules = yield* Effect.gen(function* () {
+      if (!(yield* fileSystem.exists(path.join(destination, ".gitmodules")))) return [];
+      const [config, gitmodules] = yield* Effect.all([
+        executeGit(
+          "GitVcsDriver.submoduleConfig",
+          destination,
+          ["config", "--null", "--get-regexp", "^submodule\\."],
+          { allowNonZeroExit: true },
+        ),
+        executeGit(
+          "GitVcsDriver.submodulePaths",
+          destination,
+          ["config", "--null", "--file", ".gitmodules", "--get-regexp", "^submodule\\."],
+          { allowNonZeroExit: true },
+        ),
+      ]);
+      const configs = [config, gitmodules];
+      const entries = configs.flatMap(splitNullSeparatedGitStdoutPaths);
+      // Explicit paths override Git's active/update policies and parallel cloning.
+      // Leave custom policies to the ordinary command rather than reimplement them.
+      if (
+        configs.some((result) => result.stdoutTruncated || result.exitCode > 1) ||
+        entries.some(
+          (entry) =>
+            /^submodule\.(active|fetchjobs|.*\.(active|update))\n/.test(entry) &&
+            !/^submodule\..+\.active\ntrue$/.test(entry),
+        )
+      ) {
+        return null;
+      }
+      return splitNullSeparatedGitStdoutPaths(gitmodules).flatMap((entry) => {
+        const separator = entry.indexOf("\n");
+        return entry.slice(0, separator).endsWith(".path") ? [entry.slice(separator + 1)] : [];
+      });
+    }).pipe(Effect.orElseSucceed(() => null));
+    if (submodules === null) return yield* ordinaryUpdate;
+    for (const submodule of submodules) {
+      const reference = path.resolve(source, submodule);
+      const args = ["submodule", "update", "--init", "--", submodule];
+      // git submodule accepts only one reference. Clone each direct child with
+      // its matching source, then recurse with the child's own source path.
+      const hasReference = yield* fileSystem
+        .exists(path.join(reference, ".git"))
+        .pipe(Effect.orElseSucceed(() => false));
+      if (hasReference) {
+        yield* runGit("GitVcsDriver.cloneSubmoduleWithReference", destination, [
+          "submodule",
+          "update",
+          "--init",
+          "--reference",
+          reference,
+          "--dissociate",
+          "--",
+          submodule,
+        ]).pipe(Effect.catch(() => runGit("GitVcsDriver.cloneSubmodule", destination, args)));
+      } else {
+        yield* runGit("GitVcsDriver.cloneSubmodule", destination, args);
+      }
+      // Dissociation keeps the destination independent of source pruning/deletion.
+      yield* prepareSubmodules(reference, path.join(destination, submodule));
+    }
+  });
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input) {
@@ -2849,19 +2922,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     // `git worktree add` leaves submodules empty, so a repo that keeps agent
     // skills, tooling or source in one gets a worktree that is quietly missing
-    // them. Best-effort: the objects are usually already in the parent's
-    // `.git/modules`, but a first-ever clone needs the network, and failing to
-    // populate a submodule must not roll back the caller's thread.
+    // them. Submodule Git directories belong to each worktree, so Git otherwise
+    // clones the objects again even when the source already has them locally.
     const hasSubmodules = yield* fileSystem
       .exists(path.join(worktreePath, ".gitmodules"))
       .pipe(Effect.orElseSucceed(() => false));
     if (hasSubmodules) {
-      yield* runGit("GitVcsDriver.createWorktree.updateSubmodules", worktreePath, [
-        "submodule",
-        "update",
-        "--init",
-        "--recursive",
+      const sourceRoot = yield* runGitStdout("GitVcsDriver.submoduleSourceRoot", input.cwd, [
+        "rev-parse",
+        "--show-toplevel",
       ]).pipe(
+        Effect.map((stdout) => stdout.trim()),
+        Effect.orElseSucceed(() => input.cwd),
+      );
+      yield* prepareSubmodules(sourceRoot, worktreePath).pipe(
+        Effect.catch(() =>
+          runGit("GitVcsDriver.updateSubmodules", worktreePath, [
+            "submodule",
+            "update",
+            "--init",
+            "--recursive",
+          ]),
+        ),
         Effect.catch((cause) =>
           Effect.logWarning("worktree submodule checkout failed; submodule paths are empty", {
             worktreePath,
