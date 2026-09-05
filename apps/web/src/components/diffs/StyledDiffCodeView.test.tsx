@@ -9,6 +9,7 @@ import { useWorkerPool, type CodeViewProps } from "@pierre/diffs/react";
 import { WorkerPoolManager, type WorkerRequest, type WorkerResponse } from "@pierre/diffs/worker";
 import {
   act,
+  StrictMode,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -149,6 +150,14 @@ function Views({ count }: { count: number }) {
   );
 }
 
+function renderViews(count: number) {
+  return (
+    <StrictMode>
+      <Views count={count} />
+    </StrictMode>
+  );
+}
+
 describe("StyledDiffCodeView", () => {
   beforeEach(() => {
     testState.codeViewClassName = null;
@@ -208,6 +217,7 @@ describe("code-view worker lifecycle", () => {
     vi.stubGlobal("window", {});
     vi.stubGlobal("navigator", { hardwareConcurrency: 2 });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
       setImmediate(() => callback(0)),
     );
@@ -226,14 +236,16 @@ describe("code-view worker lifecycle", () => {
   afterEach(async () => {
     await act(async () => renderer?.unmount());
     renderer = undefined;
+    await vi.runOnlyPendingTimersAsync();
     await Promise.all(testState.terminations);
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
-  it("starts on demand, shares one pool, disposes the last view, and reopens without resetting siblings", async () => {
+  it("starts on demand, keeps quick reopens warm, and expires the last closed pool", async () => {
     await act(async () => {
-      renderer = create(<Views count={0} />);
+      renderer = create(renderViews(0));
     });
     const mounted = renderer!;
     const button = mounted.root.findByType("button");
@@ -241,7 +253,7 @@ describe("code-view worker lifecycle", () => {
     expect(testState.pools.size).toBe(0);
     await act(async () => {
       (button.props as { onClick(): void }).onClick();
-      mounted.update(<Views count={1} />);
+      mounted.update(renderViews(1));
     });
     const pool = [...testState.pools.keys()][0]!;
     await act(async () => testState.pools.get(pool));
@@ -252,25 +264,39 @@ describe("code-view worker lifecycle", () => {
     );
     expect(testState.requests.filter((request) => request.type === "file")).toHaveLength(0);
 
-    await act(async () => mounted.update(<Views count={2} />));
+    await act(async () => mounted.update(renderViews(2)));
     await act(async () => pool.primeFileHighlightCache(files[1]!));
     expect(testState.pools.size).toBe(1);
     expect(testState.workers).toHaveLength(2);
-    expect(testState.renderPools).toEqual([pool, pool]);
+    expect(new Set(testState.renderPools)).toEqual(new Set([pool]));
     expect(pool.getFileResultCache(files[1]!)).toBeDefined();
     expect(mounted.root.findByProps({ "data-code-file": "answer.ts" }).children.join("")).toContain(
       "answer",
     );
 
-    await act(async () => mounted.update(<Views count={1} />));
+    await act(async () => mounted.update(renderViews(1)));
     expect(pool.getStats().totalWorkers).toBe(2);
     expect(testState.terminations).toHaveLength(0);
-    await act(async () => mounted.update(<Views count={0} />));
+    await act(async () => mounted.update(renderViews(0)));
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(pool.getStats().totalWorkers).toBe(2);
+    expect(testState.terminations).toHaveLength(0);
+
+    await act(async () => mounted.update(renderViews(1)));
+    expect(testState.pools.size).toBe(1);
+    expect(testState.workers).toHaveLength(2);
+    expect(mounted.root.findAllByProps({ role: "status" })).toHaveLength(0);
+    expect(pool.getFileResultCache(files[1]!)).toBeDefined();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(pool.getStats().totalWorkers).toBe(2);
+
+    await act(async () => mounted.update(renderViews(0)));
+    await vi.advanceTimersByTimeAsync(30_000);
     await Promise.all(testState.terminations);
     expect(pool.getStats().totalWorkers).toBe(0);
     expect(testState.terminations).toHaveLength(2);
 
-    await act(async () => mounted.update(<Views count={1} />));
+    await act(async () => mounted.update(renderViews(1)));
     const reopenedPool = [...testState.pools.keys()][1]!;
     await act(async () => testState.pools.get(reopenedPool));
     expect(reopenedPool.isInitialized()).toBe(true);
@@ -285,7 +311,7 @@ describe("code-view worker lifecycle", () => {
   it("renders through Pierre's main-thread fallback when worker creation fails", async () => {
     testState.failWorkers = true;
     await act(async () => {
-      renderer = create(<Views count={1} />);
+      renderer = create(renderViews(1));
     });
     const pool = [...testState.pools.keys()][0]!;
     await act(async () => {
@@ -309,7 +335,7 @@ describe("code-view worker lifecycle", () => {
       testState.onInitializationHeld = resolve;
     });
     await act(async () => {
-      renderer = create(<Views count={2} />);
+      renderer = create(renderViews(2));
     });
     const pool = [...testState.pools.keys()][0]!;
     const pending = testState.pools.get(pool)!;
@@ -319,10 +345,11 @@ describe("code-view worker lifecycle", () => {
     expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(2);
     expect(testState.renderPools).toHaveLength(0);
 
-    await act(async () => renderer!.update(<Views count={1} />));
+    await act(async () => renderer!.update(renderViews(1)));
     expect(pool.getStats().totalWorkers).toBe(2);
     expect(testState.terminations).toHaveLength(0);
-    await act(async () => renderer!.update(<Views count={0} />));
+    await act(async () => renderer!.update(renderViews(0)));
+    await vi.advanceTimersByTimeAsync(30_000);
     await pending;
     await Promise.all(testState.terminations);
     await act(async () => {
