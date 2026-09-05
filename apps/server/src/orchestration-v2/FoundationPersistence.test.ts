@@ -2348,6 +2348,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       assert.isTrue(Option.isSome(recovered));
       if (Option.isSome(recovered)) {
         assert.equal(recovered.value.id, "effect:b-foundation-legacy-rollback");
+        yield* outbox.succeed({ effectId: recovered.value.id, workerId: "recovery-worker" });
       }
     }),
   );
