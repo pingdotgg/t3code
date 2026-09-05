@@ -2621,7 +2621,7 @@ export default function ChatView(props: ChatViewProps) {
       Object.fromEntries(pendingQuestionDraftKeys.map((key) => [key, state.counts[key] ?? 0])),
     ),
   );
-  const questionThreadReady = activeThread !== null;
+  const questionThreadReady = serverThread != null && !threadDetailLoading;
   useEffect(() => {
     if (!activeThreadId || !questionThreadReady) return;
     const prefix = questionAttachmentDraftPrefix(environmentId, activeThreadId);
