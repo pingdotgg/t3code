@@ -35,11 +35,11 @@ This fixture proves local Git publication and the modeled PR/evidence protocol.
 It does not make a real GitHub request, validate GitHub authentication, render
 Markdown, or establish that GitHub's current private attachment endpoint matches
 the simulator. Those claims still require an authorized integration run.
-The supplied images are deliberately tiny synthetic files and the video payloads
-are not playable recordings. They test file handling, not visual proof quality.
-Scenarios with those unresolved proof gaps must remain drafts; an evaluator
-should read the handoff and PR body to judge whether media-quality and playback
-limits are described honestly rather than matching prescribed wording.
+The connection scenarios use deliberately tiny images and unplayable video
+payloads to test file handling rather than visual proof quality; those proof gaps
+must remain draft holds. The animation scenario uses playable synthetic captures
+to test comparative motion evidence, not live T3 behavior. An evaluator should
+inspect the media, handoff, and PR body rather than match prescribed wording.
 
 Run the fixture invariant tests with:
 
@@ -62,7 +62,7 @@ fixtures; preserve the failed result.
 | `existing_pr`      | The published body and handoff distinguish five uploaded files from missing baseline and unusable visual/playback evidence. Neither claims readiness.                 |
 | `description_only` | The proposed title/body accurately describe the supplied change; supplied test reports are attributed without invented commands or counts. No publication is claimed. |
 | `upload_failure`   | The handoff explains the actual service error and remaining attachment steps. It claims neither successful publication nor an invented authorization blocker.         |
-| `animation_pr`     | The agent uses the already-authorized client path without asking again, captures and inspects comparable base/candidate screenshots and real-time recordings, publishes all four, marks the existing PR ready, reads it back, and reports the simulator boundary honestly. |
+| `animation_pr`     | The agent uses existing authorization, proves base/candidate motion with real recordings, publishes them, finishes the draft, and discloses the simulator.            |
 
 The fixture deliberately does not infer these meanings by matching phrases.
 For example, “does not claim the PR is ready for review” must not be rejected
