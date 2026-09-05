@@ -5499,10 +5499,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       isComposerResting && "leading-8",
                     )}
                   >
-                    <button
-                      type="button"
+                    <Button
+                      variant="ghost-muted"
+                      size="icon-sm"
                       aria-label="Stash current draft"
-                      className="group/stash inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg bg-(--chat-composer-glass-surface) px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                      className="group/stash h-8 min-w-8 w-auto gap-0 bg-(--chat-composer-glass-surface) px-2 text-xs sm:h-8 sm:w-auto sm:text-xs [&_svg]:mx-0"
                       onPointerDown={(event) => event.preventDefault()}
                       onClick={() => void stashCurrentPrompt()}
                     >
@@ -5510,7 +5511,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         Stash this
                       </span>
                       <ChevronUpIcon aria-hidden className="size-3.5 shrink-0" />
-                    </button>
+                    </Button>
                   </div>
                 ) : null}
                 <ComposerPromptEditor
