@@ -34,7 +34,7 @@ import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
 
-export { formatDuration, formatElapsed } from "@t3tools/shared/orchestrationTiming";
+export { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
 export type WorkLogToolLifecycleStatus =
   | "idle"

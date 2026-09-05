@@ -91,7 +91,7 @@ const V2TurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.pip
   }),
 );
 
-export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make")(function* (
+const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make")(function* (
   stdio: Stdio.Stdio,
   options: CodexAppServerClientOptions = {},
   terminationError?: Effect.Effect<CodexError.CodexAppServerError>,
@@ -259,11 +259,6 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
       }),
   });
 });
-
-export const layer = (
-  stdio: Stdio.Stdio,
-  options: CodexAppServerClientOptions = {},
-): Layer.Layer<CodexAppServerClient> => Layer.effect(CodexAppServerClient, make(stdio, options));
 
 export const layerChildProcess = (
   handle: ChildProcessSpawner.ChildProcessHandle,
