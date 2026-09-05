@@ -1,6 +1,5 @@
 import {
   type AssetResource,
-  ProviderDriverKind,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
@@ -36,37 +35,6 @@ import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
 
 export { formatDuration, formatElapsed } from "@t3tools/shared/orchestrationTiming";
-
-export type ProviderPickerKind = ProviderDriverKind;
-
-export const PROVIDER_OPTIONS: Array<{
-  value: ProviderPickerKind;
-  label: string;
-  available: boolean;
-  pickerSidebarBadge?: "new" | "soon";
-}> = [
-  { value: ProviderDriverKind.make("codex"), label: "Codex", available: true },
-  { value: ProviderDriverKind.make("claudeAgent"), label: "Claude", available: true },
-  {
-    value: ProviderDriverKind.make("opencode"),
-    label: "OpenCode",
-    available: true,
-    pickerSidebarBadge: "new",
-  },
-  {
-    value: ProviderDriverKind.make("cursor"),
-    label: "Cursor",
-    available: true,
-    pickerSidebarBadge: "new",
-  },
-  { value: ProviderDriverKind.make("grok"), label: "Grok", available: true },
-  {
-    value: ProviderDriverKind.make("antigravity"),
-    label: "Antigravity",
-    available: true,
-    pickerSidebarBadge: "new",
-  },
-];
 
 export type WorkLogToolLifecycleStatus =
   | "idle"
@@ -1017,10 +985,13 @@ export function inferCheckpointTurnCountByRunId(
   );
 }
 
-export function deriveRevertTurnCountByUserMessageId(input: {
-  readonly timelineEntries: ReadonlyArray<TimelineEntry>;
-  readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
-}): Map<ChatMessage["id"], number> {
+export function deriveRevertTurnCountByUserMessageId(
+  input: {
+    readonly timelineEntries: ReadonlyArray<TimelineEntry>;
+    readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
+  },
+  previous: Map<ChatMessage["id"], number> | null = null,
+): Map<ChatMessage["id"], number> {
   const readyCheckpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
   for (const checkpoint of input.checkpoints) {
     if (checkpoint.status === "ready") {
@@ -1038,7 +1009,7 @@ export function deriveRevertTurnCountByUserMessageId(input: {
     if (checkpoint === undefined) continue;
     byUserMessageId.set(entry.message.id, Math.max(0, checkpoint.checkpointTurnCount - 1));
   }
-  return byUserMessageId;
+  return previous !== null && shallow(previous, byUserMessageId) ? previous : byUserMessageId;
 }
 
 export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase {

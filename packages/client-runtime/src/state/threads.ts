@@ -149,10 +149,18 @@ function matchesThreadSnapshot(
   );
 }
 
+// A retained "live" state stays live: the cursor resume that follows only
+// replays what the thread missed, and on servers that send the completion
+// marker the first replayed event moves the status to "synchronizing" on its
+// own. Downgrading here would flash a sync label on every return to a
+// recently viewed thread.
 function cachedThreadState(value: EnvironmentThreadState): EnvironmentThreadState {
   return {
     ...value,
-    status: value.status === "deleted" ? "deleted" : statusWithoutLiveData(value.data),
+    status:
+      value.status === "deleted" || (value.status === "live" && Option.isSome(value.data))
+        ? value.status
+        : statusWithoutLiveData(value.data),
     error: Option.none(),
     history: { ...value.history, loading: false, error: null },
   };
@@ -668,7 +676,16 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       service.changes.pipe(Stream.filter(ConnectionWakeups.shouldResubscribeAfterWakeup)),
   });
 
-  yield* setSynchronizing;
+  // Only the first subscription after a warm live resume keeps the retained
+  // status. A replacement session or foreground resubscribe on the same scope
+  // may have missed events, so those show sync progress until confirmed.
+  const resumingLive = yield* Ref.make(initialState.status === "live");
+  const markSynchronizing = Effect.gen(function* () {
+    if (yield* Ref.get(resumingLive)) return;
+    yield* setSynchronizing;
+  });
+
+  yield* markSynchronizing;
   yield* Effect.forkScoped(
     subscribeDynamic(
       ORCHESTRATION_V2_WS_METHODS.subscribeThread,
@@ -686,7 +703,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           Effect.orElseSucceed(() => false),
         );
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
-        yield* setSynchronizing;
+        yield* markSynchronizing;
+        yield* Ref.set(resumingLive, false);
 
         if (Option.isNone(current.data)) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(

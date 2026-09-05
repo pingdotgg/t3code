@@ -25,6 +25,9 @@
     "typecheck": "vp run -r --concurrency-limit 2 typecheck",
     "tc": "vp run -r --concurrency-limit 2 typecheck",
     "lint": "vp lint --report-unused-disable-directives",
+    "knip": "knip",
+    "knip:check": "knip --include files,dependencies --no-config-hints",
+    "knip:production": "knip --production",
     "lint:mobile": "node scripts/mobile-native-static-check.ts",
     "test": "vp run -r test",
     "test:perf:v2-wire": "vp test run apps/server/src/orchestration-v2/WireProjection.test.ts apps/server/src/orchestration-v2/threadHistoryPaging.test.ts apps/server/src/orchestration-v2/ThreadStream.test.ts apps/server/src/orchestration-v2/ShellStream.test.ts packages/contracts/src/environmentHttp.test.ts packages/contracts/src/orchestrationV2.test.ts packages/client-runtime/src/operations/commands.test.ts packages/client-runtime/src/state/boundedThreadSnapshotHttp.test.ts packages/client-runtime/src/state/threadHistoryController.test.ts packages/client-runtime/src/state/threadHistoryMerge.test.ts packages/client-runtime/src/state/threadDetail.test.ts packages/client-runtime/src/state/threads-sync.test.ts packages/client-runtime/src/state/shellReducer.test.ts",
@@ -45,11 +48,10 @@
     "sync:repos": "node scripts/sync-reference-repos.ts"
   },
   "devDependencies": {
-    "@babel/plugin-transform-react-jsx": "7.28.6",
     "@effect/tsgo": "catalog:",
-    "@oxlint/plugins": "^1.63.0",
     "@types/node": "catalog:",
     "@typescript/native-preview": "catalog:",
+    "knip": "6.34.0",
     "vite-plus": "catalog:"
   },
   "engines": {

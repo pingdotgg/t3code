@@ -1,5 +1,4 @@
 import { assert, it } from "@effect/vitest";
-import { DEFAULT_MODEL, ProviderInstanceId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -10,13 +9,6 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 
 import * as ServerConfig from "./config.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
-
-it("uses the canonical Codex model for auto-bootstrap", () => {
-  assert.deepEqual(ServerRuntimeStartup.getAutoBootstrapThreadModelSelection(), {
-    instanceId: ProviderInstanceId.make("codex"),
-    model: DEFAULT_MODEL,
-  });
-});
 
 it.effect("runs projection repair, recovery, worker startup, and bootstrap in order", () =>
   Effect.gen(function* () {

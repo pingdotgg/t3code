@@ -224,6 +224,45 @@ describe("V2 session presentation", () => {
 
     expect([...targets]).toEqual([[turnStartMessageId, 0]]);
     expect(targets.has(steerMessageId)).toBe(false);
+    const checkpoints = [
+      {
+        runId,
+        checkpointTurnCount: 1,
+        checkpointRef: "checkpoint-run-1" as never,
+        status: "ready" as const,
+        files: [],
+        assistantMessageId,
+        completedAt: "2026-06-20T00:00:03.000Z",
+      },
+    ];
+    const streamedEntries = timelineEntries.map((entry) =>
+      entry.kind === "message" && entry.message.role === "assistant"
+        ? { ...entry, message: { ...entry.message, text: "Another token" } }
+        : entry,
+    );
+    expect(
+      deriveRevertTurnCountByUserMessageId(
+        { timelineEntries: streamedEntries, checkpoints },
+        targets,
+      ),
+    ).toBe(targets);
+    const advanced = deriveRevertTurnCountByUserMessageId(
+      {
+        timelineEntries: streamedEntries,
+        checkpoints: [{ ...checkpoints[0]!, checkpointTurnCount: 3 }],
+      },
+      targets,
+    );
+    expect(advanced).not.toBe(targets);
+    expect(advanced.get(turnStartMessageId)).toBe(2);
+    const disabled = deriveRevertTurnCountByUserMessageId(
+      { timelineEntries: [], checkpoints },
+      advanced,
+    );
+    expect(disabled.size).toBe(0);
+    expect(
+      deriveRevertTurnCountByUserMessageId({ timelineEntries: [], checkpoints }, disabled),
+    ).toBe(disabled);
   });
 
   it("uses visible turn item order and keeps provider errors in the work log", () => {
