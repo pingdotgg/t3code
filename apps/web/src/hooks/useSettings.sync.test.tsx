@@ -133,7 +133,10 @@ describe("shared settings writes", () => {
   it.each([
     ["denied", () => AsyncResult.success(session([]))],
     ["denied while refreshing", () => AsyncResult.waiting(AsyncResult.success(session([])))],
-    ["failed", () => AsyncResult.failure(Cause.fail(new Error("session rejected")))],
+    [
+      "failed",
+      () => AsyncResult.failure<AuthSessionState, Error>(Cause.fail(new Error("session rejected"))),
+    ],
   ] as const)("skips a remote whose grant is %s", async (_label, result) => {
     state.registry!.set(state.sessions.get(remoteId)!, result());
     await mountEditor();
