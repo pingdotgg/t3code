@@ -96,6 +96,10 @@ import { isMacPlatform } from "~/lib/utils";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
+import {
+  isSameSidebarThreadRef,
+  useSidebarPendingFileDropStore,
+} from "../sidebarPendingFileDropStore";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import {
   buildSidebarProjectSnapshots,
@@ -185,6 +189,7 @@ import {
   type SnoozePreset,
 } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import {
@@ -794,6 +799,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
   onUnpin: (threadRef: ScopedThreadRef) => void;
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
+  /**
+   * External files dropped onto this row. The row highlights while the drag
+   * is over it; the callback opens the thread and hands the files to its
+   * composer. Absent when the sidebar cannot open server threads.
+   */
+  onFileDropThreads?: ((threadRef: ScopedThreadRef, files: File[]) => void) | undefined;
   changeRequestSnapshot: ThreadChangeRequestSnapshot | null;
   onChangeRequestSnapshot: (
     threadKey: string,
@@ -808,6 +819,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     onCommitRename,
     onContextMenu,
     onAcknowledgeWoke,
+    onFileDropThreads,
     onRenameTitleChange,
     onSettle,
     onSnooze,
@@ -1084,6 +1096,27 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     },
     [isRenaming, onStartRename, thread.title, threadRef],
   );
+  const [isFileDragOver, setIsFileDragOver] = useState(false);
+  const fileDropHandlers = useMemo(
+    () =>
+      onFileDropThreads
+        ? makeWorkspaceFileDropHandlers({
+            setDragActive: setIsFileDragOver,
+            addFiles: (files) => {
+              onFileDropThreads(threadRef, files);
+            },
+          })
+        : null,
+    [onFileDropThreads, threadRef],
+  );
+  // A drop lands on a child or outside the window entirely, so dragend is
+  // the reset of last resort for the row's highlight.
+  useEffect(() => {
+    if (!isFileDragOver) return;
+    const clearFileDrag = () => setIsFileDragOver(false);
+    window.addEventListener("dragend", clearFileDrag);
+    return () => window.removeEventListener("dragend", clearFileDrag);
+  }, [isFileDragOver]);
   const renameCommittedRef = useRef(false);
   useEffect(() => {
     if (isRenaming) renameCommittedRef.current = false;
@@ -1198,6 +1231,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       !props.isActive &&
       !isSelected &&
       "opacity-70 transition-opacity hover:opacity-100",
+    isFileDragOver && "ring-1 ring-inset ring-primary/70",
+    // The hover tint must not clobber an active/selected row's own surface.
+    isFileDragOver && !props.isActive && !isSelected && "bg-sidebar-row-hover",
   );
 
   const title = isRenaming ? (
@@ -1330,6 +1366,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item
+        {...(fileDropHandlers ?? {})}
         className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
       >
         <Tooltip>
@@ -1491,6 +1528,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           : undefined
       }
       {...(sortable?.listeners ?? {})}
+      {...(fileDropHandlers ?? {})}
       className={cn(
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_96px]",
         sortable?.isDragging && "z-20 opacity-80",
@@ -2528,12 +2566,55 @@ export default function Sidebar() {
       if (isMobile) {
         setOpenMobile(false);
       }
-      void router.navigate({
+      return router.navigate({
         to: "/$environmentId/$threadId",
         params: buildThreadRouteParams(threadRef),
       });
     },
     [clearSelection, isMobile, router, setOpenMobile, setSelectionAnchor],
+  );
+
+  // Dropping files on a row opens that thread and attaches the files there.
+  // The composer only accepts drops for its OWN thread, so when the row is
+  // not the open thread we stash the files and let ChatView hand them over
+  // once the navigation actually lands; if the route bounced (thread gone),
+  // nothing will consume them, so clear instead of surprising the user later.
+  const setPendingFileDrop = useSidebarPendingFileDropStore((s) => s.setPendingFileDrop);
+  const clearPendingFileDrop = useSidebarPendingFileDropStore((s) => s.clearPendingFileDrop);
+  const handleThreadFileDrop = useCallback(
+    async (threadRef: ScopedThreadRef, files: File[]) => {
+      setPendingFileDrop({ threadRef, files });
+      // Key match alone is not "already there": during draft promotion the
+      // resolved route key is the server thread while the URL is still the
+      // draft route, and its composer would swallow the drop then discard it.
+      const landedBefore =
+        router.buildLocation({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+        }).pathname === router.state.location.pathname;
+      if (landedBefore) return;
+      try {
+        await navigateToThread(threadRef);
+        // A newer drop may have replaced ours while the navigation was in
+        // flight; only clear the stash if it still belongs to this drop.
+        const landed =
+          router.buildLocation({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(threadRef),
+          }).pathname === router.state.location.pathname;
+        const pending = useSidebarPendingFileDropStore.getState().pending;
+        if (!landed && pending !== null && isSameSidebarThreadRef(pending.threadRef, threadRef)) {
+          clearPendingFileDrop();
+        }
+      } catch {
+        // Navigation failed outright; nothing will consume this drop.
+        const pending = useSidebarPendingFileDropStore.getState().pending;
+        if (pending !== null && isSameSidebarThreadRef(pending.threadRef, threadRef)) {
+          clearPendingFileDrop();
+        }
+      }
+    },
+    [clearPendingFileDrop, navigateToThread, router, setPendingFileDrop],
   );
 
   const navigateToDraft = useCallback(
@@ -4101,6 +4182,7 @@ export default function Sidebar() {
                         onAcknowledgeWoke={acknowledgeWoke}
                         changeRequestSnapshot={changeRequestSnapshotByKey.get(threadKey) ?? null}
                         onChangeRequestSnapshot={setThreadChangeRequestSnapshot}
+                        onFileDropThreads={handleThreadFileDrop}
                       />
                     );
                   };

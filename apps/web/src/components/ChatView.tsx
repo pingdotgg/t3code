@@ -171,6 +171,10 @@ import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import {
+  isSameSidebarThreadRef,
+  useSidebarPendingFileDropStore,
+} from "../sidebarPendingFileDropStore";
+import {
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
@@ -7502,6 +7506,56 @@ export default function ChatView(props: ChatViewProps) {
     }
     void onRevertToTurnCountRef.current(targetTurnCount);
   }, []);
+
+  // Files dropped on a sidebar row land here once the dropped-on thread is
+  // actually open, then take the exact same path as a workspace drop:
+  // validate, compress, focus the composer, never send. Kept above the
+  // no-active-thread early return so hook order never changes.
+  const pendingSidebarFileDrop = useSidebarPendingFileDropStore((state) => state.pending);
+  const consumePendingFileDrop = useSidebarPendingFileDropStore(
+    (state) => state.consumePendingFileDrop,
+  );
+  useEffect(() => {
+    if (pendingSidebarFileDrop === null) return;
+    // A promoting draft can mount this view with the server thread id while
+    // its composer is still draft-keyed; finalization would discard what we
+    // attach there. Only the canonical thread target may consume a drop.
+    if (
+      typeof composerDraftTarget === "string" ||
+      !isSameSidebarThreadRef(composerDraftTarget, pendingSidebarFileDrop.threadRef)
+    ) {
+      return;
+    }
+    if (!activeThread) return;
+    if (!composerRef.current) {
+      const raf = window.requestAnimationFrame(() => {
+        if (!composerRef.current) return;
+        const latestPending = useSidebarPendingFileDropStore.getState().pending;
+        if (latestPending === null) return;
+        if (
+          typeof composerDraftTarget === "string" ||
+          !isSameSidebarThreadRef(composerDraftTarget, latestPending.threadRef)
+        ) {
+          return;
+        }
+        const files = consumePendingFileDrop(latestPending.threadRef);
+        if (files !== null) {
+          composerRef.current?.addDroppedFiles(files);
+        }
+      });
+      return () => window.cancelAnimationFrame(raf);
+    }
+    const files = consumePendingFileDrop(pendingSidebarFileDrop.threadRef);
+    if (files !== null) {
+      composerRef.current.addDroppedFiles(files);
+    }
+  }, [
+    activeThread,
+    composerDraftTarget,
+    composerRef,
+    consumePendingFileDrop,
+    pendingSidebarFileDrop,
+  ]);
 
   // Empty state: no active thread
   if (!activeThread) {
