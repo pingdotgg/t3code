@@ -13,6 +13,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { SshPasswordPrompt } from "./auth.ts";
+import { SshCommandError } from "./errors.ts";
 import {
   buildRemoteLaunchScript,
   buildRemotePairingScript,
@@ -384,63 +385,102 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(processLayer));
   });
 
-  it.effect("closes the tunnel scope and starts fresh after disconnect", () => {
-    const spawnedCommands: Array<ReadonlyArray<string>> = [];
-    let tunnelKillCount = 0;
-    let stopCommandCount = 0;
-    const spawner = ChildProcessSpawner.make((command) =>
-      Effect.sync(() => {
-        const args = commandArgs(command);
-        spawnedCommands.push(args);
-        if (args.includes("-N")) {
-          return makeRunningProcess(() => {
-            tunnelKillCount += 1;
-          });
+  it.effect.each(["successful stop", "failed stop"] as const)(
+    "closes the tunnel scope and starts fresh after a %s",
+    (mode) => {
+      const spawnedCommands: Array<ReadonlyArray<string>> = [];
+      let tunnelKillCount = 0;
+      let stopCommandCount = 0;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = commandArgs(command);
+          spawnedCommands.push(args);
+          if (args.includes("-N")) {
+            return makeRunningProcess(() => {
+              tunnelKillCount += 1;
+            });
+          }
+          if (args.includes("sh") && args.includes("--")) {
+            return makeSuccessfulProcess('{"remotePort":3773}\n');
+          }
+          if (args.includes("sh")) {
+            stopCommandCount += 1;
+            if (mode === "failed stop" && stopCommandCount === 1) {
+              return {
+                ...makeSuccessfulProcess(""),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+                stderr: Stream.make(
+                  new TextEncoder().encode("Remote T3 server did not stop within 2 seconds.\n"),
+                ),
+              };
+            }
+            return makeSuccessfulProcess('{"stopped":true}\n');
+          }
+          return makeSuccessfulProcess("\n");
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshPasswordPrompt.disabledLayer,
+        SshEnvironmentManager.layer(),
+      );
+      const target = {
+        alias: "devbox",
+        hostname: "devbox.example.com",
+        username: "julius",
+        port: 2222,
+      } as const;
+
+      return Effect.gen(function* () {
+        const manager = yield* SshEnvironmentManager;
+
+        const first = yield* manager.ensureEnvironment(target);
+        assert.equal(first.httpBaseUrl, "http://127.0.0.1:41773/");
+        const firstTunnelArgs = spawnedCommands.find((args) => args.includes("-N"));
+        assert.isDefined(firstTunnelArgs);
+        assert.include(firstTunnelArgs, "ControlMaster=no");
+        assert.include(firstTunnelArgs, "ControlPath=none");
+        assert.include(firstTunnelArgs, "ControlPersist=no");
+
+        const disconnected = yield* Effect.result(manager.disconnectEnvironment(target));
+        if (mode === "failed stop") {
+          assert.isTrue(Result.isFailure(disconnected));
+          if (Result.isFailure(disconnected)) {
+            assert.instanceOf(disconnected.failure, SshCommandError);
+            assert.equal(
+              disconnected.failure.message,
+              "Remote T3 server did not stop within 2 seconds.",
+            );
+          }
+        } else {
+          assert.isTrue(Result.isSuccess(disconnected));
         }
-        if (args.includes("sh") && args.includes("--")) {
-          return makeSuccessfulProcess('{"remotePort":3773}\n');
+        assert.equal(tunnelKillCount, 1);
+        assert.equal(stopCommandCount, 1);
+
+        if (mode === "failed stop") {
+          yield* manager.disconnectEnvironment(target);
+          assert.equal(tunnelKillCount, 1);
+          assert.equal(stopCommandCount, 2);
         }
-        if (args.includes("sh")) {
-          stopCommandCount += 1;
-          return makeSuccessfulProcess('{"stopped":true}\n');
-        }
-        return makeSuccessfulProcess("\n");
-      }),
-    );
-    const layer = Layer.mergeAll(
-      NodeServices.layer,
-      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Layer.succeed(HttpClient.HttpClient, testHttpClient),
-      Layer.succeed(NetService.NetService, testNetService),
-      SshPasswordPrompt.disabledLayer,
-      SshEnvironmentManager.layer(),
-    );
-    const target = {
-      alias: "devbox",
-      hostname: "devbox.example.com",
-      username: "julius",
-      port: 2222,
-    } as const;
 
-    return Effect.gen(function* () {
-      const manager = yield* SshEnvironmentManager;
+        yield* manager.ensureEnvironment(target);
 
-      const first = yield* manager.ensureEnvironment(target);
-      assert.equal(first.httpBaseUrl, "http://127.0.0.1:41773/");
-      const firstTunnelArgs = spawnedCommands.find((args) => args.includes("-N"));
-      assert.isDefined(firstTunnelArgs);
-      assert.include(firstTunnelArgs, "ControlMaster=no");
-      assert.include(firstTunnelArgs, "ControlPath=none");
-      assert.include(firstTunnelArgs, "ControlPersist=no");
-
-      yield* manager.disconnectEnvironment(target);
-      assert.equal(tunnelKillCount, 1);
-      assert.equal(stopCommandCount, 1);
-
-      yield* manager.ensureEnvironment(target);
-
-      assert.equal(spawnedCommands.filter((args) => args.includes("-N")).length, 2);
-      assert.equal(tunnelKillCount, 1);
-    }).pipe(Effect.provide(layer), Effect.scoped);
-  });
+        assert.equal(spawnedCommands.filter((args) => args.includes("-N")).length, 2);
+        assert.equal(tunnelKillCount, 1);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.scoped,
+        Effect.andThen(
+          Effect.sync(() => {
+            assert.equal(tunnelKillCount, 2);
+            assert.equal(stopCommandCount, mode === "failed stop" ? 3 : 2);
+          }),
+        ),
+      );
+    },
+  );
 });
