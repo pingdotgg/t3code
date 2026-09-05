@@ -18,6 +18,7 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/pngjs": "6.0.5",
+    "typescript": "catalog:",
     "vite-plus": "catalog:"
   }
 }
