@@ -566,15 +566,20 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
       }
     }
     const fileInfo = opened.info;
+    const mimeType = Mime.getType(filePath) ?? "application/octet-stream";
+    const isHtml = mimeType === "text/html";
 
     // A hash-like name is not enough: custom static files can use the same naming pattern.
     const relativePath = path.relative(staticRoot, filePath).replaceAll("\\", "/");
     const immutable =
-      /^assets\/.+-[\w-]{8}\.[^/]+$/.test(relativePath) && immutableBuildAssets.has(relativePath);
+      !isHtml &&
+      /^assets\/.+-[\w-]{8}\.[^/]+$/.test(relativePath) &&
+      immutableBuildAssets.has(relativePath);
     const headers: Record<string, string> = {
       "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "no-cache",
     };
-    const modifiedAt = Option.getOrUndefined(fileInfo.mtime);
+    // Deployments can preserve HTML size and mtime while changing its bundle URLs.
+    const modifiedAt = isHtml ? undefined : Option.getOrUndefined(fileInfo.mtime);
     const etag = modifiedAt
       ? `W/"${fileInfo.size.toString(16)}-${modifiedAt.getTime().toString(16)}"`
       : undefined;
@@ -599,17 +604,14 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
         : ifModifiedSince !== undefined &&
           modifiedAt !== undefined &&
           Date.parse(modifiedAt.toUTCString()) <= Date.parse(ifModifiedSince);
-    if (unchanged) {
+    if (!isHtml && unchanged) {
       return HttpServerResponse.empty({
         status: 304,
         headers: { ...headers, Vary: "Accept-Encoding" },
       });
     }
 
-    const contentType =
-      path.extname(filePath) === ".html"
-        ? "text/html; charset=utf-8"
-        : (Mime.getType(filePath) ?? "application/octet-stream");
+    const contentType = isHtml ? "text/html; charset=utf-8" : mimeType;
     // The request scope closes the handle for GET, HEAD, 304, errors, and cancellation.
     // HEAD still passes through compression, which selects headers without reading the stream.
     return HttpServerResponse.stream(streamStaticFile(opened.file, fileInfo.size), {
