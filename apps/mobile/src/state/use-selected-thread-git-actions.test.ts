@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   scopes: new Set<string>(),
+  primaryScopes: new Set<string>(),
   branch: "main",
   worktrees: [] as string[],
   thread: {
@@ -15,6 +16,9 @@ const state = vi.hoisted(() => ({
   },
   commits: 0,
   pushes: 0,
+  metadataRequests: [] as { environmentId: string; branch: string }[],
+  results: [] as { type: string; description?: string }[],
+  afterGitAction: undefined as (() => void) | undefined,
 }));
 
 vi.mock("react", () => ({
@@ -23,8 +27,10 @@ vi.mock("react", () => ({
   useEffect: () => {},
 }));
 vi.mock("./session", () => ({
-  useEnvironmentScope: (_environmentId: unknown, scope: string) => state.scopes.has(scope),
-  readEnvironmentScope: (_environmentId: unknown, scope: string) => state.scopes.has(scope),
+  useEnvironmentScope: (environmentId: unknown, scope: string) =>
+    (environmentId === state.thread.environmentId ? state.scopes : state.primaryScopes).has(scope),
+  readEnvironmentScope: (environmentId: unknown, scope: string) =>
+    (environmentId === state.thread.environmentId ? state.scopes : state.primaryScopes).has(scope),
 }));
 vi.mock("./use-thread-selection", () => ({
   useThreadSelection: () => ({
@@ -44,15 +50,21 @@ vi.mock("./queries", () => ({
 vi.mock("./use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
 vi.mock("./atom-registry", () => ({ appAtomRegistry: {} }));
 vi.mock("./use-remote-environment-registry", () => ({ setPendingConnectionError: () => {} }));
-vi.mock("./use-vcs-action-state", () => ({ showGitActionResult: () => {} }));
+vi.mock("./use-vcs-action-state", () => ({
+  showGitActionResult: (result: { type: string; description?: string }) =>
+    state.results.push(result),
+}));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "action" }));
 vi.mock("./threads", () => ({
   threadEnvironment: {
     updateMetadata: async ({
+      environmentId,
       input,
     }: {
+      environmentId: string;
       input: { branch: string; worktreePath: string | null };
     }) => {
+      state.metadataRequests.push({ environmentId, branch: input.branch });
       if (!state.scopes.has(AuthOrchestrationOperateScope)) {
         return AsyncResult.failure(Cause.fail(new Error("Task operation denied")));
       }
@@ -66,14 +78,17 @@ vi.mock("./vcs", () => ({
     refreshStatus: async () => AsyncResult.success({ refName: state.branch }),
     switchRef: async ({ input }: { input: { refName: string } }) => {
       state.branch = input.refName;
+      state.afterGitAction?.();
       return AsyncResult.success({ refName: state.branch });
     },
     createRef: async ({ input }: { input: { refName: string } }) => {
       state.branch = input.refName;
+      state.afterGitAction?.();
       return AsyncResult.success({ refName: state.branch });
     },
     createWorktree: async ({ input }: { input: { newRefName: string } }) => {
       state.worktrees.push("/repo-worktree");
+      state.afterGitAction?.();
       return AsyncResult.success({
         worktree: { path: "/repo-worktree", refName: input.newRefName },
       });
@@ -86,6 +101,7 @@ vi.mock("./vcs", () => ({
       if (input.featureBranch) state.branch = "feature";
       if (input.action === "commit") state.commits += 1;
       if (input.action === "push") state.pushes += 1;
+      state.afterGitAction?.();
       return AsyncResult.success({
         branch: input.featureBranch
           ? { status: "created", name: "feature" }
@@ -101,12 +117,16 @@ import { useSelectedThreadGitActions } from "./use-selected-thread-git-actions";
 describe("thread Git mutation permissions", () => {
   beforeEach(() => {
     state.scopes = new Set([AuthSourceControlWriteScope]);
+    state.primaryScopes = new Set([AuthSourceControlWriteScope, AuthOrchestrationOperateScope]);
     state.branch = "main";
     state.worktrees = [];
     state.thread.branch = "main";
     state.thread.worktreePath = null;
     state.commits = 0;
     state.pushes = 0;
+    state.metadataRequests = [];
+    state.results = [];
+    state.afterGitAction = undefined;
   });
 
   it.each([false, true])(
@@ -156,5 +176,50 @@ describe("thread Git mutation permissions", () => {
     expect(state.commits).toBe(1);
     expect(state.pushes).toBe(1);
     expect(state.thread.branch).toBe("main");
+    expect(state.metadataRequests).toEqual([]);
+  });
+
+  it.each(["create", "checkout", "worktree", "commit"] as const)(
+    "does not send thread metadata after task permission is revoked during %s",
+    async (operation) => {
+      state.scopes.add(AuthOrchestrationOperateScope);
+      state.afterGitAction = () => state.scopes.delete(AuthOrchestrationOperateScope);
+      const actions = useSelectedThreadGitActions();
+      if (operation === "create")
+        expect(await actions.onCreateSelectedThreadBranch("feature")).toBeNull();
+      if (operation === "checkout") await actions.onCheckoutSelectedThreadBranch("feature");
+      if (operation === "worktree")
+        await actions.onCreateSelectedThreadWorktree({ baseBranch: "main", newBranch: "feature" });
+      if (operation === "commit")
+        expect(
+          await actions.onRunSelectedThreadGitAction({ action: "commit", featureBranch: true }),
+        ).toBeNull();
+      if (operation === "worktree") expect(state.worktrees).toEqual(["/repo-worktree"]);
+      else expect(state.branch).toBe("feature");
+      expect(state.thread.branch).toBe("main");
+      expect(state.thread.worktreePath).toBeNull();
+      expect(state.metadataRequests).toEqual([]);
+      expect(state.results.map((result) => result.type)).toEqual(["error"]);
+    },
+  );
+
+  it("uses a newly granted task permission for a retained branch callback", async () => {
+    state.primaryScopes.clear();
+    const actions = useSelectedThreadGitActions();
+    state.scopes.add(AuthOrchestrationOperateScope);
+    await actions.onCreateSelectedThreadBranch("feature");
+    expect(state.thread.branch).toBe("feature");
+    expect(state.metadataRequests).toEqual([{ environmentId: "environment", branch: "feature" }]);
+  });
+
+  it("can finish the thread update when only source-control permission is revoked after Git", async () => {
+    state.scopes.add(AuthOrchestrationOperateScope);
+    state.afterGitAction = () => state.scopes.delete(AuthSourceControlWriteScope);
+    expect(
+      await useSelectedThreadGitActions().onCreateSelectedThreadBranch("feature"),
+    ).not.toBeNull();
+    expect(state.thread.branch).toBe("feature");
+    expect(state.metadataRequests).toHaveLength(1);
+    expect(state.results).toEqual([]);
   });
 });
