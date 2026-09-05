@@ -82,6 +82,12 @@ const ManifestProviderCatalog = Schema.Struct({
  */
 const ModelManifestEnvelopeSchema = Schema.Struct({
   version: Schema.Literal(1),
+  /**
+   * ISO date of the last edit. A release bundles its manifest, and a disk
+   * cache of an older edit must not outrank it. Optional so older remote
+   * files still decode; they count as older than any dated bundle.
+   */
+  updatedAt: Schema.optional(Schema.String),
   currentModels: Schema.Record(Schema.String, Schema.Array(Schema.String)),
   providers: Schema.optional(Schema.Record(Schema.String, ManifestProviderCatalog)),
 });
@@ -130,6 +136,13 @@ const decodeManifest = Schema.decodeUnknownEffect(ModelManifestSchema);
 
 export const BUNDLED_MODEL_MANIFEST: ModelManifestData =
   Schema.decodeUnknownSync(ModelManifestSchema)(bundledManifestJson);
+
+/** Epoch millis of the manifest's `updatedAt`, or 0 when absent or unparsable. */
+export function manifestUpdatedAtMs(manifest: ModelManifestData): number {
+  if (manifest.updatedAt === undefined) return 0;
+  const parsed = Date.parse(manifest.updatedAt);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
 
 /** Resolve provider-neutral model presentation and capability data. */
 export function resolveProviderCatalog(
@@ -186,7 +199,8 @@ const decodeManifestCache = Schema.decodeUnknownEffect(
     ManifestCacheFile as unknown as Schema.Codec<typeof ManifestCacheFile.Type>,
   ),
 );
-const encodeManifestCache = Schema.encodeEffect(
+/** Exported for tests that seed the disk cache. */
+export const encodeManifestCache = Schema.encodeEffect(
   Schema.fromJsonString(
     ManifestCacheFile as unknown as Schema.Codec<typeof ManifestCacheFile.Type>,
   ),
@@ -216,7 +230,52 @@ export function applyModelManifest(
   manifest: ModelManifestData,
   driverKind: ProviderDriverKind,
 ): ServerProviderDraft {
-  return { ...draft, models: classifyModels(draft.models, manifest, driverKind) };
+  return {
+    ...draft,
+    models: applyManifestDefault(
+      classifyModels(draft.models, manifest, driverKind),
+      manifest,
+      driverKind,
+    ),
+  };
+}
+
+/** The manifest's chat default for `driverKind`, when it names one. */
+export function manifestDefaultModel(
+  manifest: ModelManifestData,
+  driverKind: ProviderDriverKind,
+): string | undefined {
+  return manifest.providers?.[driverKind]?.defaults?.chat;
+}
+
+/**
+ * Moves `isDefault` to the manifest's chat default when the catalog carries
+ * it. Providers that learn their default from the runtime (Antigravity takes
+ * Google's current model) can be overridden here without a release. Aliases
+ * that pointed at the old default move with the flag so the shared
+ * "provider default" alias keeps resolving.
+ */
+export function applyManifestDefault(
+  models: ReadonlyArray<ServerProviderModel>,
+  manifest: ModelManifestData,
+  driverKind: ProviderDriverKind,
+): ReadonlyArray<ServerProviderModel> {
+  const slug = manifestDefaultModel(manifest, driverKind);
+  if (slug === undefined || !models.some((model) => model.slug === slug)) return models;
+  const previous = models.find((model) => model.isDefault && model.slug !== slug);
+  if (!previous) return models;
+  const movedAliases = previous.aliases ?? [];
+  return models.map((model) => {
+    if (model.slug === previous.slug) {
+      const { isDefault: _isDefault, aliases: _aliases, ...rest } = model;
+      return rest;
+    }
+    if (model.slug === slug) {
+      const aliases = [...new Set([...(model.aliases ?? []), ...movedAliases])];
+      return { ...model, isDefault: true, ...(aliases.length > 0 ? { aliases } : {}) };
+    }
+    return model;
+  });
 }
 
 /** Model-level half of `applyModelManifest`, exported for focused tests. */
@@ -285,7 +344,14 @@ export const make = Effect.gen(function* () {
       );
       if (fromDisk === null) return;
       // The disk copy is the last-seen remote manifest, so it outranks the
-      // bundle even when stale: it is refreshed on the next successful fetch.
+      // bundle even when stale, unless the bundle's own edit date is newer
+      // than the cached manifest's. Then the release carries data the cache
+      // has not seen and the cache is dropped so the next refresh replaces
+      // it. Comparing edit dates, not fetch time, keeps this independent of
+      // when the cache was written relative to the release.
+      if (manifestUpdatedAtMs(BUNDLED_MODEL_MANIFEST) > manifestUpdatedAtMs(fromDisk.manifest)) {
+        return;
+      }
       manifest = fromDisk.manifest;
       fetchedAtMs = fromDisk.fetchedAtMs;
     }),

@@ -33,6 +33,16 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUpdateProvider]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerAuthStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerConsumeResetCredit]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerAuthComplete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerAuthCancel]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerAuthLogout]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerAuthSubscribe]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerInstallStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerInstallCancel]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerInstallSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.providerInstallRemove]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUpdateServer]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUpdateServerWithProgress]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverCommitDesktopUpdate]: AuthOrchestrationOperateScope,
@@ -47,6 +57,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverGetResourceTelemetryHistory]: AuthOrchestrationReadScope,
   [WS_METHODS.serverRetryResourceTelemetry]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverGetUsageSummary]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverRefreshUsageRates]: AuthOrchestrationReadScope,
   [WS_METHODS.serverSignalProcess]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.serverReportHostPowerState]: AuthOrchestrationOperateScope,
@@ -71,6 +82,7 @@ export const RPC_REQUIRED_SCOPES = {
   // Read scope like the reads it un-caches: refreshing is part of reading, and a read-only
   // client pressing refresh must not be told it may not look again.
   [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsSubscribeRefreshes]: AuthOrchestrationReadScope,
   // The candidate list is a read like the detail beside it; asking somebody for a review is a
   // write like every other one.
   [WS_METHODS.pullRequestsReviewerCandidates]: AuthOrchestrationReadScope,

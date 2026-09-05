@@ -3,7 +3,7 @@ import { codexFeedbackMessage } from "@t3tools/client-runtime/state/threads";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
-import type { LegendListRef } from "@legendapp/list/react";
+import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -16,23 +16,34 @@ vi.mock("@legendapp/list/react", async () => {
     ListFooterComponent?: ReactNode;
     anchoredEndSpace?: {
       anchorIndex: number;
+      anchorMaxSize?: number;
+      anchorOffset?: number;
+      onReady?: (info: { anchorIndex: number }) => void;
     };
-    maintainScrollAtEnd?:
+    contentInsetEndAdjustment?: number;
+    className?: string;
+    maintainScrollAtEnd?: boolean | MaintainScrollAtEndOptions;
+    maintainVisibleContentPosition?:
       | boolean
       | {
-          animated?: boolean;
-          on?: {
-            dataChange?: boolean;
-            itemLayout?: boolean;
-            layout?: boolean;
-          };
+          data?: boolean;
+          size?: boolean;
+          shouldRestorePosition?: (item: { id: string }) => boolean;
         };
     ref?: Ref<LegendListRef>;
   }) => {
+    if (props.anchoredEndSpace) {
+      props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });
+    }
     return (
       <div
         data-testid={legendListTestId}
         data-anchor-index={props.anchoredEndSpace?.anchorIndex}
+        data-anchor-max-size={props.anchoredEndSpace?.anchorMaxSize}
+        data-anchor-offset={props.anchoredEndSpace?.anchorOffset}
+        data-anchor-on-ready={Boolean(props.anchoredEndSpace?.onReady)}
+        data-content-inset-end={props.contentInsetEndAdjustment}
+        data-class-name={props.className}
         data-maintain-scroll-at-end={props.maintainScrollAtEnd ? "enabled" : undefined}
         data-maintain-scroll-at-end-animated={
           typeof props.maintainScrollAtEnd === "object"
@@ -44,6 +55,11 @@ vi.mock("@legendapp/list/react", async () => {
             ? props.maintainScrollAtEnd.on?.dataChange
             : undefined
         }
+        data-maintain-scroll-at-end-footer-layout={
+          typeof props.maintainScrollAtEnd === "object"
+            ? props.maintainScrollAtEnd.on?.footerLayout
+            : undefined
+        }
         data-maintain-scroll-at-end-item-layout={
           typeof props.maintainScrollAtEnd === "object"
             ? props.maintainScrollAtEnd.on?.itemLayout
@@ -52,6 +68,26 @@ vi.mock("@legendapp/list/react", async () => {
         data-maintain-scroll-at-end-layout={
           typeof props.maintainScrollAtEnd === "object"
             ? props.maintainScrollAtEnd.on?.layout
+            : undefined
+        }
+        data-maintain-visible-content-position={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? "object"
+            : props.maintainVisibleContentPosition
+        }
+        data-maintain-visible-content-position-data={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? props.maintainVisibleContentPosition.data
+            : undefined
+        }
+        data-maintain-visible-content-position-size={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? props.maintainVisibleContentPosition.size
+            : undefined
+        }
+        data-maintain-visible-content-position-restore={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? Boolean(props.maintainVisibleContentPosition.shouldRestorePosition)
             : undefined
         }
       >
@@ -85,6 +121,10 @@ function MockFileDiff(props: {
 vi.mock("@pierre/diffs/react", () => {
   return { FileDiff: MockFileDiff };
 });
+
+vi.mock("../DiffWorkerPoolProvider", () => ({
+  DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => children,
+}));
 
 function matchMedia() {
   return {
@@ -339,9 +379,8 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("sticky top-2 z-10");
     expect(markup).not.toContain("self-start");
     expect(markup).toContain("whitespace-nowrap");
-    expect(markup).toContain("!size-[22px]");
     expect(markup).toContain("size-3");
-    expect(markup).toContain('aria-label="Collapse all folders"');
+    expect(markup).not.toContain('aria-label="Collapse all folders"');
     expect(markup).toContain('aria-label="Open diff"');
     expect(markup).toContain("1 changed file");
   });
@@ -704,6 +743,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
     expect(markup).toContain('data-maintain-scroll-at-end-animated="false"');
     expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
+    expect(markup).toContain('data-maintain-scroll-at-end-footer-layout="false"');
     expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
     expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
     expect(markup).toContain('data-user-message-collapsed="true"');
@@ -937,7 +977,7 @@ describe("MessagesTimeline", () => {
             entry: {
               id: "work-1",
               createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Context compacted",
+              label: "Compacted context 899K → 19K tokens",
               tone: "info",
             },
           },
@@ -945,7 +985,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Context compacted");
+    expect(markup).toContain("Compacted context 899K → 19K tokens");
   });
 
   it("summarizes changed files in one line", () => {
@@ -1056,6 +1096,62 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("tool call failed");
   });
 
+  it("renders trailing tool calls as part of the terminal assistant block", () => {
+    const turnId = TurnId.make("turn-trailing-tools");
+    const assistantMessageId = MessageId.make("assistant-trailing-tools");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        latestTurn={{
+          turnId,
+          state: "error",
+          startedAt: "2026-03-17T19:12:20.000Z",
+          completedAt: "2026-03-17T19:12:30.000Z",
+        }}
+        timelineEntries={[
+          {
+            id: "assistant-entry",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: assistantMessageId,
+              role: "assistant",
+              text: "I’ll search for it now.",
+              turnId,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: "2026-03-17T19:12:29.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "trailing-work-entry",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            entry: {
+              id: "trailing-work",
+              createdAt: "2026-03-17T19:12:30.000Z",
+              turnId,
+              label: "Ran command",
+              tone: "tool",
+              itemType: "command_execution",
+              toolLifecycleStatus: "failed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    const messageIndex = markup.indexOf('data-timeline-row-id="assistant-entry"');
+    const toolIndex = markup.indexOf('data-timeline-row-id="trailing-work-entry"');
+    const metaIndex = markup.indexOf(
+      'data-timeline-row-id="assistant-meta:assistant-trailing-tools"',
+    );
+    expect(messageIndex).toBeGreaterThanOrEqual(0);
+    expect(toolIndex).toBeGreaterThan(messageIndex);
+    expect(metaIndex).toBeGreaterThan(toolIndex);
+    expect(markup.match(/I’ll search for it now\./gu)).toHaveLength(1);
+  });
+
   it("keeps mixed work logs neutral after a later tool call succeeds", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1106,7 +1202,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('aria-label="Hidden work includes a failure"');
   });
 
-  it("shows the animated one-line label for a live tool group", () => {
+  it("shows the one-line label for a live tool group", () => {
     const turnId = TurnId.make("turn-live");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1143,7 +1239,6 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Working for");
     expect(markup).toContain("Running pnpm");
-    expect(markup).toContain("live-activity-focus");
   });
 
   it("scopes a live row failure to the tool named by the row", () => {
@@ -1261,7 +1356,6 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Running pnpm");
     expect(markup).toContain("lucide-terminal");
-    expect(markup).toContain("live-activity-focus");
     expect(markup).not.toContain("Ran pnpm");
     expect(markup).not.toContain("Thinking");
     expect(markup).not.toContain('data-timeline-row-kind="thinking"');
@@ -1378,7 +1472,7 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain('aria-label="Received 1 update and used 1 tool, tool call failed"');
-    // Ordinary tool failures render muted, not red.
+    // Ordinary tool failures do not use destructive row styling.
     expect(markup).not.toContain("text-destructive");
   });
 

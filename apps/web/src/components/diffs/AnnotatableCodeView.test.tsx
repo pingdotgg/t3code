@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -10,6 +11,10 @@ vi.mock("@pierre/diffs/react", () => ({
     testState.codeViewOptions = props.options;
     return null;
   },
+}));
+
+vi.mock("../DiffWorkerPoolProvider", () => ({
+  DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => children,
 }));
 
 vi.mock("~/composerDraftStore", () => ({

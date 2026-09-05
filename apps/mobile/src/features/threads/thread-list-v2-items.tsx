@@ -746,49 +746,54 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : thread.branch || props.environmentLabel ? (
           /* "branch · machine" share one truncating line. The machine sits
              last so a tight fit cuts the repetitive label, not the branch —
-             and machine-only fills the row for non-git projects. */
-          <Text
-            className={cn(
-              "flex-1 text-xs",
-              selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
-            )}
-            numberOfLines={1}
-          >
-            {thread.branch ? (
-              <Text
-                className={cn(
-                  "text-xs",
-                  selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
-                )}
-                style={{ fontFamily: MONO_FONT }}
-              >
-                {thread.branch}
-              </Text>
+             and machine-only fills the row for non-git projects. The glyph
+             hugs the label (it cannot live inside the Text without breaking
+             truncation), and the wrapper takes the slack so the trailers
+             stay pinned right. */
+          <View className="min-w-0 flex-1 flex-row items-center gap-1">
+            <Text
+              className={cn(
+                "shrink text-xs",
+                selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
+              )}
+              numberOfLines={1}
+            >
+              {thread.branch ? (
+                <Text
+                  className={cn(
+                    "text-xs",
+                    selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
+                  )}
+                  style={{ fontFamily: MONO_FONT }}
+                >
+                  {thread.branch}
+                </Text>
+              ) : null}
+              {thread.branch && props.environmentLabel ? "  ·  " : null}
+              {props.environmentLabel ? (
+                <Text
+                  className={cn(
+                    "text-xs",
+                    selected ? "text-user-bubble-foreground-muted" : "text-foreground-tertiary",
+                  )}
+                >
+                  {props.environmentLabel}
+                </Text>
+              ) : null}
+            </Text>
+            {props.environmentLabel && props.environmentMachine ? (
+              <EnvironmentMachineSymbol
+                kind={props.environmentMachine}
+                size={11}
+                tintColorClassName={
+                  selected ? "accent-user-bubble-foreground-muted" : "accent-foreground-tertiary"
+                }
+              />
             ) : null}
-            {thread.branch && props.environmentLabel ? "  ·  " : null}
-            {props.environmentLabel ? (
-              <Text
-                className={cn(
-                  "text-xs",
-                  selected ? "text-user-bubble-foreground-muted" : "text-foreground-tertiary",
-                )}
-              >
-                {props.environmentLabel}
-              </Text>
-            ) : null}
-          </Text>
+          </View>
         ) : (
           <View className="flex-1" />
         )}
-        {status !== "failed" && props.environmentLabel && props.environmentMachine ? (
-          <EnvironmentMachineSymbol
-            kind={props.environmentMachine}
-            size={11}
-            tintColorClassName={
-              selected ? "accent-user-bubble-foreground-muted" : "accent-foreground-tertiary"
-            }
-          />
-        ) : null}
         {pr ? (
           <Text
             accessibilityLabel={pr.accessibilityLabel}

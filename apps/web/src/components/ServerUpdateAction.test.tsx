@@ -15,7 +15,8 @@ vi.mock("~/hooks/useCopyToClipboard", () => ({
   useCopyToClipboard: () => ({ copyToClipboard: vi.fn() }),
 }));
 vi.mock("~/hooks/useSettings", () => ({
-  useClientSettings: (
+  useEnvironmentSettings: (
+    _environmentId: EnvironmentId,
     selector: (settings: { continueThreadsAfterServerUpdate: boolean }) => unknown,
   ) => selector({ continueThreadsAfterServerUpdate: testState.continueThreadsAfterServerUpdate }),
 }));

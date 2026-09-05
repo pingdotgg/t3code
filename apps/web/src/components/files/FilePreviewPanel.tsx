@@ -12,6 +12,7 @@ import {
 import { VirtualizedFile, type SelectedLineRange } from "@pierre/diffs";
 import { Editor } from "@pierre/diffs/editor";
 import { EditProvider, File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
+import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -773,42 +774,47 @@ function EditableFileSurface({
     ],
   );
 
-  const beginComment = useCallback((range: SelectedLineRange) => {
-    const { startLine, endLine } = normalizeFileCommentRange(range);
-    const draftEntry: FileCommentAnnotationEntry = {
-      id: nextFileCommentId(),
-      kind: "draft",
-      startLine,
-      endLine,
-      text: "",
-    };
-    setLineAnnotations((current) => {
-      const withoutDraft = current.flatMap((annotation) => {
-        const entries = annotation.metadata.entries.filter((entry) => entry.kind !== "draft");
-        return entries.length > 0 ? [{ ...annotation, metadata: { entries } }] : [];
+  const beginComment = useCallback(
+    (range: SelectedLineRange) => {
+      editor.setSelections([]);
+      editor.blur();
+      const { startLine, endLine } = normalizeFileCommentRange(range);
+      const draftEntry: FileCommentAnnotationEntry = {
+        id: nextFileCommentId(),
+        kind: "draft",
+        startLine,
+        endLine,
+        text: "",
+      };
+      setLineAnnotations((current) => {
+        const withoutDraft = current.flatMap((annotation) => {
+          const entries = annotation.metadata.entries.filter((entry) => entry.kind !== "draft");
+          return entries.length > 0 ? [{ ...annotation, metadata: { entries } }] : [];
+        });
+        const existingIndex = withoutDraft.findIndex(
+          (annotation) => annotation.lineNumber === endLine,
+        );
+        if (existingIndex < 0) {
+          return [
+            ...withoutDraft,
+            {
+              lineNumber: endLine,
+              metadata: { entries: [draftEntry] },
+            },
+          ];
+        }
+        return withoutDraft.map((annotation, index) =>
+          index === existingIndex
+            ? {
+                ...annotation,
+                metadata: { entries: [...annotation.metadata.entries, draftEntry] },
+              }
+            : annotation,
+        );
       });
-      const existingIndex = withoutDraft.findIndex(
-        (annotation) => annotation.lineNumber === endLine,
-      );
-      if (existingIndex < 0) {
-        return [
-          ...withoutDraft,
-          {
-            lineNumber: endLine,
-            metadata: { entries: [draftEntry] },
-          },
-        ];
-      }
-      return withoutDraft.map((annotation, index) =>
-        index === existingIndex
-          ? {
-              ...annotation,
-              metadata: { entries: [...annotation.metadata.entries, draftEntry] },
-            }
-          : annotation,
-      );
-    });
-  }, []);
+    },
+    [editor],
+  );
   const hasOpenCommentForm = lineAnnotations.some((annotation) =>
     annotation.metadata.entries.some((entry) => entry.kind === "draft"),
   );
@@ -1304,46 +1310,50 @@ export default function FilePreviewPanel({
                 onPendingChange={onPendingChange}
               />
             ) : file.data.truncated || isHostFile ? (
-              <Virtualizer
-                key={`${relativePath}:${resolvedTheme}:${file.data.byteLength}`}
-                className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
-                config={{
-                  overscrollSize: 600,
-                  intersectionObserverMargin: 1200,
-                }}
-              >
-                <File
-                  file={{
-                    name: relativePath,
-                    contents: file.data.contents,
-                    cacheKey: projectFileCacheKey(cwd, relativePath, file.data.contents),
+              <DiffWorkerPoolProvider>
+                <Virtualizer
+                  key={`${relativePath}:${resolvedTheme}:${file.data.byteLength}`}
+                  className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
+                  config={{
+                    overscrollSize: 600,
+                    intersectionObserverMargin: 1200,
                   }}
-                  options={{
-                    disableFileHeader: true,
-                    overflow: wordWrap ? "wrap" : "scroll",
-                    theme: resolveDiffThemeName(resolvedTheme),
-                    preferredHighlighter: PREFERRED_HIGHLIGHTER,
-                    themeType: resolvedTheme,
-                    unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
-                    onPostRender: onFilePostRender,
-                  }}
-                  className="min-h-full"
-                />
-              </Virtualizer>
+                >
+                  <File
+                    file={{
+                      name: relativePath,
+                      contents: file.data.contents,
+                      cacheKey: projectFileCacheKey(cwd, relativePath, file.data.contents),
+                    }}
+                    options={{
+                      disableFileHeader: true,
+                      overflow: wordWrap ? "wrap" : "scroll",
+                      theme: resolveDiffThemeName(resolvedTheme),
+                      preferredHighlighter: PREFERRED_HIGHLIGHTER,
+                      themeType: resolvedTheme,
+                      unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
+                      onPostRender: onFilePostRender,
+                    }}
+                    className="min-h-full"
+                  />
+                </Virtualizer>
+              </DiffWorkerPoolProvider>
             ) : (
-              <EditableFileSurface
-                key={`${relativePath}:${resolvedTheme}`}
-                environmentId={environmentId}
-                cwd={cwd}
-                relativePath={relativePath}
-                composerDraftTarget={composerDraftTarget}
-                contents={file.data.contents}
-                resolvedTheme={resolvedTheme}
-                revealRequestId={revealRequestId}
-                wordWrap={wordWrap}
-                onPostRender={onFilePostRender}
-                onPendingChange={onPendingChange}
-              />
+              <DiffWorkerPoolProvider>
+                <EditableFileSurface
+                  key={`${relativePath}:${resolvedTheme}`}
+                  environmentId={environmentId}
+                  cwd={cwd}
+                  relativePath={relativePath}
+                  composerDraftTarget={composerDraftTarget}
+                  contents={file.data.contents}
+                  resolvedTheme={resolvedTheme}
+                  revealRequestId={revealRequestId}
+                  wordWrap={wordWrap}
+                  onPostRender={onFilePostRender}
+                  onPendingChange={onPendingChange}
+                />
+              </DiffWorkerPoolProvider>
             )
           ) : null}
         </div>

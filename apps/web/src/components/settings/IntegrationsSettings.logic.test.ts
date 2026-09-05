@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentId } from "@t3tools/contracts";
 
-import { browserProfileRemovalAvailable, clearBrowserProfileData } from "./IntegrationsSettings";
+import {
+  browserProfileRemovalAvailable,
+  clearBrowserProfileData,
+  importFailureReason,
+} from "./IntegrationsSettings";
 
 const environmentId = "environment-a" as EnvironmentId;
 const secondEnvironmentId = "environment-b" as EnvironmentId;
@@ -70,5 +74,28 @@ describe("browserProfileRemovalAvailable", () => {
     expect(browserProfileRemovalAvailable(true, true, 0)).toBe(false);
     expect(browserProfileRemovalAvailable(true, false, 1)).toBe(false);
     expect(browserProfileRemovalAvailable(false, true, 1)).toBe(false);
+  });
+});
+
+// Mirrors `BrowserImportFailedError.message`, which IPC flattens to a string
+// before the renderer sees it.
+const failure = (reason: string) => ({
+  message: `Importing cookies from safari failed: ${reason}.`,
+});
+
+describe("importFailureReason", () => {
+  it("recovers the reason token from the flattened message", () => {
+    expect(importFailureReason(failure("browserRunning"))).toBe("browserRunning");
+    expect(importFailureReason(failure("readFailed"))).toBe("readFailed");
+    expect(importFailureReason(failure("keychainUnavailable"))).toBe("keychainUnavailable");
+    // A settings write that fails after the cookies landed is its own case,
+    // not a read failure over a database that was in fact read.
+    expect(importFailureReason(failure("profileNotSaved"))).toBe("profileNotSaved");
+    expect(importFailureReason(failure("profileLimitReached"))).toBe("profileLimitReached");
+  });
+
+  it("falls back to readFailed for anything it cannot classify", () => {
+    expect(importFailureReason(new Error("something else entirely"))).toBe("readFailed");
+    expect(importFailureReason(undefined)).toBe("readFailed");
   });
 });
