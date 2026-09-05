@@ -6,14 +6,14 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { HttpClient } from "effect/unstable/http";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
+import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
-import { executeEnvironmentHttpRequest, makeEnvironmentHttpApiClient } from "../rpc/http.ts";
-import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./environmentHttpAuth.ts";
+import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
 function initialConfigOption<E>(
@@ -36,29 +36,26 @@ const DEFAULT_SESSION_STATE_TIMEOUT_MS = 6_000;
 
 /**
  * Read the granted scopes of this client's session on one environment via its
- * `/api/auth/session` endpoint, authenticated with whatever credential the
- * connection was prepared with (cookie, bearer, or DPoP).
+ * `/api/auth/session` endpoint, using the connection's authentication method
+ * and refreshing relay credentials when needed.
  */
 export const fetchEnvironmentSessionState = Effect.fn(
   "clientRuntime.state.fetchEnvironmentSessionState",
 )(function* (input: {
   readonly prepared: PreparedConnection;
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
   readonly timeoutMs?: number;
 }) {
-  const requestUrl = environmentEndpointUrl(input.prepared.httpBaseUrl, "/api/auth/session");
-  const client = yield* makeEnvironmentHttpApiClient(input.prepared.httpBaseUrl);
-  const headers = yield* buildEnvironmentAuthHeaders(
-    input.prepared.httpAuthorization,
-    "GET",
-    requestUrl,
-    input.signer,
-  );
-  return yield* executeEnvironmentHttpRequest(
-    requestUrl,
-    input.timeoutMs ?? DEFAULT_SESSION_STATE_TIMEOUT_MS,
-    withEnvironmentCredentials(input.prepared.httpAuthorization, client.auth.session({ headers })),
-  );
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    ...input,
+    method: "GET",
+    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/auth/session"),
+    timeoutMs: input.timeoutMs ?? DEFAULT_SESSION_STATE_TIMEOUT_MS,
+    request: ({ client, headers }) => client.auth.session({ headers }),
+    // This endpoint returns 200 with authenticated:false for expired credentials.
+    isUnauthorizedResponse: (response) => !response.authenticated,
+  });
 });
 
 export function createEnvironmentSessionAtoms<R, E>(
@@ -134,7 +131,8 @@ export function createEnvironmentSessionAtoms<R, E>(
         }
         return Effect.gen(function* () {
           const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-          return yield* fetchEnvironmentSessionState({ prepared, signer });
+          const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+          return yield* fetchEnvironmentSessionState({ prepared, signer, remoteAuthorization });
         });
       })
       .pipe(

@@ -10,15 +10,14 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 
+import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import {
-  executeEnvironmentHttpRequest,
-  makeEnvironmentHttpApiClient,
   makeEnvironmentHttpApiUrlBuilder,
   type RemoteEnvironmentRequestError,
 } from "../rpc/http.ts";
-import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./environmentHttpAuth.ts";
+import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 
 const DEFAULT_PULL_REQUEST_DIFF_TIMEOUT_MS = 60_000;
 
@@ -46,26 +45,16 @@ export const fetchEnvironmentPullRequestDiff = Effect.fn(
   readonly prepared: PreparedConnection;
   readonly diff: PullRequestDiffInput;
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
   readonly timeoutMs?: number;
 }) {
-  const requestUrl = makeEnvironmentHttpApiUrlBuilder(
-    input.prepared.httpBaseUrl,
-  ).pullRequests.diff();
-  const client = yield* makeEnvironmentHttpApiClient(input.prepared.httpBaseUrl);
-  const headers = yield* buildEnvironmentAuthHeaders(
-    input.prepared.httpAuthorization,
-    "POST",
-    requestUrl,
-    input.signer,
-  );
-  return yield* executeEnvironmentHttpRequest(
-    requestUrl,
-    input.timeoutMs ?? DEFAULT_PULL_REQUEST_DIFF_TIMEOUT_MS,
-    withEnvironmentCredentials(
-      input.prepared.httpAuthorization,
-      client.pullRequests.diff({ payload: input.diff, headers }),
-    ),
-  ).pipe(
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    ...input,
+    method: "POST",
+    url: (httpBaseUrl) => makeEnvironmentHttpApiUrlBuilder(httpBaseUrl).pullRequests.diff(),
+    timeoutMs: input.timeoutMs ?? DEFAULT_PULL_REQUEST_DIFF_TIMEOUT_MS,
+    request: ({ client, headers }) => client.pullRequests.diff({ payload: input.diff, headers }),
+  }).pipe(
     Effect.mapError((error) =>
       error._tag === "EnvironmentAuthInvalidError" && error.reason === "invalid_credential"
         ? new PullRequestDiffCredentialRejectedError({
@@ -98,11 +87,15 @@ export const pullRequestDiffLoaderLayer: Layer.Layer<
   Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
     const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
     return PullRequestDiffLoader.of({
       load: (prepared, input) =>
-        fetchEnvironmentPullRequestDiff({ prepared, diff: input, signer }).pipe(
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-        ),
+        fetchEnvironmentPullRequestDiff({
+          prepared,
+          diff: input,
+          signer,
+          remoteAuthorization,
+        }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
     });
   }),
 );
