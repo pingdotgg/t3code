@@ -9,12 +9,14 @@ import { HttpBody, HttpClient, HttpRouter } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
+import { layer as threadCommandExecutorLayer } from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRunner.ts";
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import * as TerminalManager from "../../../terminal/Manager.ts";
 import { VcsStatusBroadcaster } from "../../../vcs/VcsStatusBroadcaster.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
@@ -29,6 +31,8 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster)({}),
+  Layer.mock(TerminalManager.TerminalManager)({}),
+  threadCommandExecutorLayer,
 );
 
 const ToolsListPayload = Schema.fromJsonString(
@@ -114,6 +118,10 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       // than replacing them.
       expect(toolNames).toContain("preview_status");
       expect(toolNames).toContain("delegate_task");
+      expect(toolNames).toContain("t3_terminal_list");
+      expect(toolNames).toContain("t3_terminal_read");
+      expect(toolNames).toContain("t3_terminal_open");
+      expect(toolNames).toContain("t3_terminal_write");
 
       // The handoff tool mutates thread state, reaches the network (origin
       // fetch), and runs project setup scripts, so its MCP hints must not
@@ -125,6 +133,12 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       const status = tools.find((tool) => tool.name === "t3_worktree_status");
       expect(status?.annotations?.readOnlyHint).toBe(true);
       expect(status?.annotations?.destructiveHint).toBe(false);
+      const terminalRead = tools.find((tool) => tool.name === "t3_terminal_read");
+      expect(terminalRead?.annotations?.readOnlyHint).toBe(true);
+      expect(terminalRead?.annotations?.destructiveHint).toBe(false);
+      const terminalWrite = tools.find((tool) => tool.name === "t3_terminal_write");
+      expect(terminalWrite?.annotations?.readOnlyHint).toBe(false);
+      expect(terminalWrite?.annotations?.destructiveHint).toBe(true);
 
       // MCP requires every tool input schema to be a top-level object schema.
       // A non-object schema (e.g. the anyOf produced by an empty
