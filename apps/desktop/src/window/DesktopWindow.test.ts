@@ -240,6 +240,7 @@ function makeTestLayer(input: {
     setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
     setWslDistro: () => Effect.die("unexpected WSL distro change"),
     setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
+    setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),
     applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
     applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
   } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
@@ -488,6 +489,37 @@ describe("DesktopWindow", () => {
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),
+  );
+
+  it.effect(
+    "opens and reopens the window without backend readiness when local execution is disabled",
+    () =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const layer = makeTestLayer({
+          window: fakeWindow.window,
+          createCount,
+          mainWindow,
+          createdWindowOptions: [],
+          desktopSettings: {
+            ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+            localEnvironmentEnabled: false,
+          },
+        });
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.createMainIfBackendReady;
+          assert.equal(yield* Ref.get(createCount), 1);
+          yield* Ref.set(mainWindow, Option.none());
+          yield* desktopWindow.activate;
+          assert.equal(yield* Ref.get(createCount), 2);
+          yield* Ref.set(mainWindow, Option.none());
+          yield* desktopWindow.dispatchMenuAction("new-thread");
+          assert.equal(yield* Ref.get(createCount), 3);
+        }).pipe(Effect.provide(layer));
+      }),
   );
 
   it.effect("blocks only repeated Cmd+W input before it reaches the native window menu", () =>

@@ -169,3 +169,15 @@ Include the diagnostic message and trace ID when reporting a persistent failure.
 
 For a connection that still fails after linking, check the date and time on both
 devices. For server version warnings, follow [Updating T3 Code](./updating.md).
+
+## Use desktop with remote environments only
+
+In **Settings → Connections → This environment**, turn off **Local environment**
+and confirm the restart. The desktop app opens without a local server or agents,
+including desktop-managed WSL backends. Other devices can no longer connect to
+this computer's environment. Your local projects, history, and saved connections
+are kept, and you can still connect to other environments through pairing,
+T3 Connect, or SSH.
+
+Turn **Local environment** back on in the same place to restart with your saved
+local settings.

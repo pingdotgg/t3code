@@ -57,3 +57,17 @@ capabilities and handle their absence, rather than assume their own version
 describes the server. Process replacement belongs to the launcher's
 [update protocol](./server-updates.md); the connection runtime handles the
 resulting disconnect.
+
+## Desktop without a local environment
+
+The desktop setting `localEnvironmentEnabled` defaults to true. Turning it off
+restarts the app without deleting local state. Startup skips port selection,
+server exposure, and the primary and WSL backends, then opens the window directly.
+The desktop control socket remains available in this mode.
+
+The renderer reads `desktopBridge.getLocalEnvironmentEnabled()` and has no
+primary target when local execution is disabled. Primary authentication and
+platform-managed discovery are skipped; saved pairing, relay, and SSH connections
+remain available. Packaged desktop serves bundled frontend files through
+`t3code://app`, while development proxies that protocol to Vite. API traffic uses
+each environment's own URL.
