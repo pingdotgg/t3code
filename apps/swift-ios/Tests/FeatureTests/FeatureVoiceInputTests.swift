@@ -16,6 +16,7 @@ struct FeatureVoiceInputTests {
                 text: Binding(get: { text }, set: { text = $0 }),
                 focused: Binding(get: { focused }, set: { focused = $0 }),
                 placeholder: "Message", acceptsImages: true, isReadOnly: readOnly,
+                skills: [],
                 selectionRequest: nil, onSelectionChange: { _ in },
                 onPasteImages: { _ in Issue.record("Pasted while dictating") },
                 onDismissKeyboard: nil
