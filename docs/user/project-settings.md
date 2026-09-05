@@ -1,6 +1,7 @@
 # Project settings
 
-Open **Settings → Projects** and select a project to change its preferences.
+In the sidebar, open the project picker and click the settings icon beside the project you want to
+change. You can also right-click a thread in that project and choose **Project settings**.
 
 ## Project icons
 
