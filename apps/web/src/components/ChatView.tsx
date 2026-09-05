@@ -29,9 +29,10 @@ import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
 import { type CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import {
+  canSnooze,
   effectiveSnoozed,
   threadWokeAt,
-  usageLimitSnoozeOffer,
+  usageLimitSnoozePreset,
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
   codexFeedbackMessage,
@@ -1377,8 +1378,7 @@ export default function ChatView(props: ChatViewProps) {
   const threadSyncPhase = routeKind === "server" ? (props.threadSyncPhase ?? null) : null;
   const threadDetailLoading = threadSyncPhase === "loading";
   const handleNewThread = useNewThreadHandler();
-  const { settleThread, pinThread, confirmAndUnpinThread, snoozeThread, unsnoozeThread } =
-    useThreadActions();
+  const { settleThread, pinThread, confirmAndUnpinThread, snoozeThread } = useThreadActions();
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
@@ -5276,79 +5276,37 @@ export default function ChatView(props: ChatViewProps) {
       setUnsnoozingThreadKey((current) => (current === threadKey ? null : current));
     }
   }, [activeThreadRef, unsnoozeThreadMutation]);
-  // Derived from the provider snapshot #9507 already publishes: the latest
-  // reset among the instance's exhausted windows, or null while it is serving.
+  // Read off the provider snapshot the Limits tab already draws from: the
+  // latest reset among the instance's exhausted windows, or null while it serves.
   const usageLimitResetsAt = useMemo(
     () => exhaustedUntil(conversationProviderStatus?.usageLimits, nowMinuteDate.getTime()),
     [conversationProviderStatus?.usageLimits, nowMinuteDate],
   );
-  // Minute-quantized like the settle rules, so the offer expires on the same
-  // shared tick instead of needing a timer of its own.
-  const usageLimitOffer = useMemo(
+  // The same preset the snooze menus lead with, on the shared minute tick so
+  // the notice expires with it instead of needing a timer of its own.
+  const usageLimitPreset = useMemo(
     () =>
-      activeThreadShell === null || !supportsSnooze
+      usageLimitResetsAt === null || !supportsSnooze || activeThreadSnoozed
         ? null
-        : usageLimitSnoozeOffer(activeThreadShell, {
-            resetsAt: usageLimitResetsAt,
-            now: nowMinuteIso,
-          }),
-    [activeThreadShell, nowMinuteIso, supportsSnooze, usageLimitResetsAt],
+        : usageLimitSnoozePreset(usageLimitResetsAt, nowMinuteDate),
+    [activeThreadSnoozed, nowMinuteDate, supportsSnooze, usageLimitResetsAt],
   );
-  const [snoozingUsageLimitKey, setSnoozingUsageLimitKey] = useState<string | null>(null);
-  const isSnoozingUsageLimit =
-    snoozingUsageLimitKey !== null && snoozingUsageLimitKey === activeThreadKey;
   const handleSnoozeUntilUsageLimitReset = useCallback(async () => {
-    if (activeThreadRef === null || usageLimitOffer === null) return;
-    const threadRef = activeThreadRef;
-    const threadKey = scopedThreadKey(threadRef);
-    setSnoozingUsageLimitKey(threadKey);
-    try {
-      const result = await snoozeThread(threadRef, usageLimitOffer.snoozedUntil);
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Failed to snooze thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        }
-        return;
-      }
+    if (activeThreadRef === null || usageLimitPreset === null) return;
+    // No success toast: the parked-thread banner that replaces this notice
+    // already offers Wake now.
+    const result = await snoozeThread(activeThreadRef, usageLimitPreset.snoozedUntil);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
       toastManager.add(
         stackedThreadToast({
-          type: "success",
-          title: `Snoozed until ${snoozeWakeDescription(usageLimitOffer.snoozedUntil, new Date(), timestampFormat)}`,
-          timeout: 5_000,
-          actionProps: {
-            children: "Undo",
-            // Undo targets the thread that was snoozed, not whatever is open
-            // when it is clicked: this toast outlives navigation by 5s, and
-            // handleUnsnoozeActiveThread resolves the active thread on click.
-            onClick: () => {
-              void unsnoozeThread(threadRef).then((undone) => {
-                if (undone._tag === "Failure" && !isAtomCommandInterrupted(undone)) {
-                  const undoError = squashAtomCommandFailure(undone);
-                  toastManager.add(
-                    stackedThreadToast({
-                      type: "error",
-                      title: "Failed to wake thread",
-                      description:
-                        undoError instanceof Error ? undoError.message : "An error occurred.",
-                    }),
-                  );
-                }
-              });
-            },
-          },
+          type: "error",
+          title: "Failed to snooze thread",
+          description: error instanceof Error ? error.message : "An error occurred.",
         }),
       );
-    } finally {
-      setSnoozingUsageLimitKey((current) => (current === threadKey ? null : current));
     }
-  }, [activeThreadRef, snoozeThread, timestampFormat, unsnoozeThread, usageLimitOffer]);
+  }, [activeThreadRef, snoozeThread, usageLimitPreset]);
   const [isRestoringThreadBranch, setIsRestoringThreadBranch] = useState(false);
   const [branchRestoreConfirmOpen, setBranchRestoreConfirmOpen] = useState(false);
   // Once revealed for a given mismatch, the banner stays mounted until the
@@ -5586,55 +5544,51 @@ export default function ChatView(props: ChatViewProps) {
     new Set(),
   );
   const usageLimitKey =
-    activeThread && usageLimitOffer ? `${activeThread.id}:${usageLimitOffer.resetsAt}` : null;
+    activeThread && usageLimitResetsAt !== null ? `${activeThread.id}:${usageLimitResetsAt}` : null;
   // Nothing auto-resumes on the reset — the offer just parks the thread out of
   // the inbox until the provider is serving again. The reset time is worth
   // showing even while snoozing is unavailable, so only the button is gated.
   const usageLimitBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (
-      usageLimitOffer === null ||
+      usageLimitPreset === null ||
+      usageLimitResetsAt === null ||
       usageLimitKey === null ||
+      activeThreadShell === null ||
       dismissedUsageLimitKeys.has(usageLimitKey)
     ) {
       return null;
     }
-    const snoozeAction = (
-      <Button
-        size="xs"
-        variant="outline"
-        disabled={isSnoozingUsageLimit || !usageLimitOffer.snoozable}
-        onClick={() => void handleSnoozeUntilUsageLimitReset()}
-      >
-        {isSnoozingUsageLimit
-          ? "Snoozing..."
-          : `Snooze until ${snoozeWakeDescription(usageLimitOffer.snoozedUntil, nowMinuteDate, timestampFormat)}`}
-      </Button>
-    );
+    const snoozable = canSnooze(activeThreadShell, { now: nowMinuteIso });
     return {
       id: `usage-limit:${usageLimitKey}`,
       variant: "warning",
       icon: <AlarmClockIcon />,
       title: "Usage limit reached",
-      description: `Limits reset ${snoozeWakeDescription(usageLimitOffer.resetsAt, nowMinuteDate, timestampFormat)}`,
-      actions: usageLimitOffer.snoozable ? (
-        snoozeAction
-      ) : (
-        <Tooltip>
-          <TooltipTrigger render={<span className="inline-flex">{snoozeAction}</span>} />
-          <TooltipPopup side="top">Snoozing is unavailable while work is pending</TooltipPopup>
-        </Tooltip>
+      description: `Limits reset ${snoozeWakeDescription(usageLimitResetsAt, nowMinuteDate, timestampFormat)}`,
+      actions: (
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={!snoozable}
+          title={snoozable ? undefined : "Snoozing is unavailable while work is pending"}
+          onClick={() => void handleSnoozeUntilUsageLimitReset()}
+        >
+          {`Snooze until ${snoozeWakeDescription(usageLimitPreset.snoozedUntil, nowMinuteDate, timestampFormat)}`}
+        </Button>
       ),
       dismissLabel: "Dismiss usage limit notice",
       onDismiss: () => setDismissedUsageLimitKeys((keys) => new Set(keys).add(usageLimitKey)),
     };
   }, [
+    activeThreadShell,
     dismissedUsageLimitKeys,
     handleSnoozeUntilUsageLimitReset,
-    isSnoozingUsageLimit,
     nowMinuteDate,
+    nowMinuteIso,
     timestampFormat,
     usageLimitKey,
-    usageLimitOffer,
+    usageLimitPreset,
+    usageLimitResetsAt,
   ]);
   // Session-scoped dismissals, one key per (thread, snapshot). A set rather
   // than a single slot so dismissing the banner on one thread does not
