@@ -288,23 +288,40 @@ describe("browser recording", () => {
     expect(stopTrack).toHaveBeenCalledOnce();
   });
 
-  it("uses the best supported encoder and saves the recorder's actual format", async () => {
+  it("prefers H.264 MP4 over WebM and saves the recorder's actual format", async () => {
     FakeMediaRecorder.supportedTypes = new Set([
-      "video/mp4;codecs=avc1.42e01e",
-      "video/webm;codecs=vp9",
       "video/webm;codecs=av1",
+      "video/webm;codecs=vp9",
+      "video/mp4;codecs=avc1.42e01e",
     ]);
-    FakeMediaRecorder.outputMimeType = "video/webm;codecs=av01";
+    FakeMediaRecorder.outputMimeType = 'video/mp4;codecs="avc1.42e01e"';
 
     await startBrowserRecording("recording-tab");
     await stopBrowserRecording("recording-tab");
 
     expect(FakeMediaRecorder.instances[0]?.options).toEqual({
-      mimeType: "video/webm;codecs=av1",
+      mimeType: "video/mp4;codecs=avc1.42e01e",
     });
     expect(save).toHaveBeenCalledWith(
       "recording-tab",
-      "video/webm;codecs=av01",
+      'video/mp4;codecs="avc1.42e01e"',
+      expect.any(Uint8Array),
+    );
+  });
+
+  it("falls back to WebM when the browser cannot encode H.264 MP4", async () => {
+    FakeMediaRecorder.supportedTypes = new Set(["video/webm;codecs=vp9", "video/webm"]);
+    FakeMediaRecorder.outputMimeType = "video/webm;codecs=vp9";
+
+    await startBrowserRecording("recording-tab");
+    await stopBrowserRecording("recording-tab");
+
+    expect(FakeMediaRecorder.instances[0]?.options).toEqual({
+      mimeType: "video/webm;codecs=vp9",
+    });
+    expect(save).toHaveBeenCalledWith(
+      "recording-tab",
+      "video/webm;codecs=vp9",
       expect.any(Uint8Array),
     );
   });

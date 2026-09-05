@@ -237,11 +237,12 @@ export function findActiveBrowserRecordingRuntimeTabId(
   );
 }
 
+// H.264 MP4 first: iOS cannot decode WebM/AV1, and recordings are shared across every client.
 const preferredMimeTypes = [
-  "video/webm;codecs=av1",
-  "video/webm;codecs=vp9",
   "video/mp4;codecs=avc1.640028",
   "video/mp4;codecs=avc1.42e01e",
+  "video/webm;codecs=av1",
+  "video/webm;codecs=vp9",
   "video/webm;codecs=vp8",
   "video/webm",
 ] as const;
