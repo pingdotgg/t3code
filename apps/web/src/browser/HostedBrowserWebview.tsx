@@ -123,6 +123,7 @@ export function HostedBrowserWebview(props: {
     const bridge = previewBridge;
     if (!clientSettingsHydrated || !webview || !config || !bridge) return;
     let disposed = false;
+    let replacing = false;
     let recoveryTimeout: ReturnType<typeof setTimeout> | null = null;
     const register = () => {
       const lease = tabLeaseRef.current;
@@ -143,17 +144,31 @@ export function HostedBrowserWebview(props: {
         }
       })();
     };
+    const replaceGuest = () => {
+      if (disposed || replacing || webviewRef.current !== webview) return;
+      replacing = true;
+      setRecoverySrc(latestUrlRef.current ?? initialSrc);
+      setWebviewGeneration((generation) => generation + 1);
+    };
+    const unsubscribeReset = bridge.onWebviewReset?.((tabId, webContentsId) => {
+      if (tabId !== runtimeTabId || disposed || replacing) return;
+      try {
+        if (webview.getWebContentsId() !== webContentsId) return;
+      } catch {
+        return;
+      }
+      // Remounting removes Electron's outer frame. Closing the main-process
+      // WebContents wrapper alone does not retire an attached guest target.
+      replaceGuest();
+    });
     const recoverGuest = () => {
-      if (disposed || recoveryTimeout !== null) return;
+      if (disposed || replacing || recoveryTimeout !== null) return;
       const recovery = planWebviewCrashRecovery(crashRecoveryRef.current, Date.now());
       if (!recovery) return;
       crashRecoveryRef.current = recovery.state;
       recoveryTimeout = setTimeout(() => {
         recoveryTimeout = null;
-        if (!disposed) {
-          setRecoverySrc(latestUrlRef.current ?? initialSrc);
-          setWebviewGeneration((generation) => generation + 1);
-        }
+        replaceGuest();
       }, recovery.delayMs);
     };
     webview.addEventListener("did-attach", register);
@@ -162,6 +177,7 @@ export function HostedBrowserWebview(props: {
     register();
     return () => {
       disposed = true;
+      unsubscribeReset?.();
       if (recoveryTimeout !== null) clearTimeout(recoveryTimeout);
       webview.removeEventListener("did-attach", register);
       webview.removeEventListener("dom-ready", register);
