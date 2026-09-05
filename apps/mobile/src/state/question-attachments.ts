@@ -6,7 +6,7 @@ export function questionAttachmentDraftPrefix(
   environmentId: EnvironmentId,
   threadId: ThreadId,
 ): string {
-  return `${environmentId}:question-${encodeURIComponent(threadId)}-`;
+  return `${environmentId}:question-${encodeURIComponent(threadId)}:`;
 }
 export function questionAttachmentDraftKey(
   environmentId: EnvironmentId,

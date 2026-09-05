@@ -248,10 +248,10 @@ export function useSelectedThreadRequests() {
       "",
     );
     if (userInputResponsesInFlight.current.has(responseKey)) return;
-    const attachmentsByQuestionId: Record<
+    const attachmentsByQuestionId = new Map<
       string,
       import("@t3tools/contracts").UserInputAttachments[string]
-    > = {};
+    >();
     for (const question of activePendingUserInput.questions) {
       const key = questionAttachmentDraftKey(
         selectedThreadShell.environmentId,
@@ -275,13 +275,16 @@ export function useSelectedThreadRequests() {
         );
         return;
       }
-      attachmentsByQuestionId[question.id] = attachments.map((attachment) => ({
-        type: attachment.type,
-        id: attachment.uploadedAttachmentId!,
-        name: attachment.name,
-        mimeType: attachment.mimeType,
-        sizeBytes: attachment.sizeBytes,
-      }));
+      attachmentsByQuestionId.set(
+        question.id,
+        attachments.map((attachment) => ({
+          type: attachment.type,
+          id: attachment.uploadedAttachmentId!,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+        })),
+      );
     }
     userInputResponsesInFlight.current.add(responseKey);
     setRespondingUserInputId(activePendingUserInput.requestId);
@@ -291,7 +294,9 @@ export function useSelectedThreadRequests() {
         threadId: selectedThreadShell.id,
         requestId: activePendingUserInput.requestId,
         answers: activePendingUserInputAnswers,
-        ...(Object.keys(attachmentsByQuestionId).length > 0 ? { attachmentsByQuestionId } : {}),
+        ...(attachmentsByQuestionId.size > 0
+          ? { attachmentsByQuestionId: Object.fromEntries(attachmentsByQuestionId) }
+          : {}),
       },
     });
     userInputResponsesInFlight.current.delete(responseKey);

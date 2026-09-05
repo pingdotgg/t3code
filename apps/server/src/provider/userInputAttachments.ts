@@ -14,14 +14,26 @@ export const appendUserInputAttachmentPaths = Effect.fn("appendUserInputAttachme
     attachmentsByQuestionId?: UserInputAttachments | undefined;
     attachmentsDir: string;
   }) {
-    const answers = { ...input.answers };
+    const answers = new Map(Object.entries(input.answers));
     const fs = yield* FileSystem.FileSystem;
     for (const [questionId, attachments] of Object.entries(input.attachmentsByQuestionId ?? {})) {
       if (attachments.length === 0) continue;
       const references: string[] = [];
       for (const attachment of attachments) {
         const path = resolveAttachmentPath({ attachmentsDir: input.attachmentsDir, attachment });
-        if (!path || !(yield* fs.exists(path).pipe(Effect.orElseSucceed(() => false)))) {
+        if (
+          !path ||
+          !(yield* fs.exists(path).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderValidationError({
+                  operation: "respondToUserInput",
+                  issue: `Could not access attachment '${attachment.name}'.`,
+                  cause,
+                }),
+            ),
+          ))
+        ) {
           return yield* new ProviderValidationError({
             operation: "respondToUserInput",
             issue: `Attachment '${attachment.name}' is no longer available. Attach it again.`,
@@ -31,14 +43,17 @@ export const appendUserInputAttachmentPaths = Effect.fn("appendUserInputAttachme
           `Attached ${attachment.type} ${quoteReference(attachment.name)}: ${quoteReference(path)}`,
         );
       }
-      const answer = answers[questionId];
+      const answer = answers.get(questionId);
       const text = references.join("\n");
-      answers[questionId] = Array.isArray(answer)
-        ? [...answer, text]
-        : typeof answer === "string" && answer.length > 0
-          ? `${answer}\n\n${text}`
-          : text;
+      answers.set(
+        questionId,
+        Array.isArray(answer)
+          ? [...answer, text]
+          : typeof answer === "string" && answer.length > 0
+            ? `${answer}\n\n${text}`
+            : text,
+      );
     }
-    return answers;
+    return Object.fromEntries(answers);
   },
 );

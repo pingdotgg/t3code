@@ -1073,7 +1073,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       });
       const request = userInputActivity;
       const attachments = Object.values(command.attachmentsByQuestionId ?? {}).flat();
-      const questionTextById: Record<string, string> = {};
+      let questionTextById: Record<string, string> = {};
       if (attachments.length > 0) {
         const payload =
           request?.kind === "user-input.requested"
@@ -1088,8 +1088,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
                 : "This question is no longer pending.",
           });
         }
-        for (const question of payload.value.questions)
-          questionTextById[question.id] = question.question;
+        questionTextById = Object.fromEntries(
+          payload.value.questions.map((question) => [question.id, question.question]),
+        );
         for (const questionId of Object.keys(command.attachmentsByQuestionId ?? {})) {
           const question = payload.value.questions.find((question) => question.id === questionId);
           if (!question || question.allowCustomAnswer === false) {

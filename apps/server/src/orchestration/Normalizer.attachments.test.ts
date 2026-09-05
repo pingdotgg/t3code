@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
-  type ClientOrchestrationCommand,
+  ClientOrchestrationCommand,
   CommandId,
   ApprovalRequestId,
   MessageId,
@@ -13,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -24,6 +25,7 @@ const testLayer = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 const attachmentUuid = "00000000-0000-4000-8000-0000000000aa";
+const isClientCommand = Schema.is(ClientOrchestrationCommand);
 
 function turnStartCommand(input: {
   readonly threadId?: string;
@@ -361,6 +363,58 @@ describe("normalizeDispatchCommand attachments", () => {
 });
 
 describe("question attachments", () => {
+  it("requires uploaded metadata for question images, including pasted images", () => {
+    expect(
+      isClientCommand({
+        type: "thread.user-input.respond",
+        commandId: "answer",
+        threadId: "thread-1",
+        requestId: "request",
+        answers: { q: "" },
+        createdAt: "2026-08-01T00:00:00.000Z",
+        attachmentsByQuestionId: {
+          q: [
+            {
+              type: "image",
+              name: "image.png",
+              mimeType: "image/png",
+              sizeBytes: 6,
+              dataUrl: "data:image/png;base64,cGl4ZWxz",
+            },
+          ],
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it.effect("preserves a __proto__ question key and cleans up its claimed files", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const id = `pending-${attachmentUuid}`;
+      NodeFS.writeFileSync(NodePath.join(config.attachmentsDir, `${id}.png`), "pixels");
+      const command: ClientOrchestrationCommand = {
+        type: "thread.user-input.respond",
+        commandId: CommandId.make("answer"),
+        threadId: ThreadId.make("thread-1"),
+        requestId: ApprovalRequestId.make("request"),
+        answers: { ["__proto__"]: "" },
+        createdAt: "2026-08-01T00:00:00.000Z",
+        attachmentsByQuestionId: {
+          ["__proto__"]: [
+            { type: "image", id, name: "image.png", mimeType: "image/png", sizeBytes: 6 },
+          ],
+        },
+      };
+      const normalized = yield* normalizeDispatchCommand(command);
+      if (normalized.type !== "thread.user-input.respond") throw new Error("Wrong command");
+      expect(Object.keys(normalized.attachmentsByQuestionId!)).toEqual(["__proto__"]);
+      const attachment = normalized.attachmentsByQuestionId!["__proto__"]![0]!;
+      const claimedPath = NodePath.join(config.attachmentsDir, `${attachment.id}.png`);
+      expect(NodeFS.existsSync(claimedPath)).toBe(true);
+      yield* cleanupFailedUploadedAttachments(command, normalized);
+      expect(NodeFS.existsSync(claimedPath)).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
+  );
   it.effect(
     "claims images and files by question, preserves answers, and cleans up failed dispatches",
     () =>

@@ -278,16 +278,18 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
 
     if (canonicalCommand.type === "thread.user-input.respond") {
       let index = 0;
-      const attachmentsByQuestionId: Record<string, UserInputAttachments[string]> = {};
-      for (const [questionId, original] of Object.entries(
-        canonicalCommand.attachmentsByQuestionId ?? {},
-      )) {
-        attachmentsByQuestionId[questionId] = normalizedAttachments.slice(
-          index,
-          index + original.length,
-        ) as UserInputAttachments[string];
-        index += original.length;
-      }
+      const attachmentsByQuestionId = Object.fromEntries(
+        Object.entries(canonicalCommand.attachmentsByQuestionId ?? {}).map(
+          ([questionId, original]) => {
+            const claimed = normalizedAttachments.slice(
+              index,
+              index + original.length,
+            ) as UserInputAttachments[string];
+            index += original.length;
+            return [questionId, claimed];
+          },
+        ),
+      );
       return {
         ...canonicalCommand,
         ...(attachments.length > 0 ? { attachmentsByQuestionId } : {}),

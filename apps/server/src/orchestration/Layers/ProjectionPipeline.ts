@@ -1927,6 +1927,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const runProjectorForEvent = Effect.fn("runProjectorForEvent")(function* (
       projector: ProjectorDefinition,
       event: OrchestrationEvent,
+      pendingPrunes: Map<string, OrchestrationEvent>,
     ) {
       const attachmentSideEffects: AttachmentSideEffects = {
         deletedThreadIds: new Set<string>(),
@@ -1934,10 +1935,17 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       };
 
       yield* sql.withTransaction(applyProjectorForEvent(projector, event, attachmentSideEffects));
+      for (const threadId of attachmentSideEffects.prunedThreadRelativePaths.keys()) {
+        pendingPrunes.set(threadId, event);
+      }
+      attachmentSideEffects.prunedThreadRelativePaths.clear();
       yield* applyAttachmentSideEffects(event, attachmentSideEffects);
     });
 
-    const bootstrapProjector = (projector: ProjectorDefinition) =>
+    const bootstrapProjector = (
+      projector: ProjectorDefinition,
+      pendingPrunes: Map<string, OrchestrationEvent>,
+    ) =>
       projectionStateRepository
         .getByProjector({
           projector: projector.name,
@@ -1949,7 +1957,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                 Option.isSome(stateRow) ? stateRow.value.lastAppliedSequence : 0,
                 Number.MAX_SAFE_INTEGER,
               ),
-              (event) => runProjectorForEvent(projector, event),
+              (event) => runProjectorForEvent(projector, event, pendingPrunes),
             ),
           ),
         );
@@ -1997,11 +2005,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       yield* cleanup;
     });
 
-    const bootstrap: OrchestrationProjectionPipelineShape["bootstrap"] = Effect.forEach(
-      projectors,
-      bootstrapProjector,
-      { concurrency: 1 },
-    ).pipe(
+    const bootstrap: OrchestrationProjectionPipelineShape["bootstrap"] = Effect.gen(function* () {
+      const pendingPrunes = new Map<string, OrchestrationEvent>();
+      yield* Effect.forEach(
+        projectors,
+        (projector) => bootstrapProjector(projector, pendingPrunes),
+        { concurrency: 1, discard: true },
+      );
+      // Both message and activity references must finish replaying before files are pruned.
+      for (const [threadId, event] of pendingPrunes) {
+        yield* applyAttachmentSideEffects(event, {
+          deletedThreadIds: new Set(),
+          prunedThreadRelativePaths: new Map([[threadId, new Set()]]),
+        });
+      }
+    }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
       Effect.provideService(ServerConfig, serverConfig),

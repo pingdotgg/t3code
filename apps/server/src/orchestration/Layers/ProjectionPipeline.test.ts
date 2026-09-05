@@ -1268,6 +1268,23 @@ it.layer(
       assert.isFalse(yield* exists(removePath));
       assert.isTrue(yield* exists(laterPath));
       assert.isTrue(yield* exists(otherThreadPath));
+
+      // Replay message and activity history from different cursors, as during a projection rebuild.
+      yield* sql`DELETE FROM projection_thread_messages WHERE thread_id = ${threadId}`;
+      yield* sql`DELETE FROM projection_thread_activities WHERE thread_id = ${threadId}`;
+      yield* sql`UPDATE projection_state SET last_applied_sequence = 0
+        WHERE projector IN ('projection.thread-messages', 'projection.thread-activities')`;
+      yield* fileSystem.writeFileString(removePath, "remove");
+      yield* fileSystem.writeFileString(
+        path.join(attachmentsDir, `${answerRemoveId}.txt`),
+        "answer",
+      );
+      yield* projectionPipeline.bootstrap;
+      assert.isTrue(yield* exists(keepPath));
+      assert.isTrue(yield* exists(laterPath));
+      assert.isTrue(yield* exists(path.join(attachmentsDir, `${answerKeepId}.txt`)));
+      assert.isFalse(yield* exists(removePath));
+      assert.isFalse(yield* exists(path.join(attachmentsDir, `${answerRemoveId}.txt`)));
     }),
   );
 });

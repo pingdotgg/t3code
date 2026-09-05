@@ -38,6 +38,13 @@ describe("question answer paths", () => {
       expect(answers.other).toBe("No file");
       expect(original.q).toEqual(["First", "Second"]);
       expect(NodeFS.readFileSync(path, "utf8")).toBe("spec");
+      const specialKey = yield* appendUserInputAttachmentPaths({
+        answers: {},
+        attachmentsDir: config.attachmentsDir,
+        attachmentsByQuestionId: { ["__proto__"]: [attachment] },
+      });
+      expect(Object.keys(specialKey)).toEqual(["__proto__"]);
+      expect(specialKey["__proto__"]).toContain(path);
     }).pipe(Effect.provide(layer)),
   );
   it.effect("does not send an unavailable attachment path", () =>
