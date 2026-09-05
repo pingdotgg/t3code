@@ -6,6 +6,7 @@ import type { VariantProps } from "class-variance-authority";
 import * as React from "react";
 
 import { cn } from "~/lib/utils";
+import { segmentedControlGroupClassName } from "~/components/ui/segmented-control-styles";
 import { Separator } from "~/components/ui/separator";
 import { Toggle as ToggleComponent, type toggleVariants } from "~/components/ui/toggle";
 
@@ -16,7 +17,7 @@ const ToggleGroupContext = React.createContext<VariantProps<typeof toggleVariant
 
 function ToggleGroup({
   className,
-  variant = "default",
+  variant = "segmented",
   size = variant === "segmented" ? "segmented" : "default",
   orientation = "horizontal",
   children,
@@ -31,7 +32,7 @@ function ToggleGroup({
           ? "*:pointer-coarse:after:min-w-auto"
           : "*:pointer-coarse:after:min-h-auto",
         variant === "segmented"
-          ? "gap-0.5 rounded-lg bg-input/40 p-0.5"
+          ? segmentedControlGroupClassName
           : variant === "default"
             ? "gap-0.5"
             : orientation === "horizontal"

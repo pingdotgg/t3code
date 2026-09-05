@@ -5,6 +5,8 @@ import {
   CopyIcon,
   DownloadIcon,
   LoaderIcon,
+  LockIcon,
+  LockOpenIcon,
   PlusIcon,
   Trash2Icon,
   XIcon,
@@ -23,26 +25,28 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 
+import {
+  type CustomModelDefinition,
+  readCustomModelEntries,
+  toCustomModelSetting,
+} from "@t3tools/shared/model";
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Checkbox } from "../ui/checkbox";
 import { DraftInput } from "../ui/draft-input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { ScrollArea } from "../ui/scroll-area";
 import { Switch } from "../ui/switch";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { DriverOption } from "./providerDriverMeta";
-import { providerSettingsTabClassName } from "./providerSettingsTabs";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon, providerInstanceInitials } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { SettingsRow, SettingsSection } from "./settingsLayout";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -97,16 +101,13 @@ function providerEnvironmentsEqual(
 }
 
 /**
- * Read a string[] at `key` from the opaque config blob, filtering out
- * non-string entries. Used for `customModels`, which is always typed as
- * `string[]` by the concrete driver schemas but arrives here as
- * `Schema.Unknown`.
+ * Read `customModels` from the opaque config blob. The concrete driver
+ * schemas type it as `CustomModelSetting[]`, but it arrives here as
+ * `Schema.Unknown`, so the shared reader does the shape checking.
  */
-function readConfigStringArray(config: unknown, key: string): ReadonlyArray<string> {
+function readConfigCustomModels(config: unknown): ReadonlyArray<CustomModelDefinition> {
   if (config === null || typeof config !== "object") return [];
-  const value = (config as Record<string, unknown>)[key];
-  if (!Array.isArray(value)) return [];
-  return value.filter((entry): entry is string => typeof entry === "string");
+  return readCustomModelEntries((config as Record<string, unknown>).customModels);
 }
 
 /**
@@ -128,9 +129,14 @@ function nextConfigBlobWithValue(
   return base;
 }
 
+/**
+ * Custom rows come from current settings so name/descriptor edits show
+ * instantly; a bare entry falls back to the live row's driver-default
+ * capabilities (the server fills those in on its next probe).
+ */
 export function deriveProviderModelsForDisplay(input: {
   readonly liveModels: ReadonlyArray<ServerProviderModel> | undefined;
-  readonly customModels: ReadonlyArray<string>;
+  readonly customModels: ReadonlyArray<CustomModelDefinition>;
 }): ReadonlyArray<ServerProviderModel> {
   const liveCustomModelsBySlug = new Map(
     Arr.filterMap(input.liveModels ?? [], (model) =>
@@ -138,15 +144,13 @@ export function deriveProviderModelsForDisplay(input: {
     ),
   );
   const serverModels = input.liveModels?.filter((model) => !model.isCustom) ?? [];
-  const customModels = input.customModels.map(
-    (slug) =>
-      liveCustomModelsBySlug.get(slug) ?? {
-        slug,
-        name: slug,
-        isCustom: true,
-        capabilities: null,
-      },
-  );
+  const customModels = input.customModels.map((entry) => ({
+    slug: entry.slug,
+    name: entry.name,
+    isCustom: true,
+    capabilities:
+      entry.capabilities ?? liveCustomModelsBySlug.get(entry.slug)?.capabilities ?? null,
+  }));
   return [...serverModels, ...customModels];
 }
 
@@ -235,118 +239,104 @@ function ProviderEnvironmentSection(props: {
     publishRows(nextRows);
   };
 
+  const addVariable = () =>
+    setRows([
+      ...rows,
+      {
+        id: nextEnvironmentVariableDraftId(),
+        name: "",
+        value: "",
+        sensitive: true,
+      },
+    ]);
+
   return (
-    <div className="grid gap-2">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-medium text-foreground">Environment variables</span>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-7 gap-1.5 px-2 text-xs"
-          onClick={() =>
-            setRows([
-              ...rows,
-              {
-                id: nextEnvironmentVariableDraftId(),
-                name: "",
-                value: "",
-                sensitive: true,
-              },
-            ])
-          }
-        >
+    <div className="mt-3 min-w-0 space-y-2">
+      {rows.map((variable, index) => (
+        <div key={variable.id} className="flex min-w-0 items-center gap-1.5">
+          <DraftInput
+            size="sm"
+            className="w-44 shrink-0 font-mono"
+            value={variable.name}
+            onCommit={(name) => updateVariable(variable.id, { name: name.trim() })}
+            placeholder="VARIABLE_NAME"
+            spellCheck={false}
+            aria-label={`Environment variable name ${index + 1}`}
+          />
+          <span className="text-xs text-muted-foreground" aria-hidden>
+            =
+          </span>
+          <DraftInput
+            size="sm"
+            className="min-w-0 flex-1 font-mono"
+            value={variable.valueRedacted ? "" : variable.value}
+            onCommit={(value) => updateVariable(variable.id, { value })}
+            type={variable.sensitive ? "password" : undefined}
+            autoComplete="off"
+            placeholder={
+              variable.valueRedacted ? "Stored secret, enter a new value to replace" : "value"
+            }
+            spellCheck={false}
+            aria-label={`Environment variable value ${index + 1}`}
+          />
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-micro"
+                  variant="ghost-muted"
+                  className={cn(
+                    "[--control-icon-color:currentColor]",
+                    variable.sensitive && "text-foreground",
+                  )}
+                  onClick={() => {
+                    const sensitive = !variable.sensitive;
+                    updateVariable(variable.id, {
+                      sensitive,
+                      ...(sensitive && variable.valueRedacted === undefined
+                        ? {}
+                        : { valueRedacted: sensitive ? variable.valueRedacted : false }),
+                    });
+                  }}
+                  aria-pressed={variable.sensitive}
+                  aria-label={`Mark environment variable ${variable.name || index + 1} as sensitive`}
+                >
+                  {variable.sensitive ? (
+                    <LockIcon className="size-3" />
+                  ) : (
+                    <LockOpenIcon className="size-3" />
+                  )}
+                </Button>
+              }
+            />
+            <TooltipPopup side="top">
+              {variable.sensitive ? "Sensitive, stored separately" : "Plain text"}
+            </TooltipPopup>
+          </Tooltip>
+          <Button
+            type="button"
+            size="icon-micro"
+            variant="ghost-muted"
+            className="[--control-icon-color:currentColor] hover:text-destructive"
+            onClick={() => removeVariable(variable.id)}
+            aria-label={`Remove environment variable ${variable.name || index + 1}`}
+          >
+            <XIcon className="size-3" />
+          </Button>
+        </div>
+      ))}
+      <div className="flex min-h-[1.875rem] flex-wrap items-center justify-end gap-x-3 gap-y-1">
+        {rows.length > 0 ? (
+          <span className="mr-auto text-xs text-muted-foreground">
+            Sensitive values are stored separately and never returned to the app.
+          </span>
+        ) : null}
+        <Button type="button" size="xs" variant="ghost-muted" onClick={addVariable}>
           <PlusIcon className="size-3" />
-          Add
+          Add variable
         </Button>
       </div>
-      {rows.length === 0 ? (
-        <p className="text-xs text-muted-foreground">
-          Add variables to pass API keys, base URLs, or other per-instance CLI settings.
-        </p>
-      ) : (
-        <div className="overflow-hidden rounded-md border border-border/70">
-          <Table>
-            <TableHeader className="bg-muted/25 text-[11px] text-muted-foreground">
-              <TableRow className="hover:bg-transparent">
-                <TableHead>Variable</TableHead>
-                <TableHead>Value</TableHead>
-                <TableHead className="w-20">Sensitive</TableHead>
-                <TableHead className="w-12 text-right">
-                  <span className="sr-only">Options</span>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((variable, index) => (
-                <TableRow
-                  key={variable.id}
-                  className="border-border/60 odd:bg-muted/20 even:bg-background/20"
-                >
-                  <TableCell>
-                    <DraftInput
-                      value={variable.name}
-                      onCommit={(name) => updateVariable(variable.id, { name: name.trim() })}
-                      placeholder="VARIABLE_NAME"
-                      spellCheck={false}
-                      aria-label={`Environment variable name ${index + 1}`}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <DraftInput
-                      value={variable.valueRedacted ? "" : variable.value}
-                      onCommit={(value) => updateVariable(variable.id, { value })}
-                      type={variable.sensitive ? "password" : undefined}
-                      autoComplete="off"
-                      placeholder={
-                        variable.valueRedacted
-                          ? "Stored secret - enter a new value to replace"
-                          : "Value"
-                      }
-                      spellCheck={false}
-                      aria-label={`Environment variable value ${index + 1}`}
-                    />
-                  </TableCell>
-                  <TableCell className="w-20">
-                    <div className="flex h-8 items-center justify-center">
-                      <Checkbox
-                        checked={variable.sensitive}
-                        onCheckedChange={(checked) => {
-                          const sensitive = Boolean(checked);
-                          updateVariable(variable.id, {
-                            sensitive,
-                            ...(sensitive && variable.valueRedacted === undefined
-                              ? {}
-                              : { valueRedacted: sensitive ? variable.valueRedacted : false }),
-                          });
-                        }}
-                        aria-label={`Mark environment variable ${variable.name || index + 1} as sensitive`}
-                      />
-                    </div>
-                  </TableCell>
-                  <TableCell className="w-12">
-                    <div className="flex justify-end">
-                      <Button
-                        type="button"
-                        size="icon-sm"
-                        variant="ghost"
-                        className="size-8 text-muted-foreground hover:text-destructive"
-                        onClick={() => removeVariable(variable.id)}
-                        aria-label={`Remove environment variable ${variable.name || index + 1}`}
-                      >
-                        <XIcon className="size-3.5" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      )}
-      <span className="text-xs text-muted-foreground">
-        Sensitive values are stored separately and are not returned to the app after saving.
-      </span>
     </div>
   );
 }
@@ -362,7 +352,7 @@ interface ProviderInstanceCardProps {
   readonly readOnly?: boolean | undefined;
   readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
   /**
-   * Pass `undefined` to hide the delete button entirely. Built-in default
+   * Pass `undefined` to hide the delete footer entirely. Built-in default
    * instance slots use `undefined` — they can't be deleted without losing
    * the slot, and their "reset to defaults" affordance lives on an outer
    * reset button instead. Explicit `| undefined` in the type accommodates
@@ -376,6 +366,7 @@ interface ProviderInstanceCardProps {
    * omit it.
    */
   readonly headerAction?: ReactNode | undefined;
+  readonly setup?: ReactNode;
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
@@ -417,6 +408,7 @@ export function ProviderInstanceCard({
   onUpdate,
   onDelete,
   headerAction,
+  setup,
   hiddenModels,
   favoriteModels,
   modelOrder,
@@ -426,7 +418,6 @@ export function ProviderInstanceCard({
   onRunUpdate,
   isUpdating = false,
 }: ProviderInstanceCardProps) {
-  const [activeTab, setActiveTab] = useState<"configuration" | "models">("configuration");
   const enabled = resolveProviderInstanceEnabled(instance);
   // A locally disabled provider reads "Disabled" with a muted dot even if its
   // last server status is stale. Enabled providers use the server status.
@@ -438,9 +429,6 @@ export function ProviderInstanceCard({
     ? getProviderSummary(liveProvider)
     : { headline: "Disabled", detail: null };
   const authEmail = liveProvider?.auth.email?.trim();
-  // The editor header folds the account email into the status line —
-  // "Authenticated as <email> · <plan>" — with the email redacted until its
-  // reveal toggle is clicked.
   const isAuthenticated = enabled && liveProvider?.auth.status === "authenticated";
   const authLabel =
     enabled && liveProvider?.auth.status === "authenticated"
@@ -479,9 +467,8 @@ export function ProviderInstanceCard({
   const driverKind: ProviderDriverKind | null = isProviderDriverKind(instance.driver)
     ? instance.driver
     : null;
-  const visibleTab = driverOption === undefined ? "configuration" : activeTab;
-
-  const customModels = readConfigStringArray(instance.config, "customModels");
+  const customModels =
+    instance.driver === "antigravity" ? [] : readConfigCustomModels(instance.config);
   // Server-returned models may lag behind settings writes. Treat probe
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
@@ -489,7 +476,6 @@ export function ProviderInstanceCard({
     liveModels: liveProvider?.models,
     customModels,
   });
-
   const updateDisplayName = (value: string) => {
     const trimmed = value.trim();
     const { displayName: _omit, ...rest } = instance;
@@ -523,8 +509,12 @@ export function ProviderInstanceCard({
     );
   };
 
-  const updateCustomModels = (next: ReadonlyArray<string>) => {
-    const nextConfig = nextConfigBlobWithValue(instance.config, "customModels", [...next]);
+  const updateCustomModels = (next: ReadonlyArray<CustomModelDefinition>) => {
+    const nextConfig = nextConfigBlobWithValue(
+      instance.config,
+      "customModels",
+      next.map(toCustomModelSetting),
+    );
     const { config: _omit, ...rest } = instance;
     onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
   };
@@ -562,54 +552,9 @@ export function ProviderInstanceCard({
     </span>
   );
 
-  const titleHeadNode = (
-    <>
-      {titleIconNode}
-      <h3 className="truncate text-sm font-medium tracking-[-0.005em] text-foreground">
-        {displayName}
-      </h3>
-      {String(instanceId) !== String(instance.driver) ? (
-        <code className="truncate rounded bg-muted/60 px-1 py-0.5 text-[10px] text-muted-foreground">
-          {instanceId}
-        </code>
-      ) : null}
-      {driverOption?.badgeLabel ? (
-        <Badge variant="warning" size="sm" className="shrink-0">
-          {driverOption.badgeLabel}
-        </Badge>
-      ) : null}
-    </>
-  );
-
-  const titleTailNode = (
-    <>
-      {headerAction ? (
-        <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-          {headerAction}
-        </span>
-      ) : null}
-      {onDelete ? (
-        <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  size="icon-micro"
-                  variant="ghost"
-                  className="text-muted-foreground hover:text-destructive"
-                  onClick={onDelete}
-                  aria-label={`Delete provider instance ${instanceId}`}
-                >
-                  <Trash2Icon className="size-3" />
-                </Button>
-              }
-            />
-            <TooltipPopup side="top">Delete instance</TooltipPopup>
-          </Tooltip>
-        </span>
-      ) : null}
-    </>
-  );
+  const titleTailNode = headerAction ? (
+    <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">{headerAction}</span>
+  ) : null;
 
   const versionCodeNode = versionLabel ? (
     <code className="text-xs text-muted-foreground">{versionLabel}</code>
@@ -620,29 +565,43 @@ export function ProviderInstanceCard({
     statusKey === "warning" || statusKey === "error" ? (
       <span className={cn("size-1.5 shrink-0 rounded-full", statusStyle.dot)} aria-hidden />
     ) : null;
-  const statusHeadlineNode = <span>{summary.headline}</span>;
   // Trouble states carry the server's explanation (a failed probe, a shadow
   // home entry that is not a symlink, a missing binary). Show it wherever the
   // headline shows so the user can act without opening the editor.
   const needsAttention = statusKey === "warning" || statusKey === "error";
-  const statusLineClassName =
-    "flex min-w-0 flex-wrap items-center gap-x-1.5 text-[13px] leading-[1.45] text-muted-foreground/80";
-
+  const editorStatusNode =
+    isAuthenticated && authEmail ? (
+      <>
+        {needsAttention ? statusDotNode : null}
+        <span>Authenticated as</span>
+        <ProviderAuthEmail email={authEmail} />
+        {authLabel ? <span>· {authLabel}</span> : null}
+        {summary.detail ? (
+          <span className="min-w-0 [overflow-wrap:anywhere]">· {summary.detail}</span>
+        ) : null}
+      </>
+    ) : (
+      <>
+        {statusDotNode}
+        <span>{summary.headline}</span>
+        {summary.detail ? (
+          <span className="min-w-0 [overflow-wrap:anywhere]">· {summary.detail}</span>
+        ) : null}
+      </>
+    );
   if (mode === "list") {
     return (
       <div
+        data-slot="settings-row"
         className={cn(
-          // Sidebar-style selection with a fixed row height so the list stays
-          // even; the status line clamps to two lines instead of growing.
-          "group flex h-19 items-start gap-3 rounded-md px-3 py-2 transition-colors",
-          // Foreground-alpha tint so the fill reads the same in light and dark themes.
-          selected ? "bg-foreground/8" : "hover:bg-foreground/4",
+          "group flex min-h-18 items-center gap-3 px-3 py-3 transition-colors sm:px-4",
+          selected ? "bg-muted/45" : "hover:bg-muted/25",
         )}
       >
         <button
           type="button"
           className={cn(
-            "flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-sm text-left outline-none transition-opacity focus-visible:ring-2 focus-visible:ring-ring",
+            "flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-md text-left outline-none transition-opacity focus-visible:ring-2 focus-visible:ring-ring",
             !enabled && !selected && "opacity-60 group-hover:opacity-100",
           )}
           onClick={onSelect}
@@ -657,10 +616,14 @@ export function ProviderInstanceCard({
                   {instanceId}
                 </code>
               ) : null}
-              {versionCodeNode}
+              {versionLabel ? (
+                <code className="max-w-24 shrink-0 truncate text-xs text-muted-foreground">
+                  {versionLabel}
+                </code>
+              ) : null}
               {versionAdvisory ? (
                 <span role="img" aria-label="Update available" className="inline-flex shrink-0">
-                  <ArrowUpCircleIcon className="size-3.5 text-update-foreground" />
+                  <ArrowUpCircleIcon className="size-3.5 text-muted-foreground" />
                 </span>
               ) : null}
             </span>
@@ -687,237 +650,227 @@ export function ProviderInstanceCard({
     );
   }
 
+  const editorHeaderAction = (
+    <div className="flex min-w-0 items-center gap-1.5">
+      {driverOption?.badgeLabel ? (
+        <Badge variant="warning" size="sm" className="shrink-0">
+          {driverOption.badgeLabel}
+        </Badge>
+      ) : null}
+      {versionCodeNode}
+      <span
+        inert={readOnly}
+        aria-disabled={readOnly || undefined}
+        className={cn("inline-flex items-center gap-1", readOnly && "opacity-50")}
+      >
+        {versionAdvisory ? (
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-micro"
+                  variant="ghost"
+                  className={cn(
+                    "[--control-icon-color:currentColor]",
+                    versionAdvisory.emphasis === "strong"
+                      ? "text-warning hover:text-warning"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                  aria-label="Update available — view details"
+                >
+                  <ArrowUpCircleIcon className="size-3.5" />
+                </Button>
+              }
+            />
+            <PopoverPopup
+              side="bottom"
+              align="end"
+              className="w-[min(21rem,calc(100vw-1.5rem))] [--popup-width:min(21rem,calc(100vw-1.5rem))]"
+            >
+              <div className="grid min-w-0 gap-3">
+                <div className="grid gap-0.5">
+                  <p className="text-[13px] font-semibold leading-tight text-foreground">
+                    Update available
+                  </p>
+                  <p
+                    className={cn(
+                      "text-xs leading-snug",
+                      versionAdvisory.emphasis === "strong"
+                        ? "text-warning"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {versionAdvisory.detail}
+                  </p>
+                </div>
+                {onRunUpdate ? (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    className="w-full"
+                    disabled={isUpdating}
+                    onClick={onRunUpdate}
+                  >
+                    {isUpdating ? <LoaderIcon className="animate-spin" /> : <DownloadIcon />}
+                    {isUpdating ? "Updating" : "Update now"}
+                  </Button>
+                ) : null}
+                {onRunUpdate && updateCommand ? (
+                  <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                    <span aria-hidden className="h-px flex-1 bg-border" />
+                    or, update manually using
+                    <span aria-hidden className="h-px flex-1 bg-border" />
+                  </div>
+                ) : null}
+                {updateCommand ? (
+                  <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-muted/40 py-0.5 pr-0.5 pl-2">
+                    <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground">
+                      {updateCommand}
+                    </code>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            type="button"
+                            size="icon-xs"
+                            variant="ghost"
+                            className="shrink-0 text-muted-foreground hover:text-foreground"
+                            onClick={() =>
+                              copyToClipboard(updateCommand, { providerName: displayName })
+                            }
+                            aria-label="Copy update command"
+                          >
+                            <CopyIcon className="size-3" />
+                          </Button>
+                        }
+                      />
+                      <TooltipPopup side="top">Copy command</TooltipPopup>
+                    </Tooltip>
+                  </div>
+                ) : null}
+              </div>
+            </PopoverPopup>
+          </Popover>
+        ) : null}
+        {titleTailNode}
+        {onDelete ? (
+          <Button
+            type="button"
+            size="icon-micro"
+            variant="ghost-muted"
+            disabled={readOnly}
+            className="[--control-icon-color:currentColor] hover:text-destructive"
+            onClick={onDelete}
+            aria-label={`Delete instance ${instanceId}`}
+          >
+            <Trash2Icon className="size-3" />
+          </Button>
+        ) : null}
+      </span>
+    </div>
+  );
+
   return (
-    <div className="min-w-0 lg:flex lg:h-full lg:min-h-0 lg:flex-col">
-      <div className="flex min-h-16 shrink-0 items-start justify-between gap-3 border-b border-border/70 px-4 py-3">
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            {titleHeadNode}
-            {versionCodeNode}
-            {/*
-              Only the write actions go inert on read-only sessions; the
-              status line below keeps its email reveal clickable.
-            */}
-            <span
+    <>
+      <SettingsSection
+        title={displayName}
+        description={editorStatusNode}
+        icon={titleIconNode}
+        headerAction={editorHeaderAction}
+      >
+        <SettingsRow
+          title="Display name"
+          control={
+            <div
               inert={readOnly}
               aria-disabled={readOnly || undefined}
-              className={cn("inline-flex items-center gap-2", readOnly && "opacity-50")}
+              className={cn(
+                "flex w-full items-center justify-end gap-2 sm:w-auto",
+                readOnly && "opacity-50 select-none",
+              )}
             >
-              {versionAdvisory ? (
-                <Popover>
-                  <PopoverTrigger
-                    render={
-                      <Button
-                        type="button"
-                        size="icon-xs"
-                        variant="ghost"
-                        className={cn(
-                          "size-5 rounded-sm p-0",
-                          versionAdvisory.emphasis === "strong"
-                            ? "text-warning hover:text-warning"
-                            : "text-update-foreground hover:text-update-foreground",
-                        )}
-                        aria-label="Update available — view details"
-                      >
-                        <ArrowUpCircleIcon className="size-3.5" />
-                      </Button>
-                    }
-                  />
-                  <PopoverPopup
-                    side="bottom"
-                    align="start"
-                    className="w-[min(21rem,calc(100vw-1.5rem))] [--popup-width:min(21rem,calc(100vw-1.5rem))]"
-                  >
-                    <div className="grid min-w-0 gap-3">
-                      <div className="grid gap-0.5">
-                        <p className="text-[13px] font-semibold leading-tight text-foreground">
-                          Update available
-                        </p>
-                        <p
-                          className={cn(
-                            "text-xs leading-snug",
-                            versionAdvisory.emphasis === "strong"
-                              ? "text-warning"
-                              : "text-muted-foreground",
-                          )}
-                        >
-                          {versionAdvisory.detail}
-                        </p>
-                      </div>
-                      {onRunUpdate ? (
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="default"
-                          className="w-full"
-                          disabled={isUpdating}
-                          onClick={onRunUpdate}
-                        >
-                          {isUpdating ? <LoaderIcon className="animate-spin" /> : <DownloadIcon />}
-                          {isUpdating ? "Updating" : "Update now"}
-                        </Button>
-                      ) : null}
-                      {onRunUpdate && updateCommand ? (
-                        <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                          <span aria-hidden className="h-px flex-1 bg-border" />
-                          or, update manually using
-                          <span aria-hidden className="h-px flex-1 bg-border" />
-                        </div>
-                      ) : null}
-                      {updateCommand ? (
-                        <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-muted/40 py-0.5 pr-0.5 pl-2">
-                          <ScrollArea scrollFade className="h-8 min-w-0 flex-1 rounded-none">
-                            <code className="flex h-full w-max items-center whitespace-nowrap pr-3 font-mono text-[11px] text-foreground">
-                              {updateCommand}
-                            </code>
-                          </ScrollArea>
-                          <Tooltip>
-                            <TooltipTrigger
-                              render={
-                                <Button
-                                  type="button"
-                                  size="icon-xs"
-                                  variant="ghost"
-                                  className="size-6 shrink-0 rounded-sm p-0 text-muted-foreground hover:text-foreground"
-                                  onClick={() =>
-                                    copyToClipboard(updateCommand, {
-                                      providerName: displayName,
-                                    })
-                                  }
-                                  aria-label="Copy update command"
-                                >
-                                  <CopyIcon className="size-3" />
-                                </Button>
-                              }
-                            />
-                            <TooltipPopup side="top">Copy command</TooltipPopup>
-                          </Tooltip>
-                        </div>
-                      ) : null}
-                    </div>
-                  </PopoverPopup>
-                </Popover>
-              ) : null}
-              {titleTailNode}
-            </span>
-          </div>
-          <p className={statusLineClassName}>
-            {statusDotNode}
-            {isAuthenticated && authEmail ? (
-              <>
-                <span>Authenticated as</span>
-                <ProviderAuthEmail email={authEmail} />
-                {authLabel ? <span>· {authLabel}</span> : null}
-              </>
-            ) : (
-              statusHeadlineNode
-            )}
-            {summary.detail && !needsAttention ? <span>· {summary.detail}</span> : null}
-          </p>
-          {summary.detail && needsAttention ? (
-            <p className="text-[13px] leading-[1.45] text-muted-foreground/80 [overflow-wrap:anywhere]">
-              {summary.detail}
-            </p>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="flex h-11 shrink-0 border-b border-border/70 px-1">
-        <button
-          type="button"
-          aria-pressed={visibleTab === "configuration"}
-          className={providerSettingsTabClassName(visibleTab === "configuration")}
-          onClick={() => setActiveTab("configuration")}
-        >
-          Configuration
-        </button>
-        {driverOption !== undefined ? (
-          <button
-            type="button"
-            aria-pressed={visibleTab === "models"}
-            className={providerSettingsTabClassName(visibleTab === "models")}
-            onClick={() => setActiveTab("models")}
-          >
-            Models
-          </button>
-        ) : null}
-      </div>
-
-      <div className="lg:min-h-0 lg:flex-1">
-        <ScrollArea
-          scrollFade
-          chainVerticalScroll
-          className="lg:h-full"
-          hidden={visibleTab !== "configuration"}
-        >
-          <div
-            inert={readOnly}
-            aria-disabled={readOnly || undefined}
-            className={cn("space-y-5 px-4 py-5", readOnly && "opacity-50 select-none")}
-          >
-            <div>
-              <label htmlFor={`provider-instance-${instanceId}-display-name`} className="block">
-                <span className="text-xs font-medium text-foreground">Display name</span>
-                <DraftInput
-                  id={`provider-instance-${instanceId}-display-name`}
-                  className="mt-1.5"
-                  value={instance.displayName ?? ""}
-                  onCommit={updateDisplayName}
-                  placeholder={driverOption?.label ?? "Instance label"}
-                  spellCheck={false}
-                />
-                <span className="mt-1 block text-xs text-muted-foreground">
-                  Optional label shown in the provider list.
-                </span>
-              </label>
-            </div>
-
-            <div>
               <ProviderAccentColorPicker
+                layout="inline"
                 displayName={displayName}
                 value={accentColor}
                 onCommit={updateAccentColor}
                 commitDelayMs={120}
-                description="Used to distinguish this instance in picker rails and model lists."
+              />
+              <DraftInput
+                id={`provider-instance-${instanceId}-display-name`}
+                size="sm"
+                className="min-w-0 flex-1 sm:w-56 sm:flex-none"
+                value={instance.displayName ?? ""}
+                onCommit={updateDisplayName}
+                placeholder={driverOption?.label ?? "Instance label"}
+                spellCheck={false}
               />
             </div>
+          }
+        />
+      </SettingsSection>
 
-            <div>
-              <ProviderEnvironmentSection
-                environment={instance.environment ?? []}
-                onChange={updateEnvironment}
-              />
-            </div>
+      {setup ? (
+        <SettingsSection title="Setup">
+          <div className="px-3 py-3 sm:px-4">{setup}</div>
+        </SettingsSection>
+      ) : null}
 
-            {driverOption ? (
-              <ProviderSettingsForm
-                definition={driverOption}
-                value={instance.config}
-                idPrefix={`provider-instance-${instanceId}`}
-                variant="card"
-                onChange={updateConfig}
-              />
-            ) : null}
+      <SettingsSection
+        title="Runtime"
+        inert={readOnly}
+        aria-disabled={readOnly || undefined}
+        className={readOnly ? "opacity-50 select-none" : undefined}
+      >
+        {driverOption ? (
+          <ProviderSettingsForm
+            definition={driverOption}
+            value={instance.config}
+            idPrefix={`provider-instance-${instanceId}`}
+            variant="settings"
+            onChange={updateConfig}
+          />
+        ) : (
+          <SettingsRow
+            title="Driver"
+            description={
+              <span>
+                This instance uses{" "}
+                <code className="text-foreground">{String(instance.driver)}</code>, which is not
+                available in this build. Its configuration is preserved.
+              </span>
+            }
+          />
+        )}
+      </SettingsSection>
 
-            {driverOption === undefined ? (
-              <div>
-                <p className="text-xs text-muted-foreground">
-                  This instance uses a driver (
-                  <code className="text-foreground">{String(instance.driver)}</code>) that is not
-                  shipped with the current build. Configuration values are preserved but cannot be
-                  edited from this surface.
-                </p>
-              </div>
-            ) : null}
-          </div>
-        </ScrollArea>
-        {driverOption !== undefined ? (
-          <div
-            inert={readOnly}
-            aria-disabled={readOnly || undefined}
-            className={cn("px-4 py-5 lg:h-full lg:min-h-0", readOnly && "opacity-50 select-none")}
-            hidden={visibleTab !== "models"}
-          >
+      <SettingsSection
+        title="Environment"
+        inert={readOnly}
+        aria-disabled={readOnly || undefined}
+        className={readOnly ? "opacity-50 select-none" : undefined}
+      >
+        <SettingsRow
+          title="Variables"
+          description="API keys, base URLs, and other per-instance CLI settings."
+        >
+          <ProviderEnvironmentSection
+            environment={instance.environment ?? []}
+            onChange={updateEnvironment}
+          />
+        </SettingsRow>
+      </SettingsSection>
+
+      {driverOption !== undefined ? (
+        <SettingsSection
+          title="Models"
+          inert={readOnly}
+          aria-disabled={readOnly || undefined}
+          className={readOnly ? "opacity-50 select-none" : undefined}
+        >
+          <div className="px-3 py-3 sm:px-4">
             <ProviderModelsSection
               instanceId={instanceId}
               driverKind={driverKind}
@@ -932,8 +885,8 @@ export function ProviderInstanceCard({
               onModelOrderChange={onModelOrderChange}
             />
           </div>
-        ) : null}
-      </div>
-    </div>
+        </SettingsSection>
+      ) : null}
+    </>
   );
 }

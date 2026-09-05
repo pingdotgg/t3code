@@ -22,6 +22,7 @@ import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { encodeThreadDetailPageCursor } from "../threadDetailCursor.ts";
 import { projectThreadDetailSnapshot } from "../ActivityPayloadProjection.ts";
+import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
@@ -278,7 +279,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
+          autoPull: false,
           faviconPath: null,
+          projectIcon: null,
           scripts: [
             {
               id: "script-1",
@@ -405,7 +408,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
+          autoPull: false,
           faviconPath: null,
+          projectIcon: null,
           scripts: [
             {
               id: "script-1",
@@ -556,6 +561,38 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           },
         ]);
       }
+
+      const counter = makeSqlStatementCounter();
+      const context = yield* snapshotQuery
+        .getThreadRuntimeContext(ThreadId.make("thread-1"))
+        .pipe(Effect.withTracer(counter.tracer));
+      assert.equal(counter.count(), 1);
+      assert.equal(context._tag, "Some");
+      if (context._tag === "Some") {
+        assert.deepEqual(context.value, {
+          id: ThreadId.make("thread-1"),
+          title: "Thread 1",
+          session: snapshot.threads[0]?.session,
+        });
+      }
+
+      yield* sql`
+        UPDATE projection_thread_sessions
+        SET status = 'starting', active_turn_id = NULL, provider_name = 'claudeAgent',
+            provider_instance_id = 'claude-secondary', last_error = 'Starting another session'
+        WHERE thread_id = 'thread-1'
+      `;
+      const changedContext = yield* snapshotQuery.getThreadRuntimeContext(
+        ThreadId.make("thread-1"),
+      );
+      assert.equal(changedContext._tag, "Some");
+      if (changedContext._tag === "Some") {
+        assert.equal(changedContext.value.session?.status, "starting");
+        assert.equal(changedContext.value.session?.activeTurnId, null);
+        assert.equal(changedContext.value.session?.providerName, "claudeAgent");
+        assert.equal(changedContext.value.session?.providerInstanceId, "claude-secondary");
+        assert.equal(changedContext.value.session?.lastError, "Starting another session");
+      }
     }),
   );
 
@@ -676,6 +713,22 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         [ThreadId.make("thread-archived")],
       );
       assert.equal(archivedShellSnapshot.threads[0]?.archivedAt, "2026-04-06T00:00:06.000Z");
+      const activeContext = yield* snapshotQuery.getThreadRuntimeContext(
+        ThreadId.make("thread-active"),
+      );
+      assert.equal(activeContext._tag, "Some");
+      if (activeContext._tag === "Some") assert.equal(activeContext.value.session, null);
+      for (const threadId of ["thread-archived", "thread-missing"]) {
+        assert.equal(
+          (yield* snapshotQuery.getThreadRuntimeContext(ThreadId.make(threadId)))._tag,
+          "None",
+        );
+      }
+      yield* sql`UPDATE projection_threads SET deleted_at = '2026-04-06T00:00:08.000Z' WHERE thread_id = 'thread-active'`;
+      assert.equal(
+        (yield* snapshotQuery.getThreadRuntimeContext(ThreadId.make("thread-active")))._tag,
+        "None",
+      );
     }),
   );
 
@@ -920,6 +973,52 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           assert.equal(firstThreadId.value, ThreadId.make("thread-first"));
         }
       }),
+  );
+
+  it.effect("measures replay payload bytes without decoding event bodies", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM orchestration_events`;
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+          command_id, causation_event_id, correlation_id, actor_kind, payload_json, metadata_json
+        )
+        VALUES
+          (
+            'replay-event-1', 'thread', 'thread-replay', 1, 'thread.activity-appended',
+            '2026-03-01T00:00:00.000Z', NULL, NULL, NULL, 'provider',
+            json_object('output', printf('%.*c', 1000, 'x')), '{}'
+          ),
+          (
+            'replay-event-2', 'thread', 'thread-replay', 2, 'thread.activity-appended',
+            '2026-03-01T00:00:01.000Z', NULL, NULL, NULL, 'provider',
+            json_object('output', printf('%.*c', 2000, 'x')), '{}'
+          ),
+          (
+            'replay-event-3', 'thread', 'thread-replay', 3, 'thread.activity-appended',
+            '2026-03-01T00:00:02.000Z', NULL, NULL, NULL, 'provider',
+            json_object('output', printf('%.*c', 3000, 'x')), '{}'
+          ),
+          (
+            'replay-event-4', 'thread', 'thread-replay', 4, 'thread.activity-appended',
+            '2026-03-01T00:00:03.000Z', NULL, NULL, NULL, 'provider',
+            json_object('output', '😀'), '{}'
+          )
+      `;
+
+      // Bytes, not code points: the 4-byte emoji row is {"output":"😀"}, 17 bytes.
+      const stats = yield* snapshotQuery.getEventReplayStats({
+        fromSequenceExclusive: 1,
+        toSequenceInclusive: 4,
+      });
+      assert.deepStrictEqual(stats, {
+        eventCount: 3,
+        payloadBytes: 5043,
+      });
+    }),
   );
 
   it.effect("reads single-thread checkpoint context without hydrating unrelated threads", () =>

@@ -139,6 +139,38 @@ describe("ThreadUsageAccumulator", () => {
     expect(rows.rows[0]?.daily).toEqual([]);
   });
 
+  it("uses custom prices for thread totals and component costs", () => {
+    const customRates: RateTable = new Map([
+      [
+        "claude-fable-5",
+        {
+          inputCostPerToken: 2e-5,
+          outputCostPerToken: 1e-4,
+          cacheReadCostPerToken: 2e-6,
+          cacheCreationCostPerToken: 2.5e-5,
+        },
+      ],
+    ]);
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      priceOverrides: customRates,
+    });
+    accumulator.add(record({ reportedCostUsd: 1.25 }), {
+      sessionKey: "claude:session-a",
+      agentId: null,
+    });
+
+    const group = accumulator.finish()[0];
+    const day = group?.daily.get("2026-08-07");
+    expect(group?.costUsd).toBeCloseTo(100 * 2e-5 + 1000 * 2e-6 + 10 * 2.5e-5 + 50 * 1e-4, 12);
+    expect(day?.cacheWriteUsd).toBeCloseTo(10 * 2.5e-5, 12);
+    expect(day?.cacheReadUsd).toBeCloseTo(1000 * 2e-6, 12);
+    expect(day?.freshUsd).toBeCloseTo(100 * 2e-5 + 50 * 1e-4, 12);
+  });
+
   it("drops records outside the window", () => {
     const context = { sessionKey: "claude:session-a", agentId: null };
     const groups = accumulate([
@@ -520,5 +552,31 @@ describe("foldThreadRows", () => {
     const outside = foldThreadRows(groups, NO_ATTRIBUTION, { cap: 40, projectFilter: null });
     expect(outside.rows.map((row) => row.key)).toHaveLength(1);
     expect(outside.rows[0]?.key).toContain("claude:session-b");
+  });
+
+  it("excludes unknown project attribution from the outside-project filter", () => {
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      resolveProject: () => null,
+    });
+    accumulator.add(record({ sessionId: "outside", cwd: "/elsewhere" }), {
+      sessionKey: "claude:outside",
+      agentId: null,
+    });
+    accumulator.add(record({ provider: "grok", sessionId: "unknown", cwd: "" }), {
+      sessionKey: "grok:unknown",
+      agentId: null,
+    });
+
+    const outside = foldThreadRows(accumulator.finish(), NO_ATTRIBUTION, {
+      cap: 40,
+      projectFilter: null,
+    });
+
+    expect(outside.rows).toHaveLength(1);
+    expect(outside.rows[0]?.key).toContain("claude:outside");
   });
 });

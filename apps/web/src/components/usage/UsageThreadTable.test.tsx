@@ -28,7 +28,7 @@ vi.mock("./usageProviders", () => ({
   },
 }));
 
-import { UsageThreadTable } from "./UsageThreadTable";
+import { UsageThreadDailyChart, UsageThreadTable } from "./UsageThreadTable";
 
 const input = {
   sinceDay: UsageDay.make("2026-08-01"),
@@ -53,7 +53,7 @@ describe("UsageThreadTable", () => {
       <UsageThreadTable input={input} providerContributions={[]} summaryFailedEnvironments={0} />,
     );
 
-    expect(markup).toContain("after:animate-skeleton");
+    expect(markup.match(/motion-safe:animate-skeleton/g)).toHaveLength(4);
   });
 
   it("reports an unavailable breakdown when every query failed", () => {
@@ -121,5 +121,39 @@ describe("UsageThreadTable", () => {
     expect(markup).toContain("1 subagent");
     expect(markup).toContain('aria-label="Open thread"');
     expect(markup).not.toContain('title="Fix the flaky test"');
+  });
+});
+
+describe("UsageThreadDailyChart", () => {
+  it("renders continuous stacked component bands with a peak and date labels", () => {
+    const markup = renderToStaticMarkup(
+      <UsageThreadDailyChart
+        sinceDay="2026-08-01"
+        untilDay="2026-08-03"
+        daily={[
+          {
+            day: UsageDay.make("2026-08-01"),
+            cacheWriteUsd: 2,
+            cacheReadUsd: 3,
+            freshUsd: 1,
+          },
+          {
+            day: UsageDay.make("2026-08-03"),
+            cacheWriteUsd: 4,
+            cacheReadUsd: 5,
+            freshUsd: 3,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Peak $12.00");
+    expect(markup).toContain("cache writes");
+    expect(markup).toContain("cache reads");
+    expect(markup).toContain("fresh input + output");
+    expect(markup.match(/<path/g)).toHaveLength(3);
+    expect(markup).toContain("H253.33 V96 H506.67");
+    expect(markup).toContain("Aug 1");
+    expect(markup).toContain("Aug 3");
   });
 });

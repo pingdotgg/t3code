@@ -142,6 +142,39 @@ describe("parseClaudeLine", () => {
     ]);
   });
 
+  it("preserves an aggregate cache creation count when TTL details are partial", () => {
+    const records = parseClaudeLineRecords(
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-09-03T01:13:44.675Z",
+        requestId: "req_partial_ttl",
+        sessionId: "session-partial-ttl",
+        cwd: "/work/app",
+        message: {
+          id: "msg_partial_ttl",
+          model: "claude-opus-5",
+          usage: {
+            input_tokens: 2,
+            cache_read_input_tokens: 10,
+            cache_creation_input_tokens: 60,
+            cache_creation: {
+              ephemeral_5m_input_tokens: 20,
+              ephemeral_1h_input_tokens: 10,
+            },
+            output_tokens: 12,
+          },
+        },
+      }),
+    );
+
+    expect(records).toHaveLength(1);
+    expect(records[0]?.totals).toMatchObject({
+      cacheCreationTokens: 60,
+      cacheCreation5mTokens: 20,
+      cacheCreation1hTokens: 10,
+    });
+  });
+
   it("uses the serving model when an iteration omits its model", () => {
     const records = parseClaudeLineRecords(
       JSON.stringify({
