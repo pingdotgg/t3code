@@ -1,5 +1,6 @@
 import { EnvironmentId, UsageDay, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
+import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -7,6 +8,9 @@ const testState = vi.hoisted(() => ({
   useUsage: vi.fn(),
   metric: "cost" as "cost" | "tokens",
   breakdown: "time" as "model" | "time",
+  refresh: vi.fn(),
+  setWindowSelection: vi.fn(),
+  refreshWindow: undefined as (() => void) | undefined,
 }));
 
 vi.mock("react", async (importOriginal) => {
@@ -31,14 +35,20 @@ vi.mock("react", async (importOriginal) => {
           : initial === "model"
             ? testState.breakdown
             : initial,
-      vi.fn(),
+      typeof initial === "function" ? testState.setWindowSelection : vi.fn(),
     ]),
   };
 });
 
 vi.mock("../../env", () => ({ isElectron: false }));
 vi.mock("../../state/usage", () => ({ useUsage: testState.useUsage }));
-vi.mock("../ui/button", () => ({ Button: "button" }));
+vi.mock("../ui/button", () => ({
+  Button: (props: { "aria-label"?: string; children?: ReactNode; onClick?: () => void }) => {
+    if (props["aria-label"] === "Refresh usage") testState.refreshWindow = props.onClick;
+    return <button aria-label={props["aria-label"]}>{props.children}</button>;
+  },
+}));
+vi.mock("../ui/input", () => ({ Input: "input" }));
 vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));
 vi.mock("../ui/select", () => ({
   Select: "div",
@@ -127,6 +137,9 @@ const environments = [
 beforeEach(() => {
   testState.metric = "cost";
   testState.breakdown = "time";
+  testState.refresh.mockReset();
+  testState.setWindowSelection.mockReset();
+  testState.refreshWindow = undefined;
   testState.useUsage.mockReturnValue({
     merged: {
       ...mergeUsage([], USAGE_CONTRACT_VERSION),
@@ -152,11 +165,28 @@ beforeEach(() => {
     selectedEnvironments: environments,
     isPending: false,
     isPartial: false,
-    refresh: vi.fn(),
+    refresh: testState.refresh,
   });
 });
 
 describe("UsagePage hourly breakdown", () => {
+  it("refreshes after rebasing a rolling window", () => {
+    renderToStaticMarkup(<UsagePage />);
+
+    testState.refreshWindow?.();
+
+    expect(testState.setWindowSelection).toHaveBeenCalledOnce();
+    expect(testState.refresh).toHaveBeenCalledOnce();
+  });
+
+  it("keeps custom date fields available in both desktop and compact layouts", () => {
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup.match(/aria-label="From day"/g)).toHaveLength(2);
+    expect(markup.match(/aria-label="To day"/g)).toHaveLength(2);
+    expect(markup.match(/pointer-coarse:h-8\.5/g)).toHaveLength(4);
+  });
+
   it("keeps recent activity visible first without empty hourly rows", () => {
     const markup = renderToStaticMarkup(<UsagePage />);
     const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";

@@ -26,6 +26,7 @@ import { serverEnvironment } from "../../state/server";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
+  compareUsageDays,
   enumerateDays,
   enumerateHourStarts,
   formatCount,
@@ -35,9 +36,12 @@ import {
   formatPercent,
   formatTokens,
   formatUsd,
+  makeCustomWindow,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
+import { useCommitOnBlur } from "../../hooks/useCommitOnBlur";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import {
   Menu,
   MenuCheckboxItem,
@@ -82,8 +86,11 @@ const WINDOW_OPTIONS = [
 ] as const;
 
 export function UsagePage() {
+  // `days` remembers the last preset even while a custom (brushed or typed)
+  // range is active, so a reset lands back where the user started.
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
+    custom: false,
     window: makeWindow(30),
   }));
   const [metric, setMetric] = useState<UsageMetric>("cost");
@@ -91,8 +98,8 @@ export function UsagePage() {
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
-  const { days: windowDays, window } = windowSelection;
-  const isPast24Hours = windowDays === 1;
+  const { days: windowDays, custom: isCustomWindow, window } = windowSelection;
+  const isPast24Hours = !isCustomWindow && windowDays === 1;
   const { merged, environments, selectedEnvironments, isPending, isPartial, refresh } = useUsage(
     window,
     selectedEnvironmentIds,
@@ -134,7 +141,15 @@ export function UsagePage() {
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
+      custom: false,
       window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
+    });
+  };
+  const selectCustomWindow = (sinceDay: string, untilDay: string) => {
+    setWindowSelection({
+      days: windowDays,
+      custom: true,
+      window: makeCustomWindow(sinceDay, untilDay),
     });
   };
   const refreshWindow = () => {
@@ -147,17 +162,22 @@ export function UsagePage() {
       }
       return;
     }
+    // A custom range is a fixed span of past days; rescanning is all a
+    // refresh can mean for it.
+    if (isCustomWindow) {
+      refresh();
+      return;
+    }
     const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
-      nextWindow.sinceDay === window.sinceDay &&
-      nextWindow.untilDay === window.untilDay &&
-      nextWindow.sinceTime === window.sinceTime &&
-      nextWindow.untilTime === window.untilTime
+      nextWindow.sinceDay !== window.sinceDay ||
+      nextWindow.untilDay !== window.untilDay ||
+      nextWindow.sinceTime !== window.sinceTime ||
+      nextWindow.untilTime !== window.untilTime
     ) {
-      refresh();
-    } else {
-      setWindowSelection({ days: windowDays, window: nextWindow });
+      setWindowSelection({ days: windowDays, custom: false, window: nextWindow });
     }
+    refresh();
   };
   const windowLabel =
     isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
@@ -204,12 +224,18 @@ export function UsagePage() {
             </Toggle>
           ))}
         </ToggleGroup>
+        <UsageDateRangeInputs
+          sinceDay={window.sinceDay}
+          untilDay={window.untilDay}
+          onChange={selectCustomWindow}
+          disabled={showingLimits}
+        />
         {/* The period does not apply to Limits, so it stays in place but
             disabled; unmounting it shifted the metric toggle ~300px. */}
         <ToggleGroup
           aria-label="Usage period"
           variant="segmented"
-          value={[String(windowDays)]}
+          value={isCustomWindow ? [] : [String(windowDays)]}
           disabled={showingLimits}
           onValueChange={(next) => {
             const value = next[0];
@@ -257,9 +283,11 @@ export function UsagePage() {
           </SelectPopup>
         </Select>
         <Select
-          value={String(windowDays)}
+          value={isCustomWindow ? "custom" : String(windowDays)}
           disabled={showingLimits}
-          onValueChange={(value) => selectWindow(Number(value))}
+          onValueChange={(value) => {
+            if (value !== "custom" && value !== null) selectWindow(Number(value));
+          }}
         >
           <SelectTrigger
             aria-label="Usage period"
@@ -268,7 +296,9 @@ export function UsagePage() {
             className="w-auto min-w-0"
           >
             <SelectValue>
-              {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
+              {isCustomWindow
+                ? "Custom"
+                : WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
             </SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -300,6 +330,14 @@ export function UsagePage() {
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
+            {!showingLimits ? (
+              <UsageDateRangeInputs
+                className="mb-4 flex-wrap xl:hidden"
+                sinceDay={window.sinceDay}
+                untilDay={window.untilDay}
+                onChange={selectCustomWindow}
+              />
+            ) : null}
             {selectedEnvironments.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {environments.length === 0
@@ -373,10 +411,17 @@ export function UsagePage() {
                   </div>
 
                   <div className="flex min-w-0 flex-col gap-3">
-                    <h2 className="text-sm font-medium text-foreground">
-                      {isPast24Hours ? "Hourly" : "Daily"}{" "}
-                      {metric === "tokens" ? "processed tokens" : "cost"}
-                    </h2>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <h2 className="text-sm font-medium text-foreground">
+                        {isPast24Hours ? "Hourly" : "Daily"}{" "}
+                        {metric === "tokens" ? "processed tokens" : "cost"}
+                      </h2>
+                      {isPast24Hours ? null : (
+                        <span className="text-[10px] tracking-wide text-muted-foreground uppercase">
+                          drag to zoom · double-click resets
+                        </span>
+                      )}
+                    </div>
                     <UsageProviderChart
                       providers={activeProviders}
                       days={days}
@@ -387,6 +432,12 @@ export function UsagePage() {
                       referenceTime={window.untilTime}
                       resolution={isPast24Hours ? "hour" : "day"}
                       timeZone={window.timeZone}
+                      {...(isPast24Hours
+                        ? {}
+                        : {
+                            onZoomToDays: selectCustomWindow,
+                            onResetZoom: () => selectWindow(windowDays),
+                          })}
                     />
                   </div>
                 </section>
@@ -552,6 +603,77 @@ export function UsagePage() {
         </ScrollArea>
       </div>
     </SidebarInset>
+  );
+}
+
+/**
+ * Free date-range bounds beside the presets. Native date inputs; committing
+ * either bound deselects every preset. Compact layouts render the same control
+ * above the page content so custom ranges remain reachable without crowding
+ * the header.
+ */
+function UsageDateRangeInputs({
+  className,
+  sinceDay,
+  untilDay,
+  onChange,
+  disabled = false,
+}: {
+  readonly className?: string;
+  readonly sinceDay: string;
+  readonly untilDay: string;
+  readonly onChange: (sinceDay: string, untilDay: string) => void;
+  readonly disabled?: boolean;
+}) {
+  // The shared buffered-input hook preserves a focused draft across upstream
+  // range changes and commits on both blur and Enter. Keep the hooks separate
+  // so each bound can validate against the last committed opposite bound.
+  const sinceInput = useCommitOnBlur(sinceDay, (next) => {
+    const comparison = compareUsageDays(next, untilDay);
+    if (comparison !== null && comparison <= 0) onChange(next, untilDay);
+  });
+  const untilInput = useCommitOnBlur(untilDay, (next) => {
+    const comparison = compareUsageDays(sinceDay, next);
+    if (comparison !== null && comparison <= 0) onChange(sinceDay, next);
+  });
+  const comparison = compareUsageDays(sinceInput.value, untilInput.value);
+  const invalid = comparison === null || comparison > 0;
+  const inputClassName =
+    "w-auto rounded-md transition-colors hover:bg-background/55 hover:text-foreground focus-within:bg-background focus-within:text-foreground focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-1 focus-within:ring-offset-background has-aria-invalid:text-destructive focus-within:has-aria-invalid:ring-destructive/50 dark:hover:bg-input/32 dark:focus-within:bg-input/72 [&_[data-slot=input]]:h-6 [&_[data-slot=input]]:px-2.5 [&_[data-slot=input]]:leading-6 [&_[data-slot=input]]:pointer-coarse:h-8.5 [&_[data-slot=input]]:pointer-coarse:leading-8.5 [&_[data-slot=input]::-webkit-calendar-picker-indicator]:opacity-50";
+
+  return (
+    <div
+      className={cn(
+        "flex w-fit items-center gap-0.5 rounded-lg bg-input/40 p-0.5 text-xs text-muted-foreground",
+        className,
+      )}
+    >
+      <Input
+        nativeInput
+        unstyled
+        type="date"
+        size="compact"
+        aria-label="From day"
+        className={cn(inputClassName, "[color-scheme:inherit]")}
+        max={untilInput.value}
+        disabled={disabled}
+        aria-invalid={invalid || undefined}
+        {...sinceInput}
+      />
+      <span className="px-0.5">to</span>
+      <Input
+        nativeInput
+        unstyled
+        type="date"
+        size="compact"
+        aria-label="To day"
+        className={cn(inputClassName, "[color-scheme:inherit]")}
+        min={sinceInput.value}
+        disabled={disabled}
+        aria-invalid={invalid || undefined}
+        {...untilInput}
+      />
+    </div>
   );
 }
 

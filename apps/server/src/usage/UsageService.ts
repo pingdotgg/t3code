@@ -76,6 +76,9 @@ const RATES_REFRESH_FLOOR_MS = 60 * 1000;
 const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/** Match the client query TTL so changing a date range does not rescan fresh sources. */
+const SOURCE_SCAN_TTL_MS = 60 * 1000;
+
 /** Longest window the UI offers, plus slack. Older entries are pruned. */
 const CACHE_RETENTION_DAYS = 90;
 
@@ -95,6 +98,7 @@ const encodeRatesCache = Schema.encodeEffect(
 const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>);
 const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
 const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
+const encodeSourceKey = Schema.encodeSync(ScanCacheJson);
 
 export class UsageService extends Context.Service<
   UsageService,
@@ -378,6 +382,19 @@ export const make = Effect.gen(function* () {
       | null;
   }
 
+  interface SourceSnapshot {
+    readonly completedAtMs: number;
+    readonly scanRevision: number;
+    readonly windowStartMs: number;
+    readonly sourceKey: string;
+    readonly dirs: readonly ScannedDir[];
+  }
+
+  let sourceSnapshot: SourceSnapshot | null = null;
+  let sourceScanRevision = 0;
+  let lastRefreshToken: string | null = null;
+  const sourceScanSemaphore = yield* Semaphore.make(1);
+
   const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
     windowStartMs: number,
     settings: ServerSettingsValue,
@@ -408,6 +425,71 @@ export const make = Effect.gen(function* () {
       scanned.push({ provider, dir, volumeId, files: parsedFiles });
     }
     return scanned;
+  });
+
+  const getSourceSnapshot = Effect.fn("UsageService.getSourceSnapshot")(function* (
+    windowStartMs: number,
+    refreshToken: string | undefined,
+    settings: ServerSettingsValue,
+  ) {
+    return yield* sourceScanSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const startedAtMs = yield* Clock.currentTimeMillis;
+        const currentSnapshot = sourceSnapshot;
+        const snapshotAgeMs =
+          currentSnapshot === null
+            ? Number.POSITIVE_INFINITY
+            : startedAtMs - currentSnapshot.completedAtMs;
+        const snapshotCoversWindow =
+          currentSnapshot !== null && currentSnapshot.windowStartMs <= windowStartMs;
+        const sourceKey = encodeSourceKey([
+          settings.providers.claudeAgent,
+          settings.providers.codex,
+        ]);
+        const snapshotCoversSources = currentSnapshot?.sourceKey === sourceKey;
+        const manualRefresh = refreshToken !== undefined && refreshToken !== lastRefreshToken;
+
+        if (
+          !manualRefresh &&
+          currentSnapshot !== null &&
+          snapshotCoversWindow &&
+          snapshotCoversSources &&
+          snapshotAgeMs < SOURCE_SCAN_TTL_MS
+        ) {
+          return currentSnapshot;
+        }
+
+        // Preserve the widest coverage already loaded. A stale narrow request
+        // should update changed files, not discard older records and force the
+        // next wider range to read them again.
+        const scanWindowStartMs = Math.min(
+          windowStartMs,
+          currentSnapshot?.windowStartMs ?? windowStartMs,
+        );
+
+        // Pricing only matters once records are aggregated, so the rate table
+        // loads while transcripts stream instead of gating them: a cold rates
+        // fetch on a slow network no longer delays the scan by its own timeout.
+        sourceScanRevision += 1;
+        const scanRevision = sourceScanRevision;
+        const [, dirs] = yield* Effect.all(
+          [ensureRates(false), collectDirs(scanWindowStartMs, settings)],
+          { concurrency: 2 },
+        );
+        const now = yield* Clock.currentTimeMillis;
+        const completedAtMs = Math.max(now, (currentSnapshot?.completedAtMs ?? now - 1) + 1);
+        const nextSnapshot = {
+          completedAtMs,
+          scanRevision,
+          windowStartMs: scanWindowStartMs,
+          sourceKey,
+          dirs,
+        } satisfies SourceSnapshot;
+        sourceSnapshot = nextSnapshot;
+        if (refreshToken !== undefined) lastRefreshToken = refreshToken;
+        return nextSnapshot;
+      }),
+    );
   });
 
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
@@ -458,14 +540,9 @@ export const make = Effect.gen(function* () {
     }
     const windowStartMs =
       (hourlyWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
-
-    // Pricing only matters once records are aggregated, so the rate table
-    // loads while transcripts stream instead of gating them: a cold rates
-    // fetch on a slow network no longer delays the scan by its own timeout.
-    const [, scannedDirs] = yield* Effect.all(
-      [ensureRates(false), collectDirs(windowStartMs, settings)],
-      { concurrency: 2 },
-    );
+    const currentSnapshot = yield* getSourceSnapshot(windowStartMs, input.refreshToken, settings);
+    const scannedDirs = currentSnapshot.dirs;
+    const sourceReadAtMs = currentSnapshot.completedAtMs;
 
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
@@ -529,22 +606,26 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const pruned = pruneScanCache(fileCache, {
-      livePaths,
-      walkedRoots,
-      windowStartMs,
-      retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-    });
-    if (pruned > 0) cacheDirty = true;
-    yield* persistScanCache();
+    // A newer source walk may have populated files after this snapshot left
+    // the scan lane. Only the latest walk can prove that an unseen path
+    // disappeared and persist the resulting cache.
+    if (currentSnapshot.scanRevision === sourceScanRevision) {
+      const pruned = pruneScanCache(fileCache, {
+        livePaths,
+        walkedRoots,
+        windowStartMs,
+        retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+      });
+      if (pruned > 0) cacheDirty = true;
+      yield* persistScanCache();
+    }
 
     const aggregated = aggregator.finish();
-    const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
 
     return {
       contractVersion: USAGE_CONTRACT_VERSION,
-      readAt: DateTime.formatIso(readAt),
+      readAt: DateTime.formatIso(DateTime.makeUnsafe(sourceReadAtMs)),
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
@@ -573,6 +654,7 @@ export const make = Effect.gen(function* () {
       input.resolution ?? "day",
       input.sinceTime ?? null,
       input.untilTime ?? null,
+      input.refreshToken === undefined ? null : "refresh",
       priceOverrides,
     ]);
 

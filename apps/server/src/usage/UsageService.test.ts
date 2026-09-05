@@ -13,7 +13,6 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
 import * as TestClock from "effect/testing/TestClock";
@@ -41,6 +40,12 @@ const WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
   sinceDay: UsageDay.make("2026-07-31"),
   untilDay: UsageDay.make("2026-08-02"),
+};
+
+const NARROW_WINDOW: UsageSummaryInput = {
+  ...WINDOW,
+  sinceDay: UsageDay.make("2026-08-01"),
+  untilDay: UsageDay.make("2026-08-01"),
 };
 
 const setup = Effect.gen(function* () {
@@ -150,10 +155,12 @@ describe("UsageService", () => {
         Effect.provide(serviceLayers({ prefix: "usage-service-grow-test", home, settings })),
       );
 
-      const first = yield* service.readSummary(WINDOW);
+      const first = yield* service.readSummary(NARROW_WINDOW);
       assert.strictEqual(totalOutputTokens(first), 5);
 
       yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
+      // Expanding beyond the cached coverage requires a source update. The
+      // grown transcript resumes at its cached byte position.
       const second = yield* service.readSummary(WINDOW);
       assert.strictEqual(totalOutputTokens(second), 12);
     }).pipe(Effect.scoped),
@@ -166,31 +173,14 @@ describe("UsageService", () => {
 
       yield* Effect.gen(function* () {
         const settingsService = yield* ServerSettings.ServerSettingsService;
-        const fileSystem = yield* FileSystem.FileSystem;
         const firstScanStarted = yield* Deferred.make<void>();
-        const secondScanStarted = yield* Deferred.make<void>();
         const releaseRates = yield* Deferred.make<void>();
-        let homeProbes = 0;
         const service = yield* UsageService.make.pipe(
-          Effect.provideService(FileSystem.FileSystem, {
-            ...fileSystem,
-            exists: (path) =>
-              fileSystem.exists(path).pipe(
-                Effect.tap(() => {
-                  if (path !== NodePath.join(home, "claude", ".claude", "projects"))
-                    return Effect.void;
-                  homeProbes += 1;
-                  return Deferred.succeed(
-                    homeProbes === 1 ? firstScanStarted : secondScanStarted,
-                    undefined,
-                  );
-                }),
-              ),
-          }),
           Effect.provideService(
             HttpClient.HttpClient,
             HttpClient.make((request) =>
-              Deferred.await(releaseRates).pipe(
+              Deferred.succeed(firstScanStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseRates)),
                 Effect.as(HttpClientResponse.fromWeb(request, Response.json({}))),
               ),
             ),
@@ -205,7 +195,7 @@ describe("UsageService", () => {
           },
         });
         const second = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
-        yield* Deferred.await(secondScanStarted);
+        yield* Effect.yieldNow;
         yield* Deferred.succeed(releaseRates, undefined);
 
         const original = yield* Fiber.join(first);
@@ -244,8 +234,69 @@ describe("UsageService", () => {
       assert.deepStrictEqual(first, second);
       assert.strictEqual(ratesFetches, 1);
 
-      // A later request is fresh work again, not a stale cached answer.
+      // A later request within the freshness window reuses the source snapshot.
       yield* service.readSummary(WINDOW);
+      assert.strictEqual(ratesFetches, 1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("reuses a recent scan when only the date range changes", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      let ratesFetches = 0;
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-window-cache-test",
+            home,
+            settings,
+            onRatesFetch: () => {
+              ratesFetches += 1;
+            },
+          }),
+        ),
+      );
+
+      yield* service.readSummary(WINDOW);
+      const narrower = yield* service.readSummary(NARROW_WINDOW);
+
+      assert.strictEqual(totalOutputTokens(narrower), 5);
+      assert.strictEqual(ratesFetches, 1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("updates fresh source data for a new manual refresh token", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      let ratesFetches = 0;
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-manual-refresh-test",
+            home,
+            settings,
+            onRatesFetch: () => {
+              ratesFetches += 1;
+            },
+          }),
+        ),
+      );
+
+      const first = yield* service.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(first), 5);
+
+      yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
+      const refreshedInput = { ...WINDOW, refreshToken: "manual-refresh-1" };
+      const refreshed = yield* service.readSummary(refreshedInput);
+
+      assert.strictEqual(totalOutputTokens(refreshed), 12);
+      assert.strictEqual(ratesFetches, 2);
+
+      yield* service.readSummary(refreshedInput);
       assert.strictEqual(ratesFetches, 2);
     }).pipe(Effect.scoped),
   );

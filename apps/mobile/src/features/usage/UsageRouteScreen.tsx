@@ -11,8 +11,8 @@ import {
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
-import { useMemo, useState } from "react";
-import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
@@ -25,6 +25,7 @@ import { UsageDailyChart } from "./UsageDailyChart";
 import { UsageLimitsSection, useRefreshLimits } from "./UsageLimitsSection";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors } from "./usageProviders";
+import { refreshRebasedUsageWindow, usagePullRefreshTargets } from "./usagePullRefresh";
 
 type UsageTab = "usage" | "limits";
 const TAB_OPTIONS = [
@@ -62,6 +63,8 @@ export function UsageRouteScreen() {
     window: makeWindow(30),
   }));
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
+  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
+  const refreshRequest = useRef(0);
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
   const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
@@ -91,29 +94,57 @@ export function UsageRouteScreen() {
     [isPast24Hours, merged.daily, merged.hourly],
   );
 
-  // The pull spinner tracks re-scans of environments that have answered
-  // before. The initial scan renders its own placeholder, and an unreachable
-  // environment stays pending forever — neither may pin the spinner on.
-  const refreshingUsage = environments.some((entry) => entry.isPending && entry.summary !== null);
+  const refreshingUsage = isPullRefreshing;
   const showingLimits = tab === "limits";
+  useEffect(
+    () => () => {
+      refreshRequest.current += 1;
+    },
+    [],
+  );
   const selectWindow = (days: number) => {
+    refreshRequest.current += 1;
+    setIsPullRefreshing(false);
     setWindowSelection({
       days,
       window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
     });
   };
   const refreshWindow = () => {
+    const request = ++refreshRequest.current;
+    const targets = usagePullRefreshTargets(environments);
+    setIsPullRefreshing(targets.size > 0);
+    const completeRefresh = () => {
+      if (request !== refreshRequest.current) return false;
+      refreshRequest.current += 1;
+      setIsPullRefreshing(false);
+      return true;
+    };
+    const failRefresh = (error: unknown) => {
+      if (!completeRefresh()) return;
+      Alert.alert(
+        "Could not refresh usage",
+        error instanceof Error ? error.message : "Usage could not be refreshed. Try again.",
+      );
+    };
     const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
-      nextWindow.sinceDay === window.sinceDay &&
-      nextWindow.untilDay === window.untilDay &&
-      nextWindow.sinceTime === window.sinceTime &&
-      nextWindow.untilTime === window.untilTime
+      nextWindow.sinceDay !== window.sinceDay ||
+      nextWindow.untilDay !== window.untilDay ||
+      nextWindow.sinceTime !== window.sinceTime ||
+      nextWindow.untilTime !== window.untilTime
     ) {
-      refresh();
-    } else {
-      setWindowSelection({ days: windowDays, window: nextWindow });
+      void refreshRebasedUsageWindow(
+        nextWindow,
+        refresh,
+        (refreshedWindow) => {
+          setWindowSelection({ days: windowDays, window: refreshedWindow });
+        },
+        () => request === refreshRequest.current,
+      ).then(completeRefresh, failRefresh);
+      return;
     }
+    void refresh().then(completeRefresh, failRefresh);
   };
 
   return (
