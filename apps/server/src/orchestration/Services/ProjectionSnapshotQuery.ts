@@ -6,7 +6,15 @@
  *
  * @module ProjectionSnapshotQuery
  */
-import type { ApprovalRequestId, CheckpointRef, ProjectId, ThreadId } from "@t3tools/contracts";
+import type {
+  ApprovalRequestId,
+  CheckpointRef,
+  MessageId,
+  ProjectId,
+  RunId,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
 import type {
   OrchestrationCheckpointSummary,
   OrchestrationProject,
@@ -23,6 +31,7 @@ import type {
 } from "@t3tools/contracts/legacy-orchestration";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import type * as Effect from "effect/Effect";
 
 import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
@@ -65,6 +74,107 @@ export interface ProjectionThreadDetailQuery {
    * the activity query. Omit this option to preserve the full detail response.
    */
   readonly activityKinds?: ReadonlyArray<string>;
+}
+
+export type ProjectionThreadContentSearchSource = "title" | "user" | "assistant";
+export type ProjectionThreadContentSearchOrigin = "legacy" | "v2";
+
+/** Text limits are Unicode code points, matching SQLite length/substr semantics. */
+export const PROJECTION_THREAD_CONTENT_SEARCH_LIMITS = {
+  queryMinChars: 2,
+  queryMaxChars: 200,
+  pageMax: 50,
+  offsetMax: 10_000,
+  snippetMinChars: 64,
+  snippetMaxChars: 1_000,
+  titleMaxChars: 500,
+} as const;
+
+function unexpectedSearchConstraint(value: never): never {
+  value satisfies never;
+  throw new Error("Unexpected thread content search constraint.");
+}
+
+export class ProjectionThreadContentSearchInputError extends Schema.TaggedErrorClass<ProjectionThreadContentSearchInputError>()(
+  "ProjectionThreadContentSearchInputError",
+  {
+    field: Schema.Literals(["query", "limit", "offset", "snippetChars"]),
+    constraint: Schema.Union([
+      Schema.Struct({ type: Schema.Literal("trimmed") }),
+      Schema.Struct({ type: Schema.Literal("no_nul") }),
+      Schema.Struct({
+        type: Schema.Literal("integer"),
+        actual: Schema.optional(Schema.Number),
+      }),
+      Schema.Struct({
+        type: Schema.Literal("range"),
+        minimum: Schema.Number,
+        maximum: Schema.Number,
+        actual: Schema.optional(Schema.Number),
+      }),
+    ]),
+  },
+) {
+  override get message(): string {
+    const constraint = this.constraint;
+    switch (constraint.type) {
+      case "trimmed":
+        return "Thread content search query must not have leading or trailing whitespace.";
+      case "no_nul":
+        return "Thread content search query must not contain NUL.";
+      case "integer":
+        return `Thread content search ${this.field} must be an integer${
+          constraint.actual === undefined ? "." : `; received ${constraint.actual}.`
+        }`;
+      case "range":
+        return `Thread content search ${this.field} must be between ${constraint.minimum} and ${constraint.maximum}${
+          constraint.actual === undefined ? "." : `; received ${constraint.actual}.`
+        }`;
+    }
+    return unexpectedSearchConstraint(constraint);
+  }
+}
+
+export interface ProjectionThreadContentSearchInput {
+  readonly projectId: ProjectId;
+  readonly threadId?: ThreadId;
+  /** Trimmed literal query, bounded in Unicode code points. */
+  readonly query: string;
+  readonly includeArchived: boolean;
+  readonly offset: number;
+  readonly limit: number;
+  /** Maximum returned snippet length in Unicode code points. */
+  readonly snippetChars: number;
+}
+
+export interface ProjectionThreadContentSearchHit {
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  /** SQL-bounded display title measured in Unicode code points. */
+  readonly threadTitle: string;
+  readonly threadTitleTruncated: boolean;
+  readonly archived: boolean;
+  readonly source: ProjectionThreadContentSearchSource;
+  readonly origin: ProjectionThreadContentSearchOrigin;
+  readonly snippet: string;
+  readonly snippetTruncated: boolean;
+  readonly matchedAt: string;
+  readonly sourceThreadId: ThreadId | null;
+  readonly messageId: MessageId | null;
+  readonly runId: RunId | null;
+  readonly itemId: TurnItemId | null;
+}
+
+export interface ProjectionThreadContentSearchPage {
+  readonly hits: ReadonlyArray<ProjectionThreadContentSearchHit>;
+  /** Whether more rows existed when this live query page was read. */
+  readonly hasMore: boolean;
+  /**
+   * Offset for the next live query page, or null when complete or when the
+   * bounded traversal limit has been reached. This is not a snapshot cursor;
+   * concurrent projection changes can shift later pages.
+   */
+  readonly nextOffset: number | null;
 }
 
 /**
@@ -134,6 +244,18 @@ export interface ProjectionSnapshotQueryShape {
   readonly searchThreads: (
     input: OrchestrationSearchThreadsInput,
   ) => Effect.Effect<OrchestrationSearchThreadsResult, ProjectionRepositoryError>;
+
+  /**
+   * Search a bounded page of durable content in one project without hydrating
+   * thread projections. Unlike searchThreads, this opt-in query can include
+   * archived threads and returns stable V2 message anchors where available.
+   */
+  readonly searchThreadContent: (
+    input: ProjectionThreadContentSearchInput,
+  ) => Effect.Effect<
+    ProjectionThreadContentSearchPage,
+    ProjectionRepositoryError | ProjectionThreadContentSearchInputError
+  >;
 
   /**
    * Read the latest projection snapshot sequence without hydrating read-model
