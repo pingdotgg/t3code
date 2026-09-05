@@ -227,7 +227,10 @@ import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
-import { confirmTerminalClose, isTerminalCloseConfirmPending } from "../lib/terminalCloseConfirm";
+import {
+  confirmInspectedTerminalClose,
+  isTerminalCloseConfirmPending,
+} from "../lib/terminalCloseConfirm";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import {
   preventRepeatedTerminalCloseShortcut,
@@ -1384,6 +1387,9 @@ export default function ChatView(props: ChatViewProps) {
   });
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
+  const inspectTerminalSubprocesses = useAtomCommand(terminalEnvironment.inspectSubprocesses, {
+    reportFailure: false,
+  });
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
@@ -4143,23 +4149,39 @@ export default function ChatView(props: ChatViewProps) {
     },
     [activeRightPanelSurface, activeThreadRef, closeTerminalMutation, storeCloseTerminal],
   );
+  const confirmActiveTerminalClose = useCallback(
+    async (terminalIds: readonly [string, ...string[]]) => {
+      if (!activeThreadRef) return false;
+      return confirmInspectedTerminalClose({
+        terminalIds,
+        labelFor: (terminalId) =>
+          activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId),
+        inspect: async (ids) => {
+          const inspection = await inspectTerminalSubprocesses({
+            environmentId: activeThreadRef.environmentId,
+            input: { threadId: activeThreadRef.threadId, terminalIds: ids },
+          });
+          return inspection._tag === "Success" ? inspection.value.terminals : undefined;
+        },
+      });
+    },
+    [activeTerminalLabelsById, activeThreadRef, inspectTerminalSubprocesses],
+  );
   const requestCloseTerminal = useCallback(
     (terminalId: string) => {
-      const label = activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId);
-      void confirmTerminalClose([label]).then((confirmed) => {
+      void confirmActiveTerminalClose([terminalId]).then((confirmed) => {
         if (confirmed) closeTerminal(terminalId);
       });
     },
-    [activeTerminalLabelsById, closeTerminal],
+    [closeTerminal, confirmActiveTerminalClose],
   );
   const requestClosePanelTerminal = useCallback(
     (terminalId: string) => {
-      const label = activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId);
-      void confirmTerminalClose([label]).then((confirmed) => {
+      void confirmActiveTerminalClose([terminalId]).then((confirmed) => {
         if (confirmed) closePanelTerminal(terminalId);
       });
     },
-    [activeTerminalLabelsById, closePanelTerminal],
+    [closePanelTerminal, confirmActiveTerminalClose],
   );
   const activateRightPanelSurface = useCallback(
     (surface: RightPanelSurface) => {
@@ -4277,22 +4299,19 @@ export default function ChatView(props: ChatViewProps) {
         finishClose();
         return;
       }
-      const activeLabel =
-        activeTerminalLabelsById.get(surface.activeTerminalId) ??
-        getTerminalLabel(surface.activeTerminalId);
-      const otherLabels = surface.terminalIds
-        .filter((terminalId) => terminalId !== surface.activeTerminalId)
-        .map(
-          (terminalId) => activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId),
-        );
-      void confirmTerminalClose([activeLabel, ...otherLabels]).then((confirmed) => {
-        if (confirmed) finishClose();
-      });
+      const otherTerminalIds = surface.terminalIds.filter(
+        (terminalId) => terminalId !== surface.activeTerminalId,
+      );
+      void confirmActiveTerminalClose([surface.activeTerminalId, ...otherTerminalIds]).then(
+        (confirmed) => {
+          if (confirmed) finishClose();
+        },
+      );
     },
     [
       activeThreadRef,
-      activeTerminalLabelsById,
       closeAfterAgentBrowserConfirmation,
+      confirmActiveTerminalClose,
       finishRightPanelSurfaceClose,
     ],
   );

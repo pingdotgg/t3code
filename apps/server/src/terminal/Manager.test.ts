@@ -1047,6 +1047,35 @@ it.layer(
     }),
   );
 
+  it.effect("reads fresh subprocess activity for a close decision", () =>
+    Effect.gen(function* () {
+      let inspect = {
+        hasRunningSubprocess: false,
+        childCommand: null as string | null,
+        processIds: [] as ReadonlyArray<number>,
+      };
+      const { manager } = yield* createManager(5, {
+        subprocessInspector: () => Effect.succeed(inspect),
+        subprocessPollIntervalMs: 60_000,
+      });
+
+      yield* manager.open(openInput());
+      inspect = {
+        hasRunningSubprocess: true,
+        childCommand: "sleep",
+        processIds: [9000, 9001],
+      };
+      const result = yield* manager.inspectSubprocesses({
+        threadId: "thread-1",
+        terminalIds: [DEFAULT_TERMINAL_ID],
+      });
+
+      expect(result.terminals).toEqual([
+        { terminalId: DEFAULT_TERMINAL_ID, hasRunningSubprocess: true },
+      ]);
+    }),
+  );
+
   it.effect("does not invoke subprocess polling until a terminal session is running", () =>
     Effect.gen(function* () {
       let checks = 0;
