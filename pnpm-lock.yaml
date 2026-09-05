@@ -109,15 +109,9 @@ importers:
 
   .:
     devDependencies:
-      '@babel/plugin-transform-react-jsx':
-        specifier: 7.28.6
-        version: 7.28.6(@babel/core@7.29.7)
       '@effect/tsgo':
         specifier: 'catalog:'
         version: 0.13.2
-      '@oxlint/plugins':
-        specifier: ^1.63.0
-        version: 1.68.0
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -14304,7 +14298,7 @@ snapshots:
       '@babel/plugin-transform-private-methods': 7.29.7(@babel/core@7.29.7)
       '@babel/plugin-transform-private-property-in-object': 7.29.7(@babel/core@7.29.7)
       '@babel/plugin-transform-react-display-name': 7.29.7(@babel/core@7.29.7)
-      '@babel/plugin-transform-react-jsx': 7.28.6(@babel/core@7.29.7)
+      '@babel/plugin-transform-react-jsx': 7.29.7(@babel/core@7.29.7)
       '@babel/plugin-transform-react-jsx-self': 7.29.7(@babel/core@7.29.7)
       '@babel/plugin-transform-react-jsx-source': 7.29.7(@babel/core@7.29.7)
       '@babel/plugin-transform-regenerator': 7.29.7(@babel/core@7.29.7)
