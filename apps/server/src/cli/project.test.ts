@@ -8,6 +8,7 @@ import { assert, it } from "@effect/vitest";
 import { EnvironmentInternalError } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as References from "effect/References";
 import { Command } from "effect/unstable/cli";
@@ -132,3 +133,112 @@ it.effect("adds, renames, and removes projects through the V2 project CLI domain
     assert.deepEqual((yield* readProjects(baseDir)).projects, []);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+const makeProjectLookupFixture = Effect.fn("ProjectCliTest.makeProjectLookupFixture")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-project-lookup-" });
+  const baseDir = NodePath.join(root, "state");
+  const workspaceRoot = NodePath.join(root, "workspace");
+  yield* fs.makeDirectory(workspaceRoot);
+  yield* runCli(["project", "add", workspaceRoot, "--base-dir", baseDir]);
+  const project = (yield* readProjects(baseDir)).projects[0];
+  assert.isDefined(project);
+  return { baseDir, workspaceRoot, project: project! };
+});
+
+it.layer(NodeServices.layer)("project lookup with unavailable workspaces", (it) => {
+  it.effect.each(["id", "stored path"] as const)(
+    "removes an empty project by %s after its directory is gone",
+    (identifier) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture();
+        yield* fs.rename(workspaceRoot, `${workspaceRoot}-removed`);
+        yield* runCli([
+          "project",
+          "remove",
+          identifier === "id" ? project.id : workspaceRoot,
+          "--base-dir",
+          baseDir,
+        ]);
+        assert.deepEqual((yield* readProjects(baseDir)).projects, []);
+        assert.isFalse(yield* fs.exists(workspaceRoot));
+      }),
+  );
+
+  it.effect("renames by ID and stored path after the directory is gone", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture();
+      yield* fs.rename(workspaceRoot, `${workspaceRoot}-removed`);
+      for (const [identifier, title] of [
+        [project.id, "Renamed by ID"],
+        [workspaceRoot, "Renamed by stored path"],
+      ] as const) {
+        yield* runCli(["project", "rename", identifier, title, "--base-dir", baseDir]);
+        assert.equal((yield* readProjects(baseDir)).projects[0]?.title, title);
+      }
+      assert.isFalse(yield* fs.exists(workspaceRoot));
+    }),
+  );
+
+  it.effect("does not resolve another environment's project ID in an empty database", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture();
+      yield* fs.rename(workspaceRoot, `${workspaceRoot}-removed`);
+      const replacementDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-project-empty-" });
+      const error = yield* runCli([
+        "project",
+        "remove",
+        project.id,
+        "--force",
+        "--base-dir",
+        replacementDir,
+      ]).pipe(Effect.flip);
+      assert.include(error.message, "No active project found");
+      assert.deepEqual(
+        (yield* readProjects(baseDir)).projects.map((entry) => entry.id),
+        [project.id],
+      );
+      assert.deepEqual((yield* readProjects(replacementDir)).projects, []);
+    }),
+  );
+
+  it.effect("normalizes existing paths without conflating separately registered symlinks", () =>
+    Effect.gen(function* () {
+      const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture();
+      yield* runCli([
+        "project",
+        "rename",
+        `${workspaceRoot}${NodePath.sep}.`,
+        "Normalized",
+        "--base-dir",
+        baseDir,
+      ]);
+      assert.equal((yield* readProjects(baseDir)).projects[0]?.title, "Normalized");
+      const aliasPath = `${workspaceRoot}-alias`;
+      NodeFS.symlinkSync(workspaceRoot, aliasPath, "junction");
+      const unknownAlias = yield* runCli([
+        "project",
+        "remove",
+        aliasPath,
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.flip);
+      assert.include(unknownAlias.message, "No active project found");
+      yield* runCli(["project", "add", aliasPath, "--base-dir", baseDir]);
+      const added = (yield* readProjects(baseDir)).projects;
+      assert.equal(added.length, 2);
+      const aliasProject = added.find((entry) => entry.workspaceRoot === aliasPath);
+      assert.isDefined(aliasProject);
+      assert.notEqual(aliasProject?.id, project.id);
+      yield* runCli(["project", "remove", `${aliasPath}${NodePath.sep}.`, "--base-dir", baseDir]);
+      assert.deepEqual(
+        (yield* readProjects(baseDir)).projects.map((entry) => entry.id),
+        [project.id],
+      );
+      assert.isTrue(NodeFS.existsSync(workspaceRoot));
+    }),
+  );
+});
