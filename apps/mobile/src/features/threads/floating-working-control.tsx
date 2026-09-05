@@ -18,8 +18,12 @@ import { SymbolView } from "../../components/AppSymbol";
 import { ControlPill } from "../../components/ControlPill";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 
-const CONTROL_HEIGHT = 44;
-const CONTROL_COMPOSER_GAP = 8;
+const CONTROL_HEIGHT = 38.5; // h-11 with the mobile 14px rem
+// The collapsed composer capsule starts 6 below its overlay's top edge, so
+// the pill sits at (gap - 6) above the overlay to leave the same gap to the
+// capsule as the feed's end inset leaves between it and the last row.
+const CONTROL_GAP = 8;
+const COMPOSER_CAPSULE_INSET = 6;
 const GLASS_MERGE_SPACING = 12;
 const CONTROL_ENTERING = FadeIn.duration(180).reduceMotion(ReduceMotion.System);
 const CONTROL_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
@@ -40,7 +44,8 @@ const UniwindGlassContainer = withUniwind(GlassContainer, {
 });
 const AnimatedGlassView = Animated.createAnimatedComponent(UniwindGlassView);
 
-export const FLOATING_WORKING_CONTROL_COVERAGE = CONTROL_HEIGHT + CONTROL_COMPOSER_GAP;
+const CONTROL_OVERLAY_OFFSET = CONTROL_HEIGHT + CONTROL_GAP - COMPOSER_CAPSULE_INSET;
+export const FLOATING_WORKING_CONTROL_COVERAGE = CONTROL_OVERLAY_OFFSET + CONTROL_GAP;
 
 /**
  * What the floating pill says. Syncing and working share one element so the
@@ -81,7 +86,7 @@ export function FloatingWorkingControl(props: {
     <Animated.View
       pointerEvents="box-none"
       className="absolute left-0 right-0 z-20 items-center"
-      style={{ top: -FLOATING_WORKING_CONTROL_COVERAGE }}
+      style={{ top: -CONTROL_OVERLAY_OFFSET }}
       entering={NATIVE_LIQUID_GLASS_SUPPORTED ? undefined : CONTROL_ENTERING}
       exiting={NATIVE_LIQUID_GLASS_SUPPORTED ? undefined : CONTROL_EXITING}
     >
