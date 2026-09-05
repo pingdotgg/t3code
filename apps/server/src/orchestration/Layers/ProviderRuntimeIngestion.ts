@@ -4,7 +4,7 @@ import {
   CommandId,
   MessageId,
   type OrchestrationEvent,
-  type OrchestrationProposedPlanId,
+  OrchestrationProposedPlanId,
   CheckpointRef,
   classifyTaskAgentKind,
   EventId,
@@ -13,7 +13,6 @@ import {
   type ThreadTokenUsageSnapshot,
   TurnId,
   type OrchestrationCheckpointSummary,
-  type OrchestrationProposedPlan,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
   RuntimeRequestId,
@@ -139,23 +138,6 @@ function sameId(left: string | null | undefined, right: string | null | undefine
   return left === right;
 }
 
-function findProposedPlanById(
-  proposedPlans: ReadonlyArray<
-    Pick<OrchestrationProposedPlan, "id" | "createdAt" | "implementedAt" | "implementationThreadId">
-  >,
-  planId: string,
-):
-  | Pick<OrchestrationProposedPlan, "id" | "createdAt" | "implementedAt" | "implementationThreadId">
-  | undefined {
-  for (let index = 0; index < proposedPlans.length; index += 1) {
-    const proposedPlan = proposedPlans[index];
-    if (proposedPlan?.id === planId) {
-      return proposedPlan;
-    }
-  }
-  return undefined;
-}
-
 function hasCheckpointForTurn(
   checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>,
   turnId: TurnId,
@@ -231,16 +213,15 @@ function buildContextWindowActivityPayload(
 }
 
 function compactedTokenCountsFromActivities(
-  activities: ReadonlyArray<OrchestrationThreadActivity> | undefined,
+  activities: ReadonlyArray<
+    Pick<OrchestrationThreadActivity, "kind" | "payload" | "sequence" | "createdAt">
+  >,
 ): { readonly beforeTokens: number; readonly afterTokens: number } | undefined {
-  const lastCompactionIndex = activities?.findLastIndex(
+  const lastCompactionIndex = activities.findLastIndex(
     (activity) => activity.kind === "context-compaction",
   );
-  const lastCompaction =
-    lastCompactionIndex !== undefined && lastCompactionIndex >= 0
-      ? activities?.[lastCompactionIndex]
-      : undefined;
-  const activitiesSinceLastCompaction = activities?.slice((lastCompactionIndex ?? -1) + 1) ?? [];
+  const lastCompaction = activities[lastCompactionIndex];
+  const activitiesSinceLastCompaction = activities.slice(lastCompactionIndex + 1);
   const usedTokens = activitiesSinceLastCompaction.flatMap((activity) => {
     if (activity.kind !== "context-window.updated") return [];
     if (lastCompaction !== undefined) {
@@ -982,15 +963,6 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const resolveThreadDetail = Effect.fn("resolveThreadDetail")(function* (
-    threadId: ThreadId,
-    activityKinds: ReadonlyArray<string> = [],
-  ) {
-    return yield* projectionSnapshotQuery
-      .getThreadDetailById(threadId, { activityKinds })
-      .pipe(Effect.map(Option.getOrUndefined));
-  });
-
   const resolveThreadRuntimeContext = Effect.fn("resolveThreadRuntimeContext")(function* (
     threadId: ThreadId,
   ) {
@@ -1007,21 +979,6 @@ const make = Effect.gen(function* () {
     return Option.filter(message, (entry) => entry.threadId === threadId).pipe(
       Option.getOrUndefined,
     );
-  });
-
-  const listThreadProposedPlans = Effect.fn("listThreadProposedPlans")(function* (
-    threadId: ThreadId,
-  ) {
-    const proposedPlans = yield* projectionThreadProposedPlans.listByThreadId({ threadId });
-    return proposedPlans.map((plan): OrchestrationProposedPlan => ({
-      id: plan.planId,
-      turnId: plan.turnId,
-      planMarkdown: plan.planMarkdown,
-      implementedAt: plan.implementedAt,
-      implementationThreadId: plan.implementationThreadId,
-      createdAt: plan.createdAt,
-      updatedAt: plan.updatedAt,
-    }));
   });
 
   const rememberAssistantMessageId = (threadId: ThreadId, turnId: TurnId, messageId: MessageId) =>
@@ -1189,15 +1146,6 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const takeBufferedProposedPlan = (planId: string) =>
-    Cache.getOption(bufferedProposedPlanById, planId).pipe(
-      Effect.flatMap((existingEntry) =>
-        Cache.invalidate(bufferedProposedPlanById, planId).pipe(
-          Effect.as(Option.getOrUndefined(existingEntry)),
-        ),
-      ),
-    );
-
   const clearBufferedProposedPlan = (planId: string) =>
     Cache.invalidate(bufferedProposedPlanById, planId);
 
@@ -1351,83 +1299,45 @@ const make = Effect.gen(function* () {
       }
     });
 
-  const upsertProposedPlan = (input: {
+  const finalizeBufferedProposedPlan = Effect.fn("finalizeBufferedProposedPlan")(function* (input: {
     event: ProviderRuntimeEvent;
     threadId: ThreadId;
-    threadProposedPlans: ReadonlyArray<{
-      id: string;
-      createdAt: string;
-      implementedAt: string | null;
-      implementationThreadId: ThreadId | null;
-    }>;
-    planId: string;
-    turnId?: TurnId;
-    planMarkdown: string | undefined;
-    createdAt: string;
-    updatedAt: string;
-  }) =>
-    Effect.gen(function* () {
-      const planMarkdown = normalizeProposedPlanMarkdown(input.planMarkdown);
-      if (!planMarkdown) {
-        return;
-      }
-
-      const existingPlan = findProposedPlanById(input.threadProposedPlans, input.planId);
-      yield* orchestrationEngine.dispatch({
-        type: "thread.proposed-plan.upsert",
-        commandId: yield* providerCommandId(input.event, "proposed-plan-upsert"),
-        threadId: input.threadId,
-        proposedPlan: {
-          id: input.planId,
-          turnId: input.turnId ?? null,
-          planMarkdown,
-          implementedAt: existingPlan?.implementedAt ?? null,
-          implementationThreadId: existingPlan?.implementationThreadId ?? null,
-          createdAt: existingPlan?.createdAt ?? input.createdAt,
-          updatedAt: input.updatedAt,
-        },
-        createdAt: input.updatedAt,
-      });
-    });
-
-  const finalizeBufferedProposedPlan = (input: {
-    event: ProviderRuntimeEvent;
-    threadId: ThreadId;
-    threadProposedPlans: ReadonlyArray<{
-      id: string;
-      createdAt: string;
-      implementedAt: string | null;
-      implementationThreadId: ThreadId | null;
-    }>;
     planId: string;
     turnId?: TurnId;
     fallbackMarkdown?: string;
     updatedAt: string;
-  }) =>
-    Effect.gen(function* () {
-      const bufferedPlan = yield* takeBufferedProposedPlan(input.planId);
-      const bufferedMarkdown = normalizeProposedPlanMarkdown(bufferedPlan?.text);
-      const fallbackMarkdown = normalizeProposedPlanMarkdown(input.fallbackMarkdown);
-      const planMarkdown = bufferedMarkdown ?? fallbackMarkdown;
-      if (!planMarkdown) {
-        return;
-      }
+  }) {
+    const bufferedPlan = Option.getOrUndefined(
+      yield* Cache.getOption(bufferedProposedPlanById, input.planId),
+    );
+    const planMarkdown =
+      normalizeProposedPlanMarkdown(bufferedPlan?.text) ??
+      normalizeProposedPlanMarkdown(input.fallbackMarkdown);
+    if (!planMarkdown) return;
 
-      yield* upsertProposedPlan({
-        event: input.event,
+    const existingPlan = Option.getOrUndefined(
+      yield* projectionThreadProposedPlans.getByPlanId({
         threadId: input.threadId,
-        threadProposedPlans: input.threadProposedPlans,
-        planId: input.planId,
-        ...(input.turnId ? { turnId: input.turnId } : {}),
+        planId: OrchestrationProposedPlanId.make(input.planId),
+      }),
+    );
+    yield* orchestrationEngine.dispatch({
+      type: "thread.proposed-plan.upsert",
+      commandId: yield* providerCommandId(input.event, "proposed-plan-upsert"),
+      threadId: input.threadId,
+      proposedPlan: {
+        id: input.planId,
+        turnId: input.turnId ?? null,
         planMarkdown,
-        createdAt:
-          bufferedPlan?.createdAt && bufferedPlan.createdAt.length > 0
-            ? bufferedPlan.createdAt
-            : input.updatedAt,
+        implementedAt: existingPlan?.implementedAt ?? null,
+        implementationThreadId: existingPlan?.implementationThreadId ?? null,
+        createdAt: existingPlan?.createdAt ?? bufferedPlan?.createdAt ?? input.updatedAt,
         updatedAt: input.updatedAt,
-      });
-      yield* clearBufferedProposedPlan(input.planId);
+      },
+      createdAt: input.updatedAt,
     });
+    yield* clearBufferedProposedPlan(input.planId);
+  });
 
   const clearTurnStateForSession = (threadId: ThreadId) =>
     Effect.gen(function* () {
@@ -1532,11 +1442,13 @@ const make = Effect.gen(function* () {
       implementationThreadId: ThreadId,
       implementedAt: string,
     ) {
-      const [sourceThread, sourcePlans] = yield* Effect.all([
-        resolveThreadRuntimeContext(sourceThreadId),
-        listThreadProposedPlans(sourceThreadId),
-      ]);
-      const sourcePlan = sourcePlans.find((entry) => entry.id === sourcePlanId);
+      const sourceThread = yield* resolveThreadRuntimeContext(sourceThreadId);
+      const sourcePlan = Option.getOrUndefined(
+        yield* projectionThreadProposedPlans.getByPlanId({
+          threadId: sourceThreadId,
+          planId: sourcePlanId,
+        }),
+      );
       if (!sourceThread || !sourcePlan || sourcePlan.implementedAt !== null) {
         return;
       }
@@ -1549,7 +1461,10 @@ const make = Effect.gen(function* () {
         ),
         threadId: sourceThreadId,
         proposedPlan: {
-          ...sourcePlan,
+          id: sourcePlan.planId,
+          turnId: sourcePlan.turnId,
+          planMarkdown: sourcePlan.planMarkdown,
+          createdAt: sourcePlan.createdAt,
           implementedAt,
           implementationThreadId,
           updatedAt: implementedAt,
@@ -1567,16 +1482,6 @@ const make = Effect.gen(function* () {
 
       const thread = yield* resolveThreadRuntimeContext(event.threadId);
       if (!thread) return;
-
-      let loadedThreadProposedPlans: ReadonlyArray<OrchestrationProposedPlan> | undefined;
-      const getLoadedThreadProposedPlans = () =>
-        Effect.gen(function* () {
-          if (loadedThreadProposedPlans !== undefined) {
-            return loadedThreadProposedPlans;
-          }
-          loadedThreadProposedPlans = yield* listThreadProposedPlans(thread.id);
-          return loadedThreadProposedPlans;
-        });
 
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
@@ -1918,11 +1823,9 @@ const make = Effect.gen(function* () {
       }
 
       if (proposedPlanCompletion) {
-        const proposedPlans = yield* getLoadedThreadProposedPlans();
         yield* finalizeBufferedProposedPlan({
           event,
           threadId: thread.id,
-          threadProposedPlans: proposedPlans,
           planId: proposedPlanCompletion.planId,
           ...(proposedPlanCompletion.turnId ? { turnId: proposedPlanCompletion.turnId } : {}),
           fallbackMarkdown: proposedPlanCompletion.planMarkdown,
@@ -1931,7 +1834,6 @@ const make = Effect.gen(function* () {
       }
 
       if (isTerminalTurn) {
-        const proposedPlans = yield* getLoadedThreadProposedPlans();
         const turnId = toTurnId(event.turnId);
         if (turnId) {
           const userInputActivities =
@@ -2001,7 +1903,6 @@ const make = Effect.gen(function* () {
           yield* finalizeBufferedProposedPlan({
             event,
             threadId: thread.id,
-            threadProposedPlans: proposedPlans,
             planId: proposedPlanIdForTurn(thread.id, turnId),
             turnId,
             updatedAt: now,
@@ -2206,11 +2107,13 @@ const make = Effect.gen(function* () {
         (activityEvent.payload.beforeTokens === undefined ||
           activityEvent.payload.afterTokens === undefined)
       ) {
-        const threadDetail = yield* resolveThreadDetail(thread.id, [
-          "context-window.updated",
-          "context-compaction",
-        ]);
-        const tokenCounts = compactedTokenCountsFromActivities(threadDetail?.activities);
+        const activities = yield* projectionThreadActivityRepository.listByThreadId({
+          threadId: thread.id,
+          activityKinds: ["context-window.updated", "context-compaction"],
+          // Preserve the previous thread-detail read's context-history bound.
+          limit: 500,
+        });
+        const tokenCounts = compactedTokenCountsFromActivities(activities);
         if (tokenCounts) {
           activityEvent = {
             ...activityEvent,
