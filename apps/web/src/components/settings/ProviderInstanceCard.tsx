@@ -677,7 +677,7 @@ export function ProviderInstanceCard({
   }
 
   const editorHeaderAction = (
-    <div className="flex min-w-0 items-center gap-1.5">
+    <div className="flex shrink-0 items-center gap-1.5">
       {driverOption?.badgeLabel ? (
         <Badge variant="warning" size="sm" className="shrink-0">
           {driverOption.badgeLabel}
@@ -695,7 +695,7 @@ export function ProviderInstanceCard({
               render={
                 <Button
                   type="button"
-                  size="icon-micro"
+                  size="icon-xs"
                   variant="ghost"
                   className={cn(
                     "[--control-icon-color:currentColor]",
@@ -705,7 +705,7 @@ export function ProviderInstanceCard({
                   )}
                   aria-label="Update available — view details"
                 >
-                  <ArrowUpCircleIcon className="size-3.5" />
+                  <ArrowUpCircleIcon />
                 </Button>
               }
             />
@@ -784,14 +784,14 @@ export function ProviderInstanceCard({
         {onDelete ? (
           <Button
             type="button"
-            size="icon-micro"
+            size="icon-xs"
             variant="ghost-muted"
             disabled={readOnly}
             className="[--control-icon-color:currentColor] hover:text-destructive"
             onClick={onDelete}
             aria-label={`Delete instance ${instanceId}`}
           >
-            <Trash2Icon className="size-3" />
+            <Trash2Icon />
           </Button>
         ) : null}
       </span>
