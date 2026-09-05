@@ -158,6 +158,59 @@ const decodeRow = (row: ScheduledTaskRow) =>
     ),
   );
 
+/**
+ * Reads only runnable due rows through the partial `(enabled, next_run_at)`
+ * index. Rows are still decoded leniently so a corrupt due task cannot stop
+ * other due work from running.
+ */
+export const loadDueScheduledTasks = Effect.fn("ScheduledTaskService.loadDueScheduledTasks")(
+  function* (through: string) {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<ScheduledTaskRow>`
+      SELECT
+        task_id,
+        title,
+        prompt,
+        enabled,
+        schedule_json,
+        project_id,
+        thread_id,
+        workspace_strategy_json,
+        model_selection_json,
+        runtime_mode,
+        interaction_mode,
+        created_by,
+        creation_source,
+        created_at,
+        updated_at,
+        next_run_at,
+        last_run_at,
+        last_run_status,
+        last_run_error,
+        run_count
+      FROM scheduled_tasks
+      WHERE enabled = 1
+        AND next_run_at IS NOT NULL
+        AND next_run_at <= ${through}
+        AND last_run_status <> 'running'
+      ORDER BY updated_at DESC, task_id ASC
+    `;
+    const tasks: ScheduledTask[] = [];
+    for (const row of rows) {
+      const decoded = yield* Effect.result(decodeRow(row));
+      if (Result.isSuccess(decoded)) {
+        tasks.push(decoded.success);
+      } else {
+        yield* Effect.logWarning("Skipping undecodable schedule task row", {
+          taskId: row.task_id,
+          cause: decoded.failure,
+        });
+      }
+    }
+    return tasks;
+  },
+);
+
 export const layer = Layer.effect(
   ScheduledTaskService,
   Effect.gen(function* () {
@@ -202,25 +255,6 @@ export const layer = Layer.effect(
     const listRows = Effect.fn("ScheduledTaskService.listRows")(function* () {
       const rows = yield* selectAllRows();
       return yield* Effect.forEach(rows, decodeRow, { concurrency: 1 });
-    });
-
-    // Lenient decode for the scheduler: one corrupt row must never halt the
-    // poll loop or crash recovery for every other task — skip it and log.
-    const listTasksLenient = Effect.fn("ScheduledTaskService.listTasksLenient")(function* () {
-      const rows = yield* selectAllRows();
-      const tasks: ScheduledTask[] = [];
-      for (const row of rows) {
-        const decoded = yield* Effect.result(decodeRow(row));
-        if (Result.isSuccess(decoded)) {
-          tasks.push(decoded.success);
-        } else {
-          yield* Effect.logWarning("Skipping undecodable schedule task row", {
-            taskId: row.task_id,
-            cause: decoded.failure,
-          });
-        }
-      }
-      return tasks;
     });
 
     const getRows = (id: ScheduledTaskId) => sql<ScheduledTaskRow>`
@@ -581,10 +615,10 @@ export const layer = Layer.effect(
     });
 
     const runDueTasks = Effect.fn("ScheduledTaskService.runDueTasks")(function* () {
-      const tasks = yield* listTasksLenient().pipe(
+      const now = yield* localNow;
+      const tasks = yield* loadDueScheduledTasks(iso(now)).pipe(
         Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
       );
-      const now = yield* localNow;
       const nowEpochMillis = DateTime.toEpochMillis(now);
       const due = tasks.flatMap((task) => {
         if (!task.enabled || task.nextRunAt === null || task.lastRunStatus === "running") {
