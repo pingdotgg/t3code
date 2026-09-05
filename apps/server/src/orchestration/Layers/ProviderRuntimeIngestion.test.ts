@@ -3245,6 +3245,151 @@ describe("ProviderRuntimeIngestion", () => {
     expect(activityPayload?.message).toBe("runtime activity exploded");
   });
 
+  it.each(
+    (["runtime.error", "runtime.warning"] as const).flatMap((type) =>
+      [
+        {
+          fixture: "reported",
+          message:
+            "2026-03-14T16:11:12.550224Z ERROR codex_core::codex: failed to load skill /home/sebherrerabe/repos/devsuite/.agent/skills/monorepo-scaffolding/SKILL.md: invalid YAML: mapping values are not allowed in this context at line 2 column 50",
+        },
+        {
+          fixture: "fictional",
+          message:
+            "2026-09-05T09:00:00.000000Z ERROR codex_core::codex: failed to load skill /workspace/example/.agent/skills/application-project-scaffolding/SKILL.md: invalid YAML: mapping values are not allowed in this context at line 2 column 50",
+        },
+      ].map((fixture) => ({ type, ...fixture })),
+    ),
+  )(
+    "retains the $fixture malformed-skill diagnostic tail in $type work-log detail",
+    async ({ type, message }) => {
+      const harness = await createHarness();
+      await harness.emitAndDrain([
+        {
+          type,
+          eventId: asEventId("malformed-skill-diagnostic"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt: "2026-01-01T00:00:01.000Z",
+          threadId: asThreadId("thread-1"),
+          turnId: asTurnId("turn-1"),
+          payload: { message },
+        },
+      ]);
+
+      const thread = (await harness.readModel()).threads[0];
+      const activity = thread?.activities.find(
+        (entry) => entry.id === "malformed-skill-diagnostic",
+      );
+      expect(activity?.payload).toEqual({
+        message: message.slice(0, 177) + "...",
+        detail: message,
+      });
+      expect(activity?.summary).toBe(
+        type === "runtime.error" ? "Runtime error" : message.slice(0, 117) + "...",
+      );
+      expect(thread?.session?.lastError).toBe(type === "runtime.error" ? message : null);
+    },
+  );
+
+  it.each(
+    (["runtime.error", "runtime.warning"] as const).flatMap((type) =>
+      [
+        { name: "compact boundary", message: "a".repeat(180), detail: undefined },
+        { name: "first expanded character", message: "a".repeat(181), detail: "a".repeat(181) },
+        { name: "detail boundary", message: "a".repeat(2_048), detail: "a".repeat(2_048) },
+        {
+          name: "oversized message",
+          message: "a".repeat(2_049),
+          detail: "a".repeat(2_045) + "...",
+        },
+        {
+          name: "multiline Unicode",
+          message: "診断エラー 🐛\n".repeat(30) + "at line 2 column 50",
+          detail: "診断エラー 🐛\n".repeat(30) + "at line 2 column 50",
+        },
+      ].map((testCase) => ({ type, ...testCase })),
+    ),
+  )(
+    "bounds $name in $type detail without changing compact fields",
+    async ({ type, message, detail }) => {
+      const harness = await createHarness();
+      await harness.emitAndDrain([
+        {
+          type,
+          eventId: asEventId("bounded-diagnostic"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt: "2026-01-01T00:00:01.000Z",
+          threadId: asThreadId("thread-1"),
+          payload: { message },
+        },
+      ]);
+
+      const thread = (await harness.readModel()).threads[0];
+      const activity = thread?.activities.find((entry) => entry.id === "bounded-diagnostic");
+      expect(activity?.payload).toEqual({
+        message: message.length <= 180 ? message : message.slice(0, 177) + "...",
+        ...(detail === undefined ? {} : { detail }),
+      });
+      expect(thread?.session?.lastError).toBe(type === "runtime.error" ? message : null);
+    },
+  );
+
+  it.each(["existing detail", "", null, { latencyMs: 1_500 }, 0, false])(
+    "preserves explicit warning detail %j instead of replacing it with the message",
+    async (detail) => {
+      const harness = await createHarness();
+      const message = "warning ".repeat(300);
+      await harness.emitAndDrain([
+        {
+          type: "runtime.warning",
+          eventId: asEventId("explicit-warning-detail"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt: "2026-01-01T00:00:01.000Z",
+          threadId: asThreadId("thread-1"),
+          payload: { message, detail },
+        },
+      ]);
+
+      const activity = (await harness.readModel()).threads[0]?.activities.find(
+        (entry) => entry.id === "explicit-warning-detail",
+      );
+      expect(activity?.payload).toEqual({ message: message.slice(0, 177) + "...", detail });
+    },
+  );
+
+  it("does not expand non-runtime details or retain arbitrary runtime error detail", async () => {
+    const harness = await createHarness();
+    const reason = "denied ".repeat(400);
+    const base = {
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+    };
+    await harness.emitAndDrain([
+      {
+        ...base,
+        type: "tool.denied",
+        eventId: asEventId("unchanged-tool-detail"),
+        payload: { toolName: "Read", reason },
+      },
+      {
+        ...base,
+        type: "runtime.error",
+        eventId: asEventId("short-runtime-error"),
+        payload: { message: "Short error", detail: { nativePayload: "not retained" } },
+      },
+    ]);
+
+    const activities = (await harness.readModel()).threads[0]?.activities;
+    expect(activities?.find((entry) => entry.id === "unchanged-tool-detail")?.payload).toEqual({
+      toolName: "Read",
+      detail: reason.slice(0, 177) + "...",
+    });
+    expect(activities?.find((entry) => entry.id === "short-runtime-error")?.payload).toEqual({
+      message: "Short error",
+    });
+  });
+
   it("keeps the session running when a runtime.warning arrives during an active turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

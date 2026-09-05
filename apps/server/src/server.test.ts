@@ -93,6 +93,9 @@ const decodeTransferShellSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationShellSnapshot),
 );
 const encodeTestJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const decodeRuntimeDiagnosticPayload = Schema.decodeUnknownSync(
+  Schema.Struct({ message: Schema.String, detail: Schema.optional(Schema.String) }),
+);
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
@@ -11097,6 +11100,180 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 });
+
+it.live(
+  "measures a 500-row runtime diagnostic window over HTTP and WebSocket",
+  () =>
+    Effect.gen(function* () {
+      const provider = ProviderDriverKind.make("codex");
+      const reportedMessage =
+        "2026-03-14T16:11:12.550224Z ERROR codex_core::codex: failed to load skill /home/sebherrerabe/repos/devsuite/.agent/skills/monorepo-scaffolding/SKILL.md: invalid YAML: mapping values are not allowed in this context at line 2 column 50";
+      const variants = [
+        { name: "reported-233", expectedDetailLength: 233, message: () => reportedMessage },
+        {
+          name: "saturated-repeated",
+          expectedDetailLength: 2_048,
+          message: () => "diagnostic ".repeat(300),
+        },
+        {
+          name: "saturated-varied",
+          expectedDetailLength: 2_048,
+          message: (row: number) =>
+            Array.from({ length: 80 }, (_, block) =>
+              NodeCrypto.createHash("sha256").update(`${row}:${block}`).digest("base64"),
+            ).join(""),
+        },
+        {
+          name: "saturated-json-escapes",
+          expectedDetailLength: 2_048,
+          message: (row: number) =>
+            `diagnostic ${row}: ` +
+            Array.from({ length: 3_072 }, (_, index) =>
+              String.fromCharCode((row + index) % 8),
+            ).join(""),
+        },
+      ];
+      const results = yield* Effect.forEach(
+        variants,
+        (variant) =>
+          Effect.acquireUseRelease(
+            makeOrchestrationIntegrationHarness({ provider }),
+            (harness) =>
+              Effect.scoped(
+                Effect.gen(function* () {
+                  assert.isNotNull(harness.adapterHarness);
+                  const adapter = harness.adapterHarness!;
+                  const modelSelection = transferModelSelection(provider);
+                  const projectId = ProjectId.make("runtime-diagnostic-project");
+                  const createdAt = "2026-06-01T00:00:00.000Z";
+                  yield* harness.engine.dispatch({
+                    type: "project.create",
+                    commandId: CommandId.make("diagnostics-project"),
+                    projectId,
+                    title: "Runtime diagnostics",
+                    workspaceRoot: harness.workspaceDir,
+                    defaultModelSelection: modelSelection,
+                    createdAt,
+                  });
+                  yield* harness.engine.dispatch({
+                    type: "thread.create",
+                    commandId: CommandId.make("diagnostics-thread"),
+                    threadId: TRANSFER_THREAD_ID,
+                    projectId,
+                    title: "Runtime diagnostics",
+                    modelSelection,
+                    runtimeMode: "approval-required",
+                    interactionMode: "default",
+                    branch: "main",
+                    worktreePath: harness.workspaceDir,
+                    createdAt,
+                  });
+                  yield* harness.providerService.startSession(TRANSFER_THREAD_ID, {
+                    threadId: TRANSFER_THREAD_ID,
+                    provider,
+                    providerInstanceId: modelSelection.instanceId,
+                    modelSelection,
+                    runtimeMode: "approval-required",
+                    cwd: harness.workspaceDir,
+                  });
+                  yield* adapter.queueTurnResponse(TRANSFER_THREAD_ID, {
+                    events: Array.from({ length: 500 }, (_, row) => ({
+                      type: "runtime.warning",
+                      eventId: EventId.make(`diagnostic-${row}`),
+                      provider,
+                      threadId: TRANSFER_THREAD_ID,
+                      createdAt,
+                      payload: { message: variant.message(row) },
+                    })),
+                  });
+                  yield* buildAppUnderTest({
+                    layers: {
+                      orchestrationEngine: harness.engine,
+                      projectionSnapshotQuery: harness.snapshotQuery,
+                    },
+                  });
+                  const baseUrl = yield* getHttpServerUrl();
+                  const cookie = yield* getAuthenticatedSessionCookieHeader();
+                  const wsUrl = baseUrl.replace(/^http:/, "ws:") + "/ws";
+                  const client = yield* openMeasuredWsClient({ url: wsUrl, cookie });
+                  assert.include(client.recorder.negotiatedExtensions(), "permessage-deflate");
+                  const items = yield* subscribeThreadItems(
+                    client,
+                    yield* harness.engine.latestSequence,
+                  );
+                  yield* awaitSubscriptionSynchronized(items, "diagnostic subscription ready");
+                  const start = client.recorder.totals();
+                  yield* harness.providerService.sendTurn({
+                    threadId: TRANSFER_THREAD_ID,
+                    input: "Replay the owned diagnostic fixture.",
+                    modelSelection,
+                  });
+
+                  const delivered: OrchestrationThreadActivity[] = [];
+                  while (delivered.length < 500) {
+                    const item = yield* Queue.take(items);
+                    if (
+                      item.kind === "event" &&
+                      item.event.type === "thread.activity-appended" &&
+                      item.event.payload.activity.kind === "runtime.warning"
+                    ) {
+                      delivered.push(item.event.payload.activity);
+                    }
+                  }
+                  yield* harness.drainProviderRuntime;
+                  const webSocket = transferDelta(start, client.recorder.totals());
+                  const response = yield* measureHttpGet({
+                    url: `${baseUrl}/api/orchestration/threads/${TRANSFER_THREAD_ID}`,
+                    headers: { cookie },
+                  });
+                  assert.equal(response.status, 200);
+                  assert.equal(response.contentEncoding, "gzip");
+                  const snapshot = yield* decodeTransferThreadSnapshot(
+                    Buffer.from(response.decodedBody).toString("utf8"),
+                  );
+                  const activities = snapshot.thread.activities.filter(
+                    (activity) => activity.kind === "runtime.warning",
+                  );
+                  assert.equal(activities.length, 500);
+                  const deliveredById = new Map(
+                    delivered.map((activity) => [activity.id, activity.payload]),
+                  );
+                  for (const activity of activities) {
+                    assert.deepEqual(activity.payload, deliveredById.get(activity.id));
+                  }
+                  const payloads = activities.map((activity) =>
+                    decodeRuntimeDiagnosticPayload(activity.payload),
+                  );
+                  assert.isTrue(payloads.every((payload) => payload.message.length === 180));
+                  assert.isTrue(
+                    payloads.every(
+                      (payload) => payload.detail?.length === variant.expectedDetailLength,
+                    ),
+                  );
+                  return {
+                    variant: variant.name,
+                    rows: activities.length,
+                    retainedDetailCharacters: payloads.reduce(
+                      (total, payload) => total + (payload.detail?.length ?? 0),
+                      0,
+                    ),
+                    http: {
+                      jsonBytes: response.decodedBodyBytes,
+                      gzipBytes: response.encodedBodyBytes,
+                      wireBytes: response.wireBytes,
+                    },
+                    webSocket,
+                  };
+                }),
+              ),
+            (harness) => harness.dispose,
+          ).pipe(Effect.provide(NodeHttpServerTestWithWsDeflate)),
+        { concurrency: 1 },
+      );
+      yield* Effect.logInfo(`RUNTIME_DIAGNOSTIC_TRANSFER ${encodeTestJson(results)}`);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  120_000,
+);
 
 it.live(
   "reports thread HTTP and WebSocket transfer budgets",

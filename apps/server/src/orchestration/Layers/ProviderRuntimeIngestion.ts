@@ -218,6 +218,8 @@ function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
 }
 
+const RUNTIME_DIAGNOSTIC_DETAIL_LIMIT = 2_048;
+
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
   const trimmed = planMarkdown?.trim();
   if (!trimmed) {
@@ -481,6 +483,9 @@ export function runtimeEventToActivities(
           summary: "Runtime error",
           payload: {
             message: truncateDetail(event.payload.message),
+            ...(event.payload.message.length > 180
+              ? { detail: truncateDetail(event.payload.message, RUNTIME_DIAGNOSTIC_DETAIL_LIMIT) }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -520,7 +525,13 @@ export function runtimeEventToActivities(
           summary: truncateDetail(event.payload.message, 120),
           payload: {
             message: truncateDetail(event.payload.message),
-            ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
+            ...(event.payload.detail !== undefined
+              ? { detail: event.payload.detail }
+              : event.payload.message.length > 180
+                ? {
+                    detail: truncateDetail(event.payload.message, RUNTIME_DIAGNOSTIC_DETAIL_LIMIT),
+                  }
+                : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
