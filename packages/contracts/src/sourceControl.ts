@@ -92,8 +92,8 @@ export const SourceControlPublishRepositoryInput = Schema.Struct({
 });
 export type SourceControlPublishRepositoryInput = typeof SourceControlPublishRepositoryInput.Type;
 
-export const SourceControlPublishStatus = Schema.Literals(["pushed", "remote_added"]);
-export type SourceControlPublishStatus = typeof SourceControlPublishStatus.Type;
+const SourceControlPublishStatus = Schema.Literals(["pushed", "remote_added"]);
+type SourceControlPublishStatus = typeof SourceControlPublishStatus.Type;
 
 export const SourceControlPublishRepositoryResult = Schema.Struct({
   repository: SourceControlRepositoryInfo,
@@ -105,15 +105,15 @@ export const SourceControlPublishRepositoryResult = Schema.Struct({
 });
 export type SourceControlPublishRepositoryResult = typeof SourceControlPublishRepositoryResult.Type;
 
-export const SourceControlDiscoveryStatus = Schema.Literals(["available", "missing"]);
-export type SourceControlDiscoveryStatus = typeof SourceControlDiscoveryStatus.Type;
+const SourceControlDiscoveryStatus = Schema.Literals(["available", "missing"]);
+type SourceControlDiscoveryStatus = typeof SourceControlDiscoveryStatus.Type;
 
-export const SourceControlProviderAuthStatus = Schema.Literals([
+const SourceControlProviderAuthStatus = Schema.Literals([
   "authenticated",
   "unauthenticated",
   "unknown",
 ]);
-export type SourceControlProviderAuthStatus = typeof SourceControlProviderAuthStatus.Type;
+type SourceControlProviderAuthStatus = typeof SourceControlProviderAuthStatus.Type;
 
 export const SourceControlProviderAuth = Schema.Struct({
   status: SourceControlProviderAuthStatus,

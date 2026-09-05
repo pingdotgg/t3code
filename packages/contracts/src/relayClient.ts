@@ -18,7 +18,6 @@ export const RelayClientStatusSchema = Schema.Union([
     version: Schema.String,
   }),
 ]);
-export type RelayClientStatus = typeof RelayClientStatusSchema.Type;
 
 export const RelayClientInstallProgressStageSchema = Schema.Literals([
   "checking",
@@ -43,7 +42,7 @@ export const RelayClientInstallProgressEventSchema = Schema.Union([
 ]);
 export type RelayClientInstallProgressEvent = typeof RelayClientInstallProgressEventSchema.Type;
 
-export const RelayClientInstallFailureReasonSchema = Schema.Literals([
+const RelayClientInstallFailureReasonSchema = Schema.Literals([
   "download_failed",
   "invalid_checksum",
   "install_locked",
@@ -52,7 +51,6 @@ export const RelayClientInstallFailureReasonSchema = Schema.Literals([
   "validation_failed",
   "write_failed",
 ]);
-export type RelayClientInstallFailureReason = typeof RelayClientInstallFailureReasonSchema.Type;
 
 export class RelayClientInstallFailedError extends Schema.TaggedErrorClass<RelayClientInstallFailedError>()(
   "RelayClientInstallFailedError",

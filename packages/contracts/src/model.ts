@@ -4,16 +4,16 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderDriverKind } from "./providerInstance.ts";
 
-export const ProviderOptionDescriptorType = Schema.Literals(["select", "boolean"]);
-export type ProviderOptionDescriptorType = typeof ProviderOptionDescriptorType.Type;
+const ProviderOptionDescriptorType = Schema.Literals(["select", "boolean"]);
+type ProviderOptionDescriptorType = typeof ProviderOptionDescriptorType.Type;
 
-export const ProviderOptionChoice = Schema.Struct({
+const ProviderOptionChoice = Schema.Struct({
   id: TrimmedNonEmptyString,
   label: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
   isDefault: Schema.optional(Schema.Boolean),
 });
-export type ProviderOptionChoice = typeof ProviderOptionChoice.Type;
+type ProviderOptionChoice = typeof ProviderOptionChoice.Type;
 
 const ProviderOptionDescriptorBase = {
   id: TrimmedNonEmptyString,
@@ -21,21 +21,21 @@ const ProviderOptionDescriptorBase = {
   description: Schema.optional(TrimmedNonEmptyString),
 } as const;
 
-export const SelectProviderOptionDescriptor = Schema.Struct({
+const SelectProviderOptionDescriptor = Schema.Struct({
   ...ProviderOptionDescriptorBase,
   type: Schema.Literal("select"),
   options: Schema.Array(ProviderOptionChoice),
   currentValue: Schema.optional(TrimmedNonEmptyString),
   promptInjectedValues: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
 });
-export type SelectProviderOptionDescriptor = typeof SelectProviderOptionDescriptor.Type;
+type SelectProviderOptionDescriptor = typeof SelectProviderOptionDescriptor.Type;
 
-export const BooleanProviderOptionDescriptor = Schema.Struct({
+const BooleanProviderOptionDescriptor = Schema.Struct({
   ...ProviderOptionDescriptorBase,
   type: Schema.Literal("boolean"),
   currentValue: Schema.optional(Schema.Boolean),
 });
-export type BooleanProviderOptionDescriptor = typeof BooleanProviderOptionDescriptor.Type;
+type BooleanProviderOptionDescriptor = typeof BooleanProviderOptionDescriptor.Type;
 
 export const ProviderOptionDescriptor = Schema.Union([
   SelectProviderOptionDescriptor,
@@ -43,8 +43,8 @@ export const ProviderOptionDescriptor = Schema.Union([
 ]);
 export type ProviderOptionDescriptor = typeof ProviderOptionDescriptor.Type;
 
-export const ProviderOptionSelectionValue = Schema.Union([TrimmedNonEmptyString, Schema.Boolean]);
-export type ProviderOptionSelectionValue = typeof ProviderOptionSelectionValue.Type;
+const ProviderOptionSelectionValue = Schema.Union([TrimmedNonEmptyString, Schema.Boolean]);
+type ProviderOptionSelectionValue = typeof ProviderOptionSelectionValue.Type;
 
 export const ProviderOptionSelection = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -132,12 +132,12 @@ export type ModelCapabilities = typeof ModelCapabilities.Type;
  * bare slug keeps its driver-default presentation; when `capabilities` is
  * set, its descriptors replace the driver default in the model picker.
  */
-export const CustomModelEntry = Schema.Struct({
+const CustomModelEntry = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: Schema.optional(TrimmedNonEmptyString),
   capabilities: Schema.optional(ModelCapabilities),
 });
-export type CustomModelEntry = typeof CustomModelEntry.Type;
+type CustomModelEntry = typeof CustomModelEntry.Type;
 
 /** On-disk custom model setting: the legacy bare slug, or a full entry. */
 export const CustomModelSetting = Schema.Union([Schema.String, CustomModelEntry]);

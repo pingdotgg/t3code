@@ -183,7 +183,7 @@ const ChatAttachmentId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(CHAT_ATTACHMENT_ID_MAX_CHARS),
   Schema.isPattern(/^[a-z0-9_-]+$/i),
 );
-export type ChatAttachmentId = typeof ChatAttachmentId.Type;
+type ChatAttachmentId = typeof ChatAttachmentId.Type;
 
 export const ChatImageAttachment = Schema.Struct({
   type: Schema.Literal("image"),
@@ -246,7 +246,7 @@ export const ChatAttachment = Schema.Union([
 ]);
 export type ChatAttachment = typeof ChatAttachment.Type;
 const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
-export type UploadChatAttachment = typeof UploadChatAttachment.Type;
+type UploadChatAttachment = typeof UploadChatAttachment.Type;
 
 export const ProjectScriptIcon = Schema.Literals([
   "play",
@@ -455,7 +455,7 @@ const OrchestrationLatestTurnState = Schema.Literals([
   "completed",
   "error",
 ]);
-export type OrchestrationLatestTurnState = typeof OrchestrationLatestTurnState.Type;
+type OrchestrationLatestTurnState = typeof OrchestrationLatestTurnState.Type;
 
 export const OrchestrationLatestTurn = Schema.Struct({
   turnId: TurnId,
@@ -468,11 +468,11 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
-export const ThreadTitleRegeneration = Schema.Struct({
+const ThreadTitleRegeneration = Schema.Struct({
   requestId: CommandId,
   startedAt: IsoDateTime,
 });
-export type ThreadTitleRegeneration = typeof ThreadTitleRegeneration.Type;
+type ThreadTitleRegeneration = typeof ThreadTitleRegeneration.Type;
 
 export const ThreadLinkedPullRequest = Schema.Struct({
   projectId: ProjectId,
@@ -659,7 +659,7 @@ export const OrchestrationShellStreamItem = Schema.Union([
 ]);
 export type OrchestrationShellStreamItem = typeof OrchestrationShellStreamItem.Type;
 
-export const OrchestrationSubscribeShellInput = Schema.Struct({
+const OrchestrationSubscribeShellInput = Schema.Struct({
   /**
    * When provided, the server skips the initial full shell snapshot and instead
    * replays shell events after this sequence before streaming live events.
@@ -675,9 +675,9 @@ export const OrchestrationSubscribeShellInput = Schema.Struct({
    */
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
 });
-export type OrchestrationSubscribeShellInput = typeof OrchestrationSubscribeShellInput.Type;
+type OrchestrationSubscribeShellInput = typeof OrchestrationSubscribeShellInput.Type;
 
-export const OrchestrationSubscribeThreadInput = Schema.Struct({
+const OrchestrationSubscribeThreadInput = Schema.Struct({
   threadId: ThreadId,
   /**
    * When provided, the server skips the initial snapshot frame and instead
@@ -701,7 +701,7 @@ export const OrchestrationSubscribeThreadInput = Schema.Struct({
    */
   turnLimit: Schema.optionalKey(PositiveInt),
 });
-export type OrchestrationSubscribeThreadInput = typeof OrchestrationSubscribeThreadInput.Type;
+type OrchestrationSubscribeThreadInput = typeof OrchestrationSubscribeThreadInput.Type;
 
 /**
  * Bounds a thread detail read to a window of recent turns. `turnLimit` counts
@@ -952,7 +952,7 @@ const ThreadTurnStartBootstrap = Schema.Struct({
   runSetupScript: Schema.optional(Schema.Boolean),
 });
 
-export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
+type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
 
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
@@ -1066,8 +1066,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
 ]);
-export type DispatchableClientOrchestrationCommand =
-  typeof DispatchableClientOrchestrationCommand.Type;
+type DispatchableClientOrchestrationCommand = typeof DispatchableClientOrchestrationCommand.Type;
 
 export const ClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
@@ -1195,7 +1194,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadRevertCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
 ]);
-export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
+type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
 export const OrchestrationCommand = Schema.Union([
   DispatchableClientOrchestrationCommand,
@@ -1673,7 +1672,7 @@ export type OrchestrationThreadStreamItem = typeof OrchestrationThreadStreamItem
 export const OrchestrationCommandReceiptStatus = Schema.Literals(["accepted", "rejected"]);
 export type OrchestrationCommandReceiptStatus = typeof OrchestrationCommandReceiptStatus.Type;
 
-export const TurnCountRange = Schema.Struct({
+const TurnCountRange = Schema.Struct({
   fromTurnCount: NonNegativeInt,
   toTurnCount: NonNegativeInt,
 }).check(
@@ -1709,7 +1708,7 @@ const ProjectionThreadTurnStatus = Schema.Literals([
   "interrupted",
   "error",
 ]);
-export type ProjectionThreadTurnStatus = typeof ProjectionThreadTurnStatus.Type;
+type ProjectionThreadTurnStatus = typeof ProjectionThreadTurnStatus.Type;
 
 const ProjectionCheckpointRow = Schema.Struct({
   threadId: ThreadId,
@@ -1721,7 +1720,7 @@ const ProjectionCheckpointRow = Schema.Struct({
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
 });
-export type ProjectionCheckpointRow = typeof ProjectionCheckpointRow.Type;
+type ProjectionCheckpointRow = typeof ProjectionCheckpointRow.Type;
 
 export const ProjectionPendingApprovalStatus = Schema.Literals(["pending", "resolved"]);
 export type ProjectionPendingApprovalStatus = typeof ProjectionPendingApprovalStatus.Type;
@@ -1743,8 +1742,7 @@ export const OrchestrationGetTurnDiffInput = TurnCountRange.mapFields(
 );
 export type OrchestrationGetTurnDiffInput = typeof OrchestrationGetTurnDiffInput.Type;
 
-export const OrchestrationGetTurnDiffResult = ThreadTurnDiff;
-export type OrchestrationGetTurnDiffResult = typeof OrchestrationGetTurnDiffResult.Type;
+export type OrchestrationGetTurnDiffResult = typeof ThreadTurnDiff.Type;
 
 export const OrchestrationGetFullThreadDiffInput = Schema.Struct({
   threadId: ThreadId,
@@ -1753,8 +1751,7 @@ export const OrchestrationGetFullThreadDiffInput = Schema.Struct({
 });
 export type OrchestrationGetFullThreadDiffInput = typeof OrchestrationGetFullThreadDiffInput.Type;
 
-export const OrchestrationGetFullThreadDiffResult = ThreadTurnDiff;
-export type OrchestrationGetFullThreadDiffResult = typeof OrchestrationGetFullThreadDiffResult.Type;
+export type OrchestrationGetFullThreadDiffResult = typeof ThreadTurnDiff.Type;
 
 export const OrchestrationThreadSearchSource = Schema.Literals(["user", "assistant"]);
 export type OrchestrationThreadSearchSource = typeof OrchestrationThreadSearchSource.Type;
@@ -1781,20 +1778,20 @@ export const OrchestrationSearchThreadsResult = Schema.Struct({
 });
 export type OrchestrationSearchThreadsResult = typeof OrchestrationSearchThreadsResult.Type;
 
-export const OrchestrationGetWorkflowScriptInput = Schema.Struct({
+const OrchestrationGetWorkflowScriptInput = Schema.Struct({
   threadId: ThreadId,
   /** Absolute path from the workflow's runHandles.scriptPath. The server
    * re-derives containment; the client value is a hint, never trusted. */
   scriptPath: TrimmedNonEmptyString,
 });
-export type OrchestrationGetWorkflowScriptInput = typeof OrchestrationGetWorkflowScriptInput.Type;
+type OrchestrationGetWorkflowScriptInput = typeof OrchestrationGetWorkflowScriptInput.Type;
 
-export const OrchestrationGetWorkflowScriptResult = Schema.Struct({
+const OrchestrationGetWorkflowScriptResult = Schema.Struct({
   scriptPath: TrimmedNonEmptyString,
   contents: Schema.String,
   truncated: Schema.Boolean,
 });
-export type OrchestrationGetWorkflowScriptResult = typeof OrchestrationGetWorkflowScriptResult.Type;
+type OrchestrationGetWorkflowScriptResult = typeof OrchestrationGetWorkflowScriptResult.Type;
 
 const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
   "invalid-path": "Workflow scripts must be absolute .js paths.",
@@ -1840,11 +1837,11 @@ export const OrchestrationRpcSchemas = {
   },
   getTurnDiff: {
     input: OrchestrationGetTurnDiffInput,
-    output: OrchestrationGetTurnDiffResult,
+    output: ThreadTurnDiff,
   },
   getFullThreadDiff: {
     input: OrchestrationGetFullThreadDiffInput,
-    output: OrchestrationGetFullThreadDiffResult,
+    output: ThreadTurnDiff,
   },
   searchThreads: {
     input: OrchestrationSearchThreadsInput,

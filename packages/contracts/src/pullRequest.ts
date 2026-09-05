@@ -185,12 +185,8 @@ export const PullRequestReaction = Schema.Struct({
 });
 export type PullRequestReaction = typeof PullRequestReaction.Type;
 
-export const PullRequestCommentKind = Schema.Literals([
-  "issue-comment",
-  "review-comment",
-  "review",
-]);
-export type PullRequestCommentKind = typeof PullRequestCommentKind.Type;
+const PullRequestCommentKind = Schema.Literals(["issue-comment", "review-comment", "review"]);
+type PullRequestCommentKind = typeof PullRequestCommentKind.Type;
 
 export const PullRequestComment = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -344,13 +340,13 @@ export type PullRequestReviewCapabilities = typeof PullRequestReviewCapabilities
  * command that closes a pull request, and has no way to post a remark here at all — so nothing it
  * shows in a conversation can be rewritten either.
  */
-export const PullRequestEditCapabilities = Schema.Struct({
+const PullRequestEditCapabilities = Schema.Struct({
   /** The change request's own title and description can be rewritten. */
   changeRequest: Schema.Boolean,
   /** A remark can be rewritten by whoever wrote it. */
   comment: Schema.Boolean,
 });
-export type PullRequestEditCapabilities = typeof PullRequestEditCapabilities.Type;
+type PullRequestEditCapabilities = typeof PullRequestEditCapabilities.Type;
 
 /**
  * What a host can do about who reviews. The two are independent: a host can take a request without

@@ -49,11 +49,11 @@ export const ProjectSearchContentsInput = Schema.Struct({
 });
 export type ProjectSearchContentsInput = typeof ProjectSearchContentsInput.Type;
 
-export const ProjectContentMatchRange = Schema.Struct({
+const ProjectContentMatchRange = Schema.Struct({
   start: NonNegativeInt,
   end: NonNegativeInt,
 });
-export type ProjectContentMatchRange = typeof ProjectContentMatchRange.Type;
+type ProjectContentMatchRange = typeof ProjectContentMatchRange.Type;
 
 export const ProjectContentMatch = Schema.Struct({
   path: TrimmedNonEmptyString,
