@@ -227,7 +227,7 @@ export function useSelectedThreadGitActions() {
 
   const onCheckoutSelectedThreadBranch = useCallback(
     async (branch: string) => {
-      await runSelectedThreadGitMutation(
+      return runSelectedThreadGitMutation(
         "switch_ref",
         "Switching branch",
         async ({ thread, cwd }) => {
@@ -295,7 +295,7 @@ export function useSelectedThreadGitActions() {
 
   const onCreateSelectedThreadWorktree = useCallback(
     async (nextWorktree: { readonly baseBranch: string; readonly newBranch: string }) => {
-      await runSelectedThreadGitMutation(
+      return runSelectedThreadGitMutation(
         "create_worktree",
         "Creating worktree",
         async ({ thread, project }) => {
