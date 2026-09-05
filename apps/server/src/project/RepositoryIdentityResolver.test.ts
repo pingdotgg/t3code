@@ -1,12 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { TestClock } from "effect/testing";
 
@@ -38,11 +40,12 @@ const makeRepositoryIdentityResolverTestLayer = (options: {
   ).pipe(Layer.provide(ProcessRunner.layer));
 
 it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
-  it.effect("reuses the cached Git root for repeated workspace lookups", () => {
+  it.effect("reuses the cached Git root even when the filesystem preflight fails", () => {
     const calls: Array<ReadonlyArray<string>> = [];
     const processRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
       run: (input) =>
         Effect.sync(() => {
+          expect(input.windowsCleanupOnExit).toBe(false);
           calls.push(input.args);
           return {
             stdout: input.args.includes("rev-parse")
@@ -61,7 +64,22 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     const resolverLayer = Layer.effect(
       RepositoryIdentityResolver.RepositoryIdentityResolver,
       RepositoryIdentityResolver.make(),
-    ).pipe(Layer.provide(processRunner));
+    ).pipe(
+      Layer.provide(processRunner),
+      Layer.provide(
+        FileSystem.layerNoop({
+          exists: (path) =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "PermissionDenied",
+                module: "FileSystem",
+                method: "exists",
+                pathOrDescriptor: path,
+              }),
+            ),
+        }),
+      ),
+    );
 
     return Effect.gen(function* () {
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
@@ -105,7 +123,10 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     const resolverLayer = Layer.effect(
       RepositoryIdentityResolver.RepositoryIdentityResolver,
       RepositoryIdentityResolver.make(),
-    ).pipe(Layer.provide(processRunner));
+    ).pipe(
+      Layer.provide(processRunner),
+      Layer.provide(FileSystem.layerNoop({ exists: () => Effect.succeed(true) })),
+    );
 
     return Effect.gen(function* () {
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
@@ -120,6 +141,40 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       ]);
     }).pipe(Effect.provide(resolverLayer));
   });
+
+  it.effect("skips missing workspaces and discovers them immediately when restored", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-restored-",
+      });
+      const cwd = path.join(parent, "restored");
+      const processRunner = yield* ProcessRunner.ProcessRunner;
+      const calls: Array<ReadonlyArray<string>> = [];
+      const resolver = yield* RepositoryIdentityResolver.make().pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: (input) => {
+            calls.push(input.args);
+            return processRunner.run(input);
+          },
+        }),
+      );
+
+      expect(yield* resolver.resolve(cwd)).toBeNull();
+      expect(yield* resolver.resolve(cwd)).toBeNull();
+      const platform = yield* HostProcessPlatform;
+      expect(calls).toHaveLength(platform === "win32" ? 0 : 2);
+      calls.length = 0;
+
+      yield* fileSystem.makeDirectory(cwd);
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
+
+      expect((yield* resolver.resolve(cwd))?.canonicalKey).toBe("github.com/t3tools/t3code");
+      expect(calls).toHaveLength(2);
+    }).pipe(Effect.provide(ProcessRunner.layer)),
+  );
 
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
     Effect.gen(function* () {

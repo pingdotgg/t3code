@@ -1,4 +1,5 @@
 import type { RepositoryIdentity } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   detectSourceControlProviderFromGitRemoteUrl,
   normalizeGitRemoteUrl,
@@ -8,6 +9,7 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -90,6 +92,12 @@ function buildRepositoryIdentity(input: {
 const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
   function* (cwd: string) {
     const processRunner = yield* ProcessRunner.ProcessRunner;
+    const fileSystem = yield* FileSystem.FileSystem;
+    if ((yield* HostProcessPlatform) === "win32") {
+      // Avoid spawning Git for removed projects on Windows.
+      const exists = yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true));
+      if (!exists) return null;
+    }
 
     // git is a real executable on every platform — no cmd.exe shell mode, which
     // would split paths containing spaces during cmd's re-tokenization.
@@ -97,6 +105,7 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
       .run({
         command: "git",
         args: ["-C", cwd, "rev-parse", "--show-toplevel"],
+        windowsCleanupOnExit: false,
         timeoutBehavior: "timedOutResult",
       })
       .pipe(Effect.option);
@@ -119,6 +128,7 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     .run({
       command: "git",
       args: ["-C", cacheKey, "remote", "-v"],
+      windowsCleanupOnExit: false,
       timeoutBehavior: "timedOutResult",
     })
     .pipe(Effect.option);
@@ -135,11 +145,13 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
 ) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const repositoryRootCache = yield* Cache.makeWith<string, string | null>(
     (cwd) =>
       resolveRepositoryIdentityCacheKey(cwd).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
       ),
     {
       capacity: cacheCapacity,

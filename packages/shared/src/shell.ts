@@ -124,7 +124,25 @@ function resolveSpawnExecutableWithNode(
   for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
     const normalizedPathEntry = stripWrappingQuotes(pathEntry.trim());
     if (normalizedPathEntry.length === 0) continue;
-    for (const candidate of candidates) {
+    let directoryCandidates = candidates;
+    if (platform === "win32") {
+      try {
+        directoryCandidates = matchCommandDirectory(
+          candidates,
+          indexCommandDirectory(NodeFS.readdirSync(normalizedPathEntry)),
+        );
+      } catch (error) {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          (error.code === "ENOENT" || error.code === "ENOTDIR")
+        ) {
+          continue;
+        }
+      }
+    }
+    for (const candidate of directoryCandidates) {
       const candidatePath = path.join(normalizedPathEntry, candidate);
       if (isExecutable(candidatePath)) return candidatePath;
     }
@@ -512,6 +530,59 @@ export const CommandResolutionCache = Context.Reference<Map<string, CommandResol
   },
 );
 
+interface CommandDirectoryIndex {
+  readonly exact: ReadonlySet<string>;
+  readonly folded: ReadonlyMap<string, string>;
+}
+
+function indexCommandDirectory(entries: ReadonlyArray<string>): CommandDirectoryIndex {
+  return {
+    exact: new Set(entries),
+    folded: new Map(entries.map((entry) => [entry.toUpperCase(), entry])),
+  };
+}
+
+function matchCommandDirectory(candidates: ReadonlyArray<string>, index: CommandDirectoryIndex) {
+  return candidates.flatMap((candidate) => {
+    const match = index.exact.has(candidate)
+      ? candidate
+      : index.folded.get(candidate.toUpperCase());
+    return match === undefined ? [] : [match];
+  });
+}
+
+const CommandDirectoryCache = Context.Reference<Map<string, CommandDirectoryIndex> | undefined>(
+  "@t3tools/shared/shell/CommandDirectoryCache",
+  { defaultValue: () => undefined },
+);
+
+/** Reuse Windows directory listings within one discovery pass, then discard them. */
+export const withCommandDirectoryCache = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.suspend(() => Effect.provideService(effect, CommandDirectoryCache, new Map()));
+
+const readCommandDirectory = Effect.fnUntraced(function* (directory: string) {
+  const cache = yield* CommandDirectoryCache;
+  const cached = cache?.get(directory);
+  if (cached !== undefined) return cached;
+
+  const fileSystem = yield* FileSystem.FileSystem;
+  const entries = yield* fileSystem
+    .readDirectory(directory)
+    .pipe(
+      Effect.catch((error) =>
+        Effect.succeed(
+          error.reason._tag === "NotFound" || error.reason._tag === "BadResource" ? [] : null,
+        ),
+      ),
+    );
+  // Searchable but unlistable directories still need direct executable probes.
+  if (entries === null) return null;
+
+  const index = indexCommandDirectory(entries);
+  cache?.set(directory, index);
+  return index;
+});
+
 function cacheCommandResolution(
   cache: Map<string, CommandResolutionCacheEntry>,
   cacheKey: string,
@@ -604,7 +675,15 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   }
 
   for (const pathEntry of pathEntries) {
-    for (const candidate of commandCandidates) {
+    let candidates = commandCandidates;
+    if (platform === "win32") {
+      const index = yield* readCommandDirectory(pathEntry);
+      if (index !== null) {
+        candidates = matchCommandDirectory(commandCandidates, index);
+      }
+    }
+
+    for (const candidate of candidates) {
       const candidatePath = path.join(pathEntry, candidate);
       if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
         cacheCommandResolution(cache, cacheKey, candidatePath, nowNanos);

@@ -28,6 +28,8 @@ export interface ProcessRunInput {
   readonly maxOutputBytes?: number | undefined;
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly truncatedMarker?: string | undefined;
+  /** On Windows, disable only for leaf probes that cannot leave child processes after exiting. */
+  readonly windowsCleanupOnExit?: boolean | undefined;
   /**
    * On timeout, return a synthetic timedOut result.
    * Partial stdout/stderr are not preserved.
@@ -294,6 +296,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   const outputMode = input.outputMode ?? "error";
   const truncatedMarker = input.truncatedMarker ?? "";
   const extendEnv = input.env !== undefined;
+  const platform = yield* HostProcessPlatform;
   const spawnCommand = yield* resolveSpawnCommand(
     input.command,
     input.args,
@@ -311,6 +314,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
             }
           : {}),
         shell: spawnCommand.shell,
+        ...(platform === "win32" ? { cleanupOnExit: input.windowsCleanupOnExit } : {}),
       }),
     )
     .pipe(
