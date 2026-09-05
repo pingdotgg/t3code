@@ -85,6 +85,8 @@ import {
   usePromptStashStore,
   type PromptStashEntry,
 } from "../../promptStashStore";
+import { ChevronUpIcon } from "lucide-react";
+import { ComposerStashFlight, type StashFlight } from "./ComposerStashFlight";
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerMenuState } from "./useComposerMenuState";
@@ -1848,6 +1850,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerScrollCollapseEligibleRef = useRef(false);
   const windowRefocusInFlightRef = useRef(false);
   const composerScrollGestureRef = useRef(createComposerScrollGestureState());
+  const stashDestinationRef = useRef<HTMLButtonElement>(null);
+  const [stashFlight, setStashFlight] = useState<StashFlight | null>(null);
   const stashPulseKeyRef = useRef(0);
   const stashPulseTimeoutRef = useRef<number | null>(null);
   /**
@@ -3134,6 +3138,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }, 1200);
   }, []);
 
+  const finishStashFlight = useCallback(() => {
+    setStashFlight(null);
+    pulseStashBadge();
+  }, [pulseStashBadge]);
+
+  useEffect(() => setStashFlight(null), [composerDraftTarget]);
+
   const restoreStashEntry = useCallback(
     async (menuEntry: PromptStashEntry) => {
       const filesToVerify = menuEntry.files ?? [];
@@ -3492,6 +3503,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     stashInFlightRef.current.add(snapshotKey);
 
     const stashTarget = composerDraftTarget;
+    const flightSource = composerSurfaceRef.current
+      ?.querySelector('[data-testid="composer-editor"]')
+      ?.getBoundingClientRect();
     const entryId = randomUUID();
     try {
       // Persist the text-only entry *first*, then clear. Ordering matters in
@@ -3545,7 +3559,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       setComposerCursor(0);
       setComposerTrigger(null);
-      pulseStashBadge();
+      setIsStashMenuOpen(false);
+      if (
+        durable &&
+        flightSource &&
+        !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ) {
+        setStashFlight({
+          key: ++stashPulseKeyRef.current,
+          target: composerTargetKey(stashTarget),
+          text: prompt.slice(0, 180) || `${images.length + files.length} saved attachments`,
+          x: flightSource.x,
+          y: flightSource.y,
+          width: Math.min(flightSource.width, 360),
+        });
+      } else {
+        pulseStashBadge();
+      }
 
       if (evicted) {
         for (const file of evicted.files ?? []) {
@@ -4995,6 +5025,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         </ComposerBanner.Column>
         {!isComposerApprovalState ? (
           <ComposerStashBadge
+            destinationRef={stashDestinationRef}
             count={stashQueue.length}
             menuOpen={isStashMenuOpen}
             pulseKey={stashPulse.key}
@@ -5003,6 +5034,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           />
         ) : null}
       </ComposerBanner.Dock>
+      {stashFlight && stashFlight.target === composerTargetKey(composerDraftTarget) ? (
+        <ComposerStashFlight
+          key={stashFlight.key}
+          flight={stashFlight}
+          destinationRef={stashDestinationRef}
+          onDone={finishStashFlight}
+        />
+      ) : null}
       <div className="relative">
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
@@ -5436,6 +5475,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               <div
                 className={cn(
                   "relative",
+                  !isComposerResting && "pr-14",
                   isComposerResting && "flex min-w-0 items-center gap-1",
                   isComposerResting &&
                     (settings.contextWindowMeterEnabled && activeContextWindow
@@ -5445,6 +5485,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         : "pr-12"),
                 )}
               >
+                {!isComposerApprovalState &&
+                !projectSelectionRequired &&
+                pendingUserInputs.length === 0 &&
+                activePendingProgress === null &&
+                !isComposerCollapsedMobile &&
+                (prompt.split(INLINE_TERMINAL_CONTEXT_PLACEHOLDER).join("").trim().length > 0 ||
+                  composerImages.length > 0 ||
+                  composerFiles.length > 0) ? (
+                  <div
+                    className={cn(
+                      "absolute flex top-[calc(0.5lh-1rem)] right-[calc(var(--chat-composer-drawer-inset)-0.75rem-1px)] z-10 leading-relaxed [font-size:var(--font-size-prompt,0.875rem)] sm:right-[calc(var(--chat-composer-drawer-inset)-1rem-1px)] [@media(max-width:39.999rem)_and_(pointer:coarse)]:[font-size:max(var(--font-size-prompt,1rem),16px)]",
+                      isComposerResting && "leading-8",
+                    )}
+                  >
+                    <button
+                      type="button"
+                      aria-label="Stash current draft"
+                      className="group/stash inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg bg-(--chat-composer-glass-surface) px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                      onPointerDown={(event) => event.preventDefault()}
+                      onClick={() => void stashCurrentPrompt()}
+                    >
+                      <span className="max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity,margin] duration-150 ease-out group-hover/stash:mr-1 group-hover/stash:max-w-24 group-hover/stash:opacity-100 group-focus/stash:mr-1 group-focus/stash:max-w-24 group-focus/stash:opacity-100 motion-reduce:transition-none">
+                        Stash this
+                      </span>
+                      <ChevronUpIcon aria-hidden className="size-3.5 shrink-0" />
+                    </button>
+                  </div>
+                ) : null}
                 <ComposerPromptEditor
                   editorRef={composerEditorRef}
                   value={

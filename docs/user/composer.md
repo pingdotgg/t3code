@@ -71,6 +71,11 @@ into a normal draft.
 
 ## Prompt stash
 
+Use the upward caret inside the composer to stash a draft without a shortcut.
+Hover over or focus it to reveal **Stash this**. After saving, the draft follows
+a short curve into the **Stash** tab above the composer. Reduced motion skips
+the movement. Open the tab to restore a saved draft.
+
 On web and desktop, press `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux to save
 the current prompt and its attachments for later. Wait for uploads to finish first.
 With an empty composer, the same shortcut restores a single stash or opens the
