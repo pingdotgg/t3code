@@ -202,6 +202,9 @@ def service_transaction(root, args):
     state = read_state(root)
     repo = root / "repo"
     try:
+        if args[:2] == ["pr", "ready"] and any(arg in args for arg in ("--help", "-h")):
+            print("gh pr ready [NUMBER]\n  Mark the pull request ready for review.")
+            return
         if args[:2] in (["fixture", "--help"], ["fixture", "-h"]):
             print("gh fixture attachment upload PATH\n  Store PATH and return its immutable reviewer URL.\ngh fixture attachment fetch URL --output PATH\n  Retrieve an uploaded URL; a zero exit verifies accessible bytes.")
             return
@@ -376,12 +379,17 @@ def operations(root):
     return [json.loads(line) for line in text.splitlines()]
 
 
-def attachment_errors(root, state):
+def attachment_errors(root, state, allow_gif_derivatives=False):
     errors = []
     for item in state["attachments"].values():
         expected = state["evidenceHashes"].get(item["name"])
         path = root / item["path"]
         actual = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+        if expected is None and allow_gif_derivatives and path.suffix == ".gif":
+            # Derivative fidelity is checked by the independent semantic reviewer.
+            expected = item["sha256"]
+            if not path.is_file() or path.read_bytes()[:6] not in (b"GIF87a", b"GIF89a"):
+                errors.append(f"published GIF derivative is not a GIF: {item['name']}")
         if expected is None or item["sha256"] != expected or actual != expected:
             errors.append(f"published bytes do not match supplied evidence: {item['name']}")
     return errors
@@ -459,11 +467,15 @@ def check(name, root, report_path):
         captured_names = {Path(path).name for path in captured_paths}
         if len(captured_names) != 4 or sorted(Path(path).suffix for path in captured_paths) != [".mp4", ".mp4", ".png", ".png"]:
             errors.append("animation proof must contain two screenshots and two real-time recordings")
-        if {a["name"] for a in state["attachments"].values()} != captured_names:
+        uploaded_names = [a["name"] for a in state["attachments"].values()]
+        if any(uploaded_names.count(name) != 1 for name in captured_names):
             errors.append("all captured animation evidence was not uploaded exactly once")
+        gif_urls = [url for url, item in state["attachments"].items() if item["name"].endswith(".gif")]
+        if not gif_urls:
+            errors.append("animated GIF comparison evidence was not uploaded")
         if any(url not in pr["body"] for url in state["attachments"]):
             errors.append("uploaded animation evidence is absent from the published body")
-        errors.extend(attachment_errors(root, state))
+        errors.extend(attachment_errors(root, state, allow_gif_derivatives=True))
         fetched = {o["args"].get("url") for o in ops if o["operation"] == "attachment.fetch" and o["result"] == "success"}
         if fetched != set(state["attachments"]):
             errors.append("each uploaded animation artifact was not fetched for verification")
