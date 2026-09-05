@@ -370,6 +370,31 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("folds thread rows from the same source snapshot as the summary", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const summary = yield* service.readSummary(WINDOW);
+        yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
+        const breakdown = yield* service.readThreadBreakdown(WINDOW);
+
+        assert.strictEqual(totalOutputTokens(summary), 5);
+        assert.strictEqual(
+          breakdown.rows.reduce((total, row) => total + row.totals.outputTokens, 0),
+          5,
+        );
+        assert.strictEqual(breakdown.readAt, summary.readAt);
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-thread-source-cache-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("updates fresh source data for a new manual refresh token", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
