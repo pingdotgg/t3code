@@ -1,4 +1,4 @@
-import { ProjectId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, UsageDay, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import type { ComponentProps, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -130,6 +130,26 @@ const modelTotals = Object.freeze([
   },
 ]);
 
+const environments = [
+  {
+    environmentId: EnvironmentId.make("test-environment"),
+    label: "Test environment",
+    isPending: false,
+    error: null,
+    summary: {
+      contractVersion: USAGE_CONTRACT_VERSION,
+      readAt: "2026-08-11T12:37:00.000Z",
+      sinceDay: UsageDay.make("2026-08-10"),
+      untilDay: UsageDay.make("2026-08-11"),
+      timeZone: "UTC",
+      buckets: [],
+      sources: [],
+      pricing: { status: "fresh", source: "test", fetchedAt: null, knownModels: 1 },
+      scanDurationMs: 1,
+    },
+  },
+];
+
 const projectTotals = Object.freeze([
   {
     projectId: ProjectId.make("project-expensive"),
@@ -181,7 +201,8 @@ beforeEach(() => {
         },
       ],
     },
-    environments: [],
+    environments,
+    selectedEnvironments: environments,
     isPending: false,
     isPartial: false,
     refresh: testState.refresh,
@@ -203,7 +224,7 @@ describe("UsagePage hourly breakdown", () => {
 
     expect(markup.match(/aria-label="From day"/g)).toHaveLength(2);
     expect(markup.match(/aria-label="To day"/g)).toHaveLength(2);
-    expect(testState.useUsage).toHaveBeenLastCalledWith(expect.anything(), undefined, false);
+    expect(testState.useUsage).toHaveBeenLastCalledWith(expect.anything(), null, undefined, false);
     expect(markup.match(/data-size="segmented"/g)).toHaveLength(4);
     expect(markup.match(/data-variant="segmented"/g)).toHaveLength(4);
   });
@@ -348,6 +369,7 @@ describe("UsagePage thread breakdown", () => {
     });
     expect(testState.useUsage).toHaveBeenLastCalledWith(
       expect.anything(),
+      null,
       "id:project-expensive",
       true,
     );

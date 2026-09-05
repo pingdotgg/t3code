@@ -33,6 +33,7 @@ import {
   type MergedUsage,
   type SettledUsageStatuses,
 } from "@t3tools/shared/usageMerge";
+import { randomUUID } from "../lib/utils";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
@@ -54,12 +55,20 @@ export interface EnvironmentUsageStatus {
  */
 const usageByWindowAtom = Atom.family((windowKey: string) =>
   Atom.make((get): readonly EnvironmentUsageStatus[] => {
-    const input = JSON.parse(windowKey) as UsageSummaryInput;
+    const { refreshTokens, ...input } = JSON.parse(windowKey) as UsageSummaryInput & {
+      readonly refreshTokens: Readonly<Record<string, string>>;
+    };
     const presentations = get(environmentPresentations.presentationsAtom);
 
     const statuses: EnvironmentUsageStatus[] = [];
     for (const [environmentId, presentation] of presentations) {
-      const result = get(serverEnvironment.usageSummary({ environmentId, input }));
+      const refreshToken = refreshTokens[environmentId];
+      const result = get(
+        serverEnvironment.usageSummary({
+          environmentId,
+          input: refreshToken === undefined ? input : { ...input, refreshToken },
+        }),
+      );
       statuses.push({
         environmentId,
         label: presentation.entry.target.label,
@@ -72,10 +81,25 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
   }).pipe(Atom.withLabel(`web-usage:window:${windowKey}`)),
 );
 
+export function withUsageRefreshAttempt(
+  current: Readonly<Record<string, string>>,
+  selectedEnvironmentIds: readonly EnvironmentId[],
+  answered: readonly EnvironmentUsage[],
+  nonce: string,
+): Readonly<Record<string, string>> {
+  if (selectedEnvironmentIds.length === 0) return current;
+  const token = JSON.stringify([makeUsageRefreshToken(answered) ?? null, nonce]);
+  return {
+    ...current,
+    ...Object.fromEntries(selectedEnvironmentIds.map((environmentId) => [environmentId, token])),
+  };
+}
+
 export interface UsageView {
   readonly merged: MergedUsage;
   readonly environments: readonly EnvironmentUsageStatus[];
-  /** True until at least one environment has answered. */
+  readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
+  /** True until at least one selected environment has answered. */
   readonly isPending: boolean;
   /**
    * True while environments that have not failed are still answering. Failed
@@ -98,12 +122,13 @@ export function filterUsageEnvironmentsForProject<
 
 export function useUsage(
   input: UsageSummaryInput,
+  selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
   /** A namespaced project key, `null` for outside-projects buckets, `undefined` for no filter. */
   projectFilter?: string | null,
   /** Refresh the deferred thread query only while its table is mounted. */
   refreshThreads = false,
 ): UsageView {
-  const [refreshToken, setRefreshToken] = useState<string>();
+  const [refreshTokens, setRefreshTokens] = useState<Readonly<Record<string, string>>>({});
   const rangeKey = useMemo(
     () =>
       JSON.stringify({
@@ -132,7 +157,7 @@ export function useUsage(
         resolution: input.resolution,
         sinceTime: input.sinceTime,
         untilTime: input.untilTime,
-        refreshToken,
+        refreshTokens,
       }),
     [
       input.sinceDay,
@@ -141,7 +166,7 @@ export function useUsage(
       input.resolution,
       input.sinceTime,
       input.untilTime,
-      refreshToken,
+      refreshTokens,
     ],
   );
   const atom = usageByWindowAtom(windowKey);
@@ -150,10 +175,18 @@ export function useUsage(
   const retained = retainUsageStatuses(rangeKey, currentEnvironments, settledStatuses.current);
   settledStatuses.current = retained.settled;
   const environments = retained.visible;
-
+  const selectedEnvironments = useMemo(
+    () =>
+      selectedEnvironmentIds === null
+        ? environments
+        : environments.filter((environment) =>
+            selectedEnvironmentIds.has(environment.environmentId),
+          ),
+    [environments, selectedEnvironmentIds],
+  );
   const answered = useMemo<readonly EnvironmentUsage[]>(
     () =>
-      environments.flatMap((environment) =>
+      selectedEnvironments.flatMap((environment) =>
         environment.summary === null
           ? []
           : [
@@ -164,7 +197,7 @@ export function useUsage(
               },
             ],
       ),
-    [environments],
+    [selectedEnvironments],
   );
 
   const merged = useMemo(
@@ -177,13 +210,12 @@ export function useUsage(
     [answered, projectFilter],
   );
 
-  // Refresh model prices before starting the source queries. When the thread
-  // table is mounted, refresh its provider-owned query at the same time as the
-  // summary so both views recount the same transcript state.
+  // Give every selected environment a fresh token after refreshing model
+  // prices. When the thread table is mounted, refresh its provider-owned query
+  // at the same time so both views recount the same transcript state.
   const refresh = useCallback(() => {
-    const nextToken = makeUsageRefreshToken(answered);
-    const currentInput = JSON.parse(windowKey) as UsageSummaryInput;
-    const rateRefreshes = environments.map(({ environmentId }) =>
+    const currentInput = JSON.parse(rangeKey) as UsageSummaryInput;
+    const rateRefreshes = selectedEnvironments.map(({ environmentId }) =>
       runAtomCommand(
         appAtomRegistry,
         serverEnvironment.refreshUsageRates,
@@ -192,15 +224,11 @@ export function useUsage(
       ),
     );
     void Promise.allSettled(rateRefreshes).then(() => {
-      if (nextToken !== undefined && nextToken !== refreshToken) {
-        setRefreshToken(nextToken);
-      } else {
-        for (const { environmentId } of environments) {
-          appAtomRegistry.refresh(
-            serverEnvironment.usageSummary({ environmentId, input: currentInput }),
-          );
-        }
-      }
+      const selectedIds = selectedEnvironments.map(({ environmentId }) => environmentId);
+      const attemptId = randomUUID();
+      setRefreshTokens((current) =>
+        withUsageRefreshAttempt(current, selectedIds, answered, attemptId),
+      );
       if (!refreshThreads) return;
       for (const contribution of filterProviderContributionsForProject(
         projectFilter,
@@ -222,15 +250,17 @@ export function useUsage(
     });
   }, [
     answered,
-    environments,
     merged.providerContributions,
     projectFilter,
+    rangeKey,
     refreshThreads,
-    refreshToken,
-    windowKey,
+    selectedEnvironments,
   ]);
 
-  const relevantEnvironments = filterUsageEnvironmentsForProject(environments, projectFilter);
+  const relevantEnvironments = filterUsageEnvironmentsForProject(
+    selectedEnvironments,
+    projectFilter,
+  );
   const answeredCount = relevantEnvironments.filter(
     (environment) => environment.summary !== null,
   ).length;
@@ -241,6 +271,7 @@ export function useUsage(
   return {
     merged,
     environments,
+    selectedEnvironments,
     isPending: answeredCount === 0 && stillReporting > 0,
     isPartial: answeredCount > 0 && stillReporting > 0,
     refresh,
