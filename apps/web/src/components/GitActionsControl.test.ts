@@ -4,14 +4,19 @@ import {
   EnvironmentId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   scopes: new Set<string>(),
+  primaryScopes: new Set<string>(),
   shell: { branch: "main" } as { branch: string } | null,
   draft: null as { branch: string; worktreePath: null; envMode: "local" } | null,
   branch: "main",
   commits: 0,
+  metadataRequests: [] as { environmentId: string; branch: string }[],
+  afterGitAction: undefined as (() => void) | undefined,
   run: null as ((input: { action: "commit"; featureBranch?: boolean }) => Promise<void>) | null,
 }));
 
@@ -33,8 +38,10 @@ vi.mock("~/state/entities", () => ({
   useThreadShell: () => state.shell,
 }));
 vi.mock("~/state/session", () => ({
-  useEnvironmentScope: (_environmentId: unknown, scope: string) => state.scopes.has(scope),
-  readEnvironmentScope: (_environmentId: unknown, scope: string) => state.scopes.has(scope),
+  useEnvironmentScope: (environmentId: unknown, scope: string) =>
+    (environmentId === "environment" ? state.scopes : state.primaryScopes).has(scope),
+  readEnvironmentScope: (environmentId: unknown, scope: string) =>
+    (environmentId === "environment" ? state.scopes : state.primaryScopes).has(scope),
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
 vi.mock("~/state/server", () => ({ serverEnvironment: { configValueAtom: () => null } }));
@@ -42,9 +49,18 @@ vi.mock("~/state/sourceControl", () => ({ sourceControlEnvironment: {} }));
 vi.mock("~/state/vcs", () => ({ vcsEnvironment: { status: () => null } }));
 vi.mock("~/state/threads", () => ({
   threadEnvironment: {
-    updateMetadata: async ({ input }: { input: { branch: string } }) => {
-      if (!state.scopes.has(AuthOrchestrationOperateScope)) throw new Error("Task denied");
+    updateMetadata: async ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: { branch: string };
+    }) => {
+      state.metadataRequests.push({ environmentId, branch: input.branch });
+      if (!state.scopes.has(AuthOrchestrationOperateScope))
+        return AsyncResult.failure(Cause.fail(new Error("Task denied")));
       if (state.shell) state.shell.branch = input.branch;
+      return AsyncResult.success(undefined);
     },
   },
 }));
@@ -86,6 +102,7 @@ vi.mock("~/lib/sourceControlActions", () => ({
     run: async ({ featureBranch }: { featureBranch?: boolean }) => {
       state.commits += 1;
       if (featureBranch) state.branch = "feature";
+      state.afterGitAction?.();
       return {
         _tag: "Success",
         value: {
@@ -159,10 +176,13 @@ function renderActions() {
 describe("Git actions while thread details load", () => {
   beforeEach(() => {
     state.scopes = new Set([AuthSourceControlWriteScope]);
+    state.primaryScopes = new Set([AuthSourceControlWriteScope, AuthOrchestrationOperateScope]);
     state.shell = { branch: "main" };
     state.draft = null;
     state.branch = "main";
     state.commits = 0;
+    state.metadataRequests = [];
+    state.afterGitAction = undefined;
     state.run = null;
   });
 
@@ -175,13 +195,40 @@ describe("Git actions while thread details load", () => {
   });
 
   it("commits and synchronizes the server thread before details finish loading", async () => {
+    state.primaryScopes.clear();
     state.scopes.add(AuthOrchestrationOperateScope);
     await renderActions()({ action: "commit", featureBranch: true });
 
     expect(state.branch).toBe("feature");
     expect(state.commits).toBe(1);
     expect(state.shell?.branch).toBe("feature");
+    expect(state.metadataRequests).toEqual([{ environmentId: "environment", branch: "feature" }]);
   });
+
+  it("synchronizes a retained callback after the thread grant is gained", async () => {
+    const run = renderActions();
+    state.scopes.add(AuthOrchestrationOperateScope);
+    await run({ action: "commit", featureBranch: true });
+    expect(state.commits).toBe(1);
+    expect(state.shell?.branch).toBe("feature");
+    expect(state.metadataRequests).toHaveLength(1);
+  });
+
+  it.each([
+    [AuthOrchestrationOperateScope, false],
+    [AuthSourceControlWriteScope, true],
+  ] as const)(
+    "uses the fresh task grant after Git finishes, revoking %s",
+    async (revokedScope, syncsThread) => {
+      state.scopes.add(AuthOrchestrationOperateScope);
+      state.afterGitAction = () => state.scopes.delete(revokedScope);
+      await renderActions()({ action: "commit", featureBranch: true });
+      expect(state.commits).toBe(1);
+      expect(state.branch).toBe("feature");
+      expect(state.shell?.branch).toBe(syncsThread ? "feature" : "main");
+      expect(state.metadataRequests).toHaveLength(syncsThread ? 1 : 0);
+    },
+  );
 
   it("keeps ordinary commits available while details load", async () => {
     await renderActions()({ action: "commit" });
@@ -197,5 +244,6 @@ describe("Git actions while thread details load", () => {
 
     expect(state.commits).toBe(1);
     expect(state.draft.branch).toBe("feature");
+    expect(state.metadataRequests).toEqual([]);
   });
 });

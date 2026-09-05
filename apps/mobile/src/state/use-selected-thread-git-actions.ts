@@ -10,6 +10,7 @@ import {
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
+  EnvironmentAuthorizationError,
   type GitRunStackedActionResult,
 } from "@t3tools/contracts";
 import {
@@ -77,6 +78,16 @@ export function useSelectedThreadGitActions() {
         readonly worktreePath?: string | null;
       },
     ) => {
+      if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) {
+        return AsyncResult.failure<never, EnvironmentAuthorizationError>(
+          Cause.fail(
+            new EnvironmentAuthorizationError({
+              requiredScope: AuthOrchestrationOperateScope,
+              message: "This connection cannot update the thread's branch.",
+            }),
+          ),
+        );
+      }
       return updateThreadMetadata({
         environmentId: thread.environmentId,
         input: {
@@ -359,14 +370,6 @@ export function useSelectedThreadGitActions() {
             return result;
           }
 
-          showGitActionResult({
-            type: "success",
-            title: result.value.toast.title,
-            description: result.value.toast.description,
-            prUrl:
-              result.value.toast.cta.kind === "open_pr" ? result.value.toast.cta.url : undefined,
-          });
-
           if (result.value.branch.status === "created" && result.value.branch.name) {
             const syncResult = await syncSelectedThreadBranchState({
               thread,
@@ -382,6 +385,13 @@ export function useSelectedThreadGitActions() {
           } else {
             await refreshSelectedThreadGitStatus({ quiet: true, cwd });
           }
+          showGitActionResult({
+            type: "success",
+            title: result.value.toast.title,
+            description: result.value.toast.description,
+            prUrl:
+              result.value.toast.cta.kind === "open_pr" ? result.value.toast.cta.url : undefined,
+          });
           return result;
         },
         { managedExternally: true, changesThreadBranch: input.featureBranch === true },

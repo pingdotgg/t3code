@@ -9,6 +9,7 @@ import {
   type VcsActionOperation,
 } from "@t3tools/client-runtime/state/vcs";
 import {
+  AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   EnvironmentAuthorizationError,
   type EnvironmentId,
@@ -27,7 +28,7 @@ import { useCallback } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { gitEnvironment } from "./git";
 import { useEnvironmentQuery } from "./query";
-import { useEnvironmentScope } from "./session";
+import { readEnvironmentScope, useEnvironmentScope } from "./session";
 import { sourceControlEnvironment } from "./sourceControl";
 import { useAtomCommand } from "./use-atom-command";
 import { vcsActionManager, vcsEnvironment } from "./vcs";
@@ -92,7 +93,10 @@ function useAction<
 
   const run = useCallback(
     async (...args: TArgs) => {
-      if (!isAllowed) {
+      if (
+        input.scope.environmentId === null ||
+        !readEnvironmentScope(input.scope.environmentId, AuthSourceControlWriteScope)
+      ) {
         return AsyncResult.failure<never, EnvironmentAuthorizationError>(
           Cause.fail(
             new EnvironmentAuthorizationError({
@@ -123,15 +127,7 @@ function useAction<
             execute,
           );
     },
-    [
-      input.action,
-      input.label,
-      input.managedExternally,
-      input.onSuccess,
-      input.scope,
-      isAllowed,
-      operation,
-    ],
+    [input.action, input.label, input.managedExternally, input.onSuccess, input.scope, operation],
   );
 
   return {
@@ -345,6 +341,20 @@ export function usePreparePullRequestThreadAction(scope: SourceControlActionScop
               operation: "prepare_pull_request_thread",
               environmentId: scope.environmentId,
               cwd: scope.cwd,
+            }),
+          ),
+        );
+      }
+      if (
+        input.mode === "worktree" &&
+        input.threadId !== undefined &&
+        !readEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope)
+      ) {
+        return AsyncResult.failure<never, EnvironmentAuthorizationError>(
+          Cause.fail(
+            new EnvironmentAuthorizationError({
+              requiredScope: AuthOrchestrationOperateScope,
+              message: "This connection cannot change threads.",
             }),
           ),
         );
