@@ -1,0 +1,4 @@
+interface:
+  display_name: "Prepare PR"
+  short_description: "Create and maintain PRs with verified changes and evidence"
+  default_prompt: "Use $prepare-pr to create or update this pull request: verify the change, write its description, publish the authorized branch and PR, and check the result."

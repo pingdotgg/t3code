@@ -3,7 +3,7 @@
 Use ImageMagick 7 (`magick`) through the existing entry point:
 
 ```sh
-MEDIA=.agents/skills/prepare-proof-media/scripts/prepare_proof_media.py
+MEDIA=.agents/skills/prepare-pr/scripts/prepare_proof_media.py
 python3 "$MEDIA" detail after.png --before before.png \
   --region 0.10,0.25,0.55,0.20 \
   --reason "Show the changed row label and its neighboring rows" \

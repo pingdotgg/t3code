@@ -77,8 +77,16 @@ For authorized PR publication, upload evidence to GitHub through an API, CLI, or
 path. Keep PR-only captures and receipts outside the contribution diff. Fetch
 the resulting attachment and verify successful retrieval, media type, and
 intended content. A local path, login page, or completed upload command does
-not establish that the reviewer can access the media. When the available paths
-cannot publish it, deliver the draft and name the remaining attachment step.
+not establish that the reviewer can access the media. Before reporting an upload blocker, attempt the available authorized
+publication path or identify the concrete missing capability or policy boundary.
+A local artifact, untried upload, or assumed permission requirement is not an
+upload blocker. If publication fails, retain the files, report the attempted
+operation and actual error, and name the remaining attachment step.
+
+After uploading, insert the URLs into the PR body and read it back. Verify each
+requested artifact is present and retrievable, not just hosted somewhere.
+Track an absent upstream-baseline comparison separately from successful
+publication; candidate-only media does not complete before/after proof.
 
 Report playback status and any access or lifetime limit. For a PR, return to
 the parent skill's final review; for media-only work, deliver directly.
