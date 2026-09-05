@@ -171,7 +171,7 @@ const HOUR_MS = 60 * 60 * 1_000;
 const EVENING_HOUR = 18;
 const MORNING_HOUR = 9;
 
-export type SnoozePresetId = "hour" | "three-hours" | "evening" | "tomorrow" | "next-week";
+type SnoozePresetId = "hour" | "three-hours" | "evening" | "tomorrow" | "next-week";
 
 export interface SnoozePreset {
   readonly id: SnoozePresetId;

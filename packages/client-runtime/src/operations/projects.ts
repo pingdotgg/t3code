@@ -40,21 +40,6 @@ export type AddProjectRemoteSourceReadiness = Record<
   { readonly ready: boolean; readonly hint: string | null }
 >;
 
-export type AddProjectCloneFlow =
-  | {
-      readonly step: "repository";
-      readonly environmentId: EnvironmentId;
-      readonly source: AddProjectRemoteSource;
-    }
-  | {
-      readonly step: "confirm";
-      readonly environmentId: EnvironmentId;
-      readonly source: AddProjectRemoteSource;
-      readonly repositoryInput: string;
-      readonly repository: SourceControlRepositoryInfo | null;
-      readonly remoteUrl: string;
-    };
-
 const ADD_PROJECT_REMOTE_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
   "url",
   "github",

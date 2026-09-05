@@ -10,7 +10,6 @@ import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
-import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 
 // Bounded so a pathologically slow endpoint cannot block the (cheaper) socket
@@ -62,8 +61,6 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
       }),
   });
 });
-
-export type FetchEnvironmentThreadSnapshotError = RemoteEnvironmentRequestError;
 
 /**
  * Loads a thread's detail snapshot over HTTP, returning `Option.none()` when it

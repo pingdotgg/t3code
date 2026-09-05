@@ -125,7 +125,7 @@ interface EnvironmentServiceScope {
   readonly scope: Scope.Closeable;
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const registryScope = yield* Scope.Scope;
   const storage = yield* Persistence.ConnectionTargetStore;
   const registrations = yield* Persistence.ConnectionRegistrationStore;

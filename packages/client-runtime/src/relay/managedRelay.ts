@@ -77,13 +77,13 @@ export class ManagedRelayDpopProofCreationError extends Schema.TaggedErrorClass<
   }
 }
 
-export const ManagedRelayDpopSignerError = Schema.Union([
+const ManagedRelayDpopSignerError = Schema.Union([
   ManagedRelayDpopKeyLoadError,
   ManagedRelayDpopProofCreationError,
 ]);
-export type ManagedRelayDpopSignerError = typeof ManagedRelayDpopSignerError.Type;
+type ManagedRelayDpopSignerError = typeof ManagedRelayDpopSignerError.Type;
 
-export const ManagedRelayRequestAction = Schema.Literals([
+const ManagedRelayRequestAction = Schema.Literals([
   "exchange relay DPoP access token",
   "list relay-managed environments",
   "list relay client devices",
@@ -97,9 +97,9 @@ export const ManagedRelayRequestAction = Schema.Literals([
   "register relay live activity",
   "read relay agent activity snapshot",
 ]);
-export type ManagedRelayRequestAction = typeof ManagedRelayRequestAction.Type;
+type ManagedRelayRequestAction = typeof ManagedRelayRequestAction.Type;
 
-export const ManagedRelayRequestActivity = Schema.Literals([
+const ManagedRelayRequestActivity = Schema.Literals([
   "Relay DPoP access token exchange",
   "Relay environment listing",
   "Relay client device listing",
@@ -113,7 +113,7 @@ export const ManagedRelayRequestActivity = Schema.Literals([
   "Relay Live Activity registration",
   "Relay agent activity snapshot",
 ]);
-export type ManagedRelayRequestActivity = typeof ManagedRelayRequestActivity.Type;
+type ManagedRelayRequestActivity = typeof ManagedRelayRequestActivity.Type;
 
 export class ManagedRelayRequestTimeoutError extends Schema.TaggedErrorClass<ManagedRelayRequestTimeoutError>()(
   "ManagedRelayRequestTimeoutError",
@@ -131,7 +131,7 @@ export class ManagedRelayRequestTimeoutError extends Schema.TaggedErrorClass<Man
   }
 }
 
-export class ManagedRelayUrlInvalidError extends Schema.TaggedErrorClass<ManagedRelayUrlInvalidError>()(
+class ManagedRelayUrlInvalidError extends Schema.TaggedErrorClass<ManagedRelayUrlInvalidError>()(
   "ManagedRelayUrlInvalidError",
   {
     relayUrl: Schema.String,
@@ -158,7 +158,7 @@ export class ManagedRelayRequestFailedError extends Schema.TaggedErrorClass<Mana
   }
 }
 
-export class ManagedRelayAccessTokenScopesUnexpectedError extends Schema.TaggedErrorClass<ManagedRelayAccessTokenScopesUnexpectedError>()(
+class ManagedRelayAccessTokenScopesUnexpectedError extends Schema.TaggedErrorClass<ManagedRelayAccessTokenScopesUnexpectedError>()(
   "ManagedRelayAccessTokenScopesUnexpectedError",
   {
     requestedScopes: Schema.Array(RelayDpopAccessTokenScope),
@@ -170,7 +170,7 @@ export class ManagedRelayAccessTokenScopesUnexpectedError extends Schema.TaggedE
   }
 }
 
-export class ManagedRelayTokenProofCreationError extends Schema.TaggedErrorClass<ManagedRelayTokenProofCreationError>()(
+class ManagedRelayTokenProofCreationError extends Schema.TaggedErrorClass<ManagedRelayTokenProofCreationError>()(
   "ManagedRelayTokenProofCreationError",
   {
     method: Schema.String,
@@ -183,7 +183,7 @@ export class ManagedRelayTokenProofCreationError extends Schema.TaggedErrorClass
   }
 }
 
-export class ManagedRelayRequestProofCreationError extends Schema.TaggedErrorClass<ManagedRelayRequestProofCreationError>()(
+class ManagedRelayRequestProofCreationError extends Schema.TaggedErrorClass<ManagedRelayRequestProofCreationError>()(
   "ManagedRelayRequestProofCreationError",
   {
     method: Schema.String,
@@ -240,7 +240,7 @@ export interface ManagedRelayAccessTokenStore {
   readonly clear: Effect.Effect<void>;
 }
 
-export interface ManagedRelayAuthorization {
+interface ManagedRelayAuthorization {
   readonly accessToken: string;
   readonly proof: string;
   readonly thumbprint: string;
@@ -429,7 +429,7 @@ function disabledManagedRelayClient(relayUrl: string): ManagedRelayClient["Servi
   });
 }
 
-export const make = Effect.fn("ManagedRelayClient.make")(function* (
+const make = Effect.fn("ManagedRelayClient.make")(function* (
   options: ManagedRelayClientLayerOptions,
 ) {
   const relayUrl = normalizeSecureRelayUrl(options.relayUrl);

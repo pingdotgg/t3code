@@ -36,7 +36,7 @@ export class ConnectionDriver extends Context.Service<
   }
 >()("@t3tools/client-runtime/connection/driver/ConnectionDriver") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const resolver = yield* ConnectionResolver.ConnectionResolver;
   const sessions = yield* RpcSession.RpcSessionFactory;
 

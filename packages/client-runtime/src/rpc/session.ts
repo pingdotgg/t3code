@@ -145,9 +145,7 @@ function mapSessionRpcError(
   }
 }
 
-export const make = Effect.fn("RpcSessionFactory.make")(function* (
-  options: RpcSessionOptions = {},
-) {
+const make = Effect.fn("RpcSessionFactory.make")(function* (options: RpcSessionOptions = {}) {
   const webSocketConstructor = yield* Socket.WebSocketConstructor;
   const serverConfigInput: ServerConfigSubscriptionInput = {
     ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
@@ -369,5 +367,3 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
 
 export const layerWithOptions = (options: RpcSessionOptions) =>
   Layer.effect(RpcSessionFactory, make(options));
-
-export const layer = layerWithOptions({});

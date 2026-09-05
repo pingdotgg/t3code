@@ -1,4 +1,4 @@
-export interface TerminalOutputChunk {
+interface TerminalOutputChunk {
   /** UTF-16 string offset within this generation and reset. */
   readonly startOffset: number;
   readonly data: string;

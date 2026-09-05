@@ -23,9 +23,9 @@ import { mapManagedRelayError } from "../connection/errors.ts";
 import { ConnectionBlockedError, type ConnectionAttemptError } from "../connection/model.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 
-export type RelayEnvironmentAvailability = "checking" | "online" | "offline" | "error";
+type RelayEnvironmentAvailability = "checking" | "online" | "offline" | "error";
 
-export interface RelayDiscoveredEnvironment {
+interface RelayDiscoveredEnvironment {
   readonly environment: RelayClientEnvironmentRecord;
   readonly availability: RelayEnvironmentAvailability;
   readonly status: Option.Option<RelayEnvironmentStatusResponse>;
@@ -102,7 +102,7 @@ function relayAccountId(clerkToken: string): Option.Option<string> {
   }
 }
 
-export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
+const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
   const relay = yield* ManagedRelay.ManagedRelayClient;
   const session = yield* ClientCapabilities.CloudSession;
   const connectivity = yield* Connectivity.Connectivity;

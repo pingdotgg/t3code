@@ -20,7 +20,7 @@ import * as Struct from "effect/Struct";
 import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 
 /** Server keys that hold a user preference rather than machine config. */
-export const SHARED_SERVER_SETTING_KEYS = [
+const SHARED_SERVER_SETTING_KEYS = [
   "continueThreadsAfterServerUpdate",
   "sidebarAutoSettleAfterDays",
   "sidebarAutoSettleOnMerge",
@@ -28,8 +28,6 @@ export const SHARED_SERVER_SETTING_KEYS = [
   "newWorktreesStartFromOrigin",
   "sourceControlWritingStyle",
 ] as const satisfies ReadonlyArray<keyof ServerSettings & keyof ServerSettingsPatch>;
-
-export type SharedServerSettingKey = (typeof SHARED_SERVER_SETTING_KEYS)[number];
 
 const SHARED_KEY_SET = new Set<string>(SHARED_SERVER_SETTING_KEYS);
 
