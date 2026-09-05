@@ -342,6 +342,9 @@ export function workspaceRelativeFilePath(
   const normalizedRoot = stripSlashPrefixedWindowsDrive(
     workspaceRoot.replaceAll("\\", "/"),
   ).replace(/\/+$/, "");
-  if (!normalizedPath.toLowerCase().startsWith(`${normalizedRoot.toLowerCase()}/`)) return null;
+  const caseInsensitive = isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(workspaceRoot));
+  const pathForCompare = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath;
+  const rootForCompare = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
+  if (!pathForCompare.startsWith(`${rootForCompare}/`)) return null;
   return normalizedPath.slice(normalizedRoot.length + 1);
 }
