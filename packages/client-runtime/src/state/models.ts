@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  OrchestrationMessage,
   OrchestrationProjectShell,
   OrchestrationThread,
   OrchestrationThreadShell,
@@ -12,6 +13,8 @@ export interface EnvironmentProject extends OrchestrationProjectShell {
 export interface EnvironmentThreadShell extends OrchestrationThreadShell {
   readonly environmentId: EnvironmentId;
 }
+
+export type EnvironmentMessage = OrchestrationMessage;
 
 export interface EnvironmentThread extends OrchestrationThread {
   readonly environmentId: EnvironmentId;

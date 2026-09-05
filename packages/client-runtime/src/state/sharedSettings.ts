@@ -29,6 +29,8 @@ const SHARED_SERVER_SETTING_KEYS = [
   "sourceControlWritingStyle",
 ] as const satisfies ReadonlyArray<keyof ServerSettings & keyof ServerSettingsPatch>;
 
+export type SharedServerSettingKey = (typeof SHARED_SERVER_SETTING_KEYS)[number];
+
 const SHARED_KEY_SET = new Set<string>(SHARED_SERVER_SETTING_KEYS);
 
 /** Split a server patch into the keys every environment should receive and the primary-only rest. */

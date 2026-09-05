@@ -5,7 +5,9 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 
-type CheckpointDiffResult = OrchestrationGetTurnDiffResult | OrchestrationGetFullThreadDiffResult;
+export type CheckpointDiffResult =
+  | OrchestrationGetTurnDiffResult
+  | OrchestrationGetFullThreadDiffResult;
 
 export interface CheckpointDiffState {
   readonly data: CheckpointDiffResult | null;

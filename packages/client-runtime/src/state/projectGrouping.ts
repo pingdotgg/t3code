@@ -14,6 +14,8 @@ export interface ProjectGroupingSettings {
   readonly sidebarProjectGroupingOverrides: Record<string, SidebarProjectGroupingMode>;
 }
 
+export type ProjectGroupingMode = SidebarProjectGroupingMode;
+
 export function selectProjectGroupingSettings(settings: ClientSettings): ProjectGroupingSettings {
   return {
     sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
@@ -181,7 +183,7 @@ export function deriveProjectGroupLabel(input: {
   return input.representative.title;
 }
 
-interface ProjectGroupMember<TProject extends EnvironmentProject = EnvironmentProject> {
+export interface ProjectGroupMember<TProject extends EnvironmentProject = EnvironmentProject> {
   readonly physicalProjectKey: string;
   readonly project: TProject;
 }

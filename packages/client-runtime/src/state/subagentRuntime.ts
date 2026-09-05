@@ -29,7 +29,7 @@ export type RuntimeSubagentStatus =
   | "cancelled"
   | "interrupted";
 
-interface SubagentUsage {
+export interface SubagentUsage {
   readonly totalTokens: number;
   readonly inputTokens?: number;
   readonly cachedInputTokens?: number;
@@ -39,17 +39,17 @@ interface SubagentUsage {
   readonly durationMs?: number;
 }
 
-interface SubagentActivityEntry {
+export interface SubagentActivityEntry {
   readonly at: string;
   readonly summary: string;
 }
 
-interface SubagentWorkflowPhase {
+export interface SubagentWorkflowPhase {
   readonly index: number;
   readonly title: string;
 }
 
-interface SubagentRunHandles {
+export interface SubagentRunHandles {
   readonly runId?: string;
   readonly scriptPath?: string;
   readonly transcriptDir?: string;

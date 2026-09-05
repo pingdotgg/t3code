@@ -23,9 +23,9 @@ import { mapManagedRelayError } from "../connection/errors.ts";
 import { ConnectionBlockedError, type ConnectionAttemptError } from "../connection/model.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 
-type RelayEnvironmentAvailability = "checking" | "online" | "offline" | "error";
+export type RelayEnvironmentAvailability = "checking" | "online" | "offline" | "error";
 
-interface RelayDiscoveredEnvironment {
+export interface RelayDiscoveredEnvironment {
   readonly environment: RelayClientEnvironmentRecord;
   readonly availability: RelayEnvironmentAvailability;
   readonly status: Option.Option<RelayEnvironmentStatusResponse>;

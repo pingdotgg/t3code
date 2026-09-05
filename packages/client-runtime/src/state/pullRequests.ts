@@ -23,8 +23,8 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 
 export {
-  /** @public Required to name the error in consumers' inferred diff query results. */
   type PullRequestDiffLoadError,
+  PullRequestDiffCredentialRejectedError,
   PullRequestDiffLoader,
   pullRequestDiffLoaderLayer,
 } from "./pullRequestDiffHttp.ts";

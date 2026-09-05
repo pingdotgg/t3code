@@ -8,11 +8,11 @@ import {
 import { type ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
 
-const StoredConnectionCredential = Schema.Struct({
+export const StoredConnectionCredential = Schema.Struct({
   connectionId: Schema.String,
   credential: ConnectionCredential,
 });
-type StoredConnectionCredential = typeof StoredConnectionCredential.Type;
+export type StoredConnectionCredential = typeof StoredConnectionCredential.Type;
 
 export const ConnectionCatalogDocument = Schema.Struct({
   schemaVersion: Schema.Literal(1),

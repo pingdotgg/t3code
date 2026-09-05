@@ -53,9 +53,11 @@ export const PersistedConnectionTarget = Schema.Union([
 ]);
 export type PersistedConnectionTarget = typeof PersistedConnectionTarget.Type;
 
+export type ConnectionTargetKind = ConnectionTarget["_tag"];
+
 export type NetworkStatus = "unknown" | "offline" | "online";
 
-const ConnectionTransientReason = Schema.Literals([
+export const ConnectionTransientReason = Schema.Literals([
   "network",
   "timeout",
   "transport",
@@ -63,15 +65,15 @@ const ConnectionTransientReason = Schema.Literals([
   "relay-unavailable",
   "remote-unavailable",
 ]);
-type ConnectionTransientReason = typeof ConnectionTransientReason.Type;
+export type ConnectionTransientReason = typeof ConnectionTransientReason.Type;
 
-const ConnectionBlockedReason = Schema.Literals([
+export const ConnectionBlockedReason = Schema.Literals([
   "authentication",
   "configuration",
   "permission",
   "unsupported",
 ]);
-type ConnectionBlockedReason = typeof ConnectionBlockedReason.Type;
+export type ConnectionBlockedReason = typeof ConnectionBlockedReason.Type;
 
 export class ConnectionTransientError extends Schema.TaggedErrorClass<ConnectionTransientError>()(
   "ConnectionTransientError",
@@ -123,7 +125,7 @@ export interface PreparedConnection {
   readonly target: ConnectionTarget;
 }
 
-type SupervisorConnectionPhase =
+export type SupervisorConnectionPhase =
   | "available"
   | "offline"
   | "connecting"

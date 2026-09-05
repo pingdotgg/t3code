@@ -1,6 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
-interface ComposerPathSearchEntry {
+export interface ComposerPathSearchEntry {
   readonly path: string;
   readonly kind: "file" | "directory";
   readonly parentPath?: string;

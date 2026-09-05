@@ -18,7 +18,7 @@ import {
   type MediaReference,
 } from "./mediaReference.ts";
 
-type MediaSourceResource = Extract<AssetResource, { readonly _tag: "media-file" }>;
+export type MediaSourceResource = Extract<AssetResource, { readonly _tag: "media-file" }>;
 
 /** What a piece of authored media is and how its bytes can be reached. */
 export type ResolvedMediaSource = {

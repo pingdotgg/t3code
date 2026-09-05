@@ -20,6 +20,7 @@ export {
   readTerminalOutputUpdate,
   terminalOutputText,
   type TerminalOutputCursor,
+  type TerminalOutputState,
   type TerminalOutputUpdate,
 } from "./terminalOutput.ts";
 
@@ -43,7 +44,7 @@ export interface TerminalBufferState {
   readonly lifecycleVersion: number;
 }
 
-interface KnownTerminalSessionTarget {
+export interface KnownTerminalSessionTarget {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly terminalId: string;

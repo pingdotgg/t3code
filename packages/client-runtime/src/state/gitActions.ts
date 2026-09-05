@@ -4,9 +4,9 @@ import type {
   VcsStatusResult,
 } from "@t3tools/contracts";
 
-type GitActionIconName = "commit" | "push" | "pr";
+export type GitActionIconName = "commit" | "push" | "pr";
 
-type GitDialogAction = "commit" | "push" | "create_pr";
+export type GitDialogAction = "commit" | "push" | "create_pr";
 
 export interface GitActionMenuItem {
   id: "commit" | "push" | "pr";
