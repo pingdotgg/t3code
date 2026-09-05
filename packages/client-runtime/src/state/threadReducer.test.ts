@@ -497,6 +497,139 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.latestTurn?.completedAt).toBeNull();
       }
     });
+
+    it("keeps latestTurn and checkpoints references across a streaming delta", () => {
+      const streamingThread: OrchestrationThread = {
+        ...baseThread,
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "claude",
+          runtimeMode: "full-access",
+          activeTurnId: TurnId.make("turn-1"),
+          lastError: null,
+          updatedAt: "2026-04-01T06:59:00.000Z",
+        },
+        latestTurn: {
+          turnId: TurnId.make("turn-1"),
+          state: "running",
+          requestedAt: "2026-04-01T06:59:00.000Z",
+          startedAt: "2026-04-01T06:59:00.000Z",
+          completedAt: null,
+          assistantMessageId: MessageId.make("msg-2"),
+        },
+        messages: [
+          {
+            id: MessageId.make("msg-2"),
+            role: "assistant",
+            text: "Hello",
+            turnId: TurnId.make("turn-1"),
+            streaming: true,
+            createdAt: "2026-04-01T06:00:00.000Z",
+            updatedAt: "2026-04-01T06:00:00.000Z",
+          },
+        ],
+        checkpoints: [
+          {
+            turnId: TurnId.make("turn-1"),
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("ref-1"),
+            status: "ready",
+            files: [],
+            assistantMessageId: MessageId.make("msg-2"),
+            completedAt: "2026-04-01T06:00:30.000Z",
+          },
+        ],
+      };
+
+      const result = applyThreadDetailEvent(streamingThread, {
+        ...baseEventFields,
+        sequence: 9,
+        occurredAt: "2026-04-01T07:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-sent",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("msg-2"),
+          role: "assistant",
+          text: ", world",
+          turnId: TurnId.make("turn-1"),
+          streaming: true,
+          createdAt: "2026-04-01T06:00:00.000Z",
+          updatedAt: "2026-04-01T07:00:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages).not.toBe(streamingThread.messages);
+        expect(result.thread.messages[0]?.text).toBe("Hello, world");
+        expect(result.thread.latestTurn).toBe(streamingThread.latestTurn);
+        expect(result.thread.checkpoints).toBe(streamingThread.checkpoints);
+      }
+    });
+
+    it("replaces latestTurn and checkpoints when the first assistant message binds the turn", () => {
+      const unboundThread: OrchestrationThread = {
+        ...baseThread,
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "claude",
+          runtimeMode: "full-access",
+          activeTurnId: TurnId.make("turn-1"),
+          lastError: null,
+          updatedAt: "2026-04-01T06:59:00.000Z",
+        },
+        latestTurn: {
+          turnId: TurnId.make("turn-1"),
+          state: "running",
+          requestedAt: "2026-04-01T06:59:00.000Z",
+          startedAt: "2026-04-01T06:59:00.000Z",
+          completedAt: null,
+          assistantMessageId: null,
+        },
+        checkpoints: [
+          {
+            turnId: TurnId.make("turn-1"),
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("ref-1"),
+            status: "ready",
+            files: [],
+            assistantMessageId: null,
+            completedAt: "2026-04-01T06:59:30.000Z",
+          },
+        ],
+      };
+
+      const result = applyThreadDetailEvent(unboundThread, {
+        ...baseEventFields,
+        sequence: 9,
+        occurredAt: "2026-04-01T07:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-sent",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("msg-2"),
+          role: "assistant",
+          text: "Hello",
+          turnId: TurnId.make("turn-1"),
+          streaming: true,
+          createdAt: "2026-04-01T07:00:00.000Z",
+          updatedAt: "2026-04-01T07:00:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.latestTurn).not.toBe(unboundThread.latestTurn);
+        expect(result.thread.latestTurn?.assistantMessageId).toBe("msg-2");
+        expect(result.thread.checkpoints).not.toBe(unboundThread.checkpoints);
+        expect(result.thread.checkpoints[0]?.assistantMessageId).toBe("msg-2");
+      }
+    });
   });
 
   describe("thread.session-set", () => {
@@ -725,6 +858,184 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.activities).toHaveLength(130);
         expect(result.thread.activities[0]?.id).toBe("activity-0");
+      }
+    });
+
+    it("re-sorts when an activity arrives out of order", () => {
+      const makeActivity = (id: string, sequence: number) => ({
+        id: EventId.make(id),
+        tone: "tool" as const,
+        kind: "command",
+        summary: `Ran command ${sequence}`,
+        payload: {},
+        turnId: TurnId.make("turn-1"),
+        sequence,
+        createdAt: "2026-04-01T11:00:00.000Z",
+      });
+      const result = applyThreadDetailEvent(
+        {
+          ...baseThread,
+          activities: [makeActivity("activity-a", 1), makeActivity("activity-c", 3)],
+        },
+        {
+          ...baseEventFields,
+          sequence: 131,
+          occurredAt: "2026-04-01T11:01:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.activity-appended",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            activity: makeActivity("activity-b", 2),
+          },
+        },
+      );
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.activities.map((activity) => activity.id)).toEqual([
+          "activity-a",
+          "activity-b",
+          "activity-c",
+        ]);
+      }
+    });
+
+    it("repairs snapshot ordering before fast-path appends engage", () => {
+      const makeActivity = (id: string, sequence: number | null) => ({
+        id: EventId.make(id),
+        tone: "tool" as const,
+        kind: "command",
+        summary: `Ran ${id}`,
+        payload: {},
+        turnId: TurnId.make("turn-1"),
+        ...(sequence === null ? {} : { sequence }),
+        createdAt: "2026-04-01T11:00:00.000Z",
+      });
+      // Snapshot loads deliver null-sequence rows first (DB order), which
+      // activityOrder sorts last; an in-order live append must not freeze
+      // that prefix.
+      const result = applyThreadDetailEvent(
+        {
+          ...baseThread,
+          activities: [makeActivity("activity-null", null), makeActivity("activity-a", 1)],
+        },
+        {
+          ...baseEventFields,
+          sequence: 135,
+          occurredAt: "2026-04-01T11:01:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.activity-appended",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            activity: makeActivity("activity-b", 2),
+          },
+        },
+      );
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.activities.map((activity) => activity.id)).toEqual([
+          "activity-a",
+          "activity-b",
+          "activity-null",
+        ]);
+      }
+    });
+
+    it("dedupes a re-delivery arriving right after an in-order append", () => {
+      const makeActivity = (id: string, sequence: number, summary: string) => ({
+        id: EventId.make(id),
+        tone: "tool" as const,
+        kind: "command",
+        summary,
+        payload: {},
+        turnId: TurnId.make("turn-1"),
+        sequence,
+        createdAt: "2026-04-01T11:00:00.000Z",
+      });
+      const makeEvent = (sequence: number, activity: ReturnType<typeof makeActivity>) =>
+        ({
+          ...baseEventFields,
+          sequence,
+          occurredAt: "2026-04-01T11:01:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.activity-appended",
+          payload: { threadId: ThreadId.make("thread-1"), activity },
+        }) as const;
+      const first = applyThreadDetailEvent(
+        { ...baseThread, activities: [makeActivity("activity-a", 1, "first")] },
+        makeEvent(133, makeActivity("activity-b", 2, "second")),
+      );
+      expect(first.kind).toBe("updated");
+      if (first.kind !== "updated") {
+        return;
+      }
+      const second = applyThreadDetailEvent(
+        first.thread,
+        makeEvent(134, makeActivity("activity-c", 3, "third")),
+      );
+      expect(second.kind).toBe("updated");
+      if (second.kind !== "updated") {
+        return;
+      }
+      const third = applyThreadDetailEvent(
+        second.thread,
+        makeEvent(135, makeActivity("activity-c", 4, "third (redelivered)")),
+      );
+      expect(third.kind).toBe("updated");
+      if (third.kind === "updated") {
+        expect(third.thread.activities.map((activity) => activity.id)).toEqual([
+          "activity-a",
+          "activity-b",
+          "activity-c",
+        ]);
+        expect(third.thread.activities[2]?.summary).toBe("third (redelivered)");
+      }
+    });
+
+    it("replaces a re-delivered activity instead of duplicating it", () => {
+      const makeActivity = (id: string, sequence: number, summary: string) => ({
+        id: EventId.make(id),
+        tone: "tool" as const,
+        kind: "command",
+        summary,
+        payload: {},
+        turnId: TurnId.make("turn-1"),
+        sequence,
+        createdAt: "2026-04-01T11:00:00.000Z",
+      });
+      const result = applyThreadDetailEvent(
+        {
+          ...baseThread,
+          activities: [
+            makeActivity("activity-a", 1, "first"),
+            makeActivity("activity-b", 2, "second"),
+          ],
+        },
+        {
+          ...baseEventFields,
+          sequence: 132,
+          occurredAt: "2026-04-01T11:01:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.activity-appended",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            activity: makeActivity("activity-b", 2, "second (redelivered)"),
+          },
+        },
+      );
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.activities.map((activity) => activity.id)).toEqual([
+          "activity-a",
+          "activity-b",
+        ]);
+        expect(result.thread.activities[1]?.summary).toBe("second (redelivered)");
       }
     });
 
