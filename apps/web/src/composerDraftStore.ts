@@ -417,6 +417,18 @@ export function composerDraftHasUserContent(
   );
 }
 
+/** Whether a prompt-and-attachment edit differs from its original text. */
+export function composerDraftHasEditedPromptOrAttachments(
+  draft: ComposerThreadDraftState | null | undefined,
+  originalPrompt: string,
+): boolean {
+  return (
+    draft !== null &&
+    draft !== undefined &&
+    (draft.prompt !== originalPrompt || draft.images.length > 0 || draft.files.length > 0)
+  );
+}
+
 /**
  * Mutable routing and execution context for a pre-thread draft session.
  *

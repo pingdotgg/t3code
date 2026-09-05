@@ -66,6 +66,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
   clearComposerDraftsEnvironment,
+  composerDraftHasEditedPromptOrAttachments,
   composerDraftHasUserContent,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThread,
@@ -377,6 +378,26 @@ describe("composerDraftStore unsent draft marker", () => {
     useComposerDraftStore.getState().clearComposerContent(threadRef);
     expect(hasDraft()).toBe(false);
   });
+
+  it("treats a file-only queued edit as unsaved work", () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(threadRef, "Original queued text");
+    expect(
+      composerDraftHasEditedPromptOrAttachments(
+        store.getComposerDraft(threadRef),
+        "Original queued text",
+      ),
+    ).toBe(false);
+
+    store.addFiles(threadRef, [makeFile("queued-edit-file")]);
+
+    expect(
+      composerDraftHasEditedPromptOrAttachments(
+        store.getComposerDraft(threadRef),
+        "Original queued text",
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("composerDraftStore file attachments", () => {
@@ -385,6 +406,22 @@ describe("composerDraftStore file attachments", () => {
 
   beforeEach(() => {
     resetComposerDraftStore();
+  });
+
+  it("moves a file-only queued edit into an empty thread draft", () => {
+    const store = useComposerDraftStore.getState();
+    const editTarget = DraftId.make("queued-edit-file-recovery");
+    const file = makeFile("file-recovery");
+    store.setPrompt(editTarget, "Original queued text");
+    store.addFiles(editTarget, [file]);
+
+    store.moveComposerPromptAndImages(editTarget, threadRef);
+
+    expect(store.getComposerDraft(threadRef)).toMatchObject({
+      prompt: "Original queued text",
+      files: [{ id: file.id, file: file.file }],
+    });
+    expect(store.getComposerDraft(editTarget)).toBeNull();
   });
 
   it("persists uploaded file references without including file contents", () => {

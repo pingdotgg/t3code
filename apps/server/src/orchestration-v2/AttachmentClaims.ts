@@ -1,5 +1,9 @@
 import * as FileSystem from "effect/FileSystem";
-import { ChatAttachmentId, type ChatAttachment } from "@t3tools/contracts";
+import {
+  ChatAttachmentId,
+  type ChatAttachment,
+  type OrchestrationV2Command,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -22,6 +26,33 @@ export class AttachmentClaimError extends Schema.TaggedErrorClass<AttachmentClai
 export interface ClaimedAttachments {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly claimedPaths: ReadonlyArray<string>;
+}
+
+function commandAttachments(command: OrchestrationV2Command):
+  | {
+      readonly threadId: string;
+      readonly attachments: ReadonlyArray<ChatAttachment>;
+      readonly replace: (attachments: ReadonlyArray<ChatAttachment>) => OrchestrationV2Command;
+    }
+  | undefined {
+  switch (command.type) {
+    case "message.dispatch":
+      return {
+        threadId: command.threadId,
+        attachments: command.attachments,
+        replace: (attachments) => ({ ...command, attachments }),
+      };
+    case "queued-run.edit":
+      return command.attachments === undefined
+        ? undefined
+        : {
+            threadId: command.threadId,
+            attachments: command.attachments,
+            replace: (attachments) => ({ ...command, attachments }),
+          };
+    default:
+      return undefined;
+  }
 }
 
 export function attachmentIsPendingUpload(attachment: ChatAttachment): boolean {
@@ -124,3 +155,28 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
     return { attachments, claimedPaths } satisfies ClaimedAttachments;
   },
 );
+
+/**
+ * Claims pending command attachments immediately before dispatch. A rejected
+ * dispatch removes only the new thread-scoped copies; existing attachments and
+ * pending retry sources remain untouched.
+ */
+export const dispatchWithClaimedAttachments = Effect.fn(
+  "AttachmentClaims.dispatchWithClaimedAttachments",
+)(function* <A, E, R>(
+  command: OrchestrationV2Command,
+  dispatch: (effectiveCommand: OrchestrationV2Command) => Effect.Effect<A, E, R>,
+) {
+  const claimable = commandAttachments(command);
+  if (claimable?.attachments.some(attachmentIsPendingUpload) !== true) {
+    return yield* dispatch(command);
+  }
+  const claimed = yield* claimPendingAttachments({
+    threadId: claimable.threadId,
+    attachments: claimable.attachments,
+  });
+  const effectiveCommand = claimable.replace(claimed.attachments);
+  return yield* dispatch(effectiveCommand).pipe(
+    Effect.tapError(() => releaseClaimedAttachments(claimed.claimedPaths)),
+  );
+});
