@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   migratePersistedRightPanelState,
+  pullRequestSurface,
   pullRequestSurfaceId,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
@@ -16,10 +17,121 @@ const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"))
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
 
 beforeEach(() => {
-  useRightPanelStore.setState({ byThreadKey: {} });
+  useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
 });
 
 describe("rightPanelStore", () => {
+  const completedDiff = { id: "diff", kind: "diff" } as const;
+  const linkedPullRequest = pullRequestSurface({
+    projectId: "project-a",
+    repository: "pingdotgg/t3code",
+    number: 42,
+  });
+
+  it.each(["diff-first", "pull-request-first"])(
+    "keeps the linked pull request above the completed diff with %s delivery",
+    (order) => {
+      const store = useRightPanelStore.getState();
+      const revision = store.getUserActionRevision(refA);
+      const requests =
+        order === "diff-first"
+          ? [completedDiff, linkedPullRequest]
+          : [linkedPullRequest, completedDiff];
+      for (const surface of requests) store.openProactive(refA, surface, revision);
+
+      expect(
+        selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+      ).toEqual(linkedPullRequest);
+
+      store.open(refA, "diff");
+      expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+    },
+  );
+
+  it.each([
+    { choice: "file", choose: () => useRightPanelStore.getState().openFile(refA, "src/app.ts") },
+    {
+      choice: "pull request",
+      choose: () =>
+        useRightPanelStore.getState().openPullRequest(refA, { ...linkedPullRequest, number: 41 }),
+    },
+    { choice: "browser", choose: () => useRightPanelStore.getState().openBrowser(refA, "tab-a") },
+    {
+      choice: "terminal",
+      choose: () => useRightPanelStore.getState().openTerminal(refA, "term-1"),
+    },
+    {
+      choice: "same tab",
+      choose: () => useRightPanelStore.getState().activateSurface(refA, "diff"),
+    },
+    { choice: "hide", choose: () => useRightPanelStore.getState().close(refA) },
+    { choice: "toggle", choose: () => useRightPanelStore.getState().toggle(refA, "diff") },
+    { choice: "close all", choose: () => useRightPanelStore.getState().closeAllSurfaces(refA) },
+  ])("keeps a later $choice choice when automatic requests arrive", ({ choose }) => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    const revision = store.getUserActionRevision(refA);
+    choose();
+    const chosen = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+
+    expect(store.openProactive(refA, completedDiff, revision)).toBe(false);
+    expect(store.openProactive(refA, linkedPullRequest, revision)).toBe(false);
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toBe(
+      chosen,
+    );
+  });
+
+  it("allows automatic panels for a later turn after a manual choice", () => {
+    const store = useRightPanelStore.getState();
+    const firstTurnRevision = store.getUserActionRevision(refA);
+    store.openFile(refA, "src/app.ts");
+    expect(store.openProactive(refA, completedDiff, firstTurnRevision)).toBe(false);
+
+    const nextTurnRevision = store.getUserActionRevision(refA);
+    expect(store.openProactive(refA, completedDiff, nextTurnRevision)).toBe(true);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+  });
+
+  it("keeps manual choices scoped to their thread and environment", () => {
+    const otherEnvironment = scopeThreadRef("env-2" as EnvironmentId, refA.threadId);
+    const store = useRightPanelStore.getState();
+    const revision = store.getUserActionRevision(refA);
+    store.openFile(refB, "src/app.ts");
+    store.openFile(otherEnvironment, "src/app.ts");
+
+    expect(store.openProactive(refA, completedDiff, revision)).toBe(true);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refB)).toBe("file");
+    expect(
+      selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, otherEnvironment),
+    ).toBe("file");
+  });
+
+  it("does not treat resource reconciliation as a manual choice", () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "src/app.ts");
+    const revision = store.getUserActionRevision(refA);
+    store.reconcileBrowserSurfaces(refA, ["agent-browser"]);
+    store.reconcileFileSurfaces(refA, false);
+
+    expect(store.openProactive(refA, completedDiff, revision)).toBe(true);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+  });
+
+  it.each(["user", "automatic"] as const)(
+    "distinguishes a %s terminal close from a new panel choice",
+    (source) => {
+      const store = useRightPanelStore.getState();
+      store.openTerminal(refA, "term-1");
+      const revision = store.getUserActionRevision(refA);
+      store.closeTerminal(refA, "terminal:term-1", "term-1", source);
+
+      expect(store.openProactive(refA, completedDiff, revision)).toBe(source === "automatic");
+      expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe(
+        source === "automatic" ? "diff" : null,
+      );
+    },
+  );
+
   it("drops the legacy singleton terminal surface during migration", () => {
     expect(
       migratePersistedRightPanelState({
@@ -637,6 +749,40 @@ describe("rightPanelStore", () => {
     expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)?.id).toBe(
       "browser:tab-a",
     );
+  });
+
+  it("closes a batch once and selects the next surviving tab", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    store.openFile(refA, "src/app.ts");
+    store.openTerminal(refA, "term-1");
+    store.openBrowser(refA, "tab-a");
+    store.activateSurface(refA, "file:src/app.ts");
+    const selections: (string | null)[] = [];
+    const unsubscribe = useRightPanelStore.subscribe((state) => {
+      selections.push(selectThreadRightPanelState(state.byThreadKey, refA).activeSurfaceId);
+    });
+    try {
+      store.closeSurfaces(refA, ["file:src/app.ts", "terminal:term-1"]);
+    } finally {
+      unsubscribe();
+    }
+
+    expect(selections).toEqual(["browser:tab-a"]);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([completedDiff, { id: "browser:tab-a", kind: "preview", resourceId: "tab-a" }]);
+  });
+
+  it("keeps a hidden panel hidden when closing its selected tab", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    store.openBrowser(refA, "tab-a");
+    store.close(refA);
+    store.closeSurfaces(refA, ["browser:tab-a"]);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
+    store.toggleVisibility(refA);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
   });
 
   it("closing the final surface closes the panel", () => {

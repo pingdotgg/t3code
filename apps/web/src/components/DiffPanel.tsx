@@ -31,6 +31,7 @@ import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
+import { useRightPanelStore } from "../rightPanelStore";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useTheme } from "../hooks/useTheme";
 import {
@@ -532,14 +533,17 @@ export default function DiffPanel({
 
   const selectTurn = (turnId: TurnId) => {
     if (!routeThreadRef) return;
+    useRightPanelStore.getState().activateSurface(routeThreadRef, "diff");
     useDiffPanelStore.getState().selectTurn(routeThreadRef, turnId);
   };
   const selectGitScope = (scope: "branch" | "unstaged") => {
     if (!routeThreadRef) return;
+    useRightPanelStore.getState().activateSurface(routeThreadRef, "diff");
     useDiffPanelStore.getState().selectGitScope(routeThreadRef, scope);
   };
   const selectBranchBaseRef = (baseRef: string | null) => {
     if (!routeThreadRef) return;
+    useRightPanelStore.getState().activateSurface(routeThreadRef, "diff");
     useDiffPanelStore.getState().selectBranchBaseRef(routeThreadRef, baseRef);
   };
 
