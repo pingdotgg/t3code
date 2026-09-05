@@ -1,6 +1,7 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { normalizePairingCode } from "@t3tools/shared/remote";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Linking, Platform, ScrollView, View } from "react-native";
@@ -78,7 +79,10 @@ export function ConnectionsNewRouteScreen({
   }, []);
 
   const handleCodeChange = useCallback((value: string) => {
-    setCodeInput(value);
+    // Only what the user types is repaired. A scanned or deep-linked code is
+    // written straight to state and never reaches this handler, which matters
+    // because those can carry a hosted token from a different alphabet.
+    setCodeInput(normalizePairingCode(value));
   }, []);
 
   const openScanner = useCallback(async () => {

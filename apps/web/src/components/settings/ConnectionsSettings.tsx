@@ -104,7 +104,11 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "..
 import { AnimatedHeight } from "../AnimatedHeight";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Textarea } from "../ui/textarea";
-import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "../../pairingUrl";
+import {
+  getPairingTokenFromUrl,
+  normalizePairingCode,
+  setPairingTokenOnUrl,
+} from "../../pairingUrl";
 import { readHostedPairingRequest } from "../../hostedPairing";
 import {
   createServerPairingCredential,
@@ -2518,7 +2522,9 @@ export function ConnectionsSettings() {
           <span className="mb-1.5 block text-xs font-medium text-foreground">Pairing code</span>
           <Input
             value={savedBackendPairingCode}
-            onChange={(event) => setSavedBackendPairingCode(event.target.value)}
+            onChange={(event) =>
+              setSavedBackendPairingCode(normalizePairingCode(event.target.value))
+            }
             placeholder="PAIRCODE"
             disabled={isAddingSavedBackend}
             spellCheck={false}
