@@ -2,6 +2,7 @@ import { assert, it, vi } from "@effect/vitest";
 import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
+  GitCommandError,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -17,6 +18,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -68,6 +70,7 @@ const adapter = {
 
 interface HarnessOptions {
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
+  readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
   readonly runSetup?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"];
   readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
@@ -119,7 +122,9 @@ function makeHarness(options: HarnessOptions = {}) {
     Layer.mock(GitWorkflow.GitWorkflowService)({
       createWorktree,
       renameBranch,
-      fetchRemote: () => Effect.void,
+      fetchRemote: options.fetchRemote ?? (() => Effect.void),
+      remoteExists: () => Effect.succeed(true),
+      remoteBranchExists: () => Effect.succeed(true),
       removeWorktree: () => Effect.void,
       resolveRemoteTrackingCommit: () =>
         Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" }),
@@ -1032,6 +1037,55 @@ it.effect("renames a temporary branch on an existing worktree to a generated nam
     }).pipe(Effect.provide(harness.layer));
   }),
 );
+
+it.effect("shows the fetch diagnosis when preparing a worktree from origin fails", () => {
+  const detail =
+    "Git could not authenticate with the remote. Check Git credentials or SSH access on the server, then retry.";
+  const harness = makeHarness({
+    fetchRemote: () =>
+      Effect.fail(
+        new GitCommandError({
+          operation: "GitVcsDriver.fetchRemote",
+          command: "git",
+          cwd: project.workspaceRoot,
+          detail,
+          exitCode: 128,
+        }),
+      ),
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:launch:fetch-failure",
+        thread: "thread:launch:fetch-failure",
+        message: "Start from origin",
+        workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
+      }),
+    );
+    yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+      Stream.filter(
+        (stored) => stored.event.type === "run.updated" && stored.event.payload.status === "failed",
+      ),
+      Stream.runHead,
+    );
+    const projection = yield* threads.getThreadProjection(launched.threadId);
+    assert.equal(projection.messages[0]?.text, "Start from origin");
+    assert.equal(projection.runs[0]?.status, "failed");
+    assert.equal(projection.thread.worktreePath, null);
+    assert.equal(
+      projection.turnItems.find((item) => item.type === "command_execution")?.status,
+      "failed",
+    );
+    assert.include(
+      projection.turnItems.find((item) => item.type === "error")?.failure.message ?? "",
+      detail,
+    );
+    assert.equal(harness.createWorktree.mock.calls.length, 0);
+    assert.equal(harness.runSetup.mock.calls.length, 0);
+  }).pipe(Effect.provide(harness.layer));
+});
 
 for (const failurePoint of ["worktree", "setup"] as const) {
   it.effect(

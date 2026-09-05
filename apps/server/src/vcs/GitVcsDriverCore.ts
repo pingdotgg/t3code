@@ -448,6 +448,44 @@ function isMissingWorktreeStderr(stderr: string): boolean {
   );
 }
 
+// Fetch stderr can contain remote credentials. Only fixed diagnoses may enter
+// persisted errors; unrecognized output keeps the generic failure message.
+function fetchFailureDetail(stderr: string): string | undefined {
+  const normalized = stderr.toLowerCase();
+  if (
+    normalized.includes("authentication failed") ||
+    normalized.includes("permission denied (publickey") ||
+    normalized.includes("could not read username") ||
+    normalized.includes("could not read password") ||
+    normalized.includes("terminal prompts disabled")
+  ) {
+    return "Git could not authenticate with the remote. Check Git credentials or SSH access on the server, then retry.";
+  }
+  if (
+    normalized.includes("could not resolve host") ||
+    normalized.includes("could not resolve hostname") ||
+    normalized.includes("failed to connect") ||
+    normalized.includes("connection timed out") ||
+    normalized.includes("connection refused") ||
+    normalized.includes("network is unreachable")
+  ) {
+    return "Git could not reach the remote. Check the server's network connection and remote host, then retry.";
+  }
+  if (
+    normalized.includes("repository not found") ||
+    normalized.includes("does not appear to be a git repository")
+  ) {
+    return "Git could not access the remote repository. Check the remote URL and repository permissions on the server.";
+  }
+  if (
+    normalized.includes("cannot lock ref") ||
+    (normalized.includes("unable to create") && normalized.includes(".lock"))
+  ) {
+    return "Git could not update a local reference. Another Git operation or a stale lock may be blocking the fetch; check the repository on the server, then retry.";
+  }
+  return undefined;
+}
+
 interface Trace2Monitor {
   readonly env: NodeJS.ProcessEnv;
   readonly flush: Effect.Effect<void, never>;
@@ -3015,15 +3053,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchRemote: GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"] = Effect.fn("fetchRemote")(
     function* (input) {
-      yield* executeGit(
-        "GitVcsDriver.fetchRemote",
-        input.cwd,
-        ["fetch", "--quiet", input.remoteName],
-        {
-          env: STATUS_UPSTREAM_REFRESH_ENV,
-          fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
-        },
-      );
+      const operation = "GitVcsDriver.fetchRemote";
+      const args = ["fetch", "--quiet", input.remoteName];
+      const result = yield* executeGitWithStableDiagnostics(operation, input.cwd, args, {
+        env: STATUS_UPSTREAM_REFRESH_ENV,
+        allowNonZeroExit: true,
+      });
+      if (result.exitCode !== 0) {
+        return yield* new GitCommandError({
+          ...gitCommandContext({ operation, cwd: input.cwd, args }),
+          detail: fetchFailureDetail(result.stderr) ?? `git fetch ${input.remoteName} failed`,
+          ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+          stdoutLength: result.stdout.length,
+          stderrLength: result.stderr.length,
+        });
+      }
     },
   );
 
