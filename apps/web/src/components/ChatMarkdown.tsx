@@ -448,9 +448,12 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   protocols: {
     ...defaultSchema.protocols,
     href: [...(defaultSchema.protocols?.href ?? []), "file", "t3-citation"],
-    src: [...(defaultSchema.protocols?.src ?? []), "file"],
+    src: [...(defaultSchema.protocols?.src ?? []), "file", "data"],
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
+
+/** Inline image payloads are safe on both href and src; an img never runs scripts. */
+const INLINE_DATA_IMAGE_PATTERN = /^data:image\//i;
 
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGfm,
@@ -2275,7 +2278,7 @@ function useChatMarkdownState({
   }, [inlineCodeFileLinkMetaByText, markdownFileLinkMetaByHref]);
   const markdownUrlTransform = useCallback((href: string) => {
     if (parseAssistantCitationHref(href)) return href;
-    if (isWindowsDrivePathHref(href)) return href;
+    if (isWindowsDrivePathHref(href) || INLINE_DATA_IMAGE_PATTERN.test(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
   // Re-emit highlighted content as markdown so copying out of the rendered
