@@ -1,15 +1,15 @@
 import * as Schema from "effect/Schema";
 import type * as SchemaIssue from "effect/SchemaIssue";
 
-export const CodexAppServerRequestOperation = Schema.Literals([
+const CodexAppServerRequestOperation = Schema.Literals([
   "decode-payload",
   "encode-payload",
   "handle-request",
   "receive-response",
 ]);
-export type CodexAppServerRequestOperation = typeof CodexAppServerRequestOperation.Type;
+type CodexAppServerRequestOperation = typeof CodexAppServerRequestOperation.Type;
 
-export const CodexAppServerSchemaIssueKind = Schema.Literals([
+const CodexAppServerSchemaIssueKind = Schema.Literals([
   "Filter",
   "Encoding",
   "Pointer",
@@ -22,9 +22,9 @@ export const CodexAppServerSchemaIssueKind = Schema.Literals([
   "Forbidden",
   "OneOf",
 ]);
-export type CodexAppServerSchemaIssueKind = typeof CodexAppServerSchemaIssueKind.Type;
+type CodexAppServerSchemaIssueKind = typeof CodexAppServerSchemaIssueKind.Type;
 
-export interface CodexAppServerSchemaIssueDiagnostics {
+interface CodexAppServerSchemaIssueDiagnostics {
   readonly issueCount: number;
   readonly issueKinds: ReadonlyArray<CodexAppServerSchemaIssueKind>;
   readonly maximumPathDepth: number;
@@ -62,7 +62,7 @@ const schemaIssueDiagnostics = (root: SchemaIssue.Issue): CodexAppServerSchemaIs
   };
 };
 
-export const CodexAppServerPayloadKind = Schema.Literals([
+const CodexAppServerPayloadKind = Schema.Literals([
   "null",
   "array",
   "string",
@@ -74,7 +74,7 @@ export const CodexAppServerPayloadKind = Schema.Literals([
   "function",
   "undefined",
 ]);
-export type CodexAppServerPayloadKind = typeof CodexAppServerPayloadKind.Type;
+type CodexAppServerPayloadKind = typeof CodexAppServerPayloadKind.Type;
 
 const payloadKind = (payload: unknown): CodexAppServerPayloadKind => {
   if (payload === null) return "null";
@@ -84,8 +84,7 @@ const payloadKind = (payload: unknown): CodexAppServerPayloadKind => {
 
 const protocolMessageFields = ["id", "method", "params", "result", "error"] as const;
 
-export const CodexAppServerProtocolMessageField = Schema.Literals(protocolMessageFields);
-export type CodexAppServerProtocolMessageField = typeof CodexAppServerProtocolMessageField.Type;
+const CodexAppServerProtocolMessageField = Schema.Literals(protocolMessageFields);
 
 export interface CodexAppServerRequestDiagnostics {
   readonly method?: string;
