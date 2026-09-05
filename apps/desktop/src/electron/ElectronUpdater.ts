@@ -54,7 +54,6 @@ export const ElectronUpdaterError = Schema.Union([
   ElectronUpdaterQuitAndInstallError,
 ]);
 export type ElectronUpdaterError = typeof ElectronUpdaterError.Type;
-export const isElectronUpdaterError = Schema.is(ElectronUpdaterError);
 
 export class ElectronUpdater extends Context.Service<
   ElectronUpdater,

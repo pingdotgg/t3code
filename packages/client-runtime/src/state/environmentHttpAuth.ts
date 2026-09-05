@@ -1,10 +1,18 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { FetchHttpClient, type HttpMethod } from "effect/unstable/http";
+import * as Result from "effect/Result";
+import { FetchHttpClient, type HttpClient, type HttpMethod } from "effect/unstable/http";
 
-import type { PreparedHttpAuthorization } from "../connection/model.ts";
+import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
+import type { PreparedConnection, PreparedHttpAuthorization } from "../connection/model.ts";
 import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
-import { RemoteEnvironmentAuthFetchError } from "../rpc/http.ts";
+import {
+  executeEnvironmentHttpRequest,
+  makeEnvironmentHttpApiClient,
+  RemoteEnvironmentAuthFetchError,
+  RemoteEnvironmentAuthTimeoutError,
+  type RemoteEnvironmentRequestError,
+} from "../rpc/http.ts";
 
 export interface EnvironmentHttpAuthHeaders {
   readonly authorization?: string;
@@ -28,8 +36,7 @@ export const withEnvironmentCredentials = <A, E, R>(
     : request;
 
 /**
- * Build the authorization headers for an authenticated environment HTTP
- * request, matching the credential the connection was prepared with:
+ * Build request-bound headers from the current environment credential:
  * - primary/local connections carry no credential,
  * - bearer connections send a static `Bearer` token,
  * - relay connections send a `DPoP` access token with a freshly signed proof
@@ -71,3 +78,106 @@ export const buildEnvironmentAuthHeaders = (
       );
     return { authorization: `DPoP ${authorization.accessToken}`, dpop: proof };
   });
+
+/**
+ * Resolve relay credentials at request time without replacing the live socket.
+ * A rejected credential gets one refresh and retry, with a new request-bound
+ * proof. Cookie and bearer requests keep their existing authentication behavior.
+ */
+export const executeAuthenticatedEnvironmentHttpRequest = Effect.fn(
+  "clientRuntime.state.executeAuthenticatedEnvironmentHttpRequest",
+)(function* <A, E, R>(input: {
+  readonly prepared: PreparedConnection;
+  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
+  readonly method: HttpMethod.HttpMethod;
+  readonly url: (httpBaseUrl: string) => string;
+  readonly timeoutMs: number;
+  readonly request: (input: {
+    readonly client: Effect.Success<ReturnType<typeof makeEnvironmentHttpApiClient>>;
+    readonly headers: EnvironmentHttpAuthHeaders;
+  }) => Effect.Effect<A, E, R>;
+  /** Some endpoints report rejected credentials in a successful response. */
+  readonly isUnauthorizedResponse?: (response: NoInfer<A>) => boolean;
+}): Effect.fn.Return<A, RemoteEnvironmentRequestError, HttpClient.HttpClient | R> {
+  let httpBaseUrl = input.prepared.httpBaseUrl;
+  return yield* Effect.gen(function* () {
+    let rejectedAccessToken: string | undefined;
+    for (;;) {
+      let authorization = input.prepared.httpAuthorization;
+      if (authorization?._tag === "Dpop") {
+        const remote = input.remoteAuthorization;
+        if (remote === undefined || Option.isNone(remote)) {
+          return yield* new RemoteEnvironmentAuthFetchError({
+            message: "No relay authorization service is available for the environment request.",
+            cause: input.prepared.target._tag,
+          });
+        }
+        const current = yield* remote.value
+          .authorizeDpopHttp({
+            expectedEnvironmentId: input.prepared.environmentId,
+            ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new RemoteEnvironmentAuthFetchError({
+                  message: "Could not authorize the environment request.",
+                  cause,
+                }),
+            ),
+          );
+        httpBaseUrl = current.httpBaseUrl;
+        authorization = current.httpAuthorization;
+      }
+
+      const requestUrl = input.url(httpBaseUrl);
+      const client = yield* makeEnvironmentHttpApiClient(httpBaseUrl);
+      const headers = yield* buildEnvironmentAuthHeaders(
+        authorization,
+        input.method,
+        requestUrl,
+        input.signer,
+      );
+      const result = yield* executeEnvironmentHttpRequest(
+        requestUrl,
+        input.timeoutMs,
+        withEnvironmentCredentials(authorization, input.request({ client, headers })),
+      ).pipe(Effect.result);
+
+      if (Result.isFailure(result)) {
+        if (
+          authorization?._tag === "Dpop" &&
+          rejectedAccessToken === undefined &&
+          result.failure._tag === "EnvironmentAuthInvalidError" &&
+          result.failure.reason === "invalid_credential"
+        ) {
+          rejectedAccessToken = authorization.accessToken;
+          continue;
+        }
+        return yield* result.failure;
+      }
+
+      if (
+        authorization?._tag === "Dpop" &&
+        input.isUnauthorizedResponse?.(result.success) === true
+      ) {
+        if (rejectedAccessToken === undefined) {
+          rejectedAccessToken = authorization.accessToken;
+          continue;
+        }
+        return yield* new RemoteEnvironmentAuthFetchError({
+          message: "The environment rejected the renewed session authorization.",
+          cause: result.success,
+        });
+      }
+      return result.success;
+    }
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: input.timeoutMs,
+      orElse: () =>
+        Effect.fail(new RemoteEnvironmentAuthTimeoutError(input.url(httpBaseUrl), input.timeoutMs)),
+    }),
+  );
+});

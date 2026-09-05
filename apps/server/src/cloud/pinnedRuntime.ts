@@ -2,6 +2,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
@@ -152,14 +153,35 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
 
   return yield* Effect.gen(function* () {
     const installStep = "installing the pinned t3 runtime (this can take a few minutes)";
+    const installArgs = [
+      "install",
+      "--prefix",
+      stagingDir,
+      "--no-fund",
+      "--no-audit",
+      `t3@${input.version}`,
+    ];
     yield* runner
       .run({
         command: "npm",
-        args: ["install", "--prefix", stagingDir, "--no-fund", "--no-audit", `t3@${input.version}`],
+        args: installArgs,
         // Native dependencies may compile from source on slower machines.
         timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
       })
       .pipe(
+        Effect.catchTags({
+          ProcessSpawnError: (error) =>
+            error.cause instanceof PlatformError.PlatformError &&
+            error.cause.reason._tag === "NotFound"
+              ? // pnpm-managed Node installations do not include npm. Keep npm
+                // installation semantics for the pinned runtime and native builds.
+                runner.run({
+                  command: "pnpm",
+                  args: ["--package=npm@11", "dlx", "npm", ...installArgs],
+                  timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
+                })
+              : Effect.fail(error),
+        }),
         Effect.mapError((cause) => new PinnedRuntimeInstallError({ step: installStep, cause })),
         Effect.filterOrFail(
           (result) => result.code === 0,

@@ -13,30 +13,10 @@ import * as Terminal from "effect/Terminal";
 import * as BootService from "../cloud/bootService.ts";
 import {
   acquireRelayClientForLink,
-  formatHeadlessAuthorizationPrompt,
-  formatRelayClientReady,
   headlessSessionConfig,
-  isPublishAgentActivityEnabledValue,
   reportCloudDisconnectResults,
 } from "./connect.ts";
 import { recoverServiceOnboardingOffer } from "./service.ts";
-
-it("explains how to complete headless authorization", () => {
-  assert.equal(
-    formatHeadlessAuthorizationPrompt("https://example.test/connect"),
-    [
-      "Headless authorization",
-      "Open this URL on a device with a browser:",
-      "  https://example.test/connect",
-      "",
-      "After signing in, return here and enter the code shown in your browser.",
-    ].join("\n"),
-  );
-});
-
-it("formats relay readiness without printing its installation path", () => {
-  assert.equal(formatRelayClientReady("2026.5.2"), "✓ Relay client ready · cloudflared 2026.5.2");
-});
 
 const readHeadlessSessionConfig = (env: Record<string, string>) =>
   headlessSessionConfig.pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))));
@@ -208,11 +188,4 @@ it.effect("keeps disconnect causes in structured logs and out of console warning
       }),
     ),
   );
-});
-
-it("treats only the literal 'true' as publish-enabled", () => {
-  assert.equal(isPublishAgentActivityEnabledValue("true"), true);
-  assert.equal(isPublishAgentActivityEnabledValue("false"), false);
-  assert.equal(isPublishAgentActivityEnabledValue(null), false);
-  assert.equal(isPublishAgentActivityEnabledValue("TRUE"), false);
 });

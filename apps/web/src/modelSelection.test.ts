@@ -586,6 +586,24 @@ describe("instance-scoped model selection", () => {
           modelSelectionByProvider: {
             [instanceId]: createModelSelection(instanceId, "gpt-current"),
           },
+        },
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection: createModelSelection(instanceId, "gpt-missing"),
+        projectModelSelection: null,
+        settings: settingsWithProviderInstances(),
+        preserveThreadModelSelection: false,
+      }).selectedModel,
+    ).toBe("gpt-current");
+
+    expect(
+      deriveEffectiveComposerModelState({
+        draft: {
+          activeProvider: instanceId,
+          modelSelectionByProvider: {
+            [instanceId]: createModelSelection(instanceId, "gpt-current"),
+          },
           modelSelectionExplicit: true,
         },
         providers,

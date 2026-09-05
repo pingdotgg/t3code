@@ -421,7 +421,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
           .pipe(wrapInstallFailure("write_failed", "Could not make the relay client executable."));
       }
       yield* report("validating");
-      yield* runCommand(executablePath, ["--version"]).pipe(
+      yield* runCommand(executablePath, ["version"]).pipe(
         wrapInstallFailure("validation_failed", "The downloaded relay client binary did not run."),
       );
 
