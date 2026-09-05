@@ -322,7 +322,7 @@ export const make = Effect.gen(function* () {
   const resolveProjects = Effect.fn("UsageService.resolveProjects")(function* () {
     const projects = yield* projectRepository
       .listAll()
-      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+      .pipe(Effect.catch(() => Effect.succeed(null)));
     if (projects === null) return undefined;
     const projectRoots = yield* Effect.forEach(
       projects,
@@ -758,7 +758,7 @@ export const make = Effect.gen(function* () {
 
     const projects = yield* projectRepository
       .listAll()
-      .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+      .pipe(Effect.catch(() => Effect.succeed<readonly never[]>([])));
     const worktreeClaims = new Map<string, { ref: ThreadRef; shared: boolean }>();
     for (const project of projects) {
       const threads = yield* threadRepository
