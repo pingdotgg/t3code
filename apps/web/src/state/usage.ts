@@ -85,7 +85,8 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
 export interface UsageView {
   readonly merged: MergedUsage;
   readonly environments: readonly EnvironmentUsageStatus[];
-  /** True until at least one environment has answered. */
+  readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
+  /** True until at least one selected environment has answered. */
   readonly isPending: boolean;
   /**
    * True while environments that have not failed are still answering. Failed
@@ -109,12 +110,31 @@ export function filterUsageEnvironmentsForProject<
   );
 }
 
+function usageViewScopeKey(
+  rangeKey: string,
+  projectFilter: string | null | undefined,
+  selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null,
+): string {
+  return JSON.stringify({
+    rangeKey,
+    projectScope:
+      projectFilter === undefined
+        ? ["all"]
+        : projectFilter === null
+          ? ["outside"]
+          : ["project", projectFilter],
+    environmentScope:
+      selectedEnvironmentIds === null ? ["all"] : [...selectedEnvironmentIds].toSorted(),
+  });
+}
+
 export function useUsage(
   input: UsageSummaryInput,
   /** A namespaced project key, `null` for outside-projects buckets, `undefined` for no filter. */
   projectFilter?: string | null,
   /** Refresh the deferred thread query only while its table is mounted. */
   refreshThreads = false,
+  selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
 ): UsageView {
   const rangeKey = useMemo(
     () =>
@@ -136,15 +156,28 @@ export function useUsage(
     ],
   );
   const windowKey = rangeKey;
+  const viewKey = useMemo(
+    () => usageViewScopeKey(rangeKey, projectFilter, selectedEnvironmentIds),
+    [projectFilter, rangeKey, selectedEnvironmentIds],
+  );
   const atom = usageByWindowAtom(windowKey);
   const currentEnvironments = useAtomValue(atom);
   const settledStatuses = useRef<SettledUsageStatuses<EnvironmentUsageStatus> | null>(null);
   const retained = retainUsageStatuses(rangeKey, currentEnvironments, settledStatuses.current);
   settledStatuses.current = retained.settled;
   const environments = retained.visible;
+  const selectedEnvironments = useMemo(
+    () =>
+      selectedEnvironmentIds === null
+        ? environments
+        : environments.filter((environment) =>
+            selectedEnvironmentIds.has(environment.environmentId),
+          ),
+    [environments, selectedEnvironmentIds],
+  );
   const answered = useMemo<readonly EnvironmentUsage[]>(
     () =>
-      environments.flatMap((environment) =>
+      selectedEnvironments.flatMap((environment) =>
         environment.summary === null
           ? []
           : [
@@ -155,7 +188,7 @@ export function useUsage(
               },
             ],
       ),
-    [environments],
+    [selectedEnvironments],
   );
   const merged = useMemo(
     () =>
@@ -174,35 +207,37 @@ export function useUsage(
     reportFailure: false,
   });
   const [manualRefreshState, setManualRefreshState] = useState<UsageRefreshState>({
-    windowKey: rangeKey,
+    windowKey: viewKey,
     requestId: 0,
     refreshing: false,
     error: null,
   });
-  const currentWindowKey = useRef(rangeKey);
+  const currentViewKey = useRef(viewKey);
   const currentRefreshId = useRef(0);
-  const pendingRefreshWindowKey = useRef(rangeKey);
+  const pendingRefreshViewKey = useRef(viewKey);
   useEffect(() => {
-    currentWindowKey.current = rangeKey;
-  }, [rangeKey]);
+    currentViewKey.current = viewKey;
+  }, [viewKey]);
   useEffect(() => {
     const nextState = refreshStateForWindowChange(
       manualRefreshState,
-      rangeKey,
-      pendingRefreshWindowKey.current,
+      viewKey,
+      pendingRefreshViewKey.current,
     );
     if (nextState === manualRefreshState) return;
     currentRefreshId.current = nextState.requestId;
-    pendingRefreshWindowKey.current = rangeKey;
+    pendingRefreshViewKey.current = viewKey;
     setManualRefreshState(nextState);
-  }, [manualRefreshState, rangeKey]);
+  }, [manualRefreshState, viewKey]);
 
   const refresh = useCallback(
     (requestedInput?: UsageSummaryInput) => {
-      const refreshEnvironments = usageRefreshTargets(environments);
+      const refreshEnvironments = usageRefreshTargets(
+        filterUsageEnvironmentsForProject(selectedEnvironments, projectFilter),
+      );
       if (refreshEnvironments.length === 0) return;
       const requestInput = requestedInput ?? (JSON.parse(rangeKey) as UsageSummaryInput);
-      const requestWindowKey =
+      const requestRangeKey =
         requestedInput === undefined
           ? rangeKey
           : JSON.stringify({
@@ -213,10 +248,15 @@ export function useUsage(
               sinceTime: requestInput.sinceTime,
               untilTime: requestInput.untilTime,
             });
-      const nextRefreshState = startUsageRefresh(currentRefreshId.current, requestWindowKey);
+      const requestViewKey = usageViewScopeKey(
+        requestRangeKey,
+        projectFilter,
+        selectedEnvironmentIds,
+      );
+      const nextRefreshState = startUsageRefresh(currentRefreshId.current, requestViewKey);
       const requestId = nextRefreshState.requestId;
       currentRefreshId.current = requestId;
-      pendingRefreshWindowKey.current = requestWindowKey;
+      pendingRefreshViewKey.current = requestViewKey;
       setManualRefreshState(nextRefreshState);
 
       void Promise.allSettled(
@@ -302,9 +342,9 @@ export function useUsage(
         })
         .then((results) => {
           const nextState = completeUsageRefresh(
-            currentWindowKey.current,
+            currentViewKey.current,
             currentRefreshId.current,
-            requestWindowKey,
+            requestViewKey,
             requestId,
             results.some((result) => result._tag === "Failure")
               ? "Refresh failed. Showing the last successful usage snapshot."
@@ -314,9 +354,9 @@ export function useUsage(
         })
         .catch(() => {
           const nextState = completeUsageRefresh(
-            currentWindowKey.current,
+            currentViewKey.current,
             currentRefreshId.current,
-            requestWindowKey,
+            requestViewKey,
             requestId,
             "Refresh failed. Showing the last successful usage snapshot.",
           );
@@ -324,17 +364,21 @@ export function useUsage(
         });
     },
     [
-      environments,
       merged.providerContributions,
       projectFilter,
       rangeKey,
       refreshThreads,
       refreshUsageRates,
       refreshUsageSummary,
+      selectedEnvironmentIds,
+      selectedEnvironments,
     ],
   );
 
-  const relevantEnvironments = filterUsageEnvironmentsForProject(environments, projectFilter);
+  const relevantEnvironments = filterUsageEnvironmentsForProject(
+    selectedEnvironments,
+    projectFilter,
+  );
   const answeredCount = relevantEnvironments.filter(
     (environment) => environment.summary !== null,
   ).length;
@@ -342,16 +386,19 @@ export function useUsage(
     (environment) => environment.summary === null && environment.error === null,
   ).length;
   const isRefreshing =
-    environments.some((environment) => environment.isPending && environment.summary !== null) ||
-    (manualRefreshState.windowKey === rangeKey && manualRefreshState.refreshing);
+    relevantEnvironments.some(
+      (environment) => environment.isPending && environment.summary !== null,
+    ) ||
+    (manualRefreshState.windowKey === viewKey && manualRefreshState.refreshing);
 
   return {
     merged,
     environments,
+    selectedEnvironments,
     isPending: answeredCount === 0 && stillReporting > 0,
     isPartial: answeredCount > 0 && stillReporting > 0,
     isRefreshing,
-    refreshError: manualRefreshState.windowKey === rangeKey ? manualRefreshState.error : null,
+    refreshError: manualRefreshState.windowKey === viewKey ? manualRefreshState.error : null,
     refresh,
   };
 }

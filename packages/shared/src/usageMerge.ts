@@ -302,7 +302,7 @@ function bucketTokens(bucket: UsageBucket): number {
   );
 }
 
-function isCompatibleContractVersion(version: number, expected: number): boolean {
+export function isCompatibleUsageContractVersion(version: number, expected: number): boolean {
   return version >= USAGE_MERGE_COMPATIBLE_SINCE && version <= expected;
 }
 
@@ -405,7 +405,10 @@ export function mergeUsage(
   const staleEnvironments: EnvironmentId[] = [];
   for (const environment of environments) {
     if (
-      isCompatibleContractVersion(environment.summary.contractVersion, expectedContractVersion) &&
+      isCompatibleUsageContractVersion(
+        environment.summary.contractVersion,
+        expectedContractVersion,
+      ) &&
       environment.summary.coverage !== undefined
     ) {
       current.push(environment);

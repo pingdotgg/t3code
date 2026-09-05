@@ -1,4 +1,5 @@
 import {
+  EnvironmentId,
   USAGE_CONTRACT_VERSION,
   UsageDay,
   type UsageSummary,
@@ -149,20 +150,82 @@ function deferred<T>() {
 function Harness({
   input,
   onView,
+  projectFilter,
+  selectedEnvironmentIds = null,
 }: {
   input: UsageSummaryInput;
   onView: (view: UsageView) => void;
+  projectFilter?: string | null;
+  selectedEnvironmentIds?: ReadonlySet<EnvironmentId> | null;
 }) {
-  onView(useUsage(input));
+  onView(useUsage(input, projectFilter, false, selectedEnvironmentIds));
   return null;
 }
 
-async function renderHarness(input: UsageSummaryInput, onView: (view: UsageView) => void) {
+async function renderHarness(
+  input: UsageSummaryInput,
+  onView: (view: UsageView) => void,
+  selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
+  projectFilter?: string | null,
+) {
   const document = installTestDom();
   const { createRoot } = await import("react-dom/client");
   const root = createRoot(document.createElement("div") as unknown as Element);
-  await act(() => root.render(createElement(Harness, { input, onView })));
+  await act(() =>
+    root.render(createElement(Harness, { input, onView, projectFilter, selectedEnvironmentIds })),
+  );
   return root;
+}
+
+function usageStatus(id: string, costUsd: number | null, hostId = id) {
+  return {
+    environmentId: EnvironmentId.make(id),
+    label: id,
+    isPending: costUsd === null,
+    error: null,
+    summary:
+      costUsd === null
+        ? null
+        : ({
+            ...SUMMARY,
+            buckets: [
+              {
+                day: WINDOW_A.sinceDay,
+                provider: "codex",
+                model: id,
+                totals: {
+                  uncachedInputTokens: 100,
+                  cachedInputTokens: 0,
+                  cacheCreationTokens: 0,
+                  outputTokens: 50,
+                  reasoningTokens: 0,
+                },
+                costUsd,
+                cacheSavingsUsd: 0,
+                costSource: "modelPriced",
+                records: 1,
+                unpricedRecords: 0,
+                sessions: 1,
+              },
+            ],
+            sources: [
+              {
+                fingerprint: {
+                  hostId,
+                  provider: "codex",
+                  resolvedHomePath: "/sessions",
+                  volumeId: hostId,
+                },
+                status: "ok",
+                scannedFiles: 1,
+                skippedFiles: 0,
+                malformedRecords: 0,
+                distinctSessions: 1,
+                message: null,
+              },
+            ],
+          } satisfies UsageSummary),
+  };
 }
 
 describe("web useUsage boundary refresh", () => {
@@ -353,6 +416,156 @@ describe("web useUsage boundary refresh", () => {
       });
       expect(view.isRefreshing).toBe(false);
       expect(view.refreshError).toBe("Refresh failed. Showing the last successful usage snapshot.");
+    } finally {
+      await act(() => root.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("web usage environment selection", () => {
+  beforeEach(() => {
+    mocks.statuses = [usageStatus("a", 10), usageStatus("b", 20), usageStatus("slow", null)];
+    mocks.refreshUsageSummary.mockReset();
+    mocks.refreshUsageRates.mockReset();
+    mocks.refreshUsageRates.mockResolvedValue({ _tag: "Success" });
+    mocks.refreshAtom.mockReset();
+    mocks.getAtom.mockReset();
+    mocks.getAtom.mockReturnValue({ waiting: false });
+    mocks.usageSummary.mockClear();
+    mocks.executeAtomQuery.mockReset();
+    mocks.executeAtomQuery.mockResolvedValue({ _tag: "Success" });
+  });
+
+  it("merges only selected environments and refreshes that same selection", async () => {
+    let view!: UsageView;
+    const root = await renderHarness(WINDOW_A, (nextView) => {
+      view = nextView;
+    });
+
+    try {
+      expect(view.merged.costUsd).toBe(30);
+      expect(view.isPartial).toBe(true);
+
+      await act(() =>
+        root.render(
+          createElement(Harness, {
+            input: WINDOW_A,
+            selectedEnvironmentIds: new Set([EnvironmentId.make("b")]),
+            onView: (nextView) => {
+              view = nextView;
+            },
+          }),
+        ),
+      );
+      expect(view.merged.costUsd).toBe(20);
+      expect(view.selectedEnvironments.map((environment) => environment.environmentId)).toEqual([
+        "b",
+      ]);
+      expect(view.isPartial).toBe(false);
+
+      await act(async () => {
+        view.refresh();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(mocks.refreshUsageRates).toHaveBeenCalledOnce();
+      expect(mocks.refreshUsageRates.mock.calls[0]?.[0]).toMatchObject({ environmentId: "b" });
+      expect(mocks.refreshUsageSummary).toHaveBeenCalledOnce();
+      expect(mocks.refreshUsageSummary.mock.calls[0]?.[0]).toMatchObject({ environmentId: "b" });
+    } finally {
+      await act(() => root.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("deduplicates within the selection after excluding the original owner", async () => {
+    mocks.statuses = [usageStatus("a", 10, "shared"), usageStatus("b", 20, "shared")];
+    let view!: UsageView;
+    const root = await renderHarness(WINDOW_A, (nextView) => {
+      view = nextView;
+    });
+
+    try {
+      expect(view.merged.costUsd).toBe(10);
+      await act(() =>
+        root.render(
+          createElement(Harness, {
+            input: WINDOW_A,
+            selectedEnvironmentIds: new Set([EnvironmentId.make("b")]),
+            onView: (nextView) => {
+              view = nextView;
+            },
+          }),
+        ),
+      );
+      expect(view.merged.costUsd).toBe(20);
+      expect(view.merged.duplicateSources).toEqual([]);
+    } finally {
+      await act(() => root.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("ignores background refreshes outside the selected project environment", async () => {
+    mocks.statuses = [usageStatus("a", 10), { ...usageStatus("b", 20), isPending: true }];
+    let view!: UsageView;
+    const root = await renderHarness(
+      WINDOW_A,
+      (nextView) => {
+        view = nextView;
+      },
+      null,
+      JSON.stringify([EnvironmentId.make("a"), "id:project-a"]),
+    );
+
+    try {
+      expect(view.isRefreshing).toBe(false);
+    } finally {
+      await act(() => root.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("discards an old refresh failure after the environment selection changes", async () => {
+    const pending = deferred<{ _tag: "Success" | "Failure" }>();
+    mocks.statuses = [usageStatus("a", 10), usageStatus("b", 20)];
+    mocks.refreshUsageSummary.mockReturnValue(pending.promise);
+    let view!: UsageView;
+    const selectedA = new Set([EnvironmentId.make("a")]);
+    const root = await renderHarness(
+      WINDOW_A,
+      (nextView) => {
+        view = nextView;
+      },
+      selectedA,
+    );
+
+    try {
+      await act(() => view.refresh());
+      expect(view.isRefreshing).toBe(true);
+
+      await act(() =>
+        root.render(
+          createElement(Harness, {
+            input: WINDOW_A,
+            selectedEnvironmentIds: new Set([EnvironmentId.make("b")]),
+            onView: (nextView) => {
+              view = nextView;
+            },
+          }),
+        ),
+      );
+      expect(view.isRefreshing).toBe(false);
+      expect(view.refreshError).toBeNull();
+
+      await act(async () => {
+        pending.resolve({ _tag: "Failure" });
+        await pending.promise;
+      });
+      expect(view.isRefreshing).toBe(false);
+      expect(view.refreshError).toBeNull();
+      expect(view.merged.costUsd).toBe(20);
     } finally {
       await act(() => root.unmount());
       vi.unstubAllGlobals();

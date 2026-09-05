@@ -1,4 +1,4 @@
-import { ProjectId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, UsageDay, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import type { ComponentProps, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -63,6 +63,14 @@ vi.mock("../ui/input", () => ({
     size?: string;
     variant?: string;
   }) => <input data-size={size} data-variant={variant} {...props} />,
+}));
+vi.mock("../ui/menu", () => ({
+  Menu: "div",
+  MenuCheckboxItem: "div",
+  MenuItem: "button",
+  MenuPopup: "div",
+  MenuSeparator: "hr",
+  MenuTrigger: "button",
 }));
 vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));
 vi.mock("../ui/select", () => ({
@@ -161,6 +169,31 @@ const projectTotals = Object.freeze([
   },
 ]);
 
+const environments = [
+  {
+    environmentId: EnvironmentId.make("test-environment"),
+    label: "Test environment",
+    isPending: false,
+    error: null,
+    summary: {
+      contractVersion: USAGE_CONTRACT_VERSION,
+      readAt: "2026-08-11T12:37:00.000Z",
+      sinceDay: UsageDay.make("2026-08-10"),
+      untilDay: UsageDay.make("2026-08-11"),
+      timeZone: "UTC",
+      buckets: [],
+      sources: [],
+      pricing: { status: "fresh" as const, source: "test", fetchedAt: null, knownModels: 1 },
+      coverage: {
+        availableThroughDay: UsageDay.make("2026-08-11"),
+        availableThroughTime: null,
+        generatedAt: "2026-08-11T12:37:00.000Z",
+      },
+      scanDurationMs: 1,
+    },
+  },
+];
+
 beforeEach(() => {
   testState.metric = "cost";
   testState.breakdown = "time";
@@ -191,7 +224,8 @@ beforeEach(() => {
         },
       ],
     },
-    environments: [],
+    environments,
+    selectedEnvironments: environments,
     isPending: false,
     isPartial: false,
     isRefreshing: false,
@@ -215,7 +249,7 @@ describe("UsagePage hourly breakdown", () => {
 
     expect(markup.match(/aria-label="From day"/g)).toHaveLength(2);
     expect(markup.match(/aria-label="To day"/g)).toHaveLength(2);
-    expect(testState.useUsage).toHaveBeenLastCalledWith(expect.anything(), undefined, false);
+    expect(testState.useUsage).toHaveBeenLastCalledWith(expect.anything(), undefined, false, null);
     expect(markup.match(/data-size="segmented"/g)).toHaveLength(4);
     expect(markup.match(/data-variant="segmented"/g)).toHaveLength(4);
   });
@@ -362,7 +396,32 @@ describe("UsagePage thread breakdown", () => {
       expect.anything(),
       "id:project-expensive",
       true,
+      null,
     );
+  });
+
+  it("counts failed thread sources only within the selected environments", () => {
+    testState.breakdown = "thread";
+    const usage = testState.useUsage();
+    const selected = environments[0]!;
+    const unselectedFailed = {
+      ...selected,
+      environmentId: EnvironmentId.make("unselected-failed"),
+      label: "Unselected failed",
+      error: "Usage failed",
+      summary: null,
+    };
+    testState.useUsage.mockReturnValue({
+      ...usage,
+      environments: [selected, unselectedFailed],
+      selectedEnvironments: [selected],
+    });
+
+    renderToStaticMarkup(<UsagePage />);
+
+    expect(testState.usageThreadTable.mock.calls[0]?.[0]).toMatchObject({
+      summaryFailedEnvironments: 0,
+    });
   });
 });
 
@@ -427,7 +486,8 @@ describe("UsagePage model breakdown", () => {
         availableThroughDay: "2026-08-10",
         lastUpdatedAt: "2026-08-11T12:00:00.000Z",
       },
-      environments: [],
+      environments,
+      selectedEnvironments: environments,
       isPending: false,
       isPartial: false,
       isRefreshing: false,
