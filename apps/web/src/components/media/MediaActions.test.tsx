@@ -8,6 +8,14 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { createElement, isValidElement, type ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 const state = vi.hoisted(() => ({
   sessions: new Map<string, Pick<AuthSessionState, "authenticated" | "scopes">>(),
   mint: vi.fn(),
@@ -211,8 +219,8 @@ it.each(["save", "copy-image", "open-file"])(
   "rechecks access when %s is selected from an already open native menu",
   async (action) => {
     state.sessions.set(environmentId, granted);
-    const choice = Promise.withResolvers<string>();
-    const completed = Promise.withResolvers<void>();
+    const choice = deferred<string>();
+    const completed = deferred<void>();
     state.showMenu.mockReturnValue(choice.promise);
     state.menuFinished = () => completed.resolve();
     state.openFile.mockImplementation(() => completed.resolve());
