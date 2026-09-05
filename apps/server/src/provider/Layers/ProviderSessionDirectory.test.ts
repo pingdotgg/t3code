@@ -4,7 +4,12 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+  type AgentSessionImportSource,
+} from "@t3tools/contracts";
 import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -18,6 +23,18 @@ import {
 import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
+
+const importedSource = {
+  provider: "codex",
+  providerInstanceId: ProviderInstanceId.make("codex"),
+  providerSessionId: "provider-session",
+  filePath: "/tmp/provider-session.jsonl",
+  size: 100,
+  mtimeMs: 1_000,
+  device: 1,
+  inode: 123,
+  birthtimeMs: 500,
+} satisfies AgentSessionImportSource;
 
 function makeDirectoryLayer<E, R>(persistenceLayer: Layer.Layer<SqlClient.SqlClient, E, R>) {
   const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(Layer.provide(persistenceLayer));
@@ -158,6 +175,121 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
         status: "running",
         resumeCursor: { threadId: "active-provider-thread" },
       });
+    }),
+  );
+
+  it.effect("records source files without replacing the current provider session", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const source = { ...importedSource, providerSessionId: "record-source" };
+      const threadId = ThreadId.make(
+        `import:${source.providerInstanceId}:${source.providerSessionId}`,
+      );
+      const runtimePayload = { cwd: "/tmp/project", activeTurnId: "active-turn" };
+      yield* directory.upsert({
+        threadId,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: ProviderInstanceId.make("claude-current"),
+        status: "running",
+        resumeCursor: { resume: "current-native-session" },
+        runtimePayload,
+      });
+      const before = Option.getOrThrow(yield* repository.getByThreadId({ threadId }));
+
+      yield* directory.recordImportedTranscript({ threadId, source });
+      const replacement = { ...source, size: 200, mtimeMs: 2_000 };
+      yield* directory.recordImportedTranscript({ threadId, source: replacement });
+      const secondFile = { ...source, filePath: "/tmp/provider-session-copy.jsonl" };
+      yield* directory.recordImportedTranscript({ threadId, source: secondFile });
+
+      expect(Option.getOrThrow(yield* repository.getByThreadId({ threadId }))).toEqual({
+        ...before,
+        runtimePayload: { ...runtimePayload, importedTranscripts: [replacement, secondFile] },
+      });
+    }),
+  );
+
+  it.effect("does not create a binding when recording an imported transcript", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = ThreadId.make("import:codex:missing-source-binding");
+
+      yield* directory.recordImportedTranscript({ threadId, source: importedSource });
+
+      expect(Option.isNone(yield* directory.getBinding(threadId))).toBe(true);
+    }),
+  );
+
+  it.effect("keeps newly recorded sources when a runtime write uses a stale payload", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const firstSource = { ...importedSource, providerSessionId: "stale-source" };
+      const threadId = ThreadId.make(
+        `import:${firstSource.providerInstanceId}:${firstSource.providerSessionId}`,
+      );
+      yield* directory.upsert({
+        threadId,
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        status: "stopped",
+        resumeCursor: { threadId: "original-native-session" },
+        runtimePayload: { cwd: "/tmp/stale-source-project" },
+      });
+      yield* directory.recordImportedTranscript({ threadId, source: firstSource });
+      const stale = Option.getOrThrow(yield* repository.getByThreadId({ threadId }));
+      const secondSource = { ...firstSource, filePath: "/tmp/stale-source-copy.jsonl" };
+      yield* directory.recordImportedTranscript({ threadId, source: secondSource });
+
+      yield* repository.upsert({
+        ...stale,
+        status: "running",
+        resumeCursor: { threadId: "new-native-session" },
+        lastSeenAt: "2026-08-24T10:00:00.000Z",
+      });
+
+      expect(Option.getOrThrow(yield* repository.getByThreadId({ threadId }))).toEqual({
+        ...stale,
+        status: "running",
+        resumeCursor: { threadId: "new-native-session" },
+        lastSeenAt: "2026-08-24T10:00:00.000Z",
+        runtimePayload: {
+          cwd: "/tmp/stale-source-project",
+          importedTranscripts: [firstSource, secondSource],
+        },
+      });
+    }),
+  );
+
+  it.effect("reserves imported source records for the atomic recording method", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      for (const onConflict of ["update", "ignore"] as const) {
+        const source = { ...importedSource, providerSessionId: `reserved-source-${onConflict}` };
+        const threadId = ThreadId.make(
+          `import:${source.providerInstanceId}:${source.providerSessionId}`,
+        );
+        const binding = {
+          threadId,
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        };
+        yield* directory.upsert(
+          { ...binding, runtimePayload: { cwd: "/tmp/project", importedTranscripts: [source] } },
+          { onConflict },
+        );
+        expect(Option.getOrThrow(yield* directory.getBinding(threadId)).runtimePayload).toEqual({
+          cwd: "/tmp/project",
+        });
+
+        yield* directory.recordImportedTranscript({ threadId, source });
+        yield* directory.upsert({ ...binding, runtimePayload: null });
+
+        expect(Option.getOrThrow(yield* directory.getBinding(threadId)).runtimePayload).toEqual({
+          importedTranscripts: [source],
+        });
+      }
     }),
   );
 

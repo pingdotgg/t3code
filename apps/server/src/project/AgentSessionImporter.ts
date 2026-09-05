@@ -123,7 +123,16 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
   ) {
     return yield* new AgentSessionImportProjectChangedError({ projectId: input.projectId });
   }
-  const threads = scanner.recentThreads(workspaceRoot);
+  const completedSources = yield* snapshots
+    .getImportedAgentSessionSources(input.projectId)
+    .pipe(
+      Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
+    );
+  const threads = scanner.recentThreads(
+    workspaceRoot,
+    completedSources.map((entry) => entry.source),
+  );
+  const importedThreadIds = new Set<ThreadId>();
   let importedCount = 0;
   let skippedCount = 0;
 
@@ -133,11 +142,32 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
         skippedCount += 1;
         return;
       }
-      const thread = outcome.thread;
-      const imported = yield* Effect.gen(function* () {
+      if (outcome._tag === "AlreadyImported" || outcome._tag === "Duplicate") {
         const threadId = ThreadId.make(
-          `import:${thread.providerInstanceId}:${thread.providerSessionId}`,
+          `import:${outcome.source.providerInstanceId}:${outcome.source.providerSessionId}`,
         );
+        if (outcome._tag === "AlreadyImported") {
+          importedThreadIds.add(threadId);
+          importedCount += 1;
+        } else if (importedThreadIds.has(threadId)) {
+          const recorded = yield* directory
+            .recordImportedTranscript({ threadId, source: outcome.source })
+            .pipe(Effect.result);
+          if (recorded._tag === "Failure") {
+            skippedCount += 1;
+            yield* Effect.logWarning("Could not record an imported transcript copy", {
+              threadId,
+              cause: recorded.failure,
+            });
+          }
+        }
+        return;
+      }
+      const thread = outcome.thread;
+      const threadId = ThreadId.make(
+        `import:${thread.providerInstanceId}:${thread.providerSessionId}`,
+      );
+      const imported = yield* Effect.gen(function* () {
         const provider = ProviderDriverKind.make(thread.source);
         const model = thread.model ?? DEFAULT_MODEL_BY_PROVIDER[provider] ?? DEFAULT_MODEL;
         const existingThread = yield* snapshots.getThreadDetailById(threadId);
@@ -169,6 +199,7 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
           importedHistoryPresent &&
           Option.isSome(existingBinding)
         ) {
+          yield* directory.recordImportedTranscript({ threadId, source: outcome.source });
           return true;
         }
 
@@ -240,6 +271,8 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
           });
         }
 
+        yield* directory.recordImportedTranscript({ threadId, source: outcome.source });
+
         return true;
       }).pipe(
         Effect.catch((cause) =>
@@ -251,8 +284,12 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
         ),
       );
 
-      if (imported) importedCount += 1;
-      else skippedCount += 1;
+      if (imported) {
+        importedThreadIds.add(threadId);
+        importedCount += 1;
+      } else {
+        skippedCount += 1;
+      }
     }),
   );
 

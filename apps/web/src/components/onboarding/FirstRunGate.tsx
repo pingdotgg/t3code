@@ -4,7 +4,11 @@ import { Atom } from "effect/unstable/reactivity";
 import { RotateCcwIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useState } from "react";
 
-import { useClientSettings, useClientSettingsHydrated } from "../../hooks/useSettings";
+import {
+  ensureClientSettingsHydrated,
+  useClientSettings,
+  useClientSettingsHydrationStatus,
+} from "../../hooks/useSettings";
 import { mountOnboardingTheme } from "../../hooks/useTheme";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
 import {
@@ -77,7 +81,8 @@ export function FirstRunGate({
 }) {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
-  const hydrated = useClientSettingsHydrated();
+  const hydrationStatus = useClientSettingsHydrationStatus();
+  const hydrated = hydrationStatus === "ready";
   const completeOnboarding = useCompleteOnboarding();
   const onboardingCompletedAt = useClientSettings((settings) => settings.onboardingCompletedAt);
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
@@ -98,7 +103,8 @@ export function FirstRunGate({
     stalled: false,
   }));
   const { decision, stalled } = gateState;
-  const ownsOnboardingTheme = stalled || decision === "wizard";
+  const settingsReadFailed = hydrationStatus === "failed" || hydrationStatus === "retrying";
+  const ownsOnboardingTheme = settingsReadFailed || stalled || decision === "wizard";
 
   useLayoutEffect(() => {
     if (!ownsOnboardingTheme) return;
@@ -188,28 +194,49 @@ export function FirstRunGate({
     }
   }, [decision, navigate, pathname]);
 
+  if (settingsReadFailed) {
+    return <FirstRunRecovery reason="settings" retrying={hydrationStatus === "retrying"} />;
+  }
   if (decision !== "app") {
-    return stalled ? <FirstRunConnectionRecovery /> : null;
+    return stalled ? <FirstRunRecovery reason="connection" /> : null;
   }
   return children;
 }
 
-function FirstRunConnectionRecovery() {
+function FirstRunRecovery({
+  reason,
+  retrying = false,
+}: {
+  readonly reason: "settings" | "connection";
+  readonly retrying?: boolean;
+}) {
+  const settingsReadFailed = reason === "settings";
   return (
     <main className="flex h-dvh min-h-0 items-center justify-center bg-background px-6 text-foreground">
       <div className="flex max-w-sm flex-col items-center text-center">
-        <h1 className="text-lg font-semibold">Still connecting</h1>
+        <h1 className="text-lg font-semibold">
+          {settingsReadFailed ? "Could not read settings" : "Still connecting"}
+        </h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          T3 Code could not confirm this workspace.
+          {settingsReadFailed
+            ? "Your saved settings could not be loaded."
+            : "T3 Code could not confirm this workspace."}
         </p>
         <Button
           className="mt-5"
           size="sm"
           variant="outline"
-          onClick={() => window.location.reload()}
+          disabled={retrying}
+          onClick={() => {
+            if (settingsReadFailed) {
+              void ensureClientSettingsHydrated().catch(() => undefined);
+            } else {
+              window.location.reload();
+            }
+          }}
         >
           <RotateCcwIcon />
-          Reload
+          {settingsReadFailed ? "Retry" : "Reload"}
         </Button>
       </div>
     </main>

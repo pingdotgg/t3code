@@ -18,6 +18,10 @@ hosted app for the first time. Existing workspaces skip this flow.
 If T3 Code cannot confirm the workspace during startup, the setup flow shows
 **Still connecting** instead of opening the app. Select **Reload** to try again.
 
+If T3 Code cannot read your saved settings, it shows **Could not read settings**.
+Select **Retry** after storage becomes available. Setup does not replace
+unreadable settings with defaults.
+
 ## Check your agents
 
 T3 Code checks the selected computer for Claude Code and Codex. If an agent is
@@ -43,8 +47,13 @@ It omits tool activity and attachments. For Codex, it omits generated setup
 context only when a canonical user event and a valid shared turn ID identify the
 same user turn. Ambiguous legacy or response-only context stays in the imported
 conversation so T3 Code does not remove user text. It reads one conversation at
-a time and skips files larger than 16 MB. It ignores malformed records and skips
+a time and skips files larger than 16 MiB. It ignores malformed records and skips
 unreadable or unparseable conversations.
+
+Each import attempt reads up to 100 conversation files and 64 MiB per project,
+with up to 100,000 input records. Run import again to continue a large batch.
+Completed conversations are not imported again. You can continue without the
+remaining history.
 
 You can skip agent setup and project import. Select **Back** to return to a
 previous step.

@@ -1,9 +1,24 @@
 import * as Schema from "effect/Schema";
 import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 /** Coding agent home directories the scanner knows how to read. */
 export const AgentSessionSource = Schema.Literals(["claudeAgent", "codex"]);
 export type AgentSessionSource = typeof AgentSessionSource.Type;
+
+/** File identity saved with an imported session so bounded retries can skip unchanged history. */
+export const AgentSessionImportSource = Schema.Struct({
+  provider: AgentSessionSource,
+  providerInstanceId: ProviderInstanceId,
+  providerSessionId: TrimmedNonEmptyString,
+  filePath: TrimmedNonEmptyString,
+  size: NonNegativeInt,
+  mtimeMs: Schema.NullOr(Schema.Number),
+  device: Schema.Number,
+  inode: Schema.NullOr(Schema.Number),
+  birthtimeMs: Schema.NullOr(Schema.Number),
+});
+export type AgentSessionImportSource = typeof AgentSessionImportSource.Type;
 
 /** Imported message ids retain their origin after event metadata is projected into SQLite. */
 export function isImportedAgentSessionMessageId(messageId: string): boolean {

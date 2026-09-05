@@ -5,6 +5,8 @@ import {
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { ensureClientSettingsHydrated } from "~/hooks/useSettings";
+
 const {
   clientSettings,
   events,
@@ -240,6 +242,33 @@ describe("browser recording", () => {
     });
     await stopBrowserRecording("recording-tab");
   });
+
+  it.each([30, 60] as const)(
+    "records at %i fps and can restart when client settings cannot be read",
+    async (frameRate) => {
+      clientSettings.browserRecordingFrameRate = frameRate;
+      vi.mocked(ensureClientSettingsHydrated).mockRejectedValueOnce(
+        new Error("Settings read failed"),
+      );
+
+      const startedAt = await startBrowserRecording("settings-read-failure-tab");
+      await expect(startBrowserRecording("settings-read-failure-tab")).resolves.toBe(startedAt);
+      expect(getDisplayMedia).toHaveBeenCalledWith({
+        audio: false,
+        video: { frameRate: { max: frameRate } },
+      });
+
+      await stopBrowserRecording("settings-read-failure-tab");
+      await startBrowserRecording("settings-read-failure-tab");
+      await stopBrowserRecording("settings-read-failure-tab");
+
+      expect(startScreencast).toHaveBeenCalledTimes(2);
+      expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
+      expect(
+        useBrowserSurfaceStore.getState().activityByTabId["settings-read-failure-tab"],
+      ).toBeUndefined();
+    },
+  );
 
   it("stops the native stream when MediaRecorder cleanup fails", async () => {
     const stopTrack = vi.fn();

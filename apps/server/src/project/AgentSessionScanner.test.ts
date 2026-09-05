@@ -50,6 +50,7 @@ const makeProjectionSnapshotQueryLayer = (importedWorkspaceRoots: ReadonlyArray<
     getEventReplayStats: () => Effect.die("unused"),
     getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
     getProjectShellById: () => Effect.die("unused"),
+    getImportedAgentSessionSources: () => Effect.succeed([]),
     getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
     getThreadCheckpointContext: () => Effect.die("unused"),
     getFullThreadDiffContext: () => Effect.die("unused"),
@@ -1212,11 +1213,228 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           workspaceRoot: workspace,
         });
 
-        expect(outcomes).toHaveLength(1);
+        expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Importable", "Duplicate"]);
         expect(outcomes[0]).toMatchObject({
           _tag: "Importable",
           thread: { providerSessionId: "copied-session" },
         });
+      }),
+    );
+
+    it.effect("shares a 64 MiB full-read budget across providers without hiding projects", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-budget-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-budget-codex-");
+        const workspace = yield* makeTempDir("t3code-budget-workspace-");
+        const transcriptPaths = new Set<string>();
+        for (const [index, source] of [
+          "codex",
+          "claudeAgent",
+          "codex",
+          "claudeAgent",
+          "codex",
+        ].entries()) {
+          const sessionId = `budget-session-${index}`;
+          const filePath =
+            source === "codex"
+              ? path.join(
+                  codexHomePath,
+                  "sessions",
+                  "2026",
+                  "08",
+                  "24",
+                  `rollout-${sessionId}.jsonl`,
+                )
+              : path.join(claudeHomePath, "projects", "selected", `${sessionId}.jsonl`);
+          const contents =
+            source === "codex"
+              ? [
+                  encodeTranscriptRecord({
+                    type: "session_meta",
+                    payload: { id: sessionId, cwd: workspace },
+                  }),
+                  encodeTranscriptRecord({
+                    type: "event_msg",
+                    payload: { type: "user_message", message: "Imported prompt" },
+                  }),
+                ].join("\n")
+              : encodeTranscriptRecord({
+                  type: "user",
+                  cwd: workspace,
+                  sessionId,
+                  message: { content: "Imported prompt" },
+                });
+          transcriptPaths.add(filePath);
+          yield* writeTranscript({
+            filePath,
+            contents: `${contents}\n`.padEnd(16 * 1024 * 1024, " "),
+            mtimeMs: nowMs - index * 1_000,
+          });
+        }
+
+        const opens = new Map<string, number>();
+        let fullReadBytes = 0;
+        const trackedFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          open: (filePath, options) => {
+            const count = (opens.get(filePath) ?? 0) + 1;
+            opens.set(filePath, count);
+            return fileSystem.open(filePath, options).pipe(
+              Effect.map((file) =>
+                !transcriptPaths.has(filePath) || count === 1
+                  ? file
+                  : {
+                      ...file,
+                      stat: file.stat,
+                      readAlloc: (size: FileSystem.SizeInput) =>
+                        file.readAlloc(size).pipe(
+                          Effect.tap((chunk) =>
+                            Effect.sync(() => {
+                              if (chunk._tag === "Some") fullReadBytes += chunk.value.byteLength;
+                            }),
+                          ),
+                        ),
+                    },
+              ),
+            );
+          },
+        });
+        const outcomes = yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const scan = yield* scanner.scan;
+          expect(scan.candidates[0]?.threadCount).toBe(5);
+          return yield* scanner.recentThreads(workspace).pipe(Stream.runCollect);
+        }).pipe(
+          Effect.provide(makeScannerTestLayer({ claudeHomePath, codexHomePath })),
+          Effect.provideService(FileSystem.FileSystem, trackedFileSystem),
+        );
+
+        expect(outcomes.map((outcome) => outcome._tag)).toEqual([
+          "Importable",
+          "Importable",
+          "Importable",
+          "Importable",
+          "Skipped",
+        ]);
+        expect(fullReadBytes).toBe(64 * 1024 * 1024);
+      }),
+    );
+
+    it.effect("skips excessive records without blocking an older valid transcript", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-record-budget-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-record-budget-codex-");
+        const workspace = yield* makeTempDir("t3code-record-budget-workspace-");
+        for (const [sessionId, padding, mtimeMs] of [
+          ["excessive", "\n".repeat(100_001), nowMs],
+          ["older", "", nowMs - 1_000],
+        ] as const) {
+          yield* writeTranscript({
+            filePath: path.join(
+              codexHomePath,
+              "sessions",
+              "2026",
+              "08",
+              "24",
+              `rollout-${sessionId}.jsonl`,
+            ),
+            contents:
+              [
+                encodeTranscriptRecord({
+                  type: "session_meta",
+                  payload: { id: sessionId, cwd: workspace },
+                }),
+                encodeTranscriptRecord({
+                  type: "event_msg",
+                  payload: { type: "user_message", message: "Imported prompt" },
+                }),
+              ].join("\n") + padding,
+            mtimeMs,
+          });
+        }
+        const outcomes = yield* runRecentThreadOutcomes({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+        expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Skipped", "Importable"]);
+        expect(outcomes[1]).toMatchObject({ thread: { providerSessionId: "older" } });
+      }),
+    );
+
+    it.effect("checks file identity and provider before skipping completed history", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-completed-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-completed-codex-");
+        const workspace = yield* makeTempDir("t3code-completed-workspace-");
+        const filePath = path.join(
+          codexHomePath,
+          "sessions",
+          "2026",
+          "08",
+          "24",
+          "rollout-replaced.jsonl",
+        );
+        const contents = (sessionId: string) =>
+          [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: sessionId, cwd: workspace },
+            }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              payload: { type: "user_message", message: "Imported prompt" },
+            }),
+          ].join("\n");
+        yield* writeTranscript({
+          filePath,
+          contents: contents("original-session"),
+          mtimeMs: nowMs,
+        });
+
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const initial = yield* scanner.recentThreads(workspace).pipe(Stream.runCollect);
+          const imported = initial[0];
+          expect(imported?._tag).toBe("Importable");
+          if (imported?._tag !== "Importable") return;
+          const completed = yield* scanner
+            .recentThreads(workspace, [imported.source])
+            .pipe(Stream.runCollect);
+          expect(completed[0]?._tag).toBe("AlreadyImported");
+          const wrongProvider = yield* scanner
+            .recentThreads(workspace, [{ ...imported.source, provider: "claudeAgent" }])
+            .pipe(Stream.runCollect);
+          expect(wrongProvider[0]?._tag).toBe("Importable");
+
+          // Keep the old inode allocated while replacing the path with an equal-size file.
+          yield* fileSystem.open(filePath);
+          yield* fileSystem.remove(filePath);
+          yield* writeTranscript({
+            filePath,
+            contents: contents("replaced-session"),
+            mtimeMs: nowMs,
+          });
+          const replaced = yield* scanner
+            .recentThreads(workspace, [imported.source])
+            .pipe(Stream.runCollect);
+          expect(replaced[0]).toMatchObject({
+            _tag: "Importable",
+            thread: { providerSessionId: "replaced-session" },
+            source: { size: imported.source.size, mtimeMs: imported.source.mtimeMs },
+          });
+        }).pipe(Effect.provide(makeScannerTestLayer({ claudeHomePath, codexHomePath })));
       }),
     );
 
@@ -1428,7 +1646,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect("skips a transcript that grows after its size check", () =>
+    it.effect("skips growth during reading without exceeding the reserved bytes", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const fileSystem = yield* FileSystem.FileSystem;
@@ -1445,7 +1663,6 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           "24",
           "rollout-growing.jsonl",
         );
-        const grownPath = path.join(codexHomePath, "grown.jsonl");
         const contents = [
           encodeTranscriptRecord({
             type: "session_meta",
@@ -1457,19 +1674,34 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           }),
         ].join("\n");
         yield* writeTranscript({ filePath: transcriptPath, contents, mtimeMs: nowMs });
-        yield* writeTranscript({
-          filePath: grownPath,
-          contents: `${contents}\nchanged`,
-          mtimeMs: nowMs,
-        });
-
         let transcriptOpenCount = 0;
+        let fullReadBytes = 0;
+        let grew = false;
         const simulatedFileSystem = FileSystem.FileSystem.of({
           ...fileSystem,
           open: (filePath, options) => {
             if (filePath !== transcriptPath) return fileSystem.open(filePath, options);
             transcriptOpenCount += 1;
-            return fileSystem.open(transcriptOpenCount === 1 ? transcriptPath : grownPath, options);
+            if (transcriptOpenCount === 1) return fileSystem.open(filePath, options);
+            return fileSystem.open(filePath, options).pipe(
+              Effect.map((file) => ({
+                ...file,
+                stat: file.stat,
+                readAlloc: (size: FileSystem.SizeInput) =>
+                  file.readAlloc(size).pipe(
+                    Effect.tap((chunk) =>
+                      Effect.gen(function* () {
+                        if (chunk._tag === "None") return;
+                        fullReadBytes += chunk.value.byteLength;
+                        if (!grew) {
+                          grew = true;
+                          yield* fileSystem.writeFileString(filePath, `${contents}\nchanged`);
+                        }
+                      }),
+                    ),
+                  ),
+              })),
+            );
           },
         });
 
@@ -1480,6 +1712,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         }).pipe(Effect.provideService(FileSystem.FileSystem, simulatedFileSystem));
 
         expect(transcriptOpenCount).toBe(2);
+        expect(fullReadBytes).toBe(new TextEncoder().encode(contents).byteLength);
         expect(outcomes).toEqual([{ _tag: "Skipped" }]);
       }),
     );
