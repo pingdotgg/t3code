@@ -25,9 +25,9 @@ export function SidebarPullSurface({
     const atTop = () => (viewport()?.scrollTop ?? 0) <= 0;
     const hasArtwork = () => root.querySelector(".sidebar-stage-backdrop") !== null;
     const setDistance = (next: number) => {
-      distance = Math.max(0, Math.min(next, 320));
+      distance = Math.max(0, Math.min(next, 720));
       root.dataset.pulling = String(distance > 0);
-      root.style.setProperty("--sidebar-pull-offset", `${72 * (1 - Math.exp(-distance / 140))}px`);
+      root.style.setProperty("--sidebar-pull-offset", `${224 * (1 - Math.exp(-distance / 240))}px`);
     };
     const release = () => {
       clearTimeout(releaseTimer);
