@@ -10,7 +10,6 @@ import {
   type UsageBucket,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -160,13 +159,7 @@ export const make = Effect.gen(function* () {
     if (!scope.capabilities.has("orchestration")) {
       return yield* failure("capability_denied");
     }
-    const environmentId = yield* environment.getEnvironmentId.pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterrupts(cause)
-          ? Effect.failCause(cause).pipe(Effect.orDie)
-          : Effect.fail(failure("environment_unavailable")),
-      ),
-    );
+    const environmentId = yield* environment.getEnvironmentId;
     if (environmentId !== scope.environmentId) {
       return yield* failure("environment_mismatch");
     }
