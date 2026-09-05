@@ -10,6 +10,7 @@ describe.sequential("primary environment HTTP layer", () => {
   afterEach(() => {
     __resetDesktopPrimaryAuthForTests();
     Reflect.deleteProperty(globalThis, "window");
+    vi.unstubAllEnvs();
     vi.unstubAllGlobals();
   });
 
@@ -28,6 +29,28 @@ describe.sequential("primary environment HTTP layer", () => {
 
     return Effect.gen(function* () {
       yield* HttpClient.get("http://127.0.0.1:3773/api/auth/session");
+
+      const request = new Request(fetchMock.mock.calls[0]?.[0], fetchMock.mock.calls[0]?.[1]);
+      expect(request.credentials).toBe("include");
+      expect(request.headers.get("authorization")).toBeNull();
+    }).pipe(Effect.provide(makePrimaryEnvironmentHttpLayer()));
+  });
+
+  it.effect("uses cookie credentials through the LAN dev proxy", () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("VITE_DEV_SERVER_URL", "http://127.0.0.1:5733");
+    vi.stubEnv("VITE_HTTP_URL", "http://127.0.0.1:3773");
+    vi.stubEnv("VITE_WS_URL", "ws://127.0.0.1:3773");
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        location: new URL("http://192.168.1.20:5733/settings"),
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* HttpClient.get("http://192.168.1.20:5733/api/auth/session");
 
       const request = new Request(fetchMock.mock.calls[0]?.[0], fetchMock.mock.calls[0]?.[1]);
       expect(request.credentials).toBe("include");
