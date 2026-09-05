@@ -5559,22 +5559,29 @@ export default function ChatView(props: ChatViewProps) {
       return null;
     }
     const snoozable = canSnooze(activeThreadShell, { now: nowMinuteIso });
+    const snoozeAction = (
+      <Button
+        size="xs"
+        variant="ghost"
+        disabled={!snoozable}
+        onClick={() => void handleSnoozeUntilUsageLimitReset()}
+      >
+        {`Snooze until ${snoozeWakeDescription(usageLimitPreset.snoozedUntil, nowMinuteDate, timestampFormat)}`}
+      </Button>
+    );
     return {
       id: `usage-limit:${usageLimitKey}`,
       variant: "warning",
       icon: <AlarmClockIcon />,
       title: "Usage limit reached",
       description: `Limits reset ${snoozeWakeDescription(usageLimitResetsAt, nowMinuteDate, timestampFormat)}`,
-      actions: (
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={!snoozable}
-          title={snoozable ? undefined : "Snoozing is unavailable while work is pending"}
-          onClick={() => void handleSnoozeUntilUsageLimitReset()}
-        >
-          {`Snooze until ${snoozeWakeDescription(usageLimitPreset.snoozedUntil, nowMinuteDate, timestampFormat)}`}
-        </Button>
+      actions: snoozable ? (
+        snoozeAction
+      ) : (
+        <Tooltip>
+          <TooltipTrigger render={<span className="inline-flex">{snoozeAction}</span>} />
+          <TooltipPopup side="top">Snoozing is unavailable while work is pending</TooltipPopup>
+        </Tooltip>
       ),
       dismissLabel: "Dismiss usage limit notice",
       onDismiss: () => setDismissedUsageLimitKeys((keys) => new Set(keys).add(usageLimitKey)),
