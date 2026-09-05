@@ -6,6 +6,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
   PullRequestActor,
+  PullRequestTimelineEvent,
   PullRequestCheck,
   PullRequestCheckStatus,
   PullRequestComment,
@@ -309,6 +310,92 @@ function toPullRequest(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): Bi
 }
 
 const decodePage = decodeJsonResult(RawPageSchema);
+
+const decodeActivityEntry = Schema.decodeUnknownExit(
+  Schema.Struct({
+    pull_request: Schema.optional(
+      Schema.Struct({
+        links: Schema.optional(Schema.Struct({ html: Schema.optional(RawLinkSchema) })),
+      }),
+    ),
+    approval: Schema.optional(
+      Schema.Struct({ date: Schema.String, user: Schema.optional(Schema.NullOr(RawUserSchema)) }),
+    ),
+    request_changes: Schema.optional(
+      Schema.Struct({ date: Schema.String, user: Schema.optional(Schema.NullOr(RawUserSchema)) }),
+    ),
+    update: Schema.optional(
+      Schema.Struct({
+        date: Schema.String,
+        author: Schema.optional(Schema.NullOr(RawUserSchema)),
+        state: Schema.optional(Schema.String),
+        title: Schema.optional(Schema.String),
+        description: Schema.optional(Schema.String),
+      }),
+    ),
+  }),
+);
+
+export function decodeTimelineEventsJson(raw: string): Result.Result<
+  {
+    readonly items: ReadonlyArray<PullRequestTimelineEvent>;
+    readonly next: string | null;
+  },
+  DecodeFailure
+> {
+  const page = decodePage(raw);
+  if (!Result.isSuccess(page)) return Result.fail(page.failure);
+  const events: PullRequestTimelineEvent[] = [];
+  for (const entry of page.success.values) {
+    const decoded = decodeActivityEntry(entry);
+    if (Exit.isFailure(decoded)) continue;
+    const url = decoded.value.pull_request?.links?.html?.href ?? null;
+    const approval = decoded.value.approval;
+    if (approval !== undefined) {
+      const actor = toActor(approval.user);
+      events.push({
+        id: `bitbucket:approved:${approval.date}:${actor?.login ?? ""}`,
+        kind: "approved",
+        actor,
+        createdAt: toIsoUtc(approval.date),
+        url,
+        body: "approved this pull request",
+      });
+    }
+    const requestChanges = decoded.value.request_changes;
+    if (requestChanges !== undefined) {
+      const actor = toActor(requestChanges.user);
+      events.push({
+        id: `bitbucket:changes-requested:${requestChanges.date}:${actor?.login ?? ""}`,
+        kind: "changes-requested",
+        actor,
+        createdAt: toIsoUtc(requestChanges.date),
+        url,
+        body: "requested changes",
+      });
+    }
+    if (decoded.value.update === undefined) continue;
+    const update = decoded.value.update;
+    const actor = toActor(update.author);
+    events.push({
+      id: `bitbucket:update:${update.date}:${actor?.login ?? ""}:${update.state ?? ""}`,
+      kind:
+        update.state?.toUpperCase() === "MERGED"
+          ? "merged"
+          : update.state?.toUpperCase() === "DECLINED" ||
+              update.state?.toUpperCase() === "SUPERSEDED"
+            ? "closed"
+            : "updated",
+      actor,
+      createdAt: toIsoUtc(update.date),
+      url,
+      body: update.state
+        ? `updated pull request: ${update.state.toLowerCase()}`
+        : "updated pull request",
+    });
+  }
+  return Result.succeed({ items: events, next: page.success.next ?? null });
+}
 const decodePullRequestEntry = Schema.decodeUnknownExit(RawPullRequestSchema);
 const decodePullRequest = decodeJsonResult(RawPullRequestSchema);
 const decodeCommentEntry = Schema.decodeUnknownExit(RawCommentSchema);
@@ -367,13 +454,18 @@ export function decodeViewerJson(raw: string): Result.Result<string | null, Deco
  * Bitbucket answers `admin`, `write` or `read`, and an empty page means it named no permission at
  * all for this account — an unknown standing, which is granted rather than guessed away.
  */
-export function decodeRepositoryPermissionJson(raw: string): Result.Result<boolean, DecodeFailure> {
+export function decodeRepositoryPermissionJson(
+  raw: string,
+  allowUnknown = true,
+): Result.Result<boolean, DecodeFailure> {
   const decoded = decodeRepositoryPermissions(raw);
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
   }
   const permission = trimmed(decoded.success.values?.[0]?.permission)?.toLowerCase() ?? null;
-  return Result.succeed(permission === null || permission === "admin" || permission === "write");
+  return Result.succeed(
+    (allowUnknown && permission === null) || permission === "admin" || permission === "write",
+  );
 }
 
 /**

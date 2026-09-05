@@ -4,6 +4,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
   PullRequestActor,
+  PullRequestTimelineEvent,
   PullRequestComment,
   PullRequestMergeMethod,
   PullRequestMergeability,
@@ -56,6 +57,17 @@ const RawPullRequestSchema = Schema.Struct({
   // Required, and required to be non-empty: the wire contract will not carry a change request
   // without a branch or a created time, so a row missing one is skipped rather than breaking the
   // response it travels in.
+  forkSource: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        repository: Schema.Struct({
+          id: Schema.optional(Schema.String),
+          name: Schema.String,
+          project: Schema.Struct({ id: Schema.optional(Schema.String), name: Schema.String }),
+        }),
+      }),
+    ),
+  ),
   sourceRefName: TrimmedNonEmptyString,
   targetRefName: TrimmedNonEmptyString,
   creationDate: TrimmedNonEmptyString,
@@ -64,10 +76,16 @@ const RawPullRequestSchema = Schema.Struct({
   repository: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
+        id: Schema.optional(Schema.String),
         name: Schema.optional(Schema.NullOr(Schema.String)),
         webUrl: Schema.optional(Schema.NullOr(Schema.String)),
         project: Schema.optional(
-          Schema.NullOr(Schema.Struct({ name: Schema.optional(Schema.NullOr(Schema.String)) })),
+          Schema.NullOr(
+            Schema.Struct({
+              id: Schema.optional(Schema.String),
+              name: Schema.optional(Schema.NullOr(Schema.String)),
+            }),
+          ),
         ),
       }),
     ),
@@ -85,6 +103,14 @@ const RawPullRequestSchema = Schema.Struct({
 
 /** A pull request thread, which is how Azure keeps its conversation. */
 const RawThreadSchema = Schema.Struct({
+  properties: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        CodeReviewThreadType: Schema.optional(Schema.Struct({ $value: Schema.String })),
+        CodeReviewStatus: Schema.optional(Schema.Struct({ $value: Schema.String })),
+      }),
+    ),
+  ),
   id: Schema.Int,
   isDeleted: Schema.optional(Schema.NullOr(Schema.Boolean)),
   threadContext: Schema.optional(
@@ -118,6 +144,9 @@ const RawViewerSchema = Schema.Struct({
 });
 
 export interface AzureDevOpsPullRequest {
+  readonly sourceRepositoryId?: string;
+  readonly sourceProjectId?: string;
+  readonly headRepositoryNameWithOwner?: string | null;
   readonly number: number;
   readonly title: string;
   readonly url: string;
@@ -243,12 +272,24 @@ function toPullRequest(
   const headBranch = trimmed(normalizeRefName(raw.sourceRefName));
   const baseBranch = trimmed(normalizeRefName(raw.targetRefName));
   if (url === null || headBranch === null || baseBranch === null) return null;
+  const sourceRepository = raw.forkSource?.repository ?? raw.repository;
   return {
+    ...(sourceRepository?.id === undefined ? {} : { sourceRepositoryId: sourceRepository.id }),
+    ...(sourceRepository?.project?.id === undefined
+      ? {}
+      : { sourceProjectId: sourceRepository.project.id }),
     number: raw.pullRequestId,
     title: raw.title,
     url,
     author: toActor(raw.createdBy),
     headBranch,
+    ...(raw.forkSource?.repository
+      ? {
+          headRepositoryNameWithOwner: `${raw.forkSource.repository.project.name}/${raw.forkSource.repository.name}`,
+        }
+      : raw.repository?.project?.name && raw.repository.name
+        ? { headRepositoryNameWithOwner: `${raw.repository.project.name}/${raw.repository.name}` }
+        : {}),
     baseBranch,
     state: toState(raw),
     isDraft: raw.isDraft ?? false,
@@ -330,28 +371,47 @@ export function decodeViewerJson(raw: string): Result.Result<string | null, Deco
  * Azure answers the whole thread collection in one response, with no cursor and no page to
  * follow, so what this returns is everything the host has.
  */
-export function decodeThreadsJson(
-  raw: string,
-): Result.Result<ReadonlyArray<PullRequestComment>, DecodeFailure> {
+export function decodeThreadsJson(raw: string): Result.Result<
+  {
+    readonly comments: ReadonlyArray<PullRequestComment>;
+    readonly timelineEvents: ReadonlyArray<PullRequestTimelineEvent>;
+  },
+  DecodeFailure
+> {
   const decoded = decodeThreadPage(raw);
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
   }
   const comments: PullRequestComment[] = [];
+  const timelineEvents: PullRequestTimelineEvent[] = [];
   for (const entry of decoded.success.value) {
     const decodedThread = decodeThreadEntry(entry);
     if (Exit.isFailure(decodedThread)) continue;
     const thread = decodedThread.value;
     if (thread.isDeleted === true) continue;
     const path = trimmed(thread.threadContext?.filePath);
+    const status =
+      thread.properties?.CodeReviewThreadType?.$value === "StatusUpdate"
+        ? thread.properties.CodeReviewStatus?.$value.toLowerCase()
+        : undefined;
     for (const comment of thread.comments ?? []) {
       const publishedDate = trimmed(comment.publishedDate);
       if (
         comment.isDeleted === true ||
-        comment.commentType?.trim().toLowerCase() === "system" ||
         (comment.content ?? "").trim().length === 0 ||
         publishedDate === null
       ) {
+        continue;
+      }
+      if (comment.commentType?.trim().toLowerCase() === "system") {
+        timelineEvents.push({
+          id: `azure:${thread.id}:${comment.id ?? 0}`,
+          kind: status === "completed" ? "merged" : status === "abandoned" ? "closed" : "system",
+          actor: toActor(comment.author),
+          createdAt: publishedDate,
+          body: comment.content ?? "",
+          url: null,
+        });
         continue;
       }
       comments.push({
@@ -366,7 +426,8 @@ export function decodeThreadsJson(
       });
     }
   }
-  return Result.succeed(
-    comments.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
-  );
+  return Result.succeed({
+    comments: comments.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+    timelineEvents,
+  });
 }

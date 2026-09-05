@@ -30,6 +30,7 @@ import {
   mergePullRequestThreadComments,
 } from "./pullRequestDetail.logic";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
+import { PullRequestCommentActions } from "./PullRequestCommentActions";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
@@ -215,6 +216,7 @@ export function ReviewThreadCard({
   return (
     <div
       className={CARD_CLASS}
+      data-pr-conversation={thread.isResolved ? "resolved" : "unresolved"}
       contentEditable={false}
       onPointerDown={(event) => event.stopPropagation()}
     >
@@ -300,6 +302,15 @@ export function ReviewThreadCard({
                     ) : null}
                   </div>
                 )}
+                <PullRequestCommentActions
+                  body={comment.body}
+                  url={comment.url}
+                  canReply={false}
+                  cwd={workspaceRoot}
+                  environmentId={environmentId}
+                  reference={reference}
+                  onRefresh={onReacted}
+                />
                 <PullRequestReactionBar
                   className="mt-1.5"
                   reactions={comment.reactions ?? []}
@@ -331,6 +342,7 @@ export function ReviewThreadCard({
               <div className="mt-2">
                 <Textarea
                   autoFocus
+                  disabled={pending}
                   size="sm"
                   value={reply}
                   placeholder="Reply"
@@ -340,11 +352,18 @@ export function ReviewThreadCard({
                     value: reply,
                     pending,
                     onSubmit: () => void send(),
-                    onCancel: () => setReplying(false),
+                    onCancel: () => {
+                      if (!pending) setReplying(false);
+                    },
                   })}
                 />
                 <div className="mt-2 flex justify-end gap-2">
-                  <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() => setReplying(false)}
+                  >
                     Cancel
                   </Button>
                   <Button

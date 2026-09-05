@@ -1,3 +1,4 @@
+import { pullRequestErrorHint } from "./pullRequestError.logic";
 import { RefreshCwIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
@@ -21,7 +22,15 @@ export function PullRequestActivityUnavailableState({
       )}
     >
       <p className="text-sm font-medium text-foreground">Could not load pull request activity</p>
-      <p className="max-w-md text-xs text-muted-foreground">{error}</p>
+      <p className="max-w-md text-xs text-muted-foreground">
+        {pullRequestErrorHint(error) ?? error}
+      </p>
+      {pullRequestErrorHint(error) ? (
+        <details className="max-w-md text-xs text-muted-foreground">
+          <summary className="cursor-pointer">Error details</summary>
+          <p className="mt-2 whitespace-pre-wrap break-words">{error}</p>
+        </details>
+      ) : null}
       <Button size="sm" variant="outline" onClick={onRetry}>
         <RefreshCwIcon aria-hidden className="size-3.5" />
         Retry

@@ -120,3 +120,45 @@ export function writePullRequestListPreferences(
     // Storage can be full or denied; the URL remains the source of truth for this visit.
   }
 }
+
+const EXCLUDED_PROJECTS_STORAGE_KEY = "t3.pullRequests.excludedProjects";
+const decodeExcludedProjects = Schema.decodeUnknownOption(Schema.Array(Schema.String));
+const decodeExcludedProject = Schema.decodeUnknownOption(Schema.Tuple([EnvironmentId, ProjectId]));
+
+export function readExcludedPullRequestProjects(
+  storage?: PreferenceStorage,
+): ReadonlyArray<string> {
+  try {
+    const raw = resolvePreferenceStorage(storage)?.getItem(EXCLUDED_PROJECTS_STORAGE_KEY);
+    const decoded = decodeExcludedProjects(raw ? JSON.parse(raw) : []);
+    if (decoded._tag === "None") return [];
+    return [
+      ...new Set(
+        decoded.value.flatMap((key) => {
+          try {
+            const project = decodeExcludedProject(JSON.parse(key));
+            return project._tag === "Some" ? [JSON.stringify(project.value)] : [];
+          } catch {
+            return [];
+          }
+        }),
+      ),
+    ];
+  } catch {
+    return [];
+  }
+}
+
+export function writeExcludedPullRequestProjects(
+  projects: ReadonlyArray<string>,
+  storage?: PreferenceStorage,
+): boolean {
+  try {
+    const target = resolvePreferenceStorage(storage);
+    if (!target) return false;
+    target.setItem(EXCLUDED_PROJECTS_STORAGE_KEY, JSON.stringify(projects));
+    return true;
+  } catch {
+    return false;
+  }
+}

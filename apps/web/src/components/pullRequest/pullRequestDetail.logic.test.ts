@@ -9,6 +9,9 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  pullRequestGeneralComments,
+  mergePullRequestActivity,
+  comparePullRequestTimelineEvents,
   buildAddSelectionToAgentHandoff,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
@@ -38,6 +41,7 @@ import {
   shouldRefreshPullRequestActivity,
   resolveBaseFreshness,
   buildPullRequestTimeline,
+  pullRequestAttentionItems,
   editPullRequestThreadComment,
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
@@ -1374,6 +1378,33 @@ describe("cached pull request detail", () => {
     };
   };
 
+  it("passes native activity to the rendered detail and supports older activity responses", () => {
+    const timelineEvents = [
+      {
+        id: "closed",
+        kind: "closed",
+        actor: null,
+        createdAt: "2026-09-05T00:00:00Z",
+        url: null,
+        body: "Closed",
+      },
+    ];
+    const activity = {
+      comments: [],
+      commentCount: 0,
+      commentsTruncated: false,
+      reviewThreads: [],
+      commits: [],
+      timelineEvents,
+      timelineTruncated: true,
+    };
+    expect(mergePullRequestActivity(detail(), activity)?.timelineEvents).toEqual(timelineEvents);
+    expect(mergePullRequestActivity(detail(), activity)?.timelineTruncated).toBe(true);
+    expect(mergePullRequestActivity(detail(), undefined)?.timelineTruncated).toBe(false);
+    expect(mergePullRequestActivity(detail(), undefined)?.timelineEvents).toEqual([]);
+    expect(mergePullRequestActivity(null, activity)).toBeNull();
+  });
+
   it("hydrates the last title, author, and counts so a reopen does not ghost the tab", () => {
     const storage = makeStorage();
     writePullRequestDetailSnapshot(storage, "env-1", reference, detail());
@@ -1409,5 +1440,135 @@ describe("cached pull request detail", () => {
     storage.setItem("t3.pullRequests.detail:env-1:project-1:acme/web#7", "{not json");
     expect(readPullRequestDetailSnapshot(storage, "env-1", reference)).toBeNull();
     expect(readPullRequestDetailSnapshot(undefined, "env-1", reference)).toBeNull();
+  });
+});
+
+describe("host timeline events", () => {
+  it("orders native events and conversation rows by instant across timezone offsets", () => {
+    const earlier = { at: "2026-07-05T01:00:00+02:00" };
+    const later = { at: "2026-07-05T00:30:00Z" };
+    expect([earlier, later].toSorted(comparePullRequestTimelineEvents)).toEqual([later, earlier]);
+    const events = buildPullRequestTimeline({
+      ...TIMELINE_SOURCE,
+      timelineEvents: [earlier, later].map((event, index) => ({
+        id: String(index),
+        kind: "reopened",
+        body: "",
+        actor: null,
+        url: null,
+        createdAt: event.at,
+      })),
+    });
+    expect(events.filter((event) => event.kind === "reopened").map((event) => event.at)).toEqual([
+      later.at,
+      earlier.at,
+    ]);
+  });
+
+  it("uses the host actor without adding a second merge event", () => {
+    const events = buildPullRequestTimeline({
+      ...TIMELINE_SOURCE,
+      mergedAt: "2026-07-04T00:00:00Z",
+      timelineEvents: [
+        {
+          id: "host-merge",
+          kind: "merged",
+          body: "merged into main",
+          createdAt: "2026-07-04T00:00:00Z",
+          actor: { login: "maintainer", name: null, avatarUrl: null },
+          url: null,
+        },
+      ],
+    });
+    expect(events.filter((event) => event.kind === "merged")).toMatchObject([
+      { id: "activity:host-merge", actor: { login: "maintainer" } },
+    ]);
+  });
+  it("keeps the current close when only an older close is loaded", () => {
+    const closedAt = "2026-07-06T00:00:00Z";
+    const source = {
+      ...TIMELINE_SOURCE,
+      closedAt,
+      timelineEvents: [
+        {
+          id: "host-close",
+          kind: "closed",
+          body: "closed",
+          createdAt: "2026-07-04T00:00:00Z",
+          actor: null,
+          url: null,
+        },
+      ],
+    };
+    expect(
+      buildPullRequestTimeline(source)
+        .filter((event) => event.kind === "closed")
+        .map((event) => event.at),
+    ).toEqual([closedAt, "2026-07-04T00:00:00Z"]);
+    expect(
+      buildPullRequestTimeline({
+        ...source,
+        timelineEvents: source.timelineEvents.map((event) => ({
+          ...event,
+          createdAt: "2026-07-06T02:00:00+02:00",
+        })),
+      })
+        .filter((event) => event.kind === "closed")
+        .map((event) => event.id),
+    ).toEqual(["activity:host-close"]);
+  });
+  it("keeps close and reopen history in time order", () => {
+    const events = buildPullRequestTimeline({
+      ...TIMELINE_SOURCE,
+      closedAt: null,
+      timelineEvents: [
+        {
+          id: "close",
+          kind: "closed",
+          body: "closed",
+          createdAt: "2026-07-04T00:00:00Z",
+          actor: null,
+          url: null,
+        },
+        {
+          id: "reopen",
+          kind: "reopened",
+          body: "reopened",
+          createdAt: "2026-07-05T00:00:00Z",
+          actor: null,
+          url: null,
+        },
+      ],
+    });
+    expect(events.slice(0, 2).map((event) => event.kind)).toEqual(["reopened", "closed"]);
+    expect(events.slice(0, 2).map((event) => event.body)).toEqual([null, null]);
+  });
+});
+
+describe("pull request attention", () => {
+  it("lists reported problems and removes them after closure", () => {
+    const detail = {
+      state: "open" as const,
+      mergeability: "conflicting" as const,
+      reviewDecision: "review-required" as const,
+      checks: [{ name: "CI", status: "failure" as const, url: null, description: null }],
+      reviewThreads: [],
+    };
+    expect(pullRequestAttentionItems(detail).map((item) => item.label)).toEqual([
+      "Merge conflicts",
+      "Review required",
+      "1 failed check",
+    ]);
+    expect(pullRequestAttentionItems({ ...detail, state: "merged" })).toEqual([]);
+  });
+});
+
+describe("pullRequestGeneralComments", () => {
+  it("excludes threaded replies from the general comments count and empty state", () => {
+    const reply = { id: "reply", body: "review reply" };
+    const general = { id: "general", body: "top-level comment" };
+    const threads = [{ comments: [reply] }];
+    expect(pullRequestGeneralComments([reply], threads)).toEqual([]);
+    expect(pullRequestGeneralComments([reply, general], threads)).toEqual([general]);
   });
 });

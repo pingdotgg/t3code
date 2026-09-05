@@ -34,6 +34,8 @@ import {
 import {
   pullRequestListPreferences,
   readPullRequestListPreferences,
+  readExcludedPullRequestProjects,
+  writeExcludedPullRequestProjects,
   writePullRequestListPreferences,
 } from "./pullRequestListPreferences";
 
@@ -1494,5 +1496,39 @@ describe("the priority groups against a paginated feed", () => {
     expect(
       groups.find((group) => group.key === "others")?.entries.map((row) => row.number),
     ).toEqual([6123]);
+  });
+});
+
+describe("excluded pull request projects", () => {
+  it("remembers exclusions separately from the list filters and allows restoring them", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        values.set(key, value);
+      },
+    };
+    const excluded = [JSON.stringify(["server-a", "project-a"])];
+    expect(writeExcludedPullRequestProjects(excluded, storage)).toBe(true);
+    writePullRequestListPreferences({ involvement: "all", state: "merged" }, storage);
+    expect(readExcludedPullRequestProjects(storage)).toEqual(excluded);
+    writeExcludedPullRequestProjects([], storage);
+    expect(readExcludedPullRequestProjects(storage)).toEqual([]);
+  });
+
+  it("rejects invalid saved exclusions and reports storage failure", () => {
+    expect(readExcludedPullRequestProjects({ getItem: () => "[1]", setItem: () => {} })).toEqual(
+      [],
+    );
+    const denied = {
+      getItem: () => {
+        throw new Error("denied");
+      },
+      setItem: () => {
+        throw new Error("denied");
+      },
+    };
+    expect(readExcludedPullRequestProjects(denied)).toEqual([]);
+    expect(writeExcludedPullRequestProjects(["project"], denied)).toBe(false);
   });
 });

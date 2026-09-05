@@ -8,7 +8,6 @@ import type {
   PullRequestRef,
   PullRequestReviewPosition,
   PullRequestReviewThread,
-  PullRequestThreadCommentsResult,
 } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
@@ -32,8 +31,7 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
-import { pullRequestFindingKey, type PullRequestFinding } from "./pullRequestDetail.logic";
-import { canEditPullRequestComment } from "./pullRequestEditing.logic";
+import { type PullRequestFinding } from "./pullRequestDetail.logic";
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 import {
   buildFileDiffRenderKey,
@@ -71,10 +69,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../ui/menu";
-import { toastManager } from "../ui/toast";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { PendingReviewCommentCard, ReviewThreadCard } from "./PullRequestReviewAnnotation";
+import { PullRequestConversation } from "./PullRequestConversation";
+import { PendingReviewCommentCard } from "./PullRequestReviewAnnotation";
 import { PullRequestReviewBar } from "./PullRequestReviewBar";
 import {
   isFileDiffCollapsed,
@@ -237,7 +235,6 @@ export function PullRequestCodeTab({
     range: SelectedLineRange;
   } | null>(null);
   const [draft, setDraft] = useState<DraftAnchor | null>(null);
-  const [threadPending, setThreadPending] = useState(false);
   const [orphansOpen, setOrphansOpen] = useState(false);
   // Closed by default so the review form does not permanently eat vertical space below the
   // diff; opened on demand as a floating overlay instead.
@@ -343,18 +340,6 @@ export function PullRequestCodeTab({
   const pendingComments = usePendingReviewComments(reference);
   const addComment = usePullRequestReviewStore((store) => store.addComment);
   const removeComment = usePullRequestReviewStore((store) => store.removeComment);
-  const replyToThread = useAtomCommand(pullRequestEnvironment.replyToThread, {
-    reportFailure: false,
-  });
-  const setThreadResolution = useAtomCommand(pullRequestEnvironment.setThreadResolution, {
-    reportFailure: false,
-  });
-  const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
-    reportFailure: false,
-  });
-  const loadThreadComments = useAtomCommand(pullRequestEnvironment.threadComments, {
-    reportFailure: false,
-  });
   const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
   const loadDiffFiles = useMemo(
     () =>
@@ -786,104 +771,21 @@ export function PullRequestCodeTab({
     [diffLayout, wordWrap, resolvedTheme, loadDiffFiles, canCommentOnLines, draft, beginComment],
   );
 
-  const runThreadCommand = useCallback(
-    async (label: string, run: () => Promise<{ readonly _tag: string }>): Promise<boolean> => {
-      if (threadPending) return false;
-      setThreadPending(true);
-      const result = await run();
-      setThreadPending(false);
-      if (result._tag === "Failure") {
-        toastManager.add({ type: "error", title: label });
-        return false;
-      }
-      onRefresh();
-      return true;
-    },
-    [onRefresh, threadPending],
-  );
-
-  // A conversation is the same card wired to the same commands whether it sits on its line or
-  // was stranded off the diff; only where it is drawn differs.
   const renderThreadCard = useCallback(
     (thread: PullRequestReviewThread) => (
-      <ReviewThreadCard
-        // Named with the pull request too: a thread's id is the host's own, and two pull requests
-        // can hand out the same one — which would leave one card's open editor standing over the
-        // other's conversation.
-        key={`${reference.projectId}#${reference.number}:${thread.id}`}
+      <PullRequestConversation
+        key={`${environmentId}:${reference.projectId}#${reference.number}:${thread.id}`}
         thread={thread}
-        workspaceRoot={detail.workspaceRoot}
-        canReply={review.reply}
-        canResolve={review.resolve}
-        canReact={detail.capabilities.reactions === true}
+        detail={detail}
         environmentId={environmentId}
         reference={reference}
-        pending={threadPending}
-        fixPending={pendingFinding === pullRequestFindingKey({ kind: "thread", thread })}
+        pendingFinding={pendingFinding}
         fixLabel={fixFindingLabel}
-        {...(onFixFinding ? { onFix: () => onFixFinding({ kind: "thread", thread }) } : {})}
-        onLoadMore={async (cursor): Promise<PullRequestThreadCommentsResult | null> => {
-          const result = await loadThreadComments({
-            environmentId,
-            input: { ...reference, threadId: thread.id, cursor },
-          });
-          if (result._tag === "Failure") {
-            toastManager.add({
-              type: "error",
-              title: "More comments could not be loaded",
-            });
-            return null;
-          }
-          return result.value;
-        }}
-        onReply={(body) =>
-          runThreadCommand("Reply could not be posted", () =>
-            replyToThread({
-              environmentId,
-              input: { ...reference, threadId: thread.id, body },
-            }),
-          )
-        }
-        // A conversation on a line is made of review comments, whatever the host filed them as.
-        canEditComment={(comment) =>
-          canEditPullRequestComment(detail, { author: comment.author, kind: "review-comment" })
-        }
-        onEditComment={(commentId, body) =>
-          runThreadCommand("The comment could not be saved", () =>
-            updateComment({
-              environmentId,
-              input: { ...reference, commentId, kind: "review-comment", body },
-            }),
-          )
-        }
-        onToggleResolved={() =>
-          void runThreadCommand("The conversation could not be updated", () =>
-            setThreadResolution({
-              environmentId,
-              input: { ...reference, threadId: thread.id, resolved: !thread.isResolved },
-            }),
-          )
-        }
-        onReacted={onRefresh}
+        onFixFinding={onFixFinding}
+        onRefresh={onRefresh}
       />
     ),
-    [
-      detail,
-      environmentId,
-      fixFindingLabel,
-      loadThreadComments,
-      onRefresh,
-      onFixFinding,
-      pendingFinding,
-      reference,
-      replyToThread,
-      review.reply,
-      review.resolve,
-      runThreadCommand,
-      setThreadResolution,
-      threadPending,
-      updateComment,
-    ],
+    [detail, environmentId, reference, pendingFinding, fixFindingLabel, onFixFinding, onRefresh],
   );
 
   const renderAnnotation = useCallback(

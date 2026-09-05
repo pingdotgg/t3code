@@ -83,6 +83,63 @@ afterEach(() => {
 });
 
 layer("BitbucketPullRequestApi.layer", (it) => {
+  it.effect.each([
+    ['{"values":[{"permission":"write"}]}', true],
+    ['{"values":[{"permission":"admin"}]}', true],
+    ['{"values":[{"permission":"read"}]}', false],
+    ['{"values":[]}', false],
+    ['{"values":[{}]}', false],
+  ] as const)("reads explicit source permission from %s", ([body, allowed]) =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response(body)));
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+      expect(yield* api.getSourceRepositoryPermission({ repository: "fork/web" })).toBe(allowed);
+      expect(callAt(0).url).toMatch(/^\/user\/workspaces\/fork\/permissions\/repositories\?/);
+      expect(filterOfCall(0)).toBe('repository.full_name="fork/web"');
+    }),
+  );
+  it.effect("deletes the fork source branch and refuses the pull request target branch", () =>
+    Effect.gen(function* () {
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+      const target = { repository: "acme/web", number: 7, action: "delete-source-branch" as const };
+      const current = {
+        state: "MERGED",
+        source: {
+          branch: { name: "main" },
+          repository: { uuid: "{fork}", full_name: "fork/renamed" },
+        },
+        destination: { branch: { name: "main" }, repository: { uuid: "{base}" } },
+      };
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response(pullRequestJson(current))));
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(response('{"mainbranch":{"name":"develop"}}')),
+      );
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response("")));
+      yield* api.runAction(target);
+      expect(callAt(1).url).toBe("/repositories/fork/renamed");
+      expect(callAt(2)).toEqual({
+        method: "DELETE",
+        url: "/repositories/fork/renamed/refs/branches/main",
+      });
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response(
+            pullRequestJson({
+              ...current,
+              destination: { branch: { name: "main" }, repository: { uuid: "{fork}" } },
+            }),
+          ),
+        ),
+      );
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(response('{"mainbranch":{"name":"develop"}}')),
+      );
+      const error = yield* Effect.flip(api.runAction(target));
+      expect(error).toMatchObject({ reason: "protected-branch" });
+      expect(mockedRequest).toHaveBeenCalledTimes(5);
+    }),
+  );
+
   it.effect("asks for reviewers, newest first, at Bitbucket's page ceiling", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(Effect.succeed(response(page(3, 1))));

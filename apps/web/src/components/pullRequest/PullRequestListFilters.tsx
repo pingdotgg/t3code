@@ -33,6 +33,7 @@ import {
   Menu,
   MenuCheckboxItem,
   MenuGroupLabel,
+  MenuGroup,
   MenuItem,
   MenuPopup,
   MenuRadioGroup,
@@ -424,7 +425,21 @@ export function PullRequestFiltersMenu({
   projectEnvironmentId,
   unavailable,
   onProject,
+  exclusionProjects,
+  excludedProjects,
+  onExcludeProject,
 }: {
+  exclusionProjects?: ReadonlyArray<{
+    readonly id: ProjectId;
+    readonly environmentId: EnvironmentId;
+    readonly title: string;
+    readonly workspaceRoot: string;
+  }>;
+  excludedProjects?: ReadonlyArray<string>;
+  onExcludeProject?: (
+    project: { readonly id: ProjectId; readonly environmentId: EnvironmentId },
+    excluded: boolean,
+  ) => void;
   onOpenChange?: (open: boolean) => void;
   state: PullRequestListState;
   stateOptions: ReadonlyArray<PullRequestFilterOption<PullRequestListState>>;
@@ -487,6 +502,7 @@ export function PullRequestFiltersMenu({
     filters.checks,
     filters.author,
     ...selectedLabels,
+    ...(excludedProjects ?? []),
   ].filter(Boolean).length;
   const updateFilters = (next: Partial<PullRequestListFilters>) =>
     onFilters(
@@ -624,6 +640,40 @@ export function PullRequestFiltersMenu({
             else if (projectId !== undefined) onProject(undefined, undefined);
           }}
         />
+        {onExcludeProject &&
+        exclusionProjects &&
+        excludedProjects &&
+        exclusionProjects.length > 0 ? (
+          <MenuSub>
+            <MenuSubTrigger>
+              <EyeOffIcon aria-hidden className="size-4" />
+              <span className="flex-1">Excluded projects</span>
+              {excludedProjects.length > 0 ? (
+                <span className="text-xs text-muted-foreground">{excludedProjects.length}</span>
+              ) : null}
+            </MenuSubTrigger>
+            <MenuSubPopup className="max-h-80 min-w-64 overflow-y-auto">
+              <MenuGroup>
+                <MenuGroupLabel>Hide from this PR list</MenuGroupLabel>
+                {exclusionProjects.map((project) => (
+                  <MenuCheckboxItem
+                    key={pullRequestProjectKey(project)}
+                    checked={excludedProjects.includes(pullRequestProjectKey(project))}
+                    onCheckedChange={(checked) => onExcludeProject(project, checked)}
+                    closeOnClick={false}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate">{project.title}</span>
+                      <span className="block max-w-72 truncate text-xs text-muted-foreground">
+                        {project.workspaceRoot}
+                      </span>
+                    </span>
+                  </MenuCheckboxItem>
+                ))}
+              </MenuGroup>
+            </MenuSubPopup>
+          </MenuSub>
+        ) : null}
       </MenuPopup>
     </Menu>
   );

@@ -25,6 +25,7 @@ export function PullRequestMarkdownEditor({
   label,
   saving,
   allowEmpty = false,
+  saveLabel = "Save",
   className,
   onSave,
   onCancel,
@@ -39,6 +40,7 @@ export function PullRequestMarkdownEditor({
   readonly saving: boolean;
   /** A description may be cleared, which is how one is removed; a remark may not be emptied. */
   readonly allowEmpty?: boolean;
+  readonly saveLabel?: string;
   readonly className?: string | undefined;
   readonly onSave: (next: string) => void;
   readonly onCancel: () => void;
@@ -112,7 +114,7 @@ export function PullRequestMarkdownEditor({
           disabled={saving || (empty && !allowEmpty)}
           onClick={() => onSave(draft)}
         >
-          {saving ? "Saving..." : "Save"}
+          {saving ? "Saving..." : saveLabel}
         </Button>
       </div>
     </div>

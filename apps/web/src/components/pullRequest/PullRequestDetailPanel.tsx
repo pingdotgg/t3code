@@ -1,4 +1,10 @@
-import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { mergePullRequestActivity } from "./pullRequestDetail.logic";
+import { PullRequestCommentAgentContext } from "./PullRequestCommentActions";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   type EnvironmentId,
@@ -60,7 +66,9 @@ import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
-import { useProjects } from "~/state/entities";
+import { useNavigate } from "@tanstack/react-router";
+import { buildThreadRouteParams } from "~/threadRoutes";
+import { useProjects, useThreadShells } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
@@ -86,6 +94,17 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
+import {
+  Dialog,
+  DialogPopup,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogPanel,
+  DialogFooter,
+} from "../ui/dialog";
+import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import {
   Menu,
@@ -154,6 +173,7 @@ import {
 type DetailTab = "summary" | "timeline" | "code";
 
 const ACTION_SUCCESS_LABELS: Record<PullRequestAction, string> = {
+  "delete-source-branch": "Source branch deleted",
   merge: "Pull request merged",
   ready: "Marked ready for review",
   draft: "Converted to draft",
@@ -177,6 +197,7 @@ const MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
 
 /** Said as the thing that did not happen, rather than as the operation that returned an error. */
 const ACTION_FAILURE_LABELS: Record<PullRequestAction, string> = {
+  "delete-source-branch": "Could not delete the source branch",
   merge: "Could not merge this pull request",
   ready: "Could not mark this ready for review",
   draft: "Could not convert this to a draft",
@@ -191,6 +212,8 @@ const ACTION_FAILURE_LABELS: Record<PullRequestAction, string> = {
 
 /** What to try, for the times the host says only that it refused. */
 const ACTION_FAILURE_HINTS: Record<PullRequestAction, string> = {
+  "delete-source-branch":
+    "Check that you have write access to the source repository and that the branch is not protected.",
   merge:
     "The host refused the merge. Check that you have write access, that the checks it requires have passed, and that the branch is not conflicting.",
   ready: "The host refused it. Check that you have write access to this repository.",
@@ -568,7 +591,13 @@ export function PullRequestDetailPanel({
   };
   const [confirmation, setConfirmation] = useState<{
     readonly open: boolean;
-    readonly action: "merge" | "close" | "enable-auto-merge" | "revert" | "approve-workflows";
+    readonly action:
+      | "merge"
+      | "close"
+      | "enable-auto-merge"
+      | "revert"
+      | "approve-workflows"
+      | "delete-source-branch";
   }>({ open: false, action: "merge" });
   const confirmAction = confirmation.action;
   // Which handoff is preparing, keyed so a per-finding button can say "Preparing..." on itself
@@ -635,20 +664,7 @@ export function PullRequestDetailPanel({
   );
   const activity = activityQuery.data;
   const detail = useMemo(
-    () =>
-      coreDetail === null
-        ? null
-        : {
-            ...coreDetail,
-            author: activity?.author ?? coreDetail.author,
-            reviewers: activity?.reviewers ?? coreDetail.reviewers,
-            comments: activity?.comments ?? [],
-            commentCount: activity?.commentCount ?? 0,
-            commentsTruncated: activity?.commentsTruncated ?? false,
-            reviewThreads: activity?.reviewThreads ?? [],
-            commits: activity?.commits ?? [],
-            reactions: activity?.reactions ?? [],
-          },
+    () => mergePullRequestActivity(coreDetail, activity),
     [activity, coreDetail],
   );
   useEffect(() => {
@@ -756,6 +772,16 @@ export function PullRequestDetailPanel({
   const titleDraft = titleScope?.pullRequestKey === pullRequestKey ? titleScope.text : null;
   const [titleSaving, setTitleSaving] = useState(false);
   const newThread = useNewThreadHandler();
+  const navigate = useNavigate();
+  const threadShells = useThreadShells();
+  const [handoffRequest, setHandoffRequest] = useState<{
+    key: string;
+    kind: string;
+    task: ThreadTask | null;
+    checkout: boolean;
+  } | null>(null);
+  const [handoffMode, setHandoffMode] = useState<"worktree" | "local">("worktree");
+  const [targetThread, setTargetThread] = useState("new");
   const { environments } = useEnvironments();
   const projects = useProjects();
   const unavailableGitHubUrl = useMemo(() => {
@@ -764,28 +790,25 @@ export function PullRequestDetailPanel({
     )?.repositoryIdentity;
     return gitHubPullRequestBrowserUrl(identity, reference.repository, reference.number);
   }, [environmentId, projects, reference.number, reference.projectId, reference.repository]);
-  // Beside a thread there is nothing to pick: the hand-offs land in that thread's composer, and
-  // the thread is already on one server's copy of the branch.
   const pickableEnvironments = useMemo(
     () =>
-      context === "page"
-        ? resolvePickableEnvironments(
-            { environmentId, projectId: reference.projectId },
-            projects,
-            environments.map((environment) => ({
-              environmentId: environment.environmentId,
-              label: environment.label,
-              machine: resolveEnvironmentMachineKind(environment.serverConfig),
-            })),
-          )
-        : [],
-    [context, environmentId, environments, projects, reference.projectId],
+      resolvePickableEnvironments(
+        { environmentId, projectId: reference.projectId },
+        projects,
+        environments.map((environment) => ({
+          environmentId: environment.environmentId,
+          label: environment.label,
+          machine: resolveEnvironmentMachineKind(environment.serverConfig),
+        })),
+      ),
+    [environmentId, environments, projects, reference.projectId],
   );
   // Which server the reader chose, and only for the pull request they chose it on: this one panel
   // shows a different pull request every time it is opened, and the choice does not follow.
   const [actingScope, setActingScope] = useState<{
     readonly pullRequestKey: string;
     readonly environmentId: EnvironmentId;
+    readonly projectId?: string;
   } | null>(null);
   const chosenEnvironmentId =
     actingScope?.pullRequestKey === pullRequestKey ? actingScope.environmentId : environmentId;
@@ -794,9 +817,35 @@ export function PullRequestDetailPanel({
   const acting =
     pickableEnvironments.find((entry) => entry.environmentId === chosenEnvironmentId) ?? null;
   const actingEnvironmentId = acting?.environmentId ?? environmentId;
+  const selectedCheckout = projects.find(
+    (project) =>
+      project.environmentId === actingEnvironmentId &&
+      project.id ===
+        (actingScope?.pullRequestKey === pullRequestKey ? actingScope.projectId : undefined),
+  );
+  const actingProjectId = selectedCheckout?.id ?? acting?.projectId ?? reference.projectId;
+  const actingWorkspaceRoot =
+    selectedCheckout?.workspaceRoot ?? acting?.workspaceRoot ?? detail?.workspaceRoot ?? null;
+  const currentProject = projects.find(
+    (project) => project.environmentId === environmentId && project.id === reference.projectId,
+  );
+  const currentRepositoryKey = currentProject?.repositoryIdentity?.canonicalKey?.toLowerCase();
+  const checkoutProjects = projects.filter(
+    (project) =>
+      project.environmentId === actingEnvironmentId &&
+      (project.id === actingProjectId ||
+        (currentRepositoryKey &&
+          project.repositoryIdentity?.canonicalKey?.toLowerCase() === currentRepositoryKey)),
+  );
+  const availableThreads = threadShells.filter(
+    (thread) =>
+      thread.environmentId === actingEnvironmentId &&
+      thread.projectId === actingProjectId &&
+      thread.archivedAt === null,
+  );
   const prepareThread = usePreparePullRequestThreadAction({
     environmentId: actingEnvironmentId,
-    cwd: acting?.workspaceRoot ?? detail?.workspaceRoot ?? null,
+    cwd: actingWorkspaceRoot,
   });
 
   const finishAction = async (
@@ -960,8 +1009,8 @@ export function PullRequestDetailPanel({
   };
 
   /** A question about the change, which needs a thread and nothing else. */
-  const startAsk = async (kind: string, task: ThreadTask) => {
-    if (!detail || handoff !== null) return;
+  const executeAsk = async (kind: string, task: ThreadTask): Promise<boolean> => {
+    if (!detail || handoff !== null) return false;
     if (attachTarget !== null) {
       writeTaskToComposer(attachTarget, task);
       toastManager.add({
@@ -972,10 +1021,10 @@ export function PullRequestDetailPanel({
             ? "The question is in the composer — read it over, then send."
             : "The pull request is in the composer — type your question, then send.",
       });
-      return;
+      return true;
     }
     setHandoff(kind);
-    const projectRef = scopeProjectRef(actingEnvironmentId, acting?.projectId ?? detail.projectId);
+    const projectRef = scopeProjectRef(actingEnvironmentId, actingProjectId);
     const opened = await openThreadWithTask(projectRef, task);
     setHandoff(null);
     if (opened === null) {
@@ -984,7 +1033,7 @@ export function PullRequestDetailPanel({
         title: "Could not open a thread",
         description: "Try again from the project, or open a thread first.",
       });
-      return;
+      return false;
     }
     toastManager.add({
       type: "success",
@@ -996,40 +1045,29 @@ export function PullRequestDetailPanel({
           ? "The question is in the composer — read it over, then send."
           : "The pull request is in the composer — type your question, then send.",
     });
+    return true;
   };
 
   // Every handoff works the same way: check the pull request out into its own worktree, open a
   // thread there, and — when it carries a task — put that in the composer for the user to read
   // before sending. Checking out is the whole point of the ones that carry nothing.
-  const startHandoff = async (
+  const executeHandoff = async (
     kind: string,
     task: { prompt: string; reviewComments?: ReadonlyArray<ReviewCommentContext> } | null,
     // A worktree leaves whatever is open alone, which is why it is the default. Checking out in
     // the repository itself is what you want when the point is to run the thing where you
     // already work — and it moves the branch under everything else that is open there.
     mode: "worktree" | "local" = "worktree",
-  ) => {
-    if (!detail || handoff !== null) return;
-    if (attachTarget !== null && task !== null) {
-      writeTaskToComposer(attachTarget, task);
-      toastManager.add({
-        type: "success",
-        title: "Added to the composer",
-        description: "The task is in the composer — read it over, then send.",
-      });
-      return;
-    }
+  ): Promise<boolean> => {
+    if (!detail || handoff !== null) return false;
     setHandoff(kind);
-    // The menu closes on the press and takes its "Preparing..." label with it, so this is the
-    // only thing answering for the checkout. It carries no timeout of its own: a loading toast
-    // never expires, and an explicit one would survive the update and pin the result on screen.
     const toastId = toastManager.add({
       type: "loading",
       title: "Preparing the pull request checkout...",
     });
     // Wherever the reader chose to act: the thread, the checkout it is pointed at and the composer
     // the task lands in are all one server's, and picking another one moves all three.
-    const projectRef = scopeProjectRef(actingEnvironmentId, acting?.projectId ?? detail.projectId);
+    const projectRef = scopeProjectRef(actingEnvironmentId, actingProjectId);
     // The thread is opened before the checkout rather than after it, because the project's setup
     // script only runs for a checkout that knows which thread it is for — and a worktree with no
     // dependencies installed is not something anyone can test.
@@ -1047,7 +1085,7 @@ export function PullRequestDetailPanel({
         title: "Could not open a thread for the checkout",
         description: "Try again from the project, or open a thread first.",
       });
-      return;
+      return false;
     }
     const prepared = await prepareThread.run({
       reference: detail.url,
@@ -1065,7 +1103,7 @@ export function PullRequestDetailPanel({
         title: "Could not prepare the pull request checkout",
         ...(detailMessage ? { description: detailMessage } : {}),
       });
-      return;
+      return false;
     }
     // The same thread again, now that there is somewhere to point it at. A local checkout has
     // no worktree of its own, so the thread runs where the repository already is.
@@ -1087,7 +1125,7 @@ export function PullRequestDetailPanel({
         title: "Checked out, but the thread stayed where it was",
         description: `The checkout is ready on \`${prepared.value.branch}\`. Point a thread at it from the branch picker, then ask again.`,
       });
-      return;
+      return false;
     }
     // Released here whatever happened next: a loading toast never expires on its own, so leaving
     // this set would spin forever and lock every handoff behind it until a reload.
@@ -1115,7 +1153,7 @@ export function PullRequestDetailPanel({
             }
           : staleCheckoutToast,
       );
-      return;
+      return true;
     }
     await openThreadWithTask(projectRef, task, opened);
     toastManager.update(
@@ -1128,6 +1166,22 @@ export function PullRequestDetailPanel({
           }
         : staleCheckoutToast,
     );
+    return true;
+  };
+
+  const startAsk = (kind: string, task: ThreadTask) => {
+    if (attachTarget !== null) return void executeAsk(kind, task);
+    setTargetThread("new");
+    setHandoffRequest({ key: pullRequestKey, kind, task, checkout: false });
+  };
+  const startHandoff = (
+    kind: string,
+    task: ThreadTask | null,
+    mode: "worktree" | "local" = "worktree",
+  ) => {
+    setTargetThread(attachTarget !== null && task !== null ? "current" : "new");
+    setHandoffMode(mode);
+    setHandoffRequest({ key: pullRequestKey, kind, task, checkout: true });
   };
 
   const askAboutPullRequest = () => {
@@ -1261,8 +1315,12 @@ export function PullRequestDetailPanel({
   // whether this account may. A reader with read access on someone else's project sees the pull
   // request and none of the buttons that would only ever be refused.
   const can = (action: PullRequestAction) =>
-    detail?.capabilities.actions.includes(action) === true &&
-    detail.viewerPermissions.actions.includes(action);
+    action === "delete-source-branch"
+      ? detail?.capabilities.deleteSourceBranch === true &&
+        detail.viewerPermissions.deleteSourceBranch === true &&
+        Boolean(detail.headRepositoryNameWithOwner?.trim())
+      : detail?.capabilities.actions.includes(action) === true &&
+        detail.viewerPermissions.actions.includes(action);
   const checksState = detail ? pullRequestChecksState(detail.checks) : null;
   // The merge state remains in one stable slot from waiting through completion. Conflicts take
   // the slot while they need a person; the armed badge remains beside them so that state is not lost.
@@ -1670,9 +1728,35 @@ export function PullRequestDetailPanel({
                   <MoreHorizontalIcon className="size-4" />
                 </MenuTrigger>
                 <MenuPopup align="end" side="bottom" className="min-w-72">
+                  {detail.state !== "open" && can("delete-source-branch") ? (
+                    <MenuItem
+                      disabled={actionPending}
+                      onClick={() =>
+                        setConfirmation({ open: true, action: "delete-source-branch" })
+                      }
+                    >
+                      Delete source branch
+                    </MenuItem>
+                  ) : null}
                   <MenuItem disabled={detailQuery.isPending} onClick={() => void refreshFromHost()}>
                     <RefreshCwIcon className="size-3.5" />
                     Refresh
+                  </MenuItem>
+                  <MenuItem
+                    disabled={handoff !== null}
+                    onClick={() => {
+                      if (!detail) return;
+                      setTargetThread("new");
+                      setHandoffRequest({
+                        key: pullRequestKey,
+                        kind: "note",
+                        checkout: false,
+                        task: buildAskAboutPullRequestHandoff(detail),
+                      });
+                    }}
+                  >
+                    <PencilIcon className="size-3.5" />
+                    Add note to agent
                   </MenuItem>
                   <MenuItem disabled={handoff !== null} onClick={askAboutPullRequest}>
                     <MessageCircleQuestionIcon className="mt-0.5 size-3.5 shrink-0 self-start" />
@@ -2319,70 +2403,328 @@ export function PullRequestDetailPanel({
             {...(unavailableGitHubUrl ? { gitHubUrl: unavailableGitHubUrl } : {})}
           />
         ) : detail ? (
-          <PullRequestMarkdownContext value={detail.provider === "github" ? repositoryUrl : null}>
-            {mountedTabs.has("summary") ? (
-              <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
-                <PullRequestSummaryTab
-                  environmentId={environmentId}
-                  threadRef={threadRef}
-                  reference={reference}
-                  detail={detail}
-                  activityPending={activityPending}
-                  activityError={activityError}
-                  pendingFinding={handoff}
-                  fixFindingLabel={handoffLabels.fixFinding}
-                  fixCheckLabel={handoffLabels.fixCheck}
-                  onFixFinding={startFixFinding}
-                  actionPending={actionPending}
-                  onCommentAction={performCommentAction}
-                  onRefresh={refreshDetail}
-                />
-              </div>
-            ) : null}
-            {mountedTabs.has("timeline") ? (
-              <div className={cn("absolute inset-0", tab !== "timeline" && "invisible")}>
-                {activityPending ? (
-                  <PullRequestTimelineGhost />
-                ) : activityError ? (
-                  <PullRequestActivityUnavailableState
-                    error={activityError}
-                    onRetry={activityQuery.refresh}
-                  />
-                ) : (
-                  <PullRequestTimelineTab
-                    detail={detail}
+          <PullRequestCommentAgentContext
+            value={(body, url) => {
+              const task = buildAskAboutPullRequestHandoff(detail);
+              startAsk("comment", {
+                ...task,
+                reviewComments: task.reviewComments.map((comment) => ({
+                  ...comment,
+                  text: comment.text + "\nQuoted comment " + (url ?? "") + ":\n" + body,
+                })),
+              });
+            }}
+          >
+            <PullRequestMarkdownContext value={detail.provider === "github" ? repositoryUrl : null}>
+              {mountedTabs.has("summary") ? (
+                <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
+                  <PullRequestSummaryTab
                     environmentId={environmentId}
                     threadRef={threadRef}
                     reference={reference}
-                    order={timelineOrder}
-                    onOpenCommit={openCommit}
-                    onRefresh={refreshDetail}
-                  />
-                )}
-              </div>
-            ) : null}
-            {mountedTabs.has("code") ? (
-              <div className={cn("absolute inset-0", tab !== "code" && "invisible")}>
-                <Suspense fallback={<DiffPanelLoadingState label="Loading pull request diff..." />}>
-                  <PullRequestCodeTab
-                    {...(attachTarget ? { onAddToAgentSelection: addSelectionToAgent } : {})}
-                    environmentId={environmentId}
-                    reference={reference}
                     detail={detail}
-                    selectedCommitOid={selectedCodeCommitOid}
-                    onSelectedCommitChange={selectCodeCommit}
+                    activityPending={activityPending}
+                    activityError={activityError}
                     pendingFinding={handoff}
                     fixFindingLabel={handoffLabels.fixFinding}
+                    fixCheckLabel={handoffLabels.fixCheck}
                     onFixFinding={startFixFinding}
+                    actionPending={actionPending}
+                    onCommentAction={performCommentAction}
                     onRefresh={refreshDetail}
-                    refreshToken={codeRefreshToken}
                   />
-                </Suspense>
-              </div>
-            ) : null}
-          </PullRequestMarkdownContext>
+                </div>
+              ) : null}
+              {mountedTabs.has("timeline") ? (
+                <div className={cn("absolute inset-0", tab !== "timeline" && "invisible")}>
+                  {activityPending ? (
+                    <PullRequestTimelineGhost />
+                  ) : activityError ? (
+                    <PullRequestActivityUnavailableState
+                      error={activityError}
+                      onRetry={activityQuery.refresh}
+                    />
+                  ) : (
+                    <PullRequestTimelineTab
+                      detail={detail}
+                      environmentId={environmentId}
+                      threadRef={threadRef}
+                      reference={reference}
+                      order={timelineOrder}
+                      onOpenCommit={openCommit}
+                      onRefresh={refreshDetail}
+                    />
+                  )}
+                </div>
+              ) : null}
+              {mountedTabs.has("code") ? (
+                <div className={cn("absolute inset-0", tab !== "code" && "invisible")}>
+                  <Suspense
+                    fallback={<DiffPanelLoadingState label="Loading pull request diff..." />}
+                  >
+                    <PullRequestCodeTab
+                      onAddToAgentSelection={addSelectionToAgent}
+                      environmentId={environmentId}
+                      reference={reference}
+                      detail={detail}
+                      selectedCommitOid={selectedCodeCommitOid}
+                      onSelectedCommitChange={selectCodeCommit}
+                      pendingFinding={handoff}
+                      fixFindingLabel={handoffLabels.fixFinding}
+                      onFixFinding={startFixFinding}
+                      onRefresh={refreshDetail}
+                      refreshToken={codeRefreshToken}
+                    />
+                  </Suspense>
+                </div>
+              ) : null}
+            </PullRequestMarkdownContext>
+          </PullRequestCommentAgentContext>
         ) : null}
       </div>
+
+      <Dialog
+        open={handoffRequest?.key === pullRequestKey}
+        onOpenChange={(open) => {
+          if (!open) setHandoffRequest(null);
+        }}
+      >
+        <DialogPopup>
+          <DialogHeader>
+            <DialogTitle>
+              {handoffRequest?.checkout ? "Prepare a thread" : "Add to agent"}
+            </DialogTitle>
+            <DialogDescription>
+              {handoffRequest?.checkout
+                ? "Choose where to work on this pull request."
+                : "Add the PR context and your notes to a thread. Review the draft before sending."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-4">
+            {handoffRequest?.checkout && attachTarget !== null && handoffRequest.task !== null ? (
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium" htmlFor="pr-handoff-destination">
+                  Destination
+                </label>
+                <Select
+                  value={targetThread}
+                  onValueChange={(value) => setTargetThread(value ?? "current")}
+                >
+                  <SelectTrigger id="pr-handoff-destination">
+                    <SelectValue>
+                      {targetThread === "current" ? "Current thread" : "New thread"}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    <SelectItem value="current">Current thread</SelectItem>
+                    <SelectItem value="new">New thread and checkout</SelectItem>
+                  </SelectPopup>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {targetThread === "current"
+                    ? "Adds the task here without changing this thread's checkout."
+                    : "Creates a thread on the server, project, and checkout selected below."}
+                </p>
+              </div>
+            ) : null}
+            {targetThread !== "current" && pickableEnvironments.length > 0 ? (
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium" htmlFor="pr-handoff-server">
+                  Server
+                </label>
+                <Select
+                  value={actingEnvironmentId}
+                  onValueChange={(value) => {
+                    const entry = pickableEnvironments.find(
+                      (entry) => entry.environmentId === value,
+                    );
+                    if (entry) {
+                      setActingScope({ pullRequestKey, environmentId: entry.environmentId });
+                      setTargetThread("new");
+                    }
+                  }}
+                >
+                  <SelectTrigger id="pr-handoff-server">
+                    <SelectValue>
+                      {
+                        pickableEnvironments.find(
+                          (entry) => entry.environmentId === actingEnvironmentId,
+                        )?.label
+                      }
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {pickableEnvironments.map((entry) => (
+                      <SelectItem key={entry.environmentId} value={entry.environmentId}>
+                        {entry.label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </div>
+            ) : null}
+            {targetThread !== "current" ? (
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium" htmlFor="pr-handoff-project">
+                  Project
+                </label>
+                <Select
+                  value={actingProjectId}
+                  onValueChange={(value) => {
+                    const project = checkoutProjects.find((project) => project.id === value);
+                    if (project) {
+                      setActingScope({
+                        pullRequestKey,
+                        environmentId: actingEnvironmentId,
+                        projectId: project.id,
+                      });
+                      setTargetThread("new");
+                    }
+                  }}
+                >
+                  <SelectTrigger id="pr-handoff-project">
+                    <SelectValue>{actingWorkspaceRoot}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {checkoutProjects.map((project) => (
+                      <SelectItem key={project.id} value={project.id}>
+                        {project.workspaceRoot}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </div>
+            ) : null}
+            {handoffRequest?.checkout && targetThread !== "current" ? (
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium" htmlFor="pr-handoff-mode">
+                  Checkout
+                </label>
+                <Select
+                  value={handoffMode}
+                  onValueChange={(value) => {
+                    if (value === "worktree" || value === "local") setHandoffMode(value);
+                  }}
+                >
+                  <SelectTrigger id="pr-handoff-mode">
+                    <SelectValue>
+                      {handoffMode === "worktree" ? "New worktree" : "Use this checkout"}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    <SelectItem value="worktree">New worktree</SelectItem>
+                    <SelectItem value="local">Use this checkout</SelectItem>
+                  </SelectPopup>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {handoffMode === "worktree"
+                    ? "Keeps your current checkout in place."
+                    : "Switches this checkout to the PR branch. Local changes can prevent the switch."}
+                </p>
+              </div>
+            ) : attachTarget === null ? (
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium" htmlFor="pr-handoff-thread">
+                  Thread
+                </label>
+                <Select
+                  value={targetThread}
+                  onValueChange={(value) => setTargetThread(value ?? "new")}
+                >
+                  <SelectTrigger id="pr-handoff-thread">
+                    <SelectValue>
+                      {targetThread === "new"
+                        ? "New thread"
+                        : availableThreads.find((thread) => thread.id === targetThread)?.title}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    <SelectItem value="new">New thread</SelectItem>
+                    {availableThreads.map((thread) => (
+                      <SelectItem key={thread.id} value={thread.id}>
+                        {thread.title}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </div>
+            ) : null}
+            {!handoffRequest?.checkout ? (
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium" htmlFor="pr-handoff-note">
+                  Notes
+                </label>
+                <Textarea
+                  id="pr-handoff-note"
+                  rows={4}
+                  value={handoffRequest?.task?.prompt ?? ""}
+                  onChange={(event) =>
+                    setHandoffRequest((request) =>
+                      request
+                        ? { ...request, task: { ...request.task, prompt: event.target.value } }
+                        : null,
+                    )
+                  }
+                  placeholder="What should the agent do?"
+                />
+              </div>
+            ) : null}
+          </DialogPanel>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setHandoffRequest(null)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={handoff !== null || (targetThread !== "current" && !actingWorkspaceRoot)}
+              onClick={async () => {
+                const request = handoffRequest;
+                if (!request || request.key !== pullRequestKey) return;
+                if (
+                  request.checkout &&
+                  targetThread === "current" &&
+                  attachTarget !== null &&
+                  request.task !== null
+                ) {
+                  writeTaskToComposer(attachTarget, request.task);
+                  toastManager.add({
+                    type: "success",
+                    title: "Added to the composer",
+                    description: "The task is in the composer — read it over, then send.",
+                  });
+                  setHandoffRequest(null);
+                  return;
+                }
+                if (!request.checkout && targetThread !== "new" && attachTarget === null) {
+                  const thread = availableThreads.find((thread) => thread.id === targetThread);
+                  if (!thread || !request.task) return;
+                  const target = scopeThreadRef(thread.environmentId, thread.id);
+                  writeTaskToComposer(target, request.task);
+                  setHandoffRequest(null);
+                  await navigate({
+                    to: "/$environmentId/$threadId",
+                    params: buildThreadRouteParams(target),
+                  });
+                  return;
+                }
+                const succeeded = request.checkout
+                  ? await executeHandoff(request.kind, request.task, handoffMode)
+                  : request.task
+                    ? await executeAsk(request.kind, request.task)
+                    : false;
+                if (succeeded)
+                  setHandoffRequest((current) => (current === request ? null : current));
+              }}
+            >
+              {handoffRequest?.checkout && targetThread === "current"
+                ? "Add to this thread"
+                : handoffRequest?.checkout
+                  ? "Prepare thread"
+                  : "Add to agent"}
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
 
       <AlertDialog
         open={confirmation.open}
@@ -2394,29 +2736,36 @@ export function PullRequestDetailPanel({
         <AlertDialogPopup>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirmAction === "merge"
-                ? "Merge pull request?"
-                : confirmAction === "enable-auto-merge"
-                  ? "Enable auto-merge?"
-                  : confirmAction === "revert"
-                    ? "Revert these changes?"
-                    : confirmAction === "approve-workflows"
-                      ? "Approve workflows to run?"
-                      : "Close pull request?"}
+              {confirmAction === "delete-source-branch"
+                ? "Delete source branch?"
+                : confirmAction === "merge"
+                  ? "Merge pull request?"
+                  : confirmAction === "enable-auto-merge"
+                    ? "Enable auto-merge?"
+                    : confirmAction === "revert"
+                      ? "Revert these changes?"
+                      : confirmAction === "approve-workflows"
+                        ? "Approve workflows to run?"
+                        : "Close pull request?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {confirmAction === "merge"
-                ? `This merges #${reference.number} using ${selectedMergeMethod}.`
-                : confirmAction === "enable-auto-merge"
-                  ? // The host merges this as soon as it considers the pull request ready, which
-                    // may be immediately — there is no telling from here whether anything is
-                    // still outstanding.
-                    `This merges #${reference.number} using ${selectedMergeMethod} as soon as the host considers it ready, which may be immediately.`
-                  : confirmAction === "revert"
-                    ? `This opens a new pull request that reverses the changes merged by #${reference.number}.`
-                    : confirmAction === "approve-workflows"
-                      ? `This allows ${workflowApprovalsRequired} ${workflowApprovalsRequired === 1 ? "workflow" : "workflows"} from #${reference.number} to run. Review the code and workflow changes first.`
-                      : `This closes #${reference.number} without merging it.`}
+              {confirmAction === "delete-source-branch"
+                ? "Delete source branch " +
+                  detail?.headBranch +
+                  " from " +
+                  detail?.headRepositoryNameWithOwner +
+                  " #" +
+                  reference.number +
+                  "? This removes the branch on the source host, including when it belongs to a fork. Local checkouts are kept."
+                : confirmAction === "merge"
+                  ? `This merges #${reference.number} using ${selectedMergeMethod}.`
+                  : confirmAction === "enable-auto-merge"
+                    ? `This merges #${reference.number} using ${selectedMergeMethod} as soon as the host considers it ready, which may be immediately.`
+                    : confirmAction === "revert"
+                      ? `This opens a new pull request that reverses the changes merged by #${reference.number}.`
+                      : confirmAction === "approve-workflows"
+                        ? `This allows ${workflowApprovalsRequired} ${workflowApprovalsRequired === 1 ? "workflow" : "workflows"} from #${reference.number} to run. Review the code and workflow changes first.`
+                        : `This closes #${reference.number} without merging it.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -2425,11 +2774,16 @@ export function PullRequestDetailPanel({
             </AlertDialogClose>
             <Button
               size="sm"
-              variant={confirmAction === "close" ? "destructive" : "default"}
+              variant={
+                confirmAction === "close" || confirmAction === "delete-source-branch"
+                  ? "destructive"
+                  : "default"
+              }
               disabled={actionPending}
               onClick={() => {
                 const action = confirmAction;
                 setConfirmation((current) => ({ ...current, open: false }));
+                if (action === "delete-source-branch") void perform("delete-source-branch");
                 if (action === "merge") void perform("merge", selectedMergeMethod);
                 if (action === "enable-auto-merge")
                   void perform("enable-auto-merge", selectedMergeMethod);
@@ -2438,15 +2792,17 @@ export function PullRequestDetailPanel({
                 if (action === "close") void perform("close");
               }}
             >
-              {confirmAction === "merge"
-                ? selectedMergeMethodLabel
-                : confirmAction === "enable-auto-merge"
-                  ? "Enable auto-merge"
-                  : confirmAction === "revert"
-                    ? "Create revert PR"
-                    : confirmAction === "approve-workflows"
-                      ? "Approve and run"
-                      : "Close"}
+              {confirmAction === "delete-source-branch"
+                ? "Delete branch"
+                : confirmAction === "merge"
+                  ? selectedMergeMethodLabel
+                  : confirmAction === "enable-auto-merge"
+                    ? "Enable auto-merge"
+                    : confirmAction === "revert"
+                      ? "Create revert PR"
+                      : confirmAction === "approve-workflows"
+                        ? "Approve and run"
+                        : "Close"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

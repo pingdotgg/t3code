@@ -1,3 +1,7 @@
+import {
+  pullRequestEnvironmentQueries,
+  includedPullRequestEntries,
+} from "./pullRequestProjectAssignment.logic";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -154,5 +158,49 @@ describe("pull request project filter choices", () => {
 
     expect(pullRequestFilterProjects([app, tools], labels)).toEqual([tools, app]);
     expect(pullRequestFilterProjects([], labels)).toEqual([]);
+  });
+});
+
+describe("excluded project queries and cached rows", () => {
+  it("does not fetch until saved exclusions can be applied", () => {
+    expect(
+      pullRequestEnvironmentQueries({
+        projects: [],
+        listedProjects: [],
+        environmentIds: [cups],
+        projectsKnown: false,
+        hasExclusions: true,
+        projectId: undefined,
+      }),
+    ).toEqual([]);
+  });
+  it("sends only included project IDs and skips empty environments", () => {
+    const first = project("first", cups);
+    const second = project("second", cups, "github.com/acme/second");
+    const third = project("third", nucbox);
+    const input = {
+      projects: [first, second, third],
+      listedProjects: [second],
+      environmentIds: [cups, nucbox],
+      projectsKnown: true,
+      hasExclusions: true,
+      projectId: undefined,
+    };
+    expect(pullRequestEnvironmentQueries(input)).toEqual([
+      { environmentId: cups, projectIds: [second.id] },
+    ]);
+    expect(pullRequestEnvironmentQueries({ ...input, listedProjects: [] })).toEqual([]);
+  });
+  it("filters cached entries by server and project without changing detail lookup", () => {
+    const first = project("same", cups);
+    const second = project("same", nucbox);
+    const entries = [first, second].map((project) => ({
+      projectId: project.id,
+      environmentId: project.environmentId,
+    }));
+    expect(includedPullRequestEntries(entries, [JSON.stringify([cups, first.id])])).toEqual([
+      entries[1],
+    ]);
+    expect(findScopedProject([first, second], cups, first.id)).toEqual(first);
   });
 });

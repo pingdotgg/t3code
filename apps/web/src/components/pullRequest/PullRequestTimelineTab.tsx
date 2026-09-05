@@ -1,3 +1,4 @@
+import { formatEnvironmentQueryError } from "~/state/query";
 import type {
   EnvironmentId,
   PullRequestActor,
@@ -25,12 +26,14 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
+import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   buildPullRequestTimeline,
+  comparePullRequestTimelineEvents,
   groupPullRequestTimelineConversations,
   isPullRequestVerdictStale,
   newestPullRequestCommitAt,
@@ -39,6 +42,8 @@ import {
   type PullRequestTimelineEvent,
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestComment } from "./pullRequestEditing.logic";
+import { PullRequestConversation } from "./PullRequestConversation";
+import { PullRequestCommentActions } from "./PullRequestCommentActions";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
@@ -55,6 +60,7 @@ import {
 /** What every comment on the timeline needs to react; only the subject differs between them. */
 interface ReactionSurface {
   readonly canReact: boolean;
+  readonly canReply: boolean;
   readonly environmentId: EnvironmentId;
   /** Thread the timeline is shown beside, so body links can open in its in-app browser. */
   readonly threadRef: ScopedThreadRef | null;
@@ -209,7 +215,11 @@ function ConversationCard({
     });
     setSaving(false);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not save the comment" });
+      toastManager.add({
+        type: "error",
+        title: "Could not save the comment",
+        description: formatEnvironmentQueryError(result.cause),
+      });
       return;
     }
     setEditing(false);
@@ -274,6 +284,16 @@ function ConversationCard({
           />
         </div>
       ) : null}
+      <PullRequestCommentActions
+        body={event.body ?? ""}
+        url={event.url}
+        canReply={reactions.canReply}
+        cwd={cwd}
+        environmentId={reactions.environmentId}
+        threadRef={reactions.threadRef}
+        reference={reactions.reference}
+        onRefresh={reactions.onRefresh}
+      />
       {reactions.canReact || event.reactions.length > 0 ? (
         <div className="px-2 pb-2">
           <PullRequestReactionBar
@@ -415,7 +435,17 @@ function CommitEvent({
   );
 }
 
-function LifecycleEvent({ event }: { event: PullRequestTimelineEvent }) {
+function LifecycleEvent({
+  event,
+  cwd,
+  reactions,
+  onOpen,
+}: {
+  event: PullRequestTimelineEvent;
+  cwd: string;
+  reactions: ReactionSurface;
+  onOpen: (url: string) => void;
+}) {
   const presentation =
     event.kind === "opened"
       ? {
@@ -427,10 +457,12 @@ function LifecycleEvent({ event }: { event: PullRequestTimelineEvent }) {
             icon: <GitMergeIcon className="size-3.5" />,
             label: "Pull request merged",
           }
-        : {
-            icon: <GitPullRequestClosedIcon className="size-3.5" />,
-            label: "Pull request closed",
-          };
+        : event.kind === "closed"
+          ? {
+              icon: <GitPullRequestClosedIcon className="size-3.5" />,
+              label: "Pull request closed",
+            }
+          : { icon: <GitPullRequestIcon className="size-3.5" />, label: event.title };
 
   return (
     <div className="relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
@@ -439,7 +471,17 @@ function LifecycleEvent({ event }: { event: PullRequestTimelineEvent }) {
         <div className="flex flex-wrap items-center gap-1.5">
           {event.actor ? <ActorName actor={event.actor} /> : null}
           <span className="font-semibold text-foreground">{presentation.label}</span>
+          <OpenOnHostButton url={event.url} onOpen={onOpen} />
         </div>
+        {event.body ? (
+          <TimelineBody
+            body={event.body}
+            markdown={event.markdown}
+            cwd={cwd}
+            environmentId={reactions.environmentId}
+            threadRef={reactions.threadRef}
+          />
+        ) : null}
         <div className="mt-0.5 text-[11px] text-muted-foreground">
           {formatRelativeTimeLabel(event.at)}
         </div>
@@ -565,10 +607,40 @@ export function PullRequestTimelineTab({
   onOpenCommit: (oid: string) => void;
   onRefresh: () => void;
 }) {
-  const events = buildPullRequestTimeline(detail);
+  const threadByComment = new Map(
+    detail.reviewThreads.flatMap((thread) =>
+      thread.comments.map((comment) => [comment.id, thread] as const),
+    ),
+  );
+  const events = buildPullRequestTimeline(detail).filter((event) => !threadByComment.has(event.id));
+  const conversationEvents = detail.reviewThreads.flatMap((thread) => {
+    const comment = thread.comments[0];
+    return comment
+      ? [
+          {
+            id: "thread:" + thread.id,
+            at: comment.createdAt,
+            kind: "conversation",
+            title: "Conversation",
+            body: null,
+            markdown: false,
+            url: null,
+            actor: comment.author,
+            commitAuthors: [],
+            additions: null,
+            deletions: null,
+            path: thread.path,
+            reviewState: null,
+            reactions: [],
+          },
+        ]
+      : [];
+  });
+  const timeline = [...events, ...conversationEvents].toSorted(comparePullRequestTimelineEvents);
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
   const reactions: ReactionSurface = {
     canReact: detail.capabilities.reactions === true,
+    canReply: detail.capabilities.comment && detail.viewerPermissions.comment,
     environmentId,
     threadRef,
     reference,
@@ -581,7 +653,7 @@ export function PullRequestTimelineTab({
       .filter((comment) => canEditPullRequestComment(detail, comment))
       .map((comment) => [comment.id, comment] as const),
   );
-  const orderedEvents = order === "newest" ? events : events.toReversed();
+  const orderedEvents = order === "newest" ? timeline : timeline.toReversed();
   const rows = groupPullRequestTimelineConversations(orderedEvents);
   const openOnHost = (url: string) => {
     void readLocalApi()?.shell.openExternal(url);
@@ -590,6 +662,18 @@ export function PullRequestTimelineTab({
   return (
     <div className="h-full overflow-y-auto px-4 py-5">
       <div className="mx-auto max-w-3xl">
+        {detail.timelineTruncated ? (
+          <Alert variant="warning" className="mb-4">
+            <AlertDescription>
+              <p>
+                Some host events are not loaded.{" "}
+                <a className="underline" href={detail.url} target="_blank" rel="noreferrer">
+                  Open the full history on the host.
+                </a>
+              </p>
+            </AlertDescription>
+          </Alert>
+        ) : null}
         <div className="relative">
           <span aria-hidden className="absolute bottom-5 left-[15px] top-1 w-px bg-border/45" />
           {rows.map((row) => {
@@ -606,6 +690,31 @@ export function PullRequestTimelineTab({
               );
             }
             const event = row.event;
+            if (event.kind === "conversation") {
+              const thread = detail.reviewThreads.find(
+                (thread) => "thread:" + thread.id === event.id,
+              );
+              return thread ? (
+                <div
+                  key={JSON.stringify([
+                    environmentId,
+                    reference.projectId,
+                    reference.repository,
+                    reference.number,
+                    thread.id,
+                  ])}
+                  className="relative mb-5 pl-9"
+                >
+                  <PullRequestConversation
+                    thread={thread}
+                    detail={detail}
+                    environmentId={environmentId}
+                    reference={reference}
+                    onRefresh={onRefresh}
+                  />
+                </div>
+              ) : null;
+            }
             if (event.kind === "commit") {
               return <CommitEvent key={event.id} event={event} onOpen={onOpenCommit} />;
             }
@@ -623,7 +732,15 @@ export function PullRequestTimelineTab({
                 />
               );
             }
-            return <LifecycleEvent key={event.id} event={event} />;
+            return (
+              <LifecycleEvent
+                key={event.id}
+                event={event}
+                cwd={detail.workspaceRoot}
+                reactions={reactions}
+                onOpen={openOnHost}
+              />
+            );
           })}
         </div>
 

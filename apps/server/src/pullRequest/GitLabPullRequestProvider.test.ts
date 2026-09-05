@@ -8,6 +8,7 @@ import { gitLabViewerPermissions, make } from "./GitLabPullRequestProvider.ts";
 describe("gitLabViewerPermissions", () => {
   it("offers everything to a viewer GitLab says can merge", () => {
     expect(gitLabViewerPermissions({ viewerCanMerge: true })).toEqual({
+      deleteSourceBranch: false,
       // Arming a merge for later and taking the arming back answer to the same `can_merge`.
       actions: [
         "merge",
@@ -34,6 +35,7 @@ describe("gitLabViewerPermissions", () => {
     // `user.can_merge` already accounts for the role, the approval rules and a protected target
     // branch, so it is the one answer here that does not have to be inferred.
     expect(gitLabViewerPermissions({ viewerCanMerge: false })).toEqual({
+      deleteSourceBranch: false,
       actions: ["ready", "draft", "close", "reopen"],
       comment: true,
       resolve: true,
@@ -195,3 +197,15 @@ describe("rewriting what has already been said", () => {
     }),
   );
 });
+
+it.each([true, false, undefined])(
+  "requires known source access for deletion (%s)",
+  (sourceAccess) => {
+    expect(
+      gitLabViewerPermissions({
+        viewerCanMerge: true,
+        ...(sourceAccess === undefined ? {} : { viewerCanDeleteSourceBranch: sourceAccess }),
+      }).deleteSourceBranch,
+    ).toBe(sourceAccess === true);
+  },
+);

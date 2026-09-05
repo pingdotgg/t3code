@@ -1,3 +1,9 @@
+import * as NodeBuffer from "node:buffer";
+import {
+  assertSourceBranchDeletable,
+  decodeBranchDeletionJson,
+  PullRequestBranchDeletionError,
+} from "./pullRequestBranchDeletion.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -5,6 +11,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
   PullRequestAction,
+  PullRequestTimelineEvent,
   PullRequestComment,
   PullRequestInvolvement,
   PullRequestListState,
@@ -103,6 +110,7 @@ export class AzureDevOpsReviewerNameError extends Schema.TaggedErrorClass<AzureD
 }
 
 export type AzureDevOpsPullRequestCliError =
+  | PullRequestBranchDeletionError
   | AzureDevOpsCli.AzureDevOpsCliError
   | AzureDevOpsPullRequestReadError
   | AzureDevOpsPullRequestIncompleteError
@@ -142,6 +150,13 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       AzureDevOpsPullRequestCliError
     >;
 
+    readonly getSourceBranchPermission: (input: {
+      readonly cwd: string;
+      readonly projectId: string;
+      readonly repositoryId: string;
+      readonly branch: string;
+    }) => Effect.Effect<boolean, AzureDevOpsPullRequestCliError>;
+
     readonly getPullRequest: (input: {
       readonly cwd: string;
       readonly number: number;
@@ -151,7 +166,13 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
     readonly listThreads: (input: {
       readonly cwd: string;
       readonly threadsUrl: string;
-    }) => Effect.Effect<ReadonlyArray<PullRequestComment>, AzureDevOpsPullRequestCliError>;
+    }) => Effect.Effect<
+      {
+        readonly comments: ReadonlyArray<PullRequestComment>;
+        readonly timelineEvents: ReadonlyArray<PullRequestTimelineEvent>;
+      },
+      AzureDevOpsPullRequestCliError
+    >;
 
     readonly runPullRequestAction: (input: {
       readonly cwd: string;
@@ -219,6 +240,8 @@ function actionArgs(
   mergeMethod: PullRequestMergeMethod | undefined,
 ): ReadonlyArray<string> {
   switch (action) {
+    case "delete-source-branch":
+      throw new Error("Source branch deletion requires a fresh branch lookup");
     case "merge":
       return ["--status", "completed", "--squash", mergeMethod === "squash" ? "true" : "false"];
     // Auto-complete is Azure's own name for it: the pull request stays active and Azure completes
@@ -260,6 +283,10 @@ function isReviewerName(value: string): boolean {
   const name = value.trim();
   return name.length > 0 && !name.startsWith("-");
 }
+
+const decodeSourceBranchPermission = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ value: Schema.Array(Schema.Boolean) })),
+);
 
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
@@ -413,6 +440,50 @@ export const make = Effect.gen(function* () {
         items: [],
       }),
 
+    getSourceBranchPermission: (input) => {
+      const branch = input.branch
+        .split("/")
+        .map((part) => NodeBuffer.Buffer.from(part, "utf16le").toString("hex"))
+        .join("/");
+      return executeJson({
+        cwd: input.cwd,
+        args: [
+          "devops",
+          "invoke",
+          ...detectArgs,
+          "--area",
+          "security",
+          "--resource",
+          "permissions",
+          "--route-parameters",
+          "securityNamespaceId=2e9eb7ed-3c0a-47d4-87c1-0ffdd275fd87",
+          "permissions=8",
+          "--query-parameters",
+          `tokens=repoV2/${input.projectId}/${input.repositoryId}/refs/heads/${branch}/`,
+          "alwaysAllowAdministrators=true",
+          "--api-version",
+          "7.1",
+          "--http-method",
+          "GET",
+        ],
+      }).pipe(
+        Effect.flatMap((response) =>
+          decodeSourceBranchPermission(response.stdout).pipe(
+            Effect.mapError(
+              (cause) =>
+                new AzureDevOpsPullRequestReadError({
+                  command: "az",
+                  cwd: input.cwd,
+                  operation: "getSourceBranchPermission",
+                  cause,
+                }),
+            ),
+          ),
+        ),
+        Effect.map((response) => response.value.length === 1 && response.value[0] === true),
+      );
+    },
+
     getPullRequest: (input) =>
       executeJson({
         cwd: input.cwd,
@@ -497,8 +568,102 @@ export const make = Effect.gen(function* () {
             })
             .pipe(Effect.asVoid),
 
-    runPullRequestAction: (input) =>
-      azure
+    runPullRequestAction: (input) => {
+      if (input.action === "delete-source-branch") {
+        return Effect.gen(function* () {
+          const response = yield* executeJson({
+            cwd: input.cwd,
+            args: ["repos", "pr", "show", ...detectArgs, "--id", String(input.number)],
+          });
+          const repositorySchema = Schema.Struct({
+            id: Schema.String,
+            project: Schema.Struct({ id: Schema.String }),
+          });
+          const current = yield* decodeBranchDeletionJson(
+            Schema.Struct({
+              status: Schema.String,
+              sourceRefName: Schema.String,
+              targetRefName: Schema.String,
+              repository: repositorySchema,
+              forkSource: Schema.optional(
+                Schema.NullOr(Schema.Struct({ repository: repositorySchema })),
+              ),
+            }),
+            response.stdout,
+          );
+          const source = current.forkSource?.repository ?? current.repository;
+          const sourceArgs = [
+            ...detectArgs,
+            "--repository",
+            source.id,
+            "--project",
+            source.project.id,
+          ];
+          const repository = yield* executeJson({
+            cwd: input.cwd,
+            args: ["repos", "show", ...sourceArgs],
+          });
+          const config = yield* decodeBranchDeletionJson(
+            Schema.Struct({ defaultBranch: Schema.String }),
+            repository.stdout,
+          );
+          yield* assertSourceBranchDeletable({
+            state: current.status,
+            sourceRepository: source.id,
+            baseRepository: current.repository.id,
+            sourceBranch: current.sourceRefName,
+            baseBranch: current.targetRefName,
+            defaultBranch: config.defaultBranch,
+          });
+          const refs = yield* executeJson({
+            cwd: input.cwd,
+            args: [
+              "repos",
+              "ref",
+              "list",
+              ...sourceArgs,
+              "--filter",
+              current.sourceRefName.replace(/^refs\//, ""),
+            ],
+          });
+          const branches = yield* decodeBranchDeletionJson(
+            Schema.Array(Schema.Struct({ name: Schema.String, objectId: Schema.String })),
+            refs.stdout,
+          );
+          const branch = branches.find((ref) => ref.name === current.sourceRefName);
+          if (branch === undefined)
+            return yield* new PullRequestBranchDeletionError({
+              reason: "source-branch-missing",
+            });
+          const deleted = yield* executeJson({
+            cwd: input.cwd,
+            args: [
+              "repos",
+              "ref",
+              "delete",
+              ...sourceArgs,
+              "--name",
+              branch.name,
+              "--object-id",
+              branch.objectId,
+            ],
+          });
+          const result = yield* decodeBranchDeletionJson(
+            Schema.Struct({
+              success: Schema.Boolean,
+              customMessage: Schema.optional(Schema.NullOr(Schema.String)),
+              updateStatus: Schema.optional(Schema.String),
+            }),
+            deleted.stdout,
+          );
+          if (!result.success)
+            return yield* new PullRequestBranchDeletionError({
+              reason: "delete-refused",
+              cause: result,
+            });
+        });
+      }
+      return azure
         .execute({
           cwd: input.cwd,
           args: [
@@ -514,7 +679,8 @@ export const make = Effect.gen(function* () {
             "json",
           ],
         })
-        .pipe(Effect.asVoid),
+        .pipe(Effect.asVoid);
+    },
 
     updatePullRequest: (input) =>
       azure

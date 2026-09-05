@@ -4,6 +4,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
   PullRequestActor,
+  PullRequestTimelineEvent,
   PullRequestCheck,
   PullRequestCheckStatus,
   PullRequestChecksState,
@@ -32,6 +33,103 @@ import type {
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 import { dedupeChecks } from "./pullRequestChecks.ts";
+
+const decodeTimelinePage = decodeJsonResult(Schema.Array(Schema.Unknown));
+const decodeTimelineEvent = Schema.decodeUnknownExit(
+  Schema.Struct({
+    id: Schema.optional(Schema.Number),
+    event: Schema.String,
+    created_at: Schema.String,
+    actor: Schema.optional(
+      Schema.NullOr(
+        Schema.Struct({ login: Schema.String, avatar_url: Schema.optional(Schema.String) }),
+      ),
+    ),
+    html_url: Schema.optional(Schema.String),
+    requested_reviewer: Schema.optional(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
+    requested_team: Schema.optional(Schema.NullOr(Schema.Struct({ name: Schema.String }))),
+    label: Schema.optional(Schema.NullOr(Schema.Struct({ name: Schema.String }))),
+    rename: Schema.optional(
+      Schema.NullOr(Schema.Struct({ from: Schema.String, to: Schema.String })),
+    ),
+    source: Schema.optional(
+      Schema.Struct({
+        issue: Schema.optional(
+          Schema.Struct({
+            id: Schema.Number,
+            title: Schema.String,
+            html_url: Schema.String,
+            state: Schema.String,
+            pull_request: Schema.optional(
+              Schema.Struct({ merged_at: Schema.optional(Schema.NullOr(Schema.String)) }),
+            ),
+          }),
+        ),
+      }),
+    ),
+  }),
+);
+
+export function decodeTimelineEventsJson(raw: string): Result.Result<
+  {
+    readonly events: ReadonlyArray<PullRequestTimelineEvent>;
+    readonly rawCount: number;
+  },
+  DecodeFailure
+> {
+  const page = decodeTimelinePage(raw);
+  if (!Result.isSuccess(page)) return Result.fail(page.failure);
+  const events = new Map<string, PullRequestTimelineEvent>();
+  for (const entry of page.success) {
+    const decoded = decodeTimelineEvent(entry);
+    if (Exit.isFailure(decoded)) continue;
+    const event = decoded.value;
+    if (
+      ["commented", "reviewed", "committed", "line-commented", "review_dismissed"].includes(
+        event.event,
+      )
+    )
+      continue;
+    const related = event.source?.issue;
+    const reviewer = event.requested_reviewer
+      ? `@${event.requested_reviewer.login}`
+      : event.requested_team?.name;
+    const body =
+      event.label?.name ??
+      reviewer ??
+      (event.rename ? `${event.rename.from} → ${event.rename.to}` : (related?.title ?? ""));
+    const id =
+      event.id === undefined
+        ? `${event.event}:${event.created_at}:${related?.id ?? event.actor?.login ?? ""}`
+        : String(event.id);
+    events.set(id, {
+      id: `github:${id}`,
+      kind: event.event.replaceAll("_", "-"),
+      actor: event.actor
+        ? { login: event.actor.login, name: null, avatarUrl: event.actor.avatar_url ?? null }
+        : null,
+      createdAt: event.created_at,
+      url: event.html_url ?? related?.html_url ?? null,
+      body:
+        body.replace(/[\\`*_[\]{}()#+.!|~<>-]/g, "\\$&") +
+        (related ? `\n\n${related.html_url}` : ""),
+      ...(related?.pull_request === undefined
+        ? {}
+        : {
+            relatedPullRequest: {
+              title: related.title,
+              url: related.html_url,
+              state: related.pull_request.merged_at
+                ? ("merged" as const)
+                : related.state === "closed"
+                  ? ("closed" as const)
+                  : ("open" as const),
+            },
+          }),
+    });
+  }
+  return Result.succeed({ events: [...events.values()], rawCount: page.success.length });
+}
 
 /**
  * Enum-ish GitHub CLI fields are decoded as plain strings and normalized here: a `gh`
@@ -366,6 +464,7 @@ const RawDetailSchema = Schema.Struct({
   isCrossRepository: Schema.optional(Schema.Boolean),
   /** Names the fork a pull request came from, which is what qualifies its head ref. */
   headRepositoryOwner: Schema.optional(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
+  headRepository: Schema.optional(Schema.NullOr(Schema.Struct({ name: Schema.String }))),
   /** The exact head revision, used to find workflow runs that GitHub has not started yet. */
   headRefOid: Schema.optional(Schema.NullOr(Schema.String)),
   body: Schema.optional(Schema.String),
@@ -620,7 +719,7 @@ export function decodeActorAvatarsJson(
 export const PULL_REQUEST_LIST_JSON_FIELDS =
   "number,title,url,author,headRefName,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,labels,statusCheckRollup";
 
-export const PULL_REQUEST_DETAIL_JSON_FIELDS = `${PULL_REQUEST_LIST_JSON_FIELDS},body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest`;
+export const PULL_REQUEST_DETAIL_JSON_FIELDS = `${PULL_REQUEST_LIST_JSON_FIELDS},body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRepository,headRefOid,autoMergeRequest`;
 export const PULL_REQUEST_ACTIVITY_JSON_FIELDS = "author,comments,reviews,commits";
 
 /** GitHub's own ceiling on a connection page, which is what both thread reads ask for. */
@@ -1045,6 +1144,7 @@ export interface GitHubPullRequestListItem {
 }
 
 export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
+  readonly headRepositoryNameWithOwner?: string | null;
   /** True only when GitHub says the head belongs to another repository. */
   readonly isCrossRepository?: boolean;
   /** The owner of the head branch's repository; null where `gh` did not say. */
@@ -1420,12 +1520,22 @@ function toListItem(raw: Schema.Schema.Type<typeof RawListItemSchema>): GitHubPu
 
 function toDetail(raw: Schema.Schema.Type<typeof RawDetailSchema>): GitHubPullRequestDetail {
   const autoMergeMethod = toMergeMethod(raw.autoMergeRequest?.mergeMethod);
+  const headRepositoryOwner = trimmed(raw.headRepositoryOwner?.login);
+  const headRepositoryName = trimmed(raw.headRepository?.name);
   return {
     ...toListItem(raw),
     ...(typeof raw.isCrossRepository === "boolean"
       ? { isCrossRepository: raw.isCrossRepository }
       : {}),
-    headRepositoryOwner: trimmed(raw.headRepositoryOwner?.login),
+    headRepositoryOwner,
+    ...(raw.headRepository === undefined
+      ? {}
+      : {
+          headRepositoryNameWithOwner:
+            headRepositoryOwner && headRepositoryName
+              ? `${headRepositoryOwner}/${headRepositoryName}`
+              : null,
+        }),
     headSha: trimmed(raw.headRefOid),
     body: raw.body ?? "",
     changedFiles: raw.changedFiles ?? 0,
@@ -2324,6 +2434,7 @@ export function buildLabelRequestJson(labels: ReadonlyArray<string>): string {
  * only read access can still be told apart from a passer-by.
  */
 export interface GitHubViewerAccess {
+  readonly canWriteSource?: boolean;
   readonly canWrite: boolean;
   /**
    * The viewer's role reaches triage, which is the least that may label. Everyone who can write
@@ -2350,7 +2461,7 @@ export interface GitHubViewerAccess {
 export const VIEWER_PERMISSIONS_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     viewerPermission
-    pullRequest(number: $number) { viewerCanUpdate viewerDidAuthor }
+    pullRequest(number: $number) { viewerCanUpdate viewerDidAuthor headRepository { viewerPermission } }
   }
 }`;
 
@@ -2359,7 +2470,18 @@ const RawViewerPermissionsSchema = Schema.Struct({
     repository: Schema.Struct({
       viewerPermission: Schema.optional(Schema.NullOr(Schema.String)),
       /** Null for a number that names no pull request the viewer can see. */
-      pullRequest: Schema.NullOr(RawViewerFieldsSchema),
+      pullRequest: Schema.NullOr(
+        Schema.Struct({
+          ...RawViewerFieldsSchema.fields,
+          headRepository: Schema.optional(
+            Schema.NullOr(
+              Schema.Struct({
+                viewerPermission: Schema.optional(Schema.NullOr(Schema.String)),
+              }),
+            ),
+          ),
+        }),
+      ),
     }),
   }),
 });
@@ -2376,6 +2498,7 @@ export function decodeViewerPermissionsJson(
   const repository = decoded.success.data.repository;
   return Result.succeed({
     canWrite: toCanWrite(repository.viewerPermission),
+    canWriteSource: toCanWrite(repository.pullRequest?.headRepository?.viewerPermission),
     canTriage: toCanTriage(repository.viewerPermission),
     ...toPullRequestViewerFields(repository.pullRequest),
   });

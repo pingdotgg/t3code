@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import {
   PullRequestDetail,
   type PullRequestAction,
+  type PullRequestActivity,
   type PullRequestActor,
   type PullRequestBaseComparison,
   type PullRequestCheck,
@@ -317,7 +318,7 @@ export function latestPullRequestReviewOutcomes(
 export interface PullRequestTimelineEvent {
   readonly id: string;
   readonly at: string;
-  readonly kind: "opened" | "commit" | "comment" | "review" | "merged" | "closed";
+  readonly kind: string;
   readonly title: string;
   readonly body: string | null;
   /** Whether `body` is markdown. A commit headline is plain text and must not be parsed as one. */
@@ -392,9 +393,10 @@ export function visibleBody(body: string): string | null {
 export function buildPullRequestTimeline(
   detail: Pick<
     PullRequestDetailView,
-    "createdAt" | "author" | "commits" | "comments" | "mergedAt" | "closedAt"
+    "createdAt" | "author" | "commits" | "comments" | "mergedAt" | "closedAt" | "timelineEvents"
   >,
 ): ReadonlyArray<PullRequestTimelineEvent> {
+  const { closedAt } = detail;
   return [
     {
       id: "created",
@@ -444,7 +446,26 @@ export function buildPullRequestTimeline(
       reviewState: comment.reviewState,
       reactions: comment.reactions ?? [],
     })),
-    ...(detail.mergedAt
+    ...(detail.timelineEvents ?? []).map((event) => ({
+      id: "activity:" + event.id,
+      at: event.createdAt,
+      kind: event.kind,
+      title: event.kind.replaceAll("-", " "),
+      body:
+        event.body.trim().toLowerCase() === event.kind.replaceAll("-", " ")
+          ? null
+          : event.body || null,
+      markdown: true,
+      url: event.url,
+      actor: event.actor,
+      commitAuthors: [],
+      additions: null,
+      deletions: null,
+      path: null,
+      reviewState: null,
+      reactions: [],
+    })),
+    ...(detail.mergedAt && !detail.timelineEvents?.some((event) => event.kind === "merged")
       ? [
           {
             id: "merged",
@@ -464,11 +485,15 @@ export function buildPullRequestTimeline(
           },
         ]
       : []),
-    ...(detail.closedAt && !detail.mergedAt
+    ...(closedAt &&
+    !detail.mergedAt &&
+    !detail.timelineEvents?.some(
+      (event) => event.kind === "closed" && instant(event.createdAt) === instant(closedAt),
+    )
       ? [
           {
             id: "closed",
-            at: detail.closedAt,
+            at: closedAt,
             kind: "closed" as const,
             title: "Pull request closed",
             body: null,
@@ -484,7 +509,7 @@ export function buildPullRequestTimeline(
           },
         ]
       : []),
-  ].toSorted((left, right) => right.at.localeCompare(left.at));
+  ].toSorted(comparePullRequestTimelineEvents);
 }
 
 const FINDING_LIMIT = 20;
@@ -1000,6 +1025,7 @@ const ACTION_NEEDS_HOST_REFRESH: Record<PullRequestAction, boolean> = {
   "disable-auto-merge": false,
   revert: false,
   "approve-workflows": true,
+  "delete-source-branch": false,
 };
 
 export function pullRequestActionNeedsHostRefresh(action: PullRequestAction): boolean {
@@ -1076,4 +1102,71 @@ export function resolveDisplayedPullRequestDetail(input: {
     return input.cached;
   }
   return null;
+}
+
+export function pullRequestAttentionItems(
+  detail: Pick<
+    PullRequestDetailView,
+    "state" | "mergeability" | "reviewDecision" | "checks" | "reviewThreads"
+  >,
+) {
+  if (detail.state !== "open") return [];
+  const items: { label: string; section: string | null }[] = [];
+  if (detail.mergeability === "conflicting")
+    items.push({ label: "Merge conflicts", section: null });
+  if (detail.reviewDecision === "changes-requested")
+    items.push({ label: "Changes requested", section: null });
+  if (detail.reviewDecision === "review-required")
+    items.push({ label: "Review required", section: null });
+  const failed = detail.checks.filter(
+    (check) => check.status === "failure" || check.status === "cancelled",
+  ).length;
+  if (failed > 0)
+    items.push({
+      label: failed + (failed === 1 ? " failed check" : " failed checks"),
+      section: "Checks",
+    });
+  const unresolved = detail.reviewThreads.filter((thread) => !thread.isResolved).length;
+  if (unresolved > 0)
+    items.push({
+      label:
+        unresolved + (unresolved === 1 ? " unresolved conversation" : " unresolved conversations"),
+      section: "Conversations",
+    });
+  return items;
+}
+
+export function pullRequestGeneralComments<T extends { id: string }>(
+  comments: readonly T[],
+  reviewThreads: readonly { comments: readonly { id: string }[] }[],
+): T[] {
+  const threadedIds = new Set(
+    reviewThreads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
+  );
+  return comments.filter((comment) => !threadedIds.has(comment.id));
+}
+
+export function mergePullRequestActivity(
+  detail: PullRequestDetail | null,
+  activity: PullRequestActivity | null | undefined,
+): PullRequestDetailView | null {
+  return detail === null
+    ? null
+    : {
+        ...detail,
+        author: activity?.author ?? detail.author,
+        reviewers: activity?.reviewers ?? detail.reviewers,
+        comments: activity?.comments ?? [],
+        commentCount: activity?.commentCount ?? 0,
+        commentsTruncated: activity?.commentsTruncated ?? false,
+        reviewThreads: activity?.reviewThreads ?? [],
+        timelineEvents: activity?.timelineEvents ?? [],
+        timelineTruncated: activity?.timelineTruncated ?? false,
+        commits: activity?.commits ?? [],
+        reactions: activity?.reactions ?? [],
+      };
+}
+
+export function comparePullRequestTimelineEvents(left: { at: string }, right: { at: string }) {
+  return instant(right.at) - instant(left.at);
 }

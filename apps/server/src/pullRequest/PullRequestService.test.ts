@@ -991,16 +991,18 @@ it.effect("refuses an action the host never claimed it could run", () =>
       ],
     });
 
-    const error = yield* Effect.flip(
-      service.runAction({
-        projectId: "p1" as ProjectId,
-        repository: "acme/web",
-        number: 1,
-        action: "reopen",
-      }),
-    );
+    for (const action of ["reopen", "delete-source-branch"] as const) {
+      const error = yield* Effect.flip(
+        service.runAction({
+          projectId: "p1" as ProjectId,
+          repository: "acme/web",
+          number: 1,
+          action,
+        }),
+      );
 
-    assert.strictEqual(error._tag, "PullRequestOperationError");
+      assert.strictEqual(error._tag, "PullRequestOperationError");
+    }
     assert.isFalse(ran);
   }),
 );
@@ -3205,6 +3207,7 @@ it.effect(
               return Effect.succeed({
                 ...changeRequest(1, "2026-07-02T00:00:00Z"),
                 body: "Ready before the conversation",
+                reviewDecision: "review-required",
                 changedFiles: 2,
                 mergedAt: null,
                 closedAt: null,
@@ -3223,6 +3226,17 @@ it.effect(
             getChangeRequestActivity: () => {
               activityCalls += 1;
               return Effect.succeed({
+                timelineTruncated: true,
+                timelineEvents: [
+                  {
+                    id: "event:1",
+                    kind: "closed",
+                    actor: null,
+                    createdAt: "2026-07-02T00:00:00Z",
+                    url: null,
+                    body: "closed this pull request",
+                  },
+                ],
                 comments: [],
                 commentCount: 0,
                 commentsTruncated: false,
@@ -3236,6 +3250,7 @@ it.effect(
 
       const core = yield* service.detail(reference);
       assert.strictEqual(core.body, "Ready before the conversation");
+      assert.strictEqual(core.reviewDecision, "review-required");
       assert.strictEqual(coreCalls, 1);
       assert.strictEqual(activityCalls, 0);
 
@@ -3249,9 +3264,14 @@ it.effect(
         },
       ]);
 
-      yield* Effect.all([service.activity(reference), service.activity(reference)], {
-        concurrency: 2,
-      });
+      const [activity] = yield* Effect.all(
+        [service.activity(reference), service.activity(reference)],
+        {
+          concurrency: 2,
+        },
+      );
+      assert.strictEqual(activity.timelineEvents?.[0]?.body, "closed this pull request");
+      assert.strictEqual(activity.timelineTruncated, true);
       assert.strictEqual(activityCalls, 1);
 
       yield* service.invalidate({ reference });
@@ -4135,5 +4155,51 @@ it.effect("names the signed-in account in the detail, and says nothing where the
 
     assert.strictEqual(named.viewer, "bilal");
     assert.strictEqual(unnamed.viewer, undefined);
+  }),
+);
+
+it.effect("accepts Azure source branch deletion and ignores unrelated methods", () =>
+  Effect.gen(function* () {
+    const provider = fakeProvider("azure-devops");
+    let canDelete = false;
+    let deletions = 0;
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/a",
+          repository: "web",
+          provider: "azure-devops",
+          host: "dev.azure.com",
+        }),
+      ],
+      providers: [
+        fakeProvider("azure-devops", {
+          capabilities: { ...provider.capabilities, deleteSourceBranch: true },
+          getViewerPermissions: (input) =>
+            provider
+              .getViewerPermissions(input)
+              .pipe(Effect.map((viewer) => ({ ...viewer, deleteSourceBranch: canDelete }))),
+          runAction: (input) =>
+            Effect.sync(() => {
+              assert.strictEqual(input.action, "delete-source-branch");
+              deletions += 1;
+            }),
+        }),
+      ],
+    });
+    const input = {
+      projectId: "p1" as ProjectId,
+      repository: "web",
+      number: 1,
+      action: "delete-source-branch" as const,
+    };
+    const error = yield* Effect.flip(service.runAction(input));
+    assert.include(error.message, "write access on the source repository");
+    assert.strictEqual(deletions, 0);
+    canDelete = true;
+    yield* service.runAction({ ...input, mergeMethod: "rebase", updateMethod: "rebase" });
+    assert.strictEqual(deletions, 1);
   }),
 );

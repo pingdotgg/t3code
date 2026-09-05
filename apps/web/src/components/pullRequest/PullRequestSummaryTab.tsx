@@ -1,3 +1,6 @@
+import { relatedPullRequests } from "./pullRequestRelated.logic";
+import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
+import { formatEnvironmentQueryError } from "~/state/query";
 import type {
   EnvironmentId,
   PullRequestActor,
@@ -27,6 +30,7 @@ import { cn } from "~/lib/utils";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
+import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Textarea } from "../ui/textarea";
@@ -47,6 +51,8 @@ import { PullRequestReviewerPicker } from "./PullRequestReviewerPicker";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import {
   latestPullRequestReviewOutcomes,
+  pullRequestGeneralComments,
+  pullRequestAttentionItems,
   orderPullRequestComments,
   pullRequestFindingKey,
   pullRequestReviewOutcome,
@@ -60,6 +66,8 @@ import {
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
+import { PullRequestCommentActions } from "./PullRequestCommentActions";
+import { PullRequestConversation } from "./PullRequestConversation";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { pullRequestLabelColor } from "./pullRequestList.logic";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
@@ -100,6 +108,9 @@ interface CommentEditing {
   readonly saving: boolean;
   readonly onEdit: (comment: PullRequestComment | null) => void;
   readonly onSave: (comment: PullRequestComment, body: string) => void;
+  readonly reference: PullRequestRef;
+  readonly canReply: boolean;
+  readonly onRefresh: () => void;
 }
 
 /**
@@ -131,25 +142,37 @@ function CommentBody({
     );
   }
   return (
-    <div className={cn("flex items-start gap-1", className)}>
-      <PullRequestMarkdown
-        className="min-w-0 flex-1"
-        text={comment.body}
+    <div className={className}>
+      <div className="flex items-start gap-1">
+        <PullRequestMarkdown
+          className="min-w-0 flex-1"
+          text={comment.body}
+          cwd={editing.cwd}
+          environmentId={editing.environmentId}
+          threadRef={editing.threadRef}
+        />
+        {editing.canEdit(comment) ? (
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
+            aria-label="Edit comment"
+            onClick={() => editing.onEdit(comment)}
+          >
+            <PencilIcon className="size-3" />
+          </Button>
+        ) : null}
+      </div>
+      <PullRequestCommentActions
+        body={comment.body}
+        url={comment.url}
+        canReply={editing.canReply}
         cwd={editing.cwd}
         environmentId={editing.environmentId}
         threadRef={editing.threadRef}
+        reference={editing.reference}
+        onRefresh={editing.onRefresh}
       />
-      {editing.canEdit(comment) ? (
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
-          aria-label="Edit comment"
-          onClick={() => editing.onEdit(comment)}
-        >
-          <PencilIcon className="size-3" />
-        </Button>
-      ) : null}
     </div>
   );
 }
@@ -279,6 +302,7 @@ function Section({
     <Collapsible
       open={open}
       onOpenChange={setOpenWithScrollAnchor}
+      data-pull-request-section-title={title}
       data-pull-request-summary-section
     >
       {/* The heading rides the top of the scroll box the way a diff's file header does, so a
@@ -363,7 +387,11 @@ function CommentComposer({
     });
     if (result._tag === "Failure") {
       setSubmitting(null);
-      toastManager.add({ type: "error", title: "Could not post the comment" });
+      toastManager.add({
+        type: "error",
+        title: "Could not post the comment",
+        description: formatEnvironmentQueryError(result.cause),
+      });
       return;
     }
     setBody("");
@@ -464,8 +492,18 @@ export function PullRequestSummaryTab({
   const shownComments = shown.url === detail.url ? shown.count : COMMENT_PAGE;
   // Windowed by recency regardless of display order: expanding always reaches further back in
   // time, whether the newest comment currently reads first or last.
-  const recentComments = detail.comments.slice(Math.max(0, detail.comments.length - shownComments));
-  const hiddenCommentCount = detail.comments.length - recentComments.length;
+  const comments = pullRequestGeneralComments(detail.comments, detail.reviewThreads);
+  const recentComments = comments.slice(Math.max(0, comments.length - shownComments));
+  const hiddenCommentCount = comments.length - recentComments.length;
+  const [unresolvedOnly, setUnresolvedOnly] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const nextConversation = useRef(0);
+  const attention = pullRequestAttentionItems(detail);
+  const related = relatedPullRequests(detail);
+  const openChangeRequest = useOpenChangeRequestLink(threadRef ?? undefined);
+  const conversations = detail.reviewThreads.filter(
+    (thread) => !unresolvedOnly || !thread.isResolved,
+  );
   const [commentOrder, setCommentOrder] = useState<"newest" | "oldest">("newest");
   const visibleComments = orderPullRequestComments(recentComments, commentOrder);
   const showOldestCommentsButton =
@@ -517,15 +555,6 @@ export function PullRequestSummaryTab({
       })),
   ];
 
-  // A comment that already lives on a review thread is that thread: the thread carries the line
-  // and side the bare comment has lost, and a resolved one is finished work nobody should be
-  // invited to fix again — the same call the whole-review hand-off makes.
-  const threadByCommentId = new Map(
-    detail.reviewThreads.flatMap((thread) =>
-      thread.comments.map((comment) => [comment.id, thread] as const),
-    ),
-  );
-
   const openLink = useOpenLink(threadRef);
   const openCheck = (url: string) => {
     void openLink(url).catch((error: unknown) => {
@@ -559,7 +588,11 @@ export function PullRequestSummaryTab({
     const result = await update({ environmentId, input: { ...reference, body } });
     setBodySaving(false);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not save the description" });
+      toastManager.add({
+        type: "error",
+        title: "Could not save the description",
+        description: formatEnvironmentQueryError(result.cause),
+      });
       return;
     }
     setBodyScope(null);
@@ -571,6 +604,9 @@ export function PullRequestSummaryTab({
     environmentId,
     threadRef,
     canEdit: (comment) => canEditPullRequestComment(detail, comment),
+    reference,
+    canReply: detail.capabilities.comment && detail.viewerPermissions.comment,
+    onRefresh,
     editingId: editingCommentId,
     saving: commentSaving,
     onEdit: (comment) =>
@@ -586,7 +622,11 @@ export function PullRequestSummaryTab({
       });
       setCommentSaving(false);
       if (result._tag === "Failure") {
-        toastManager.add({ type: "error", title: "Could not save the comment" });
+        toastManager.add({
+          type: "error",
+          title: "Could not save the comment",
+          description: formatEnvironmentQueryError(result.cause),
+        });
         return;
       }
       setCommentScope(null);
@@ -595,7 +635,40 @@ export function PullRequestSummaryTab({
   };
 
   return (
-    <div className="h-full overflow-y-auto" data-pull-request-summary-scroll>
+    <div ref={scrollRef} className="h-full overflow-y-auto" data-pull-request-summary-scroll>
+      {attention.length > 0 ? (
+        <div className="border-b border-border/60 px-4 py-3">
+          <p className="mb-1 text-xs font-medium">Needs attention</p>
+          <div className="flex flex-wrap gap-1">
+            {attention.map((item) =>
+              item.section === null ? (
+                <span
+                  key={item.label}
+                  className="inline-flex h-6 items-center px-2 text-xs text-muted-foreground"
+                >
+                  {item.label}
+                </span>
+              ) : (
+                <Button
+                  key={item.label}
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => {
+                    const section = [
+                      ...(scrollRef.current?.querySelectorAll<HTMLElement>(
+                        "[data-pull-request-section-title]",
+                      ) ?? []),
+                    ].find((element) => element.dataset.pullRequestSectionTitle === item.section);
+                    section?.scrollIntoView({ block: "start" });
+                  }}
+                >
+                  {item.label}
+                </Button>
+              ),
+            )}
+          </div>
+        </div>
+      ) : null}
       <section className="px-4 py-3">
         <div>
           <MetaRow icon={<UsersIcon className="size-3.5" />} label="Reviewers">
@@ -736,6 +809,31 @@ export function PullRequestSummaryTab({
         </div>
       </section>
 
+      {related.length > 0 ? (
+        <Section title="Related pull requests">
+          <div className="space-y-2">
+            {related.map((reference) => (
+              <div key={reference.url} className="flex items-center gap-2 text-xs">
+                <a
+                  href={reference.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="min-w-0 text-primary hover:underline"
+                  onClick={(event) =>
+                    openChangeRequest(event, reference.url, threadRef ?? undefined, environmentId)
+                  }
+                >
+                  {reference.title}
+                </a>
+                {reference.state ? (
+                  <span className="shrink-0 text-muted-foreground">{reference.state}</span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </Section>
+      ) : null}
+
       <Section title="Description">
         <div className="group">
           {bodyScope === detail.url ? (
@@ -838,11 +936,68 @@ export function PullRequestSummaryTab({
         )}
       </Section>
 
+      {detail.reviewThreads.length > 0 ? (
+        <Section
+          title="Conversations"
+          count={detail.reviewThreads.length}
+          actions={
+            <div className="flex gap-1">
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={!detail.reviewThreads.some((thread) => !thread.isResolved)}
+                onClick={() => {
+                  const cards = scrollRef.current?.querySelectorAll<HTMLElement>(
+                    '[data-pr-conversation="unresolved"]',
+                  );
+                  if (!cards?.length) return;
+                  cards[nextConversation.current % cards.length]?.scrollIntoView({
+                    block: "center",
+                  });
+                  nextConversation.current += 1;
+                }}
+              >
+                Next unresolved
+              </Button>
+              <Button
+                size="xs"
+                variant="ghost"
+                aria-pressed={unresolvedOnly}
+                onClick={() => setUnresolvedOnly((value) => !value)}
+              >
+                {unresolvedOnly ? "Show all" : "Unresolved only"}
+              </Button>
+            </div>
+          }
+        >
+          {conversations.length === 0 ? (
+            <p className="text-xs text-muted-foreground">All conversations are resolved.</p>
+          ) : null}
+          <div className="space-y-3">
+            {conversations.map((thread) => (
+              <PullRequestConversation
+                key={`${environmentId}:${detail.url}:${thread.id}`}
+                thread={thread}
+                detail={detail}
+                environmentId={environmentId}
+                reference={reference}
+                pendingFinding={pendingFinding}
+                fixLabel={fixFindingLabel}
+                onFixFinding={onFixFinding}
+                onRefresh={onRefresh}
+              />
+            ))}
+          </div>
+        </Section>
+      ) : null}
+
       <Section
         title="Comments"
-        {...(activityPending || activityError ? {} : { count: detail.commentCount })}
+        {...(activityPending || activityError || detail.commentsTruncated
+          ? {}
+          : { count: comments.length })}
         actions={
-          !activityPending && !activityError && detail.comments.length > 0 ? (
+          !activityPending && !activityError && comments.length > 0 ? (
             <Button
               size="xs"
               variant="ghost"
@@ -867,27 +1022,29 @@ export function PullRequestSummaryTab({
         ) : (
           <>
             {detail.commentsTruncated ? (
-              <p className="mb-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-xs">
-                This conversation is longer than this page reads in one go. The most recent{" "}
-                {detail.comments.length} are here; open it on the host to read the rest.
-              </p>
+              <Alert variant="warning" className="mb-2">
+                <AlertDescription>
+                  This conversation is longer than this page reads in one go. The most recent
+                  comments are shown in Comments and Conversations; open it on the host to read the
+                  rest.
+                </AlertDescription>
+              </Alert>
             ) : null}
-            {detail.comments.length === 0 ? (
+            {comments.length === 0 ? (
               <p className="py-2 text-xs text-muted-foreground">No comments yet.</p>
             ) : (
               <div className="space-y-3">
                 {commentOrder === "oldest" ? showOldestCommentsButton : null}
                 {visibleComments.map((comment) => {
-                  const thread = threadByCommentId.get(comment.id);
                   const body = visibleBody(comment.body);
                   const outcome = pullRequestReviewOutcome(comment.reviewState);
-                  if (thread?.isResolved || outcome === "dismissed") {
+                  if (outcome === "dismissed") {
                     return (
                       <CollapsedComment
                         key={comment.id}
                         comment={comment}
                         editing={commentEditing}
-                        label={thread?.isResolved ? "Resolved" : "Approval dismissed"}
+                        label="Approval dismissed"
                         body={body}
                         reactionBar={
                           <PullRequestReactionBar
@@ -906,15 +1063,10 @@ export function PullRequestSummaryTab({
                   // An approval is a verdict, not a finding: there is nothing in it to fix.
                   const finding: PullRequestFinding | null =
                     (comment.kind !== "review" && comment.kind !== "review-comment") ||
-                    outcome === "approved"
+                    outcome === "approved" ||
+                    body === null
                       ? null
-                      : thread === undefined
-                        ? // Nor is a remark with nothing in it: offering to hand an empty review
-                          // to a thread promises work it does not describe.
-                          body === null
-                          ? null
-                          : { kind: "comment", comment }
-                        : { kind: "thread", thread };
+                      : { kind: "comment", comment };
                   // One bar, two homes. Under a card with words in it, it is the row beneath
                   // them. A bodiless verdict has nothing above it, so a row reserved for an add
                   // button nobody can see until they hover is a hole — there it rides the header

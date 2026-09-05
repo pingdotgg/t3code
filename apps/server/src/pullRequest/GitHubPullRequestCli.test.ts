@@ -1,6 +1,7 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -11,6 +12,7 @@ import { BASE_COMPARISON_GRAPHQL_QUERY } from "./gitHubPullRequestJson.ts";
 
 const mockedExecute = vi.fn<GitHubCli.GitHubCli["Service"]["execute"]>();
 const mockedGetPullRequest = vi.fn<GitHubCli.GitHubCli["Service"]["getPullRequest"]>();
+const encodeTimelinePage = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const layer = it.layer(
   GitHubPullRequestCli.layer.pipe(
@@ -183,6 +185,167 @@ afterEach(() => {
 });
 
 layer("GitHubPullRequestCli.layer", (it) => {
+  it.effect("reads every timeline page with older gh and retains the native close actor", () =>
+    Effect.gen(function* () {
+      const closed = {
+        id: 30487715814,
+        event: "closed",
+        created_at: "2026-09-03T12:28:17Z",
+        actor: { login: "Bil0000" },
+      };
+      const firstPage = yield* encodeTimelinePage(
+        Array.from({ length: 100 }, () => ({ event: "committed" })),
+      );
+      const secondPage = yield* encodeTimelinePage([closed, closed]);
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(firstPage)));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(secondPage)));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const events = yield* cli.listTimelineEvents({
+        cwd: "/w",
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 9256,
+      });
+      expect(events.events).toMatchObject([
+        {
+          id: "github:30487715814",
+          kind: "closed",
+          actor: { login: "Bil0000" },
+          createdAt: "2026-09-03T12:28:17Z",
+        },
+      ]);
+      expect(events.truncated).toBe(false);
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+      for (const page of [1, 2]) {
+        expect(callAt(page - 1).args).toEqual([
+          "api",
+          "--hostname",
+          "github.com",
+          `repos/pingdotgg/t3code/issues/9256/timeline?per_page=100&page=${page}`,
+        ]);
+      }
+    }),
+  );
+
+  it.effect("bounds long native timelines and reports incomplete history", () =>
+    Effect.gen(function* () {
+      const page = yield* encodeTimelinePage(
+        Array.from({ length: 100 }, () => ({
+          id: 1,
+          event: "reopened",
+          created_at: "2026-09-05T00:00:00Z",
+          actor: null,
+        })),
+      );
+      mockedExecute.mockReturnValue(Effect.succeed(output(page)));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const result = yield* cli.listTimelineEvents({
+        cwd: "/w",
+        host: "github.com",
+        repository: "acme/web",
+        number: 7,
+      });
+      expect(result.truncated).toBe(true);
+      expect(result.events).toHaveLength(1);
+      expect(mockedExecute).toHaveBeenCalledTimes(10);
+    }),
+  );
+
+  it.effect("fails unreadable or truncated timeline pages instead of reporting no events", () =>
+    Effect.gen(function* () {
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      for (const result of [output("broken"), output("[]", true), output("[]", false, true)]) {
+        mockedExecute.mockReturnValueOnce(Effect.succeed(result));
+        const error = yield* Effect.flip(
+          cli.listTimelineEvents({
+            cwd: "/w",
+            host: "github.com",
+            repository: "acme/web",
+            number: 7,
+          }),
+        );
+        expect(error._tag).toBe("GitHubPullRequestReadError");
+      }
+    }),
+  );
+
+  it.effect(
+    "deletes a finished PR branch from its fork and refuses the source default branch",
+    () =>
+      Effect.gen(function* () {
+        const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+        const target = {
+          cwd: "/w",
+          host: "github.com",
+          repository: "acme/web",
+          number: 7,
+          action: "delete-source-branch" as const,
+        };
+        const current =
+          '{"state":"closed","head":{"ref":"main","sha":"abcdef0123456789abcdef0123456789abcdef01","repo":{"id":42,"node_id":"R_fork","full_name":"fork/renamed"}},"base":{"ref":"main","repo":{"id":7}}}';
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output(current)));
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output('{"default_branch":"develop"}')));
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output("")));
+        yield* cli.runPullRequestAction(target);
+        expect(callAt(1).args).toContain("repos/fork/renamed");
+        expect(callAt(2).args).toEqual([
+          "api",
+          "graphql",
+          "--hostname",
+          "github.com",
+          "--input",
+          "-",
+        ]);
+        expect(callAt(2).stdin).toContain("updateRefs");
+        expect(callAt(2).stdin).toContain("beforeOid: $beforeOid");
+        expect(callAt(2).stdin).toContain('"repositoryId":"R_fork"');
+        expect(callAt(2).stdin).toContain('"name":"refs/heads/main"');
+        expect(callAt(2).stdin).toContain('"beforeOid":"abcdef0123456789abcdef0123456789abcdef01"');
+        expect(callAt(2).stdin).toContain("0000000000000000000000000000000000000000");
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output(current)));
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output('{"default_branch":"main"}')));
+        const error = yield* Effect.flip(cli.runPullRequestAction(target));
+        expect(error).toMatchObject({ reason: "protected-branch" });
+        expect(mockedExecute).toHaveBeenCalledTimes(5);
+      }),
+  );
+
+  it.effect("refuses a moved source tip without retrying an unconditional deletion", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            '{"state":"closed","head":{"ref":"topic","sha":"abcdef0123456789abcdef0123456789abcdef01","repo":{"id":42,"node_id":"R_fork","full_name":"fork/web"}},"base":{"ref":"main","repo":{"id":7}}}',
+          ),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output('{"default_branch":"main"}')));
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new GitHubCli.GitHubCliCommandError({
+            command: "gh",
+            cwd: "/w",
+            cause: new Error("beforeOid does not match the current ref"),
+          }),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const error = yield* Effect.flip(
+        cli.runPullRequestAction({
+          cwd: "/w",
+          host: "github.com",
+          repository: "acme/web",
+          number: 7,
+          action: "delete-source-branch",
+        }),
+      );
+      expect(error).toMatchObject({ reason: "delete-refused" });
+      expect(mockedExecute).toHaveBeenCalledTimes(3);
+      expect(callAt(2).stdin).toContain('"beforeOid":"abcdef0123456789abcdef0123456789abcdef01"');
+      expect(callAt(2).args).not.toContain("DELETE");
+    }),
+  );
+
   it.effect("reads linked pull request status through one narrow request", () =>
     Effect.gen(function* () {
       mockedGetPullRequest.mockReturnValueOnce(
@@ -2519,7 +2682,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
       expect(detail.body).toBe("Core body");
       expect(activity.author?.login).toBe("octocat");
       expect(callAt(0).args.at(-1)).toBe(
-        "number,title,url,author,headRefName,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,labels,statusCheckRollup,body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest",
+        "number,title,url,author,headRefName,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,labels,statusCheckRollup,body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRepository,headRefOid,autoMergeRequest",
       );
       expect(callAt(1).args.at(-1)).toBe("author,comments,reviews,commits");
     }),
@@ -2727,6 +2890,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
         assert.strictEqual(mockedExecute.mock.calls.length, 1);
         expect(callAt(0).args).toContain("number=7");
         expect(access).toEqual({
+          canWriteSource: false,
           canWrite: false,
           canTriage: false,
           canUpdate: true,
@@ -2895,6 +3059,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
 
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
       expect(access).toEqual({
+        canWriteSource: false,
         canWrite: false,
         canTriage: false,
         canUpdate: true,

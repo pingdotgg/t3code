@@ -1,3 +1,8 @@
+import {
+  assertSourceBranchDeletable,
+  decodeBranchDeletionJson,
+  PullRequestBranchDeletionError,
+} from "./pullRequestBranchDeletion.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -6,6 +11,7 @@ import * as Schema from "effect/Schema";
 import {
   resolvePullRequestAuthorFilter,
   type PullRequestAction,
+  type PullRequestTimelineEvent,
   type PullRequestActor,
   type PullRequestInvolvement,
   type PullRequestListFilters,
@@ -77,6 +83,7 @@ import {
   UPDATE_REVIEW_COMMENT_GRAPHQL_MUTATION,
   VIEWER_PERMISSIONS_GRAPHQL_QUERY,
   decodeViewerPermissionsJson,
+  decodeTimelineEventsJson,
   decodeWorkflowRunApprovalsJson,
   type GitHubBaseComparison,
   type GitHubPullRequestDetail,
@@ -332,6 +339,7 @@ export class GitHubWorkflowApprovalHeadChangedError extends Schema.TaggedErrorCl
 }
 
 export type GitHubPullRequestCliError =
+  | PullRequestBranchDeletionError
   | GitHubCli.GitHubCliError
   | GitHubPullRequestReadError
   | GitHubDiffCursorError
@@ -507,6 +515,16 @@ export class GitHubPullRequestCli extends Context.Service<
       /** Manual action checks may use the quota held back from automatic reads. */
       readonly allowReserve?: boolean | undefined;
     }) => Effect.Effect<GitHubBaseComparison, GitHubPullRequestCliError>;
+
+    readonly listTimelineEvents: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+    }) => Effect.Effect<
+      { events: ReadonlyArray<PullRequestTimelineEvent>; truncated: boolean },
+      GitHubPullRequestCliError
+    >;
 
     readonly getPullRequestActivity: (input: {
       readonly cwd: string;
@@ -950,6 +968,8 @@ function actionArgs(
   updateMethod: PullRequestUpdateMethod | undefined,
 ): ReadonlyArray<string> {
   switch (action) {
+    case "delete-source-branch":
+      throw new Error("Source branch deletion requires a fresh branch lookup");
     case "merge":
       return ["merge", `--${mergeMethod ?? "merge"}`];
     // `--auto` arms the same command instead of running it, and still needs the strategy: GitHub
@@ -1678,6 +1698,43 @@ export const make = Effect.gen(function* () {
       });
     },
 
+    listTimelineEvents: (input) =>
+      Effect.gen(function* () {
+        const events = new Map<string, PullRequestTimelineEvent>();
+        for (let page = 1; page <= 10; page += 1) {
+          const response = yield* github.execute({
+            cwd: input.cwd,
+            args: [
+              "api",
+              "--hostname",
+              input.host,
+              `repos/${input.repository}/issues/${input.number}/timeline?per_page=100&page=${page}`,
+            ],
+          });
+          if (response.stdoutTruncated || response.stdoutInvalidUtf8) {
+            return yield* new GitHubPullRequestReadError({
+              command: "gh",
+              cwd: input.cwd,
+              operation: "listTimelineEvents",
+              cause: new Error(`Timeline page ${page} could not be read completely.`),
+            });
+          }
+          const decoded = decodeTimelineEventsJson(response.stdout);
+          if (!Result.isSuccess(decoded)) {
+            return yield* new GitHubPullRequestReadError({
+              command: "gh",
+              cwd: input.cwd,
+              operation: "listTimelineEvents",
+              cause: decoded.failure,
+            });
+          }
+          for (const event of decoded.success.events) events.set(event.id, event);
+          if (decoded.success.rawCount < 100)
+            return { events: [...events.values()], truncated: false };
+        }
+        return { events: [...events.values()], truncated: true };
+      }),
+
     getPullRequestActivity: (input) =>
       github
         .execute({
@@ -2052,6 +2109,69 @@ export const make = Effect.gen(function* () {
     },
 
     runPullRequestAction: (input) => {
+      if (input.action === "delete-source-branch") {
+        return Effect.gen(function* () {
+          const read = (path: string) =>
+            github.execute({ cwd: input.cwd, args: ["api", "--hostname", input.host, path] });
+          const response = yield* read(`repos/${input.repository}/pulls/${input.number}`);
+          const current = yield* decodeBranchDeletionJson(
+            Schema.Struct({
+              state: Schema.String,
+              head: Schema.Struct({
+                ref: Schema.String,
+                sha: Schema.String,
+                repo: Schema.NullOr(
+                  Schema.Struct({
+                    id: Schema.Int,
+                    node_id: Schema.String,
+                    full_name: Schema.String,
+                  }),
+                ),
+              }),
+              base: Schema.Struct({ ref: Schema.String, repo: Schema.Struct({ id: Schema.Int }) }),
+            }),
+            response.stdout,
+          );
+          if (current.head.repo === null)
+            return yield* new PullRequestBranchDeletionError({
+              reason: "source-repository-missing",
+            });
+          const source = current.head.repo.full_name;
+          const repository = yield* read(`repos/${source}`);
+          const config = yield* decodeBranchDeletionJson(
+            Schema.Struct({ default_branch: Schema.String }),
+            repository.stdout,
+          );
+          yield* assertSourceBranchDeletable({
+            state: current.state,
+            sourceRepository: String(current.head.repo.id),
+            baseRepository: String(current.base.repo.id),
+            sourceBranch: current.head.ref,
+            baseBranch: current.base.ref,
+            defaultBranch: config.default_branch,
+          });
+          yield* graphql({
+            cwd: input.cwd,
+            host: input.host,
+            query: `mutation DeleteSourceBranch($repositoryId: ID!, $name: GitRefname!, $beforeOid: GitObjectID!) {
+                updateRefs(input: {repositoryId: $repositoryId, refUpdates: [{name: $name, beforeOid: $beforeOid, afterOid: "0000000000000000000000000000000000000000"}]}) { clientMutationId }
+              }`,
+            variables: {
+              repositoryId: current.head.repo.node_id,
+              name: `refs/heads/${current.head.ref}`,
+              beforeOid: current.head.sha,
+            },
+          }).pipe(
+            Effect.catchTags({
+              GitHubCliCommandError: (cause) =>
+                new PullRequestBranchDeletionError({
+                  reason: "delete-refused",
+                  cause,
+                }),
+            }),
+          );
+        });
+      }
       if (input.action === "revert") {
         return pullRequestNodeId({ ...input, operation: "revertPullRequest" }).pipe(
           Effect.flatMap((pullRequestId) =>

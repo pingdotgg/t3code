@@ -1,3 +1,4 @@
+import { pullRequestErrorHint } from "./pullRequestError.logic";
 import { ExternalLinkIcon, GitPullRequestIcon, RefreshCwIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
@@ -30,7 +31,13 @@ export function PullRequestsUnavailableState({
         <EmptyTitle>{title}</EmptyTitle>
         {/* The caller names the fix — update the environment, install gh, sign in — so this
             shows its message rather than trying to infer one from the failure text. */}
-        <EmptyDescription>{error}</EmptyDescription>
+        <EmptyDescription>{pullRequestErrorHint(error) ?? error}</EmptyDescription>
+        {pullRequestErrorHint(error) ? (
+          <details className="max-w-md text-xs text-muted-foreground">
+            <summary className="cursor-pointer">Error details</summary>
+            <p className="mt-2 whitespace-pre-wrap break-words">{error}</p>
+          </details>
+        ) : null}
       </EmptyHeader>
       {onRetry || gitHubUrl ? (
         <EmptyContent className="flex-row flex-wrap justify-center gap-2">

@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import type {
   PullRequestAction,
   PullRequestActor,
+  PullRequestTimelineEvent,
   PullRequestBaseComparison,
   PullRequestCapabilities,
   PullRequestChecksState,
@@ -188,6 +189,8 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
 
 /** The conversation-shaped half of a detail, loaded after the core can already render. */
 export interface ProviderChangeRequestActivity {
+  readonly timelineEvents?: ReadonlyArray<PullRequestTimelineEvent>;
+  readonly timelineTruncated?: boolean;
   /** An optional richer actor, e.g. after GitHub's GraphQL read supplies an avatar. */
   readonly author?: PullRequestActor | null;
   /** Optional because most hosts already report their reviewer list in the core detail. */

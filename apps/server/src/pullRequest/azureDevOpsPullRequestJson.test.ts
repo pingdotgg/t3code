@@ -238,7 +238,7 @@ describe("decodeViewerJson", () => {
 
 describe("decodeThreadsJson", () => {
   it("takes every real comment of every thread, oldest first", () => {
-    const comments = expectSuccess(
+    const { comments } = expectSuccess(
       decodeThreadsJson(
         asJson({
           value: [
@@ -279,7 +279,7 @@ describe("decodeThreadsJson", () => {
   });
 
   it("reads a thread pinned to a file as a review comment", () => {
-    const comments = expectSuccess(
+    const { comments } = expectSuccess(
       decodeThreadsJson(
         asJson({
           value: [
@@ -297,7 +297,7 @@ describe("decodeThreadsJson", () => {
   });
 
   it("keeps the replies under a thread, which are as much of the conversation", () => {
-    const comments = expectSuccess(
+    const { comments } = expectSuccess(
       decodeThreadsJson(
         asJson({
           value: [
@@ -319,7 +319,7 @@ describe("decodeThreadsJson", () => {
   });
 
   it("drops deleted threads and threads with nothing to show", () => {
-    const comments = expectSuccess(
+    const { comments } = expectSuccess(
       decodeThreadsJson(
         asJson({
           value: [

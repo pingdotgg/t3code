@@ -84,8 +84,13 @@ import {
   type PullRequestListPreferences,
   type PullRequestListSort,
   writePullRequestListPreferences,
+  readExcludedPullRequestProjects,
+  writeExcludedPullRequestProjects,
 } from "../components/pullRequest/pullRequestListPreferences";
-import { assignProjectsToEnvironments } from "../components/pullRequest/pullRequestProjectAssignment.logic";
+import {
+  pullRequestEnvironmentQueries,
+  includedPullRequestEntries,
+} from "../components/pullRequest/pullRequestProjectAssignment.logic";
 import { pullRequestFilterProjects } from "../components/pullRequest/pullRequestProjectFilter.logic";
 import { environmentMachineIcon } from "../components/EnvironmentMachineIcon";
 import { PullRequestDetailPanel } from "../components/pullRequest/PullRequestDetailPanel";
@@ -141,6 +146,7 @@ import {
 } from "../state/pullRequests";
 import { useAtomCommand } from "../state/use-atom-command";
 import { cn } from "~/lib/utils";
+import { toastManager } from "../components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 
@@ -350,6 +356,11 @@ function PullRequestsRouteView() {
     () => allProjects.filter((project) => environmentIds.includes(project.environmentId)),
     [allProjects, environmentIds],
   );
+  const [excludedProjects, setExcludedProjects] = useState(readExcludedPullRequestProjects);
+  const listedProjects = useMemo(
+    () => projects.filter((project) => !excludedProjects.includes(pullRequestProjectKey(project))),
+    [projects, excludedProjects],
+  );
   const environmentLabels = useMemo(
     () =>
       new Map(
@@ -359,16 +370,16 @@ function PullRequestsRouteView() {
   );
   // The scope the URL asks for, once the environments have had their say about whether it exists.
   const scopedProjectId = useMemo(
-    () => resolveProjectScope(search.projectId, projects, projectsKnown),
-    [projects, projectsKnown, search.projectId],
+    () => resolveProjectScope(search.projectId, listedProjects, projectsKnown),
+    [listedProjects, projectsKnown, search.projectId],
   );
   const scopedProject = useMemo(
     () => findScopedProject(projects, scopedEnvironmentId, scopedProjectId),
     [projects, scopedEnvironmentId, scopedProjectId],
   );
   const scopedProjects = useMemo(
-    () => pullRequestFilterProjects(projects, environmentLabels, scopedProject),
-    [environmentLabels, projects, scopedProject],
+    () => pullRequestFilterProjects(listedProjects, environmentLabels, scopedProject),
+    [environmentLabels, listedProjects, scopedProject],
   );
 
   // A link from a thread or the sidebar only knows the repository, so the owning project is
@@ -568,12 +579,12 @@ function PullRequestsRouteView() {
     () =>
       resolveQueryEnvironmentIds(
         environmentIds,
-        projects,
+        listedProjects,
         scopedProject,
         scopedProjectId,
         projectsKnown,
       ),
-    [environmentIds, projects, projectsKnown, scopedProject, scopedProjectId],
+    [environmentIds, listedProjects, projectsKnown, scopedProject, scopedProjectId],
   );
   /**
    * Which projects each server is asked about. Two servers holding the same repository would both
@@ -584,30 +595,25 @@ function PullRequestsRouteView() {
    * Left alone while the projects are still arriving, and while the scope is a single project:
    * that path deliberately asks both servers holding an ambiguous id.
    */
-  const environmentQueries = useMemo((): ReadonlyArray<{
-    readonly environmentId: EnvironmentId;
-    readonly projectIds?: ReadonlyArray<ProjectId>;
-  }> => {
-    const plain = queryEnvironmentIds.map((environmentId) => ({ environmentId }));
-    if (!projectsKnown || scopedProjectId !== undefined) return plain;
-    const assignment = assignProjectsToEnvironments(
+  const environmentQueries = useMemo(
+    () =>
+      pullRequestEnvironmentQueries({
+        projects,
+        listedProjects,
+        environmentIds: queryEnvironmentIds,
+        projectsKnown,
+        hasExclusions: excludedProjects.length > 0,
+        projectId: scopedProjectId,
+      }),
+    [
       projects,
+      listedProjects,
       queryEnvironmentIds,
-      queryEnvironmentIds[0],
-    );
-    const totals = new Map<EnvironmentId, number>();
-    for (const project of projects) {
-      totals.set(project.environmentId, (totals.get(project.environmentId) ?? 0) + 1);
-    }
-    return queryEnvironmentIds.flatMap((environmentId) => {
-      const projectIds = assignment.get(environmentId);
-      if (projectIds === undefined) return [];
-      // It lists everything it holds anyway, so the filter is left off and a one-server workspace
-      // asks exactly the question it asked before.
-      if (projectIds.length === (totals.get(environmentId) ?? 0)) return [{ environmentId }];
-      return [{ environmentId, projectIds }];
-    });
-  }, [projects, projectsKnown, queryEnvironmentIds, scopedProjectId]);
+      projectsKnown,
+      excludedProjects.length,
+      scopedProjectId,
+    ],
+  );
   // Part of the scope, since a different split is a different question and its answers must not
   // be filed under the same page state.
   const assignmentKey = useMemo(
@@ -624,7 +630,7 @@ function PullRequestsRouteView() {
     .map(([environmentId, revision]) => `${environmentId}:${revision}`)
     .join("|");
   // Page size is view state, not a URL concern: a shared link should open the first page.
-  const scopeKey = `${environmentKey}:${assignmentKey}:${search.state}:${search.involvement}:${scopedProjectId ?? ""}:${search.host ?? ""}:${search.draft ?? ""}:${search.review ?? ""}:${search.checks ?? ""}:${search.author ?? ""}:${search.labels?.join("\u0000") ?? ""}`;
+  const scopeKey = `${JSON.stringify(excludedProjects)}:${environmentKey}:${assignmentKey}:${search.state}:${search.involvement}:${scopedProjectId ?? ""}:${search.host ?? ""}:${search.draft ?? ""}:${search.review ?? ""}:${search.checks ?? ""}:${search.author ?? ""}:${search.labels?.join("\u0000") ?? ""}`;
   const filterKey = `${scopeKey}:${sentQuery}`;
   const statsScopeRef = useRef<PullRequestStatsScope>({ key: filterKey, policy: statsPolicy });
   statsScopeRef.current = { key: filterKey, policy: statsPolicy };
@@ -1146,7 +1152,11 @@ function PullRequestsRouteView() {
 
   const entries = useMemo(() => {
     const known = ordered?.key === filterKey ? ordered.entries : (listData?.entries ?? []);
-    const involvementEntries = filterPullRequestsByInvolvement(known, viewers, search.involvement);
+    const involvementEntries = filterPullRequestsByInvolvement(
+      includedPullRequestEntries(known, excludedProjects),
+      viewers,
+      search.involvement,
+    );
     // The hosts search more than the row shows — a body, a review, a commit message — so once
     // their answer is in, narrowing it again here would throw away matches the reader asked for.
     // The local pass stands in for the answer that has not arrived yet, and for the hosts that
@@ -1175,6 +1185,7 @@ function PullRequestsRouteView() {
         matchesPullRequestQuery(entry, typedParsed.text),
     );
   }, [
+    excludedProjects,
     filterKey,
     hasLocalFilters,
     localFilters,
@@ -1225,11 +1236,18 @@ function PullRequestsRouteView() {
     // narrowing: a host that cannot filter for itself would otherwise put rows into Authored
     // that the filters above just took out of the feed.
     const narrow = (rows: ReadonlyArray<EnvironmentPullRequestEntry> | undefined) =>
-      rows === undefined || !hasLocalFilters
-        ? rows
-        : rows.filter((entry) =>
-            matchesPullRequestFilters(entry, localFilters, pullRequestEntryViewer(entry, viewers)),
+      rows === undefined
+        ? undefined
+        : includedPullRequestEntries(rows, excludedProjects).filter(
+            (entry) =>
+              !hasLocalFilters ||
+              matchesPullRequestFilters(
+                entry,
+                localFilters,
+                pullRequestEntryViewer(entry, viewers),
+              ),
           );
+
     const authored = narrow(
       partitionsWanted ? (authoredQuery.data?.entries ?? held?.authored) : undefined,
     );
@@ -1244,6 +1262,7 @@ function PullRequestsRouteView() {
     hasLocalFilters,
     localFilters,
     authoredQuery.data?.entries,
+    excludedProjects,
     entries,
     environmentKey,
     loaded,
@@ -1578,6 +1597,13 @@ function PullRequestsRouteView() {
           title="Pull requests unavailable"
           error="Update your T3 Code servers to browse pull requests."
         />
+      ) : projectsKnown && projects.length > 0 && listedProjects.length === 0 ? (
+        <div className="flex flex-col items-center gap-3 px-4 py-16 text-center">
+          <p className="text-sm font-medium">All projects are excluded</p>
+          <p className="text-xs text-muted-foreground">
+            Include a project from Filters to see its pull requests.
+          </p>
+        </div>
       ) : firstLoad ? (
         <PullRequestListGhost rows={7} />
       ) : listQuery.error && entries.length === 0 ? (
@@ -1591,6 +1617,7 @@ function PullRequestsRouteView() {
           onRefresh={() => void refreshFromHost()}
           query={typedQuery}
           filtered={
+            excludedProjects.length > 0 ||
             menuFiltered ||
             search.state !== "open" ||
             search.involvement !== "all" ||
@@ -1747,6 +1774,22 @@ function PullRequestsRouteView() {
       // Narrowing to one server drops a project scope belonging to another, which would
       // otherwise narrow the list to nothing with no visible filter to explain it.
       onServer={(server) => updateListScope({ environmentId: server, projectId: undefined })}
+      exclusionProjects={projects}
+      excludedProjects={excludedProjects}
+      onExcludeProject={(project, excluded) => {
+        const key = pullRequestProjectKey(project);
+        const next = excluded
+          ? [...new Set([...excludedProjects, key])]
+          : excludedProjects.filter((entry) => entry !== key);
+        setExcludedProjects(next);
+        if (!writeExcludedPullRequestProjects(next)) {
+          toastManager.add({
+            type: "error",
+            title: "Project exclusions could not be saved",
+            description: "This change will last until you reload the page.",
+          });
+        }
+      }}
       projects={scopedProjects}
       projectId={scopedProjectId}
       projectEnvironmentId={scopedProject?.environmentId}

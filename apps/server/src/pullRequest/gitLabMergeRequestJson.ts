@@ -4,6 +4,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
   PullRequestActor,
+  PullRequestTimelineEvent,
   PullRequestCheck,
   PullRequestCheckStatus,
   PullRequestComment,
@@ -43,6 +44,8 @@ const RawPipelineSchema = Schema.Struct({
 });
 
 const RawMergeRequestSchema = Schema.Struct({
+  source_project_id: Schema.optional(Schema.NullOr(Schema.Int)),
+  target_project_id: Schema.optional(Schema.Int),
   iid: Schema.Int,
   title: Schema.String,
   web_url: Schema.String,
@@ -220,6 +223,10 @@ export interface GitLabMergeRequestListItem {
 }
 
 export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
+  readonly viewerCanDeleteSourceBranch?: boolean;
+  readonly sourceProjectId?: number | null;
+  readonly targetProjectId?: number;
+  readonly headRepositoryNameWithOwner?: string | null;
   readonly body: string;
   readonly changedFiles: number;
   readonly mergedAt: string | null;
@@ -381,6 +388,8 @@ function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLab
     }),
     checks: toChecks(raw),
     viewerCanMerge: raw.user?.can_merge !== false,
+    ...(raw.source_project_id === undefined ? {} : { sourceProjectId: raw.source_project_id }),
+    ...(raw.target_project_id === undefined ? {} : { targetProjectId: raw.target_project_id }),
     reviewerIds: (raw.reviewers ?? []).flatMap((reviewer) =>
       reviewer.id === undefined ? [] : [reviewer.id],
     ),
@@ -594,10 +603,12 @@ export function decodeDiffRefsJson(
   );
 }
 
-export function decodeNotesJson(
-  raw: string,
-): Result.Result<
-  { readonly comments: ReadonlyArray<PullRequestComment>; readonly rawCount: number },
+export function decodeNotesJson(raw: string): Result.Result<
+  {
+    readonly comments: ReadonlyArray<PullRequestComment>;
+    readonly timelineEvents: ReadonlyArray<PullRequestTimelineEvent>;
+    readonly rawCount: number;
+  },
   DecodeFailure
 > {
   const decoded = decodeUnknownList(raw);
@@ -605,11 +616,25 @@ export function decodeNotesJson(
     return Result.fail(decoded.failure);
   }
   const comments: PullRequestComment[] = [];
+  const timelineEvents: PullRequestTimelineEvent[] = [];
   for (const entry of decoded.success) {
     const note = decodeNoteEntry(entry);
     if (Exit.isFailure(note)) continue;
     const value = note.value;
-    if (value.system === true) continue;
+    if (value.system === true) {
+      if (value.body?.trim())
+        timelineEvents.push({
+          id: `note:${value.id}`,
+          kind:
+            value.body.trim().match(/^(merged|closed)(?:$| with | via | manually$)/)?.[1] ??
+            "system",
+          actor: toActor(value.author),
+          body: value.body,
+          createdAt: value.created_at,
+          url: null,
+        });
+      continue;
+    }
     const body = value.body ?? "";
     if (body.trim().length === 0) continue;
     const isDiffNote = value.type?.trim() === "DiffNote";
@@ -624,7 +649,7 @@ export function decodeNotesJson(
       reviewState: null,
     });
   }
-  return Result.succeed({ comments, rawCount: decoded.success.length });
+  return Result.succeed({ comments, timelineEvents, rawCount: decoded.success.length });
 }
 
 export function decodeCommitsJson(

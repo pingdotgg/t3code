@@ -13,6 +13,7 @@ import {
 import type { AzureDevOpsPullRequest } from "./azureDevOpsPullRequestJson.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
+  deleteSourceBranch: true,
   // `az repos pr` has no diff command, and the REST route reports changed files without their
   // contents, so there is no patch to show. The Code tab is hidden rather than empty.
   diff: false,
@@ -46,17 +47,8 @@ const CAPABILITIES: PullRequestCapabilities = {
   edit: { changeRequest: true, comment: false },
 };
 
-/**
- * Everything this host offers, granted to whoever is signed in. Azure DevOps states no permission
- * anywhere `az repos pr show` or `az repos pr list` reach: the answer lives in the security
- * namespaces, behind identity descriptors and token paths that would be several calls per pull
- * request to resolve.
- *
- * So the actions stay live and a viewer who may not take one is told so by Azure, at the moment
- * they try. That is the safer half of an unknown: hiding a control from someone entitled to it
- * leaves them no way through and no reason given.
- */
 const AZURE_DEVOPS_VIEWER_PERMISSIONS: PullRequestViewerPermissions = {
+  deleteSourceBranch: false,
   actions: CAPABILITIES.actions,
   comment: CAPABILITIES.comment,
   resolve: CAPABILITIES.review.resolve,
@@ -81,6 +73,9 @@ function toChangeRequest(pullRequest: AzureDevOpsPullRequest): ProviderChangeReq
     url: pullRequest.url,
     author: pullRequest.author,
     headBranch: pullRequest.headBranch,
+    ...(pullRequest.headRepositoryNameWithOwner === undefined
+      ? {}
+      : { headRepositoryNameWithOwner: pullRequest.headRepositoryNameWithOwner }),
     baseBranch: pullRequest.baseBranch,
     state: pullRequest.state,
     isDraft: pullRequest.isDraft,
@@ -121,6 +116,24 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const viewerPermissions = (cwd: string, pullRequest: AzureDevOpsPullRequest) =>
+    (pullRequest.sourceProjectId === undefined || pullRequest.sourceRepositoryId === undefined
+      ? Effect.succeed(false)
+      : cli
+          .getSourceBranchPermission({
+            cwd,
+            projectId: pullRequest.sourceProjectId,
+            repositoryId: pullRequest.sourceRepositoryId,
+            branch: pullRequest.headBranch,
+          })
+          .pipe(Effect.orElseSucceed(() => false))
+    ).pipe(
+      Effect.map((deleteSourceBranch): PullRequestViewerPermissions => ({
+        ...AZURE_DEVOPS_VIEWER_PERMISSIONS,
+        deleteSourceBranch,
+      })),
+    );
+
   const provider: PullRequestProviderApi = {
     kind: "azure-devops",
     capabilities: CAPABILITIES,
@@ -157,21 +170,25 @@ export const make = Effect.gen(function* () {
     getChangeRequest: (input) =>
       cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
         Effect.mapError(fail("getChangeRequest")),
-        Effect.map((pullRequest): ProviderChangeRequestDetail => ({
-          ...toChangeRequest(pullRequest),
-          body: pullRequest.body,
-          changedFiles: 0,
-          mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
-          closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
-          reviewers: pullRequest.reviewers,
-          checks: [],
-          mergeCapabilities: { merge: true, squash: true, rebase: false },
-          viewerPermissions: AZURE_DEVOPS_VIEWER_PERMISSIONS,
-          autoMergeEnabled: pullRequest.autoMergeEnabled,
-          ...(pullRequest.autoMergeMethod === undefined
-            ? {}
-            : { autoMergeMethod: pullRequest.autoMergeMethod }),
-        })),
+        Effect.flatMap((pullRequest) =>
+          viewerPermissions(input.cwd, pullRequest).pipe(
+            Effect.map((permissions): ProviderChangeRequestDetail => ({
+              ...toChangeRequest(pullRequest),
+              body: pullRequest.body,
+              changedFiles: 0,
+              mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
+              closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
+              reviewers: pullRequest.reviewers,
+              checks: [],
+              mergeCapabilities: { merge: true, squash: true, rebase: false },
+              viewerPermissions: permissions,
+              autoMergeEnabled: pullRequest.autoMergeEnabled,
+              ...(pullRequest.autoMergeMethod === undefined
+                ? {}
+                : { autoMergeMethod: pullRequest.autoMergeMethod }),
+            })),
+          ),
+        ),
       ),
 
     getChangeRequestActivity: (input) =>
@@ -181,11 +198,15 @@ export const make = Effect.gen(function* () {
           (pullRequest.threadsUrl === null
             ? Effect.succeed({ comments: [], truncated: true })
             : cli.listThreads({ cwd: input.cwd, threadsUrl: pullRequest.threadsUrl }).pipe(
-                Effect.map((comments) => ({ comments, truncated: false })),
+                Effect.map((activity) => ({ ...activity, truncated: false })),
                 Effect.orElseSucceed(() => ({ comments: [], truncated: true })),
               )
           ).pipe(
             Effect.map((conversation): ProviderChangeRequestActivity => ({
+              timelineEvents: ("timelineEvents" in conversation
+                ? conversation.timelineEvents
+                : []
+              ).map((event) => ({ ...event, url: pullRequest.url })),
               comments: conversation.comments,
               commentCount: conversation.comments.length,
               commentsTruncated: conversation.truncated,
@@ -196,9 +217,11 @@ export const make = Effect.gen(function* () {
         ),
       ),
 
-    // No request at all: Azure has nothing to say about the viewer that a pull request read can
-    // reach, so the answer is the same constant the detail carries.
-    getViewerPermissions: () => Effect.succeed(AZURE_DEVOPS_VIEWER_PERMISSIONS),
+    getViewerPermissions: (input) =>
+      cli.getPullRequest(input).pipe(
+        Effect.flatMap((pullRequest) => viewerPermissions(input.cwd, pullRequest)),
+        Effect.orElseSucceed(() => AZURE_DEVOPS_VIEWER_PERMISSIONS),
+      ),
 
     // Never called: `capabilities.diff` is false, and the service refuses a diff without it.
     getDiff: () =>

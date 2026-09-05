@@ -61,6 +61,137 @@ afterEach(() => {
 });
 
 layer("AzureDevOpsPullRequestCli.layer", (it) => {
+  it.effect("preserves existing Azure actions when the source pull request cannot be read", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new AzureDevOpsCli.AzureDevOpsCliAuthenticationError({
+            operation: "execute",
+            command: "az",
+            cwd: "/w",
+            argumentCount: 7,
+            cause: new Error("unavailable"),
+          }),
+        ),
+      );
+      const provider = yield* AzureDevOpsPullRequestProvider.make;
+      const permissions = yield* provider.getViewerPermissions({
+        cwd: "/w",
+        repository: "base/web",
+        host: "dev.azure.com",
+        number: 7,
+      });
+      expect(permissions.deleteSourceBranch).toBe(false);
+      expect(permissions.actions).toEqual(provider.capabilities.actions);
+    }),
+  );
+  it.effect.each([
+    ['{"count":1,"value":[true]}', true],
+    ['{"count":1,"value":[false]}', false],
+    ['{"count":0,"value":[]}', false],
+  ] as const)("checks exact Azure source branch deletion permission from %s", ([body, allowed]) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(body)));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      expect(
+        yield* cli.getSourceBranchPermission({
+          cwd: "/w",
+          projectId: "fork-project",
+          repositoryId: "fork-repo",
+          branch: "feat/A",
+        }),
+      ).toBe(allowed);
+      expect(argsOfCall(0)).toEqual(
+        expect.arrayContaining([
+          "devops",
+          "invoke",
+          "--area",
+          "security",
+          "--resource",
+          "permissions",
+          "securityNamespaceId=2e9eb7ed-3c0a-47d4-87c1-0ffdd275fd87",
+          "permissions=8",
+          "tokens=repoV2/fork-project/fork-repo/refs/heads/6600650061007400/4100/",
+          "alwaysAllowAdministrators=true",
+        ]),
+      );
+    }),
+  );
+
+  it.effect.each([
+    ['{"count":1,"value":[true]}', true],
+    ['{"count":1,"value":[false]}', false],
+    ["{}", false],
+  ] as const)("uses source permission for Azure viewer authorization from %s", ([body, allowed]) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            '{"pullRequestId":7,"title":"PR","status":"completed","sourceRefName":"refs/heads/feat/A","targetRefName":"refs/heads/main","creationDate":"2026-07-01T00:00:00Z","url":"https://dev.azure.com/acme/_apis/git/repositories/base/pullRequests/7","repository":{"id":"base","name":"web","project":{"id":"base-project","name":"base"}},"forkSource":{"repository":{"id":"fork-repo","name":"web","project":{"id":"fork-project","name":"fork"}}}}',
+          ),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(body)));
+      const provider = yield* AzureDevOpsPullRequestProvider.make;
+      const permissions = yield* provider.getViewerPermissions({
+        cwd: "/w",
+        repository: "base/web",
+        host: "dev.azure.com",
+        number: 7,
+      });
+      expect(permissions.deleteSourceBranch).toBe(allowed);
+      expect(argsOfCall(1)).toContain(
+        "tokens=repoV2/fork-project/fork-repo/refs/heads/6600650061007400/4100/",
+      );
+    }),
+  );
+  it.effect("checks the Azure fork ref tip and reports concurrent changes", () =>
+    Effect.gen(function* () {
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            '{"status":"completed","sourceRefName":"refs/heads/main","targetRefName":"refs/heads/main","repository":{"id":"base","project":{"id":"base-project"}},"forkSource":{"repository":{"id":"fork","project":{"id":"fork-project"}}}}',
+          ),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output('{"defaultBranch":"refs/heads/develop"}')),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            '[{"name":"refs/heads/main-extra","objectId":"wrong"},{"name":"refs/heads/main","objectId":"abc123"}]',
+          ),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output('{"success":false,"updateStatus":"staleOldObjectId"}')),
+      );
+      const error = yield* Effect.flip(
+        cli.runPullRequestAction({ cwd: "/w", number: 7, action: "delete-source-branch" }),
+      );
+      expect(error).toMatchObject({
+        reason: "delete-refused",
+        cause: { success: false, updateStatus: "staleOldObjectId" },
+      });
+      expect(argsOfCall(3)).toEqual(
+        expect.arrayContaining([
+          "delete",
+          "--repository",
+          "fork",
+          "--project",
+          "fork-project",
+          "--name",
+          "refs/heads/main",
+          "--object-id",
+          "abc123",
+        ]),
+      );
+      expect(mockedExecute).toHaveBeenCalledTimes(4);
+    }),
+  );
+
   it.effect("asks for one row more than the page, to probe for a next page", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(3, 1))));
@@ -537,7 +668,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       );
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
 
-      const comments = yield* cli.listThreads({
+      const { comments } = yield* cli.listThreads({
         cwd: "/w",
         threadsUrl: "https://dev.azure.com/acme/platform/_apis/git/r/web/pullRequests/42/threads",
       });

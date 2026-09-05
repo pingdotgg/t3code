@@ -13,6 +13,7 @@ import {
 import type { BitbucketPullRequest } from "./bitbucketPullRequestJson.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
+  deleteSourceBranch: true,
   diff: true,
   comment: true,
   // Bitbucket has no endpoint that reopens a declined pull request, and nothing documented that
@@ -48,9 +49,11 @@ const CAPABILITIES: PullRequestCapabilities = {
  * of the two this account is.
  */
 export function bitbucketViewerPermissions(input: {
+  readonly canWriteSource?: boolean;
   readonly canWrite: boolean;
 }): PullRequestViewerPermissions {
   return {
+    deleteSourceBranch: input.canWriteSource === true,
     actions: CAPABILITIES.actions.filter((action) => action !== "merge" || input.canWrite),
     comment: true,
     resolve: true,
@@ -117,6 +120,11 @@ export const make = Effect.gen(function* () {
         cause: error,
       });
 
+  const sourcePermission = (repository: string | null) =>
+    repository === null
+      ? Effect.succeed(false)
+      : api.getSourceRepositoryPermission({ repository }).pipe(Effect.orElseSucceed(() => false));
+
   const provider: PullRequestProviderApi = {
     kind: "bitbucket",
     capabilities: CAPABILITIES,
@@ -149,7 +157,15 @@ export const make = Effect.gen(function* () {
       const target = { repository: input.repository, number: input.number };
       return Effect.all(
         [
-          api.getPullRequest(target),
+          api
+            .getPullRequest(target)
+            .pipe(
+              Effect.flatMap((pullRequest) =>
+                sourcePermission(pullRequest.headRepositoryNameWithOwner).pipe(
+                  Effect.map((canWriteSource) => ({ pullRequest, canWriteSource })),
+                ),
+              ),
+            ),
           api.getDiffStat(target),
           api.getMergeability(target).pipe(Effect.orElseSucceed(() => "unknown" as const)),
           api.listChecks(target).pipe(Effect.orElseSucceed(() => [])),
@@ -163,7 +179,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(fail("getChangeRequest")),
         Effect.map(
           ([
-            pullRequest,
+            { pullRequest, canWriteSource },
             diffStat,
             mergeability,
             checks,
@@ -182,7 +198,7 @@ export const make = Effect.gen(function* () {
             // Bitbucket publishes no per-repository list of allowed strategies, so the ones it
             // supports are all offered and a strategy the repository forbids fails on merge.
             mergeCapabilities: { merge: true, squash: true, rebase: true },
-            viewerPermissions: bitbucketViewerPermissions({ canWrite }),
+            viewerPermissions: bitbucketViewerPermissions({ canWrite, canWriteSource }),
           }),
         ),
       );
@@ -199,11 +215,35 @@ export const make = Effect.gen(function* () {
             .listComments(target)
             .pipe(Effect.orElseSucceed(() => ({ comments: [], threads: [], truncated: true }))),
           api.listCommits(target).pipe(Effect.orElseSucceed(() => [])),
+          api.listTimelineEvents(target).pipe(
+            Effect.map((events) => ({ events, truncated: false })),
+            Effect.orElseSucceed(() => ({ events: [], truncated: true })),
+          ),
         ],
-        { concurrency: 3 },
+        { concurrency: 4 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(([pullRequest, comments, commits]): ProviderChangeRequestActivity => ({
+        Effect.map(([pullRequest, comments, commits, timeline]): ProviderChangeRequestActivity => ({
+          timelineTruncated: timeline.truncated,
+          timelineEvents: timeline.events
+            .filter((event) => {
+              const reviewState =
+                event.kind === "approved"
+                  ? "approved"
+                  : event.kind === "changes-requested"
+                    ? "changes-requested"
+                    : null;
+              return (
+                reviewState === null ||
+                !pullRequest.reviews.some(
+                  (review) =>
+                    review.author?.login === event.actor?.login &&
+                    review.createdAt === event.createdAt &&
+                    review.reviewState?.toLowerCase().replaceAll("_", "-") === reviewState,
+                )
+              );
+            })
+            .map((event) => ({ ...event, url: event.url ?? pullRequest.url })),
           comments: [...comments.comments, ...pullRequest.reviews].toSorted((left, right) =>
             left.createdAt.localeCompare(right.createdAt),
           ),
@@ -216,9 +256,22 @@ export const make = Effect.gen(function* () {
     },
 
     getViewerPermissions: (input) =>
-      api.getRepositoryPermission({ repository: input.repository }).pipe(
+      Effect.all(
+        [
+          api.getRepositoryPermission({ repository: input.repository }),
+          api.getPullRequest(input).pipe(
+            Effect.flatMap((pullRequest) =>
+              sourcePermission(pullRequest.headRepositoryNameWithOwner),
+            ),
+            Effect.orElseSucceed(() => false),
+          ),
+        ],
+        { concurrency: 2 },
+      ).pipe(
         Effect.mapError(fail("getViewerPermissions")),
-        Effect.map((canWrite) => bitbucketViewerPermissions({ canWrite })),
+        Effect.map(([canWrite, canWriteSource]) =>
+          bitbucketViewerPermissions({ canWrite, canWriteSource }),
+        ),
       ),
 
     // `/diff` answers with the whole patch and pages nothing, so the first slice is the last.

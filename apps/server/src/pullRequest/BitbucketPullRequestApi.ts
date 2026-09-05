@@ -1,3 +1,8 @@
+import {
+  assertSourceBranchDeletable,
+  decodeBranchDeletionJson,
+  PullRequestBranchDeletionError,
+} from "./pullRequestBranchDeletion.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -5,6 +10,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
   PullRequestAction,
+  PullRequestTimelineEvent,
   PullRequestCheck,
   PullRequestComment,
   PullRequestCommit,
@@ -30,6 +36,7 @@ import {
   decodeRepositoryPermissionJson,
   decodeStatusesJson,
   decodeViewerJson,
+  decodeTimelineEventsJson,
   decodeWorkspaceMembersJson,
   type BitbucketDiffStat,
   type BitbucketPullRequest,
@@ -102,6 +109,7 @@ export class BitbucketDiffCommitError extends Schema.TaggedErrorClass<BitbucketD
 }
 
 export type BitbucketPullRequestApiError =
+  | PullRequestBranchDeletionError
   | BitbucketApi.BitbucketApiError
   | BitbucketPullRequestReadError
   | BitbucketViewerUnavailableError
@@ -162,6 +170,10 @@ export class BitbucketPullRequestApi extends Context.Service<
       readonly number: number;
     }) => Effect.Effect<BitbucketPullRequest, BitbucketPullRequestApiError>;
 
+    readonly getSourceRepositoryPermission: (input: {
+      readonly repository: string;
+    }) => Effect.Effect<boolean, BitbucketPullRequestApiError>;
+
     /** True where the credentials can write to the repository, which is what merging needs. */
     readonly getRepositoryPermission: (input: {
       readonly repository: string;
@@ -186,6 +198,11 @@ export class BitbucketPullRequestApi extends Context.Service<
       readonly repository: string;
       readonly number: number;
     }) => Effect.Effect<PullRequestMergeability, BitbucketPullRequestApiError>;
+
+    readonly listTimelineEvents: (input: {
+      readonly repository: string;
+      readonly number: number;
+    }) => Effect.Effect<ReadonlyArray<PullRequestTimelineEvent>, BitbucketPullRequestApiError>;
 
     readonly listComments: (input: {
       readonly repository: string;
@@ -595,6 +612,15 @@ export const make = Effect.gen(function* () {
         }),
       ).pipe(Effect.catchIf(isRepositoryPermissionRemovedError, () => Effect.succeed(true))),
 
+    getSourceRepositoryPermission: (input) =>
+      withRepository(input.repository, () =>
+        readPage({
+          operation: "getSourceRepositoryPermission",
+          url: `/user/workspaces/${encodeURIComponent(input.repository.trim().split("/")[0]!)}/permissions/repositories?q=${encodeURIComponent(`repository.full_name="${filterLiteral(input.repository.trim())}"`)}`,
+          decode: (raw) => decodeRepositoryPermissionJson(raw, false),
+        }),
+      ),
+
     getPullRequestDiff: (input) =>
       input.commit !== undefined && !isCommitSha(input.commit)
         ? Effect.fail(new BitbucketDiffCommitError())
@@ -630,6 +656,17 @@ export const make = Effect.gen(function* () {
           operation: "getMergeability",
           url: `${path}/pullrequests/${input.number}/conflicts`,
           decode: decodeConflictsJson,
+        }),
+      ),
+
+    listTimelineEvents: (input) =>
+      withRepository(input.repository, (path) =>
+        itemPages({
+          operation: "listTimelineEvents",
+          url: `${path}/pullrequests/${input.number}/activity?pagelen=${CONVERSATION_PAGE_SIZE}`,
+          decode: decodeTimelineEventsJson,
+          items: [],
+          prepend: false,
         }),
       ),
 
@@ -730,6 +767,67 @@ export const make = Effect.gen(function* () {
     runAction: (input) =>
       withRepository(input.repository, (path) => {
         const pullRequest = `${path}/pullrequests/${input.number}`;
+        if (input.action === "delete-source-branch") {
+          return Effect.gen(function* () {
+            const response = yield* bitbucket.request({ method: "GET", url: pullRequest });
+            const current = yield* decodeBranchDeletionJson(
+              Schema.Struct({
+                state: Schema.String,
+                source: Schema.Struct({
+                  branch: Schema.Struct({ name: Schema.String }),
+                  repository: Schema.NullOr(
+                    Schema.Struct({ uuid: Schema.String, full_name: Schema.String }),
+                  ),
+                }),
+                destination: Schema.Struct({
+                  branch: Schema.Struct({ name: Schema.String }),
+                  repository: Schema.Struct({ uuid: Schema.String }),
+                }),
+              }),
+              response.body,
+            );
+            const sourceRepository = current.source.repository;
+            if (sourceRepository === null)
+              return yield* new PullRequestBranchDeletionError({
+                reason: "source-repository-missing",
+              });
+            return yield* withRepository(sourceRepository.full_name, (source) =>
+              Effect.gen(function* () {
+                const repository = yield* bitbucket.request({ method: "GET", url: source });
+                const config = yield* decodeBranchDeletionJson(
+                  Schema.Struct({ mainbranch: Schema.Struct({ name: Schema.String }) }),
+                  repository.body,
+                );
+                yield* assertSourceBranchDeletable({
+                  state: current.state,
+                  sourceRepository: sourceRepository.uuid,
+                  baseRepository: current.destination.repository.uuid,
+                  sourceBranch: current.source.branch.name,
+                  baseBranch: current.destination.branch.name,
+                  defaultBranch: config.mainbranch.name,
+                });
+                yield* bitbucket
+                  .request({
+                    method: "DELETE",
+                    url: `${source}/refs/branches/${encodeURIComponent(current.source.branch.name)}`,
+                  })
+                  .pipe(
+                    Effect.catchTags({
+                      BitbucketResponseError: (
+                        cause,
+                      ): Effect.Effect<never, BitbucketPullRequestApiError> =>
+                        cause.status === 404
+                          ? new PullRequestBranchDeletionError({
+                              reason: "source-branch-missing",
+                              cause,
+                            })
+                          : Effect.fail(cause),
+                    }),
+                  );
+              }),
+            );
+          });
+        }
         // Only merge and close reach here: the provider declares the others unsupported, so the
         // surface never offers them.
         if (input.action === "merge") {

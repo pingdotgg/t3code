@@ -15,6 +15,7 @@ import {
 } from "./PullRequestProvider.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
+  deleteSourceBranch: true,
   diff: true,
   comment: true,
   actions: [
@@ -74,9 +75,11 @@ const MERGE_ACTIONS: ReadonlySet<string> = new Set([
  * and from anyone with the Developer role, and states neither of those two facts here.
  */
 export function gitLabViewerPermissions(input: {
+  viewerCanDeleteSourceBranch?: boolean;
   readonly viewerCanMerge: boolean;
 }): PullRequestViewerPermissions {
   return {
+    deleteSourceBranch: input.viewerCanDeleteSourceBranch === true,
     // Arming the merge and taking the arming back are the merge, deferred, so they answer to
     // the same `can_merge` the merge itself does.
     actions: CAPABILITIES.actions.filter(
@@ -188,6 +191,12 @@ export const make = Effect.gen(function* () {
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
         Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => ({
+          timelineEvents: ("timelineEvents" in notes ? (notes.timelineEvents ?? []) : []).map(
+            (event) => ({
+              ...event,
+              url: `https://${input.host}/${input.repository}/-/merge_requests/${input.number}#note_${event.id.slice(5)}`,
+            }),
+          ),
           reactions: awards.reactions,
           comments: notes.comments.map((comment) => ({
             ...comment,

@@ -97,6 +97,7 @@ export const PullRequestAction = Schema.Literals([
   "revert",
   /** Allow Actions workflows from a fork pull request to begin running. */
   "approve-workflows",
+  "delete-source-branch",
 ]);
 export type PullRequestAction = typeof PullRequestAction.Type;
 
@@ -377,6 +378,7 @@ export type PullRequestReviewerCapabilities = typeof PullRequestReviewerCapabili
  * buttons.
  */
 export const PullRequestCapabilities = Schema.Struct({
+  deleteSourceBranch: Schema.optional(Schema.Boolean),
   /** A unified patch can be fetched for the change request. */
   diff: Schema.Boolean,
   /** A comment can be posted, and the conversation read back. */
@@ -426,12 +428,9 @@ export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
  * `capabilities`: that says what the host is able to do at all, and this says whether this viewer
  * is allowed to ask for it. A host that merges pull requests still will not let a stranger merge
  * one, so a control belongs on the page only where the two agree.
- *
- * A permission the host reports nothing about is granted rather than withheld. Hiding a control
- * from someone who may in fact use it leaves them no way through and no reason given, while
- * offering one they may not use ends in the host's own refusal — which at least says why.
  */
 export const PullRequestViewerPermissions = Schema.Struct({
+  deleteSourceBranch: Schema.optional(Schema.Boolean),
   /** Which of the actions this viewer may take; anything absent is theirs to look at only. */
   actions: Schema.Array(PullRequestAction),
   /** This viewer may write a remark: a comment, a reply, or a note against a line. */
@@ -692,6 +691,7 @@ export const PullRequestInvalidateInput = Schema.Struct({
 export type PullRequestInvalidateInput = typeof PullRequestInvalidateInput.Type;
 
 export const PullRequestDetail = Schema.Struct({
+  reviewDecision: Schema.optional(Schema.NullOr(PullRequestReviewDecision)),
   provider: SourceControlProviderKind,
   capabilities: PullRequestCapabilities,
   /** What this viewer may do, which `capabilities` says nothing about. Both narrow the page. */
@@ -750,6 +750,23 @@ export const PullRequestDetail = Schema.Struct({
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 
+export const PullRequestTimelineEvent = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  kind: TrimmedNonEmptyString,
+  actor: Schema.NullOr(PullRequestActor),
+  createdAt: IsoDateTime,
+  url: Schema.NullOr(Schema.String),
+  body: Schema.String,
+  relatedPullRequest: Schema.optional(
+    Schema.Struct({
+      title: Schema.String,
+      url: Schema.String,
+      state: PullRequestState,
+    }),
+  ),
+});
+export type PullRequestTimelineEvent = typeof PullRequestTimelineEvent.Type;
+
 /**
  * The slower, conversation-shaped half of a change request. It is read independently from the
  * core detail so a host with a deeply paginated review history cannot hold the title, body,
@@ -757,6 +774,8 @@ export type PullRequestDetail = typeof PullRequestDetail.Type;
  * conversation query carries avatars and completed reviewers that its basic detail does not.
  */
 export const PullRequestActivity = Schema.Struct({
+  timelineEvents: Schema.optional(Schema.Array(PullRequestTimelineEvent)),
+  timelineTruncated: Schema.optional(Schema.Boolean),
   author: Schema.optional(Schema.NullOr(PullRequestActor)),
   reviewers: Schema.optional(Schema.Array(PullRequestActor)),
   comments: Schema.Array(PullRequestComment),

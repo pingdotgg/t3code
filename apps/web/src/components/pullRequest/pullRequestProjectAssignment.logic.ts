@@ -135,3 +135,39 @@ export function resolvePickableEnvironments(
     ...others,
   ];
 }
+
+export function pullRequestEnvironmentQueries(input: {
+  projects: ReadonlyArray<AssignableProject>;
+  listedProjects: ReadonlyArray<AssignableProject>;
+  environmentIds: ReadonlyArray<EnvironmentId>;
+  projectsKnown: boolean;
+  hasExclusions: boolean;
+  projectId: ProjectId | undefined;
+}): ReadonlyArray<{ environmentId: EnvironmentId; projectIds?: ReadonlyArray<ProjectId> }> {
+  if (!input.projectsKnown && input.hasExclusions) return [];
+  const plain = input.environmentIds.map((environmentId) => ({ environmentId }));
+  if (!input.projectsKnown || input.projectId !== undefined) return plain;
+  const assignment = assignProjectsToEnvironments(
+    input.listedProjects,
+    input.environmentIds,
+    input.environmentIds[0],
+  );
+  return input.environmentIds.flatMap((environmentId) => {
+    const projectIds = assignment.get(environmentId);
+    if (!projectIds?.length) return [];
+    const total = input.projects.filter(
+      (project) => project.environmentId === environmentId,
+    ).length;
+    return projectIds.length === total ? [{ environmentId }] : [{ environmentId, projectIds }];
+  });
+}
+
+export function includedPullRequestEntries<
+  Entry extends { environmentId: EnvironmentId; projectId: ProjectId },
+>(entries: ReadonlyArray<Entry>, exclusions: ReadonlyArray<string>): ReadonlyArray<Entry> {
+  if (exclusions.length === 0) return entries;
+  const excluded = new Set(exclusions);
+  return entries.filter(
+    (entry) => !excluded.has(JSON.stringify([entry.environmentId, entry.projectId])),
+  );
+}

@@ -102,6 +102,92 @@ afterEach(() => {
 });
 
 layer("GitLabPullRequestCli.layer", (it) => {
+  it.effect.each([
+    ['{"can_push":true}', true],
+    ['{"can_push":false}', false],
+    ["{}", false],
+    ["not JSON", false],
+  ] as const)("reads source branch access from %s", ([body, allowed]) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            mergeRequestJson({
+              source_project_id: 42,
+              target_project_id: 7,
+              source_branch: "feat/fork",
+            }),
+          ),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output('{"path_with_namespace":"fork/web"}')),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(body)));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
+      expect(detail.viewerCanDeleteSourceBranch).toBe(allowed);
+      expect(detail.headRepositoryNameWithOwner).toBe("fork/web");
+      expect(argsOfCall(2)).toContain("projects/42/repository/branches/feat%2Ffork");
+    }),
+  );
+
+  it.effect("preserves core detail when optional source project data is malformed", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(mergeRequestJson({ source_project_id: 42, target_project_id: 7 }))),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
+      expect(detail.number).toBe(7);
+      expect(detail.viewerCanMerge).toBe(true);
+      expect(detail.headRepositoryNameWithOwner).toBeUndefined();
+      expect(detail.viewerCanDeleteSourceBranch).toBe(false);
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+    }),
+  );
+  it.effect("deletes the fork source project branch and refuses an open merge request", () =>
+    Effect.gen(function* () {
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const target = {
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        action: "delete-source-branch" as const,
+      };
+      const current = {
+        state: "merged",
+        source_branch: "main",
+        target_branch: "main",
+        source_project_id: 42,
+        target_project_id: 7,
+      };
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(mergeRequestJson(current))));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output('{"default_branch":"develop"}')));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("")));
+      yield* cli.runMergeRequestAction(target);
+      expect(argsOfCall(1)).toContain("projects/42");
+      expect(argsOfCall(2)).toContain("projects/42/repository/branches/main");
+      expect(argsOfCall(2)).toContain("DELETE");
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(mergeRequestJson({ ...current, state: "opened" }))),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output('{"default_branch":"main"}')));
+      const error = yield* Effect.flip(cli.runMergeRequestAction(target));
+      expect(error).toMatchObject({ reason: "not-finished" });
+      expect(mockedExecute).toHaveBeenCalledTimes(5);
+    }),
+  );
+
   it.effect("asks GitLab for one row more than the page, to probe for a next page", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(mergeRequests(3, 1))));

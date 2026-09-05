@@ -211,6 +211,7 @@ const VERDICT_LABELS: Record<PullRequestReviewVerdict, string> = {
  * else; the other four are also the author's to take, whatever access they have.
  */
 const ACTION_ACCESS_REFUSALS: Record<PullRequestAction, string> = {
+  "delete-source-branch": "You need write access on the source repository to delete its branch.",
   merge: "You need write access on this repository to merge.",
   ready:
     "You need write access on this repository, or to have opened this change request, to mark it ready for review.",
@@ -1290,6 +1291,9 @@ export const make = Effect.gen(function* () {
             number: changeRequest.number,
             title: changeRequest.title,
             body: changeRequest.body,
+            ...(changeRequest.reviewDecision === undefined
+              ? {}
+              : { reviewDecision: changeRequest.reviewDecision }),
             url: changeRequest.url,
             author: changeRequest.author,
             state: changeRequest.state,
@@ -1346,6 +1350,12 @@ export const make = Effect.gen(function* () {
             Effect.map((activity): PullRequestActivity => ({
               ...(activity.author === undefined ? {} : { author: activity.author }),
               ...(activity.reviewers === undefined ? {} : { reviewers: activity.reviewers }),
+              ...(activity.timelineEvents === undefined
+                ? {}
+                : { timelineEvents: activity.timelineEvents }),
+              ...(activity.timelineTruncated === undefined
+                ? {}
+                : { timelineTruncated: activity.timelineTruncated }),
               comments: activity.comments,
               commentCount: activity.commentCount,
               commentsTruncated: activity.commentsTruncated,
@@ -1434,7 +1444,11 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((project): Effect.Effect<string, PullRequestError> => {
         // The surface hides what a host cannot do, and this refuses it as well: a request that
         // reached here anyway must not be handed to a provider that never claimed the action.
-        if (!project.api.capabilities.actions.includes(input.action)) {
+        if (
+          input.action === "delete-source-branch"
+            ? project.api.capabilities.deleteSourceBranch !== true
+            : !project.api.capabilities.actions.includes(input.action)
+        ) {
           return Effect.fail(
             new PullRequestOperationError({
               operation: "runAction",
@@ -1446,6 +1460,7 @@ export const make = Effect.gen(function* () {
         // provider maps an unrecognised method to its own default, so asking Azure DevOps to
         // rebase would quietly merge instead of failing.
         if (
+          (input.action === "merge" || input.action === "enable-auto-merge") &&
           input.mergeMethod !== undefined &&
           !project.api.capabilities.mergeMethods.includes(input.mergeMethod)
         ) {
@@ -1459,6 +1474,7 @@ export const make = Effect.gen(function* () {
         // The same for the way a stale branch is brought up to date: a host that only merges
         // must not be asked to rebase and left to pick something else.
         if (
+          input.action === "update-branch" &&
           input.updateMethod !== undefined &&
           !(project.api.capabilities.updateMethods ?? []).includes(input.updateMethod)
         ) {
@@ -1474,7 +1490,11 @@ export const make = Effect.gen(function* () {
         // above do not.
         return viewerPermissionsOf(project, input, "runAction").pipe(
           Effect.flatMap((viewer): Effect.Effect<string, PullRequestError> => {
-            if (!viewer.actions.includes(input.action)) {
+            if (
+              input.action === "delete-source-branch"
+                ? viewer.deleteSourceBranch !== true
+                : !viewer.actions.includes(input.action)
+            ) {
               return Effect.fail(
                 new PullRequestOperationError({
                   operation: "runAction",
@@ -1483,6 +1503,7 @@ export const make = Effect.gen(function* () {
               );
             }
             if (
+              input.action === "update-branch" &&
               input.updateMethod !== undefined &&
               !(viewer.updateMethods ?? []).includes(input.updateMethod)
             ) {
