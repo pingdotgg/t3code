@@ -21,7 +21,7 @@ export interface EnvironmentUsage {
   readonly summary: UsageSummary;
 }
 
-interface ProviderTotals {
+export interface ProviderTotals {
   readonly provider: UsageProviderKind;
   readonly costUsd: number;
   readonly totalTokens: number;
@@ -31,7 +31,7 @@ interface ProviderTotals {
   readonly tokenShare: number;
 }
 
-interface ModelTotals {
+export interface ModelTotals {
   readonly model: string;
   readonly provider: UsageProviderKind;
   readonly costUsd: number;
@@ -55,7 +55,7 @@ export interface HourlyTotals {
   readonly byProvider: ReadonlyMap<UsageProviderKind, { costUsd: number; totalTokens: number }>;
 }
 
-interface CostQuality {
+export interface CostQuality {
   readonly providerReportedShare: number;
   readonly modelPricedShare: number;
   readonly unpricedShare: number;

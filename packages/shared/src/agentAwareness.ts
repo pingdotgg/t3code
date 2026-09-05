@@ -5,7 +5,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 
-type AgentAwarenessPhase =
+export type AgentAwarenessPhase =
   | "starting"
   | "running"
   | "waiting_for_approval"

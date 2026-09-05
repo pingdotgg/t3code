@@ -22,7 +22,7 @@ import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
 export const CLOUDFLARED_VERSION = "2026.5.2";
 const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
 
-type RelayClientExecutableSource = "override" | "managed" | "path";
+export type RelayClientExecutableSource = "override" | "managed" | "path";
 
 export type RelayClientStatus =
   | {
@@ -42,7 +42,7 @@ export type RelayClientStatus =
       readonly version: string;
     };
 
-type AvailableRelayClient = Extract<RelayClientStatus, { readonly status: "available" }>;
+export type AvailableRelayClient = Extract<RelayClientStatus, { readonly status: "available" }>;
 
 export class RelayClientInstallError extends Data.TaggedError("RelayClientInstallError")<{
   readonly reason:

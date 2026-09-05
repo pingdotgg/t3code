@@ -15,8 +15,8 @@ import {
   type ToStringOptions,
 } from "yaml";
 
-type YamlParseOptions = ParseOptions & DocumentOptions & SchemaOptions & ToJSOptions;
-type YamlStringifyOptions = DocumentOptions &
+export type YamlParseOptions = ParseOptions & DocumentOptions & SchemaOptions & ToJSOptions;
+export type YamlStringifyOptions = DocumentOptions &
   SchemaOptions &
   ParseOptions &
   CreateNodeOptions &

@@ -51,7 +51,7 @@ export class RemotePairingTokenMissingError extends Schema.TaggedErrorClass<Remo
   }
 }
 
-class RemotePairingCodeMissingError extends Schema.TaggedErrorClass<RemotePairingCodeMissingError>()(
+export class RemotePairingCodeMissingError extends Schema.TaggedErrorClass<RemotePairingCodeMissingError>()(
   "RemotePairingCodeMissingError",
   { host: Schema.String },
 ) {
@@ -60,14 +60,14 @@ class RemotePairingCodeMissingError extends Schema.TaggedErrorClass<RemotePairin
   }
 }
 
-const RemotePairingTargetError = Schema.Union([
+export const RemotePairingTargetError = Schema.Union([
   RemoteBackendUrlMissingError,
   RemotePairingUrlInvalidError,
   RemoteBackendUrlInvalidError,
   RemotePairingTokenMissingError,
   RemotePairingCodeMissingError,
 ]);
-type RemotePairingTargetError = typeof RemotePairingTargetError.Type;
+export type RemotePairingTargetError = typeof RemotePairingTargetError.Type;
 
 const hasSupportedRemoteBackendProtocol = (url: URL): boolean =>
   SUPPORTED_REMOTE_BACKEND_PROTOCOLS.has(url.protocol);
