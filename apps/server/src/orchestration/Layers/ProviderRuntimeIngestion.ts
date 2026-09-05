@@ -1867,15 +1867,22 @@ const make = Effect.gen(function* () {
         const detailedThread = yield* getLoadedThreadDetail();
         const messages = detailedThread?.messages ?? [];
         const turnId = toTurnId(event.turnId);
-        const activeAssistantMessageId = turnId
-          ? yield* getActiveAssistantMessageIdForTurn(thread.id, turnId)
-          : Option.none<MessageId>();
-        const hasAssistantMessagesForTurn =
-          turnId !== undefined ? hasAssistantMessageForTurn(messages, turnId) : false;
+        const activeAssistantSegment = turnId
+          ? yield* getAssistantSegmentStateForTurn(thread.id, turnId)
+          : Option.none<AssistantSegmentState>();
+        const completingAssistantSegment = Option.filter(
+          activeAssistantSegment,
+          (segment) => segment.baseKey === assistantSegmentBaseKeyFromEvent(event),
+        );
+        const activeAssistantMessageId = Option.flatMap(completingAssistantSegment, (segment) =>
+          segment.activeMessageId ? Option.some(segment.activeMessageId) : Option.none(),
+        );
         const assistantMessageId = Option.getOrElse(
           activeAssistantMessageId,
           () => assistantCompletion.messageId,
         );
+        const hasAssistantMessagesForTurn =
+          turnId !== undefined ? hasAssistantMessageForTurn(messages, turnId) : false;
         const existingAssistantMessage = findMessageById(messages, assistantMessageId);
         const shouldApplyFallbackCompletionText =
           !existingAssistantMessage || existingAssistantMessage.text.length === 0;
@@ -1910,7 +1917,7 @@ const make = Effect.gen(function* () {
           }
         }
 
-        if (turnId) {
+        if (turnId && Option.isSome(completingAssistantSegment)) {
           yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
         }
       }

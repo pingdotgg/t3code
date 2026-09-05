@@ -1336,6 +1336,63 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  it("preserves an async assistant message before the final response", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-commentary"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-async-message"),
+      itemId: asItemId("commentary"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "Working on it.",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-async-message"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-async-message"),
+      itemId: asItemId("async-message"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: "Still investigating.",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-commentary-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-async-message"),
+      itemId: asItemId("commentary"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: "Working on it.",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.text === "Working on it." && !message.streaming,
+      ),
+    );
+    expect(
+      thread.messages.map((message: ProviderRuntimeTestMessage) => message.text).toSorted(),
+    ).toEqual(["Working on it.", "Still investigating."].toSorted());
+  });
+
   it("preserves completed tool metadata on projected tool activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
