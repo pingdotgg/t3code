@@ -13,6 +13,7 @@ import {
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
+  setSidebarProjectScopeKey,
   setThreadChangedFilesExpanded,
   type UiState,
 } from "./uiStateStore";
@@ -21,6 +22,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
+    sidebarProjectScopeKey: null,
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -144,6 +146,15 @@ describe("uiStateStore pure functions", () => {
       defaultAdvertisedEndpointKey: null,
     });
   });
+
+  it("stores the sidebar project scope and resets it to all projects", () => {
+    const scoped = setSidebarProjectScopeKey(makeUiState(), "github.com/pingdotgg/t3code");
+
+    expect(scoped.sidebarProjectScopeKey).toBe("github.com/pingdotgg/t3code");
+    expect(setSidebarProjectScopeKey(scoped, "github.com/pingdotgg/t3code")).toBe(scoped);
+    expect(setSidebarProjectScopeKey(scoped, null).sidebarProjectScopeKey).toBeNull();
+    expect(setSidebarProjectScopeKey(scoped, "").sidebarProjectScopeKey).toBeNull();
+  });
 });
 
 describe("parsePersistedState", () => {
@@ -177,6 +188,7 @@ describe("parsePersistedState", () => {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
+      sidebarProjectScopeKey: null,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
@@ -297,6 +309,7 @@ describe("uiStateStore persistence", () => {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
+      sidebarProjectScopeKey: null,
       threadChangedFilesExpansionVersion: 2,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -308,6 +321,18 @@ describe("uiStateStore persistence", () => {
     expect(parsePersistedState(persisted)).toEqual({
       ...state,
     });
+  });
+
+  it("restores the sidebar project scope across reloads", () => {
+    persistState(makeUiState({ sidebarProjectScopeKey: "github.com/pingdotgg/t3code" }));
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+
+    expect(parsePersistedState(persisted).sidebarProjectScopeKey).toBe(
+      "github.com/pingdotgg/t3code",
+    );
   });
 
   it("drops the temporary expanded-only migration fallback when rewriting state", () => {
