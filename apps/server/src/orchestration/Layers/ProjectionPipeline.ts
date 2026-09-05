@@ -1,3 +1,4 @@
+import { pendingProviderTurnUpdate } from "@t3tools/shared/pendingProviderTurn";
 import {
   ApprovalRequestId,
   type ChatAttachment,
@@ -613,6 +614,17 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const applyThreadsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyThreadsProjection",
     )(function* (event, attachmentSideEffects) {
+      const pendingUpdate = pendingProviderTurnUpdate(event);
+      if (pendingUpdate !== undefined && event.aggregateKind === "thread") {
+        const row = yield* projectionThreadRepository.getById({
+          threadId: ThreadId.make(event.aggregateId),
+        });
+        if (Option.isSome(row))
+          yield* projectionThreadRepository.upsert({
+            ...row.value,
+            pendingProviderTurn: pendingUpdate,
+          });
+      }
       switch (event.type) {
         case "thread.created":
           yield* projectionThreadRepository.upsert({

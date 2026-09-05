@@ -6123,7 +6123,11 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     const sendCtx = composerRef.current?.getSendContext();
-    if (!sendCtx?.providerAvailable) {
+    if (
+      !sendCtx?.providerAvailable ||
+      activeThread.pendingProviderTurn != null ||
+      (sendCtx.quotaExhausted && submissionIntent !== "when-available")
+    ) {
       notifyDirectAnnotationAttached();
       return;
     }
@@ -6190,6 +6194,7 @@ export default function ChatView(props: ChatViewProps) {
         composerReviewComments.length,
     });
     const feedbackCommand =
+      submissionIntent !== "when-available" &&
       ctxSelectedProvider === "codex" &&
       composerImages.length === 0 &&
       composerFiles.length === 0 &&
@@ -6286,6 +6291,7 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     if (
+      submissionIntent !== "when-available" &&
       !directAnnotation &&
       sendInteractionModeEnabled &&
       showPlanFollowUpPrompt &&
@@ -6707,6 +6713,7 @@ export default function ChatView(props: ChatViewProps) {
             attachments: turnAttachmentsResult.value,
           },
           modelSelection: ctxSelectedModelSelection,
+          ...(submissionIntent === "when-available" ? { waitForProvider: true } : {}),
           titleSeed: title,
           runtimeMode,
           interactionMode: sendInteractionMode,
@@ -6721,6 +6728,12 @@ export default function ChatView(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        if (submissionIntent === "when-available") {
+          setOptimisticUserMessages((messages) =>
+            messages.filter((message) => message.id !== messageIdForSend),
+          );
+          resetLocalDispatch();
+        }
         if (turnUsesAttachmentUploads) {
           releaseDraftAttachments(composerAttachmentsSnapshot);
         }
@@ -6842,6 +6855,20 @@ export default function ChatView(props: ChatViewProps) {
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
       );
       resetLocalDispatch();
+    }
+  };
+
+  const onCancelProviderWait = async () => {
+    if (!activeThread?.pendingProviderTurn) return;
+    const result = await interruptThreadTurn({
+      environmentId,
+      input: {
+        threadId: activeThread.id,
+        pendingMessageId: activeThread.pendingProviderTurn.message.messageId,
+      },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      setThreadError(activeThread.id, chatActionErrorMessage(squashAtomCommandFailure(result)));
     }
   };
 
@@ -7934,6 +7961,13 @@ export default function ChatView(props: ChatViewProps) {
                             activeThreadId={activeThreadId}
                             activeThreadEnvironmentId={activeThread?.environmentId}
                             activeThread={activeThread}
+                            supportsProviderWait={
+                              appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)
+                                ?.environment.capabilities.providerAvailabilityWait === true
+                            }
+                            onCancelProviderWait={() => {
+                              void onCancelProviderWait();
+                            }}
                             promptHistoryMessages={timelineMessages}
                             isServerThread={isServerThread}
                             isLocalDraftThread={isLocalDraftThread}

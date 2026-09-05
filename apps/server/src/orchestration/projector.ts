@@ -1,9 +1,11 @@
-import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
+import { pendingProviderTurnUpdate } from "@t3tools/shared/pendingProviderTurn";
+import type { OrchestrationEvent, OrchestrationReadModel } from "@t3tools/contracts";
 import {
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
   OrchestrationThread,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -221,6 +223,15 @@ export function projectEvent(
   model: OrchestrationReadModel,
   event: OrchestrationEvent,
 ): Effect.Effect<OrchestrationReadModel, OrchestrationProjectorDecodeError> {
+  const pendingUpdate = pendingProviderTurnUpdate(event);
+  if (pendingUpdate !== undefined && event.aggregateKind === "thread") {
+    model = {
+      ...model,
+      threads: updateThread(model.threads, ThreadId.make(event.aggregateId), {
+        pendingProviderTurn: pendingUpdate,
+      }),
+    };
+  }
   const nextBase: OrchestrationReadModel = {
     ...model,
     snapshotSequence: event.sequence,

@@ -1,3 +1,4 @@
+import { modelUsageAvailability } from "@t3tools/shared/usageLimits";
 import type {
   ApprovalRequestId,
   AssistantCitation,
@@ -1149,6 +1150,7 @@ export interface ChatComposerHandle {
     selectedModelOptionsForDispatch: unknown;
     selectedModelSelection: ModelSelection;
     providerAvailable: boolean;
+    quotaExhausted: boolean;
     selectedProvider: ProviderDriverKind;
     selectedModel: string;
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
@@ -1164,6 +1166,8 @@ export interface ChatComposerHandle {
 // --------------------------------------------------------------------------
 
 export interface ChatComposerProps {
+  supportsProviderWait: boolean;
+  onCancelProviderWait: () => void;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   attachmentUploadsCapabilityKnown: boolean;
@@ -1632,9 +1636,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderEntry?.snapshot,
     selectedModel,
   );
-  const sendDisabledReason =
+  const quota = modelUsageAvailability(
+    selectedProviderEntry?.snapshot.usageLimits,
+    selectedModel,
+    Date.now(),
+  );
+  const quotaExhausted = quota.status === "exhausted";
+  const queuedProviderTurn = activeThread?.pendingProviderTurn;
+  const ordinarySendDisabledReason =
     externalSendDisabledReason ??
     (activePendingProgress ? null : (attachmentBlockReason ?? providerSendBlockReason));
+  const sendDisabledReason =
+    ordinarySendDisabledReason ??
+    (queuedProviderTurn
+      ? "Cancel the queued message before sending another"
+      : quotaExhausted && !activePendingProgress
+        ? "Usage limit reached"
+        : null);
   const isSendDisabled = sendDisabledReason !== null;
   const selectedProviderStatus = useMemo(
     () => selectedProviderEntry?.snapshot ?? null,
@@ -2845,7 +2863,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }, intent: ComposerSubmissionIntent = "foreground") => {
-      if (noProviderAvailable || isSendDisabled) {
+      if (
+        noProviderAvailable ||
+        (intent === "when-available"
+          ? ordinarySendDisabledReason !== null ||
+            queuedProviderTurn != null ||
+            !props.supportsProviderWait
+          : isSendDisabled)
+      ) {
         event?.preventDefault();
         return;
       }
@@ -2885,6 +2910,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activePendingProgress,
       blurMobileComposerAfterSend,
       isSendDisabled,
+      ordinarySendDisabledReason,
+      queuedProviderTurn,
+      props.supportsProviderWait,
       noProviderAvailable,
       onSend,
       promptRef,
@@ -4692,6 +4720,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedModelOptionsForDispatch,
         selectedModelSelection,
         providerAvailable: !noProviderAvailable && providerSendBlockReason === null,
+        quotaExhausted,
         selectedProvider,
         selectedModel,
         selectedProviderModels,
@@ -4740,6 +4769,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedModelSelection,
       noProviderAvailable,
       providerSendBlockReason,
+      quotaExhausted,
       selectedPromptEffort,
       selectedProvider,
       selectedProviderModels,
@@ -4838,6 +4868,71 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         : null}
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
+          {queuedProviderTurn || quotaExhausted ? (
+            <ComposerBanner.Attachment>
+              <ComposerBanner.Root variant="warning">
+                <ComposerBanner.Row layout="wrap-actions">
+                  <ComposerBanner.Icon />
+                  <ComposerBanner.Content className="flex-col items-start gap-0">
+                    {queuedProviderTurn ? (
+                      <>
+                        <span>
+                          Waiting for provider capacity · {queuedProviderTurn.modelSelection.model}
+                        </span>
+                        <span className="line-clamp-2 text-xs text-muted-foreground">
+                          {queuedProviderTurn.message.text}
+                          {queuedProviderTurn.message.attachments.length > 0
+                            ? ` · ${queuedProviderTurn.message.attachments.length} attachments`
+                            : ""}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Usage limit reached</span>
+                        {quota.resetsAt !== null ? (
+                          <span className="text-xs text-muted-foreground">
+                            Resets {new Date(quota.resetsAt).toLocaleString()}
+                          </span>
+                        ) : null}
+                      </>
+                    )}
+                  </ComposerBanner.Content>
+                  <ComposerBanner.Actions>
+                    {queuedProviderTurn ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={props.onCancelProviderWait}
+                      >
+                        Cancel queued message
+                      </Button>
+                    ) : props.supportsProviderWait ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={
+                          ordinarySendDisabledReason !== null ||
+                          noProviderAvailable ||
+                          isSendBusy ||
+                          isConnecting ||
+                          environmentUnavailable !== null ||
+                          !composerSendState.hasSendableContent ||
+                          phase === "running" ||
+                          activePendingProgress !== null ||
+                          activePendingApproval !== null
+                        }
+                        onClick={() => submitComposer(undefined, "when-available")}
+                      >
+                        Start when available
+                      </Button>
+                    ) : null}
+                  </ComposerBanner.Actions>
+                </ComposerBanner.Row>
+              </ComposerBanner.Root>
+            </ComposerBanner.Attachment>
+          ) : null}
           <ComposerBannerStack
             key={activeThreadId}
             className="relative z-0"

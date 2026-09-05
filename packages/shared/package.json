@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./pendingProviderTurn": {
+      "types": "./src/pendingProviderTurn.ts",
+      "import": "./src/pendingProviderTurn.ts"
+    },
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"

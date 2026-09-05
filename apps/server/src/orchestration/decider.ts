@@ -438,7 +438,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      if (command.type === "thread.auto-settle" && thread.settledOverride !== null) {
+      if (
+        command.type === "thread.auto-settle" &&
+        (thread.settledOverride !== null || thread.pendingProviderTurn != null)
+      ) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,
@@ -910,6 +913,20 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (
+        targetThread.pendingProviderTurn != null ||
+        (command.waitForProvider === true &&
+          (targetThread.archivedAt !== null ||
+            hasOpenBlockingRequest(targetThread) ||
+            targetThread.session?.status === "running" ||
+            targetThread.session?.status === "starting" ||
+            hasQueuedTurnStartForThread(targetThread, command.createdAt)))
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Finish or cancel the pending work before waiting for provider capacity.",
+        });
+      }
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({
@@ -1014,15 +1031,91 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           },
         });
       }
+      if (command.waitForProvider === true) {
+        return [
+          ...lifecycleResetEvents,
+          {
+            ...(yield* withEventBase({
+              aggregateKind: "thread",
+              aggregateId: command.threadId,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            })),
+            type: "thread.turn-queued" as const,
+            payload: {
+              threadId: command.threadId,
+              turn: {
+                message: command.message,
+                modelSelection: command.modelSelection ?? targetThread.modelSelection,
+                ...(command.titleSeed !== undefined ? { titleSeed: command.titleSeed } : {}),
+                runtimeMode: targetThread.runtimeMode,
+                interactionMode: targetThread.interactionMode,
+                ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
+                createdAt: command.createdAt,
+              },
+            },
+          },
+        ];
+      }
       return [...lifecycleResetEvents, userMessageEvent, turnStartRequestedEvent];
     }
 
+    case "thread.turn.release": {
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      const pending = thread.pendingProviderTurn;
+      if (
+        !pending ||
+        pending.message.messageId !== command.messageId ||
+        thread.archivedAt !== null ||
+        thread.settledOverride === "settled" ||
+        hasOpenBlockingRequest(thread) ||
+        thread.session?.status === "running" ||
+        thread.session?.status === "starting"
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "The pending provider turn is no longer eligible to start.",
+        });
+      }
+      return yield* decideOrchestrationCommand({
+        command: {
+          ...pending,
+          type: "thread.turn.start",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          createdAt: command.createdAt,
+        },
+        readModel: {
+          ...readModel,
+          threads: readModel.threads.map((entry) =>
+            entry.id === thread.id
+              ? {
+                  ...entry,
+                  pendingProviderTurn: null,
+                  runtimeMode: pending.runtimeMode,
+                  interactionMode: pending.interactionMode,
+                }
+              : entry,
+          ),
+        },
+      });
+    }
+
     case "thread.turn.interrupt": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      if (
+        command.pendingMessageId !== undefined &&
+        thread.pendingProviderTurn?.message.messageId !== command.pendingMessageId
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "This queued message is no longer pending.",
+        });
+      }
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1034,6 +1127,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           ...(command.turnId !== undefined ? { turnId: command.turnId } : {}),
+          ...(thread.pendingProviderTurn != null
+            ? { pendingMessageId: thread.pendingProviderTurn.message.messageId }
+            : {}),
           createdAt: command.createdAt,
         },
       };
