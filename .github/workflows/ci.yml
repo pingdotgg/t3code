@@ -45,6 +45,10 @@ jobs:
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
 
+      # Export cleanup is still a manual audit; files and dependencies have no baseline.
+      - name: Check unused files and dependencies
+        run: vp run knip:check
+
       - name: Check
         run: vp check
 
