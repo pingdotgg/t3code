@@ -41,7 +41,7 @@ function getNativeErrorCode(error: unknown): string | undefined {
 
 export function getLocalVoiceTranscriber(): VoiceTranscriber | null {
   const locale = getDeviceLocale();
-  if (!isVoiceStreamingAvailable()) return null;
+  if (!isVoiceStreamingAvailable() && !AppleTranscription.isAvailable(locale)) return null;
   return { prepare: (options) => prepareVoiceTranscription(locale, options) };
 }
 
@@ -50,7 +50,34 @@ async function prepareVoiceTranscription(
   { signal }: VoiceTranscriptionOptions,
 ): Promise<PreparedVoiceTranscription> {
   throwIfVoiceTranscriptionAborted(signal);
-  if (!isVoiceStreamingAvailable()) {
+  if (isVoiceStreamingAvailable()) {
+    try {
+      const supportedLocale = await prepareVoiceStreaming(locale, { signal });
+      throwIfVoiceTranscriptionAborted(signal);
+      return {
+        locale: supportedLocale,
+        prepareFileFallback: AppleTranscription.isAvailable(locale)
+          ? (options) => prepareFileVoiceTranscription(locale, options)
+          : undefined,
+        startStreaming: (options) =>
+          startVoiceStreaming(supportedLocale, VOICE_RECORDING_LIMIT_SECONDS, options),
+        transcribe: (uri, options) => transcribeVoiceRecording(uri, supportedLocale, options),
+      };
+    } catch (error) {
+      throwIfVoiceTranscriptionAborted(signal);
+      if (!AppleTranscription.isAvailable(locale)) throw mapPreparationError(error);
+    }
+  }
+
+  return prepareFileVoiceTranscription(locale, { signal });
+}
+
+async function prepareFileVoiceTranscription(
+  locale: string,
+  { signal }: VoiceTranscriptionOptions,
+): Promise<PreparedVoiceTranscription> {
+  throwIfVoiceTranscriptionAborted(signal);
+  if (!AppleTranscription.isAvailable(locale)) {
     throw new VoiceTranscriptionError(
       "unavailable",
       "Voice transcription requires a supported device with iOS 26 or later.",
@@ -58,30 +85,32 @@ async function prepareVoiceTranscription(
   }
 
   try {
-    const supportedLocale = await prepareVoiceStreaming(locale, { signal });
+    const supportedLocale = await AppleTranscription.prepare(locale);
     throwIfVoiceTranscriptionAborted(signal);
     return {
       locale: supportedLocale,
-      startStreaming: (options) =>
-        startVoiceStreaming(supportedLocale, VOICE_RECORDING_LIMIT_SECONDS, options),
       transcribe: (uri, options) => transcribeVoiceRecording(uri, supportedLocale, options),
     };
   } catch (error) {
     throwIfVoiceTranscriptionAborted(signal);
-    if (getNativeErrorCode(error) === "AppleTranscriptionUnsupportedLocale") {
-      throw new VoiceTranscriptionError(
-        "unsupported-locale",
-        "Voice transcription does not support this device language.",
-        { cause: error },
-      );
-    }
+    throw mapPreparationError(error);
+  }
+}
 
-    throw wrapError(
-      "preparation-failed",
-      "Voice transcription could not prepare this language.",
-      error,
+function mapPreparationError(error: unknown): VoiceTranscriptionError {
+  if (getNativeErrorCode(error) === "AppleTranscriptionUnsupportedLocale") {
+    return new VoiceTranscriptionError(
+      "unsupported-locale",
+      "Voice transcription does not support this device language.",
+      { cause: error },
     );
   }
+
+  return wrapError(
+    "preparation-failed",
+    "Voice transcription could not prepare this language.",
+    error,
+  );
 }
 
 async function transcribeVoiceRecording(

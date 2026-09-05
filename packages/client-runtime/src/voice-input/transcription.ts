@@ -23,6 +23,10 @@ export type VoiceStreamingSession = {
 /** Binds a recording to its selected implementation and resolved locale. */
 export type PreparedVoiceTranscription = {
   readonly locale: string;
+  /** Prepares record-then-transcribe capture when live capture cannot start. */
+  readonly prepareFileFallback?: (
+    options: VoiceTranscriptionOptions,
+  ) => Promise<PreparedVoiceTranscription>;
   readonly startStreaming?: (options: VoiceStreamingOptions) => Promise<VoiceStreamingSession>;
   readonly transcribe: (uri: string, options: VoiceTranscriptionOptions) => Promise<string>;
 };

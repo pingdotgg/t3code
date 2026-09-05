@@ -255,27 +255,60 @@ export class VoiceInputController {
       if (!this.isCurrent(operationToken)) return;
       const streamingDraft = this.dependencies.readDraft();
       if (this.transcription.startStreaming) {
+        const prepareFileFallback = this.transcription.prepareFileFallback;
         if (!streamingDraft || streamingDraft.ownerKey !== initiatingDraft.ownerKey) {
           this.setError("This draft is no longer available.", "retry");
           return;
         }
         this.capturedDraft = streamingDraft;
         this.expectedDraft = streamingDraft;
-        this.streaming = await this.transcription.startStreaming({
-          signal: abortController.signal,
-          onTranscript: (text) => {
-            if (this.isCurrent(operationToken)) this.updateLiveTranscript(text);
-          },
-          onError: (message) => {
-            if (this.isCurrent(operationToken)) this.failStreaming(message);
-          },
-          onEnd: () => {
-            if (this.isCurrent(operationToken)) void this.stop();
-          },
-        });
-        if (!this.isCurrent(operationToken)) return;
-        this.setState({ phase: "recording", error: null, errorAction: null });
-        return;
+        let receivedStreamingTranscript = false;
+        try {
+          this.streaming = await this.transcription.startStreaming({
+            signal: abortController.signal,
+            onTranscript: (text) => {
+              receivedStreamingTranscript = true;
+              if (this.isCurrent(operationToken)) this.updateLiveTranscript(text);
+            },
+            onError: (message) => {
+              if (this.isCurrent(operationToken)) this.failStreaming(message);
+            },
+            onEnd: () => {
+              if (this.isCurrent(operationToken)) void this.stop();
+            },
+          });
+          if (!this.isCurrent(operationToken)) return;
+          this.setState({ phase: "recording", error: null, errorAction: null });
+          return;
+        } catch (error) {
+          if (!this.isCurrent(operationToken)) return;
+          const currentDraft = this.dependencies.readDraft();
+          const expectedDraft = this.expectedDraft;
+          if (
+            receivedStreamingTranscript ||
+            !prepareFileFallback ||
+            !currentDraft ||
+            !expectedDraft ||
+            currentDraft.ownerKey !== expectedDraft.ownerKey ||
+            currentDraft.text !== expectedDraft.text ||
+            currentDraft.revision !== expectedDraft.revision
+          ) {
+            throw error;
+          }
+          this.capturedDraft = null;
+          this.expectedDraft = null;
+          try {
+            this.transcription = await runTranscriptionOperation(() =>
+              prepareFileFallback({ signal: abortController.signal }),
+            );
+          } catch (fallbackError) {
+            if (this.isCurrent(operationToken)) {
+              this.setError(preparationErrorMessage(fallbackError), "retry");
+            }
+            return;
+          }
+          if (!this.isCurrent(operationToken)) return;
+        }
       }
       await this.dependencies.recorder.prepareToRecordAsync();
       if (!this.isCurrent(operationToken)) return;

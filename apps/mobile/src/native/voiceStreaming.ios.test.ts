@@ -84,6 +84,17 @@ it("does not release cancellation during startup until native capture stops", as
   await expect(result).resolves.toMatchObject({ code: "cancelled" });
 });
 
+it("cancels native capture before reporting a startup failure", async () => {
+  native.start.mockRejectedValueOnce(new Error("microphone unavailable"));
+
+  await expect(startVoiceStreaming("en-AU", 300, options())).rejects.toThrow(
+    "microphone unavailable",
+  );
+
+  expect(native.cancel).toHaveBeenCalledOnce();
+  expect(native.remove).toHaveBeenCalledOnce();
+});
+
 it("cancels native capture once and immediately suppresses late events", async () => {
   const abort = new AbortController();
   const callbacks = { ...options(), signal: abort.signal };

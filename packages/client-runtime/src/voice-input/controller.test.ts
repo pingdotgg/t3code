@@ -564,6 +564,61 @@ describe("live voice input", () => {
     expect(transcribe).not.toHaveBeenCalled();
     harness.controller.cancel();
   });
+
+  it("falls back to file capture when live capture cannot start", async () => {
+    const transcribe = vi.fn(async () => "fallback words");
+    const prepareFileFallback = vi.fn(async () => preparedTranscription(transcribe));
+    const harness = createHarness({
+      getTranscriber: () => ({
+        prepare: async () => ({
+          locale: "en-US",
+          transcribe,
+          prepareFileFallback,
+          startStreaming: async () => {
+            throw new Error("live capture unavailable");
+          },
+        }),
+      }),
+    });
+
+    await harness.controller.start();
+
+    expect(prepareFileFallback).toHaveBeenCalledOnce();
+    expect(harness.recorder.record).toHaveBeenCalledWith({
+      forDuration: VOICE_RECORDING_LIMIT_SECONDS,
+    });
+    await harness.controller.stop();
+    expect(harness.commits.at(-1)?.text).toBe("hello fallback words");
+  });
+
+  it("keeps live words and does not start file capture when startup reports speech before failing", async () => {
+    let current = draft();
+    const prepareFileFallback = vi.fn(async () => preparedTranscription());
+    const harness = createHarness({
+      readDraft: () => current,
+      commitDraft: (text, selection) => {
+        current = { ...current, text, selection, revision: current.revision + 1 };
+      },
+      getTranscriber: () => ({
+        prepare: async () => ({
+          locale: "en-US",
+          transcribe: async () => "",
+          prepareFileFallback,
+          startStreaming: async (options) => {
+            options.onTranscript("recognized words");
+            throw new Error("live capture failed after speech");
+          },
+        }),
+      }),
+    });
+
+    await harness.controller.start();
+
+    expect(current.text).toBe("hello recognized words");
+    expect(harness.controller.currentState.phase).toBe("error");
+    expect(prepareFileFallback).not.toHaveBeenCalled();
+    expect(harness.recorder.record).not.toHaveBeenCalled();
+  });
 });
 
 function createLiveHarness() {
