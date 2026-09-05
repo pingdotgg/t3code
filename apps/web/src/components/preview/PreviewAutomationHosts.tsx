@@ -56,6 +56,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { previewBridge } from "./previewBridge";
 import {
+  confirmPreviewAutomationClickTarget,
   PreviewAutomationOperationError,
   PreviewAutomationOverlayTimeoutError,
   PreviewAutomationRecordingNotActiveError,
@@ -649,9 +650,18 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "click": {
             const ready = await requireReadyTab();
-            return await ready.bridge.automation.click(
-              ready.runtimeTabId,
-              request.input as Parameters<typeof ready.bridge.automation.click>[1],
+            return confirmPreviewAutomationClickTarget(
+              await ready.bridge.automation.click(
+                ready.runtimeTabId,
+                request.input as Parameters<typeof ready.bridge.automation.click>[1],
+              ),
+              {
+                requestId: request.requestId,
+                operation: "click",
+                environmentId,
+                threadId: request.threadId,
+                tabId: ready.tabId,
+              },
             );
           }
           case "type": {

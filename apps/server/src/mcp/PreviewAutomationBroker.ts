@@ -10,6 +10,8 @@ import {
   PreviewAutomationRequestQueueClosedError,
   PreviewAutomationResultTooLargeError,
   PreviewAutomationTabNotFoundError,
+  PreviewAutomationTargetLookupError,
+  PreviewAutomationTargetLookupFailureKind,
   PreviewAutomationTargetNotEditableError,
   PreviewAutomationTimeoutError,
   PreviewAutomationUnsupportedClientError,
@@ -183,6 +185,14 @@ function remoteDetailKind(detail: unknown): RemoteDetailKind {
   }
 }
 
+const PreviewAutomationTargetLookupRemoteDetail = Schema.Struct({
+  failureKind: PreviewAutomationTargetLookupFailureKind,
+  matchCount: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+});
+const isPreviewAutomationTargetLookupRemoteDetail = Schema.is(
+  PreviewAutomationTargetLookupRemoteDetail,
+);
+
 const classifyResponseError = (
   context: PreviewAutomationRequestErrorContext,
   error: NonNullable<PreviewAutomationResponse["error"]>,
@@ -255,6 +265,16 @@ const classifyResponseError = (
           : { selectorLength: remoteSelectorLength ?? context.selectorLength }),
       });
     }
+    case "PreviewAutomationTargetLookupError": {
+      if (!isPreviewAutomationTargetLookupRemoteDetail(error.detail)) break;
+      if (error.detail.failureKind === "ambiguous" && error.detail.matchCount === undefined) break;
+      return new PreviewAutomationTargetLookupError({
+        ...context,
+        ...remoteDiagnostics,
+        failureKind: error.detail.failureKind,
+        ...(error.detail.matchCount === undefined ? {} : { matchCount: error.detail.matchCount }),
+      });
+    }
     case "PreviewAutomationResultTooLargeError": {
       const detail =
         typeof error.detail === "object" && error.detail !== null ? error.detail : undefined;
@@ -278,11 +298,12 @@ const classifyResponseError = (
         ...remoteDiagnostics,
       });
     default:
-      return new PreviewAutomationExecutionError({
-        ...context,
-        ...remoteDiagnostics,
-      });
+      break;
   }
+  return new PreviewAutomationExecutionError({
+    ...context,
+    ...remoteDiagnostics,
+  });
 };
 
 export const make = Effect.gen(function* PreviewAutomationBrokerMake() {

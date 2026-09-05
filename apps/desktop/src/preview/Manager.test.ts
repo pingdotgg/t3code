@@ -2,6 +2,7 @@ import { it as effectIt } from "@effect/vitest";
 import { DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
 import type { DesktopPreviewRecordingFrame } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as NodeVM from "node:vm";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -4190,4 +4191,132 @@ describe("Preview automation diagnostics", () => {
     expect(JSON.stringify(error)).not.toContain(selector);
     expect("locator" in error).toBe(false);
   });
+
+  it("does not invent an ambiguous target match count", () => {
+    const error = new PreviewManager.PreviewAutomationTargetLookupError({
+      operation: "click",
+      tabId: "tab_1",
+      selectorKind: "locator",
+      selectorLength: 12,
+      failureKind: "ambiguous",
+    });
+
+    expect(error.message).toBe(
+      "Preview automation click matched multiple elements for locator (12 characters)",
+    );
+  });
+
+  effectIt.effect("returns typed click lookup failures without dispatching input", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const selector = "role=button[name='target-secret']";
+        let lookupResult: unknown = { notFound: true, failureKind: "missing" };
+        let lookupExpression = "";
+        const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+          if (method !== "Runtime.evaluate") return undefined;
+          const expression = String(params?.["expression"] ?? "");
+          if (expression.includes("const parsed = injected.parseSelector")) {
+            lookupExpression = expression;
+            return { result: { value: lookupResult } };
+          }
+          return { result: { value: true } };
+        });
+        fromId.mockReturnValue({
+          ...makeTestPreviewWebContents(
+            vi.fn(async () => ({
+              toJPEG: () => Buffer.from("unused-click-frame"),
+              toPNG: () => Buffer.from("unused-click-frame"),
+              getSize: () => ({ width: 1280, height: 720 }),
+            })),
+          ),
+          isDevToolsOpened: () => false,
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_lookup");
+        yield* manager.registerWebview("tab_lookup", 42);
+
+        const missing = yield* manager.automationClick("tab_lookup", { locator: selector });
+        lookupResult = { notFound: true, failureKind: "hidden" };
+        const hidden = yield* manager.automationClick("tab_lookup", { locator: selector });
+        lookupResult = { notFound: true, failureKind: "disabled" };
+        const disabled = yield* manager.automationClick("tab_lookup", { locator: selector });
+        lookupResult = { notFound: true, failureKind: "ambiguous", matchCount: 3 };
+        const ambiguous = yield* manager.automationClick("tab_lookup", { locator: selector });
+        const snapshot = yield* manager.automationSnapshot("tab_lookup");
+
+        expect([missing, hidden, disabled, ambiguous]).toEqual([
+          { _tag: "NotSent", reason: "target-missing" },
+          { _tag: "NotSent", reason: "target-hidden" },
+          { _tag: "NotSent", reason: "target-disabled" },
+          { _tag: "NotSent", reason: "target-ambiguous", matchCount: 3 },
+        ]);
+        expect(snapshot.actionTimeline.filter((action) => action.action === "click")).toEqual([
+          expect.objectContaining({ status: "failed" }),
+          expect.objectContaining({ status: "failed" }),
+          expect.objectContaining({ status: "failed" }),
+          expect.objectContaining({ status: "failed" }),
+        ]);
+        expect(sendCommand).not.toHaveBeenCalledWith("Input.dispatchMouseEvent", expect.anything());
+
+        const element = {
+          scrollIntoView: vi.fn(),
+          getBoundingClientRect: () => ({ left: 20, top: 10, width: 40, height: 20 }),
+        };
+        const runLookup = (
+          matches: ReadonlyArray<typeof element>,
+          state: { readonly visible: boolean; readonly enabled: boolean },
+        ) => {
+          const querySelectorAll = vi.fn(() => matches);
+          const elementState = vi.fn((_element: typeof element, name: keyof typeof state) => ({
+            matches: state[name],
+          }));
+          const result = NodeVM.runInNewContext(lookupExpression, {
+            document: {},
+            globalThis: {
+              __t3PlaywrightInjected: {
+                parseSelector: vi.fn(() => ({ parts: [] })),
+                querySelectorAll,
+                elementState,
+              },
+            },
+          });
+          return { result, querySelectorAll, elementState };
+        };
+
+        const missingLookup = runLookup([], { visible: true, enabled: true });
+        expect(missingLookup.result).toEqual({ notFound: true, failureKind: "missing" });
+        expect(missingLookup.querySelectorAll).toHaveBeenCalledOnce();
+
+        const ambiguousLookup = runLookup([element, element, element], {
+          visible: true,
+          enabled: true,
+        });
+        expect(ambiguousLookup.result).toEqual({
+          notFound: true,
+          failureKind: "ambiguous",
+          matchCount: 3,
+        });
+        expect(ambiguousLookup.querySelectorAll).toHaveBeenCalledOnce();
+
+        const hiddenLookup = runLookup([element], { visible: false, enabled: true });
+        expect(hiddenLookup.result).toEqual({ notFound: true, failureKind: "hidden" });
+        expect(hiddenLookup.elementState).toHaveBeenCalledWith(element, "visible");
+
+        const disabledLookup = runLookup([element], { visible: true, enabled: false });
+        expect(disabledLookup.result).toEqual({ notFound: true, failureKind: "disabled" });
+        expect(disabledLookup.elementState).toHaveBeenCalledWith(element, "enabled");
+
+        const visibleLookup = runLookup([element], { visible: true, enabled: true });
+        expect(visibleLookup.result).toEqual({ x: 40, y: 20 });
+        expect(element.scrollIntoView).toHaveBeenCalledWith({ block: "center", inline: "center" });
+      }),
+    ),
+  );
 });

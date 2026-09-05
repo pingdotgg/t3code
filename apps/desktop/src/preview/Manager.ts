@@ -8,6 +8,7 @@
 import { DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
 import type {
   DesktopPreviewAnnotationTheme,
+  DesktopPreviewAutomationClickResult,
   DesktopPreviewAutomationStatus,
   DesktopPreviewColorScheme,
   DesktopPreviewFavicon,
@@ -3617,7 +3618,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       locator,
     );
     const point = yield* evaluateWithDebugger<
-      { x: number; y: number } | { invalidSelector: true; message: string } | { notFound: true }
+      | { x: number; y: number }
+      | { invalidSelector: true; message: string }
+      | {
+          notFound: true;
+          failureKind: "missing" | "hidden" | "disabled";
+        }
+      | {
+          notFound: true;
+          failureKind: "ambiguous";
+          matchCount: number;
+        }
     >(
       tabId,
       send,
@@ -3625,11 +3636,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           try {
             const injected = globalThis.__t3PlaywrightInjected;
             const parsed = injected.parseSelector(${locatorJson});
-            const element = injected.querySelector(parsed, document, true);
-            if (!element) return { notFound: true };
+            const matches = injected.querySelectorAll(parsed, document);
+            if (matches.length === 0) return { notFound: true, failureKind: "missing" };
+            if (matches.length > 1) {
+              return { notFound: true, failureKind: "ambiguous", matchCount: matches.length };
+            }
+            const element = matches[0];
             const visible = injected.elementState(element, "visible");
             const enabled = injected.elementState(element, "enabled");
-            if (!visible.matches || !enabled.matches) return { notFound: true };
+            if (!visible.matches) return { notFound: true, failureKind: "hidden" };
+            if (!enabled.matches) return { notFound: true, failureKind: "disabled" };
             element.scrollIntoView({ block: "center", inline: "center" });
             const rect = element.getBoundingClientRect();
             return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
@@ -3649,10 +3665,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       });
     }
     if ("notFound" in point) {
-      return yield* new PreviewAutomationTargetNotFoundError({
+      return yield* new PreviewAutomationTargetLookupError({
         operation: "click",
         tabId,
         ...automationSelectorDiagnostics(input),
+        failureKind: point.failureKind,
+        ...(point.failureKind === "ambiguous" ? { matchCount: point.matchCount } : {}),
       });
     }
     return point;
@@ -3731,8 +3749,33 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationClickInput,
   ) {
     const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "click", (send) =>
-      performAutomationClick(tabId, input, send),
+    return yield* Effect.gen(function* () {
+      yield* withControlSession(tabId, wc, "click", (send) =>
+        performAutomationClick(tabId, input, send),
+      );
+      return { _tag: "Dispatched" } satisfies DesktopPreviewAutomationClickResult;
+    }).pipe(
+      Effect.catchTags({
+        PreviewAutomationTargetLookupError: (
+          error,
+        ): Effect.Effect<
+          DesktopPreviewAutomationClickResult,
+          PreviewAutomationTargetLookupError
+        > => {
+          if (error.failureKind === "ambiguous") {
+            if (error.matchCount === undefined) return Effect.fail(error);
+            return Effect.succeed<DesktopPreviewAutomationClickResult>({
+              _tag: "NotSent",
+              reason: "target-ambiguous",
+              matchCount: error.matchCount,
+            });
+          }
+          return Effect.succeed<DesktopPreviewAutomationClickResult>({
+            _tag: "NotSent",
+            reason: `target-${error.failureKind}`,
+          });
+        },
+      }),
     );
   });
 
@@ -4345,6 +4388,34 @@ export class PreviewAutomationTargetNotFoundError extends Schema.TaggedErrorClas
   }
 }
 
+export class PreviewAutomationTargetLookupError extends Schema.TaggedErrorClass<PreviewAutomationTargetLookupError>()(
+  "PreviewAutomationTargetLookupError",
+  {
+    operation: Schema.String,
+    tabId: Schema.String,
+    selectorKind: PreviewAutomationSelectorKind,
+    selectorLength: Schema.optionalKey(Schema.Number),
+    failureKind: Schema.Literals(["missing", "hidden", "disabled", "ambiguous"]),
+    matchCount: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
+  },
+) {
+  override get message(): string {
+    const target = previewAutomationTargetLabel(this.selectorKind, this.selectorLength);
+    if (this.failureKind === "hidden") {
+      return `Preview automation ${this.operation} found ${target}, but it is not visible`;
+    }
+    if (this.failureKind === "disabled") {
+      return `Preview automation ${this.operation} found ${target}, but it is disabled`;
+    }
+    if (this.failureKind === "ambiguous") {
+      return this.matchCount === undefined
+        ? `Preview automation ${this.operation} matched multiple elements for ${target}`
+        : `Preview automation ${this.operation} matched ${this.matchCount} elements for ${target}`;
+    }
+    return `Preview automation ${this.operation} could not find ${target}`;
+  }
+}
+
 export class PreviewAutomationTargetNotEditableError extends Schema.TaggedErrorClass<PreviewAutomationTargetNotEditableError>()(
   "PreviewAutomationTargetNotEditableError",
   {
@@ -4463,6 +4534,7 @@ export const PreviewManagerError = Schema.Union([
   PreviewAutomationDebuggerAttachedError,
   PreviewAutomationEvaluationError,
   PreviewAutomationTargetNotFoundError,
+  PreviewAutomationTargetLookupError,
   PreviewAutomationTargetNotEditableError,
   PreviewAutomationCoordinatesOutsideViewportError,
   PreviewAutomationInvalidSelectorError,
@@ -4561,7 +4633,7 @@ export class PreviewManager extends Context.Service<
     readonly automationClick: (
       tabId: string,
       input: PreviewAutomationClickInput,
-    ) => Effect.Effect<void, PreviewManagerError>;
+    ) => Effect.Effect<DesktopPreviewAutomationClickResult, PreviewManagerError>;
     readonly automationType: (
       tabId: string,
       input: PreviewAutomationTypeInput,

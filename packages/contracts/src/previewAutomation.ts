@@ -800,6 +800,46 @@ export class PreviewAutomationTargetNotEditableError extends Schema.TaggedErrorC
   }
 }
 
+export const PreviewAutomationTargetLookupFailureKind = Schema.Literals([
+  "missing",
+  "hidden",
+  "disabled",
+  "ambiguous",
+]);
+export type PreviewAutomationTargetLookupFailureKind =
+  typeof PreviewAutomationTargetLookupFailureKind.Type;
+
+export class PreviewAutomationTargetLookupError extends Schema.TaggedErrorClass<PreviewAutomationTargetLookupError>()(
+  "PreviewAutomationTargetLookupError",
+  {
+    ...PreviewAutomationRequestErrorFields,
+    ...PreviewAutomationRemoteDiagnosticFields,
+    failureKind: PreviewAutomationTargetLookupFailureKind,
+    matchCount: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+    selectorKind: Schema.optional(Schema.Literals(["locator", "selector"])),
+    selectorLength: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  },
+) {
+  override get message(): string {
+    const target =
+      this.selectorKind === undefined || this.selectorLength === undefined
+        ? "target"
+        : `${this.selectorKind} (${this.selectorLength} characters)`;
+    if (this.failureKind === "hidden") {
+      return `Preview automation ${this.operation} found ${target}, but it is not visible.`;
+    }
+    if (this.failureKind === "disabled") {
+      return `Preview automation ${this.operation} found ${target}, but it is disabled.`;
+    }
+    if (this.failureKind === "ambiguous") {
+      return this.matchCount === undefined
+        ? `Preview automation ${this.operation} matched multiple elements for ${target}.`
+        : `Preview automation ${this.operation} matched ${this.matchCount} elements for ${target}.`;
+    }
+    return `Preview automation ${this.operation} could not find ${target}.`;
+  }
+}
+
 export class PreviewAutomationResultTooLargeError extends Schema.TaggedErrorClass<PreviewAutomationResultTooLargeError>()(
   "PreviewAutomationResultTooLargeError",
   {
@@ -866,6 +906,7 @@ export const PreviewAutomationError = Schema.Union([
   PreviewAutomationExecutionError,
   PreviewAutomationInvalidSelectorError,
   PreviewAutomationTargetNotEditableError,
+  PreviewAutomationTargetLookupError,
   PreviewAutomationResultTooLargeError,
   PreviewAutomationClientDisconnectedError,
   PreviewAutomationRequestQueueClosedError,

@@ -10,6 +10,7 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  confirmPreviewAutomationClickTarget,
   PreviewAutomationRecordingNotActiveError,
   PreviewAutomationTargetUnavailableError,
   PreviewAutomationViewportTimeoutError,
@@ -289,6 +290,37 @@ describe("previewAutomationRequestConsumer", () => {
       _tag: "PreviewAutomationTimeoutError",
       detail: { tabId: "tab-1", timeoutMs: 2_500 },
     });
+  });
+
+  it("maps hidden click targets to a named execution failure without leaking the locator", () => {
+    const context = {
+      requestId: "request-click",
+      operation: "click" as const,
+      environmentId,
+      threadId,
+      tabId,
+    };
+    let error: unknown;
+    try {
+      confirmPreviewAutomationClickTarget({ _tag: "NotSent", reason: "target-hidden" }, context);
+    } catch (cause) {
+      error = cause;
+    }
+
+    const response = serializePreviewAutomationError(error, context);
+    expect(response).toEqual({
+      _tag: "PreviewAutomationTargetLookupError",
+      message: "The preview click target is not visible.",
+      detail: {
+        requestId: "request-click",
+        operation: "click",
+        environmentId: "environment-1",
+        threadId: "thread-1",
+        tabId: "tab-1",
+        failureKind: "hidden",
+      },
+    });
+    expect(JSON.stringify(response)).not.toContain("target-secret");
   });
 
   it("maps desktop non-editable targets to the public typed response", () => {

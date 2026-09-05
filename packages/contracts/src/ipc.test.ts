@@ -1,7 +1,10 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { DesktopEnvironmentBootstrapSchema } from "./ipc.ts";
+import {
+  DesktopEnvironmentBootstrapSchema,
+  DesktopPreviewAutomationClickResultSchema,
+} from "./ipc.ts";
 
 describe("DesktopEnvironmentBootstrapSchema", () => {
   const decode = Schema.decodeUnknownSync(DesktopEnvironmentBootstrapSchema);
@@ -34,5 +37,25 @@ describe("DesktopEnvironmentBootstrapSchema", () => {
         wsBaseUrl: null,
       }).runningDistro,
     ).toBeNull();
+  });
+});
+
+describe("DesktopPreviewAutomationClickResultSchema", () => {
+  const decode = Schema.decodeUnknownSync(DesktopPreviewAutomationClickResultSchema);
+
+  it.each([
+    { _tag: "Dispatched" },
+    { _tag: "NotSent", reason: "tab-not-visible" },
+    { _tag: "NotSent", reason: "timeout", timeoutMs: 50 },
+    { _tag: "NotSent", reason: "target-missing" },
+    { _tag: "NotSent", reason: "target-hidden" },
+    { _tag: "NotSent", reason: "target-disabled" },
+    { _tag: "NotSent", reason: "target-ambiguous", matchCount: 2 },
+  ] as const)("decodes $reason", (result) => {
+    expect(decode(result)).toEqual(result);
+  });
+
+  it("rejects an ambiguous target without a positive match count", () => {
+    expect(() => decode({ _tag: "NotSent", reason: "target-ambiguous", matchCount: 0 })).toThrow();
   });
 });
