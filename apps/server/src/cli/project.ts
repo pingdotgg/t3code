@@ -455,7 +455,11 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
                   })
                   .pipe(Effect.asVoid)
               : projects
-                  .delete({ commandId: command.commandId, projectId: command.projectId })
+                  .delete({
+                    commandId: command.commandId,
+                    projectId: command.projectId,
+                    ...(command.force === undefined ? {} : { force: command.force }),
+                  })
                   .pipe(Effect.asVoid),
         mode: "offline",
       });
