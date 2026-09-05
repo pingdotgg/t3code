@@ -852,6 +852,13 @@ it.effect("accepts pull request synchronization only as an internal command", ()
       threadId: ThreadId.make("thread-1"),
       projectId: pullRequest.projectId,
       snapshotSequence: 12,
+      expected: {
+        workspaceRoot: "/workspace/project",
+        branch: "feature",
+        worktreePath: null,
+        linkedPullRequest: null,
+        branchPullRequest: null,
+      },
       branchPullRequest: pullRequest,
       linkedPullRequest: pullRequest,
     };

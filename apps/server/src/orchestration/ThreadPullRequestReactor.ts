@@ -198,12 +198,19 @@ export const make = Effect.gen(function* () {
                   threadId: thread.id,
                   projectId: project.id,
                   snapshotSequence: snapshot.snapshotSequence,
+                  expected: {
+                    workspaceRoot: project.workspaceRoot,
+                    branch: thread.branch,
+                    worktreePath: thread.worktreePath,
+                    linkedPullRequest: thread.linkedPullRequest ?? null,
+                    branchPullRequest: thread.branchPullRequest ?? null,
+                  },
                   branchPullRequest,
                   ...(replacement !== undefined ? { linkedPullRequest: replacement } : {}),
                 });
                 pendingBackfill.delete(thread.id);
               }).pipe(
-                Effect.catchTag("OrchestrationCommandInvariantError", () => Effect.void),
+                Effect.catchTags({ OrchestrationCommandInvariantError: () => Effect.void }),
                 Effect.catchCause((cause) =>
                   Cause.hasInterruptsOnly(cause)
                     ? Effect.failCause(cause)

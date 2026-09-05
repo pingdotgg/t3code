@@ -185,37 +185,20 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           });
         }
 
-        // Streaming messages do not invalidate a branch lookup. Metadata
-        // changes and a recreated thread do, including manual Link and Unlink.
-        if (envelope.command.type === "thread.pull-request.sync") {
-          for (const type of ["thread.meta-updated", "thread.created"] as const) {
-            if (
-              yield* eventStore.hasEventAfter({
-                aggregateKind: "thread",
-                aggregateId: envelope.command.threadId,
-                sequenceExclusive: envelope.command.snapshotSequence,
-                type,
-              })
-            ) {
-              return yield* new OrchestrationCommandInvariantError({
-                commandType: envelope.command.type,
-                detail: `thread ${envelope.command.threadId} changed before pull request discovery`,
-              });
-            }
-          }
-        }
-
+        // The decider compares the lookup inputs. Only recreation needs an
+        // event check, since it can reset a thread to the same field values.
         if (
           envelope.command.type === "thread.pull-request.sync" &&
           (yield* eventStore.hasEventAfter({
-            aggregateKind: "project",
-            aggregateId: envelope.command.projectId,
+            aggregateKind: "thread",
+            aggregateId: envelope.command.threadId,
             sequenceExclusive: envelope.command.snapshotSequence,
+            type: "thread.created",
           }))
         ) {
           return yield* new OrchestrationCommandInvariantError({
             commandType: envelope.command.type,
-            detail: `project ${envelope.command.projectId} changed before pull request discovery`,
+            detail: `thread ${envelope.command.threadId} was recreated before pull request discovery`,
           });
         }
 
