@@ -15,7 +15,6 @@ import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
-  type ApplicationStoredEvent,
   type AuthEnvironmentScope,
   AuthSessionId,
   ClientConnectionMethod,
@@ -105,6 +104,8 @@ import {
   shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
   shellStreamItemsFromResumeSnapshot,
+  toShellApplicationEvent,
+  type ShellApplicationEvent,
 } from "./orchestration-v2/ShellStream.ts";
 import { ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION } from "./orchestration-v2/ProjectionStore.ts";
 import { bufferLiveStream } from "./orchestration/LiveStreamBudget.ts";
@@ -1016,23 +1017,21 @@ const makeWsRpcLayer = (
             };
           });
           const projectItem = Effect.fn("ws.orchestrationV2.projectShellItem")(function* (
-            stored: Extract<ApplicationStoredEvent, { readonly aggregateKind: "project" }>,
+            stored: Extract<ShellApplicationEvent, { readonly aggregateKind: "project" }>,
           ) {
             if (stored.type === "project.deleted") {
               return {
                 kind: "project.removed" as const,
                 sequence: stored.sequence,
-                projectId: stored.payload.projectId,
+                projectId: stored.aggregateId,
               };
             }
-            const project = yield* projectionSnapshotQuery.getProjectShellById(
-              stored.payload.projectId,
-            );
+            const project = yield* projectionSnapshotQuery.getProjectShellById(stored.aggregateId);
             return Option.match(project, {
               onNone: () => ({
                 kind: "project.removed" as const,
                 sequence: stored.sequence,
-                projectId: stored.payload.projectId,
+                projectId: stored.aggregateId,
               }),
               onSome: (value) => ({
                 kind: "project.updated" as const,
@@ -1047,7 +1046,7 @@ const makeWsRpcLayer = (
           // threads keeps the cost of a busy stream independent of how many
           // threads exist overall.
           const projectShellItems = Effect.fn("ws.orchestrationV2.projectShellItems")(function* (
-            events: ReadonlyArray<ApplicationStoredEvent>,
+            events: ReadonlyArray<ShellApplicationEvent>,
           ) {
             return yield* Effect.forEach(
               coalesceShellApplicationEvents(events),
@@ -1063,7 +1062,7 @@ const makeWsRpcLayer = (
             );
           });
 
-          const toShellStream = <E, R>(stream: Stream.Stream<ApplicationStoredEvent, E, R>) =>
+          const toShellStream = <E, R>(stream: Stream.Stream<ShellApplicationEvent, E, R>) =>
             stream.pipe(
               Stream.groupedWithin(512, Duration.millis(50)),
               Stream.mapEffect((events) => projectShellItems(Array.from(events))),
@@ -1072,7 +1071,12 @@ const makeWsRpcLayer = (
 
           const liveFrom = (afterSequence: number) =>
             bufferLiveStream(
-              toShellStream(applicationEvents.streamApplicationEvents({ afterSequence })),
+              toShellStream(
+                applicationEvents.streamProjectedApplicationEvents({
+                  afterSequence,
+                  project: toShellApplicationEvent,
+                }),
+              ),
             );
 
           const enrichmentRefreshes = Stream.fromSubscription(enrichmentChanges).pipe(

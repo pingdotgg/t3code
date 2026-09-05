@@ -11,6 +11,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   RawEventId,
   RunAttemptId,
   RunId,
@@ -25,6 +26,7 @@ import * as Schema from "effect/Schema";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { AnalyticsService } from "../telemetry/AnalyticsService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
+import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import { ProviderAdapterV2Event } from "./ProviderAdapter.ts";
 import { makeProviderFailureTurnItem } from "./ProviderFailure.ts";
@@ -179,254 +181,316 @@ function compactUndefined<T extends Record<string, unknown>>(record: T): T {
 
 const decodeDomainEvent = Schema.decodeUnknownEffect(OrchestrationV2DomainEvent);
 
-export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | IdAllocatorV2> =
-  Layer.effect(
-    ProviderEventIngestorV2,
-    Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const analytics = yield* ProviderTurnAnalytics;
-      const completedTurnAnalytics = new Set<string>();
+export const layer: Layer.Layer<
+  ProviderEventIngestorV2,
+  never,
+  EventSinkV2 | IdAllocatorV2 | ProjectionStoreV2
+> = Layer.effect(
+  ProviderEventIngestorV2,
+  Effect.gen(function* () {
+    const eventSink = yield* EventSinkV2;
+    const projections = yield* ProjectionStoreV2;
+    const idAllocator = yield* IdAllocatorV2;
+    const analytics = yield* ProviderTurnAnalytics;
+    const completedTurnAnalytics = new Set<string>();
 
-      const makeDomainEvent = (
-        input: ProviderEventIngestInput,
-        payloadInput: {
-          readonly type: OrchestrationV2DomainEvent["type"];
-          readonly payload: OrchestrationV2DomainEvent["payload"];
-          readonly threadId?: ThreadId;
-          readonly runId?: RunId | null;
-          readonly nodeId?: NodeId | null;
-        },
-      ) =>
-        Effect.gen(function* () {
-          const threadId = payloadInput.threadId ?? input.threadId;
-          const eventId = yield* idAllocator.allocate.event({
+    const makeDomainEvent = (
+      input: ProviderEventIngestInput,
+      payloadInput: {
+        readonly type: OrchestrationV2DomainEvent["type"];
+        readonly payload: OrchestrationV2DomainEvent["payload"];
+        readonly threadId?: ThreadId;
+        readonly runId?: RunId | null;
+        readonly nodeId?: NodeId | null;
+      },
+    ) =>
+      Effect.gen(function* () {
+        const threadId = payloadInput.threadId ?? input.threadId;
+        const eventId = yield* idAllocator.allocate.event({
+          threadId,
+          providerSessionId: input.providerSessionId,
+        });
+        const occurredAt = yield* DateTime.now;
+        return yield* decodeDomainEvent(
+          compactUndefined({
+            id: eventId,
+            type: payloadInput.type,
             threadId,
-            providerSessionId: input.providerSessionId,
-          });
-          const occurredAt = yield* DateTime.now;
-          return yield* decodeDomainEvent(
-            compactUndefined({
-              id: eventId,
-              type: payloadInput.type,
+            runId: payloadInput.runId ?? input.runId,
+            nodeId: payloadInput.nodeId ?? input.nodeId,
+            driver: input.event.driver,
+            providerInstanceId: input.providerInstanceId,
+            rawEventId: input.rawEventId,
+            occurredAt,
+            payload: payloadInput.payload,
+          }),
+        );
+      });
+
+    const dismissNativeUserInputs = Effect.fn("ProviderEventIngestor.dismissNativeUserInputs")(
+      function* (
+        input: ProviderEventIngestInput,
+        providerTurnId: ProviderTurnId,
+        threadId = input.threadId,
+      ) {
+        const pending = yield* projections.getPendingNativeUserInputs(threadId, providerTurnId);
+        const now = yield* DateTime.now;
+        const events: Array<OrchestrationV2DomainEvent> = [];
+        for (const request of pending.runtimeRequests) {
+          events.push(
+            yield* makeDomainEvent(input, {
+              type: "runtime-request.updated",
               threadId,
-              runId: payloadInput.runId ?? input.runId,
-              nodeId: payloadInput.nodeId ?? input.nodeId,
-              driver: input.event.driver,
-              providerInstanceId: input.providerInstanceId,
-              rawEventId: input.rawEventId,
-              occurredAt,
-              payload: payloadInput.payload,
+              nodeId: request.nodeId,
+              payload: { ...request, status: "cancelled", resolvedAt: now },
             }),
           );
-        });
+        }
+        for (const node of pending.nodes) {
+          events.push(
+            yield* makeDomainEvent(input, {
+              type: "node.updated",
+              threadId,
+              nodeId: node.id,
+              runId: node.runId,
+              payload: { ...node, status: "cancelled", completedAt: now },
+            }),
+          );
+        }
+        for (const item of pending.turnItems) {
+          events.push(
+            yield* makeDomainEvent(input, {
+              type: "turn-item.updated",
+              threadId,
+              nodeId: item.nodeId,
+              runId: item.runId,
+              payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
+            }),
+          );
+        }
+        return events;
+      },
+    );
 
-      const normalize: ProviderEventIngestorV2Shape["normalize"] = (input) =>
-        Effect.gen(function* () {
-          switch (input.event.type) {
-            case "app_thread.created":
-              return [
-                yield* makeDomainEvent(input, {
-                  type: "thread.created",
-                  threadId: input.event.appThread.id,
-                  payload: input.event.appThread,
-                }),
-              ];
-            case "provider_session.updated":
-              return [
-                yield* makeDomainEvent(input, {
-                  type: "provider-session.updated",
-                  payload: input.event.providerSession,
-                }),
-              ];
-            case "provider_thread.updated":
-              return [
-                yield* makeDomainEvent(input, {
-                  type: "provider-thread.updated",
-                  threadId: input.event.providerThread.appThreadId ?? input.threadId,
-                  payload: input.event.providerThread,
-                }),
-              ];
-            case "provider_turn.updated":
-              return [
-                yield* makeDomainEvent(input, {
-                  type: "provider-turn.updated",
-                  ...(input.event.threadId === undefined ? {} : { threadId: input.event.threadId }),
-                  payload: input.event.providerTurn,
-                  nodeId: input.event.providerTurn.nodeId,
-                }),
-              ];
-            case "node.updated":
-              return [
-                yield* makeDomainEvent(input, {
-                  type: "node.updated",
-                  threadId: input.event.node.threadId,
-                  payload: input.event.node,
-                  runId: input.event.node.runId,
-                  nodeId: input.event.node.id,
-                }),
-              ];
-            case "subagent.updated":
-              return [
-                yield* makeDomainEvent(input, {
-                  type: "subagent.updated",
-                  threadId: input.event.subagent.threadId,
-                  payload: input.event.subagent,
-                  runId: input.event.subagent.runId,
-                  nodeId: input.event.subagent.id,
-                }),
-              ];
-            case "message.updated":
-              return [
-                yield* makeDomainEvent(input, {
-                  type: "message.updated",
-                  threadId: input.event.message.threadId,
-                  payload: input.event.message,
-                  runId: input.event.message.runId,
-                  nodeId: input.event.message.nodeId,
-                }),
-              ];
-            case "turn_item.updated":
-              return [
-                yield* makeDomainEvent(input, {
-                  type: "turn-item.updated",
-                  threadId: input.event.turnItem.threadId,
-                  payload: input.event.turnItem,
-                  runId: input.event.turnItem.runId,
-                  nodeId: input.event.turnItem.nodeId,
-                }),
-              ];
-            case "runtime_request.updated":
-              return [
-                yield* makeDomainEvent(input, {
-                  type: "runtime-request.updated",
-                  ...(input.event.threadId === undefined ? {} : { threadId: input.event.threadId }),
-                  payload: input.event.runtimeRequest,
-                  nodeId: input.event.runtimeRequest.nodeId,
-                }),
-              ];
-            case "plan.updated":
-              return [
-                yield* makeDomainEvent(input, {
-                  type: "plan.updated",
-                  threadId: input.event.plan.threadId,
-                  payload: input.event.plan,
-                  runId: input.event.plan.runId,
-                  nodeId: input.event.plan.nodeId,
-                }),
-              ];
-            case "turn.terminal":
-              if (input.event.status !== "failed") {
-                return [];
-              }
-              const occurredAt = yield* DateTime.now;
-              return [
-                yield* makeDomainEvent(input, {
-                  type: "turn-item.updated",
-                  payload: makeProviderFailureTurnItem({
-                    idAllocator,
-                    driver: input.event.driver,
-                    threadId: input.threadId,
-                    runId: input.runId ?? null,
-                    nodeId: input.nodeId ?? null,
-                    providerThreadId: input.event.providerThreadId,
-                    providerTurnId: input.event.providerTurnId,
-                    itemOrdinal: input.event.failureItemOrdinal,
-                    failure: input.event.failure,
-                    ...(input.event.retry === undefined ? {} : { retry: input.event.retry }),
-                    ...(input.event.retryStartedAt === undefined
-                      ? {}
-                      : { retryStartedAt: input.event.retryStartedAt }),
-                    occurredAt,
-                  }),
-                }),
-              ];
-          }
-        }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderEventNormalizeError({
-                providerSessionId: input.providerSessionId,
-                threadId: input.threadId,
-                providerEvent: input.event,
-                cause,
+    const normalize: ProviderEventIngestorV2Shape["normalize"] = (input) =>
+      Effect.gen(function* () {
+        switch (input.event.type) {
+          case "app_thread.created":
+            return [
+              yield* makeDomainEvent(input, {
+                type: "thread.created",
+                threadId: input.event.appThread.id,
+                payload: input.event.appThread,
               }),
-          ),
-        );
+            ];
+          case "provider_session.updated":
+            return [
+              yield* makeDomainEvent(input, {
+                type: "provider-session.updated",
+                payload: input.event.providerSession,
+              }),
+            ];
+          case "provider_thread.updated":
+            return [
+              yield* makeDomainEvent(input, {
+                type: "provider-thread.updated",
+                threadId: input.event.providerThread.appThreadId ?? input.threadId,
+                payload: input.event.providerThread,
+              }),
+            ];
+          case "provider_turn.updated":
+            return [
+              ...(["completed", "interrupted", "failed", "cancelled"].includes(
+                input.event.providerTurn.status,
+              )
+                ? yield* dismissNativeUserInputs(
+                    input,
+                    input.event.providerTurn.id,
+                    input.event.threadId,
+                  )
+                : []),
+              yield* makeDomainEvent(input, {
+                type: "provider-turn.updated",
+                ...(input.event.threadId === undefined ? {} : { threadId: input.event.threadId }),
+                payload: input.event.providerTurn,
+                nodeId: input.event.providerTurn.nodeId,
+              }),
+            ];
+          case "node.updated":
+            return [
+              yield* makeDomainEvent(input, {
+                type: "node.updated",
+                threadId: input.event.node.threadId,
+                payload: input.event.node,
+                runId: input.event.node.runId,
+                nodeId: input.event.node.id,
+              }),
+            ];
+          case "subagent.updated":
+            return [
+              yield* makeDomainEvent(input, {
+                type: "subagent.updated",
+                threadId: input.event.subagent.threadId,
+                payload: input.event.subagent,
+                runId: input.event.subagent.runId,
+                nodeId: input.event.subagent.id,
+              }),
+            ];
+          case "message.updated":
+            return [
+              yield* makeDomainEvent(input, {
+                type: "message.updated",
+                threadId: input.event.message.threadId,
+                payload: input.event.message,
+                runId: input.event.message.runId,
+                nodeId: input.event.message.nodeId,
+              }),
+            ];
+          case "turn_item.updated":
+            return [
+              yield* makeDomainEvent(input, {
+                type: "turn-item.updated",
+                threadId: input.event.turnItem.threadId,
+                payload: input.event.turnItem,
+                runId: input.event.turnItem.runId,
+                nodeId: input.event.turnItem.nodeId,
+              }),
+            ];
+          case "runtime_request.updated":
+            return [
+              yield* makeDomainEvent(input, {
+                type: "runtime-request.updated",
+                ...(input.event.threadId === undefined ? {} : { threadId: input.event.threadId }),
+                payload: input.event.runtimeRequest,
+                nodeId: input.event.runtimeRequest.nodeId,
+              }),
+            ];
+          case "plan.updated":
+            return [
+              yield* makeDomainEvent(input, {
+                type: "plan.updated",
+                threadId: input.event.plan.threadId,
+                payload: input.event.plan,
+                runId: input.event.plan.runId,
+                nodeId: input.event.plan.nodeId,
+              }),
+            ];
+          case "turn.terminal":
+            const dismissed = yield* dismissNativeUserInputs(input, input.event.providerTurnId);
+            if (input.event.status !== "failed") {
+              return dismissed;
+            }
+            const occurredAt = yield* DateTime.now;
+            return [
+              ...dismissed,
+              yield* makeDomainEvent(input, {
+                type: "turn-item.updated",
+                payload: makeProviderFailureTurnItem({
+                  idAllocator,
+                  driver: input.event.driver,
+                  threadId: input.threadId,
+                  runId: input.runId ?? null,
+                  nodeId: input.nodeId ?? null,
+                  providerThreadId: input.event.providerThreadId,
+                  providerTurnId: input.event.providerTurnId,
+                  itemOrdinal: input.event.failureItemOrdinal,
+                  failure: input.event.failure,
+                  ...(input.event.retry === undefined ? {} : { retry: input.event.retry }),
+                  ...(input.event.retryStartedAt === undefined
+                    ? {}
+                    : { retryStartedAt: input.event.retryStartedAt }),
+                  occurredAt,
+                }),
+              }),
+            ];
+        }
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderEventNormalizeError({
+              providerSessionId: input.providerSessionId,
+              threadId: input.threadId,
+              providerEvent: input.event,
+              cause,
+            }),
+        ),
+      );
 
-      return ProviderEventIngestorV2.of({
-        normalize,
-        ingestNormalized: (input) =>
-          Effect.gen(function* () {
-            const events = yield* normalize(input);
-            if (events.length === 0) {
-              return [];
-            }
-            const mapWriteError = (cause: unknown) =>
-              new ProviderEventPublishError({
-                providerSessionId: input.providerSessionId,
-                eventCount: events.length,
-                cause,
-              });
-            if (input.writeIfProviderThreadOwner !== undefined) {
-              const ownerResult = yield* eventSink
-                .writeIfProviderThreadOwner({
-                  ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-                  ...input.writeIfProviderThreadOwner,
-                  events,
-                })
-                .pipe(Effect.mapError(mapWriteError));
-              return ownerResult.storedEvents;
-            }
-            if (input.writeIfRunCurrent === undefined) {
-              return yield* eventSink
-                .write({
-                  ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-                  events,
-                })
-                .pipe(Effect.mapError(mapWriteError));
-            }
-            const result = yield* eventSink
-              .writeIfRunCurrent({
+    return ProviderEventIngestorV2.of({
+      normalize,
+      ingestNormalized: (input) =>
+        Effect.gen(function* () {
+          const events = yield* normalize(input);
+          if (events.length === 0) {
+            return [];
+          }
+          const mapWriteError = (cause: unknown) =>
+            new ProviderEventPublishError({
+              providerSessionId: input.providerSessionId,
+              eventCount: events.length,
+              cause,
+            });
+          if (input.writeIfProviderThreadOwner !== undefined) {
+            const ownerResult = yield* eventSink
+              .writeIfProviderThreadOwner({
+                guardPendingUserInputCancellations: true,
                 ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-                threadId: input.threadId,
-                ...input.writeIfRunCurrent,
+                ...input.writeIfProviderThreadOwner,
                 events,
               })
               .pipe(Effect.mapError(mapWriteError));
-            return result.storedEvents;
-          }).pipe(
-            Effect.tap((storedEvents) =>
-              Effect.gen(function* () {
-                if (storedEvents.length === 0 || input.event.type !== "provider_turn.updated")
-                  return;
-                const providerTurn = input.event.providerTurn;
-                if (
-                  providerTurn.status !== "completed" &&
-                  providerTurn.status !== "failed" &&
-                  providerTurn.status !== "interrupted" &&
-                  providerTurn.status !== "cancelled"
-                )
-                  return;
-                const key = `${input.providerInstanceId}:${providerTurn.id}`;
-                if (completedTurnAnalytics.has(key)) return;
-                completedTurnAnalytics.add(key);
-                if (completedTurnAnalytics.size > 4096) {
-                  const oldest = completedTurnAnalytics.values().next().value;
-                  if (oldest !== undefined) completedTurnAnalytics.delete(oldest);
-                }
-                yield* analytics.record(
-                  providerTurnAnalyticsProperties({
-                    driver: input.event.driver,
-                    providerTurn,
-                    ...(input.analyticsContext === undefined
-                      ? {}
-                      : { context: input.analyticsContext }),
-                  }),
-                );
-              }),
-            ),
+            return ownerResult.storedEvents;
+          }
+          if (input.writeIfRunCurrent === undefined) {
+            return yield* eventSink
+              .write({
+                guardPendingUserInputCancellations: true,
+                ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+                events,
+              })
+              .pipe(Effect.mapError(mapWriteError));
+          }
+          const result = yield* eventSink
+            .writeIfRunCurrent({
+              guardPendingUserInputCancellations: true,
+              ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+              threadId: input.threadId,
+              ...input.writeIfRunCurrent,
+              events,
+            })
+            .pipe(Effect.mapError(mapWriteError));
+          return result.storedEvents;
+        }).pipe(
+          Effect.tap((storedEvents) =>
+            Effect.gen(function* () {
+              if (storedEvents.length === 0 || input.event.type !== "provider_turn.updated") return;
+              const providerTurn = input.event.providerTurn;
+              if (
+                providerTurn.status !== "completed" &&
+                providerTurn.status !== "failed" &&
+                providerTurn.status !== "interrupted" &&
+                providerTurn.status !== "cancelled"
+              )
+                return;
+              const key = `${input.providerInstanceId}:${providerTurn.id}`;
+              if (completedTurnAnalytics.has(key)) return;
+              completedTurnAnalytics.add(key);
+              if (completedTurnAnalytics.size > 4096) {
+                const oldest = completedTurnAnalytics.values().next().value;
+                if (oldest !== undefined) completedTurnAnalytics.delete(oldest);
+              }
+              yield* analytics.record(
+                providerTurnAnalyticsProperties({
+                  driver: input.event.driver,
+                  providerTurn,
+                  ...(input.analyticsContext === undefined
+                    ? {}
+                    : { context: input.analyticsContext }),
+                }),
+              );
+            }),
           ),
-      });
-    }),
-  );
+        ),
+    });
+  }),
+);

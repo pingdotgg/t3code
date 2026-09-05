@@ -4,7 +4,8 @@ import {
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
 } from "@t3tools/contracts";
-import { FetchHttpClient, type HttpMethod } from "effect/unstable/http";
+import * as Result from "effect/Result";
+import { FetchHttpClient, type HttpClient, type HttpMethod } from "effect/unstable/http";
 
 import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection, PreparedHttpAuthorization } from "../connection/model.ts";
