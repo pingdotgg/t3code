@@ -12,6 +12,7 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "./McpProviderSession.ts";
 
 export interface McpCredentialRequest {
+  readonly capabilities?: ReadonlyArray<McpInvocationContext.McpCapability>;
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
 }
@@ -128,7 +129,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         threadId: ThreadId.make(request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
-        capabilities: new Set(["preview"]),
+        capabilities: new Set(request.capabilities ?? ["preview"]),
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
@@ -139,6 +140,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       return {
         config: {
           environmentId,
+          capabilities: Array.from(scope.capabilities),
           threadId: scope.threadId,
           providerSessionId,
           providerInstanceId: scope.providerInstanceId,
