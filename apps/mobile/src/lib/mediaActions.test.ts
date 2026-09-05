@@ -96,6 +96,62 @@ beforeEach(() => {
 });
 
 it.each(["workspace-file", "media-file"] as const)(
+  "waits for the %s grant before enabling host menu actions",
+  (_tag) => {
+    for (const [session, disabled] of [
+      [null, true],
+      [granted, false],
+      [denied, true],
+    ] as const) {
+      if (session === null) state.sessions.delete(environmentId);
+      else state.sessions.set(environmentId, session);
+      const media = useMediaActions(hostSource(_tag));
+
+      expect(media.actions.find(({ id }) => id === "save")?.disabled).toBe(disabled);
+      expect(media.actions.find(({ id }) => id === "open-file")?.disabled).toBe(disabled);
+      const copyPath = media.actions.find(({ id }) => id === "copy-full-path")!;
+      expect(copyPath.disabled).not.toBe(true);
+      copyPath.run();
+    }
+    expect(state.copy).toHaveBeenCalledTimes(3);
+    expect(state.refresh).not.toHaveBeenCalled();
+    expect(state.download).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps nonhost menu actions available with pending or denied host grants", () => {
+  const sources: MediaActionsSource[] = [
+    { uri: "https://cdn.test/image.png", name: "image.png", mimeType: "image/png" },
+    { uri: "file:///device/image.png", name: "image.png", mimeType: "image/png" },
+    {
+      environmentId,
+      resource: { _tag: "attachment", attachmentId: "upload" },
+      name: "image.png",
+      mimeType: "image/png",
+    },
+    {
+      attachment: {
+        id: "draft",
+        type: "file",
+        fileUri: "file:///device/image.png",
+        name: "image.png",
+        mimeType: "image/png",
+        sizeBytes: 1,
+      },
+      name: "image.png",
+      mimeType: "image/png",
+    },
+  ];
+  for (const session of [null, denied]) {
+    if (session === null) state.sessions.delete(environmentId);
+    else state.sessions.set(environmentId, session);
+    for (const source of sources) {
+      expect(useMediaActions(source).actions.find(({ id }) => id === "save")?.disabled).toBe(false);
+    }
+  }
+});
+
+it.each(["workspace-file", "media-file"] as const)(
   "blocks denied %s sharing and file opening while preserving path copying",
   async (_tag) => {
     const media = useMediaActions(hostSource(_tag));
