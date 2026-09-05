@@ -60,6 +60,13 @@ vi.mock("~/state/session", () => ({
   readPreparedConnection: mocks.readPreparedConnection,
 }));
 
+// File-preview errors share a module with asset hooks. Keep the pure URL resolver
+// without importing those hooks and their environment runtime into chrome tests.
+vi.mock("~/assets/assetUrls", async () => {
+  const { resolveAssetUrl } = await import("@t3tools/client-runtime/state/assets");
+  return { resolveAssetUrl };
+});
+
 // Stubbed at the direct dependency rather than letting the real module pull in
 // `useSettings` -> `state/server`, which would drag the whole settings and
 // connection graph into a test that only cares about the browser chrome.
