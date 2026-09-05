@@ -6,11 +6,7 @@ import type * as React from "react";
 
 import { cn } from "~/lib/utils";
 
-const MenuCreateHandle = MenuPrimitive.createHandle;
-
 const Menu = MenuPrimitive.Root;
-
-const MenuPortal = MenuPrimitive.Portal;
 
 function MenuTrigger({ className, children, ...props }: MenuPrimitive.Trigger.Props) {
   return (
@@ -280,12 +276,8 @@ function MenuSubPopup({
 }
 
 export {
-  MenuCreateHandle,
-  MenuCreateHandle as DropdownMenuCreateHandle,
   Menu,
   Menu as DropdownMenu,
-  MenuPortal,
-  MenuPortal as DropdownMenuPortal,
   MenuTrigger,
   MenuTrigger as DropdownMenuTrigger,
   MenuPopup,

@@ -550,5 +550,3 @@ Current high-value span and metric boundaries include:
 - logs outside spans are not persisted in the trace file; SSH-managed launch stdout/stderr is still
   captured in its launcher log
 - metrics are not snapshotted locally
-- the old `serverLogPath` still exists in config for compatibility, but the trace file is the primary
-  structured persisted artifact

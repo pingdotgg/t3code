@@ -1994,19 +1994,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     )
   }
 
-  private func fileStatusText(_ changeType: String?) -> String {
-    switch changeType {
-    case "new":
-      return "A"
-    case "deleted":
-      return "D"
-    case "renamed":
-      return "R"
-    default:
-      return ""
-    }
-  }
-
   private func fileStatusColor(_ changeType: String?) -> UIColor {
     switch changeType {
     case "new":
@@ -2018,13 +2005,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     default:
       return theme.hunkText
     }
-  }
-
-  private func drawStatusPill(_ text: String, rect: CGRect, color: UIColor, font: UIFont) {
-    let path = UIBezierPath(roundedRect: rect, cornerRadius: rect.height / 2)
-    color.withAlphaComponent(0.12).setFill()
-    path.fill()
-    drawCenteredText(text, rect: rect, color: color, font: font)
   }
 
   private func drawFileIcon(rect: CGRect, changeType: String?) {

@@ -105,20 +105,6 @@ export const spawnAndCollect = (binaryPath: string, command: ChildProcess.Comman
     return result;
   }).pipe(Effect.scoped);
 
-export function detailFromResult(
-  result: CommandResult & { readonly timedOut?: boolean },
-): string | undefined {
-  if (result.timedOut) return "Timed out while running command.";
-  const stderr = nonEmptyTrimmed(result.stderr);
-  if (stderr) return stderr;
-  const stdout = nonEmptyTrimmed(result.stdout);
-  if (stdout) return stdout;
-  if (result.code !== 0) {
-    return `Command exited with code ${result.code}.`;
-  }
-  return undefined;
-}
-
 export function extractAuthBoolean(value: unknown): boolean | undefined {
   if (globalThis.Array.isArray(value)) {
     for (const entry of value) {

@@ -6,6 +6,7 @@ import {
   MessageId,
   NonNegativeInt,
   OrchestrationCheckpointFile,
+  OrchestrationCheckpointStatus,
   OrchestrationProposedPlanId,
   OrchestrationReadModel,
   OrchestrationThreadSearchSource,
@@ -45,7 +46,6 @@ import {
   toPersistenceSqlError,
   type ProjectionRepositoryError,
 } from "../../persistence/Errors.ts";
-import { ProjectionCheckpoint } from "../../persistence/Services/ProjectionCheckpoints.ts";
 import { ThreadBackgroundLivenessService } from "../ThreadBackgroundLiveness.ts";
 import { ThreadPlanProgressService } from "../ThreadPlanProgress.ts";
 import { ProjectionProject } from "../../persistence/Services/ProjectionProjects.ts";
@@ -118,11 +118,16 @@ const ProjectionThreadRuntimeContextDbRowSchema = Schema.Struct({
   title: Schema.String,
   session: Schema.NullOr(ProjectionThreadSessionDbRowSchema),
 });
-const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
-  Struct.assign({
-    files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
-  }),
-);
+const ProjectionCheckpointDbRowSchema = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  checkpointTurnCount: NonNegativeInt,
+  checkpointRef: CheckpointRef,
+  status: OrchestrationCheckpointStatus,
+  files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
+  assistantMessageId: Schema.NullOr(MessageId),
+  completedAt: IsoDateTime,
+});
 const ProjectionLatestTurnDbRowSchema = Schema.Struct({
   threadId: ProjectionThread.fields.threadId,
   turnId: TurnId,

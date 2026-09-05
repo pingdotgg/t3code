@@ -203,8 +203,6 @@ export const AzureDevOpsCliError = Schema.Union([
 ]);
 export type AzureDevOpsCliError = typeof AzureDevOpsCliError.Type;
 
-export const isAzureDevOpsCliError = Schema.is(AzureDevOpsCliError);
-
 export interface AzureDevOpsRepositoryCloneUrls {
   readonly nameWithOwner: string;
   readonly url: string;

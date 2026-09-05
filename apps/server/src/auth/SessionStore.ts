@@ -349,14 +349,12 @@ export const SessionCredentialInternalError = Schema.Union([
   OtherSessionsRevocationError,
 ]);
 export type SessionCredentialInternalError = typeof SessionCredentialInternalError.Type;
-export const isSessionCredentialInternalError = Schema.is(SessionCredentialInternalError);
 
 export const SessionCredentialError = Schema.Union([
   SessionCredentialInvalidError,
   SessionCredentialInternalError,
 ]);
 export type SessionCredentialError = typeof SessionCredentialError.Type;
-export const isSessionCredentialError = Schema.is(SessionCredentialError);
 
 export class SessionStore extends Context.Service<
   SessionStore,

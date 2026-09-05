@@ -298,11 +298,6 @@ export function readCustomModelEntries(value: unknown): CustomModelDefinition[] 
   return entries;
 }
 
-/** Slugs of a `customModels` setting, in stored order. */
-export function readCustomModelSlugs(value: unknown): string[] {
-  return readCustomModelEntries(value).map((entry) => entry.slug);
-}
-
 /**
  * Write a definition back to the compact stored shape: a bare slug when it
  * carries nothing custom, otherwise an entry with only the set fields.

@@ -1,116 +1,79 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import type { ReviewRenderableFile } from "./reviewModel";
-import { highlightCodeSnippet, highlightReviewFile } from "./shikiReviewHighlighter";
+import type { ReviewRenderableLineRow } from "./reviewModel";
+import { highlightCodeSnippet, highlightReviewSelectedLines } from "./shikiReviewHighlighter";
 
-function makeRenderableFile(
-  input: Partial<ReviewRenderableFile> & Pick<ReviewRenderableFile, "path">,
-): ReviewRenderableFile {
+function makeLine(
+  input: Pick<ReviewRenderableLineRow, "id" | "content"> & Partial<ReviewRenderableLineRow>,
+): ReviewRenderableLineRow {
   return {
-    id: input.path,
-    cacheKey: input.path,
-    previousPath: null,
-    changeType: "new",
-    additions: 0,
-    deletions: 0,
-    languageHint: null,
-    additionLines: [],
-    deletionLines: [],
-    rows: [],
+    kind: "line",
+    change: "add",
+    oldLineNumber: null,
+    newLineNumber: 1,
+    additionTokenIndex: 0,
+    deletionTokenIndex: null,
+    comparison: null,
     ...input,
   };
 }
 
-describe("highlightReviewFile", () => {
-  it("preserves one highlighted token row per diff line even without trailing newlines", async () => {
-    const file = makeRenderableFile({
-      path: "apps/mobile/src/example.txt",
-      additionLines: [
-        'const items = ["a"];',
-        'expect(items).toEqual(["a"]);',
-        "const next = items.map((item) => item.toUpperCase());",
-        'expect(next).toContain("A");',
-      ],
+describe("highlightReviewSelectedLines", () => {
+  it("preserves one highlighted token row per selected diff line without trailing newlines", async () => {
+    const contents = [
+      'const items = ["a"];',
+      'expect(items).toEqual(["a"]);',
+      "const next = items.map((item) => item.toUpperCase());",
+      'expect(next).toContain("A");',
+    ];
+    const lines = contents.map((content, index) => makeLine({ id: String(index), content }));
+    const highlighted = await highlightReviewSelectedLines({
+      filePath: "example.ts",
+      lines,
+      theme: "light",
     });
 
-    const highlighted = await highlightReviewFile(file, "light");
-
-    expect(highlighted.additionLines).toHaveLength(file.additionLines.length);
-    expect(highlighted.additionLines[0]?.map((token) => token.content).join("")).toBe(
-      file.additionLines[0],
-    );
-    expect(highlighted.additionLines[1]?.map((token) => token.content).join("")).toBe(
-      file.additionLines[1],
-    );
-    expect(highlighted.additionLines[2]?.map((token) => token.content).join("")).toBe(
-      file.additionLines[2],
-    );
-    expect(highlighted.additionLines[3]?.map((token) => token.content).join("")).toBe(
-      file.additionLines[3],
-    );
+    expect(
+      lines.map((line) => highlighted[line.id]?.map((token) => token.content).join("")),
+    ).toEqual(contents);
   });
 
   it("adds word-alt diff emphasis for paired deletion and addition lines", async () => {
-    const file = makeRenderableFile({
-      path: "apps/mobile/src/example-inline-diff.txt",
-      additionLines: ["const after = 2;"],
-      deletionLines: ["const before = 1;"],
-      rows: [
-        {
-          kind: "line",
+    const highlighted = await highlightReviewSelectedLines({
+      filePath: "example.ts",
+      theme: "light",
+      lines: [
+        makeLine({
           id: "delete-1",
+          content: "const before = 1;",
           change: "delete",
           oldLineNumber: 1,
           newLineNumber: null,
-          content: "const before = 1;",
           additionTokenIndex: null,
           deletionTokenIndex: 0,
           comparison: { change: "add", tokenIndex: 0 },
-        },
-        {
-          kind: "line",
+        }),
+        makeLine({
           id: "add-1",
-          change: "add",
-          oldLineNumber: null,
-          newLineNumber: 1,
           content: "const after = 2;",
-          additionTokenIndex: 0,
-          deletionTokenIndex: null,
           comparison: { change: "delete", tokenIndex: 0 },
-        },
+        }),
       ],
     });
 
-    const highlighted = await highlightReviewFile(file, "light");
-
-    expect(highlighted.deletionLines[0]?.some((token) => token.diffHighlight === true)).toBe(true);
-    expect(highlighted.additionLines[0]?.some((token) => token.diffHighlight === true)).toBe(true);
+    expect(highlighted["delete-1"]?.some((token) => token.diffHighlight === true)).toBe(true);
+    expect(highlighted["add-1"]?.some((token) => token.diffHighlight === true)).toBe(true);
   });
 
   it("falls back to plain tokens for very long lines", async () => {
     const longLine = `const value = "${"a".repeat(1_100)}";`;
-    const file = makeRenderableFile({
-      path: "apps/mobile/src/example-long-line.txt",
-      additionLines: [longLine],
-      rows: [
-        {
-          kind: "line",
-          id: "add-1",
-          change: "add",
-          oldLineNumber: null,
-          newLineNumber: 1,
-          content: longLine,
-          additionTokenIndex: 0,
-          deletionTokenIndex: null,
-          comparison: null,
-        },
-      ],
+    const highlighted = await highlightReviewSelectedLines({
+      filePath: "example.ts",
+      theme: "light",
+      lines: [makeLine({ id: "add-1", content: longLine })],
     });
 
-    const highlighted = await highlightReviewFile(file, "light");
-
-    expect(highlighted.additionLines).toHaveLength(1);
-    expect(highlighted.additionLines[0]).toEqual([
+    expect(highlighted["add-1"]).toEqual([
       {
         content: longLine,
         color: null,

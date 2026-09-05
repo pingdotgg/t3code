@@ -1013,7 +1013,6 @@ const RelayCommonPersistenceError = Schema.Union([
   Devices.DeviceListPersistenceError,
   LiveActivities.LiveActivityRegistrationPersistenceError,
   EnvironmentLinks.EnvironmentLinkUserListPersistenceError,
-  EnvironmentLinks.EnvironmentPublicKeyListPersistenceError,
   EnvironmentLinks.EnvironmentLinkListPersistenceError,
   EnvironmentLinks.EnvironmentLinkLookupPersistenceError,
   EnvironmentLinks.EnvironmentLinkRevokePersistenceError,

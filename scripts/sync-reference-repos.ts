@@ -91,14 +91,11 @@ export class ReferenceRepoGitSubtreeError extends Schema.TaggedErrorClass<Refere
   }
 }
 
-export const ReferenceRepoSyncError = Schema.Union([
-  ReferenceRepoSelectionError,
-  ReferenceRepoVersionSourceError,
-  ReferenceRepoVersionResolutionError,
-  ReferenceRepoGitSubtreeError,
-]);
-export type ReferenceRepoSyncError = typeof ReferenceRepoSyncError.Type;
-export const isReferenceRepoSyncError = Schema.is(ReferenceRepoSyncError);
+export type ReferenceRepoSyncError =
+  | ReferenceRepoSelectionError
+  | ReferenceRepoVersionSourceError
+  | ReferenceRepoVersionResolutionError
+  | ReferenceRepoGitSubtreeError;
 
 const decodeJsonSource = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeYamlSource = Schema.decodeEffect(fromYaml(Schema.Unknown));
