@@ -20,6 +20,7 @@ export interface UseResizableWidthOptions {
 }
 
 export interface ResizableWidthHandlers {
+  readonly ref: (element: HTMLElement | null) => (() => void) | undefined;
   readonly onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -89,6 +90,17 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     document.body.style.removeProperty("user-select");
     dragStateRef.current = null;
   }, []);
+
+  const ref = useCallback(
+    (element: HTMLElement | null) => {
+      if (element === null) return undefined;
+      return () => {
+        const state = dragStateRef.current;
+        if (state) releasePointer(state.pointerId);
+      };
+    },
+    [releasePointer],
+  );
 
   const onPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
@@ -163,6 +175,6 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
 
   return {
     width: clampedWidth,
-    handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
+    handlers: { ref, onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
   };
 }
