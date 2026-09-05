@@ -51,6 +51,14 @@ export class ElectronProtocolUnregistrationError extends Schema.TaggedErrorClass
 export interface DesktopProtocolRegistrationInput {
   readonly scheme: string;
   readonly targetOrigin: URL;
+  // Optional per-request override consulted before falling back to
+  // `targetOrigin`. The protocol is registered once during bootstrap, but the
+  // backend it proxies to can report a different renderer-visible URL when it
+  // becomes ready (the WSL backend reports its distro IP instead of the
+  // loopback URL), so the proxy target has to follow that resolution. The
+  // Effect-to-callback bridge lives here, at the Electron boundary, rather
+  // than in the caller.
+  readonly targetOriginOverride?: Effect.Effect<URL>;
   readonly backendOrigin: URL;
   readonly clerkFrontendApiHostname: string | undefined;
 }
@@ -144,14 +152,18 @@ async function proxyRequest(
   request: Request,
   targetOrigin: URL,
   contentSecurityPolicy: string,
+  getTargetOrigin?: () => URL | undefined,
 ): Promise<Response> {
   const requestUrl = new URL(request.url);
   if (requestUrl.host !== DESKTOP_HOST) {
     return new Response(null, { status: 404 });
   }
 
-  const targetUrl = new URL(`${requestUrl.pathname}${requestUrl.search}`, targetOrigin);
-  const headers = new Headers(request.headers);
+  const effectiveTargetOrigin = getTargetOrigin?.() ?? targetOrigin;
+  const targetUrl = new URL(
+    `${requestUrl.pathname}${requestUrl.search}`,
+    effectiveTargetOrigin,
+  );  const headers = new Headers(request.headers);
   const headersToRemove: string[] = [];
   for (const name of headers.keys()) {
     if (
@@ -207,18 +219,26 @@ async function fetchWithTransientRetry(url: string, init: RequestInit): Promise<
 
 export const make = Effect.gen(function* () {
   const registered = yield* Ref.make(false);
+  // The protocol handler runs outside any fiber, so an override Effect is
+  // bridged to a synchronous read here, once, at the Electron boundary.
+  const overrideContext = yield* Effect.context<never>();
+  const runOverrideSync = Effect.runSyncWith(overrideContext);
 
   const registerDesktopProtocol = Effect.fn("desktop.electron.protocol.registerDesktopProtocol")(
     function* (input: DesktopProtocolRegistrationInput) {
       if (yield* Ref.get(registered)) return;
 
       const contentSecurityPolicy = makeDesktopContentSecurityPolicy(input);
+      const overrideEffect = input.targetOriginOverride;
+      const getTargetOrigin = overrideEffect
+        ? () => runOverrideSync(overrideEffect)
+        : undefined;
 
       yield* Effect.acquireRelease(
         Effect.try({
           try: () => {
             Electron.protocol.handle(input.scheme, (request) =>
-              proxyRequest(request, input.targetOrigin, contentSecurityPolicy),
+              proxyRequest(request, input.targetOrigin, contentSecurityPolicy, getTargetOrigin),
             );
           },
           catch: (cause) => new ElectronProtocolRegistrationError({ scheme: input.scheme, cause }),

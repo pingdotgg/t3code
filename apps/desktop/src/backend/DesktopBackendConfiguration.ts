@@ -523,6 +523,9 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   input: SharedBootstrapInput & {
     readonly port: number;
     readonly distro: string | null;
+    // Mirrors the Windows primary's resolved exposure mode: a wildcard bind is
+    // only acceptable when the user opted into network access (see below).
+    readonly networkAccessible: boolean;
   },
 ): Effect.fn.Return<
   DesktopBackendManager.DesktopBackendStartConfig,
@@ -535,41 +538,6 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
-
-  // Bind to 0.0.0.0 inside WSL so the backend is reachable both via
-  // WSL2's automatic localhost forwarding (wslhost: Windows 127.0.0.1
-  // -> WSL 127.0.0.1) AND via the distro's eth0 IP directly from
-  // Windows. wslhost forwarding is unreliable on some Windows hosts:
-  // the desktop's readiness probe and the renderer's saved-env-style
-  // fetch both saw "Failed to fetch" when the backend only bound to
-  // 127.0.0.1 inside WSL. Binding to 0.0.0.0 plus advertising the
-  // WSL IP as the renderer-visible URL avoids that dependency.
-  // Security-wise this is acceptable for the local-only WSL backend:
-  // the network it exposes on is the WSL-vEthernet network, not the
-  // LAN; the primary owns LAN exposure when the user opts in.
-  const wslBindHost = "0.0.0.0";
-
-  const bootstrap = {
-    mode: "desktop" as const,
-    noBrowser: true,
-    port: input.port,
-    // Omit t3Home so the Linux backend uses its own home dir instead of
-    // the Windows-side baseDir (which would be a /mnt/c path and share
-    // the SQLite file with the primary).
-    host: wslBindHost,
-    desktopBootstrapToken: input.bootstrapToken,
-    // PortSchema rejects 0, so when tailscale serve is disabled we still
-    // need a valid number in this slot. The backend reads tailscaleServePort
-    // only when tailscaleServeEnabled is true, so the actual value here is
-    // inert.
-    tailscaleServeEnabled: false,
-    tailscaleServePort: 443,
-    // The packaged sidecar is a Windows executable and cannot run inside the
-    // Linux WSL backend. Keep the field absent instead of passing an unusable
-    // `/mnt/.../*.exe` path; WSL resource telemetry is reported unavailable.
-    // See docs/architecture/resource-telemetry.md.
-    ...buildObservabilityFragment(input.observabilitySettings),
-  };
 
   // The archive is the primary packaged WSL path: it installs directly into
   // the distro's ext4 filesystem. The server.asar extraction service is only
@@ -638,6 +606,45 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     ? "127.0.0.1"
     : Option.getOrElse(distroIp, () => "127.0.0.1");
   const httpBaseUrl = new URL(`http://${rendererHost}:${input.port}`);
+
+  // When the user opted into network access, bind to 0.0.0.0 inside WSL so the
+  // backend is reachable both via WSL2's automatic localhost forwarding
+  // (wslhost: Windows 127.0.0.1 -> WSL 127.0.0.1) AND via the distro's eth0 IP
+  // directly from Windows. wslhost forwarding is unreliable on some Windows
+  // hosts: the desktop's readiness probe and the renderer's saved-env-style
+  // fetch both saw "Failed to fetch" when the backend only bound to 127.0.0.1
+  // inside WSL. Binding to 0.0.0.0 plus advertising the WSL IP as the
+  // renderer-visible URL avoids that dependency.
+  // In local-only mode the Connections panel promises "limited to this
+  // machine", so the wildcard bind is not acceptable: it also answers on every
+  // other distro interface — including tailscale0 when Tailscale runs inside
+  // the distro — which exposed local-only backends to the whole tailnet.
+  // Instead, bind exactly the address the renderer is told to use: the distro
+  // IP in NAT mode (reachable from Windows without depending on flaky wslhost
+  // forwarding) or loopback in mirrored mode.
+  const wslBindHost = input.networkAccessible ? "0.0.0.0" : rendererHost;
+
+  const bootstrap = {
+    mode: "desktop" as const,
+    noBrowser: true,
+    port: input.port,
+    // Omit t3Home so the Linux backend uses its own home dir instead of
+    // the Windows-side baseDir (which would be a /mnt/c path and share
+    // the SQLite file with the primary).
+    host: wslBindHost,
+    desktopBootstrapToken: input.bootstrapToken,
+    // PortSchema rejects 0, so when tailscale serve is disabled we still
+    // need a valid number in this slot. The backend reads tailscaleServePort
+    // only when tailscaleServeEnabled is true, so the actual value here is
+    // inert.
+    tailscaleServeEnabled: false,
+    tailscaleServePort: 443,
+    // The packaged sidecar is a Windows executable and cannot run inside the
+    // Linux WSL backend. Keep the field absent instead of passing an unusable
+    // `/mnt/.../*.exe` path; WSL resource telemetry is reported unavailable.
+    // See docs/architecture/resource-telemetry.md.
+    ...buildObservabilityFragment(input.observabilitySettings),
+  };
 
   const distroArgs = distroForConfig ? ["-d", distroForConfig] : [];
   const forwardedEnv: Record<string, string> = {};
@@ -780,6 +787,13 @@ export const make = Effect.gen(function* () {
     return { bootstrapToken, observabilitySettings } satisfies SharedBootstrapInput;
   });
 
+  // The WSL backend must mirror the primary's exposure mode: only a
+  // network-accessible primary justifies the wildcard WSL bind.
+  const readNetworkAccessible = Effect.map(
+    serverExposure.getState,
+    (state) => state.mode === "network-accessible",
+  );
+
   const buildWslPrimaryConfig = Effect.gen(function* () {
     // wsl-only mode pipes the WSL backend through the same port the
     // Windows primary would normally take. That way the renderer
@@ -788,6 +802,7 @@ export const make = Effect.gen(function* () {
     // auth, the env switcher's "primary" id) keep working without
     // a parallel "secondary" registration.
     const backendExposure = yield* serverExposure.backendConfig;
+    const networkAccessible = yield* readNetworkAccessible;
     const persistedSettings = yield* settings.get;
     const shared = yield* sharedInputs;
     yield* wslEnvironment.preWarm(persistedSettings.wslDistro);
@@ -795,6 +810,7 @@ export const make = Effect.gen(function* () {
       ...shared,
       port: backendExposure.port,
       distro: persistedSettings.wslDistro,
+      networkAccessible,
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
@@ -858,7 +874,8 @@ export const make = Effect.gen(function* () {
     resolveWsl: (input) =>
       Effect.gen(function* () {
         const shared = yield* sharedInputs;
-        return yield* resolveWslStartConfig({ ...shared, ...input }).pipe(
+        const networkAccessible = yield* readNetworkAccessible;
+        return yield* resolveWslStartConfig({ ...shared, networkAccessible, ...input }).pipe(
           Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
           Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
           Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),

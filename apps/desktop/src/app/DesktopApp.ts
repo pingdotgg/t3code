@@ -181,9 +181,18 @@ const bootstrap = Effect.gen(function* () {
   const rendererTarget = environment.isDevelopment
     ? Option.getOrThrow(environment.devServerUrl)
     : backendConfig.httpBaseUrl;
+  // Follow the backend's resolved renderer-visible URL once a run becomes
+  // ready: a wsl-only primary reports its distro IP, which the loopback
+  // target registered here cannot reach without the wildcard bind. Only
+  // local-only packaged runs need the live override; development loads from
+  // the dev server and network-accessible runs keep the loopback target.
+  // ElectronProtocol owns the Effect-to-callback bridge.
   yield* electronProtocol.registerDesktopProtocol({
     scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment),
     targetOrigin: rendererTarget,
+    ...(environment.isDevelopment || serverExposureState.mode !== "local-only"
+      ? {}
+      : { targetOriginOverride: serverExposure.backendProxyOrigin }),
     backendOrigin: backendConfig.httpBaseUrl,
     clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
   });

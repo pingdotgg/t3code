@@ -34,20 +34,33 @@ const isDesktopBackendObservabilitySettingsReadError = Schema.is(
   DesktopBackendConfiguration.DesktopBackendObservabilitySettingsReadError,
 );
 
-const serverExposureLayer = Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
-  getState: Effect.die("unexpected getState"),
-  backendConfig: Effect.succeed({
-    port: 4888,
-    bindHost: "0.0.0.0",
-    httpBaseUrl: new URL("http://127.0.0.1:4888"),
-    tailscaleServeEnabled: true,
-    tailscaleServePort: 8443,
-  }),
-  configureFromSettings: () => Effect.die("unexpected configureFromSettings"),
-  setMode: () => Effect.die("unexpected setMode"),
-  setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
-  getAdvertisedEndpoints: Effect.succeed([]),
-} satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
+type DesktopServerExposureModeLiteral = "local-only" | "network-accessible";
+
+const makeServerExposureLayer = (mode: DesktopServerExposureModeLiteral) =>
+  Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
+    getState: Effect.succeed({
+      mode,
+      endpointUrl: null,
+      advertisedHost: null,
+      tailscaleServeEnabled: true,
+      tailscaleServePort: 8443,
+    }),
+    backendConfig: Effect.succeed({
+      port: 4888,
+      bindHost: mode === "network-accessible" ? "0.0.0.0" : "127.0.0.1",
+      httpBaseUrl: new URL("http://127.0.0.1:4888"),
+      tailscaleServeEnabled: true,
+      tailscaleServePort: 8443,
+    }),
+    backendProxyOrigin: Effect.succeed(new URL("http://127.0.0.1:4888")),
+    noteResolvedBackendOrigin: () => Effect.void,
+    configureFromSettings: () => Effect.die("unexpected configureFromSettings"),
+    setMode: () => Effect.die("unexpected setMode"),
+    setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
+    getAdvertisedEndpoints: Effect.succeed([]),
+  } satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
+
+const serverExposureLayer = makeServerExposureLayer("network-accessible");
 
 function makeEnvironmentLayer(
   baseDir: string,
@@ -374,6 +387,73 @@ describe("DesktopBackendConfiguration", () => {
       assert.deepEqual(observedDistros, ["Ubuntu", "Ubuntu", "Ubuntu"]);
       assert.isTrue(Option.isNone(config.preflightFailure));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  const makeWslBindHostTest = (input: {
+    readonly exposureMode: DesktopServerExposureModeLiteral;
+    readonly distroIp: string;
+  }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const entryPath = path.join(baseDir, "apps/server/dist/bin.mjs");
+      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fileSystem.writeFileString(entryPath, "");
+
+      return yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        return yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(makeServerExposureLayer(input.exposureMode)),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(DesktopWslServerTree.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                getDistroIp: () => Option.some(input.distroIp),
+              }),
+            ),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                appPath: baseDir,
+                platform: "win32",
+                resourcesPath: baseDir,
+              }),
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+  it.effect("resolveWsl wildcards the WSL bind only when network access is enabled", () =>
+    makeWslBindHostTest({ exposureMode: "network-accessible", distroIp: "172.27.0.99" }).pipe(
+      Effect.map((config) => {
+        assert.equal(config.bootstrap.host, "0.0.0.0");
+      }),
+    ),
+  );
+
+  it.effect("resolveWsl binds the advertised distro IP when exposure is local-only", () =>
+    makeWslBindHostTest({ exposureMode: "local-only", distroIp: "172.27.0.99" }).pipe(
+      Effect.map((config) => {
+        assert.equal(config.bootstrap.host, "172.27.0.99");
+        assert.equal(config.httpBaseUrl.href, "http://172.27.0.99:5000/");
+      }),
+    ),
+  );
+
+  it.effect("resolveWsl binds loopback in mirrored mode when exposure is local-only", () =>
+    makeWslBindHostTest({ exposureMode: "local-only", distroIp: "127.0.0.1" }).pipe(
+      Effect.map((config) => {
+        assert.equal(config.bootstrap.host, "127.0.0.1");
+      }),
+    ),
   );
 
   it.effect("resolveWsl launches a packaged backend from the WSL-local runtime cache", () => {

@@ -270,6 +270,11 @@ export class DesktopServerExposure extends Context.Service<
   {
     readonly getState: Effect.Effect<DesktopServerExposureState>;
     readonly backendConfig: Effect.Effect<DesktopServerExposureBackendConfig>;
+    // The origin the desktop protocol should proxy to. Falls back to this
+    // exposure's own loopback URL until a backend run reports its resolved
+    // renderer-visible URL (the WSL backend reports its distro IP).
+    readonly backendProxyOrigin: Effect.Effect<URL>;
+    readonly noteResolvedBackendOrigin: (origin: URL) => Effect.Effect<void>;
     readonly configureFromSettings: (input: {
       readonly port: number;
     }) => Effect.Effect<DesktopServerExposureState>;
@@ -444,6 +449,19 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // The desktop protocol registers its proxy target once during bootstrap,
+  // before any backend run resolves its renderer-visible URL. The pool's
+  // onReady reports that resolved URL here so the protocol can follow it —
+  // a wsl-only primary reports the distro IP, which differs from the
+  // loopback URL the exposure advertises.
+  const resolvedBackendOriginRef = yield* Ref.make<Option.Option<URL>>(Option.none());
+  const backendProxyOrigin: Effect.Effect<URL> = Effect.gen(function* () {
+    const resolved = yield* Ref.get(resolvedBackendOriginRef);
+    return Option.isSome(resolved) ? resolved.value : (yield* Ref.get(stateRef)).httpBaseUrl;
+  });
+  const noteResolvedBackendOrigin = (origin: URL): Effect.Effect<void> =>
+    Ref.set(resolvedBackendOriginRef, Option.some(origin));
+
   const setMode = Effect.fn("desktop.serverExposure.setMode")(function* (
     mode: DesktopServerExposureMode,
   ) {
@@ -551,6 +569,8 @@ export const make = Effect.gen(function* () {
   return DesktopServerExposure.of({
     getState,
     backendConfig,
+    backendProxyOrigin,
+    noteResolvedBackendOrigin,
     configureFromSettings,
     setMode,
     setTailscaleServeEnabled,

@@ -95,6 +95,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
+import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
@@ -214,6 +215,7 @@ export const layer = Layer.effect(
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
     const electronDialog = yield* ElectronDialog.ElectronDialog;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
+    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
     // Anchor the pool's lifetime to its layer scope so registered
     // instance scopes can be forked off it. Without this, instance
     // scopes are orphaned: they only close via explicit unregister()
@@ -292,11 +294,19 @@ export const layer = Layer.effect(
       // otherwise a post-readiness window-open failure vanishes silently and
       // is near-impossible to diagnose in production.
       onReady: (httpBaseUrl) =>
-        desktopWindow.handleBackendReady(httpBaseUrl).pipe(
-          Effect.catch((error) =>
-            logBackendPoolWarning("failed to open main window after backend readiness", {
-              error: error.message,
-            }),
+        // Report the resolved renderer-visible URL before opening the window:
+        // the desktop protocol's proxy target follows this so a wsl-only
+        // primary serving from its distro IP stays reachable on the app://
+        // origin, which was registered against the loopback URL.
+        serverExposure.noteResolvedBackendOrigin(httpBaseUrl).pipe(
+          Effect.andThen(
+            desktopWindow.handleBackendReady(httpBaseUrl).pipe(
+              Effect.catch((error) =>
+                logBackendPoolWarning("failed to open main window after backend readiness", {
+                  error: error.message,
+                }),
+              ),
+            ),
           ),
         ),
       onShutdown: () => desktopWindow.handleBackendNotReady,
