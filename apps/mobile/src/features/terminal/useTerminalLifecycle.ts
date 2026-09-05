@@ -5,6 +5,7 @@ import { useEffect, useEffectEvent, useRef } from "react";
 export function useTerminalLifecycle({
   terminalKey,
   canOperate,
+  observing,
   attached,
   terminal,
   reopen,
@@ -13,6 +14,7 @@ export function useTerminalLifecycle({
 }: {
   readonly terminalKey: string;
   readonly canOperate: boolean;
+  readonly observing: boolean;
   readonly attached: boolean;
   readonly terminal: Pick<TerminalSessionState, "status" | "version">;
   readonly reopen: () => Promise<boolean>;
@@ -40,7 +42,8 @@ export function useTerminalLifecycle({
     }
     const current = lifecycle.current;
     if (!canOperate) {
-      if (terminal.version > 0 || current.wasRunning) current.observed = true;
+      // An observe request stays passive before its first snapshot arrives.
+      if (observing || terminal.version > 0 || current.wasRunning) current.observed = true;
       current.wasRunning = false;
       return;
     }
@@ -72,5 +75,5 @@ export function useTerminalLifecycle({
     void reopenTerminal().then((succeeded) => {
       if (!succeeded && lifecycle.current === current) current.reopened = false;
     });
-  }, [attached, canOperate, terminal.status, terminal.version, terminalKey]);
+  }, [attached, canOperate, observing, terminal.status, terminal.version, terminalKey]);
 }
