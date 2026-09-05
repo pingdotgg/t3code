@@ -28,16 +28,6 @@ export function formatDuration(durationMs: number): string {
   return parts.join(" ");
 }
 
-export function formatElapsed(startIso: string, endIso: string | undefined): string | null {
-  if (!endIso) return null;
-  const startedAt = Date.parse(startIso);
-  const endedAt = Date.parse(endIso);
-  if (Number.isNaN(startedAt) || Number.isNaN(endedAt) || endedAt < startedAt) {
-    return null;
-  }
-  return formatDuration(endedAt - startedAt);
-}
-
 export function isLatestTurnSettled(
   latestTurn: LatestTurnTiming | null,
   session: SessionActivityState | null,
