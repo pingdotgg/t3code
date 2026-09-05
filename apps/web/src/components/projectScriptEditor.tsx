@@ -268,7 +268,9 @@ export function ProjectScriptEditorDialog({
         icon,
         runOnWorktreeCreate,
         waitForSetup: runOnWorktreeCreate && waitForSetup,
-        ...(changesKeybinding ? { keybinding: keybindingRule?.key ?? null } : {}),
+        ...(request.scriptId === null || changesKeybinding
+          ? { keybinding: keybindingRule?.key ?? null }
+          : {}),
         previewUrl: trimmedPreviewUrl.length > 0 ? trimmedPreviewUrl : null,
         autoOpenPreview: trimmedPreviewUrl.length > 0 ? autoOpenPreview : false,
       } satisfies NewProjectScriptInput;

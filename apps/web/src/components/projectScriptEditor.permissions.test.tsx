@@ -70,12 +70,15 @@ describe("ProjectScriptEditorDialog", () => {
     vi.unstubAllGlobals();
   });
 
-  async function openEditor(onSubmit = vi.fn().mockResolvedValue(AsyncResult.success(undefined))) {
+  async function openEditor(
+    onSubmit = vi.fn().mockResolvedValue(AsyncResult.success(undefined)),
+    editorRequest = request,
+  ) {
     await act(() => {
       renderer = create(
         <ProjectScriptEditorDialog
           environmentId={EnvironmentId.make("script-editor-test")}
-          request={request}
+          request={editorRequest}
           scripts={[]}
           onSubmit={onSubmit}
           onDelete={vi.fn()}
@@ -85,6 +88,26 @@ describe("ProjectScriptEditorDialog", () => {
     });
     return renderer!.root;
   }
+
+  it("clears an old shortcut when adding an action with no shortcut", async () => {
+    permissions.canWriteSettings = true;
+    let persistedKeybinding: string | null = "mod+k";
+    const onSubmit = vi.fn(async (_id: string | null, input: NewProjectScriptInput) => {
+      if (input.keybinding !== undefined) persistedKeybinding = input.keybinding;
+      return AsyncResult.success(undefined);
+    });
+    const root = await openEditor(onSubmit, {
+      scriptId: null,
+      initial: { ...request.initial, keybinding: null },
+    });
+
+    await act(async () => {
+      await root.findByType("form").props.onSubmit({ preventDefault() {} });
+    });
+
+    expect(persistedKeybinding).toBeNull();
+    expect(onSubmit).toHaveBeenCalledWith(null, expect.objectContaining({ keybinding: null }));
+  });
 
   it.each([false, true])(
     "preserves a concurrent shortcut change when saving only the script (settings access: %s)",
