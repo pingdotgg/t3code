@@ -217,6 +217,15 @@ const session = (scopes: ReadonlyArray<AuthEnvironmentScope>): AuthSessionState 
   },
 });
 const writable = () => AsyncResult.success(session([AuthOrchestrationOperateScope]));
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
 let renderer: ReactTestRenderer | undefined;
 
 beforeEach(() => {
@@ -264,7 +273,12 @@ beforeEach(() => {
     const { projectId, ...patch } = input;
     state.projects = state.projects.map((project) =>
       project.environmentId === environmentId && project.id === projectId
-        ? { ...project, ...patch }
+        ? {
+            ...project,
+            ...patch,
+            title: patch.title ?? project.title,
+            workspaceRoot: patch.workspaceRoot ?? project.workspaceRoot,
+          }
         : project,
     );
     return AsyncResult.success(undefined);
@@ -353,7 +367,7 @@ describe("project settings permissions", () => {
   });
 
   it("stops before the next member if its grant is revoked during an earlier update", async () => {
-    const firstUpdate = Promise.withResolvers<AsyncResult.Success<void>>();
+    const firstUpdate = deferred<AsyncResult.Success<void>>();
     state.update.mockReturnValueOnce(firstUpdate.promise);
     const root = await mountPanel();
     await act(async () =>
@@ -428,7 +442,7 @@ describe("project settings permissions", () => {
   });
 
   it("rechecks every removal target after confirmation before deleting or clearing drafts", async () => {
-    const confirmed = Promise.withResolvers<boolean>();
+    const confirmed = deferred<boolean>();
     state.confirm.mockReturnValueOnce(confirmed.promise);
     await mountPanel();
     await act(async () => button("Remove all entries").props.onClick());
