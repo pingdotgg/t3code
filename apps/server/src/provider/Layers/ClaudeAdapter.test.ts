@@ -3055,6 +3055,92 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("a settled task re-registered by a new tool use reopens; a duplicate does not", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const taskEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type.startsWith("task.")),
+        Stream.take(4),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn an agent",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-resume",
+        description: "Agent R",
+        task_type: "local_agent",
+        tool_use_id: "toolu_spawn",
+        uuid: "task-resume-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "task-resume",
+        status: "stopped",
+        output_file: "/tmp/task-resume.jsonl",
+        summary: "No completion record was found",
+        uuid: "task-resume-stopped-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      // A late duplicate of the spawn is not a re-dispatch, and must leave the
+      // task settled so a later real one is still recognized.
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-resume",
+        description: "Agent R",
+        task_type: "local_agent",
+        tool_use_id: "toolu_spawn",
+        uuid: "task-resume-uuid-duplicate",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-resume",
+        description: "Agent R",
+        task_type: "local_agent",
+        tool_use_id: "toolu_send_message",
+        is_backgrounded: true,
+        uuid: "task-resume-uuid-redispatch",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      const taskEvents = Array.from(yield* Fiber.join(taskEventsFiber));
+      assert.deepEqual(
+        taskEvents.map((event) => event.type),
+        ["task.started", "task.completed", "task.started", "task.started"],
+      );
+      const duplicate = taskEvents[2];
+      if (duplicate?.type === "task.started") {
+        assert.equal(duplicate.payload.status, undefined);
+      }
+      const redispatch = taskEvents[3];
+      if (redispatch?.type === "task.started") {
+        assert.equal(redispatch.payload.status, "running");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("a subagent snapshot that beats task_started still wins over the seed", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
