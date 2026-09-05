@@ -535,6 +535,13 @@ const openCodeAdapterTestSettings = Schema.decodeSync(OpenCodeSettings)({
   serverPassword: "secret-password",
 });
 
+// A non-loopback server URL, so the adapter treats the session as remote.
+const openCodeAdapterRemoteSettings = Schema.decodeSync(OpenCodeSettings)({
+  binaryPath: "fake-opencode",
+  serverUrl: "http://10.0.0.5:4096",
+  serverPassword: "secret-password",
+});
+
 const OpenCodeAdapterTestLayer = Layer.effect(
   OpenCodeAdapter,
   makeOpenCodeAdapter(openCodeAdapterTestSettings),
@@ -1238,6 +1245,57 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
 
       yield* adapter.stopSession(threadId);
     }),
+  );
+
+  it.effect(
+    "reuses a remote session without forking even when the server directory differs",
+    () => {
+      const remoteLayer = Layer.effect(
+        OpenCodeAdapter,
+        makeOpenCodeAdapter(openCodeAdapterRemoteSettings),
+      ).pipe(
+        Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+        Layer.provideMerge(
+          ServerSettingsService.layerTest({
+            providers: {
+              opencode: {
+                binaryPath: "fake-opencode",
+                serverUrl: "http://10.0.0.5:4096",
+                serverPassword: "secret-password",
+              },
+            },
+          }),
+        ),
+        Layer.provideMerge(providerSessionDirectoryTestLayer),
+        Layer.provideMerge(NodeServices.layer),
+      );
+
+      return Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        // The server-side directory differs from this test's local cwd.
+        runtimeMock.state.sessionDirectoryById.set("ses_remote", "/var/log");
+
+        const session = yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId: asThreadId("thread-opencode-remote-reuse"),
+          runtimeMode: "full-access",
+          resumeCursor: { schemaVersion: 1, sessionId: "ses_remote" },
+        });
+
+        NodeAssert.deepEqual(runtimeMock.state.sessionGetIds, ["ses_remote"]);
+        NodeAssert.deepEqual(runtimeMock.state.sessionCreateUrls, []);
+        NodeAssert.deepEqual(runtimeMock.state.forkCalls, []);
+        NodeAssert.deepEqual(session.resumeCursor, {
+          schemaVersion: 1,
+          sessionId: "ses_remote",
+        });
+        NodeAssert.equal(runtimeMock.state.sessionUpdateCalls.length, 1);
+        NodeAssert.equal(runtimeMock.state.sessionUpdateCalls[0]?.sessionID, "ses_remote");
+
+        yield* adapter.stopSession(asThreadId("thread-opencode-remote-reuse"));
+      }).pipe(Effect.provide(remoteLayer));
+    },
   );
 
   it.effect("fails sendTurn for missing sessions through the typed error channel", () =>

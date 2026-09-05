@@ -46,6 +46,7 @@ import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import {
   buildOpenCodePermissionRules,
+  isLoopbackBaseUrl,
   OpenCodeRuntime,
   OpenCodeRuntimeError,
   openCodeQuestionId,
@@ -2811,6 +2812,7 @@ export function makeOpenCodeAdapter(
               const client = openCodeRuntime.createOpenCodeSdkClient({
                 baseUrl: server.url,
                 directory,
+                external: server.external,
                 ...(server.serverPassword ? { serverPassword: server.serverPassword } : {}),
               });
               const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
@@ -2845,12 +2847,16 @@ export function makeOpenCodeAdapter(
                       ),
                     )
                   : undefined;
+                // Non-loopback external servers retain their own session directory.
+                const isRemote = server.external && !isLoopbackBaseUrl(server.url);
 
-                // Reuse in place only when the session still matches the
-                // requested cwd; on a cwd change it is forked below instead.
+                // Remote sessions keep their server-side cwd. Local sessions need a
+                // matching cwd to be reused; otherwise they are forked below.
                 const reusable =
                   adopted &&
-                  (!adopted.directory || (yield* sameDirectory(adopted.directory, directory)))
+                  (isRemote ||
+                    !adopted.directory ||
+                    (yield* sameDirectory(adopted.directory, directory)))
                     ? adopted
                     : undefined;
 
@@ -2871,7 +2877,7 @@ export function makeOpenCodeAdapter(
                 // moved into a git worktree). Fork it into the requested
                 // directory instead of minting an empty one — the fork carries
                 // the full history, so the follow-up keeps its context (#3604).
-                if (adopted) {
+                if (adopted && !isRemote) {
                   yield* Effect.logInfo(
                     `OpenCode session '${adopted.id}' was created under a different working directory; forking into '${directory}' to preserve conversation history.`,
                   );
