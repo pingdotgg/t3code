@@ -323,10 +323,9 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
   const legacyInstances = Object.fromEntries(
-    Object.entries(settings.providers).map(([driver, config]) => [
-      driver,
-      { driver: ProviderDriverKind.make(driver), config },
-    ]),
+    Object.entries(settings.providers).map(
+      ([driver, config]) => [driver, { driver: ProviderDriverKind.make(driver), config }] as const,
+    ),
   );
   const fallbackEntry = Object.entries({
     ...legacyInstances,
