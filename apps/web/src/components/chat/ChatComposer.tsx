@@ -1233,6 +1233,7 @@ export interface ChatComposerProps {
   providerStatuses: ServerProvider[];
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
+  preserveUnavailableModelSelection?: boolean;
 
   // Context window
   activeContextWindow: ContextWindowSnapshot | null;
@@ -1349,6 +1350,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     providerStatuses,
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
+    preserveUnavailableModelSelection = false,
     activeContextWindow,
     compactThreadUnavailable,
     compactDisabled,
@@ -1586,15 +1588,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () =>
       resolveComposerProviderSelection({
         entries: providerInstanceEntries,
-        candidateInstanceIds: [
-          selectedProviderByThreadId,
-          activeThread?.session?.providerInstanceId,
-          activeThreadModelSelection?.instanceId,
-          activeProjectDefaultModelSelection?.instanceId,
-        ],
+        candidateInstanceIds: preserveUnavailableModelSelection
+          ? [
+              activeThreadModelSelection?.instanceId,
+              selectedProviderByThreadId,
+              activeThread?.session?.providerInstanceId,
+              activeProjectDefaultModelSelection?.instanceId,
+            ]
+          : [
+              selectedProviderByThreadId,
+              activeThread?.session?.providerInstanceId,
+              activeThreadModelSelection?.instanceId,
+              activeProjectDefaultModelSelection?.instanceId,
+            ],
         lockedProvider,
         lockedInstanceId:
           activeThread?.session?.providerInstanceId ?? activeThreadModelSelection?.instanceId,
+        preserveRequestedInstance: preserveUnavailableModelSelection,
       }),
     [
       activeProjectDefaultModelSelection?.instanceId,
@@ -1603,6 +1613,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedProviderByThreadId,
       lockedProvider,
       providerInstanceEntries,
+      preserveUnavailableModelSelection,
     ],
   );
   const selectedInstanceId =
@@ -1614,6 +1625,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ? providerInstanceEntries.find((entry) => hasProviderSetup(entry.snapshot))?.instanceId
         : undefined))
     : undefined;
+  const unavailableConfiguredSelection =
+    noProviderAvailable && preserveUnavailableModelSelection ? activeThreadModelSelection : null;
   const resolvedCompactDisabledReason =
     compactDisabledReason ?? (noProviderAvailable ? "Compacting is unavailable right now" : null);
   // The driver kind follows the instance that will actually run the turn,
@@ -1630,11 +1643,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     threadModelSelection: activeThreadModelSelection,
     projectModelSelection: activeProjectDefaultModelSelection,
     settings,
+    preserveThreadModelSelection: preserveUnavailableModelSelection,
   });
-  const providerSendBlockReason = getAntigravitySendBlockReason(
-    selectedProviderEntry?.snapshot,
-    selectedModel,
+  const selectedModelOptions = useMemo(
+    () =>
+      selectedProviderEntry
+        ? getAppModelOptionsForInstance(settings, selectedProviderEntry, selectedModel, {
+            preserveUnavailableSelection: preserveUnavailableModelSelection,
+          })
+        : [],
+    [preserveUnavailableModelSelection, selectedModel, selectedProviderEntry, settings],
   );
+  const selectedModelUnavailable = selectedModelOptions.some(
+    (option) => option.slug === selectedModel && option.isUnavailable,
+  );
+  const providerSendBlockReason = selectedModelUnavailable
+    ? "Select an available model to continue"
+    : getAntigravitySendBlockReason(selectedProviderEntry?.snapshot, selectedModel);
   const sendDisabledReason =
     externalSendDisabledReason ??
     (activePendingProgress ? null : (attachmentBlockReason ?? providerSendBlockReason));
@@ -1762,11 +1787,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           settings,
           entry,
           entry.instanceId === selectedInstanceId ? selectedModelForPicker : null,
+          entry.instanceId === selectedInstanceId
+            ? { preserveUnavailableSelection: preserveUnavailableModelSelection }
+            : undefined,
         ),
       );
     }
     return out;
-  }, [providerInstanceEntries, selectedInstanceId, selectedModelForPicker, settings]);
+  }, [
+    preserveUnavailableModelSelection,
+    providerInstanceEntries,
+    selectedInstanceId,
+    selectedModelForPicker,
+    settings,
+  ]);
   const selectedModelForPickerWithCustomFallback = useMemo(() => {
     const currentOptions = modelOptionsByInstance.get(selectedInstanceId) ?? [];
     return currentOptions.some((option) => option.slug === selectedModelForPicker)
@@ -3941,7 +3975,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       className="shrink-0 gap-2 px-2 text-secondary-label sm:px-3"
     >
       <CircleAlertIcon className="size-4" />
-      {providerSetupInstanceId ? "Open provider settings" : "No provider available"}
+      {unavailableConfiguredSelection ? (
+        <span className="max-w-48 truncate">{`${unavailableConfiguredSelection.instanceId} / ${unavailableConfiguredSelection.model} unavailable`}</span>
+      ) : providerSetupInstanceId ? (
+        "Open provider settings"
+      ) : (
+        "No provider available"
+      )}
     </Button>
   ) : (
     <>

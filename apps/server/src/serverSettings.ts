@@ -344,6 +344,7 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "backgroundActivity",
   "automaticGitFetchInterval",
   "providerHealthRefreshInterval",
+  "defaultThreadModelSelection",
   "sourceControlWriterModelSelection",
   "textGenerationModelSelection",
 ]);

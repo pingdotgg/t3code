@@ -111,6 +111,7 @@ vi.mock("../state/entities", () => ({
   ],
   readThreadShell: () => null,
   useProjects: () => [],
+  useServerConfigs: () => new Map(),
   useThread: () => null,
 }));
 vi.mock("../state/server", () => ({ primaryServerSettingsAtom: {} }));

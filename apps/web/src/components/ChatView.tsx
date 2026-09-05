@@ -1498,6 +1498,9 @@ export default function ChatView(props: ChatViewProps) {
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
+  const composerModelSelectionExplicit = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.modelSelectionExplicit === true,
+  );
   const composerHasUnsentContent = useComposerDraftStore((store) =>
     composerDraftHasUserContent(store.getComposerDraft(composerDraftTarget)),
   );
@@ -1745,10 +1748,15 @@ export default function ChatView(props: ChatViewProps) {
         ? buildLocalDraftThread(
             threadId,
             draftThread,
-            fallbackDraftProject?.defaultModelSelection ?? NO_PROVIDER_MODEL_SELECTION,
+            fallbackDraftProject?.defaultModelSelection ??
+              (fallbackDraftProject
+                ? environmentById.get(fallbackDraftProject.environmentId)?.serverConfig?.settings
+                    .defaultThreadModelSelection
+                : null) ??
+              NO_PROVIDER_MODEL_SELECTION,
           )
         : undefined,
-    [draftThread, fallbackDraftProject?.defaultModelSelection, threadId],
+    [draftThread, environmentById, fallbackDraftProject, threadId],
   );
   // Promotion is data-driven: the draft route keeps rendering while the
   // server thread (same pre-allocated ref) starts, so live state must not
@@ -2493,26 +2501,41 @@ export default function ChatView(props: ChatViewProps) {
       ),
     [providerStatuses, settings],
   );
+  const preserveUnavailableEnvironmentDefault =
+    isLocalDraftThread &&
+    !composerHasUnsentContent &&
+    !composerModelSelectionExplicit &&
+    activeProject?.defaultModelSelection == null &&
+    settings.defaultThreadModelSelection !== null;
   const { selectedProviderEntry, requestedDriverKind } = useMemo(
     () =>
       resolveComposerProviderSelection({
         entries: providerInstanceEntries,
-        candidateInstanceIds: [
-          selectedProviderByThreadId,
-          activeThread?.session?.providerInstanceId,
-          activeThread?.modelSelection.instanceId,
-          activeProject?.defaultModelSelection?.instanceId,
-        ],
+        candidateInstanceIds: preserveUnavailableEnvironmentDefault
+          ? [
+              activeThread?.modelSelection.instanceId,
+              selectedProviderByThreadId,
+              activeThread?.session?.providerInstanceId,
+            ]
+          : [
+              selectedProviderByThreadId,
+              activeThread?.session?.providerInstanceId,
+              activeThread?.modelSelection.instanceId,
+              activeProject?.defaultModelSelection?.instanceId,
+            ],
         lockedProvider,
         lockedInstanceId:
           activeThread?.session?.providerInstanceId ?? activeThread?.modelSelection.instanceId,
+        preserveRequestedInstance: preserveUnavailableEnvironmentDefault,
       }),
     [
       activeProject?.defaultModelSelection?.instanceId,
       activeThread?.modelSelection.instanceId,
       activeThread?.session?.providerInstanceId,
+      composerModelSelectionExplicit,
       lockedProvider,
       providerInstanceEntries,
+      preserveUnavailableEnvironmentDefault,
       selectedProviderByThreadId,
     ],
   );
@@ -7972,6 +7995,9 @@ export default function ChatView(props: ChatViewProps) {
                               activeProject?.defaultModelSelection
                             }
                             activeThreadModelSelection={activeThread?.modelSelection}
+                            preserveUnavailableModelSelection={
+                              preserveUnavailableEnvironmentDefault
+                            }
                             activeContextWindow={activeContextWindow}
                             compactThreadUnavailable={compactThreadUnavailable}
                             compactDisabled={compactDisabled}

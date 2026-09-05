@@ -38,9 +38,13 @@ uses its account catalog and does not support custom models.
 
 ## Model defaults
 
-T3 Code remembers your provider, model, and model options for new threads. A
-project's configured model takes precedence; resetting that project setting
-returns to the remembered selection.
+On web or desktop, **Settings → Providers** can set the provider, model, and model options used
+for new threads on that environment. Each connected environment has its own default. A model
+configured in a project's settings takes precedence; resetting the project setting returns it to
+the environment default.
+
+When neither default is configured, T3 Code keeps the existing behavior: it remembers the last
+provider, model, and model options you selected and then falls back to the provider default.
 
 Leaving reasoning level or service tier unset uses the provider's own configuration.
 

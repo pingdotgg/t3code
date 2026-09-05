@@ -900,6 +900,9 @@ export const ServerSettings = Schema.Struct({
   defaultThreadEnvMode: ThreadEnvMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("local" as const satisfies ThreadEnvMode)),
   ),
+  defaultThreadModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
@@ -1131,6 +1134,7 @@ export const ServerSettingsPatch = Schema.Struct({
   backgroundActivityProfile: Schema.optionalKey(BackgroundActivityProfile),
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
+  defaultThreadModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),

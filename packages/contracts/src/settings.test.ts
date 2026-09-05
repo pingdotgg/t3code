@@ -421,6 +421,29 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   });
 });
 
+describe("ServerSettings.defaultThreadModelSelection", () => {
+  it("defaults to no environment override", () => {
+    expect(decodeServerSettings({}).defaultThreadModelSelection).toBeNull();
+  });
+
+  it("accepts and preserves a complete model selection", () => {
+    const selection = {
+      instanceId: ProviderInstanceId.make("claude-work"),
+      model: "claude-sonnet-4-5",
+      options: [{ id: "effort", value: "high" }],
+    } as const;
+
+    expect(
+      decodeServerSettingsPatch({ defaultThreadModelSelection: selection })
+        .defaultThreadModelSelection,
+    ).toEqual(selection);
+    expect(
+      encodeServerSettings(decodeServerSettings({ defaultThreadModelSelection: selection }))
+        .defaultThreadModelSelection,
+    ).toEqual(selection);
+  });
+});
+
 describe("provider enabled defaults", () => {
   it("enables only the stable bindings by default", () => {
     const decoded = decodeServerSettings({});
