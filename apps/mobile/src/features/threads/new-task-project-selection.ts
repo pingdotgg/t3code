@@ -19,7 +19,7 @@ export function getProjectScopeSelectionTarget(
   );
 }
 
-export function getOnlySelectableProject(
+function getOnlySelectableProject(
   projectScopes: ReadonlyArray<HomeProjectScope>,
 ): EnvironmentProject | null {
   const onlyScope = projectScopes.length === 1 ? projectScopes[0] : null;
