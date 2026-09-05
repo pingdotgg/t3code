@@ -4,16 +4,10 @@ import type {
   NativeReviewDiffToken,
 } from "../diffs/nativeReviewDiffSurface";
 import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
-import { resolveMobileCodeSurface } from "../../lib/appearancePreferences";
 import { MOBILE_CODE_SURFACE, MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import type { SourceHighlightTokens } from "./sourceHighlightingState";
 
-export const NATIVE_SOURCE_ROW_HEIGHT = MOBILE_CODE_SURFACE.rowHeight;
 export const NATIVE_SOURCE_CONTENT_WIDTH = 32_000;
-
-export const NATIVE_SOURCE_STYLE: NativeReviewDiffStyle = createNativeSourceStyle(
-  resolveMobileCodeSurface(MOBILE_CODE_SURFACE.fontSize),
-);
 
 export function createNativeSourceStyle(
   codeSurface: ResolvedMobileCodeSurface,
