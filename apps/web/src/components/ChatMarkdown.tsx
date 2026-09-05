@@ -85,6 +85,7 @@ import {
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import {
   resolveMarkdownMediaPreview,
+  type ExpandedImageItem,
   type ExpandedImagePreview,
 } from "./chat/ExpandedImagePreview";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
@@ -1262,6 +1263,38 @@ const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
 );
 const MarkdownLinkContext = React.createContext(false);
 
+const MARKDOWN_GALLERY_IMAGE_ATTRIBUTE = "data-preview-image";
+
+/** Current preview item for each mounted preview-enabled image element. */
+const markdownGalleryItemsByElement = new WeakMap<Element, ExpandedImageItem>();
+
+export function registerMarkdownGalleryImage(element: Element, item: ExpandedImageItem): void {
+  markdownGalleryItemsByElement.set(element, item);
+}
+
+/**
+ * Every preview-enabled image in the same rendered message forms one gallery,
+ * so the expanded dialog can arrow through them in document order. Falls back
+ * to a single-image preview when the clicked image is outside a message body.
+ */
+export function markdownImageGalleryPreview(
+  target: Element,
+  clicked: ExpandedImageItem,
+): ExpandedImagePreview {
+  const galleryElements = [
+    ...(target
+      .closest(".chat-markdown")
+      ?.querySelectorAll(`img[${MARKDOWN_GALLERY_IMAGE_ATTRIBUTE}]`) ?? []),
+  ];
+  const images = galleryElements.flatMap((element) => {
+    const item = element === target ? clicked : markdownGalleryItemsByElement.get(element);
+    return item ? [{ element, item }] : [];
+  });
+  const index = images.findIndex(({ element }) => element === target);
+  if (index < 0) return { images: [clicked], index: 0 };
+  return { images: images.map(({ item }) => item), index };
+}
+
 function expandableMarkdownImageProps(
   onImageExpand: ((preview: ExpandedImagePreview) => void) | undefined,
   src: string,
@@ -1271,23 +1304,23 @@ function expandableMarkdownImageProps(
 ) {
   if (!onImageExpand) return {};
   const previewName = alt.trim() || "image";
+  const item: ExpandedImageItem = {
+    src,
+    name: previewName,
+    ...(originalUrl ? { originalUrl } : {}),
+    ...(actionsSource ? { actionsSource } : {}),
+  };
   const expand = (event: ReactMouseEvent | ReactKeyboardEvent) => {
     if (event.currentTarget.closest("a")) return;
     event.preventDefault();
     event.stopPropagation();
-    onImageExpand({
-      images: [
-        {
-          src,
-          name: previewName,
-          ...(originalUrl ? { originalUrl } : {}),
-          ...(actionsSource ? { actionsSource } : {}),
-        },
-      ],
-      index: 0,
-    });
+    onImageExpand(markdownImageGalleryPreview(event.currentTarget, item));
   };
   return {
+    ref: (element: HTMLImageElement | null) => {
+      if (element) markdownGalleryItemsByElement.set(element, item);
+    },
+    [MARKDOWN_GALLERY_IMAGE_ATTRIBUTE]: true,
     role: "button" as const,
     tabIndex: 0,
     "aria-label": `Preview ${previewName}`,
