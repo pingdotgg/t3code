@@ -105,6 +105,20 @@ environment, viewport/device, theme, scroll position, selections, and relevant
 loading or failure state. State the conditions that matter next to the media.
 Explain deliberate differences, such as a feature changing the default view.
 
+For every user-visible change, the minimum evidence is embedded animated GIFs
+showing **Before (base)** and **After (candidate)**. Use two vertically stacked,
+labeled GIFs or one GIF that shows the labeled base and candidate sequentially.
+Candidate-only interaction footage does not satisfy this comparison. For a
+static change, a labeled alternating-state GIF made from actual base/candidate
+captures is acceptable; disclose that it is a still-state comparison. Preserve
+screenshots and source recordings as supporting evidence.
+
+Every motion or interaction needed to demonstrate the change must appear in an
+animated GIF derived from the actual recording, including the action and settled
+result. A still-state slideshow cannot prove motion. MP4 links supplement these
+GIFs; they do not replace them. Missing base evidence or a required GIF is an
+explicit readiness gap, not permission to invent a baseline or omit the GIF.
+
 Use [media-workflow.md](references/media-workflow.md) for capture, contextual
 PNG/GIF cropping, annotation guidance, and inspection. Screenshots show
 states; recordings show transitions. Sampled-frame GIFs illustrate selected
@@ -138,8 +152,9 @@ needs a short explanation and focused verification, not a report.
 For every material visual claim, place a labeled artifact beside a sentence
 describing the observable result. Use descriptive alt text and recording link
 labels: “Before: saved purple reopens as green” tells the reviewer what to
-inspect; “before.png” does not. Use a before/after table when both images remain
-legible at review width, or stack full-width images when a table shrinks detail.
+inspect; “before.png” does not. Stack labeled evidence vertically at full width.
+Side-by-side evidence is prohibited: no Markdown or HTML comparison tables,
+columns, or composite images placing states beside one another.
 For several states, name each scenario. Put supplementary captures in a
 collapsible block when that keeps the main argument easier to read.
 
@@ -230,7 +245,13 @@ rendered PR view. Require these conditions before calling the packet ready:
   was fetched and checked for the intended content. A local file is a prepared
   artifact, not published evidence.
 - Before/after and recording labels identify the scenario and visible result;
-  screenshots, captions, and crops are readable at the expected review size.
+  screenshots, captions, and crops are readable at a 390 CSS-pixel mobile viewport
+  within the PR content column; add contextual detail crops when needed.
+- The published body embeds the required base/candidate animated GIF comparison
+  and GIFs covering every claimed motion or interaction. Decode and inspect their
+  frames and playback; a .gif extension or successful upload alone is insufficient.
+- Evidence is stacked vertically; no evidence appears in side-by-side tables,
+  columns, or composites.
 - Verification results and checked boxes agree with actual artifacts and runs.
 - Relevant capture conditions, substitutions, and untested paths are visible.
 - The evidence applies to the current candidate. After changes, repeat affected

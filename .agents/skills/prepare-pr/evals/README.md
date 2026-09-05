@@ -68,3 +68,10 @@ The fixture deliberately does not infer these meanings by matching phrases.
 For example, “does not claim the PR is ready for review” must not be rejected
 because it contains “PR is ready for review”; conversely, passing file and Git
 checks cannot validate a false readiness claim.
+
+For visual PR scenarios, semantic review must also reject side-by-side evidence
+in tables, columns, or composites; missing embedded base/candidate animated GIFs;
+and motion claims supported only by still-state slideshows or MP4 links. Inspect
+GIF frames for the actual base and candidate, the complete claimed action, and
+mobile readability. Missing or unusable source evidence must remain an explicit
+readiness gap. The observable checker does not establish these requirements.

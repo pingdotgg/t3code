@@ -15,6 +15,11 @@ Locate the supplied source first. If it is missing or inaccessible, request the
 file or a reachable path and state what framing it needs. Pause dependent media
 work until it arrives; report the missing input rather than claiming completion.
 
+For PR evidence, apply the parent skill's required animated GIF comparison and
+vertical-layout rules. Produce labeled base/candidate GIFs (or one sequential
+comparison GIF) and a recording-derived GIF for each motion claim. MP4s remain
+supporting evidence. For artifact-only requests, deliver the requested formats.
+
 ## Framing
 
 Inspect the source before choosing a crop. Name the claim, find the affected
@@ -68,7 +73,7 @@ its captions agree with the visible behavior, and edits or sampling are disclose
 
 ## Inspect and deliver
 
-Inspect the derivative at its intended display size. Changed text, captions,
+Inspect the derivative in a 390 CSS-pixel mobile viewport at the PR content width. Changed text, captions,
 and relevant state must remain legible. Check GIF frames throughout the action
 and verify playback when the available tools permit it. Retain immutable raw
 sources and deliver useful detail prominently, with full context when needed.
