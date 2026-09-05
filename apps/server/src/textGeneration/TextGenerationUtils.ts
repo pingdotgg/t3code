@@ -101,6 +101,7 @@ export function normalizeCliError(
       return new TextGenerationError({
         operation,
         detail: `${cliLabel(cliName)} is required but not available on PATH.`,
+        retryable: false,
         cause: error,
       });
     }
