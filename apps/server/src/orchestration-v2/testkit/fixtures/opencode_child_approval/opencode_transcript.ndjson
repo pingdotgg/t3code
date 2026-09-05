@@ -34,3 +34,11 @@
 {"type": "emit_inbound", "label": "root.assistant.completed", "frame": {"type": "sdk.event", "event": {"id": "evt_edca21e3800181OyYIBTDTTK3r", "type": "message.updated", "properties": {"sessionID": "ses_1235df8f8ffekByXP7gVnnXA3P", "info": {"id": "msg_edca21a5f003lreMfrQqG0qWIe", "parentID": "msg_edca20735001Esh39V762TEx7f", "role": "assistant", "mode": "build", "agent": "build", "path": {"cwd": "/private/tmp/t3-opencode-probe", "root": "/"}, "cost": 0, "tokens": {"total": 11007, "input": 248, "output": 7, "reasoning": 0, "cache": {"write": 0, "read": 10752}}, "modelID": "gpt-5.4-mini", "providerID": "openai", "time": {"created": 1781818071647, "completed": 1781818072632}, "sessionID": "ses_1235df8f8ffekByXP7gVnnXA3P", "finish": "stop"}}}}}
 {"type": "emit_inbound", "label": "root.idle", "frame": {"type": "sdk.event", "event": {"id": "evt_edca21e39001lo71BB2Ym4WFC2", "type": "session.status", "properties": {"sessionID": "ses_1235df8f8ffekByXP7gVnnXA3P", "status": {"type": "idle"}}}}}
 {"type": "runtime_exit", "status": "success"}
+{"type":"expect_outbound","label":"teardown.root.abort","frame":{"type":"session.abort","input":{"sessionID":"ses_1235df8f8ffekByXP7gVnnXA3P"}}}
+{"type":"emit_inbound","label":"teardown.root.abort.response","frame":{"type":"sdk.response","operation":"session.abort","data":true}}
+{"type":"expect_outbound","label":"teardown.root.children","frame":{"type":"session.children","input":{"sessionID":"ses_1235df8f8ffekByXP7gVnnXA3P"}}}
+{"type":"emit_inbound","label":"teardown.root.children.response","frame":{"type":"sdk.response","operation":"session.children","data":[{"id":"ses_1235debc9ffe9MNk00UheV2j0q"}]}}
+{"type":"expect_outbound","label":"teardown.child.abort","frame":{"type":"session.abort","input":{"sessionID":"ses_1235debc9ffe9MNk00UheV2j0q"}}}
+{"type":"emit_inbound","label":"teardown.child.abort.response","frame":{"type":"sdk.response","operation":"session.abort","data":true}}
+{"type":"expect_outbound","label":"teardown.child.children","frame":{"type":"session.children","input":{"sessionID":"ses_1235debc9ffe9MNk00UheV2j0q"}}}
+{"type":"emit_inbound","label":"teardown.child.children.response","frame":{"type":"sdk.response","operation":"session.children","data":[]}}

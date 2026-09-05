@@ -17,3 +17,7 @@
 {"type":"emit_inbound","label":"session.status.busy.finalizing","frame":{"type":"sdk.event","event":{"id":"evt_edc93b5d7002NYE00v0LorwLmf","type":"session.status","properties":{"sessionID":"ses_1236c522dffeunHBidt20OIzWc","status":{"type":"busy"}}}}}
 {"type":"emit_inbound","label":"session.status.idle","frame":{"type":"sdk.event","event":{"id":"evt_edc93b5d8001wkyQQVJNv3M9vP","type":"session.status","properties":{"sessionID":"ses_1236c522dffeunHBidt20OIzWc","status":{"type":"idle"}}}}}
 {"type":"runtime_exit","status":"success"}
+{"type":"expect_outbound","label":"teardown.session.abort","frame":{"type":"session.abort","input":{"sessionID":"ses_1236c522dffeunHBidt20OIzWc"}}}
+{"type":"emit_inbound","label":"teardown.session.abort.response","frame":{"type":"sdk.response","operation":"session.abort","data":true}}
+{"type":"expect_outbound","label":"teardown.session.children","frame":{"type":"session.children","input":{"sessionID":"ses_1236c522dffeunHBidt20OIzWc"}}}
+{"type":"emit_inbound","label":"teardown.session.children.response","frame":{"type":"sdk.response","operation":"session.children","data":[]}}
