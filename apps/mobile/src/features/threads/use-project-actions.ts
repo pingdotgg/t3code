@@ -4,6 +4,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { mapAtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import {
+  AuthOrchestrationOperateScope,
   ThreadId,
   type ModelSelection,
   type ProviderInteractionMode,
@@ -26,6 +27,7 @@ import { setPendingConnectionError } from "../../state/use-remote-environment-re
 import { validateProjectThreadCreation } from "./projectThreadCreationValidation";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
+import { readEnvironmentScope } from "../../state/session";
 import { resolveProviderInteractionMode } from "./legacy-plan-mode";
 
 export function useCreateProjectThread() {
@@ -49,6 +51,11 @@ export function useCreateProjectThread() {
       /** Reuse identifiers from a queued pending task instead of minting new ones. */
       readonly turnMetadata?: TurnCommandMetadata;
     }) => {
+      if (!readEnvironmentScope(input.project.environmentId, AuthOrchestrationOperateScope)) {
+        const error = new Error("This connection cannot start tasks.");
+        setPendingConnectionError(error.message);
+        return AsyncResult.failure(Cause.fail(error));
+      }
       const metadata = input.turnMetadata ?? makeTurnCommandMetadata();
       const threadId = ThreadId.make(metadata.threadId);
       const initialMessageText = input.initialMessageText.trim();
@@ -128,6 +135,11 @@ export function useCreateProjectThread() {
         (candidate) => candidate.instanceId === input.modelSelection.instanceId,
       );
 
+      if (!readEnvironmentScope(input.project.environmentId, AuthOrchestrationOperateScope)) {
+        const error = new Error("This connection cannot start tasks.");
+        setPendingConnectionError(error.message);
+        return AsyncResult.failure(Cause.fail(error));
+      }
       const result = await startTurn({
         environmentId: input.project.environmentId,
         input: buildProjectThreadStartTurnInput({
