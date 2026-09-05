@@ -10,6 +10,7 @@ import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
+import * as MonitorSession from "./MonitorSession.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -348,7 +349,11 @@ it.effect("HTTP tool discovery only advertises monitors to monitoring credential
   }).pipe(
     Effect.scoped,
     Effect.provide(
-      Layer.mergeAll(McpSessionRegistry.layer, PreviewAutomationBroker.layer).pipe(
+      Layer.mergeAll(
+        McpSessionRegistry.layer,
+        PreviewAutomationBroker.layer,
+        MonitorSession.layer,
+      ).pipe(
         Layer.provide(
           Layer.succeed(
             ServerEnvironment.ServerEnvironment,
