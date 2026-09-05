@@ -186,16 +186,27 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly abortController: AbortController;
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string | undefined;
+  /**
+   * Ask the CLI to disable hooks for this probe. Defaults to `true`.
+   *
+   * The SDK serializes any `settings` object into a `--settings <json>`
+   * argument, so hook suppression is only available on CLIs that accept that
+   * argument. When `false` the key is omitted entirely rather than set to
+   * `disableAllHooks: false`, because a present-but-falsy object would still
+   * emit the argument.
+   */
+  readonly suppressHooks?: boolean | undefined;
 }): ClaudeQueryOptions {
+  const suppressHooks = input.suppressHooks ?? true;
   return {
     persistSession: false,
     pathToClaudeCodeExecutable: input.executablePath,
     abortController: input.abortController,
     settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
     // The probe keeps filesystem setting sources for slash-command discovery,
-    // but must not run the user's hooks: it fires every few minutes, so
+    // but should not run the user's hooks: it fires every few minutes, so
     // SessionStart hooks would run on every health check.
-    settings: { disableAllHooks: true },
+    ...(suppressHooks ? { settings: { disableAllHooks: true } } : {}),
     allowedTools: [],
     // Ignore MCP definitions from every filesystem setting source above. The
     // SDK combines this empty explicit map with --strict-mcp-config.
@@ -327,11 +338,14 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
  * This is used as a fallback when `claude auth status` does not include
  * subscription type information.
  */
-const probeClaudeCapabilities = (
+const runClaudeCapabilitiesProbeAttempt = (
   claudeSettings: ClaudeSettings,
+  suppressHooks: boolean,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
 ) => {
+  // One controller per attempt: `Effect.ensuring` below aborts it, so a retry
+  // cannot reuse it.
   const abort = new AbortController();
   return Effect.gen(function* () {
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
@@ -352,6 +366,7 @@ const probeClaudeCapabilities = (
           abortController: abort,
           environment: claudeEnvironment,
           cwd,
+          suppressHooks,
         }),
       });
       const init = await q.initializationResult();
@@ -394,10 +409,50 @@ const probeClaudeCapabilities = (
         if (!abort.signal.aborted) abort.abort();
       }),
     ),
+  );
+};
+
+/**
+ * A timeout means the CLI is slow to initialize rather than unwilling to accept
+ * the argument, so retrying it would only double the worst-case duration of a
+ * check that runs every few minutes.
+ */
+const isRetryableProbeFailure = (error: { readonly _tag: string }): boolean =>
+  error._tag !== "TimeoutError";
+
+/**
+ * Run the capability probe, retrying once without hook suppression.
+ *
+ * Hook suppression is an optimisation, not a requirement: the SDK can only
+ * express it as a `--settings <json>` argument, and a Claude CLI is free to
+ * reject arguments it does not allow. When that happens the first attempt dies
+ * with a non-zero exit before returning any initialization data, which would
+ * otherwise cost the caller its model list, slash commands and usage limits —
+ * a health check disabling capability discovery for a CLI that runs sessions
+ * perfectly well.
+ *
+ */
+const probeClaudeCapabilities = (
+  claudeSettings: ClaudeSettings,
+  environment?: NodeJS.ProcessEnv,
+  cwd?: string,
+) =>
+  runClaudeCapabilitiesProbeAttempt(claudeSettings, true, environment, cwd).pipe(
+    Effect.catchIf(isRetryableProbeFailure, (cause) =>
+      Effect.logWarning("Claude capability probe failed; retrying without hook suppression.", {
+        cause,
+      }).pipe(
+        Effect.andThen(runClaudeCapabilitiesProbeAttempt(claudeSettings, false, environment, cwd)),
+      ),
+    ),
+    // Without this the cause is dropped on the floor: the caller only ever sees
+    // `undefined`, and the provider reports "could not verify" with no clue why.
+    Effect.tapError((cause) =>
+      Effect.logWarning("Claude capability probe failed; capabilities are unavailable.", { cause }),
+    ),
     Effect.result,
     Effect.map((result) => (Result.isSuccess(result) ? result.success : undefined)),
   );
-};
 
 const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   claudeSettings: ClaudeSettings,
