@@ -1348,7 +1348,14 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     }
 
     guard let row = row(at: point) else {
-      return nil
+      guard verticalOffset + point.y >= contentHeight,
+            fileHeaderRowIndices.isEmpty,
+            contentWidthsByFileId.count == 1,
+            let fileId = contentWidthsByFileId.keys.first,
+            !collapsedFileIds.contains(fileId) else {
+        return nil
+      }
+      return (fileId, .code)
     }
 
     let fileId = resolvedFileId(for: row)
