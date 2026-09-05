@@ -3249,7 +3249,9 @@ export function ConnectionsSettings() {
                 <AlertDialogDescription>
                   {pendingDesktopServerExposureMode === "network-accessible"
                     ? "Other devices on your network can pair with this environment, and anyone with a valid pairing credential can run commands here until it expires or is revoked. T3 Code will restart."
-                    : "Only this machine can reach this environment again. Devices that already paired will disconnect. T3 Code will restart."}
+                    : tailscaleHttpsEndpoint?.status === "available"
+                      ? "Only this machine and your tailnet can reach this environment again. Tailscale HTTPS stays on; devices that paired over the local network will disconnect. T3 Code will restart."
+                      : "Only this machine can reach this environment again. Devices that paired over the local network will disconnect. T3 Code will restart."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
