@@ -55,6 +55,10 @@
       "types": "./src/rpc/index.ts",
       "default": "./src/rpc/index.ts"
     },
+    "./gateway": {
+      "types": "./src/gateway/index.ts",
+      "default": "./src/gateway/index.ts"
+    },
     "./operations": {
       "types": "./src/operations/index.ts",
       "default": "./src/operations/index.ts"

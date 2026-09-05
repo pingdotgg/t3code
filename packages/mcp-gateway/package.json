@@ -1,0 +1,35 @@
+{
+  "name": "@t3tools/mcp-gateway",
+  "private": true,
+  "bin": {
+    "t3-mcp-gateway": "./src/bin.ts"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./server": {
+      "types": "./src/server.ts",
+      "default": "./src/server.ts"
+    }
+  },
+  "scripts": {
+    "build": "vp build",
+    "typecheck": "tsgo --noEmit",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@t3tools/client-runtime": "workspace:*",
+    "ws": "^8.18.3",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "@types/ws": "^8.18.1",
+    "vite-plus": "catalog:"
+  }
+}

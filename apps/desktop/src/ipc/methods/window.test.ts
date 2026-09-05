@@ -14,7 +14,32 @@ import {
   getLocalEnvironmentBootstraps,
   getWindowFullscreenState,
   pickProjectFavicon,
+  resolveMcpGatewayLaunchConfig,
 } from "./window.ts";
+
+describe("resolveMcpGatewayLaunchConfig", () => {
+  it("returns an Electron-as-Node command only for packaged desktop builds", () => {
+    assert.isNull(
+      resolveMcpGatewayLaunchConfig({
+        isPackaged: false,
+        executablePath: "/app/T3 Code",
+        resourcesPath: "/app/resources",
+      }),
+    );
+    assert.deepEqual(
+      resolveMcpGatewayLaunchConfig({
+        isPackaged: true,
+        executablePath: "/app/T3 Code",
+        resourcesPath: "/app/resources",
+      }),
+      {
+        command: "/app/T3 Code",
+        args: ["/app/resources/t3-mcp-gateway.mjs"],
+        env: { ELECTRON_RUN_AS_NODE: "1" },
+      },
+    );
+  });
+});
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "wsl.exe",

@@ -33,6 +33,7 @@ import {
 } from "./methods/updates.ts";
 import {
   getAppBranding,
+  getMcpGatewayLaunchConfig,
   getLocalEnvironmentBootstraps,
   getLocalEnvironmentBearerToken,
   getSystemLocale,
@@ -58,6 +59,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(AppActivationIpc.complete);
 
   yield* ipc.handleSync(getAppBranding);
+  yield* ipc.handleSync(getMcpGatewayLaunchConfig);
   yield* ipc.handleSync(getSystemLocale);
   yield* ipc.handleSync(getWindowFullscreenState);
   yield* ipc.handleSync(getLocalEnvironmentBootstraps);

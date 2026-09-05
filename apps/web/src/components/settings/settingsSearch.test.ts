@@ -91,6 +91,8 @@ describe("searchSettings", () => {
     expect(searchSettings("Google sign in")[0]?.id).toBe("providers");
     expect(searchSettings("authorized clients")[0]?.id).toBe("connections-environment");
     expect(searchSettings("administrative access")[0]?.id).toBe("connections-environment");
+    expect(searchSettings("mcp")[0]?.id).toBe("mcp-gateway");
+    expect(searchSettings("gateway")[0]?.id).toBe("mcp-gateway");
   });
 
   it("lists thread confirmations in panel order", () => {

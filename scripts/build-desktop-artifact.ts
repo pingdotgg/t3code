@@ -544,6 +544,7 @@ const DesktopBuildInputArtifact = Schema.Literals([
   "desktop-dist",
   "desktop-resources",
   "server-dist",
+  "mcp-gateway-dist",
   "bundled-server-client",
 ]);
 type DesktopBuildInputArtifact = typeof DesktopBuildInputArtifact.Type;
@@ -551,6 +552,7 @@ const desktopBuildInputArtifactNames = {
   "desktop-dist": "desktopDist",
   "desktop-resources": "desktopResources",
   "server-dist": "serverDist",
+  "mcp-gateway-dist": "MCP gateway bundle",
   "bundled-server-client": "bundled server client",
 } satisfies Record<DesktopBuildInputArtifact, string>;
 
@@ -962,6 +964,7 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/resources/browser-secret/**/*",
   "!apps/desktop/prod-resources/browser-secret",
   "!apps/desktop/prod-resources/browser-secret/**/*",
+  "!packages/mcp-gateway/dist/t3-mcp-gateway.mjs",
   // Windows stages the server sidecar below prod-resources so electron-builder
   // can copy it using project-relative extraResources matchers. Keep those
   // staging inputs out of app.asar; they are emitted once at resources/.
@@ -1092,6 +1095,10 @@ export const DESKTOP_EXTRA_RESOURCES = [
     to: "resource-monitor",
   },
 ] as const;
+export const MCP_GATEWAY_EXTRA_RESOURCE = {
+  from: "packages/mcp-gateway/dist/t3-mcp-gateway.mjs",
+  to: "t3-mcp-gateway.mjs",
+} as const;
 export const LINUX_BROWSER_SECRET_EXTRA_RESOURCES = [
   { from: "apps/desktop/prod-resources/browser-secret", to: "browser-secret" },
 ] as const;
@@ -2599,6 +2606,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // hand-packed server.asar sidecar (see WINDOWS_SERVER_ASAR_RESOURCE).
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      MCP_GATEWAY_EXTRA_RESOURCE,
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
       ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
@@ -3442,6 +3450,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     desktopDist: path.join(repoRoot, "apps/desktop/dist-electron"),
     desktopResources: path.join(repoRoot, "apps/desktop/resources"),
     serverDist: path.join(repoRoot, "apps/server/dist"),
+    mcpGatewayDist: path.join(repoRoot, "packages/mcp-gateway/dist/t3-mcp-gateway.mjs"),
   };
   const bundledClientEntry = path.join(distDirs.serverDist, "client/index.html");
 
@@ -3461,6 +3470,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     { artifact: "desktop-dist", artifactPath: distDirs.desktopDist },
     { artifact: "desktop-resources", artifactPath: distDirs.desktopResources },
     { artifact: "server-dist", artifactPath: distDirs.serverDist },
+    { artifact: "mcp-gateway-dist", artifactPath: distDirs.mcpGatewayDist },
   ] as const;
   for (const input of requiredBuildInputs) {
     if (!(yield* fs.exists(input.artifactPath))) {
@@ -3470,6 +3480,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       });
     }
   }
+  const stagedMcpGatewayBundle = path.join(stageAppDir, MCP_GATEWAY_EXTRA_RESOURCE.from);
+  yield* fs.makeDirectory(path.dirname(stagedMcpGatewayBundle), { recursive: true });
+  yield* fs.copyFile(distDirs.mcpGatewayDist, stagedMcpGatewayBundle);
 
   // Assert against the emitted bundle, not the bundler config. `alwaysBundle`
   // only forces packages IN, so a transitive dependency of an external package

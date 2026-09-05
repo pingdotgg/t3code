@@ -16,6 +16,7 @@ import {
 import { WORKSPACE_IMAGE_PREVIEW_EXTENSIONS } from "@t3tools/shared/filePreview";
 import { isCommandAvailable } from "@t3tools/shared/shell";
 import * as NodeOS from "node:os";
+
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
@@ -52,6 +53,25 @@ const ContextMenuInput = Schema.Struct({
   position: Schema.optionalKey(ContextMenuPosition),
 });
 
+const McpGatewayLaunchConfigSchema = Schema.Struct({
+  command: Schema.String,
+  args: Schema.Array(Schema.String),
+  env: Schema.Record(Schema.String, Schema.String),
+});
+
+export function resolveMcpGatewayLaunchConfig(input: {
+  readonly isPackaged: boolean;
+  readonly executablePath: string;
+  readonly resourcesPath: string;
+}) {
+  if (!input.isPackaged) return null;
+  return {
+    command: input.executablePath,
+    args: [`${input.resourcesPath}/t3-mcp-gateway.mjs`],
+    env: { ELECTRON_RUN_AS_NODE: "1" },
+  };
+}
+
 function toWebSocketBaseUrl(httpBaseUrl: URL): string {
   const url = new URL(httpBaseUrl.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -64,6 +84,20 @@ export const getAppBranding = DesktopIpc.makeSyncIpcMethod({
   handler: Effect.fn("desktop.ipc.window.getAppBranding")(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     return environment.branding;
+  }),
+});
+
+export const getMcpGatewayLaunchConfig = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_MCP_GATEWAY_LAUNCH_CONFIG_CHANNEL,
+  result: Schema.NullOr(McpGatewayLaunchConfigSchema),
+  handler: Effect.fn("desktop.ipc.window.getMcpGatewayLaunchConfig")(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    // Electron is the packaged Node runtime when ELECTRON_RUN_AS_NODE is set.
+    return resolveMcpGatewayLaunchConfig({
+      isPackaged: environment.isPackaged,
+      executablePath: process.execPath,
+      resourcesPath: environment.resourcesPath,
+    });
   }),
 });
 

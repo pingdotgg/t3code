@@ -38,6 +38,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }
     return result as ReturnType<DesktopBridge["getAppBranding"]>;
   },
+  getMcpGatewayLaunchConfig: () => {
+    const result = ipcRenderer.sendSync(IpcChannels.GET_MCP_GATEWAY_LAUNCH_CONFIG_CHANNEL);
+    if (typeof result !== "object" || result === null) return null;
+    return result as ReturnType<DesktopBridge["getMcpGatewayLaunchConfig"]>;
+  },
   getClientPlatform: () => clientPlatform,
   getSystemLocale: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_LOCALE_CHANNEL);

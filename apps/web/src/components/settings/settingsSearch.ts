@@ -9,6 +9,7 @@ export type SettingsPath =
   | "/settings/integrations"
   | "/settings/source-control"
   | "/settings/connections"
+  | "/settings/mcp-gateway"
   | "/settings/archived";
 
 export interface SettingsSearchItem {
@@ -54,6 +55,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/integrations": "Integrations",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
+  "/settings/mcp-gateway": "MCP Gateway",
   "/settings/archived": "Archive",
 };
 
@@ -504,6 +506,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Remote environments",
     to: "/settings/connections",
     searchTerms: ["add pair backend host code ssh config agent tunnel saved t3 connect"],
+  },
+  {
+    id: "mcp-gateway",
+    title: "MCP Gateway",
+    to: "/settings/mcp-gateway",
+    searchTerms: ["model context protocol voice agent bridge companion"],
   },
   {
     id: "archive",
