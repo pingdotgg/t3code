@@ -22,7 +22,6 @@ function mount(rowCount: number) {
       createNodeMock: () => ({}) as HTMLElement,
     });
   });
-  return controllers[0]!;
 }
 
 function update(rowCount: number, nodeKey = "list") {
@@ -61,17 +60,20 @@ afterEach(async () => {
 
 describe("legacy sidebar thread-list animation", () => {
   it.each([
-    [0, true],
-    [1, true],
-    [20, true],
-    [21, false],
-    [101, false],
-  ])("sets animation for %i visible thread rows to %s", (rowCount, enabled) => {
-    expect(mount(rowCount).isEnabled()).toBe(enabled);
+    [0, 1],
+    [1, 1],
+    [20, 1],
+    [21, 0],
+    [101, 0],
+  ])("registers %i visible thread rows with %i observers", (rowCount, count) => {
+    mount(rowCount);
+    expect(controllers).toHaveLength(count);
+    if (count) expect(controllers[0]!.isEnabled()).toBe(true);
   });
 
   it("keeps one controller and ordinary animation for small changes", () => {
-    const controller = mount(19);
+    mount(19);
+    const controller = controllers[0]!;
     update(20);
     update(19);
     expect(controllers).toHaveLength(1);
@@ -80,74 +82,74 @@ describe("legacy sidebar thread-list animation", () => {
   });
 
   it.each([0, 1, 20])(
-    "bypasses bulk collapse to %i rows before restoring small-list animation",
-    async (rowCount) => {
-      const controller = mount(20);
+    "unregisters large lists and recreates animation after collapsing to %i rows",
+    (rowCount) => {
+      mount(20);
+      const controller = controllers[0]!;
       update(101);
+      expect(controller.destroy).toHaveBeenCalledOnce();
       expect(controller.isEnabled()).toBe(false);
 
       update(rowCount);
       expect(controller.isEnabled()).toBe(false);
-      await Promise.resolve();
-      expect(controller.isEnabled()).toBe(true);
+      expect(controllers).toHaveLength(2);
+      expect(controllers[1]!.isEnabled()).toBe(true);
 
       update(rowCount === 20 ? 19 : rowCount + 1);
-      expect(controller.isEnabled()).toBe(true);
+      expect(controllers).toHaveLength(2);
+      expect(controllers[1]!.isEnabled()).toBe(true);
     },
   );
 
-  it("does not re-enable a large list after a newer render", async () => {
-    const controller = mount(101);
+  it("does not leave an observer after a rapid collapse and expansion", () => {
+    mount(101);
+    expect(controllers).toHaveLength(0);
     update(1);
+    const controller = controllers[0]!;
     update(101);
-    await Promise.resolve();
-    expect(controller.isEnabled()).toBe(false);
-  });
-
-  it("keeps a second small commit disabled until the bulk removal is processed", async () => {
-    const controller = mount(101);
-    update(1);
-    update(2);
-    expect(controller.isEnabled()).toBe(false);
-    await Promise.resolve();
-    expect(controller.isEnabled()).toBe(true);
-  });
-
-  it("destroys the controller on unmount and cancels its pending re-enable", async () => {
-    const controller = mount(101);
-    update(1);
-    act(() => renderer!.unmount());
-    renderer = null;
-    await Promise.resolve();
     expect(controller.destroy).toHaveBeenCalledOnce();
     expect(controller.isEnabled()).toBe(false);
   });
 
-  it.each([1, 101])(
-    "recreates controller state after replacing a %i-row node",
-    async (rowCount) => {
-      const oldController = mount(101);
-      update(rowCount);
-      update(101, "replacement");
-      await Promise.resolve();
-      expect(oldController.destroy).toHaveBeenCalledOnce();
-      expect(oldController.isEnabled()).toBe(false);
-      expect(controllers).toHaveLength(2);
-      expect(controllers[1]!.isEnabled()).toBe(false);
-    },
-  );
+  it("reuses the recreated observer for consecutive small commits", () => {
+    mount(101);
+    update(1);
+    const controller = controllers[0]!;
+    update(2);
+    expect(controllers).toHaveLength(1);
+    expect(controller.isEnabled()).toBe(true);
+  });
+
+  it("destroys the small-list controller on unmount", () => {
+    mount(1);
+    const controller = controllers[0]!;
+    act(() => renderer!.unmount());
+    renderer = null;
+    expect(controller.destroy).toHaveBeenCalledOnce();
+    expect(controller.isEnabled()).toBe(false);
+  });
+
+  it.each([1, 101])("recreates controller state after replacing a %i-row node", (rowCount) => {
+    mount(1);
+    const oldController = controllers[0]!;
+    update(rowCount, "replacement");
+    expect(oldController.destroy).toHaveBeenCalledOnce();
+    expect(oldController.isEnabled()).toBe(false);
+    expect(controllers).toHaveLength(rowCount === 1 ? 2 : 1);
+    if (rowCount === 1) expect(controllers[1]!.isEnabled()).toBe(true);
+  });
 
   it("recreates and cleans up the controller during StrictMode replay", () => {
     act(() => {
       renderer = create(
         <StrictMode>
-          <ThreadList rowCount={101} />
+          <ThreadList rowCount={1} />
         </StrictMode>,
         { createNodeMock: () => ({}) as HTMLElement },
       );
     });
     expect(controllers).toHaveLength(2);
     expect(controllers[0]!.destroy).toHaveBeenCalledOnce();
-    expect(controllers[1]!.isEnabled()).toBe(false);
+    expect(controllers[1]!.isEnabled()).toBe(true);
   });
 });

@@ -4,9 +4,8 @@ import { useCallback, useLayoutEffect, useRef } from "react";
 export const MAX_ANIMATED_SIDEBAR_THREAD_ROWS = 20;
 
 interface ThreadListAnimation {
-  controller: AnimationController;
-  visibleRowCount: number;
-  pendingEnable: boolean;
+  node: HTMLElement;
+  controller: AnimationController | null;
 }
 
 export function useSidebarThreadListAutoAnimate(visibleRowCount: number) {
@@ -14,15 +13,11 @@ export function useSidebarThreadListAutoAnimate(visibleRowCount: number) {
   const attach = useCallback((node: HTMLElement | null) => {
     if (!node) return;
 
-    const animation = {
-      controller: autoAnimate(node, { duration: 180, easing: "ease-out" }),
-      visibleRowCount: 0,
-      pendingEnable: false,
-    };
+    const animation: ThreadListAnimation = { node, controller: null };
     animationRef.current = animation;
 
     return () => {
-      animation.controller.destroy?.();
+      animation.controller?.destroy?.();
       animationRef.current = null;
     };
   }, []);
@@ -31,31 +26,14 @@ export function useSidebarThreadListAutoAnimate(visibleRowCount: number) {
     const animation = animationRef.current;
     if (!animation) return;
 
-    const previousRowCount = animation.visibleRowCount;
-    animation.visibleRowCount = visibleRowCount;
-    if (previousRowCount === visibleRowCount) return;
-    if (
-      previousRowCount <= MAX_ANIMATED_SIDEBAR_THREAD_ROWS &&
-      visibleRowCount <= MAX_ANIMATED_SIDEBAR_THREAD_ROWS
-    ) {
-      if (!animation.pendingEnable) animation.controller.enable();
+    if (visibleRowCount > MAX_ANIMATED_SIDEBAR_THREAD_ROWS) {
+      // disable() still reinserts removed nodes. Disconnect before mutation delivery instead.
+      animation.controller?.destroy?.();
+      animation.controller = null;
       return;
     }
 
-    animation.controller.disable();
-    if (visibleRowCount > MAX_ANIMATED_SIDEBAR_THREAD_ROWS || animation.pendingEnable) return;
-
-    // MutationObserver must process the bulk removal before later small changes can animate.
-    animation.pendingEnable = true;
-    queueMicrotask(() => {
-      animation.pendingEnable = false;
-      if (
-        animationRef.current === animation &&
-        animation.visibleRowCount <= MAX_ANIMATED_SIDEBAR_THREAD_ROWS
-      ) {
-        animation.controller.enable();
-      }
-    });
+    animation.controller ??= autoAnimate(animation.node, { duration: 180, easing: "ease-out" });
   });
 
   return attach;
