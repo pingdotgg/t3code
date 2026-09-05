@@ -51,6 +51,7 @@ import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useTheme } from "./useTheme";
 import { environmentSession, readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -430,15 +431,19 @@ export function usePrimarySettingsAvailable(): boolean {
   return primaryEnvironment !== null || !isHostedStaticApp();
 }
 
-/** Environments that can receive a shared settings write right now. */
-function useSharedSettingsSyncTargetIds(): ReadonlyArray<EnvironmentId> {
+/** Connected sync targets, excluding grants already known to forbid settings writes. */
+function useSharedSettingsSyncTargetIds(includePending = false): ReadonlyArray<EnvironmentId> {
   const { environments } = useEnvironments();
   const writableTargetsAtom = useMemo(
     () =>
       Atom.make((get) =>
         environments.filter(supportsSharedSettingsSync).flatMap((environment) => {
-          // Subscribe before offering sync so the first action sees each target's grant.
           const result = get(environmentSession.sessionStateAtom(environment.environmentId));
+          // A cold grant must not drop a shared edit. The server authorizes the
+          // write; mismatch suggestions still wait for a confirmed grant.
+          if (includePending && result._tag === "Initial") {
+            return [environment.environmentId];
+          }
           const session =
             result._tag === "Failure" ? null : Option.getOrNull(AsyncResult.value(result));
           return session?.authenticated && session.scopes?.includes(AuthSettingsWriteScope)
@@ -446,7 +451,7 @@ function useSharedSettingsSyncTargetIds(): ReadonlyArray<EnvironmentId> {
             : [];
         }),
       ),
-    [environments],
+    [environments, includePending],
   );
   return useAtomValue(writableTargetsAtom);
 }
@@ -468,6 +473,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
     "server settings update",
   );
   const { environments } = useEnvironments();
+  const sharedSettingsSyncTargetIds = useSharedSettingsSyncTargetIds(true);
   const updateSettings = useCallback(
     (patch: UnifiedSettingsPatch) => {
       const { serverPatch, clientPatch } = splitPatch(patch);
@@ -507,9 +513,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           const sourceSettings = environments.find(
             (target) => target.environmentId === environmentId,
           )?.serverConfig?.settings;
-          const targets = new Set(
-            environments.filter(supportsSharedSettingsSync).map((target) => target.environmentId),
-          );
+          const targets = new Set(sharedSettingsSyncTargetIds);
           if (environmentId) {
             targets.add(environmentId);
           }
@@ -524,7 +528,9 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
               targetId === environmentId,
             );
             if (Object.keys(targetPatch).length === 0) continue;
+            const session = appAtomRegistry.get(environmentSession.sessionStateAtom(targetId));
             if (
+              session._tag !== "Initial" &&
               !requiredScopesForServerSettingsPatch(sharedPatch).every((scope) =>
                 readEnvironmentScope(targetId, scope),
               )
@@ -547,7 +553,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
         void persistClientSettingsPatch(clientPatch);
       }
     },
-    [environmentId, environments, persistServerSettings],
+    [environmentId, environments, persistServerSettings, sharedSettingsSyncTargetIds],
   );
 
   return updateSettings;
