@@ -28,7 +28,7 @@ import {
   layer as eventSinkLayer,
 } from "../orchestration-v2/EventSink.ts";
 import { layer as eventStoreLayer } from "../orchestration-v2/EventStore.ts";
-import { layer as idAllocatorLayer } from "../orchestration-v2/IdAllocator.ts";
+import { IdAllocatorV2, layer as idAllocatorLayer } from "../orchestration-v2/IdAllocator.ts";
 import {
   LegacyV1ThreadImporter,
   layer as legacyImporterLayer,
@@ -45,6 +45,7 @@ import {
   ThreadCommandExecutor,
   layer as threadCommandExecutorLayer,
 } from "../orchestration-v2/ThreadCommandExecutor.ts";
+import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import { ProjectionProjectRepositoryLive } from "../persistence/Layers/ProjectionProjects.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -204,6 +205,85 @@ it.effect("serializes admitted thread creation with project deletion", () =>
         assert.isNotNull((yield* projections.getThreadProjection(threadId)).thread.deletedAt);
       }).pipe(
         Effect.ensuring(Deferred.succeed(allowCreation, undefined)),
+        Effect.ensuring(Effect.sync(() => lockSpy.mockRestore())),
+      );
+    }).pipe(Effect.provide(servicesLayer));
+  }).pipe(Effect.provide(databaseLayer)),
+);
+
+it.effect("counts only children deleted by the project cascade", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:concurrent-child-delete");
+    const threadId = ThreadId.make("thread:concurrent-child-delete");
+    const projectDeleteCommandId = CommandId.make("command:concurrent-child-delete:project");
+    yield* seedProject(projectId);
+
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const executor = yield* ThreadCommandExecutor;
+      const idAllocator = yield* IdAllocatorV2;
+      const projections = yield* ProjectionStoreV2;
+      const service = yield* ProjectService.make;
+      const cascadeLockAttempted = yield* Deferred.make<void>();
+      const allowCascadeLock = yield* Deferred.make<void>();
+      const withLock = executor.withLock;
+      let threadLockCalls = 0;
+      const lockSpy = vi.spyOn(executor, "withLock").mockImplementation((key, effect) => {
+        if (key !== threadId || ++threadLockCalls !== 1) {
+          return withLock(key, effect);
+        }
+        return Deferred.succeed(cascadeLockAttempted, undefined).pipe(
+          Effect.andThen(Deferred.await(allowCascadeLock)),
+          Effect.andThen(withLock(key, effect)),
+        );
+      });
+
+      yield* Effect.gen(function* () {
+        yield* eventSink.write({ events: [nativeThreadCreated(projectId, threadId)] });
+        const projectDeletion = yield* service
+          .deleteDetailed({
+            commandId: projectDeleteCommandId,
+            projectId,
+            force: true,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(cascadeLockAttempted);
+
+        const directDeletion = yield* executor.withLock(
+          threadId,
+          Effect.gen(function* () {
+            const command = {
+              type: "thread.delete" as const,
+              commandId: CommandId.make("command:concurrent-child-delete:thread"),
+              threadId,
+            };
+            const projection = yield* projections.getThreadProjection(threadId);
+            const acceptedAt = yield* DateTime.now;
+            const plan = yield* planThreadDeletion({
+              command,
+              projection,
+              now: acceptedAt,
+              idAllocator,
+            });
+            return yield* eventSink.commitCommand({
+              commandId: command.commandId,
+              commandType: command.type,
+              threadId,
+              acceptedAt,
+              events: plan.events,
+              effects: plan.effects,
+            });
+          }),
+        );
+        assert.isTrue(directDeletion.committed);
+        yield* Deferred.succeed(allowCascadeLock, undefined);
+
+        const result = yield* Fiber.join(projectDeletion);
+        assert.equal(result.deletedThreadCount, 0);
+        assert.isNotNull(result.project.deletedAt);
+        assert.isNotNull((yield* projections.getThreadProjection(threadId)).thread.deletedAt);
+      }).pipe(
+        Effect.ensuring(Deferred.succeed(allowCascadeLock, undefined)),
         Effect.ensuring(Effect.sync(() => lockSpy.mockRestore())),
       );
     }).pipe(Effect.provide(servicesLayer));

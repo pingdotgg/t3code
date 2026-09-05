@@ -433,7 +433,7 @@ export const make = Effect.gen(function* () {
 
         // Delete children durably before the project. Stable command IDs let a retry
         // finish a partially completed cascade without repeating cleanup effects.
-        yield* Effect.forEach(
+        const deletedThreadCounts = yield* Effect.forEach(
           projectThreads,
           (thread) =>
             threadCommands
@@ -446,7 +446,7 @@ export const make = Effect.gen(function* () {
                     projection.thread.deletedAt !== null ||
                     projection.thread.projectId !== projectId
                   ) {
-                    return;
+                    return 0;
                   }
                   const command = {
                     type: "thread.delete" as const,
@@ -476,6 +476,11 @@ export const make = Effect.gen(function* () {
                       committed.receipt.error ?? "Thread deletion was previously rejected.",
                     );
                   }
+                  return committed.committed
+                    ? committed.storedEvents.filter(
+                        (stored) => stored.event.type === "thread.deleted",
+                      ).length
+                    : 0;
                 }),
               )
               .pipe(
@@ -484,7 +489,7 @@ export const make = Effect.gen(function* () {
                     new ProjectOperationError({ operation: "delete-thread", projectId, cause }),
                 ),
               ),
-          { concurrency: 1, discard: true },
+          { concurrency: 1 },
         );
         const project = yield* dispatch(
           projectId,
@@ -498,7 +503,10 @@ export const make = Effect.gen(function* () {
             Effect.andThen(readCommitted(projectId)),
           ),
         );
-        return { project, deletedThreadCount: projectThreads.length };
+        return {
+          project,
+          deletedThreadCount: deletedThreadCounts.reduce((total, count) => total + count, 0),
+        };
       }),
     );
   });
