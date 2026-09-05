@@ -58,45 +58,6 @@ export interface ReviewRenderableFile {
   readonly rows: ReadonlyArray<ReviewRenderableRow>;
 }
 
-export interface ReviewFileHeaderListItem {
-  readonly kind: "file-header";
-  readonly id: string;
-  readonly fileId: string;
-  readonly file: ReviewRenderableFile;
-  readonly expanded: boolean;
-}
-
-export interface ReviewFileSuppressedListItem {
-  readonly kind: "file-suppressed";
-  readonly id: string;
-  readonly fileId: string;
-  readonly message: string;
-  readonly actionLabel: string | null;
-}
-
-export interface ReviewHunkListItem {
-  readonly kind: "hunk";
-  readonly id: string;
-  readonly fileId: string;
-  readonly file: ReviewRenderableFile;
-  readonly row: ReviewRenderableHunkRow;
-}
-
-export interface ReviewLineListItem {
-  readonly kind: "line";
-  readonly id: string;
-  readonly fileId: string;
-  readonly file: ReviewRenderableFile;
-  readonly row: ReviewRenderableLineRow;
-  readonly lineIndex: number;
-}
-
-export type ReviewListItem =
-  | ReviewFileHeaderListItem
-  | ReviewFileSuppressedListItem
-  | ReviewHunkListItem
-  | ReviewLineListItem;
-
 export type ReviewFilePreviewState =
   | {
       readonly kind: "render";
@@ -314,77 +275,6 @@ export function getReviewFilePreviewState(file: ReviewRenderableFile): ReviewFil
   }
 
   return { kind: "render" };
-}
-
-// The flattened review list item model is inspired by pierre/diffs' iterator-first
-// virtualization architecture, adapted here for React Native virtualization.
-// Original project: https://github.com/pingdotgg/pierre/tree/main/packages/diffs
-// Reference files:
-// - src/utils/iterateOverDiff.ts
-// - src/components/VirtualizedFileDiff.ts
-export function buildReviewListItems(input: {
-  readonly files: ReadonlyArray<ReviewRenderableFile>;
-  readonly expandedFileIds: ReadonlyArray<string>;
-  readonly revealedLargeFileIds: ReadonlyArray<string>;
-}): ReadonlyArray<ReviewListItem> {
-  const expandedFileIds = new Set(input.expandedFileIds);
-  const revealedLargeFileIds = new Set(input.revealedLargeFileIds);
-  const items: ReviewListItem[] = [];
-
-  input.files.forEach((file) => {
-    const expanded = expandedFileIds.has(file.id);
-    items.push({
-      kind: "file-header",
-      id: `${file.id}:header`,
-      fileId: file.id,
-      file,
-      expanded,
-    });
-
-    if (!expanded) {
-      return;
-    }
-
-    const previewState = getReviewFilePreviewState(file);
-    if (previewState.kind === "suppressed") {
-      if (previewState.reason !== "large" || !revealedLargeFileIds.has(file.id)) {
-        items.push({
-          kind: "file-suppressed",
-          id: `${file.id}:suppressed`,
-          fileId: file.id,
-          message: previewState.message,
-          actionLabel: previewState.actionLabel,
-        });
-        return;
-      }
-    }
-
-    let lineIndex = 0;
-    file.rows.forEach((row, rowIndex) => {
-      if (row.kind === "hunk") {
-        items.push({
-          kind: "hunk",
-          id: `${file.id}:row:${rowIndex}:${row.id}`,
-          fileId: file.id,
-          file,
-          row,
-        });
-        return;
-      }
-
-      items.push({
-        kind: "line",
-        id: `${file.id}:row:${rowIndex}:${row.id}`,
-        fileId: file.id,
-        file,
-        row,
-        lineIndex,
-      });
-      lineIndex += 1;
-    });
-  });
-
-  return items;
 }
 
 function fallbackHunkHeader(hunk: FileDiffMetadata["hunks"][number]): string {
