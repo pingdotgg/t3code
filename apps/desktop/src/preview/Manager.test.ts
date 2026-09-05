@@ -3415,6 +3415,73 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("keeps annotation send grants isolated and updates an active pick", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const picked = new Map<number, (event: unknown, ...args: unknown[]) => void>();
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("annotation"),
+          toDataURL: () => "data:image/png;base64,YW5ub3RhdGlvbg==",
+          getSize: () => ({ width: 10, height: 10 }),
+        }));
+        const guests = new Map(
+          [42, 43].map(
+            (id) =>
+              [
+                id,
+                Object.assign(makeTestPreviewWebContents(capturePage, id), {
+                  isFocused: () => true,
+                  once: vi.fn(),
+                  ipc: {
+                    on: vi.fn(
+                      (channel: string, listener: (event: unknown, ...args: unknown[]) => void) => {
+                        if (channel === "preview:element-picked") picked.set(id, listener);
+                      },
+                    ),
+                    off: vi.fn(),
+                    removeListener: vi.fn(),
+                  },
+                }),
+              ] as const,
+          ),
+        );
+        fromId.mockImplementation((id) => (id === undefined ? null : (guests.get(id) ?? null)));
+        yield* manager.createTab("tab_a");
+        yield* manager.createTab("tab_b");
+        yield* manager.registerWebview("tab_a", 42);
+        yield* manager.registerWebview("tab_b", 43);
+        yield* manager.setAnnotationSendEnabled("tab_a", true);
+        const annotation = {
+          id: "annotation-scopes",
+          pageUrl: "https://example.com",
+          pageTitle: "Example",
+          comment: "Tighten this spacing",
+          elements: [],
+          regions: [],
+          strokes: [],
+          styleChanges: [],
+          screenshot: null,
+          createdAt: "2026-09-05T00:00:00.000Z",
+        };
+        for (const [tabId, id, nextGrant, expected] of [
+          ["tab_b", 43, undefined, "attach"],
+          ["tab_a", 42, false, "attach"],
+          ["tab_a", 42, true, "send"],
+        ] as const) {
+          const pick = yield* manager.pickElement(tabId).pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+          if (nextGrant !== undefined) {
+            yield* manager.setAnnotationSendEnabled(tabId, nextGrant);
+          }
+          picked.get(id)?.({}, annotation, null, "send");
+          const result = yield* Fiber.join(pick);
+          expect(result?.annotation.id).toBe(annotation.id);
+          expect(result?.submission).toBe(expected);
+        }
+      }),
+    ),
+  );
+
   effectIt.effect("settles the pick when the annotation screenshot never arrives", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -3461,6 +3528,7 @@ describe("PreviewManager", () => {
         const pick = yield* manager.pickElement("tab_1").pipe(Effect.forkChild);
         yield* Effect.yieldNow;
 
+        yield* manager.setAnnotationSendEnabled("tab_1", true);
         onPicked?.(
           {},
           {

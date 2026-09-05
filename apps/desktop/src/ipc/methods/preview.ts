@@ -1,4 +1,5 @@
 import {
+  DesktopPreviewAnnotationSendEnabledInputSchema,
   DesktopPreviewAnnotationThemeInputSchema,
   DesktopPreviewArtifactInputSchema,
   DesktopPreviewAutomationClickInputSchema,
@@ -347,6 +348,19 @@ export const pickElement = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const setAnnotationSendEnabled = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_ANNOTATION_SEND_ENABLED_CHANNEL,
+  payload: DesktopPreviewAnnotationSendEnabledInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setAnnotationSendEnabled")(function* ({
+    tabId,
+    enabled,
+  }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setAnnotationSendEnabled(tabId, enabled);
+  }),
+});
+
 export const captureScreenshot = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_CAPTURE_SCREENSHOT_CHANNEL,
   payload: DesktopPreviewTabInputSchema,
@@ -486,6 +500,7 @@ export const methods = [
   clearCache,
   getPreviewConfig,
   setAnnotationTheme,
+  setAnnotationSendEnabled,
   pickElement,
   cancelPickElement,
   captureScreenshot,
