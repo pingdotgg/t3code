@@ -78,6 +78,8 @@ export interface ProviderChangeRequest {
   readonly additions: number;
   readonly deletions: number;
   readonly createdAt: string;
+  readonly closedAt?: string | null;
+  readonly mergedAt?: string | null;
   readonly updatedAt: string;
   /** Accounts with a review requested. Team-level requests are excluded by each provider. */
   readonly reviewRequestLogins: ReadonlyArray<string>;
@@ -98,6 +100,8 @@ export interface ProviderChangeRequestSummary {
   readonly state: PullRequestState;
   /** Present when the host says an open pull request is still a draft. */
   readonly isDraft?: boolean;
+  readonly closedAt?: string | null;
+  readonly mergedAt?: string | null;
   readonly updatedAt: string;
 }
 

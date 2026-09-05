@@ -247,6 +247,8 @@ export interface GitLabMergeRequestSummary {
   readonly headRefName: string;
   readonly state?: "open" | "closed" | "merged";
   readonly isDraft?: boolean;
+  readonly closedAt?: string | null;
+  readonly mergedAt?: string | null;
   readonly updatedAt?: Option.Option<DateTime.Utc>;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;

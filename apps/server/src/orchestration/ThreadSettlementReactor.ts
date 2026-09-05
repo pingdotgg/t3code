@@ -119,7 +119,7 @@ export const make = Effect.gen(function* () {
         ) {
           return {
             state: "merged",
-            updatedAt: mergedPullRequest.mergedAt,
+            mergedAt: mergedPullRequest.mergedAt,
           } satisfies SettlementPullRequest;
         }
         if (!projects.has(thread.linkedPullRequest.projectId)) {
@@ -135,7 +135,8 @@ export const make = Effect.gen(function* () {
         );
         return {
           state: summary.state,
-          updatedAt: summary.updatedAt,
+          closedAt: summary.closedAt ?? null,
+          mergedAt: summary.mergedAt ?? null,
         } satisfies SettlementPullRequest;
       }
       if (thread.branch === null) return null;
