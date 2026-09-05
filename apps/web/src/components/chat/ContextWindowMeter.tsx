@@ -1,6 +1,8 @@
 import { Button } from "../ui/button";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { ComposerProviderUsageDetails } from "./ComposerUsageMeter";
+import type { ComposerUsageMeterModel } from "./ComposerUsageMeter.logic";
 import { formatContextWindowCompactionMessage } from "./ContextWindowMeter.logic";
 import { Minimize2Icon } from "lucide-react";
 import { composerFloatingLayerProps } from "./composerEventScope";
@@ -21,8 +23,16 @@ export function ContextWindowMeter(props: {
   onCompact?: (() => void) | undefined;
   compactDisabled?: boolean | undefined;
   compactDisabledReason?: string | null | undefined;
+  providerUsage?: ComposerUsageMeterModel | null | undefined;
 }) {
-  const { usage, modelDisplayName, onCompact, compactDisabled, compactDisabledReason } = props;
+  const {
+    usage,
+    modelDisplayName,
+    onCompact,
+    compactDisabled,
+    compactDisabledReason,
+    providerUsage,
+  } = props;
   const usedPercentage = formatPercentage(usage.usedPercentage);
   const normalizedPercentage = Math.max(0, Math.min(100, usage.usedPercentage ?? 0));
   const radius = 9.75;
@@ -135,6 +145,11 @@ export function ContextWindowMeter(props: {
           {usage.compactsAutomatically ? (
             <div className="mt-1 text-pretty text-secondary-label text-[11px] font-medium">
               {formatContextWindowCompactionMessage(modelDisplayName, usage.autoCompactThreshold)}
+            </div>
+          ) : null}
+          {providerUsage ? (
+            <div className="mt-1 border-t border-border/60 pt-2">
+              <ComposerProviderUsageDetails usage={providerUsage} />
             </div>
           ) : null}
           {onCompact ? (

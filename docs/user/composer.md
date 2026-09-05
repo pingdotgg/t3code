@@ -106,6 +106,14 @@ Show skills in slash menu**. Only skills enabled for the provider are listed.
 Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.
 
+The chat box can also show remaining session and weekly usage for the provider on the current
+thread. This stays off until you turn on **Show usage in chat** in **Settings → General**, and it
+stays hidden on a new thread until the first message is sent. A Codex thread shows Codex usage
+only; switching the thread to Claude Code switches the meter with it. When a context window ring is
+visible, those bars appear in that hover. If the ring is not available after a turn has started, a
+compact percent control appears next to send instead. Providers without a usable quota snapshot hide
+the meter instead of showing an error.
+
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
 

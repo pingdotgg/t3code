@@ -135,6 +135,15 @@ describe("ClaudeSettings auto-compaction", () => {
   });
 });
 
+describe("ClientSettings composer usage", () => {
+  it("keeps provider usage out of the chat box until opted in", () => {
+    expect(decodeClientSettings({}).showProviderUsageInComposer).toBe(false);
+    expect(
+      decodeClientSettingsPatch({ showProviderUsageInComposer: true }).showProviderUsageInComposer,
+    ).toBe(true);
+  });
+});
+
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
     expect(decodeClientSettings({}).wordWrap).toBe(true);

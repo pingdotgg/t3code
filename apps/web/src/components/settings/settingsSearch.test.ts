@@ -193,6 +193,10 @@ describe("searchSettings", () => {
   it("serves anchor props to panels from the catalog", () => {
     expect(searchableSetting("word-wrap")).toEqual({ id: "word-wrap", title: "Word wrap" });
     expect(searchableSetting("archive")).toEqual({ id: "archive", title: "Archived threads" });
+    expect(searchableSetting("usage-in-chat")).toEqual({
+      id: "usage-in-chat",
+      title: "Show usage in chat",
+    });
   });
 
   it("routes appearance settings to their current section", () => {
