@@ -149,11 +149,9 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   // Settings routes show the settings nav in place of whichever thread
   // sidebar is active.
   const pathname = useLocation({ select: (location) => location.pathname });
-  const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
-  const panelAnimationsSuppressed = usePanelNavigationSuppression(
-    isOnSettings ? "settings" : pathname,
-  );
+  const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
+  const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
   const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
   // Subscribed rather than read once: the clamp must track live window size,
