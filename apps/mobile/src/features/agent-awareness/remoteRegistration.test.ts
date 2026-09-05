@@ -33,7 +33,6 @@ import {
   mergeAgentAwarenessRegistrationPreferences,
   refreshActiveLiveActivityRemoteRegistration,
   refreshAgentAwarenessRegistration,
-  normalizeAgentAwarenessRelayBaseUrl,
   registerAgentAwarenessConnection,
   registerLiveActivityPushToken,
   releaseAgentAwarenessRelayTokenProvider,
@@ -361,13 +360,6 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         notifyOnFailure: true,
       },
     });
-  });
-
-  it("normalizes relay base URLs for APNs registration requests", () => {
-    expect(normalizeAgentAwarenessRelayBaseUrl(" https://relay.example.test/// ")).toBe(
-      "https://relay.example.test",
-    );
-    expect(normalizeAgentAwarenessRelayBaseUrl("   ")).toBeNull();
   });
 
   it("overrides persisted preferences for an in-flight registration", () => {
