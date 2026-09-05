@@ -14,6 +14,7 @@ import * as MobileSecureStorage from "../persistence/mobile-secure-storage";
 import { migrateLegacyConnectionCatalog } from "./migration";
 
 export const CONNECTION_CATALOG_KEY = "t3code.connection-catalog.v1";
+export const CONNECTION_CATALOG_BACKUP_KEY = "t3code.connection-catalog.v1.backup";
 export const LEGACY_CONNECTIONS_KEY = "t3code.connections";
 
 function catalogError(operation: string, cause: unknown) {
@@ -74,10 +75,21 @@ export const make = Effect.fn("mobile.connectionStorage.makeCatalogStore")(funct
           );
     if (legacyRaw !== null && legacyRaw.trim() !== "") {
       const encoded = yield* encodeCatalog(catalog);
+      yield* setItem(CONNECTION_CATALOG_BACKUP_KEY, encoded);
       yield* setItem(CONNECTION_CATALOG_KEY, encoded);
       yield* deleteItem(LEGACY_CONNECTIONS_KEY);
     }
     return catalog;
+  });
+
+  const restoreBackup = Effect.fn("mobile.connectionStorage.restoreBackup")(function* () {
+    const backupRaw = yield* getItem(CONNECTION_CATALOG_BACKUP_KEY);
+    if (backupRaw === null || backupRaw.trim() === "") {
+      return Option.none<ConnectionCatalogDocumentType>();
+    }
+    const catalog = yield* decodeCatalog(backupRaw);
+    yield* setItem(CONNECTION_CATALOG_KEY, backupRaw);
+    return Option.some(catalog);
   });
 
   const loadUnlocked = Effect.fn("mobile.connectionStorage.loadCatalog")(function* () {
@@ -90,14 +102,33 @@ export const make = Effect.fn("mobile.connectionStorage.makeCatalogStore")(funct
     if (raw !== null && raw.trim() !== "") {
       catalog = yield* decodeCatalog(raw).pipe(
         Effect.catch((error) =>
-          Effect.logWarning("Discarding corrupt mobile connection catalog", error).pipe(
-            Effect.andThen(deleteItem(CONNECTION_CATALOG_KEY)),
-            Effect.andThen(loadLegacyCatalog()),
+          Effect.logWarning("Recovering corrupt mobile connection catalog from backup", error).pipe(
+            Effect.andThen(restoreBackup()),
+            Effect.flatMap(
+              Option.match({
+                onNone: () =>
+                  Effect.fail(
+                    new ConnectionTransientError({
+                      reason: "remote-unavailable",
+                      detail:
+                        "Could not recover the local connection catalog: No valid connection catalog backup is available.",
+                    }),
+                  ),
+                onSome: Effect.succeed,
+              }),
+            ),
           ),
         ),
       );
     } else {
-      catalog = yield* loadLegacyCatalog();
+      catalog = yield* restoreBackup().pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: loadLegacyCatalog,
+            onSome: Effect.succeed,
+          }),
+        ),
+      );
     }
     yield* Ref.set(state, Option.some(catalog));
     return catalog;
@@ -110,6 +141,7 @@ export const make = Effect.fn("mobile.connectionStorage.makeCatalogStore")(funct
         Effect.gen(function* () {
           const next = transform(yield* loadUnlocked());
           const encoded = yield* encodeCatalog(next);
+          yield* setItem(CONNECTION_CATALOG_BACKUP_KEY, encoded);
           yield* setItem(CONNECTION_CATALOG_KEY, encoded);
           yield* Ref.set(state, Option.some(next));
         }),
