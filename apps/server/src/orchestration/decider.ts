@@ -1,11 +1,13 @@
-import { EventId, MessageId, UserInputRequestedPayload } from "@t3tools/contracts";
 import {
+  EventId,
+  MessageId,
+  UserInputRequestedPayload,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
-} from "@t3tools/contracts/legacy-orchestration";
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -228,7 +230,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           defaultModelSelection: null,
           faviconPath: null,
           projectIcon: null,
-          scripts: command.scripts ?? [],
+          scripts: [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },

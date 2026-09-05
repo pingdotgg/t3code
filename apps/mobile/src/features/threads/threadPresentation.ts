@@ -1,8 +1,6 @@
 import type { StatusTone } from "../../components/StatusPill";
-import {
-  threadRuntimeIsActive,
-  type EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/shell";
+import type { OrchestrationLatestTurn, OrchestrationSession } from "@t3tools/contracts";
+import { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
 export type ThreadStatusKind =
   | "pending-approval"
@@ -22,10 +20,14 @@ export interface ThreadStatusPresentation extends StatusTone {
   readonly pulse: boolean;
 }
 
-function isLatestRunSettled(thread: EnvironmentThreadShell): boolean {
-  if (!thread.latestRun?.startedAt) return false;
-  if (!thread.latestRun.completedAt) return false;
-  return !threadRuntimeIsActive(thread.runtime);
+function isLatestTurnSettled(
+  latestTurn: OrchestrationLatestTurn | null,
+  session: OrchestrationSession | null,
+): boolean {
+  if (!latestTurn?.startedAt) return false;
+  if (!latestTurn.completedAt) return false;
+  if (!session) return true;
+  return session.status !== "running";
 }
 
 /**
@@ -60,9 +62,7 @@ export function resolveThreadStatus(
     };
   }
 
-  const runtimeStatus = thread.runtime?.status;
-
-  if (runtimeStatus === "running" || runtimeStatus === "waiting") {
+  if (thread.session?.status === "running") {
     return {
       kind: "working",
       label: "Working",
@@ -74,7 +74,7 @@ export function resolveThreadStatus(
     };
   }
 
-  if (runtimeStatus === "preparing" || runtimeStatus === "queued" || runtimeStatus === "starting") {
+  if (thread.session?.status === "starting") {
     return {
       kind: "connecting",
       label: "Connecting",
@@ -86,7 +86,7 @@ export function resolveThreadStatus(
     };
   }
 
-  if (runtimeStatus === "failed" || thread.latestRun?.status === "failed") {
+  if (thread.session?.status === "error" || thread.latestTurn?.state === "error") {
     return {
       kind: "error",
       label: "Error",
@@ -100,7 +100,7 @@ export function resolveThreadStatus(
 
   const hasPlanReadyPrompt =
     thread.interactionMode === "plan" &&
-    isLatestRunSettled(thread) &&
+    isLatestTurnSettled(thread.latestTurn, thread.session) &&
     thread.hasActionableProposedPlan;
   if (hasPlanReadyPrompt) {
     return {

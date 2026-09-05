@@ -1,7 +1,7 @@
 import {
+  type ApprovalRequestId,
   type ProviderApprovalDecision,
   type ProviderApprovalOption,
-  type RuntimeRequestId,
 } from "@t3tools/contracts";
 import { memo } from "react";
 import { TriangleAlertIcon } from "lucide-react";
@@ -9,12 +9,11 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface ComposerPendingApprovalActionsProps {
-  requestId: RuntimeRequestId;
+  requestId: ApprovalRequestId;
   isResponding: boolean;
-  canRespond: boolean;
   options?: ReadonlyArray<ProviderApprovalOption> | undefined;
   onRespondToApproval: (
-    requestId: RuntimeRequestId,
+    requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
   ) => Promise<unknown>;
 }
@@ -30,7 +29,6 @@ const DEFAULT_APPROVAL_OPTIONS = [
 export const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
   requestId,
   isResponding,
-  canRespond,
   options = DEFAULT_APPROVAL_OPTIONS,
   onRespondToApproval,
 }: ComposerPendingApprovalActionsProps) {
@@ -51,7 +49,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
                     ? " text-warning"
                     : ""
             }`}
-            disabled={isResponding || !canRespond}
+            disabled={isResponding}
             aria-description={option.warning}
             onClick={() => void onRespondToApproval(requestId, option.decision)}
           >

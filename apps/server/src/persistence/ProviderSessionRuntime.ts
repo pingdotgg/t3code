@@ -9,8 +9,13 @@ import * as Struct from "effect/Struct";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
-import { IsoDateTime, ProviderInstanceId, RuntimeMode, ThreadId } from "@t3tools/contracts";
-import { ProviderSessionRuntimeStatus } from "@t3tools/contracts/legacy-orchestration";
+import {
+  IsoDateTime,
+  ProviderInstanceId,
+  ProviderSessionRuntimeStatus,
+  RuntimeMode,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import {
   PersistenceDecodeError,

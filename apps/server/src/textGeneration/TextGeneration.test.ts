@@ -38,7 +38,7 @@ const makeStubInstance = (
     displayName: undefined,
     enabled: true,
     snapshot: {} as ProviderInstance["snapshot"],
-    orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+    adapter: {} as ProviderInstance["adapter"],
     textGeneration,
   }) satisfies ProviderInstance;
 

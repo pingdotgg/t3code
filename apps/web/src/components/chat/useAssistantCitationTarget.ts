@@ -1,5 +1,5 @@
 import type { LegendListRef } from "@legendapp/list/react";
-import type { RunId } from "@t3tools/contracts";
+import type { TurnId } from "@t3tools/contracts";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { TimelineEntry } from "../../session-logic";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
@@ -31,7 +31,7 @@ export function useAssistantCitationTarget({
   viewport: HTMLElement | null;
   historyLoading: boolean;
   loadEarlier: CitationHistoryPage | null;
-  onExpandTurn: (runId: RunId) => void;
+  onExpandTurn: (turnId: TurnId) => void;
   onManualNavigation: () => void;
 }) {
   const [ready, setReady] = useState<AssistantCitationTarget | null>(null);
@@ -119,7 +119,7 @@ export function useAssistantCitationTarget({
       (row) => row.kind === "message" && row.message.id === navigation.target.citation.messageId,
     );
     if (index < 0) {
-      if (source.message.runId) onExpandTurn(source.message.runId);
+      if (source.message.turnId) onExpandTurn(source.message.turnId);
       return;
     }
     if (listLoaded && listRef.current) setReady(navigation.target);

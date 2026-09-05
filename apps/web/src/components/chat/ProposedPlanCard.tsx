@@ -175,7 +175,6 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             <ChatMarkdown
               text={collapsedPreview ?? ""}
               cwd={cwd}
-              environmentId={environmentId}
               threadRef={threadRef}
               isStreaming={false}
             />
@@ -183,7 +182,6 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             <ChatMarkdown
               text={displayedPlanMarkdown}
               cwd={cwd}
-              environmentId={environmentId}
               threadRef={threadRef}
               isStreaming={false}
             />

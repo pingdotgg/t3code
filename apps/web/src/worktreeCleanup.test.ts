@@ -2,13 +2,12 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 import { describe, expect, it } from "vite-plus/test";
 
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
-import { makeThreadFixture } from "./test-fixtures";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "./worktreeCleanup";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
-  return makeThreadFixture({
+  return {
     id: ThreadId.make("thread-1"),
     environmentId: localEnvironmentId,
     projectId: ProjectId.make("project-1"),
@@ -19,8 +18,10 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     },
     runtimeMode: DEFAULT_RUNTIME_MODE,
     interactionMode: DEFAULT_INTERACTION_MODE,
-    runtime: null,
+    session: null,
     messages: [],
+    checkpoints: [],
+    activities: [],
     proposedPlans: [],
     createdAt: "2026-02-13T00:00:00.000Z",
     updatedAt: "2026-02-13T00:00:00.000Z",
@@ -28,11 +29,11 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     settledOverride: null,
     settledAt: null,
     deletedAt: null,
-    latestRun: null,
+    latestTurn: null,
     branch: null,
     worktreePath: null,
     ...overrides,
-  });
+  };
 }
 
 describe("getOrphanedWorktreePathForThread", () => {

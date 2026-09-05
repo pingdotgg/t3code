@@ -73,23 +73,15 @@ interface ShowExternalLinkContextMenuOptions {
   ) => void;
 }
 
-function resolveExternalWebLink(href: string | null | undefined): URL | null {
+export function resolveExternalWebLinkHost(href: string | undefined): string | null {
   if (!href) return null;
   try {
     const url = new URL(href.startsWith("//") ? `https:${href}` : href);
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    return url;
+    return url.hostname || null;
   } catch {
     return null;
   }
-}
-
-export function resolveExternalWebLinkHref(href: string | null | undefined): string | null {
-  return resolveExternalWebLink(href)?.href ?? null;
-}
-
-export function resolveExternalWebLinkHost(href: string | undefined): string | null {
-  return resolveExternalWebLink(href)?.hostname || null;
 }
 
 export async function showExternalLinkContextMenu({

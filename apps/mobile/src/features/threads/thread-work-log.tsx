@@ -701,8 +701,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
     toolPresentation?.displayName ?? compactActivityDetail(row.detail) ?? row.summary;
   const displayText =
     !toolPresentation && expanded && row.workEntry.command?.trim() ? "Command" : previewText;
-  const isSystemNotice = row.projectedItem.item.type === "system_notice";
-  const iconIsDestructive = !isSystemNotice && (row.icon === "alert" || row.icon === "warning");
+  const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
   const failed = row.status === "failure";
   const toolIcon = row.workEntry.toolIcon ?? row.workEntry.toolSource?.icon;
   const icon = toolPresentation?.icon ?? workRowSymbolName(row.icon);
@@ -771,9 +770,9 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
                   "min-w-0 flex-1 text-sm text-foreground-muted",
                   iconIsDestructive && "font-t3-medium text-adaptive-rose-600-400",
                 )}
-                numberOfLines={isSystemNotice ? undefined : 1}
+                numberOfLines={1}
               >
-                {isSystemNotice ? row.summary : displayText}
+                {displayText}
               </Text>
             </>
           )}

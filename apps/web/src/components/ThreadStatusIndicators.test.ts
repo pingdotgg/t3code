@@ -554,25 +554,6 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
     ).toEqual(mergedPr);
   });
 
-  it("shows the last matching PR snapshot while its live status lease is released", () => {
-    const openPr = { ...mergedPr, state: "open" as const };
-    const input = {
-      threadBranch: featureBranch,
-      gitStatus: null,
-      snapshot: snapshotFor(featureBranch, openPr, provider),
-      retainTerminalOnBranchMismatch: false,
-    };
-    expect(resolveDisplayedThreadPr(input)).toEqual(openPr);
-    expect(resolveDisplayedThreadPrProvider(input)).toEqual(provider);
-    expect(resolveDisplayedThreadPr({ ...input, threadBranch: "feature/other" })).toBeNull();
-    expect(
-      resolveDisplayedThreadPr({
-        ...input,
-        snapshot: { ...input.snapshot, linkedPullRequest },
-      }),
-    ).toBeNull();
-  });
-
   it("retains a merged PR after a main checkout", () => {
     const matchingStatus = status({
       refName: featureBranch,

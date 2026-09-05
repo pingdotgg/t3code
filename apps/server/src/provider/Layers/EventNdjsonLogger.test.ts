@@ -21,7 +21,6 @@ import {
 } from "./EventNdjsonLogger.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
-const decodeUnknownJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 function ownedLogPath(basePath: string, segment: string): string {
   const basename = NodePath.basename(basePath);
@@ -50,7 +49,7 @@ function parseLogLine(line: string) {
 }
 
 describe("EventNdjsonLogger", () => {
-  it.effect("summarizes circular events without exposing their contents in diagnostics", () => {
+  it.effect("logs bounded diagnostics when an event cannot be serialized", () => {
     const messages: Array<unknown> = [];
     const logCapture = Logger.make<unknown, void>(({ message }) => {
       if (Array.isArray(message)) {
@@ -72,14 +71,10 @@ describe("EventNdjsonLogger", () => {
         assert.exists(logger);
         if (!logger) return;
         yield* logger.write(circular, ThreadId.make("thread-1"));
-        yield* logger.close();
 
         const serialized = encodeUnknownJson(messages);
         assert.notInclude(serialized, secret);
-        const line = parseLogLine(
-          NodeFS.readFileSync(ownedLogPath(basePath, "thread-1"), "utf8").trim(),
-        );
-        assert.equal(line.payload, '{"truncated":true}');
+        assert.include(serialized, '"errorTag":"SchemaError"');
       } finally {
         NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }
@@ -319,22 +314,6 @@ describe("EventNdjsonLogger", () => {
           { method: "thread/realtime/transcript/delta", payload: circularDelta },
           threadId,
         );
-        yield* native.write({ method: "turn/diff/updated", payload: circularDelta }, threadId);
-        yield* native.write(
-          {
-            event: {
-              direction: "incoming",
-              stage: "decoded",
-              payload: {
-                method: "turn/diff/updated",
-                get params() {
-                  throw new Error("unused diff snapshots must not be traversed");
-                },
-              },
-            },
-          },
-          threadId,
-        );
         yield* native.write(
           {
             event: {
@@ -349,41 +328,6 @@ describe("EventNdjsonLogger", () => {
             event: {
               method: "session/update",
               payload: { update: { sessionUpdate: "agent_message_chunk" } },
-            },
-          },
-          threadId,
-        );
-        yield* native.write(
-          {
-            event: {
-              direction: "incoming",
-              stage: "decoded",
-              payload: { method: "item/commandExecution/outputDelta", params: circularDelta },
-            },
-          },
-          threadId,
-        );
-        yield* native.write(
-          {
-            event: {
-              direction: "incoming",
-              stage: "decoded",
-              payload: {
-                type: "stream_event",
-                event: { type: "content_block_delta", delta: circularDelta },
-              },
-            },
-          },
-          threadId,
-        );
-        yield* native.write(
-          {
-            event: {
-              direction: "incoming",
-              stage: "raw",
-              get payload() {
-                throw new Error("raw frames must not be inspected");
-              },
             },
           },
           threadId,
@@ -425,88 +369,6 @@ describe("EventNdjsonLogger", () => {
             { stream: "NTIVE", payload: '{"type":"turn.completed","id":"native-final"}' },
           ],
         );
-      } finally {
-        NodeFS.rmSync(tempDir, { recursive: true, force: true });
-      }
-    }),
-  );
-
-  it.effect("summarizes large histories without reading their items", () =>
-    Effect.gen(function* () {
-      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
-      const basePath = NodePath.join(tempDir, "events.log");
-      const turns = Array.from({ length: 10_000 });
-      Object.defineProperty(turns, 0, {
-        get: () => {
-          throw new Error("history must not be serialized");
-        },
-      });
-
-      try {
-        const store = yield* makeEventNdjsonLogStore(basePath);
-        yield* store.logger("native").write(
-          {
-            provider: "codex",
-            event: {
-              direction: "incoming",
-              stage: "decoded",
-              payload: { id: 42, result: { thread: { id: "native-thread", turns } } },
-            },
-          },
-          ThreadId.make("large-history"),
-        );
-        yield* store.close();
-
-        const contents = NodeFS.readFileSync(ownedLogPath(basePath, "large-history"), "utf8");
-        assert.isBelow(Buffer.byteLength(contents), 2_048);
-        const record = decodeUnknownJson(parseLogLine(contents.trim()).payload);
-        assert.nestedPropertyVal(record, "event.payload.id", 42);
-        assert.nestedPropertyVal(record, "event.payload.result.thread.id", "native-thread");
-        assert.nestedPropertyVal(record, "event.payload.result.thread.turns.itemCount", 10_000);
-      } finally {
-        NodeFS.rmSync(tempDir, { recursive: true, force: true });
-      }
-    }),
-  );
-
-  it.effect("bounds oversized records while retaining failure details", () =>
-    Effect.gen(function* () {
-      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
-      const basePath = NodePath.join(tempDir, "events.log");
-
-      try {
-        const store = yield* makeEventNdjsonLogStore(basePath);
-        const logger = store.logger("native");
-        const threadId = ThreadId.make("large-error");
-        const failure = {
-          method: "error",
-          params: {
-            threadId: "native-thread",
-            turnId: "native-turn",
-            error: { message: "The provider is unavailable.", code: "overloaded" },
-            output: "x".repeat(128 * 1_024),
-          },
-        };
-        yield* logger.write(failure, threadId);
-        yield* logger.write({ id: "escaped", output: "\u0000".repeat(20_000) }, threadId);
-        yield* store.close();
-
-        const contents = NodeFS.readFileSync(ownedLogPath(basePath, "large-error"), "utf8");
-        const records = contents
-          .trim()
-          .split("\n")
-          .map((line) => decodeUnknownJson(parseLogLine(line).payload));
-        assert.isBelow(Buffer.byteLength(contents), 64 * 1_024);
-        assert.equal(records.length, 2);
-        assert.nestedPropertyVal(records[0], "params.threadId", "native-thread");
-        assert.nestedPropertyVal(records[0], "params.turnId", "native-turn");
-        assert.nestedPropertyVal(
-          records[0],
-          "params.error.message",
-          "The provider is unavailable.",
-        );
-        assert.nestedPropertyVal(records[0], "params.error.code", "overloaded");
-        assert.propertyVal(records[1], "id", "escaped");
       } finally {
         NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }

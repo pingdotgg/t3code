@@ -1,8 +1,11 @@
-import { Agent, type AgentOptions, type Run, type RunResult, type SDKAgent } from "@cursor/sdk";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { type CursorSettings, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
@@ -21,97 +24,15 @@ import {
   sanitizePrTitle,
   sanitizeThreadTitle,
 } from "./TextGenerationUtils.ts";
-import { cursorSdkModelSelection } from "../provider/cursorSdkModel.ts";
+import {
+  applyCursorAcpModelSelection,
+  makeCursorAcpRuntime,
+} from "../provider/acp/CursorAcpSupport.ts";
 
 const CURSOR_TIMEOUT_MS = 180_000;
 const CURSOR_METADATA_WORKSPACE_PREFIX = "t3-cursor-metadata-";
 
 const isTextGenerationError = Schema.is(TextGenerationError);
-type CursorTextGenerationOperation =
-  | "generateCommitMessage"
-  | "generatePrContent"
-  | "generateBranchName"
-  | "generateThreadTitle";
-
-function emptyCursorSdkResultDetail(result: RunResult): string {
-  switch (result.status) {
-    case "cancelled":
-      return "Cursor SDK request was cancelled.";
-    case "error":
-      return "Cursor SDK request finished with an error and no output.";
-    case "finished":
-      return "Cursor SDK returned empty output.";
-  }
-}
-
-const ignoreCursorCleanupFailure = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.ignore({ log: true }));
-
-interface CursorSdkRequest {
-  readonly result: Promise<RunResult>;
-  readonly cancel: () => void;
-}
-
-/**
- * Own the SDK objects and their temporary workspace beyond the caller's
- * deadline. Cursor's promises do not accept an AbortSignal, so interruption
- * requests cancellation without awaiting it; this owner removes the workspace
- * only after create/send and any acquired run have settled.
- */
-function runCursorSdkRequest(input: {
-  readonly agentOptions: AgentOptions;
-  readonly prompt: string;
-  readonly removeWorkspace: () => Promise<void>;
-}): CursorSdkRequest {
-  let cancellationRequested = false;
-  let run: Run | undefined;
-  let runWait: Promise<RunResult> | undefined;
-  let cancellation: Promise<void> | undefined;
-
-  const cancelRun = () => {
-    if (run === undefined || cancellation !== undefined) return;
-    cancellation = (async () => {
-      const cancel =
-        run.status === "running" && run.supports("cancel") ? run.cancel() : Promise.resolve();
-      const wait = runWait ?? (run.supports("wait") ? run.wait() : Promise.resolve(undefined));
-      await Promise.allSettled([cancel, wait]);
-    })();
-  };
-
-  const result = (async () => {
-    let agent: SDKAgent | undefined;
-    try {
-      agent = await Agent.create(input.agentOptions);
-      if (cancellationRequested) {
-        throw new Error("Cursor SDK request was cancelled before sending.");
-      }
-      run = await agent.send(input.prompt);
-      runWait = run.wait();
-      if (cancellationRequested) {
-        cancelRun();
-        await cancellation;
-      }
-      return await runWait;
-    } finally {
-      if (cancellationRequested) {
-        cancelRun();
-        await cancellation?.catch(() => undefined);
-      }
-      if (agent !== undefined) {
-        await Promise.resolve(agent[Symbol.asyncDispose]()).catch(() => undefined);
-      }
-      await input.removeWorkspace();
-    }
-  })();
-
-  return {
-    result,
-    cancel: () => {
-      cancellationRequested = true;
-      cancelRun();
-    },
-  };
-}
 
 /**
  * Build a Cursor text-generation closure bound to a specific `CursorSettings`
@@ -121,104 +42,112 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
 ) {
+  const crypto = yield* Crypto.Crypto;
+  const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
-  const runtimeContext = yield* Effect.context<never>();
-  const runPromise = Effect.runPromiseWith(runtimeContext);
+  const path = yield* Path.Path;
   const resolvedEnvironment = environment ?? process.env;
 
-  const resolveCursorApiKey = (operation: CursorTextGenerationOperation) =>
-    Effect.gen(function* () {
-      if (!cursorSettings.enabled) {
-        return yield* new TextGenerationError({
-          operation,
-          detail: "Cursor is disabled in T3 Code settings.",
-        });
-      }
-
-      const apiKey = resolvedEnvironment.CURSOR_API_KEY?.trim();
-      if (!apiKey) {
-        return yield* new TextGenerationError({
-          operation,
-          detail: "Cursor API key is required. Add CURSOR_API_KEY in provider settings.",
-        });
-      }
-
-      return apiKey;
-    });
+  const settingsForMetadataWorkspace = (sourceCwd: string) => {
+    const binaryPath = cursorSettings.binaryPath;
+    if (
+      !binaryPath ||
+      path.isAbsolute(binaryPath) ||
+      (!binaryPath.includes("/") && !binaryPath.includes("\\"))
+    ) {
+      return cursorSettings;
+    }
+    return { ...cursorSettings, binaryPath: path.resolve(sourceCwd, binaryPath) };
+  };
 
   const runCursorJson = <S extends Schema.Top>({
     operation,
+    sourceCwd,
     prompt,
     outputSchemaJson,
     modelSelection,
   }: {
-    operation: CursorTextGenerationOperation;
+    operation:
+      | "generateCommitMessage"
+      | "generatePrContent"
+      | "generateBranchName"
+      | "generateThreadTitle";
+    sourceCwd: string;
     prompt: string;
     outputSchemaJson: S;
     modelSelection: ModelSelection;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
-      const apiKey = yield* resolveCursorApiKey(operation);
-      const promptResult = yield* Effect.uninterruptibleMask((restore) =>
-        Effect.gen(function* () {
-          const metadataWorkspace = yield* fileSystem
-            .makeTempDirectory({ prefix: CURSOR_METADATA_WORKSPACE_PREFIX })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new TextGenerationError({
-                    operation,
-                    detail: "Failed to create an isolated Cursor metadata workspace.",
-                    cause,
-                  }),
-              ),
-            );
-          const metadataPrompt = [
-            "Use only the input below. Do not use tools, read or write files, run commands, or ask questions.",
-            "Return only the requested JSON object.",
-            "",
-            prompt,
-          ].join("\n");
-          const agentOptions = {
-            apiKey,
-            mode: "plan",
-            model: cursorSdkModelSelection(modelSelection),
-            local: {
-              cwd: metadataWorkspace,
-              autoReview: false,
-              settingSources: [],
-              sandboxOptions: { enabled: true },
-              enableAgentRetries: true,
-            },
-          } satisfies AgentOptions;
+      const metadataWorkspace = yield* Effect.acquireRelease(
+        fileSystem.makeTempDirectory({ prefix: CURSOR_METADATA_WORKSPACE_PREFIX }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation,
+                detail: "Failed to create an isolated Cursor metadata workspace.",
+                cause,
+              }),
+          ),
+        ),
+        (workspace) =>
+          fileSystem.remove(workspace, { recursive: true, force: true }).pipe(
+            // Cleanup must not replace a successfully generated result.
+            Effect.ignore({ log: true }),
+          ),
+      );
+      const outputRef = yield* Ref.make("");
+      const runtime = yield* makeCursorAcpRuntime({
+        cursorSettings: settingsForMetadataWorkspace(sourceCwd),
+        environment: resolvedEnvironment,
+        childProcessSpawner: commandSpawner,
+        cwd: metadataWorkspace,
+        clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
+      }).pipe(Effect.provideService(Crypto.Crypto, crypto));
 
-          const mapCursorSdkError = (cause: unknown) =>
+      yield* runtime.handleSessionUpdate((notification) => {
+        const update = notification.update;
+        if (update.sessionUpdate !== "agent_message_chunk") {
+          return Effect.void;
+        }
+        const content = update.content;
+        if (content.type !== "text") {
+          return Effect.void;
+        }
+        return Ref.update(outputRef, (current) => current + content.text);
+      });
+
+      const promptResult = yield* Effect.gen(function* () {
+        yield* runtime.start();
+        yield* Effect.ignore(runtime.setMode("ask"));
+        yield* applyCursorAcpModelSelection({
+          runtime,
+          model: modelSelection.model,
+          selections: modelSelection.options,
+          mapError: ({ cause, configId, step }) =>
             new TextGenerationError({
               operation,
-              detail: "Cursor SDK request failed.",
+              detail:
+                step === "set-config-option"
+                  ? `Failed to set Cursor ACP config option "${configId}" for text generation.`
+                  : "Failed to set Cursor ACP base model for text generation.",
               cause,
-            });
-          const request = runCursorSdkRequest({
-            agentOptions,
-            prompt: metadataPrompt,
-            removeWorkspace: () =>
-              runPromise(
-                ignoreCursorCleanupFailure(
-                  fileSystem.remove(metadataWorkspace, { recursive: true, force: true }),
-                ),
-              ),
-          });
-          return yield* restore(
-            Effect.callback<RunResult, TextGenerationError>((resume) => {
-              request.result.then(
-                (result) => resume(Effect.succeed(result)),
-                (cause) => resume(Effect.fail(mapCursorSdkError(cause))),
-              );
-              return Effect.sync(request.cancel);
             }),
-          );
-        }),
-      ).pipe(
+        });
+
+        return yield* runtime.prompt({
+          prompt: [
+            {
+              type: "text",
+              text: [
+                "Use only the input below. Do not use tools, read or write files, run commands, or ask questions.",
+                "Return only the requested JSON object.",
+                "",
+                prompt,
+              ].join("\n"),
+            },
+          ],
+        });
+      }).pipe(
         Effect.timeoutOption(CURSOR_TIMEOUT_MS),
         Effect.flatMap(
           Option.match({
@@ -226,19 +155,31 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
               Effect.fail(
                 new TextGenerationError({
                   operation,
-                  detail: "Cursor SDK request timed out.",
+                  detail: "Cursor Agent request timed out.",
                 }),
               ),
             onSome: (value) => Effect.succeed(value),
           }),
         ),
+        Effect.mapError((cause) =>
+          isTextGenerationError(cause)
+            ? cause
+            : new TextGenerationError({
+                operation,
+                detail: "Cursor ACP request failed.",
+                cause,
+              }),
+        ),
       );
 
-      const rawResult = promptResult.result?.trim() ?? "";
+      const rawResult = (yield* Ref.get(outputRef)).trim();
       if (!rawResult) {
         return yield* new TextGenerationError({
           operation,
-          detail: emptyCursorSdkResultDetail(promptResult),
+          detail:
+            promptResult.stopReason === "cancelled"
+              ? "Cursor ACP request was cancelled."
+              : "Cursor Agent returned empty output.",
         });
       }
 
@@ -249,7 +190,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
             Effect.fail(
               new TextGenerationError({
                 operation,
-                detail: "Cursor SDK returned invalid structured output.",
+                detail: "Cursor Agent returned invalid structured output.",
                 cause,
               }),
             ),
@@ -261,10 +202,11 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
           ? cause
           : new TextGenerationError({
               operation,
-              detail: "Cursor SDK text generation failed.",
+              detail: "Cursor ACP text generation failed.",
               cause,
             }),
       ),
+      Effect.scoped,
     );
 
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
@@ -279,6 +221,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 
       const generated = yield* runCursorJson({
         operation: "generateCommitMessage",
+        sourceCwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
@@ -307,6 +250,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 
       const generated = yield* runCursorJson({
         operation: "generatePrContent",
+        sourceCwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
@@ -327,6 +271,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 
       const generated = yield* runCursorJson({
         operation: "generateBranchName",
+        sourceCwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
@@ -347,6 +292,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 
       const generated = yield* runCursorJson({
         operation: "generateThreadTitle",
+        sourceCwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,

@@ -1,4 +1,4 @@
-import { RuntimeRequestId } from "@t3tools/contracts";
+import { ApprovalRequestId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -6,8 +6,7 @@ import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import type { PendingUserInput } from "../../session-logic";
 
 const prompt: PendingUserInput = {
-  requestId: RuntimeRequestId.make("request-1"),
-  responseCapability: "live" as const,
+  requestId: ApprovalRequestId.make("request-1"),
   createdAt: "2026-08-15T00:00:00.000Z",
   questions: [
     {

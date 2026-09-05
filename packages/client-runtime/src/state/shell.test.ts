@@ -2,13 +2,11 @@ import type { ServerConfig } from "@t3tools/contracts";
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
-import * as DateTime from "effect/DateTime";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
 import type { EnvironmentShellState } from "./shell.ts";
 import { createEnvironmentServerConfigsAtom, createEnvironmentShellSummaryAtom } from "./shell.ts";
-import { v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const OTHER_ENVIRONMENT_ID = EnvironmentId.make("environment-2");
@@ -36,16 +34,10 @@ function shellState(input: {
       input.updatedAt === undefined
         ? Option.none()
         : Option.some({
-            schemaVersion: 1,
             snapshotSequence: input.snapshotSequence ?? 1,
+            updatedAt: input.updatedAt,
             projects: [],
-            threads: [
-              {
-                ...v2ThreadShell,
-                updatedAt: DateTime.makeUnsafe(input.updatedAt),
-              },
-            ],
-            archivedThreads: [],
+            threads: [],
           }),
     status: input.status,
     error: input.error === undefined ? Option.none() : Option.some(input.error),

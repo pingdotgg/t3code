@@ -4,7 +4,10 @@ import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
 import {
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
   ClientOrchestrationCommand,
+  ModelSelection,
   OrchestrationCommand,
   OrchestrationDispatchCommandError,
   OrchestrationEvent,
@@ -25,13 +28,9 @@ import {
   ThreadCreatedPayload,
   ThreadTurnDiff,
   ThreadTurnStartRequestedPayload,
-} from "./orchestration.ts";
-import {
   isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
-} from "./chatAttachment.ts";
-import { ModelSelection } from "./modelSelection.ts";
-import { DEFAULT_PROVIDER_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "./providerPolicy.ts";
+} from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);

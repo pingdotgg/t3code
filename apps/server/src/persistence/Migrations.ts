@@ -59,18 +59,6 @@ import Migration0044 from "./Migrations/044_ClearAutomaticProjectModelDefaults.t
 import Migration0045 from "./Migrations/045_ProjectionProjectsAutoPull.ts";
 import Migration0046 from "./Migrations/046_RepairAutomaticSettlementTimestamps.ts";
 import Migration0047 from "./Migrations/047_ProjectionProjectIcon.ts";
-import Migration0048 from "./Migrations/048_OrchestrationV2.ts";
-import Migration0049 from "./Migrations/049_OrchestrationV2Subagents.ts";
-import Migration0050 from "./Migrations/050_OrchestrationV2Foundation.ts";
-import Migration0051 from "./Migrations/051_OrchestrationV2ProviderSessionBindings.ts";
-import Migration0052 from "./Migrations/052_OrchestrationV2ThreadLaunchWorkflows.ts";
-import Migration0053 from "./Migrations/053_ApplicationEventSource.ts";
-import Migration0054 from "./Migrations/054_OrchestrationV2EffectCancellation.ts";
-import Migration0055 from "./Migrations/055_ScheduledTasks.ts";
-import Migration0056 from "./Migrations/056_LegacyV1ImportState.ts";
-import Migration0057 from "./Migrations/057_ApplicationEventSequenceIndexes.ts";
-import Migration0058 from "./Migrations/058_OrchestrationV2RecoveryIndexes.ts";
-import Migration0059 from "./Migrations/059_OrchestrationV2ShellIndexes.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -130,18 +118,6 @@ export const migrationEntries = [
   [45, "ProjectionProjectsAutoPull", Migration0045],
   [46, "RepairAutomaticSettlementTimestamps", Migration0046],
   [47, "ProjectionProjectIcon", Migration0047],
-  [48, "OrchestrationV2", Migration0048],
-  [49, "OrchestrationV2Subagents", Migration0049],
-  [50, "OrchestrationV2Foundation", Migration0050],
-  [51, "OrchestrationV2ProviderSessionBindings", Migration0051],
-  [52, "OrchestrationV2ThreadLaunchWorkflows", Migration0052],
-  [53, "ApplicationEventSource", Migration0053],
-  [54, "OrchestrationV2EffectCancellation", Migration0054],
-  [55, "ScheduledTasks", Migration0055],
-  [56, "LegacyV1ImportState", Migration0056],
-  [57, "ApplicationEventSequenceIndexes", Migration0057],
-  [58, "OrchestrationV2RecoveryIndexes", Migration0058],
-  [59, "OrchestrationV2ShellIndexes", Migration0059],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

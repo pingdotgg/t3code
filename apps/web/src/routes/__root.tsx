@@ -21,7 +21,6 @@ import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstall
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
-import { LegacyThreadMigrationToast } from "../components/LegacyThreadMigrationToast";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -149,7 +148,6 @@ function RootRouteView() {
         <SshPasswordPromptDialog />
         <ConfirmDialogHost />
         <SlowRpcRequestToastCoordinator />
-        {primaryEnvironmentAuthenticated ? <LegacyThreadMigrationToast /> : null}
         <HostedStaticEnvironmentBootstrap />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}

@@ -37,11 +37,8 @@ import {
 import type { AcpSessionRuntime, AcpSessionRuntimeStartResult } from "../acp/AcpSessionRuntime.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { removeAntigravitySessionFiles } from "../acp/AntigravitySessionFiles.ts";
-import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
-import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
-import { makeAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/AntigravityAdapterV2.ts";
-import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { ProviderDriverError } from "../Errors.ts";
+import { makeAntigravityAdapter } from "../Layers/AntigravityAdapter.ts";
 import { makeAntigravityProvider } from "../Layers/AntigravityProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -63,7 +60,6 @@ export type AntigravityDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
-  | IdAllocatorV2
   | ModelManifest.ModelManifest
   | Path.Path
   | ProviderEventLoggers
@@ -86,9 +82,6 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const installation = yield* AntigravityInstallation;
       const loggers = yield* ProviderEventLoggers;
       const modelManifest = yield* ModelManifest.ModelManifest;
-      const idAllocator = yield* IdAllocatorV2;
-      const continuationRequests = yield* ProviderContinuationRequests;
-      const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
       const settings = { ...config, enabled } satisfies AntigravitySettings;
       const auth: AntigravityAuthConfig = {
         authMethod: settings.authMethod,
@@ -303,32 +296,16 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const defaultModel = modelManifest.current.pipe(
         Effect.map((manifest) => ModelManifest.manifestDefaultModel(manifest, DRIVER)),
       );
-      const orchestrationAdapter = makeAntigravityAdapterV2({
+      const adapter = yield* makeAntigravityAdapter(settings, {
         instanceId,
-        crypto,
-        fileSystem,
-        path,
-        idAllocator,
-        serverConfig,
         makeRuntime,
         withProcess: authFlow.withProcess,
         defaultModel,
         onSessionStarted: provider.onSessionStarted,
-        onSessionEvent: (event) => {
-          if (event._tag === "ConfigOptionsUpdated") {
-            return provider.onConfigOptionsUpdated(event.configOptions);
-          }
-          return event._tag === "AvailableCommandsUpdated"
-            ? provider.onAvailableCommands(event.availableCommands)
-            : Effect.void;
-        },
-        continuationRequests,
-        nativeLogging: (threadId) =>
-          makeNativeLogger({
-            nativeEventLogger: loggers.native,
-            provider: DRIVER,
-            threadId,
-          }),
+        onConfigOptionsUpdated: provider.onConfigOptionsUpdated,
+        onAvailableCommands: provider.onAvailableCommands,
+        onAuthRequired: provider.onAuthRequired,
+        ...(loggers.native ? { nativeEventLogger: loggers.native } : {}),
       });
       const textGeneration = yield* makeAntigravityTextGeneration({
         profileDirectory,
@@ -413,7 +390,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
                     }),
                 ),
               ),
-        orchestrationAdapter,
+        adapter,
         textGeneration,
         auth: authFlow.controller,
         refreshModels,

@@ -7,8 +7,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-export const ALL_MCP_CAPABILITIES = ["preview", "orchestration", "worktree"] as const;
-export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
+export type McpCapability = "preview";
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
@@ -25,7 +24,7 @@ export class McpInvocationContext extends Context.Service<
 >()("t3/mcp/McpInvocationContext") {}
 
 export const requireMcpCapability = Effect.fn("mcp.requireCapability")(function* (
-  capability: "preview",
+  capability: McpCapability,
 ) {
   const invocation = yield* McpInvocationContext;
   if (!invocation.capabilities.has(capability)) {

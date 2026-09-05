@@ -1,4 +1,4 @@
-import { EnvironmentId, type OrchestrationV2ArchivedShellSnapshot } from "@t3tools/contracts";
+import { EnvironmentId, type OrchestrationShellSnapshot } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Option from "effect/Option";
@@ -7,7 +7,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 export interface ArchivedSnapshotEntry {
   readonly environmentId: EnvironmentId;
-  readonly snapshot: OrchestrationV2ArchivedShellSnapshot;
+  readonly snapshot: OrchestrationShellSnapshot;
 }
 
 export interface ArchivedThreadSnapshotsState {
@@ -40,7 +40,7 @@ export function parseArchivedThreadsEnvironmentKey(key: string): ReadonlyArray<E
 export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
   readonly getSnapshotAtom: (
     environmentId: EnvironmentId,
-  ) => Atom.Atom<AsyncResult.AsyncResult<OrchestrationV2ArchivedShellSnapshot, E>>;
+  ) => Atom.Atom<AsyncResult.AsyncResult<OrchestrationShellSnapshot, E>>;
   readonly labelPrefix: string;
 }) {
   return Atom.family((environmentKey: string) =>

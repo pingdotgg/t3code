@@ -3,12 +3,9 @@ import { assert, describe, it } from "vite-plus/test";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
-  formatGitActionElapsed,
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
-  resolveGitActionProgressPresentation,
-  resolveGitActionResultToastTiming,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
   resolveThreadBranchUpdate,
@@ -35,98 +32,8 @@ function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   };
 }
 
-describe("git action progress presentation", () => {
-  it("keeps the phase on the first row and hook output on the second", () => {
-    assert.deepEqual(
-      resolveGitActionProgressPresentation({
-        isRunning: true,
-        operation: "run_change_request",
-        currentLabel: "Running pre-commit...",
-        lastOutputLine: "Checking formatting and lint rules",
-        phaseStartedAtMs: 1_000,
-        hookStartedAtMs: 2_000,
-      }),
-      {
-        status: "Running pre-commit...",
-        output: "Checking formatting and lint rules",
-        startedAtMs: 2_000,
-      },
-    );
-  });
-
-  it("omits empty output and supplies a brief startup label", () => {
-    assert.deepEqual(
-      resolveGitActionProgressPresentation({
-        isRunning: true,
-        operation: "run_change_request",
-        currentLabel: "Running source control action",
-        lastOutputLine: "  ",
-        phaseStartedAtMs: 1_000,
-        hookStartedAtMs: null,
-      }),
-      {
-        status: "Starting source control action...",
-        output: null,
-        startedAtMs: 1_000,
-      },
-    );
-  });
-
-  it("presents pull progress inline without a second row", () => {
-    assert.deepEqual(
-      resolveGitActionProgressPresentation({
-        isRunning: true,
-        operation: "pull",
-        currentLabel: "Pulling latest changes...",
-        lastOutputLine: null,
-        phaseStartedAtMs: 1_000,
-        hookStartedAtMs: null,
-      }),
-      {
-        status: "Pulling latest changes...",
-        output: null,
-        startedAtMs: 1_000,
-      },
-    );
-  });
-
-  it("does not present unrelated or completed actions", () => {
-    const input = {
-      isRunning: true,
-      operation: "publish_repository",
-      currentLabel: "Publishing repository",
-      lastOutputLine: null,
-      phaseStartedAtMs: 1_000,
-      hookStartedAtMs: null,
-    };
-
-    assert.isNull(resolveGitActionProgressPresentation(input));
-    assert.isNull(resolveGitActionProgressPresentation({ ...input, isRunning: false }));
-  });
-
-  it("formats compact elapsed time without allowing negative values", () => {
-    assert.isNull(formatGitActionElapsed(null, 10_000));
-    assert.equal(formatGitActionElapsed(10_000, 9_000), "0s");
-    assert.equal(formatGitActionElapsed(10_000, 14_900), "4s");
-    assert.equal(formatGitActionElapsed(10_000, 75_000), "1m 5s");
-  });
-});
-
-describe("git action result toast timing", () => {
-  it("keeps errors sticky and dismisses successes after visible time", () => {
-    assert.deepEqual(resolveGitActionResultToastTiming("error"), {
-      timeout: 0,
-      dismissAfterVisibleMs: null,
-    });
-    assert.deepEqual(resolveGitActionResultToastTiming("success"), {
-      timeout: 0,
-      dismissAfterVisibleMs: 10_000,
-    });
-  });
-});
-
 describe("when: ref is clean and has an open PR", () => {
-  it("resolveQuickAction rests in the disabled up-to-date state", () => {
+  it("resolveQuickAction opens the existing PR", () => {
     const quick = resolveQuickAction(
       status({
         pr: {
@@ -140,15 +47,10 @@ describe("when: ref is clean and has an open PR", () => {
       }),
       false,
     );
-    assert.deepInclude(quick, {
-      kind: "show_hint",
-      label: "Commit",
-      disabled: true,
-      hint: "Branch is up to date. No action needed.",
-    });
+    assert.deepInclude(quick, { kind: "open_pr", label: "View PR", disabled: false });
   });
 
-  it("buildMenuItems disables commit/push and omits the PR entry", () => {
+  it("buildMenuItems disables commit/push and enables open PR", () => {
     const items = buildMenuItems(
       status({
         pr: {
@@ -178,6 +80,13 @@ describe("when: ref is clean and has an open PR", () => {
         icon: "push",
         kind: "open_dialog",
         dialogAction: "push",
+      },
+      {
+        id: "pr",
+        label: "View PR",
+        disabled: false,
+        icon: "pr",
+        kind: "open_pr",
       },
     ]);
   });
@@ -261,7 +170,7 @@ describe("when: ref is clean, ahead, and has an open PR", () => {
     assert.deepInclude(quick, { kind: "run_action", action: "push", label: "Push" });
   });
 
-  it("buildMenuItems enables push and omits the PR entry", () => {
+  it("buildMenuItems enables push and keeps open PR available", () => {
     const items = buildMenuItems(
       status({
         aheadCount: 2,
@@ -292,6 +201,13 @@ describe("when: ref is clean, ahead, and has an open PR", () => {
         icon: "push",
         kind: "open_dialog",
         dialogAction: "push",
+      },
+      {
+        id: "pr",
+        label: "View PR",
+        disabled: false,
+        icon: "pr",
+        kind: "open_pr",
       },
     ]);
   });
@@ -721,7 +637,7 @@ describe("when: ref has no upstream configured", () => {
     });
   });
 
-  it("resolveQuickAction rests disabled when clean, no upstream, no local commits are ahead, and PR exists", () => {
+  it("resolveQuickAction opens PR when clean, no upstream, no local commits are ahead, and PR exists", () => {
     const quick = resolveQuickAction(
       status({
         hasUpstream: false,
@@ -738,10 +654,9 @@ describe("when: ref has no upstream configured", () => {
       false,
     );
     assert.deepInclude(quick, {
-      kind: "show_hint",
-      label: "Commit",
-      disabled: true,
-      hint: "Branch is up to date. No action needed.",
+      kind: "open_pr",
+      label: "View PR",
+      disabled: false,
     });
   });
 

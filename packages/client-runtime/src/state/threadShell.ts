@@ -1,7 +1,7 @@
 import type {
   EnvironmentId,
-  OrchestrationV2ShellSnapshot,
-  OrchestrationV2ThreadShell,
+  OrchestrationShellSnapshot,
+  OrchestrationThreadShell,
   ProjectId,
   ScopedProjectRef,
   ScopedThreadRef,
@@ -10,7 +10,7 @@ import type {
 import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentThreadShell } from "./models.ts";
-import { presentThreadShell } from "./models.ts";
+import { scopeThreadShell } from "./models.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
 import {
   arrayElementsEqual,
@@ -21,9 +21,9 @@ import {
   threadRefsEqual,
 } from "./entities.ts";
 
-const EMPTY_THREADS: ReadonlyArray<OrchestrationV2ThreadShell> = Object.freeze([]);
+const EMPTY_THREADS: ReadonlyArray<OrchestrationThreadShell> = Object.freeze([]);
 const EMPTY_SCOPED_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
-const EMPTY_THREAD_INDEX: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell> = new Map();
+const EMPTY_THREAD_INDEX: ReadonlyMap<ThreadId, OrchestrationThreadShell> = new Map();
 const EMPTY_THREAD_REFS_BY_PROJECT: ReadonlyMap<
   ProjectId,
   ReadonlyArray<ScopedThreadRef>
@@ -33,15 +33,15 @@ export function createEnvironmentThreadShellAtoms(input: {
   readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
   readonly snapshotAtom: (
     environmentId: EnvironmentId,
-  ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>;
+  ) => Atom.Atom<OrchestrationShellSnapshot | null>;
 }) {
   // Point reads and aggregate lists share values without keeping an atom alive
   // for every listed thread. Replaced source objects can be collected.
   const scopedThreads = new WeakMap<
-    OrchestrationV2ThreadShell,
+    OrchestrationThreadShell,
     Map<EnvironmentId, EnvironmentThreadShell>
   >();
-  const scopedThread = (environmentId: EnvironmentId, thread: OrchestrationV2ThreadShell) => {
+  const scopedThread = (environmentId: EnvironmentId, thread: OrchestrationThreadShell) => {
     let byEnvironment = scopedThreads.get(thread);
     if (byEnvironment === undefined) {
       byEnvironment = new Map();
@@ -49,7 +49,7 @@ export function createEnvironmentThreadShellAtoms(input: {
     }
     let value = byEnvironment.get(environmentId);
     if (value === undefined) {
-      value = presentThreadShell(environmentId, thread);
+      value = scopeThreadShell(environmentId, thread);
       byEnvironment.set(environmentId, value);
     }
     return value;
@@ -57,13 +57,13 @@ export function createEnvironmentThreadShellAtoms(input: {
 
   const environmentThreadsAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make(
-      (get): ReadonlyArray<OrchestrationV2ThreadShell> =>
+      (get): ReadonlyArray<OrchestrationThreadShell> =>
         get(input.snapshotAtom(environmentId))?.threads ?? EMPTY_THREADS,
     ).pipe(Atom.withLabel(`environment-threads:${environmentId}`)),
   );
 
   const environmentThreadIndexAtom = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get): ReadonlyMap<ThreadId, OrchestrationV2ThreadShell> => {
+    Atom.make((get): ReadonlyMap<ThreadId, OrchestrationThreadShell> => {
       const threads = get(environmentThreadsAtom(environmentId));
       if (threads.length === 0) {
         return EMPTY_THREAD_INDEX;

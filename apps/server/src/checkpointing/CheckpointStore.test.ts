@@ -116,18 +116,6 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
     );
   });
 
-  it.effect("detects a nested workspace without its own .git entry", () =>
-    Effect.gen(function* () {
-      const tmp = yield* makeTmpDir();
-      yield* initRepoWithCommit(tmp);
-      const fileSystem = yield* FileSystem.FileSystem;
-      const nested = NodePath.join(tmp, "packages", "nested");
-      yield* fileSystem.makeDirectory(nested, { recursive: true });
-      const checkpointStore = yield* CheckpointStore.CheckpointStore;
-      expect(yield* checkpointStore.isGitRepository(nested)).toBe(true);
-    }),
-  );
-
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {

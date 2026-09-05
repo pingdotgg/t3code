@@ -245,9 +245,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(withFd.capabilities.serverSelfUpdate).toBe("desktop-managed");
       expect(withFd.capabilities.desktopAppUpdate).toBe(true);
       expect(withFd.capabilities.serverSelfUpdateProgress).toBe(true);
-      // v2 recovery terminalizes running runs on restart, so continuation
-      // stays unadvertised until the v2 runtime carries the markers.
-      expect(withFd.capabilities.serverUpdateThreadContinuation).toBeUndefined();
+      expect(withFd.capabilities.serverUpdateThreadContinuation).toBe(true);
 
       const withoutFd = yield* describeWith({ mode: "desktop" });
       expect(withoutFd.capabilities.serverSelfUpdate).toBe("desktop-managed");

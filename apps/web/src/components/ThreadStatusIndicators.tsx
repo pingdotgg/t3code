@@ -12,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { FolderGit2Icon, TerminalIcon } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { useMemo } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -23,13 +23,7 @@ import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { vcsEnvironment } from "../state/vcs";
 import { useUiStateStore } from "../uiStateStore";
 import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
-import {
-  resolveThreadLastVisitedAt,
-  resolveThreadStatusPill,
-  type ThreadStatusPill,
-  useRetainedValue,
-  useSidebarRowSubscriptionLease,
-} from "./Sidebar.logic";
+import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import type { SidebarThreadSummary } from "../types";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
@@ -60,10 +54,9 @@ export interface LinkedThreadPullRequestStatus {
 export function useLinkedThreadPullRequest(
   environmentId: EnvironmentId | null,
   linkedPullRequest: ThreadLinkedPullRequest | null | undefined,
-  enabled = true,
 ): LinkedThreadPullRequestStatus | null {
   const queried = useEnvironmentQuery(
-    !enabled || environmentId === null || linkedPullRequest == null
+    environmentId === null || linkedPullRequest == null
       ? null
       : linkedPullRequestDetailAtom({
           environmentId,
@@ -356,7 +349,7 @@ export function nextThreadChangeRequestSnapshot(input: {
  * checkouts only, a cached merged/closed PR for the thread. Local thread
  * metadata follows the shared checkout, so the cached branch intentionally
  * survives that metadata changing to the newly checked-out branch. Open PRs
- * are retained only while live status is absent and the branch still matches.
+ * are never retained — their state can still change.
  */
 export function resolveDisplayedThreadPr(input: {
   threadBranch: string | null;
@@ -389,15 +382,6 @@ export function resolveDisplayedThreadPr(input: {
     gitStatus.pr != null
   ) {
     return gitStatus.pr;
-  }
-
-  if (
-    gitStatus === null &&
-    threadBranch !== null &&
-    snapshot?.branch === threadBranch &&
-    snapshot.linkedPullRequest === undefined
-  ) {
-    return snapshot.pr;
   }
 
   if (
@@ -444,15 +428,6 @@ export function resolveDisplayedThreadPrProvider(input: {
     gitStatus.pr != null
   ) {
     return gitStatus.sourceControlProvider;
-  }
-
-  if (
-    gitStatus === null &&
-    threadBranch !== null &&
-    snapshot?.branch === threadBranch &&
-    snapshot.linkedPullRequest === undefined
-  ) {
-    return snapshot.sourceControlProvider;
   }
 
   if (
@@ -571,24 +546,11 @@ export function ThreadStatusLabel({
  * like the command palette. Shows the change request state icon (if present) and the
  * thread status dot, matching the sidebar's leading indicators.
  */
-export function ThreadRowLeadingStatus({
-  thread,
-  snapshot,
-}: {
-  thread: SidebarThreadSummary;
-  snapshot?: ThreadChangeRequestSnapshot | undefined;
-}) {
-  const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(false);
-  // Observe the containing title even when this thread has no badge yet.
-  const statusRef = useCallback(
-    (node: HTMLSpanElement | null) => rowRef(node?.parentElement ?? null),
-    [rowRef],
-  );
+export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
-  const localLastVisitedAt = useUiStateStore(
+  const lastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
   );
-  const lastVisitedAt = resolveThreadLastVisitedAt(thread.lastVisitedAt, localLastVisitedAt);
   const threadProject = useProject(
     useMemo(
       () => scopeProjectRef(thread.environmentId, thread.projectId),
@@ -600,11 +562,9 @@ export function ThreadRowLeadingStatus({
   const linkedPullRequest = useLinkedThreadPullRequest(
     thread.environmentId,
     thread.linkedPullRequest,
-    leaseLiveStatus,
   );
   const gitStatus = useEnvironmentQuery(
-    leaseLiveStatus &&
-      thread.linkedPullRequest == null &&
+    thread.linkedPullRequest == null &&
       (thread.branch != null || thread.worktreePath !== null) &&
       gitCwd !== null
       ? vcsEnvironment.status({
@@ -613,20 +573,14 @@ export function ThreadRowLeadingStatus({
         })
       : null,
   );
-  const visibleGitStatus = useRetainedValue(
-    JSON.stringify([thread.environmentId, gitCwd]),
-    gitStatus.data,
+  const pr =
+    thread.linkedPullRequest == null
+      ? resolveThreadPr({ threadBranch: thread.branch, gitStatus: gitStatus.data })
+      : (linkedPullRequest?.pr ?? null);
+  const prStatus = prStatusIndicator(
+    pr,
+    linkedPullRequest?.sourceControlProvider ?? gitStatus.data?.sourceControlProvider,
   );
-  const displayedPrInput = {
-    threadBranch: thread.branch,
-    gitStatus: visibleGitStatus,
-    snapshot,
-    retainTerminalOnBranchMismatch: thread.worktreePath === null,
-    linkedPullRequest: thread.linkedPullRequest,
-    linkedPullRequestStatus: linkedPullRequest,
-  };
-  const pr = resolveDisplayedThreadPr(displayedPrInput);
-  const prStatus = prStatusIndicator(pr, resolveDisplayedThreadPrProvider(displayedPrInput));
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
@@ -634,13 +588,12 @@ export function ThreadRowLeadingStatus({
     },
   });
 
+  if (!prStatus && !threadStatus) {
+    return null;
+  }
+
   return (
-    <span
-      ref={statusRef}
-      className={
-        prStatus || threadStatus ? "inline-flex shrink-0 items-center gap-1.5" : "contents"
-      }
-    >
+    <span className="inline-flex shrink-0 items-center gap-1.5">
       {prStatus && pr ? (
         <Tooltip>
           <TooltipTrigger

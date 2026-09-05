@@ -1,12 +1,15 @@
-import type {
-  OrchestrationV2ProviderTurnTokenUsage,
-  OrchestrationV2TurnItem,
-  ThreadTokenUsageSnapshot,
-} from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
+import type { OrchestrationThreadActivity, ThreadTokenUsageSnapshot } from "@t3tools/contracts";
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
 
 function asFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
 }
 
 type NullableContextWindowUsage = {
@@ -22,56 +25,22 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
   readonly updatedAt: string;
 };
 
-/** Prefers the provider's live usage report (#8144); falls back to the last compaction item. */
 export function deriveLatestContextWindowSnapshot(
-  entries: ReadonlyArray<{
-    readonly item: OrchestrationV2TurnItem;
-  }>,
-  liveUsage?: OrchestrationV2ProviderTurnTokenUsage | null,
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): ContextWindowSnapshot | null {
-  if (liveUsage != null) {
-    const usedTokens = Math.max(0, liveUsage.usedTokens);
-    const maxTokens = liveUsage.maxTokens ?? null;
-    const usedPercentage =
-      maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null;
-    const remainingTokens =
-      maxTokens !== null ? Math.max(0, Math.round(maxTokens - usedTokens)) : null;
-    const remainingPercentage = usedPercentage !== null ? Math.max(0, 100 - usedPercentage) : null;
-    return {
-      usedTokens,
-      totalProcessedTokens: null,
-      maxTokens,
-      remainingTokens,
-      usedPercentage,
-      remainingPercentage,
-      inputTokens: liveUsage.inputTokens ?? null,
-      cachedInputTokens: liveUsage.cachedInputTokens ?? null,
-      outputTokens: liveUsage.outputTokens ?? null,
-      reasoningOutputTokens: liveUsage.reasoningOutputTokens ?? null,
-      lastUsedTokens: null,
-      lastInputTokens: null,
-      lastCachedInputTokens: null,
-      lastOutputTokens: null,
-      lastReasoningOutputTokens: null,
-      toolUses: null,
-      durationMs: null,
-      compactsAutomatically: true,
-      autoCompactThreshold: null,
-      updatedAt: liveUsage.updatedAt,
-    };
-  }
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index];
-    if (!entry || entry.item.type !== "compaction") {
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const activity = activities[index];
+    if (!activity || activity.kind !== "context-window.updated") {
       continue;
     }
-    const payload = entry.item;
-    const usedTokens = asFiniteNumber(payload.afterTokenCount);
+
+    const payload = asRecord(activity.payload);
+    const usedTokens = asFiniteNumber(payload?.usedTokens);
     if (usedTokens === null || usedTokens < 0) {
       continue;
     }
 
-    const maxTokens = null;
+    const maxTokens = asFiniteNumber(payload?.maxTokens);
     const usedPercentage =
       maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null;
     const remainingTokens =
@@ -80,25 +49,25 @@ export function deriveLatestContextWindowSnapshot(
 
     return {
       usedTokens,
-      totalProcessedTokens: asFiniteNumber(payload.beforeTokenCount),
+      totalProcessedTokens: asFiniteNumber(payload?.totalProcessedTokens),
       maxTokens,
       remainingTokens,
       usedPercentage,
       remainingPercentage,
-      inputTokens: null,
-      cachedInputTokens: null,
-      outputTokens: null,
-      reasoningOutputTokens: null,
-      lastUsedTokens: null,
-      lastInputTokens: null,
-      lastCachedInputTokens: null,
-      lastOutputTokens: null,
-      lastReasoningOutputTokens: null,
-      toolUses: null,
-      durationMs: null,
-      compactsAutomatically: true,
-      autoCompactThreshold: null,
-      updatedAt: DateTime.formatIso(payload.startedAt ?? payload.updatedAt),
+      inputTokens: asFiniteNumber(payload?.inputTokens),
+      cachedInputTokens: asFiniteNumber(payload?.cachedInputTokens),
+      outputTokens: asFiniteNumber(payload?.outputTokens),
+      reasoningOutputTokens: asFiniteNumber(payload?.reasoningOutputTokens),
+      lastUsedTokens: asFiniteNumber(payload?.lastUsedTokens),
+      lastInputTokens: asFiniteNumber(payload?.lastInputTokens),
+      lastCachedInputTokens: asFiniteNumber(payload?.lastCachedInputTokens),
+      lastOutputTokens: asFiniteNumber(payload?.lastOutputTokens),
+      lastReasoningOutputTokens: asFiniteNumber(payload?.lastReasoningOutputTokens),
+      toolUses: asFiniteNumber(payload?.toolUses),
+      durationMs: asFiniteNumber(payload?.durationMs),
+      compactsAutomatically: asBoolean(payload?.compactsAutomatically) ?? false,
+      autoCompactThreshold: asFiniteNumber(payload?.autoCompactThreshold),
+      updatedAt: activity.createdAt,
     };
   }
 

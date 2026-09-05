@@ -1,1242 +1,2079 @@
 import {
+  classifyTaskAgentKind,
+  EventId,
   MessageId,
-  NodeId,
-  PlanId,
-  ProviderInstanceId,
-  ProviderThreadId,
-  RunAttemptId,
-  RunId,
   ThreadId,
-  TurnItemId,
-  type OrchestrationV2ProjectedTurnItem,
-  type OrchestrationV2ExecutionNode,
-  type OrchestrationV2RunAttempt,
-  type OrchestrationV2TurnItem,
+  TurnId,
+  type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
+import { resolveWorkEntryToolPresentation } from "@t3tools/client-runtime/work-log/presentation";
 
 import {
+  createMessageAttachmentPreviewProjector,
+  deriveActiveWorkStartedAt,
   deriveActivePlanState,
-  deriveTimelineEntriesFromVisibleTurnItems,
-  deriveTimelineEntriesFromVisibleTurnItemsWithState,
-  deriveRevertTurnCountByUserMessageId,
+  derivePendingApprovals,
+  derivePendingUserInputs,
+  deriveTimelineEntries,
+  deriveTimelineEntriesWithState,
+  deriveWorkLogEntries,
   findLatestProposedPlan,
-  isLatestRunSettled,
+  hasActionableProposedPlan,
+  isLatestTurnSettled,
   selectHandoffImageResources,
   selectMessageImageResources,
-  createMessageAttachmentPreviewProjector,
-  providerErrorPresentation,
-  type TimelineEntry,
   workEntryIndicatesToolFailure,
-  workEntryDisplayIndicatesToolFailure,
+  workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
 } from "./session-logic";
-import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "./test-fixtures";
-import type { ChatMessage } from "./types";
 
-describe("V2 session presentation", () => {
-  it("uses run status as the settlement boundary", () => {
-    const runId = RunId.make("run-1");
-    expect(
-      isLatestRunSettled(
+let nextActivityId = 0;
+
+function makeActivity(overrides: {
+  id?: string;
+  createdAt?: string;
+  kind?: string;
+  summary?: string;
+  tone?: OrchestrationThreadActivity["tone"];
+  payload?: Record<string, unknown>;
+  turnId?: string;
+  sequence?: number;
+}): OrchestrationThreadActivity {
+  // Fixtures model post-ingestion rows: ingestion stamps agentKind on every
+  // task.* payload. Pass an explicit agentKind to model legacy rows.
+  const rawPayload = overrides.payload ?? {};
+  const payload =
+    overrides.kind?.startsWith("task.") && !("agentKind" in rawPayload)
+      ? {
+          ...rawPayload,
+          agentKind: classifyTaskAgentKind({
+            taskType: typeof rawPayload.taskType === "string" ? rawPayload.taskType : undefined,
+            agentId: typeof rawPayload.agentId === "string" ? rawPayload.agentId : undefined,
+          }),
+        }
+      : rawPayload;
+  return {
+    id: EventId.make(overrides.id ?? `activity-${nextActivityId++}`),
+    createdAt: overrides.createdAt ?? "2026-02-23T00:00:00.000Z",
+    kind: overrides.kind ?? "tool.started",
+    summary: overrides.summary ?? "Tool call",
+    tone: overrides.tone ?? "tool",
+    payload,
+    turnId: overrides.turnId ? TurnId.make(overrides.turnId) : null,
+    ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
+  };
+}
+
+describe("derivePendingApprovals", () => {
+  it.each([{}, { requestType: "unknown" }])(
+    "exposes legacy OpenCode approvals without a known request kind: %j",
+    (legacyPayload) => {
+      const requested = makeActivity({
+        kind: "approval.requested",
+        payload: { requestId: "per-legacy", detail: "*", ...legacyPayload },
+      });
+
+      expect(derivePendingApprovals([requested])).toEqual([
         {
-          runId,
-          status: "completed",
-          startedAt: "2026-06-20T00:00:00.000Z",
-          completedAt: "2026-06-20T00:01:00.000Z",
+          requestId: "per-legacy",
+          requestKind: "command",
+          createdAt: requested.createdAt,
+          detail: "*",
         },
-        null,
-      ),
-    ).toBe(true);
-    expect(
-      isLatestRunSettled(
-        { runId, status: "running", startedAt: null, completedAt: null },
-        { status: "running", activeRunId: runId },
-      ),
-    ).toBe(false);
-    expect(
-      isLatestRunSettled(
-        { runId, status: "queued", startedAt: null, completedAt: null },
-        { status: "running", activeRunId: RunId.make("run-active") },
-      ),
-    ).toBe(false);
-  });
+      ]);
+    },
+  );
 
-  it("labels provider retry progress, delay, recovery, and exhaustion", () => {
-    const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
-    const retryItem = {
-      id: TurnItemId.make("item-provider-retry"),
-      threadId: ThreadId.make("thread-provider-retry"),
-      runId: RunId.make("run-provider-retry"),
-      nodeId: null,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal: 1,
-      status: "running" as const,
-      title: "Provider retry",
-      startedAt: now,
-      completedAt: null,
-      updatedAt: now,
-      type: "error" as const,
-      failure: {
-        class: "provider_error" as const,
-        message: "Claude API overloaded.",
-        code: "api_error_529",
-        retryable: true,
-      },
-      retry: {
-        attempt: 2,
-        maxAttempts: 10,
-        retryDelayMs: 1_500,
-      },
-    } satisfies Extract<OrchestrationV2TurnItem, { readonly type: "error" }>;
+  it.each(["tool_user_input", "auth_tokens_refresh"])(
+    "does not turn %s into an approval",
+    (requestType) => {
+      const activity = makeActivity({
+        kind: "approval.requested",
+        payload: { requestId: "not-an-approval", requestType },
+      });
 
-    expect(providerErrorPresentation(retryItem)).toEqual({
-      label: "Retrying provider (2/10)",
-      detail: "Claude API overloaded. Retrying in 1.5s.",
-    });
-    expect(
-      providerErrorPresentation({
-        ...retryItem,
-        status: "completed",
-        completedAt: now,
+      expect(derivePendingApprovals([activity])).toEqual([]);
+    },
+  );
+
+  it("tracks open approvals and removes resolved ones", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "approval-open",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "approval.requested",
+        summary: "Command approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-1",
+          requestKind: "command",
+          detail: "bun run lint",
+        },
       }),
-    ).toMatchObject({ label: "Provider recovered (2/10 retries)" });
-    expect(
-      providerErrorPresentation({
-        ...retryItem,
-        status: "failed",
-        retry: { ...retryItem.retry, attempt: 10 },
-        completedAt: now,
+      makeActivity({
+        id: "approval-close",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "approval.resolved",
+        summary: "Approval resolved",
+        tone: "info",
+        payload: { requestId: "req-2" },
       }),
-    ).toMatchObject({ label: "Provider error after 10/10 retries" });
-  });
-
-  it("selects the latest proposed plan for a run", () => {
-    const runId = RunId.make("run-1");
-    const planId = PlanId.make("plan-1");
-    const nodeId = NodeId.make("node-plan");
-    const now = DateTime.makeUnsafe("2026-06-20T00:00:01.000Z");
-    const baseProjection = makeThreadProjectionFixture();
-    const plan = findLatestProposedPlan(
-      {
-        ...baseProjection,
-        plans: [
-          {
-            id: planId,
-            threadId: baseProjection.thread.id,
-            nodeId,
-            kind: "proposed_plan" as const,
-            markdown: "Plan",
-            status: "active" as const,
-            runId,
-          },
-        ],
-        turnItems: [
-          {
-            id: TurnItemId.make("item-plan"),
-            threadId: baseProjection.thread.id,
-            nodeId,
-            providerThreadId: null,
-            providerTurnId: null,
-            nativeItemRef: null,
-            parentItemId: null,
-            ordinal: 0,
-            status: "completed" as const,
-            title: null,
-            startedAt: now,
-            completedAt: now,
-            updatedAt: now,
-            type: "proposed_plan" as const,
-            planId,
-            markdown: "Plan",
-            streaming: false,
-            runId,
-          },
-        ],
-        updatedAt: now,
-      },
-      runId,
-    );
-    expect(plan?.planMarkdown).toBe("Plan");
-  });
-
-  it("assigns run rollback to the turn-start message instead of a later steer", () => {
-    const runId = RunId.make("run-steered");
-    const turnStartMessageId = MessageId.make("message-turn-start");
-    const steerMessageId = MessageId.make("message-steer");
-    const assistantMessageId = MessageId.make("message-assistant");
-    const messages: ChatMessage[] = [
-      {
-        id: turnStartMessageId,
-        role: "user",
-        text: "Start",
-        runId,
-        inputIntent: "turn_start",
-        streaming: false,
-        createdAt: "2026-06-20T00:00:00.000Z",
-        updatedAt: "2026-06-20T00:00:00.000Z",
-      },
-      {
-        id: steerMessageId,
-        role: "user",
-        text: "Steer",
-        runId,
-        inputIntent: "steer",
-        streaming: false,
-        createdAt: "2026-06-20T00:00:01.000Z",
-        updatedAt: "2026-06-20T00:00:01.000Z",
-      },
-      {
-        id: assistantMessageId,
-        role: "assistant",
-        text: "Done",
-        runId,
-        streaming: false,
-        createdAt: "2026-06-20T00:00:02.000Z",
-        updatedAt: "2026-06-20T00:00:02.000Z",
-      },
+      makeActivity({
+        id: "approval-closed-request",
+        createdAt: "2026-02-23T00:00:01.500Z",
+        kind: "approval.requested",
+        summary: "File-change approval requested",
+        tone: "approval",
+        payload: { requestId: "req-2", requestType: "unknown" },
+      }),
     ];
-    const timelineEntries: TimelineEntry[] = messages.map((message): TimelineEntry => ({
-      id: message.id,
-      kind: "message",
-      createdAt: message.createdAt,
-      message,
-    }));
 
-    const targets = deriveRevertTurnCountByUserMessageId({
-      timelineEntries,
-      checkpoints: [
-        {
-          runId,
-          checkpointTurnCount: 1,
-          checkpointRef: "checkpoint-run-1" as never,
-          status: "ready",
-          files: [],
-          assistantMessageId,
-          completedAt: "2026-06-20T00:00:03.000Z",
-        },
-      ],
-    });
-
-    expect([...targets]).toEqual([[turnStartMessageId, 0]]);
-    expect(targets.has(steerMessageId)).toBe(false);
-  });
-
-  it("uses visible turn item order and keeps provider errors in the work log", () => {
-    const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
-    const threadId = ThreadId.make("thread-visible");
-    const runId = RunId.make("run-visible");
-    const base = (id: string, ordinal: number) => ({
-      id: TurnItemId.make(id),
-      threadId,
-      runId,
-      nodeId: null,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal,
-      status: "completed" as const,
-      title: null,
-      startedAt: now,
-      completedAt: now,
-      updatedAt: now,
-    });
-    const userItem = {
-      ...base("item-user", 0),
-      type: "user_message" as const,
-      messageId: MessageId.make("message-user"),
-      inputIntent: "turn_start" as const,
-      text: "Start",
-      attachments: [],
-      createdBy: "user" as const,
-      creationSource: "web" as const,
-    } satisfies OrchestrationV2TurnItem;
-    const requestItem = {
-      ...base("item-interrupt-request", 1),
-      type: "run_interrupt_request" as const,
-      message: "Stopping",
-    } satisfies OrchestrationV2TurnItem;
-    const commandItem = {
-      ...base("item-command", 2),
-      type: "command_execution" as const,
-      input: "sleep 1",
-      output: "done",
-      exitCode: 0,
-    } satisfies OrchestrationV2TurnItem;
-    const resultItem = {
-      ...base("item-interrupt-result", 3),
-      type: "run_interrupt_result" as const,
-      message: "Stopped",
-    } satisfies OrchestrationV2TurnItem;
-    const todoItem = {
-      ...base("item-todo", 4),
-      type: "todo_list" as const,
-      planId: PlanId.make("plan-visible"),
-      explanation: "Keep task detail in the Tasks panel",
-      steps: [
-        { id: "step-1", text: "First", status: "completed" as const },
-        { id: "step-2", text: "Second", status: "pending" as const },
-      ],
-    } satisfies OrchestrationV2TurnItem;
-    const errorItem = {
-      ...base("item-error", 5),
-      status: "failed" as const,
-      type: "error" as const,
-      failure: {
-        class: "validation_error" as const,
-        message: "Invalid reasoning effort.",
-        code: "invalid_request",
-        retryable: false,
+    expect(derivePendingApprovals(activities)).toEqual([
+      {
+        requestId: "req-1",
+        requestKind: "command",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        detail: "bun run lint",
       },
-    } satisfies OrchestrationV2TurnItem;
-    const threadCreatedItem = {
-      ...base("item-thread-created", 6),
-      type: "thread_created" as const,
-      title: "Follow-up thread",
-      targetThreadId: ThreadId.make("thread-follow-up"),
-      targetRunId: RunId.make("run-follow-up"),
-      targetProviderInstanceId: ProviderInstanceId.make("claude-default"),
-      targetModel: "claude-sonnet-4-6",
-    } satisfies OrchestrationV2TurnItem;
-    const workspacePreparationItem = {
-      ...base("item-workspace-preparation", 7),
-      type: "command_execution" as const,
-      title: "Workspace ready",
-      input: "Preparing workspace",
-      output: "Workspace preparation completed.",
-      exitCode: 0,
-    } satisfies OrchestrationV2TurnItem;
-    const visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem> = [
-      userItem,
-      requestItem,
-      commandItem,
-      resultItem,
-      todoItem,
-      errorItem,
-      threadCreatedItem,
-      workspacePreparationItem,
-    ].map((item, position) => ({
-      position,
-      visibility: "local" as const,
-      sourceThreadId: threadId,
-      sourceItemId: item.id,
-      item,
-    }));
-
-    const entries = deriveTimelineEntriesFromVisibleTurnItems({
-      visibleTurnItems,
-      optimisticMessages: [],
-    });
-
-    expect(entries.map((entry) => [entry.kind, entry.id])).toEqual([
-      ["message", userItem.messageId],
-      ["event", requestItem.id],
-      ["work", commandItem.id],
-      ["event", resultItem.id],
-      ["work", errorItem.id],
-      ["event", threadCreatedItem.id],
     ]);
-    const commandEntry = entries[2];
-    const userEntry = entries[0];
-    expect(userEntry?.kind).toBe("message");
-    if (userEntry?.kind === "message") {
-      expect(userEntry.projectedItem).toBe(visibleTurnItems[0]);
-      expect(userEntry.message.inputIntent).toBe("turn_start");
-      expect(userEntry.message.createdBy).toBe("user");
-      expect(userEntry.message.creationSource).toBe("web");
-    }
-    expect(commandEntry?.kind).toBe("work");
-    if (commandEntry?.kind === "work") {
-      expect(commandEntry.entry.projectedItem).toBe(visibleTurnItems[2]);
-      expect(commandEntry.entry.structuredPayload).toBe(commandItem);
-    }
-    const errorEntry = entries[4];
-    expect(errorEntry?.kind).toBe("work");
-    if (errorEntry?.kind === "work") {
-      expect(errorEntry.entry.projectedItem).toBe(visibleTurnItems[5]);
-      expect(errorEntry.entry.label).toBe("Provider error");
-      expect(errorEntry.entry.detail).toBe("Invalid reasoning effort.");
-      expect(errorEntry.entry.tone).toBe("info");
-      expect(errorEntry.entry.toolLifecycleStatus).toBe("failed");
-    }
-    const threadCreatedEntry = entries[5];
-    expect(threadCreatedEntry?.kind).toBe("event");
-    if (threadCreatedEntry?.kind === "event") {
-      expect(threadCreatedEntry.projectedItem.item.type).toBe("thread_created");
-    }
   });
 
-  it.each(["pending", "running", "completed"] as const)(
-    "keeps %s task progress available to the composer and out of the timeline",
-    (stepStatus) => {
-      const projection = makeThreadProjectionFixture();
-      const now = DateTime.makeUnsafe("2026-09-04T00:00:00.000Z");
-      const runId = RunId.make("run-tasks");
-      const nodeId = NodeId.make("node-tasks");
-      const planId = PlanId.make("plan-tasks");
-      const steps = [{ id: "step-1", text: "Verify the change", status: stepStatus }];
-      const item = {
-        id: TurnItemId.make("item-tasks"),
-        threadId: projection.thread.id,
-        runId,
-        nodeId,
-        providerThreadId: null,
-        providerTurnId: null,
-        nativeItemRef: null,
-        parentItemId: null,
-        ordinal: 0,
-        status: "completed" as const,
-        title: null,
-        startedAt: now,
-        completedAt: now,
-        updatedAt: now,
-        type: "todo_list" as const,
-        planId,
-        steps,
-      } satisfies OrchestrationV2TurnItem;
-      const plans = [
-        {
-          id: planId,
-          threadId: projection.thread.id,
-          runId,
-          nodeId,
-          kind: "todo_list" as const,
-          status: "active" as const,
-          steps,
+  it("maps canonical requestType payloads into pending approvals", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "approval-open-request-type",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "approval.requested",
+        summary: "Command approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-request-type",
+          requestType: "command_execution_approval",
+          detail: "pwd",
         },
-      ];
+      }),
+    ];
 
-      expect(
-        deriveTimelineEntriesFromVisibleTurnItems({
-          visibleTurnItems: [
+    expect(derivePendingApprovals(activities)).toEqual([
+      {
+        requestId: "req-request-type",
+        requestKind: "command",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        detail: "pwd",
+      },
+    ]);
+  });
+
+  it("keeps app access approvals and persistence choices from remote activities", () => {
+    const options = [
+      { decision: "decline", label: "Decline" },
+      { decision: "acceptAlways", label: "Always allow Safari" },
+      { decision: "accept", label: "Approve" },
+    ];
+    const activities = [
+      makeActivity({
+        kind: "approval.requested",
+        summary: "App access approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-safari",
+          requestType: "mcp_elicitation_approval",
+          detail: "Allow ChatGPT to use Safari?",
+          appName: "Safari",
+          options,
+        },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities)).toEqual([
+      {
+        requestId: "req-safari",
+        requestKind: "mcp-elicitation",
+        createdAt: "2026-02-23T00:00:00.000Z",
+        detail: "Allow ChatGPT to use Safari?",
+        appName: "Safari",
+        options,
+      },
+    ]);
+  });
+
+  it("derives dynamic tool requests as actionable generic approvals", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "approval-open-dynamic-tool",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "approval.requested",
+        summary: "Approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-dynamic-tool",
+          requestType: "dynamic_tool_call",
+          detail: "Search the web",
+        },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities)).toEqual([
+      {
+        requestId: "req-dynamic-tool",
+        requestKind: "command",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        detail: "Search the web",
+      },
+    ]);
+  });
+
+  it("clears stale pending approvals when provider reports unknown pending request", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "approval-open-stale",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "approval.requested",
+        summary: "Command approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-stale-1",
+          requestType: "unknown",
+        },
+      }),
+      makeActivity({
+        id: "approval-failed-stale",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "provider.approval.respond.failed",
+        summary: "Provider approval response failed",
+        tone: "error",
+        payload: {
+          requestId: "req-stale-1",
+          detail: "Unknown pending permission request: req-stale-1",
+        },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities)).toEqual([]);
+  });
+
+  it("clears stale pending approvals when the backend marks them stale after restart", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "approval-open-stale-restart",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "approval.requested",
+        summary: "Command approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-stale-restart-1",
+          requestKind: "command",
+        },
+      }),
+      makeActivity({
+        id: "approval-failed-stale-restart",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "provider.approval.respond.failed",
+        summary: "Provider approval response failed",
+        tone: "error",
+        payload: {
+          requestId: "req-stale-restart-1",
+          detail:
+            "Stale pending approval request: req-stale-restart-1. Provider callback state does not survive app restarts or recovered sessions. Restart the turn to continue.",
+        },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities)).toEqual([]);
+  });
+});
+
+describe("derivePendingUserInputs", () => {
+  it("keeps free-text questions without suggested answers", () => {
+    const question = {
+      id: "0",
+      header: "Question",
+      question: "What should it be named?",
+      options: [],
+      allowCustomAnswer: true,
+      multiSelect: false,
+    };
+    const activities = [
+      makeActivity({
+        id: "async-question",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        payload: { requestId: "async-1", responseMode: "message", questions: [question] },
+      }),
+    ];
+    expect(derivePendingUserInputs(activities)[0]?.questions).toEqual([question]);
+  });
+
+  it("preserves native choice values and the custom-answer restriction", () => {
+    const question = {
+      id: "interaction-result",
+      header: "Result",
+      question: "Which result should be used?",
+      options: [
+        { value: " first\t", label: "Result", description: "First result" },
+        { value: "second", label: "Result", description: "Second result" },
+      ],
+      allowCustomAnswer: false,
+      multiSelect: false,
+    };
+    const activities = [
+      makeActivity({
+        id: "native-user-input",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        payload: { requestId: "req-native-choice", questions: [question] },
+      }),
+    ];
+
+    expect(derivePendingUserInputs(activities)[0]?.questions).toEqual([question]);
+  });
+
+  it("tracks open structured prompts and removes resolved ones", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "user-input-open",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-user-input-1",
+          questions: [
             {
-              position: 0,
-              visibility: "local",
-              sourceThreadId: projection.thread.id,
-              sourceItemId: item.id,
-              item,
+              id: "sandbox_mode",
+              header: "Sandbox",
+              question: "Which mode should be used?",
+              options: [
+                {
+                  label: "workspace-write",
+                  description: "Allow workspace writes only",
+                },
+              ],
+              multiSelect: true,
             },
           ],
-          optimisticMessages: [],
-          plans,
-        }),
-      ).toEqual([]);
-      expect(
-        deriveActivePlanState({ ...projection, plans, turnItems: [item] }, runId),
-      ).toMatchObject({
-        runId,
-        steps: [
+        },
+      }),
+      makeActivity({
+        id: "user-input-resolved",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "user-input.resolved",
+        summary: "User input submitted",
+        tone: "info",
+        payload: {
+          requestId: "req-user-input-2",
+          answers: {
+            sandbox_mode: "workspace-write",
+          },
+        },
+      }),
+      makeActivity({
+        id: "user-input-open-2",
+        createdAt: "2026-02-23T00:00:01.500Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-user-input-2",
+          questions: [
+            {
+              id: "approval",
+              header: "Approval",
+              question: "Continue?",
+              options: [
+                {
+                  label: "yes",
+                  description: "Continue execution",
+                },
+              ],
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+    ];
+
+    expect(derivePendingUserInputs(activities)).toEqual([
+      {
+        requestId: "req-user-input-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        questions: [
           {
-            step: "Verify the change",
-            status: stepStatus === "running" ? "inProgress" : stepStatus,
+            id: "sandbox_mode",
+            header: "Sandbox",
+            question: "Which mode should be used?",
+            options: [
+              {
+                label: "workspace-write",
+                description: "Allow workspace writes only",
+              },
+            ],
+            multiSelect: true,
           },
         ],
+      },
+    ]);
+  });
+
+  it("clears stale pending user-input prompts when the provider reports an orphaned request", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "user-input-open-stale",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-user-input-stale-1",
+          questions: [
+            {
+              id: "sandbox_mode",
+              header: "Sandbox",
+              question: "Which mode should be used?",
+              options: [
+                {
+                  label: "workspace-write",
+                  description: "Allow workspace writes only",
+                },
+              ],
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "user-input-failed-stale",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "provider.user-input.respond.failed",
+        summary: "Provider user input response failed",
+        tone: "error",
+        payload: {
+          requestId: "req-user-input-stale-1",
+          detail:
+            "Provider adapter request failed (codex) for item/tool/requestUserInput: Unknown pending Codex user input request: req-user-input-stale-1",
+        },
+      }),
+    ];
+
+    expect(derivePendingUserInputs(activities)).toEqual([]);
+  });
+});
+
+describe("deriveActivePlanState", () => {
+  it("returns the latest plan update for the active turn", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "plan-old",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          explanation: "Initial plan",
+          plan: [{ step: "Inspect code", status: "pending" }],
+        },
+      }),
+      makeActivity({
+        id: "plan-latest",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          explanation: "Refined plan",
+          plan: [{ step: "Implement Codex user input", status: "inProgress" }],
+        },
+      }),
+    ];
+
+    expect(deriveActivePlanState(activities, TurnId.make("turn-1"))).toEqual({
+      createdAt: "2026-02-23T00:00:02.000Z",
+      turnId: "turn-1",
+      explanation: "Refined plan",
+      steps: [{ step: "Implement Codex user input", status: "inProgress" }],
+    });
+  });
+
+  it("falls back to the most recent plan from a previous turn", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "plan-from-turn-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          plan: [{ step: "Write tests", status: "completed" }],
+        },
+      }),
+    ];
+
+    // Current turn is turn-2, which has no plan activity — should fall back to turn-1's plan
+    const result = deriveActivePlanState(activities, TurnId.make("turn-2"));
+    expect(result).toEqual({
+      createdAt: "2026-02-23T00:00:01.000Z",
+      turnId: "turn-1",
+      steps: [{ step: "Write tests", status: "completed" }],
+    });
+  });
+
+  it("starts timing again after a plan is cleared and recreated", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "plan-old-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: { plan: [{ step: "Check", status: "inProgress" }] },
+      }),
+      makeActivity({
+        id: "plan-old-complete",
+        createdAt: "2026-02-23T00:00:05.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: { plan: [{ step: "Check", status: "completed" }] },
+      }),
+      makeActivity({
+        id: "plan-clear",
+        createdAt: "2026-02-23T00:00:06.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: { plan: [] },
+      }),
+      makeActivity({
+        id: "plan-new-start",
+        createdAt: "2026-02-23T00:00:10.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: { plan: [{ step: "Check", status: "inProgress" }] },
+      }),
+      makeActivity({
+        id: "plan-new-complete",
+        createdAt: "2026-02-23T00:00:13.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: { plan: [{ step: "Check", status: "completed" }] },
+      }),
+    ];
+
+    expect(deriveActivePlanState(activities, TurnId.make("turn-1"))?.steps).toEqual([
+      { durationMs: 3_000, step: "Check", status: "completed" },
+    ]);
+  });
+
+  it("tracks repeated step labels independently", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "plan-1a",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          plan: [
+            { step: "Check", status: "inProgress" },
+            { step: "Check", status: "pending" },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "plan-1b",
+        createdAt: "2026-02-23T00:00:05.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          plan: [
+            { step: "Check", status: "completed" },
+            { step: "Check", status: "inProgress" },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "plan-1c",
+        createdAt: "2026-02-23T00:00:11.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          plan: [
+            { step: "Check", status: "completed" },
+            { step: "Check", status: "completed" },
+          ],
+        },
+      }),
+    ];
+
+    expect(deriveActivePlanState(activities, TurnId.make("turn-1"))?.steps).toEqual([
+      { durationMs: 4_000, step: "Check", status: "completed" },
+      { durationMs: 6_000, step: "Check", status: "completed" },
+    ]);
+  });
+
+  it("derives fallback durations in completion order", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "plan-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          plan: [
+            { step: "First", status: "pending" },
+            { step: "Second", status: "pending" },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "plan-second-complete",
+        createdAt: "2026-02-23T00:00:06.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          plan: [
+            { step: "First", status: "pending" },
+            { step: "Second", status: "completed" },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "plan-first-complete",
+        createdAt: "2026-02-23T00:00:11.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          plan: [
+            { step: "First", status: "completed" },
+            { step: "Second", status: "completed" },
+          ],
+        },
+      }),
+    ];
+
+    expect(deriveActivePlanState(activities, TurnId.make("turn-1"))?.steps).toEqual([
+      { durationMs: 5_000, step: "First", status: "completed" },
+      { durationMs: 5_000, step: "Second", status: "completed" },
+    ]);
+  });
+
+  it("clears the active plan when a later snapshot has no steps", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "plan-set",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: { plan: [{ step: "Inspect code", status: "inProgress" }] },
+      }),
+      makeActivity({
+        id: "plan-clear",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: { plan: [] },
+      }),
+    ];
+    expect(deriveActivePlanState(activities, TurnId.make("turn-1"))).toBeNull();
+  });
+});
+
+describe("findLatestProposedPlan", () => {
+  it("prefers the latest proposed plan for the active turn", () => {
+    expect(
+      findLatestProposedPlan(
+        [
+          {
+            id: "plan:thread-1:turn:turn-1",
+            turnId: TurnId.make("turn-1"),
+            planMarkdown: "# Older",
+            implementedAt: null,
+            implementationThreadId: null,
+            createdAt: "2026-02-23T00:00:01.000Z",
+            updatedAt: "2026-02-23T00:00:01.000Z",
+          },
+          {
+            id: "plan:thread-1:turn:turn-1",
+            turnId: TurnId.make("turn-1"),
+            planMarkdown: "# Latest",
+            implementedAt: null,
+            implementationThreadId: null,
+            createdAt: "2026-02-23T00:00:01.000Z",
+            updatedAt: "2026-02-23T00:00:02.000Z",
+          },
+          {
+            id: "plan:thread-1:turn:turn-2",
+            turnId: TurnId.make("turn-2"),
+            planMarkdown: "# Different turn",
+            implementedAt: null,
+            implementationThreadId: null,
+            createdAt: "2026-02-23T00:00:03.000Z",
+            updatedAt: "2026-02-23T00:00:03.000Z",
+          },
+        ],
+        TurnId.make("turn-1"),
+      ),
+    ).toEqual({
+      id: "plan:thread-1:turn:turn-1",
+      turnId: "turn-1",
+      planMarkdown: "# Latest",
+      implementedAt: null,
+      implementationThreadId: null,
+      createdAt: "2026-02-23T00:00:01.000Z",
+      updatedAt: "2026-02-23T00:00:02.000Z",
+    });
+  });
+
+  it("falls back to the most recently updated proposed plan", () => {
+    const latestPlan = findLatestProposedPlan(
+      [
+        {
+          id: "plan:thread-1:turn:turn-1",
+          turnId: TurnId.make("turn-1"),
+          planMarkdown: "# First",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: "2026-02-23T00:00:01.000Z",
+          updatedAt: "2026-02-23T00:00:01.000Z",
+        },
+        {
+          id: "plan:thread-1:turn:turn-2",
+          turnId: TurnId.make("turn-2"),
+          planMarkdown: "# Latest",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: "2026-02-23T00:00:02.000Z",
+          updatedAt: "2026-02-23T00:00:03.000Z",
+        },
+      ],
+      null,
+    );
+
+    expect(latestPlan?.planMarkdown).toBe("# Latest");
+  });
+});
+
+describe("hasActionableProposedPlan", () => {
+  it("returns true for an unimplemented proposed plan", () => {
+    expect(
+      hasActionableProposedPlan({
+        id: "plan-1",
+        turnId: TurnId.make("turn-1"),
+        planMarkdown: "# Plan",
+        implementedAt: null,
+        implementationThreadId: null,
+        createdAt: "2026-02-23T00:00:00.000Z",
+        updatedAt: "2026-02-23T00:00:01.000Z",
+      }),
+    ).toBe(true);
+  });
+
+  it("returns false for a proposed plan already implemented elsewhere", () => {
+    expect(
+      hasActionableProposedPlan({
+        id: "plan-1",
+        turnId: TurnId.make("turn-1"),
+        planMarkdown: "# Plan",
+        implementedAt: "2026-02-23T00:00:02.000Z",
+        implementationThreadId: ThreadId.make("thread-implement"),
+        createdAt: "2026-02-23T00:00:00.000Z",
+        updatedAt: "2026-02-23T00:00:02.000Z",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("workEntryIndicatesToolFailure", () => {
+  const base = {
+    id: "w1",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    label: "Read",
+  };
+
+  it("is true for error tone", () => {
+    expect(
+      workEntryIndicatesToolFailure({
+        ...base,
+        tone: "error",
+        detail: "nothing special",
+      }),
+    ).toBe(true);
+  });
+
+  it("is true when lifecycle says failed even if detail is empty", () => {
+    expect(
+      workEntryIndicatesToolFailure({
+        ...base,
+        tone: "tool",
+        toolLifecycleStatus: "failed",
+      }),
+    ).toBe(true);
+  });
+
+  it("detects file-not-found style tool output with completed lifecycle", () => {
+    expect(
+      workEntryIndicatesToolFailure({
+        ...base,
+        tone: "tool",
+        toolLifecycleStatus: "completed",
+        detail: "File not found: C:\\foo\\nonexistent.ts",
+      }),
+    ).toBe(true);
+  });
+
+  it("detects glob no files and PowerShell command errors", () => {
+    expect(
+      workEntryIndicatesToolFailure({
+        ...base,
+        label: "Glob",
+        tone: "tool",
+        detail: "No files found",
+      }),
+    ).toBe(true);
+    expect(
+      workEntryIndicatesToolFailure({
+        ...base,
+        label: "Bash",
+        tone: "tool",
+        detail:
+          "The term 'this_is_not_a_command' is not recognized as the name of a cmdlet, function, script file, or operable program.",
+      }),
+    ).toBe(true);
+  });
+
+  it("is false for successful completed tools", () => {
+    expect(
+      workEntryIndicatesToolFailure({
+        ...base,
+        tone: "tool",
+        toolLifecycleStatus: "completed",
+        detail: "Found 3 matching files",
+      }),
+    ).toBe(false);
+  });
+
+  it("treats successful tool rows as success candidates", () => {
+    expect(
+      workEntryIndicatesToolSuccess({
+        ...base,
+        tone: "tool",
+        toolLifecycleStatus: "completed",
+        detail: "ok",
+      }),
+    ).toBe(true);
+    expect(
+      workEntryIndicatesToolSuccess({
+        ...base,
+        tone: "tool",
+        toolLifecycleStatus: "inProgress",
+        detail: "…",
+      }),
+    ).toBe(false);
+    expect(workEntryIndicatesToolSuccess({ ...base, tone: "thinking", detail: "…" })).toBe(false);
+    expect(
+      workEntryIndicatesToolNeutralStatus({
+        ...base,
+        tone: "tool",
+        toolLifecycleStatus: "inProgress",
+        detail: "…",
+      }),
+    ).toBe(true);
+    expect(
+      workEntryIndicatesToolNeutralStatus({
+        ...base,
+        tone: "tool",
+        toolLifecycleStatus: "completed",
+        detail: "ok",
+      }),
+    ).toBe(false);
+  });
+
+  it("does not run heuristics on non-tool info rows", () => {
+    expect(
+      workEntryIndicatesToolFailure({
+        ...base,
+        label: "Context compacted",
+        tone: "info",
+        detail: "File not found in conversation",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("deriveWorkLogEntries", () => {
+  it("keeps the latest task progress without emitting plan-update log entries", () => {
+    const activities = [
+      makeActivity({ id: "before", kind: "tool.completed", summary: "Read files", sequence: 0 }),
+      makeActivity({
+        id: "plan-1",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        turnId: "turn-1",
+        sequence: 1,
+        payload: { plan: [{ step: "Verify the composer", status: "inProgress" }] },
+      }),
+      makeActivity({
+        id: "plan-2",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        turnId: "turn-1",
+        sequence: 2,
+        payload: { plan: [{ step: "Verify the composer", status: "completed" }] },
+      }),
+      makeActivity({ id: "after", kind: "tool.completed", summary: "Ran tests", sequence: 3 }),
+    ];
+    expect(deriveWorkLogEntries(activities).map((entry) => entry.id)).toEqual(["before", "after"]);
+    expect(deriveActivePlanState(activities, TurnId.make("turn-1"))?.steps).toMatchObject([
+      { step: "Verify the composer", status: "completed" },
+    ]);
+  });
+
+  it("omits tool started entries and keeps completed entries", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-complete",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        summary: "Tool call complete",
+        kind: "tool.completed",
+      }),
+      makeActivity({
+        id: "tool-start",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        summary: "Tool call",
+        kind: "tool.started",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
+  });
+
+  it("omits routine setup updates before work starts and after later turn activity", () => {
+    const setupActivities = [
+      makeActivity({
+        id: "setup-requested",
+        kind: "setup-script.requested",
+        summary: "Preparing setup script",
+        tone: "info",
+        sequence: 1,
+      }),
+      makeActivity({
+        id: "setup-started",
+        kind: "setup-script.started",
+        summary: "Setup script started",
+        tone: "info",
+        sequence: 2,
+      }),
+    ];
+
+    expect(deriveWorkLogEntries(setupActivities)).toEqual([]);
+    expect(
+      deriveWorkLogEntries([
+        ...setupActivities,
+        makeActivity({
+          id: "first-turn-tool",
+          kind: "tool.completed",
+          summary: "Read project files",
+          turnId: "turn-1",
+          sequence: 3,
+        }),
+        makeActivity({
+          id: "later-turn-tool",
+          kind: "tool.completed",
+          summary: "Ran tests",
+          turnId: "turn-2",
+          sequence: 4,
+        }),
+      ]).map((entry) => entry.id),
+    ).toEqual(["first-turn-tool", "later-turn-tool"]);
+  });
+
+  it("preserves setup failures and unrelated info without a turn id", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "setup-requested",
+        kind: "setup-script.requested",
+        summary: "Preparing setup script",
+        tone: "info",
+        sequence: 1,
+      }),
+      makeActivity({
+        id: "setup-failed",
+        kind: "setup-script.failed",
+        summary: "Setup script failed to start",
+        tone: "error",
+        payload: { detail: "Could not start the setup terminal" },
+        sequence: 2,
+      }),
+      makeActivity({
+        id: "runtime-notice",
+        kind: "runtime.warning",
+        summary: "Reconnecting to provider",
+        tone: "info",
+        sequence: 3,
+      }),
+    ]);
+
+    expect(entries).toMatchObject([
+      {
+        id: "setup-failed",
+        label: "Setup script failed to start",
+        tone: "error",
+        detail: "Could not start the setup terminal",
+        turnId: null,
+      },
+      {
+        id: "runtime-notice",
+        label: "Reconnecting to provider",
+        tone: "info",
+        turnId: null,
+      },
+    ]);
+  });
+
+  it("drops runtime warnings with no displayable content, keeps ones with a preview", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "warning-noise",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "runtime.warning",
+        summary: "Claude system message 'background_tasks_changed' (no displayable text content)",
+        tone: "info",
+      }),
+      makeActivity({
+        id: "warning-signal",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "runtime.warning",
+        summary: "Reconnecting... 2/5",
+        tone: "info",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.id)).toEqual(["warning-signal"]);
+  });
+
+  it("omits task.started but shows task.progress and task.completed", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "task-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "task.started",
+        summary: "default task started",
+        tone: "info",
+      }),
+      makeActivity({
+        id: "task-progress",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "task.progress",
+        summary: "Updating files",
+        tone: "info",
+      }),
+      makeActivity({
+        id: "task-complete",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "task.completed",
+        summary: "Task completed",
+        tone: "info",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.id)).toEqual(["task-progress", "task-complete"]);
+  });
+
+  it("uses payload summary as label for task entries when available", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "task-progress-with-summary",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "task.progress",
+        summary: "Reasoning update",
+        tone: "info",
+        payload: { summary: "Searching for API endpoints" },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries[0]?.label).toBe("Searching for API endpoints");
+  });
+
+  it("uses payload detail as label for task.completed and preserves error tone", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "task-completed-failed",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "task.completed",
+        summary: "Task failed",
+        tone: "error",
+        payload: { detail: "Failed to deploy changes" },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries[0]?.label).toBe("Failed to deploy changes");
+    expect(entries[0]?.tone).toBe("error");
+  });
+
+  it("keeps tool entries from every turn and tags each with its turn id", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "turn-1-tool",
+        turnId: "turn-1",
+        summary: "Tool call complete",
+        kind: "tool.completed",
+      }),
+      makeActivity({
+        id: "turn-2-tool",
+        turnId: "turn-2",
+        summary: "Tool call complete",
+        kind: "tool.completed",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.id)).toEqual(["turn-1-tool", "turn-2-tool"]);
+    expect(entries.map((entry) => entry.turnId)).toEqual([
+      TurnId.make("turn-1"),
+      TurnId.make("turn-2"),
+    ]);
+  });
+
+  it("omits checkpoint captured info entries", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "checkpoint",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        summary: "Checkpoint captured",
+        tone: "info",
+      }),
+      makeActivity({
+        id: "tool-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        summary: "Ran command",
+        tone: "tool",
+        kind: "tool.completed",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
+  });
+
+  it("omits ExitPlanMode lifecycle entries once the plan card is shown", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "exit-plan-updated",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Tool call",
+        payload: {
+          detail: 'ExitPlanMode: {"allowedPrompts":[{"tool":"Bash","prompt":"run tests"}]}',
+        },
+      }),
+      makeActivity({
+        id: "exit-plan-completed",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Tool call",
+        payload: {
+          detail: "ExitPlanMode: {}",
+        },
+      }),
+      makeActivity({
+        id: "real-work-log",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          detail: "Bash: bun test",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.id)).toEqual(["real-work-log"]);
+  });
+
+  it("orders work log by activity sequence when present", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "second",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        sequence: 2,
+        summary: "Tool call complete",
+        kind: "tool.completed",
+      }),
+      makeActivity({
+        id: "first",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        sequence: 1,
+        summary: "Tool call complete",
+        kind: "tool.completed",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.id)).toEqual(["first", "second"]);
+  });
+
+  it("extracts command text for command tool activities", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            item: {
+              command: ["bun", "run", "lint"],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.command).toBe("bun run lint");
+  });
+
+  it("extracts failed tool lifecycle status from item payloads", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-failed",
+        kind: "tool.updated",
+        summary: "Glob",
+        tone: "tool",
+        payload: {
+          itemType: "mcp_tool_call",
+          status: "failed",
+          detail: "No files found",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.toolLifecycleStatus).toBe("failed");
+  });
+
+  it("defaults tool.completed entries to completed lifecycle status", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-done",
+        kind: "tool.completed",
+        summary: "Glob",
+        tone: "tool",
+        payload: {
+          itemType: "mcp_tool_call",
+          detail: "Found 3 files",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.toolLifecycleStatus).toBe("completed");
+  });
+
+  it("preserves MCP server, tool, arguments, and results for expanded display", () => {
+    const item = {
+      type: "mcpToolCall",
+      server: "t3-code",
+      tool: "preview_status",
+      arguments: {},
+      status: "completed",
+      result: { content: [{ type: "text", text: "attached" }] },
+    };
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "mcp-tool-done",
+        kind: "tool.completed",
+        summary: "t3-code · preview_status",
+        payload: {
+          itemType: "mcp_tool_call",
+          title: "t3-code · preview_status",
+          toolSurface: "browser",
+          toolIcon: { _tag: "website", pageUrl: "https://example.com/checkout" },
+          toolSource: {
+            key: "browser-use:browser",
+            name: "Browser",
+            kind: "browser",
+          },
+          data: { item },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.toolTitle).toBe("t3-code · preview_status");
+    expect(entry?.toolSurface).toBe("browser");
+    expect(entry?.toolIcon).toEqual({
+      _tag: "website",
+      pageUrl: "https://example.com/checkout",
+    });
+    expect(entry?.toolSource).toEqual({
+      key: "browser-use:browser",
+      name: "Browser",
+      kind: "browser",
+    });
+    expect(entry?.toolData).toEqual(item);
+  });
+
+  it.each([
+    ["inProgress", "Clicking in the preview browser"],
+    ["completed", "Clicked in the preview browser"],
+    ["failed", "Failed to click in the preview browser"],
+  ] as const)(
+    "preserves Claude MCP identity behind generic titles while %s",
+    (status, displayName) => {
+      const data = {
+        toolName: "mcp__t3_code__preview_click",
+        input: { selector: "#submit" },
+        ...(status === "inProgress"
+          ? {}
+          : { result: { type: "tool_result", is_error: status === "failed", content: "Result" } }),
+      };
+      const [entry] = deriveWorkLogEntries([
+        makeActivity({
+          kind: status === "inProgress" ? "tool.updated" : "tool.completed",
+          summary: "MCP tool call",
+          payload: { itemType: "mcp_tool_call", title: "MCP tool call", status, data },
+        }),
+      ]);
+
+      expect(entry).toMatchObject({ toolTitle: "MCP tool call", toolData: data });
+      expect(resolveWorkEntryToolPresentation(entry!)).toEqual({
+        displayName,
+        icon: "browser",
       });
     },
   );
 
-  it("keeps failed tool items tool-toned so groups still summarize", () => {
-    const failedCommand = {
-      id: TurnItemId.make("item-failed-command"),
-      threadId: ThreadId.make("thread-1"),
-      runId: RunId.make("run-1"),
-      nodeId: null,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal: 0,
-      status: "failed" as const,
-      title: null,
-      startedAt: null,
-      completedAt: null,
-      updatedAt: DateTime.nowUnsafe(),
-      type: "command_execution" as const,
-      input: "ssh host true",
-      output: "connection refused",
-      exitCode: 255,
-    } satisfies OrchestrationV2TurnItem;
-    const entries = deriveTimelineEntriesFromVisibleTurnItems({
-      visibleTurnItems: [
-        {
-          position: 0,
-          visibility: "local" as const,
-          sourceThreadId: ThreadId.make("thread-1"),
-          sourceItemId: failedCommand.id,
-          item: failedCommand,
-        } as never,
-      ],
-      optimisticMessages: [],
-    });
-    const entry = entries[0];
-    expect(entry?.kind).toBe("work");
-    if (entry?.kind === "work") {
-      // An exit-code failure is still an ordinary tool row: the failed
-      // lifecycle status carries the marker, and an "error" tone here would
-      // knock the whole group out of the "Ran N commands" summary.
-      expect(entry.entry.tone).toBe("tool");
-      expect(entry.entry.toolLifecycleStatus).toBe("failed");
-    }
-  });
-
-  it("waits for a dispatched turn item before adding queued input to the timeline", () => {
-    const projection = makeThreadProjectionFixture();
-    const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
-    const runId = RunId.make("run-dispatched-queued");
-    const messageId = MessageId.make("message-dispatched-queued");
-    const optimisticMessage = {
-      id: messageId,
-      role: "user" as const,
-      text: "Queued input",
-      runId: null,
-      inputIntent: "queued_turn" as const,
-      streaming: false,
-      createdAt: DateTime.formatIso(now),
-      updatedAt: DateTime.formatIso(now),
-    };
-
-    expect(
-      deriveTimelineEntriesFromVisibleTurnItems({
-        visibleTurnItems: [],
-        optimisticMessages: [optimisticMessage],
-      }),
-    ).toEqual([]);
-
-    const dispatchedItem = {
-      id: TurnItemId.make("item-dispatched-queued"),
-      threadId: projection.thread.id,
-      runId,
-      nodeId: null,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal: 200,
-      status: "completed" as const,
-      title: null,
-      startedAt: now,
-      completedAt: now,
-      updatedAt: now,
-      type: "user_message" as const,
-      messageId,
-      inputIntent: "turn_start" as const,
-      text: "Queued input",
-      attachments: [],
-      createdBy: "user" as const,
-      creationSource: "web" as const,
-    } satisfies OrchestrationV2TurnItem;
-    const promotedEntries = deriveTimelineEntriesFromVisibleTurnItems({
-      visibleTurnItems: [
-        {
-          position: 0,
-          visibility: "local",
-          sourceThreadId: projection.thread.id,
-          sourceItemId: dispatchedItem.id,
-          item: dispatchedItem,
-        },
-      ],
-      optimisticMessages: [optimisticMessage],
-    });
-    expect(promotedEntries.map((entry) => entry.id)).toEqual([messageId]);
-    expect(promotedEntries[0]?.kind).toBe("message");
-    if (promotedEntries[0]?.kind === "message") {
-      expect(promotedEntries[0].message.inputIntent).toBe("turn_start");
-    }
-  });
-
-  it("anchors feedback before later committed turns without reordering canonical history", () => {
-    const threadId = ThreadId.make("thread-feedback-order");
-    const messageItem = (input: {
-      readonly id: string;
-      readonly role: "user" | "assistant";
-      readonly createdAt: string;
-      readonly ordinal: number;
-    }): OrchestrationV2TurnItem => {
-      const timestamp = DateTime.makeUnsafe(input.createdAt);
-      const common = {
-        id: TurnItemId.make(`item-${input.id}`),
-        threadId,
-        runId: RunId.make(`run-${input.ordinal}`),
-        nodeId: null,
-        providerThreadId: null,
-        providerTurnId: null,
-        nativeItemRef: null,
-        parentItemId: null,
-        ordinal: input.ordinal,
-        status: "completed" as const,
-        title: null,
-        startedAt: timestamp,
-        completedAt: timestamp,
-        updatedAt: timestamp,
-        messageId: MessageId.make(input.id),
-        text: input.id,
-      };
-      return input.role === "user"
-        ? {
-            ...common,
-            type: "user_message",
-            inputIntent: "turn_start",
-            attachments: [],
-            createdBy: "user",
-            creationSource: "web",
-          }
-        : { ...common, type: "assistant_message", streaming: false };
-    };
-    const canonicalItems = [
-      messageItem({ id: "old-user", role: "user", createdAt: "2026-08-29T00:00:01Z", ordinal: 1 }),
-      messageItem({
-        id: "old-assistant",
-        role: "assistant",
-        createdAt: "2026-08-29T00:00:02Z",
-        ordinal: 2,
-      }),
-      messageItem({
-        id: "later-user",
-        role: "user",
-        createdAt: "2026-08-29T00:00:05Z",
-        ordinal: 3,
-      }),
-      messageItem({
-        id: "later-assistant",
-        role: "assistant",
-        createdAt: "2026-08-29T00:00:04Z",
-        ordinal: 4,
-      }),
-    ];
-    const visibleTurnItems = canonicalItems.map((item, position) => ({
-      position,
-      visibility: "local" as const,
-      sourceThreadId: threadId,
-      sourceItemId: item.id,
-      item,
-    }));
-    const feedback = (id: string, role: "user" | "assistant"): ChatMessage => ({
-      id: MessageId.make(id),
-      role,
-      text: id,
-      runId: null,
-      streaming: false,
-      createdAt: "2026-08-29T00:00:03Z",
-      updatedAt: "2026-08-29T00:00:03Z",
-    });
-    const entries = deriveTimelineEntriesFromVisibleTurnItems({
-      visibleTurnItems,
-      anchoredMessages: [
-        feedback("feedback-user", "user"),
-        feedback("feedback-assistant", "assistant"),
-        feedback("later-user", "user"),
-      ],
-      optimisticMessages: [
-        { ...feedback("optimistic-user", "user"), createdAt: "2026-08-29T00:00:00Z" },
-      ],
-    });
-
-    expect(entries.map((entry) => entry.id)).toEqual([
-      "old-user",
-      "old-assistant",
-      "feedback-user",
-      "feedback-assistant",
-      "later-user",
-      "later-assistant",
-      "optimistic-user",
-    ]);
-    expect(
-      entries
-        .filter((entry) => entry.id.startsWith("feedback-"))
-        .every((entry) => entry.kind === "message" && entry.projectedItem === undefined),
-    ).toBe(true);
-  });
-
-  it("uses projected plan status and file contents in timeline entries", () => {
-    const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
-    const threadId = ThreadId.make("thread-timeline-artifacts");
-    const runId = RunId.make("run-timeline-artifacts");
-    const nodeId = NodeId.make("node-timeline-artifacts");
-    const planId = PlanId.make("plan-timeline-artifacts");
-    const base = {
-      threadId,
-      runId,
-      nodeId,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      status: "completed" as const,
-      title: null,
-      startedAt: now,
-      completedAt: now,
-      updatedAt: now,
-    };
-    const planItem = {
-      ...base,
-      id: TurnItemId.make("item-proposed-plan"),
-      ordinal: 0,
-      type: "proposed_plan" as const,
-      planId,
-      markdown: "Finished plan",
-      streaming: false,
-    } satisfies OrchestrationV2TurnItem;
-    const fileItem = {
-      ...base,
-      id: TurnItemId.make("item-file-change"),
-      ordinal: 1,
-      type: "file_change" as const,
-      fileName: "src/example.ts",
-      newStr: "export const answer = 42;\n",
-    } satisfies OrchestrationV2TurnItem;
-    const visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem> = [
-      planItem,
-      fileItem,
-    ].map((item, position) => ({
-      position,
-      visibility: "local",
-      sourceThreadId: threadId,
-      sourceItemId: item.id,
-      item,
-    }));
-
-    const entries = deriveTimelineEntriesFromVisibleTurnItems({
-      visibleTurnItems,
-      optimisticMessages: [],
-      plans: [
-        {
-          id: planId,
-          threadId,
-          runId,
-          nodeId,
-          kind: "proposed_plan",
-          markdown: "",
-          status: "completed",
-          detailInTurnItem: true,
-        },
-      ],
-    });
-
-    expect(entries[0]?.kind).toBe("proposed-plan");
-    if (entries[0]?.kind === "proposed-plan") {
-      expect(entries[0].proposedPlan.status).toBe("completed");
-      expect(entries[0].proposedPlan.planMarkdown).toBe("Finished plan");
-    }
-    expect(entries[1]?.kind).toBe("work");
-    if (entries[1]?.kind === "work") {
-      expect(entries[1].entry.detail).toBe(fileItem.newStr);
-    }
-  });
-
-  it("resolves attempt identity through V2 execution nodes", () => {
-    const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
-    const threadId = ThreadId.make("thread-attempts");
-    const runId = RunId.make("run-steered");
-    const supersededRootNodeId = NodeId.make("node-attempt-1-root");
-    const supersededChildNodeId = NodeId.make("node-attempt-1-child");
-    const activeRootNodeId = NodeId.make("node-attempt-2-root");
-    const supersededAttemptId = RunAttemptId.make("attempt-1");
-    const activeAttemptId = RunAttemptId.make("attempt-2");
-    const providerInstanceId = ProviderInstanceId.make("codex-default");
-    const providerThreadId = ProviderThreadId.make("provider-thread-attempts");
-    const attempts: ReadonlyArray<OrchestrationV2RunAttempt> = [
-      {
-        id: supersededAttemptId,
-        runId,
-        attemptOrdinal: 1,
-        rootNodeId: supersededRootNodeId,
-        providerInstanceId,
-        providerThreadId,
-        providerTurnId: null,
-        reason: "initial",
-        status: "superseded",
-        startedAt: now,
-        completedAt: now,
-      },
-      {
-        id: activeAttemptId,
-        runId,
-        attemptOrdinal: 2,
-        rootNodeId: activeRootNodeId,
-        providerInstanceId,
-        providerThreadId,
-        providerTurnId: null,
-        reason: "steering_restart",
-        status: "running",
-        startedAt: now,
-        completedAt: null,
-      },
-    ];
-    const node = (
-      id: OrchestrationV2ExecutionNode["id"],
-      rootNodeId: OrchestrationV2ExecutionNode["rootNodeId"],
-      parentNodeId: OrchestrationV2ExecutionNode["parentNodeId"],
-    ): OrchestrationV2ExecutionNode => ({
-      id,
-      threadId,
-      runId,
-      parentNodeId,
-      rootNodeId,
-      kind: id === rootNodeId ? "root_turn" : "assistant_message",
-      status: "running",
-      countsForRun: true,
-      providerThreadId,
-      providerTurnId: null,
-      nativeItemRef: null,
-      runtimeRequestId: null,
-      checkpointScopeId: null,
-      startedAt: now,
-      completedAt: null,
-    });
-    const nodes = [
-      node(supersededRootNodeId, supersededRootNodeId, null),
-      node(supersededChildNodeId, supersededRootNodeId, supersededRootNodeId),
-      node(activeRootNodeId, activeRootNodeId, null),
-    ];
-    const assistantItem = (
-      id: string,
-      messageId: string,
-      nodeId: NodeId,
-      text: string,
-      ordinal: number,
-    ): OrchestrationV2TurnItem => ({
-      id: TurnItemId.make(id),
-      threadId,
-      runId,
-      nodeId,
-      providerThreadId,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal,
-      status: "running",
-      title: null,
-      startedAt: now,
-      completedAt: null,
-      updatedAt: now,
-      type: "assistant_message",
-      messageId: MessageId.make(messageId),
-      text,
-      streaming: true,
-    });
-    const items = [
-      assistantItem(
-        "item-superseded",
-        "message-superseded",
-        supersededChildNodeId,
-        "Partial old response",
-        0,
-      ),
-      assistantItem("item-active", "message-active", activeRootNodeId, "Current response", 1),
-    ];
-    const visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem> = items.map(
-      (item, position) => ({
-        position,
-        visibility: "local",
-        sourceThreadId: threadId,
-        sourceItemId: item.id,
-        item,
-      }),
-    );
-
-    const entries = deriveTimelineEntriesFromVisibleTurnItems({
-      visibleTurnItems,
-      optimisticMessages: [],
-      attempts,
-      nodes,
-    });
-
-    expect(entries.map((entry) => [entry.attempt?.id, entry.attempt?.status])).toEqual([
-      [supersededAttemptId, "superseded"],
-      [activeAttemptId, "running"],
-    ]);
-    const input = { visibleTurnItems, optimisticMessages: [], attempts, nodes };
-    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
-    const nextInput = {
-      ...input,
-      attempts: attempts.map((attempt) =>
-        attempt.id === activeAttemptId ? { ...attempt, status: "superseded" as const } : attempt,
-      ),
-    };
-    const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(nextInput, previous);
-    expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(nextInput));
-    expect(next.entries.at(-1)?.attempt?.status).toBe("superseded");
-    expect(previous.entries.at(-1)?.attempt?.status).toBe("running");
-  });
-});
-
-describe("native provider presentation in the v2 timeline", () => {
-  const timestamp = DateTime.makeUnsafe("2026-09-04T12:00:00.000Z");
-  const base = {
-    id: TurnItemId.make("native-item"),
-    threadId: ThreadId.make("native-thread"),
-    runId: RunId.make("native-run"),
-    nodeId: null,
-    providerThreadId: null,
-    providerTurnId: null,
-    nativeItemRef: null,
-    parentItemId: null,
-    ordinal: 0,
-    status: "completed" as const,
-    title: null,
-    startedAt: timestamp,
-    completedAt: timestamp,
-    updatedAt: timestamp,
-  };
-  const visible = (item: OrchestrationV2TurnItem): OrchestrationV2ProjectedTurnItem => ({
-    position: 0,
-    visibility: "local",
-    sourceThreadId: item.threadId,
-    sourceItemId: item.id,
-    item,
-  });
-
-  it("keeps browser identity and its source on a completed tool row", () => {
+  it("keeps MCP payloads while collapsing lifecycle updates", () => {
     const item = {
-      ...base,
-      type: "dynamic_tool" as const,
-      toolName: "browser_snapshot",
-      input: {},
-      output: {},
-      toolSurface: "browser" as const,
-      toolIcon: { _tag: "website" as const, pageUrl: "https://example.com/checkout" },
-      toolSource: { key: "browser-use:browser", name: "Chrome", kind: "browser" as const },
-    } satisfies OrchestrationV2TurnItem;
-    const [entry] = deriveTimelineEntriesFromVisibleTurnItems({
-      visibleTurnItems: [visible(item)],
-      optimisticMessages: [],
+      type: "mcpToolCall",
+      server: "t3-code",
+      tool: "preview_snapshot",
+      arguments: { interactiveOnly: true },
+      status: "completed",
+    };
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "mcp-tool-progress",
+        kind: "tool.updated",
+        summary: "t3-code · preview_snapshot",
+        payload: {
+          itemType: "mcp_tool_call",
+          toolCallId: "call-1",
+          toolSurface: "browser",
+          data: { item },
+        },
+      }),
+      makeActivity({
+        id: "mcp-tool-complete",
+        kind: "tool.completed",
+        summary: "t3-code · preview_snapshot",
+        payload: {
+          itemType: "mcp_tool_call",
+          toolCallId: "call-1",
+          toolIcon: { _tag: "website", pageUrl: "https://example.com/result" },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.toolData).toEqual(item);
+    expect(entry?.toolCallId).toBe("call-1");
+    expect(entry?.toolSurface).toBe("browser");
+    expect(entry?.toolIcon).toEqual({
+      _tag: "website",
+      pageUrl: "https://example.com/result",
     });
-    expect(entry).toMatchObject({
-      kind: "work",
-      entry: {
-        toolSurface: "browser",
-        toolIcon: item.toolIcon,
-        toolSource: item.toolSource,
+    expect(resolveWorkEntryToolPresentation(entry!)?.displayName).toBe(
+      "Took a snapshot of the preview page",
+    );
+  });
+
+  it("collapses interleaved lifecycle updates by tool call id", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-a-progress",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: "turn-1",
+        kind: "tool.updated",
+        summary: "Tool A",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "call-a",
+          status: "inProgress",
+          data: { command: "vp test run" },
+        },
+      }),
+      makeActivity({
+        id: "tool-b-progress",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        turnId: "turn-1",
+        kind: "tool.updated",
+        summary: "Tool B",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "call-b",
+          status: "inProgress",
+          data: { command: "vp lint" },
+        },
+      }),
+      makeActivity({
+        id: "tool-a-complete",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        turnId: "turn-1",
+        kind: "tool.completed",
+        summary: "Tool A completed",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "call-a",
+          status: "completed",
+        },
+      }),
+      makeActivity({
+        id: "tool-b-complete",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        turnId: "turn-1",
+        kind: "tool.completed",
+        summary: "Tool B completed",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "call-b",
+          status: "completed",
+        },
+      }),
+    ];
+
+    expect(deriveWorkLogEntries(activities)).toMatchObject([
+      {
+        id: "tool-a-complete",
+        command: "vp test run",
+        toolCallId: "call-a",
         toolLifecycleStatus: "completed",
       },
-    });
-  });
-
-  it("shows provider-returned images on an assistant message using the environment asset URL", () => {
-    const attachment = {
-      type: "image" as const,
-      id: "assistant-image",
-      name: "screenshot.png",
-      mimeType: "image/png",
-      sizeBytes: 512,
-    };
-    const item = {
-      ...base,
-      type: "assistant_message" as const,
-      messageId: MessageId.make("assistant-native-image"),
-      text: "Here is the screenshot.",
-      streaming: false,
-      attachments: [attachment],
-    } satisfies OrchestrationV2TurnItem;
-    const [entry] = deriveTimelineEntriesFromVisibleTurnItems({
-      visibleTurnItems: [visible(item)],
-      optimisticMessages: [],
-      attachmentUrlById: new Map([[attachment.id, "https://remote.example/api/assets/screenshot"]]),
-    });
-    expect(entry).toMatchObject({
-      kind: "message",
-      message: {
-        role: "assistant",
-        attachments: [
-          { ...attachment, previewUrl: "https://remote.example/api/assets/screenshot" },
-        ],
+      {
+        id: "tool-b-complete",
+        command: "vp lint",
+        toolCallId: "call-b",
+        toolLifecycleStatus: "completed",
       },
-    });
-  });
-
-  it("keeps an idle provider task neutral without a completion mark", () => {
-    const entry = {
-      id: "idle-tool",
-      createdAt: DateTime.formatIso(timestamp),
-      label: "Waiting for the next task",
-      tone: "tool" as const,
-      toolLifecycleStatus: "idle" as const,
-    };
-    expect(workEntryIndicatesToolSuccess(entry)).toBe(false);
-    expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(false);
-  });
-});
-
-describe("work-log failure policy (#7999/#7893)", () => {
-  const toolEntry = (overrides: Record<string, unknown>) =>
-    ({
-      id: "entry-1",
-      createdAt: "2026-08-27T00:00:00.000Z",
-      label: "Ran command",
-      tone: "tool",
-      ...overrides,
-    }) as never;
-
-  it("flags success-status rows whose output text reports a failure", () => {
-    expect(
-      workEntryIndicatesToolFailure(
-        toolEntry({ toolLifecycleStatus: "completed", detail: "bash: foo: command not found" }),
-      ),
-    ).toBe(true);
-    expect(
-      workEntryIndicatesToolFailure(
-        toolEntry({ toolLifecycleStatus: "completed", detail: "<exited with exit code 2>" }),
-      ),
-    ).toBe(true);
-  });
-
-  it("keeps the rendered row calm when only the command mentions failure text", () => {
-    const entry = toolEntry({
-      toolLifecycleStatus: "completed",
-      command: "rg 'command not found' src/",
-    });
-    expect(workEntryIndicatesToolFailure(entry)).toBe(true);
-    expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(false);
-  });
-
-  it("does not call a clean completed row failed", () => {
-    const entry = toolEntry({ toolLifecycleStatus: "completed", detail: "3 files changed" });
-    expect(workEntryIndicatesToolFailure(entry)).toBe(false);
-    expect(workEntryIndicatesToolSuccess(entry)).toBe(true);
-  });
-
-  it("recovered failure text no longer counts as success", () => {
-    const entry = toolEntry({ toolLifecycleStatus: "completed", detail: "ENOENT: no such file" });
-    expect(workEntryIndicatesToolSuccess(entry)).toBe(false);
-  });
-});
-
-describe("incremental v2 timeline entries", () => {
-  it("retains history and attachment previews through decoded streaming updates", () => {
-    const fixture = makeStreamingTimelineFixture("Partial");
-    const attachment = {
-      type: "image" as const,
-      id: "stream-image",
-      name: "image.png",
-      mimeType: "image/png",
-      sizeBytes: 42,
-    };
-    const visibleTurnItems = fixture.visibleTurnItems.map((row) =>
-      row.item.type === "assistant_message"
-        ? { ...row, item: { ...row.item, attachments: [attachment] } }
-        : row,
-    );
-    const input = {
-      visibleTurnItems,
-      optimisticMessages: [],
-      attachmentUrlById: new Map([[attachment.id, "https://server.test/image"]]),
-    };
-    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
-    Object.freeze(previous.entries);
-    for (const entry of previous.entries) Object.freeze(entry);
-    const last = visibleTurnItems.at(-1)!;
-    if (last.item.type !== "assistant_message") throw new Error("Expected assistant fixture");
-    const nextItem = {
-      ...last,
-      item: {
-        ...last.item,
-        text: "Next token",
-        attachments: [{ ...attachment }],
-        startedAt: DateTime.makeUnsafe(fixture.time(7)),
-        updatedAt: DateTime.makeUnsafe(fixture.time(8)),
-      },
-    };
-    const nextInput = {
-      ...input,
-      visibleTurnItems: [...visibleTurnItems.slice(0, -1), nextItem],
-      attachmentUrlById: new Map(input.attachmentUrlById),
-    };
-    const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(nextInput, previous);
-    expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(nextInput));
-    for (const [index, entry] of previous.entries.slice(0, -1).entries()) {
-      expect(next.entries[index]).toBe(entry);
-    }
-    const beforeMessage = previous.entries.at(-1)!;
-    const nextMessage = next.entries.at(-1)!;
-    if (beforeMessage.kind !== "message" || nextMessage.kind !== "message") {
-      throw new Error("Expected assistant entries");
-    }
-    expect(nextMessage.message.attachments).toBe(beforeMessage.message.attachments);
-    expect(nextMessage.projectedItem).toBe(nextItem);
-    expect(nextMessage.message.text).toBe("Next token");
-    expect(beforeMessage.message.text).toBe("Partial");
-
-    const renewedInput = {
-      ...nextInput,
-      attachmentUrlById: new Map([[attachment.id, "https://renewed.test/image"]]),
-    };
-    const renewed = deriveTimelineEntriesFromVisibleTurnItemsWithState(renewedInput, next);
-    expect(renewed.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(renewedInput));
-    expect(renewed.entries.at(-1)).toMatchObject({
-      message: { attachments: [{ previewUrl: "https://renewed.test/image" }] },
-    });
-    expect(nextMessage.message.attachments?.[0]).toMatchObject({
-      previewUrl: "https://server.test/image",
-    });
-    const restoredInput = { ...renewedInput, attachmentUrlById: new Map<string, string>() };
-    const restored = deriveTimelineEntriesFromVisibleTurnItemsWithState(restoredInput, renewed);
-    expect(restored.entries.at(-1)).toMatchObject({ message: { attachments: [attachment] } });
-    const restoredMessage = restored.entries.at(-1)!;
-    if (restoredMessage.kind !== "message") throw new Error("Expected assistant entry");
-    expect(restoredMessage.message.attachments?.[0]).not.toHaveProperty("previewUrl");
-  });
-
-  it("appends committed items in canonical order even when their timestamps go backwards", () => {
-    const fixture = makeStreamingTimelineFixture("Partial");
-    const input = { visibleTurnItems: fixture.visibleTurnItems, optimisticMessages: [] };
-    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
-    const last = fixture.visibleTurnItems.at(-1)!;
-    const appended = {
-      ...last,
-      position: last.position + 1,
-      sourceItemId: TurnItemId.make("late-item"),
-      item: {
-        ...last.item,
-        id: TurnItemId.make("late-item"),
-        messageId: MessageId.make("late-message"),
-        startedAt: DateTime.makeUnsafe(fixture.time(0)),
-      },
-    };
-    const nextInput = { ...input, visibleTurnItems: [...input.visibleTurnItems, appended] };
-    const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(nextInput, previous);
-    expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(nextInput));
-    expect(next.entries.at(-1)).toMatchObject({ id: "late-message" });
-    for (const [index, entry] of previous.entries.entries())
-      expect(next.entries[index]).toBe(entry);
-  });
-
-  it.each(["completion", "provenance", "ordering", "attachment", "run"] as const)(
-    "rebuilds entries for a %s change instead of retaining stale v2 metadata",
-    (change) => {
-      const fixture = makeStreamingTimelineFixture("Partial");
-      const input = { visibleTurnItems: fixture.visibleTurnItems, optimisticMessages: [] };
-      const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
-      const last = fixture.visibleTurnItems.at(-1)!;
-      if (last.item.type !== "assistant_message") throw new Error("Expected assistant fixture");
-      const changed =
-        change === "provenance"
-          ? { ...last, sourceThreadId: ThreadId.make("inherited-thread") }
-          : {
-              ...last,
-              item:
-                change === "completion"
-                  ? { ...last.item, streaming: false, status: "completed" as const }
-                  : change === "ordering"
-                    ? { ...last.item, startedAt: DateTime.makeUnsafe(fixture.time(0)) }
-                    : change === "run"
-                      ? { ...last.item, runId: fixture.historyRunId }
-                      : {
-                          ...last.item,
-                          attachments: [
-                            {
-                              type: "image",
-                              id: "new-image",
-                              name: "new.png",
-                              mimeType: "image/png",
-                              sizeBytes: 42,
-                            },
-                          ],
-                        },
-            };
-      const nextInput = {
-        ...input,
-        visibleTurnItems: [...input.visibleTurnItems.slice(0, -1), changed],
-      };
-      const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(nextInput, previous);
-      expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(nextInput));
-      expect(next.entries.at(-1)).not.toBe(previous.entries.at(-1));
-    },
-  );
-
-  it("updates fallback timestamps when the provider has not supplied a message start time", () => {
-    const fixture = makeStreamingTimelineFixture("Partial");
-    const visibleTurnItems = fixture.visibleTurnItems.map((row) =>
-      row.item.type === "assistant_message" && row.item.streaming
-        ? { ...row, item: { ...row.item, startedAt: null } }
-        : row,
-    );
-    const input = { visibleTurnItems, optimisticMessages: [] };
-    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
-    const nextInput = {
-      ...input,
-      visibleTurnItems: visibleTurnItems.map((row) =>
-        row.item.type === "assistant_message" && row.item.streaming
-          ? {
-              ...row,
-              item: {
-                ...row.item,
-                text: "Next token",
-                updatedAt: DateTime.makeUnsafe(fixture.time(8)),
-              },
-            }
-          : row,
-      ),
-    };
-    const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(nextInput, previous);
-    expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(nextInput));
-    expect(next.entries.at(-1)?.createdAt).toBe(fixture.time(8));
-  });
-
-  it("keeps unchanged message previews while tool output rebuilds the work log", () => {
-    const fixture = makeStreamingTimelineFixture("Partial");
-    const input = { visibleTurnItems: fixture.visibleTurnItems, optimisticMessages: [] };
-    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
-    const nextInput = {
-      ...input,
-      visibleTurnItems: input.visibleTurnItems.map((row) =>
-        row.item.type === "command_execution"
-          ? { ...row, item: { ...row.item, output: "Additional output" } }
-          : row,
-      ),
-    };
-    const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(nextInput, previous);
-    expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(nextInput));
-    for (const [index, entry] of previous.entries.entries()) {
-      if (entry.kind === "message") expect(next.entries[index]).toBe(entry);
-    }
-  });
-
-  it("deduplicates optimistic sends when committed items arrive and retains anchored ordering", () => {
-    const fixture = makeStreamingTimelineFixture();
-    const input = {
-      visibleTurnItems: fixture.visibleTurnItems.slice(0, 3),
-      optimisticMessages: [
-        {
-          id: MessageId.make("live-user"),
-          runId: null,
-          role: "user" as const,
-          text: "Continue",
-          streaming: false,
-          createdAt: fixture.time(5),
-          updatedAt: fixture.time(5),
-        },
-      ],
-      anchoredMessages: [
-        {
-          id: MessageId.make("feedback"),
-          runId: null,
-          role: "assistant" as const,
-          text: "Feedback received",
-          streaming: false,
-          createdAt: fixture.time(4),
-          updatedAt: fixture.time(4),
-        },
-      ],
-    };
-    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
-    const nextInput = { ...input, visibleTurnItems: fixture.visibleTurnItems };
-    const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(nextInput, previous);
-    expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(nextInput));
-    expect(next.entries.filter((entry) => entry.id === "live-user")).toHaveLength(1);
-    expect(next.entries.map((entry) => entry.id)).toEqual([
-      "history-user",
-      "history-work",
-      "history-assistant",
-      "feedback",
-      "live-user",
-      "live-work",
-      "live-assistant",
     ]);
+  });
+
+  it("does not merge reused tool call ids across turns", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "turn-1-tool",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: "turn-1",
+        kind: "tool.updated",
+        summary: "Tool",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "reused-call",
+          status: "inProgress",
+        },
+      }),
+      makeActivity({
+        id: "turn-2-tool",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        turnId: "turn-2",
+        kind: "tool.completed",
+        summary: "Tool completed",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "reused-call",
+          status: "completed",
+        },
+      }),
+    ];
+
+    expect(deriveWorkLogEntries(activities)).toHaveLength(2);
+  });
+
+  it("unwraps PowerShell command wrappers for displayed command text", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-windows-wrapper",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            item: {
+              command: "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -Command 'bun run lint'",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.command).toBe("bun run lint");
+    expect(entry?.rawCommand).toBe(
+      "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -Command 'bun run lint'",
+    );
+  });
+
+  it("unwraps PowerShell command wrappers from argv-style command payloads", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-windows-wrapper-argv",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            item: {
+              command: ["C:\\Program Files\\PowerShell\\7\\pwsh.exe", "-Command", "rg -n foo ."],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.command).toBe("rg -n foo .");
+    expect(entry?.rawCommand).toBe(
+      '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "rg -n foo ."',
+    );
+  });
+
+  it("extracts command text from command detail when structured command metadata is missing", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-windows-detail-fallback",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          detail:
+            '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoLogo -NoProfile -Command \'rg -n -F "new Date()" .\' <exited with exit code 0>',
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.command).toBe('rg -n -F "new Date()" .');
+    expect(entry?.rawCommand).toBe(
+      `"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoLogo -NoProfile -Command 'rg -n -F "new Date()" .'`,
+    );
+  });
+
+  it("does not unwrap shell commands when no wrapper flag is present", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-shell-script",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            item: {
+              command: "bash script.sh",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.command).toBe("bash script.sh");
+    expect(entry?.rawCommand).toBeUndefined();
+  });
+
+  it("preserves serialized shell wrappers with non-matching boundary quotes", () => {
+    const command =
+      "/bin/zsh -lc 'git status\nsed -n '\"'1,20p' apps/web/src/components/DiffPanel.tsx\"";
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-serialized-wrapper",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: { item: { command } },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.command).toBe(command);
+    expect(entry?.rawCommand).toBeUndefined();
+  });
+
+  it("keeps compact Codex tool metadata used for icons and labels", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-with-metadata",
+        kind: "tool.completed",
+        summary: "bash",
+        payload: {
+          itemType: "command_execution",
+          title: "bash",
+          status: "completed",
+          detail: '{ "dev": "vite dev --port 3000" } <exited with exit code 0>',
+          data: {
+            item: {
+              command: ["bun", "run", "dev"],
+              result: {
+                content: '{ "dev": "vite dev --port 3000" } <exited with exit code 0>',
+                exitCode: 0,
+              },
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      command: "bun run dev",
+      detail: '{ "dev": "vite dev --port 3000" }',
+      itemType: "command_execution",
+      toolTitle: "bash",
+    });
+  });
+
+  it("extracts changed file paths for file-change tool activities", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "file-tool",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              changes: [
+                { path: "apps/web/src/components/ChatView.tsx" },
+                { filename: "apps/web/src/session-logic.ts" },
+              ],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.changedFiles).toEqual([
+      "apps/web/src/components/ChatView.tsx",
+      "apps/web/src/session-logic.ts",
+    ]);
+  });
+
+  it("drops duplicated tool detail when it only repeats the title", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "read-file-generic",
+        kind: "tool.completed",
+        summary: "Read File",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Read File",
+          detail: "Read File",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.toolTitle).toBe("Read File");
+    expect(entry?.detail).toBeUndefined();
+  });
+
+  it("uses grep raw output summaries instead of repeating the generic tool label", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "grep-update",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "grep",
+        payload: {
+          itemType: "web_search",
+          title: "grep",
+          detail: "grep",
+          data: {
+            toolCallId: "tool-grep-1",
+            kind: "search",
+            rawInput: {},
+          },
+        },
+      }),
+      makeActivity({
+        id: "grep-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "grep",
+        payload: {
+          itemType: "web_search",
+          title: "grep",
+          detail: "grep",
+          data: {
+            toolCallId: "tool-grep-1",
+            kind: "search",
+            rawOutput: {
+              totalFiles: 19,
+              truncated: false,
+            },
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "grep-complete",
+      toolTitle: "grep",
+      detail: "19 files",
+      itemType: "web_search",
+    });
+  });
+
+  it("uses completed read-file output previews and still collapses the same tool call", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "read-update",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Read File",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Read File",
+          detail: "Read File",
+          data: {
+            toolCallId: "tool-read-1",
+            kind: "read",
+            rawInput: {},
+          },
+        },
+      }),
+      makeActivity({
+        id: "read-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Read File",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Read File",
+          detail: "Read File",
+          data: {
+            toolCallId: "tool-read-1",
+            kind: "read",
+            rawOutput: {
+              content:
+                'import * as Effect from "effect/Effect"\nimport * as Layer from "effect/Layer"\n',
+            },
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "read-complete",
+      toolTitle: "Read File",
+      detail: 'import * as Effect from "effect/Effect"',
+      itemType: "dynamic_tool_call",
+    });
+  });
+
+  it("keeps viewed image metadata while collapsing a streamed Claude Read", () => {
+    const imagePath = `/workspace/${"nested folder/".repeat(16)}reference image.webp`;
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "image-read-update",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Image view",
+        payload: {
+          toolCallId: "tool-read-image",
+          itemType: "image_view",
+          detail: `${imagePath.slice(0, 177)}...`,
+          data: { imagePath },
+        },
+      }),
+      makeActivity({
+        id: "image-read-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Image view",
+        payload: {
+          toolCallId: "tool-read-image",
+          itemType: "image_view",
+          detail: `${imagePath.slice(0, 177)}...`,
+          data: {},
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "image-read-complete",
+      itemType: "image_view",
+      viewedImagePath: imagePath,
+    });
+  });
+
+  it("does not use command stdout as the detail when Cursor omits the command input", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "cursor-command-complete",
+        createdAt: "2026-04-16T22:40:42.221Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "toolu_vrtx_01WypXgRM8PPygBtrVAZwzy5",
+            kind: "execute",
+            rawInput: {},
+            rawOutput: {
+              exitCode: 0,
+              stdout: "total 960\napps\npackages\n",
+              stderr: "",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      id: "cursor-command-complete",
+      label: "Ran command",
+      itemType: "command_execution",
+      toolTitle: "Ran command",
+    });
+    expect(entry?.detail).toBeUndefined();
+    expect(entry?.command).toBeUndefined();
+  });
+
+  it("collapses legacy completed tool rows that are missing tool metadata", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "legacy-read-update",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Read File",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Read File",
+          detail: "Read File",
+          data: {
+            toolCallId: "tool-read-legacy",
+            kind: "read",
+            rawInput: {},
+          },
+        },
+      }),
+      makeActivity({
+        id: "legacy-read-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Read File",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Read File",
+          detail: "Read File",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "legacy-read-complete",
+      toolTitle: "Read File",
+      itemType: "dynamic_tool_call",
+    });
+    expect(entries[0]?.detail).toBeUndefined();
+  });
+
+  it("collapses repeated lifecycle updates for the same tool call into one entry", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-update-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Tool call",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Tool call",
+          detail: 'Read: {"file_path":"/tmp/app.ts"}',
+        },
+      }),
+      makeActivity({
+        id: "tool-update-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Tool call",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Tool call",
+          detail: 'Read: {"file_path":"/tmp/app.ts"}',
+          data: {
+            item: {
+              command: ["sed", "-n", "1,40p", "/tmp/app.ts"],
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "tool-complete",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Tool call completed",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Tool call",
+          detail: 'Read: {"file_path":"/tmp/app.ts"}',
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "tool-complete",
+      createdAt: "2026-02-23T00:00:03.000Z",
+      label: "Tool call completed",
+      detail: 'Read: {"file_path":"/tmp/app.ts"}',
+      command: "sed -n 1,40p /tmp/app.ts",
+      itemType: "dynamic_tool_call",
+      toolTitle: "Tool call",
+    });
+  });
+
+  it("keeps separate tool entries when an identical call starts after the prior one completed", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-1-update",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Tool call",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Tool call",
+          detail: 'Read: {"file_path":"/tmp/app.ts"}',
+        },
+      }),
+      makeActivity({
+        id: "tool-1-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Tool call completed",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Tool call",
+          detail: 'Read: {"file_path":"/tmp/app.ts"}',
+        },
+      }),
+      makeActivity({
+        id: "tool-2-update",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.updated",
+        summary: "Tool call",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Tool call",
+          detail: 'Read: {"file_path":"/tmp/app.ts"}',
+        },
+      }),
+      makeActivity({
+        id: "tool-2-complete",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        kind: "tool.completed",
+        summary: "Tool call completed",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Tool call",
+          detail: 'Read: {"file_path":"/tmp/app.ts"}',
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+
+    expect(entries.map((entry) => entry.id)).toEqual(["tool-1-complete", "tool-2-complete"]);
+  });
+
+  it("collapses same-timestamp lifecycle rows even when completed sorts before updated by id", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "z-update-earlier",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Tool call",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Tool call",
+          detail: 'Read: {"file_path":"/tmp/app.ts"}',
+        },
+      }),
+      makeActivity({
+        id: "a-complete-same-timestamp",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Tool call",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Tool call",
+          detail: 'Read: {"file_path":"/tmp/app.ts"}',
+        },
+      }),
+      makeActivity({
+        id: "z-update-same-timestamp",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Tool call",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Tool call",
+          detail: 'Read: {"file_path":"/tmp/app.ts"}',
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.id).toBe("a-complete-same-timestamp");
   });
 });
 
@@ -1252,7 +2089,7 @@ describe("image asset requests", () => {
     id: MessageId.make("image-message"),
     role: "user" as const,
     text: "Inspect these images",
-    runId: null,
+    turnId: null,
     createdAt: "2026-09-04T00:00:00.000Z",
     updatedAt: "2026-09-04T00:00:00.000Z",
     streaming: false,
@@ -1359,5 +2196,659 @@ describe("image asset requests", () => {
     });
     expect(displayed.attachments?.[0]).toMatchObject({ previewUrl: "https://server.test/image" });
     expect(row(released, () => undefined)).toBe(message);
+  });
+});
+
+describe("deriveTimelineEntries", () => {
+  const streamingMessage = {
+    id: MessageId.make("streaming-message"),
+    role: "assistant" as const,
+    text: "",
+    turnId: TurnId.make("streaming-turn"),
+    createdAt: "2026-02-23T00:00:03.000Z",
+    updatedAt: "2026-02-23T00:00:03.000Z",
+    streaming: true,
+  };
+
+  it("reuses preview objects while preserving URL and attachment metadata changes", () => {
+    const image = {
+      type: "image" as const,
+      id: "image",
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 42,
+    };
+    const file = {
+      type: "file" as const,
+      id: "file",
+      name: "file.txt",
+      mimeType: "text/plain",
+      sizeBytes: 8,
+    };
+    const message = { ...streamingMessage, attachments: Object.freeze([image, file]) };
+    const project = createMessageAttachmentPreviewProjector();
+    const urls = new Map([[image.id, "https://first.test/image"]]);
+    const first = project(message, (attachment) => urls.get(attachment.id));
+    Object.freeze(first.attachments);
+    expect(project(message, (attachment) => new Map(urls).get(attachment.id))).toBe(first);
+    const streamed = project({ ...message, text: "Next" }, (attachment) => urls.get(attachment.id));
+    expect(streamed.attachments).toBe(first.attachments);
+    expect(streamed.text).toBe("Next");
+    expect(first.text).toBe("");
+    expect(first.attachments?.[1]).toBe(file);
+
+    urls.set(image.id, "https://second.test/image");
+    const renewed = project(message, (attachment) => urls.get(attachment.id));
+    expect(renewed.attachments?.[0]).toMatchObject({ previewUrl: "https://second.test/image" });
+    expect(first.attachments?.[0]).toMatchObject({ previewUrl: "https://first.test/image" });
+    const renamed = project(
+      { ...message, attachments: [{ ...image, name: "renamed.png" }, file] },
+      (attachment) => urls.get(attachment.id),
+    );
+    expect(renamed.attachments?.[0]).toMatchObject({
+      name: "renamed.png",
+      previewUrl: "https://second.test/image",
+    });
+    expect(project(message, () => undefined)).toBe(message);
+  });
+
+  it("keeps pending preview handoffs stable and restores the current server URL", () => {
+    const message = {
+      ...streamingMessage,
+      role: "user" as const,
+      streaming: false,
+      attachments: [
+        {
+          type: "image" as const,
+          id: "image",
+          name: "image.png",
+          mimeType: "image/png",
+          sizeBytes: 42,
+        },
+      ],
+    };
+    const server = createMessageAttachmentPreviewProjector();
+    const handoff = createMessageAttachmentPreviewProjector();
+    const first = handoff(
+      server(message, () => undefined),
+      () => "blob:handoff",
+    );
+    expect(
+      handoff(
+        server(message, () => undefined),
+        () => "blob:handoff",
+      ),
+    ).toBe(first);
+    const ready = server(message, () => "https://server.test/image");
+    expect(handoff(ready, () => "blob:handoff").attachments?.[0]).toMatchObject({
+      previewUrl: "blob:handoff",
+    });
+    expect(handoff(ready, () => undefined)).toBe(ready);
+    expect(ready.attachments?.[0]).toMatchObject({ previewUrl: "https://server.test/image" });
+    expect(first.attachments?.[0]).toMatchObject({ previewUrl: "blob:handoff" });
+  });
+
+  it("reuses ordered history without changing an earlier projection", () => {
+    const history = { ...streamingMessage, id: MessageId.make("history"), streaming: false };
+    const work = [
+      { id: "work", createdAt: history.createdAt, label: "Ran tests", tone: "tool" as const },
+    ];
+    const first = deriveTimelineEntriesWithState([history, streamingMessage], [], work);
+    Object.freeze(first.entries);
+    for (const entry of first.entries) Object.freeze(entry);
+
+    const firstMessage = {
+      ...streamingMessage,
+      text: "First",
+      updatedAt: "2026-02-23T00:00:04.000Z",
+    };
+    const secondMessage = {
+      ...streamingMessage,
+      text: "Second",
+      updatedAt: "2026-02-23T00:00:05.000Z",
+    };
+    const firstBranch = deriveTimelineEntriesWithState([history, firstMessage], [], work, first);
+    const secondBranch = deriveTimelineEntriesWithState([history, secondMessage], [], work, first);
+
+    expect(firstBranch.entries).toEqual(deriveTimelineEntries([history, firstMessage], [], work));
+    expect(secondBranch.entries).toEqual(deriveTimelineEntries([history, secondMessage], [], work));
+    expect(firstBranch.entries[0]).toBe(first.entries[0]);
+    expect(firstBranch.entries[2]).toBe(first.entries[2]);
+    expect(first.entries[1]).toMatchObject({ message: { text: "" } });
+    expect(firstBranch.entries[1]).toMatchObject({ message: { text: "First" } });
+  });
+
+  it("preserves stable source ordering for ties, append, and older pages", () => {
+    const plan = {
+      id: "plan:thread:turn",
+      turnId: streamingMessage.turnId,
+      planMarkdown: "Plan",
+      implementedAt: null,
+      implementationThreadId: null,
+      createdAt: streamingMessage.createdAt,
+      updatedAt: streamingMessage.createdAt,
+    };
+    const firstWork = {
+      id: "work-1",
+      createdAt: streamingMessage.createdAt,
+      label: "Ran tests",
+      tone: "tool" as const,
+    };
+    const first = deriveTimelineEntriesWithState([streamingMessage], [plan], [firstWork]);
+    const appendedMessage = { ...streamingMessage, id: MessageId.make("appended") };
+    const appendedWork = { ...firstWork, id: "work-2" };
+    const messages = [streamingMessage, appendedMessage];
+    const work = [firstWork, appendedWork];
+    const appended = deriveTimelineEntriesWithState(messages, [plan], work, first);
+    expect(appended.entries.map((entry) => entry.id)).toEqual([
+      streamingMessage.id,
+      appendedMessage.id,
+      plan.id,
+      firstWork.id,
+      appendedWork.id,
+    ]);
+    expect(appended.entries[0]).toBe(first.entries[0]);
+
+    const older = {
+      ...streamingMessage,
+      id: MessageId.make("older"),
+      createdAt: "2026-02-22T00:00:00.000Z",
+    };
+    const prepended = deriveTimelineEntriesWithState([older, ...messages], [plan], work, appended);
+    expect(prepended.entries).toEqual(deriveTimelineEntries([older, ...messages], [plan], work));
+    const corrected = {
+      ...streamingMessage,
+      createdAt: "2026-02-24T00:00:00.000Z",
+      streaming: false,
+    };
+    expect(
+      deriveTimelineEntriesWithState([corrected, appendedMessage], [plan], work, appended).entries,
+    ).toEqual(deriveTimelineEntries([corrected, appendedMessage], [plan], work));
+  });
+
+  it("includes proposed plans alongside messages and work entries in chronological order", () => {
+    const entries = deriveTimelineEntries(
+      [
+        {
+          id: MessageId.make("message-1"),
+          role: "assistant",
+          text: "hello",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          turnId: null,
+          updatedAt: "2026-02-23T00:00:01.000Z",
+          streaming: false,
+        },
+      ],
+      [
+        {
+          id: "plan:thread-1:turn:turn-1",
+          turnId: TurnId.make("turn-1"),
+          planMarkdown: "# Ship it",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: "2026-02-23T00:00:02.000Z",
+          updatedAt: "2026-02-23T00:00:02.000Z",
+        },
+      ],
+      [
+        {
+          id: "work-1",
+          createdAt: "2026-02-23T00:00:03.000Z",
+          label: "Ran tests",
+          tone: "tool",
+        },
+      ],
+    );
+
+    expect(entries.map((entry) => entry.kind)).toEqual(["message", "proposed-plan", "work"]);
+    expect(entries[1]).toMatchObject({
+      kind: "proposed-plan",
+      proposedPlan: {
+        planMarkdown: "# Ship it",
+        implementedAt: null,
+        implementationThreadId: null,
+      },
+    });
+  });
+});
+
+describe("deriveWorkLogEntries context window handling", () => {
+  it("excludes context window updates from the work log", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "context-1",
+        turnId: "turn-1",
+        kind: "context-window.updated",
+        summary: "Context window updated",
+        tone: "info",
+      }),
+      makeActivity({
+        id: "tool-1",
+        turnId: "turn-1",
+        kind: "tool.completed",
+        summary: "Ran command",
+        tone: "tool",
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.label).toBe("Ran command");
+  });
+
+  it("keeps context compaction activities as normal work log entries", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "compaction-1",
+        turnId: "turn-1",
+        kind: "context-compaction",
+        summary: "Context compacted",
+        tone: "info",
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.label).toBe("Context compacted");
+  });
+});
+
+describe("isLatestTurnSettled", () => {
+  const latestTurn = {
+    turnId: TurnId.make("turn-1"),
+    startedAt: "2026-02-27T21:10:00.000Z",
+    completedAt: "2026-02-27T21:10:06.000Z",
+  } as const;
+
+  it("returns false while the same turn is still active in a running session", () => {
+    expect(
+      isLatestTurnSettled(latestTurn, {
+        status: "running",
+        activeTurnId: TurnId.make("turn-1"),
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false while any turn is running to avoid stale latest-turn banners", () => {
+    expect(
+      isLatestTurnSettled(latestTurn, {
+        status: "running",
+        activeTurnId: TurnId.make("turn-2"),
+      }),
+    ).toBe(false);
+  });
+
+  it("returns true once the session is no longer running that turn", () => {
+    expect(
+      isLatestTurnSettled(latestTurn, {
+        status: "ready",
+        activeTurnId: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("returns false when turn timestamps are incomplete", () => {
+    expect(
+      isLatestTurnSettled(
+        {
+          turnId: TurnId.make("turn-1"),
+          startedAt: null,
+          completedAt: "2026-02-27T21:10:06.000Z",
+        },
+        null,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("deriveActiveWorkStartedAt", () => {
+  const latestTurn = {
+    turnId: TurnId.make("turn-1"),
+    startedAt: "2026-02-27T21:10:00.000Z",
+    completedAt: "2026-02-27T21:10:06.000Z",
+  } as const;
+
+  it("prefers the in-flight turn start when the latest turn is not settled", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        latestTurn,
+        {
+          status: "running",
+          activeTurnId: TurnId.make("turn-1"),
+        },
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:10:00.000Z");
+  });
+
+  it("uses the new send start while the session is running a different turn", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        latestTurn,
+        {
+          status: "running",
+          activeTurnId: TurnId.make("turn-2"),
+        },
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:11:00.000Z");
+  });
+
+  it("falls back to the latest user message while a running turn is being acknowledged", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        latestTurn,
+        {
+          status: "running",
+          activeTurnId: TurnId.make("turn-2"),
+        },
+        null,
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:11:00.000Z");
+  });
+
+  it("falls back to sendStartedAt once the latest turn is settled", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        latestTurn,
+        {
+          status: "ready",
+          activeTurnId: null,
+        },
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:11:00.000Z");
+  });
+
+  it("uses sendStartedAt for a fresh send after the prior turn completed", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        {
+          turnId: TurnId.make("turn-1"),
+          startedAt: "2026-02-27T21:10:00.000Z",
+          completedAt: "2026-02-27T21:10:06.000Z",
+        },
+        null,
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:11:00.000Z");
+  });
+});
+
+describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
+  it("N concurrent subagents produce exactly N lifecycle rows, zero attributed tool rows", () => {
+    const activities: OrchestrationThreadActivity[] = [];
+    for (let agent = 0; agent < 5; agent += 1) {
+      const taskId = `task-${agent}`;
+      // Progress ticks (several per agent) + attributed tool rows.
+      for (let tick = 0; tick < 4; tick += 1) {
+        activities.push(
+          makeActivity({
+            kind: "task.progress",
+            summary: `agent ${agent} tick ${tick}`,
+            tone: "info",
+            payload: { taskId, summary: `working ${tick}`, role: "explorer" },
+            turnId: "turn-batch",
+            sequence: agent * 20 + tick,
+          }),
+        );
+        activities.push(
+          makeActivity({
+            kind: "tool.completed",
+            summary: "Read",
+            payload: { itemType: "dynamic_tool_call", agentId: taskId },
+            sequence: agent * 20 + 10 + tick,
+          }),
+        );
+      }
+      activities.push(
+        makeActivity({
+          kind: "task.completed",
+          summary: "Task completed",
+          tone: "info",
+          payload: {
+            taskId,
+            status: "completed",
+            summary: `agent ${agent} done`,
+            role: "explorer",
+          },
+          turnId: "turn-batch",
+          sequence: agent * 20 + 19,
+        }),
+      );
+    }
+
+    const entries = deriveWorkLogEntries(activities);
+    // A1 CTA design: all direct spawns in one turn collapse into ONE
+    // call-to-action row carrying the batch's agent ids.
+    const spawnRows = entries.filter((entry) => entry.agentSpawn !== undefined);
+    expect(spawnRows).toHaveLength(1);
+    expect(spawnRows[0]!.agentSpawn!.agentTaskIds).toHaveLength(5);
+    expect(spawnRows[0]!.agentSpawn!.workflowId).toBeNull();
+    // No agent-attributed tool rows leak into the main log.
+    expect(entries.some((entry) => entry.sourceActivityKind?.startsWith("tool."))).toBe(false);
+  });
+
+  it("a workflow run and its members collapse into one CTA row keyed to the coordinator", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "task.progress",
+        summary: "coordinator",
+        tone: "info",
+        payload: { taskId: "wf-1", taskType: "local_workflow", workflowName: "math-check" },
+        sequence: 1,
+      }),
+      makeActivity({
+        kind: "task.progress",
+        summary: "member",
+        tone: "info",
+        payload: { taskId: "wf-1:wf:0", status: "running", parentAgentId: "wf-1" },
+        sequence: 2,
+      }),
+      makeActivity({
+        kind: "task.completed",
+        summary: "member done",
+        tone: "info",
+        payload: { taskId: "wf-1:wf:1", status: "completed", parentAgentId: "wf-1" },
+        sequence: 3,
+      }),
+    ]);
+    const spawnRows = entries.filter((entry) => entry.agentSpawn !== undefined);
+    expect(spawnRows).toHaveLength(1);
+    expect(spawnRows[0]!.agentSpawn!.workflowId).toBe("wf-1");
+    expect(spawnRows[0]!.agentSpawn!.agentTaskIds).toEqual(
+      expect.arrayContaining(["wf-1", "wf-1:wf:0", "wf-1:wf:1"]),
+    );
+  });
+
+  it("keeps unattributed tool rows (over-hiding loses the only signal)", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Bash",
+        payload: { itemType: "command_execution", command: "ls" },
+      }),
+    ]);
+    expect(entries).toHaveLength(1);
+  });
+
+  it("folds timelineBypass agent rows into one CTA (Codex children, workflow members)", () => {
+    // Codex children carry their parent's spawn turn (spawnTurnId stamping),
+    // which is what batches a fleet into one CTA.
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "task.progress",
+        summary: "child work",
+        tone: "info",
+        payload: { taskId: "child-1", timelineBypass: true },
+        turnId: "turn-spawn",
+      }),
+      makeActivity({
+        kind: "task.progress",
+        summary: "child work again",
+        tone: "info",
+        payload: { taskId: "child-2", timelineBypass: true },
+        turnId: "turn-spawn",
+      }),
+    ]);
+    // Not suppressed outright (a Codex fleet's rows are ALL bypassed and
+    // still need a CTA anchor) — but never more than the batch's single row.
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.agentSpawn?.agentTaskIds).toEqual(["child-1", "child-2"]);
+  });
+
+  it("timelineBypass non-agent rows (background shells) stay suppressed", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "task.progress",
+        summary: "stall",
+        tone: "info",
+        payload: { taskId: "sh-1", taskType: "local_bash", timelineBypass: true },
+      }),
+    ]);
+    expect(entries).toHaveLength(0);
+  });
+
+  it("drops task.updated and tool.progress from the work log (fold input only)", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "task.updated",
+        summary: "Task running",
+        tone: "info",
+        payload: { taskId: "task-1", status: "running" },
+      }),
+      makeActivity({
+        kind: "tool.progress",
+        summary: "Read",
+        tone: "info",
+        payload: { taskId: "task-1", toolName: "Read" },
+      }),
+    ]);
+    expect(entries).toHaveLength(0);
+  });
+});
+
+describe("rerun workflows", () => {
+  it("turn-less direct spawns do not collapse into one global batch", () => {
+    // Rows that lost their turn id (defensive path) group per task, so two
+    // unrelated turn-less spawns never merge into one immortal CTA.
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "task.started",
+        summary: "Task started",
+        payload: { taskId: "loose-1", taskType: "local_agent", role: "a" },
+        sequence: 1,
+      }),
+      makeActivity({
+        kind: "task.started",
+        summary: "Task started",
+        payload: { taskId: "loose-2", taskType: "local_agent", role: "b" },
+        sequence: 2,
+      }),
+    ]);
+    const spawnRows = entries.filter((entry) => entry.agentSpawn !== undefined);
+    expect(spawnRows).toHaveLength(2);
+    expect(spawnRows.map((row) => row.agentSpawn!.agentTaskIds)).toEqual([
+      ["loose-1"],
+      ["loose-2"],
+    ]);
+  });
+
+  it("each workflow run gets its own CTA row (distinct coordinator ids)", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "task.progress",
+        summary: "run 1",
+        tone: "info",
+        payload: { taskId: "wf-run1", taskType: "local_workflow", workflowName: "math-check" },
+        turnId: "turn-1",
+        sequence: 1,
+      }),
+      makeActivity({
+        kind: "task.completed",
+        summary: "run 1 done",
+        tone: "info",
+        payload: { taskId: "wf-run1", status: "completed", taskType: "local_workflow" },
+        turnId: "turn-1",
+        sequence: 2,
+      }),
+      makeActivity({
+        kind: "task.progress",
+        summary: "run 2",
+        tone: "info",
+        payload: { taskId: "wf-run2", taskType: "local_workflow", workflowName: "math-check" },
+        turnId: "turn-2",
+        sequence: 3,
+      }),
+    ]);
+    const spawnRows = entries.filter((entry) => entry.agentSpawn !== undefined);
+    expect(spawnRows.map((row) => row.agentSpawn!.workflowId)).toEqual(["wf-run1", "wf-run2"]);
+    expect(spawnRows.map((row) => row.turnId)).toEqual(["turn-1", "turn-2"]);
+  });
+});
+
+describe("session activity performance", () => {
+  it("reuses entries for unchanged activities", () => {
+    const activities = ["status", "diff", "log"].map((command, index) =>
+      makeActivity({
+        id: `stable-tool-${index}`,
+        kind: "tool.completed",
+        sequence: index,
+        payload: {
+          itemType: "command_execution",
+          data: { toolCallId: `stable-tool-${index}`, item: { command: ["git", command] } },
+        },
+      }),
+    );
+
+    const initialEntries = deriveWorkLogEntries(activities.slice(0, 2));
+    const appendedEntries = deriveWorkLogEntries(activities);
+    expect(appendedEntries[0]).toBe(initialEntries[0]);
+    expect(appendedEntries[1]).toBe(initialEntries[1]);
+  });
+
+  it("reuses entries when appending to 20,000 ordered tool activities", () => {
+    const activities = Array.from({ length: 20_000 }, (_, index) =>
+      makeActivity({
+        id: `benchmark-tool-${index}`,
+        createdAt: new Date(1_700_000_000_000 + index).toISOString(),
+        kind: "tool.completed",
+        summary: "Ran command",
+        sequence: index,
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: `benchmark-tool-${index}`,
+            item: { command: ["git", "status"] },
+          },
+        },
+      }),
+    );
+    const initialEntries = deriveWorkLogEntries(activities);
+    expect(initialEntries).toHaveLength(20_000);
+    const updatedActivities = [
+      ...activities,
+      makeActivity({
+        id: "benchmark-tool-appended",
+        createdAt: new Date(1_700_000_000_000 + activities.length).toISOString(),
+        kind: "tool.completed",
+        summary: "Ran command",
+        sequence: activities.length,
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: { toolCallId: "benchmark-tool-appended", item: { command: ["git", "diff"] } },
+        },
+      }),
+    ];
+
+    const updatedEntries = deriveWorkLogEntries(updatedActivities);
+    expect(updatedEntries).toHaveLength(20_001);
+    expect(initialEntries.every((entry, index) => updatedEntries[index] === entry)).toBe(true);
+    expect(updatedEntries.at(-1)).toMatchObject({
+      id: "benchmark-tool-appended",
+      command: "git diff",
+      toolLifecycleStatus: "completed",
+    });
   });
 });

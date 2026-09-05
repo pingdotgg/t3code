@@ -1,4 +1,4 @@
-import { RuntimeRequestId } from "@t3tools/contracts";
+import { ApprovalRequestId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -10,11 +10,10 @@ describe("ComposerPendingApprovalPanel", () => {
     const markup = renderToStaticMarkup(
       <ComposerPendingApprovalPanel
         approval={{
-          requestId: RuntimeRequestId.make("approval-1"),
+          requestId: ApprovalRequestId.make("approval-1"),
           requestKind: "command",
           createdAt: "2026-07-18T00:00:00.000Z",
           detail,
-          responseCapability: "live",
         }}
         pendingCount={1}
       />,
@@ -40,9 +39,8 @@ describe("ComposerPendingApprovalPanel", () => {
     const markup = renderToStaticMarkup(
       <ComposerPendingApprovalPanel
         approval={{
-          requestId: RuntimeRequestId.make("approval-2"),
+          requestId: ApprovalRequestId.make("approval-2"),
           requestKind: "file-read",
-          responseCapability: "live" as const,
           createdAt: "2026-07-18T00:00:00.000Z",
           detail: "",
         }}
@@ -57,9 +55,8 @@ describe("ComposerPendingApprovalPanel", () => {
     const markup = renderToStaticMarkup(
       <ComposerPendingApprovalPanel
         approval={{
-          requestId: RuntimeRequestId.make("approval-safari"),
+          requestId: ApprovalRequestId.make("approval-safari"),
           requestKind: "mcp-elicitation",
-          responseCapability: "live" as const,
           createdAt: "2026-08-24T00:00:00.000Z",
           appName: "Safari",
           detail: "Allow ChatGPT to use Safari?",
@@ -80,9 +77,8 @@ describe("ComposerPendingApprovalPanel", () => {
     const markup = renderToStaticMarkup(
       <ComposerPendingApprovalPanel
         approval={{
-          requestId: RuntimeRequestId.make("approval-long-app-name"),
+          requestId: ApprovalRequestId.make("approval-long-app-name"),
           requestKind: "mcp-elicitation",
-          responseCapability: "live" as const,
           createdAt: "2026-08-24T00:00:00.000Z",
           appName,
           detail,

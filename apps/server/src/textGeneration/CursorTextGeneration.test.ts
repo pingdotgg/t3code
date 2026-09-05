@@ -1,398 +1,391 @@
-// @effect-diagnostics nodeBuiltinImport:off - cancellation verifies the real temp directory lifetime.
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
+import * as NodeURL from "node:url";
 import * as NodeFS from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CursorSettings, ProviderInstanceId } from "@t3tools/contracts";
-import { expect, it } from "@effect/vitest";
+import { it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
-import * as TestClock from "effect/testing/TestClock";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
-import { beforeEach, vi } from "vite-plus/test";
+import { expect } from "vite-plus/test";
 
+import { CursorSettings, ProviderInstanceId } from "@t3tools/contracts";
+
+import * as ServerConfig from "../config.ts";
+import * as TextGeneration from "./TextGeneration.ts";
 import { makeCursorTextGeneration } from "./CursorTextGeneration.ts";
-
-const cursorSdkMock = vi.hoisted(() => ({
-  create: vi.fn(),
-  send: vi.fn(),
-  wait: vi.fn(),
-  cancel: vi.fn(),
-  dispose: vi.fn(),
-  status: "finished" as "running" | "finished" | "error" | "cancelled",
-}));
-
-vi.mock("@cursor/sdk", () => ({
-  Agent: {
-    create: cursorSdkMock.create,
-  },
-}));
-
+import { execScriptSource, writeFakeCli } from "../testUtils/fakeCli.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
-const cursorSettings = decodeCursorSettings({ enabled: true });
 
-beforeEach(() => {
-  cursorSdkMock.create.mockReset();
-  cursorSdkMock.send.mockReset();
-  cursorSdkMock.wait.mockReset();
-  cursorSdkMock.cancel.mockReset();
-  cursorSdkMock.dispose.mockReset();
-  cursorSdkMock.status = "finished";
-  cursorSdkMock.wait.mockResolvedValue({
-    id: "run-cursor-text-generation-test",
-    status: "finished",
-    result:
-      '{"subject":"Add generated commit message","body":"- verify cursor sdk text generation"}',
-  });
-  cursorSdkMock.send.mockResolvedValue({
-    id: "run-cursor-text-generation-test",
-    agentId: "agent-cursor-text-generation-test",
-    supports: (operation: string) => operation === "cancel" || operation === "wait",
-    unsupportedReason: () => undefined,
-    wait: cursorSdkMock.wait,
-    cancel: cursorSdkMock.cancel,
-    get status() {
-      return cursorSdkMock.status;
-    },
-  });
-  cursorSdkMock.create.mockResolvedValue({
-    agentId: "agent-cursor-text-generation-test",
-    send: cursorSdkMock.send,
-    close: vi.fn(),
-    reload: vi.fn(),
-    listArtifacts: vi.fn(),
-    downloadArtifact: vi.fn(),
-    [Symbol.asyncDispose]: cursorSdkMock.dispose,
-  });
-});
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const mockAgentPath = NodePath.join(__dirname, "../../scripts/acp-mock-agent.ts");
 
-it.layer(NodeServices.layer)("CursorTextGeneration", (it) => {
-  it.effect("runs Cursor metadata generation in an isolated sandboxed workspace", () =>
+const CursorTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+  prefix: "t3code-cursor-text-generation-test-",
+}).pipe(Layer.provideMerge(NodeServices.layer));
+
+function makeAcpAgentWrapper(dir: string, env: Record<string, string>): string {
+  return writeFakeCli({
+    directory: NodePath.join(dir, "bin"),
+    name: "agent",
+    env,
+    source: execScriptSource({
+      scriptPath: mockAgentPath,
+      expectedArgs: ["acp"],
+    }),
+  });
+}
+
+function withFakeAcpAgent<A, E, R>(
+  env: Record<string, string>,
+  effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
+) {
+  return Effect.gen(function* () {
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-acp-"));
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }),
+    );
+    const agentPath = makeAcpAgentWrapper(tempDir, env);
+    const config = decodeCursorSettings({ binaryPath: agentPath });
+    const textGeneration = yield* makeCursorTextGeneration(config);
+    return yield* effectFn(textGeneration);
+  }).pipe(Effect.scoped);
+}
+
+function waitForFileContent(path: string): Effect.Effect<string> {
+  return Effect.gen(function* () {
+    const deadline = (yield* Clock.currentTimeMillis) + 5_000;
+    for (;;) {
+      const result = yield* Effect.exit(Effect.sync(() => NodeFS.readFileSync(path, "utf8")));
+      if (Exit.isSuccess(result)) {
+        return result.value;
+      }
+      if ((yield* Clock.currentTimeMillis) >= deadline) {
+        return yield* Effect.die(result.cause);
+      }
+      yield* Effect.sleep(25);
+    }
+  });
+}
+
+it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
+  it.effect("isolates metadata generation while preserving relative Cursor binaries", () =>
     Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {
-        CURSOR_API_KEY: "test-cursor-key",
+      const projectCwd = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-project-"),
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(projectCwd, { recursive: true, force: true })),
+      );
+      const requestLogPath = NodePath.join(projectCwd, "requests.ndjson");
+      const agentPath = makeAcpAgentWrapper(projectCwd, {
+        T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed mock-agent response fixture.
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+          subject: "Add generated commit message",
+          body: "- verify cursor acp model config path",
+        }),
       });
+      const relativeAgentPath = `.${NodePath.sep}${NodePath.relative(projectCwd, agentPath)}`;
+      const textGeneration = yield* makeCursorTextGeneration(
+        decodeCursorSettings({ binaryPath: relativeAgentPath }),
+      );
 
       const generated = yield* textGeneration.generateCommitMessage({
-        cwd: process.cwd(),
+        cwd: projectCwd,
         branch: "feature/cursor-text-generation",
         stagedSummary: "M apps/server/src/textGeneration/CursorTextGeneration.ts",
         stagedPatch:
           "diff --git a/apps/server/src/textGeneration/CursorTextGeneration.ts b/apps/server/src/textGeneration/CursorTextGeneration.ts",
-        modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "gpt-5.4", [
-          { id: "thinking", value: "high" },
-          { id: "contextWindow", value: "1m" },
-          { id: "fastMode", value: true },
-        ]),
+        modelSelection: {
+          ...createModelSelection(ProviderInstanceId.make("cursor"), "gpt-5.4", [
+            { id: "reasoning", value: "xhigh" },
+            { id: "fastMode", value: true },
+            { id: "contextWindow", value: "1m" },
+          ]),
+        },
       });
 
       expect(generated.subject).toBe("Add generated commit message");
-      expect(generated.body).toBe("- verify cursor sdk text generation");
+      expect(generated.body).toBe("- verify cursor acp model config path");
 
-      expect(cursorSdkMock.create).toHaveBeenCalledTimes(1);
-      expect(cursorSdkMock.send).toHaveBeenCalledTimes(1);
-      const [options] = (cursorSdkMock.create.mock.calls as unknown as Array<[unknown]>)[0]!;
-      const [prompt] = (cursorSdkMock.send.mock.calls as unknown as Array<[string]>)[0]!;
-      const metadataWorkspace = (options as { local: { cwd: string } }).local.cwd;
-      expect(prompt).toContain("Do not use tools, read or write files, run commands");
-      expect(prompt).toContain("Staged patch:");
+      const requests = NodeFS.readFileSync(requestLogPath, "utf8")
+        .trim()
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
+
+      const sessionInput = requests.find((request) => request.method === "session/new")?.params;
+      const metadataWorkspace = sessionInput?.cwd;
+      expect(typeof metadataWorkspace).toBe("string");
+      expect(metadataWorkspace).not.toBe(projectCwd);
       expect(metadataWorkspace).toContain("t3-cursor-metadata-");
-      expect(metadataWorkspace).not.toBe(process.cwd());
-      expect(yield* fileSystem.exists(metadataWorkspace)).toBe(false);
-      expect(options).toEqual({
-        apiKey: "test-cursor-key",
-        mode: "plan",
-        model: {
-          id: "gpt-5.4",
-          params: [
-            { id: "thinking", value: "high" },
-            { id: "context", value: "1m" },
-            { id: "fast", value: "true" },
-          ],
-        },
-        local: {
-          cwd: metadataWorkspace,
-          autoReview: false,
-          settingSources: [],
-          sandboxOptions: { enabled: true },
-          enableAgentRetries: true,
+      expect(NodeFS.existsSync(String(metadataWorkspace))).toBe(false);
+
+      expect(
+        requests.find((request) => request.method === "initialize")?.params?.clientCapabilities,
+      ).toMatchObject({
+        _meta: {
+          parameterizedModelPicker: true,
         },
       });
-    }),
+      expect(
+        requests.some(
+          (request) =>
+            request.method === "session/set_config_option" &&
+            request.params?.configId === "model" &&
+            request.params?.value === "gpt-5.4",
+        ),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (request) =>
+            request.method === "session/set_config_option" &&
+            request.params?.configId === "reasoning" &&
+            request.params?.value === "extra-high",
+        ),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (request) =>
+            request.method === "session/set_config_option" &&
+            request.params?.configId === "context" &&
+            request.params?.value === "1m",
+        ),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (request) =>
+            request.method === "session/set_config_option" &&
+            request.params?.configId === "fast" &&
+            request.params?.value === "true",
+        ),
+      ).toBe(true);
+      expect(
+        requests.find((request) => request.method === "session/prompt")?.params?.prompt,
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "text",
+            text: expect.stringMatching(
+              /Do not use tools, read or write files, run commands[\s\S]*Staged patch:/,
+            ),
+          }),
+        ]),
+      );
+    }).pipe(Effect.scoped),
   );
 
-  it.effect("removes the isolated workspace when the Cursor SDK request fails", () =>
+  it.effect("removes the metadata workspace after caller cancellation", () => {
+    const requestLogDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-cancel-"),
+    );
+    const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+    const promptStartedPath = NodePath.join(requestLogDir, "prompt-started");
+
+    return withFakeAcpAgent(
+      {
+        T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        T3_ACP_PROMPT_STARTED_PATH: promptStartedPath,
+        T3_ACP_HANG_PROMPT_FOREVER: "1",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => NodeFS.rmSync(requestLogDir, { recursive: true, force: true })),
+          );
+          const promptStarted = yield* Deferred.make<string>();
+          const watcher = NodeFS.watch(requestLogDir, (_event, filename) => {
+            if (
+              filename !== null &&
+              String(filename) !== NodePath.basename(promptStartedPath) &&
+              !NodeFS.existsSync(promptStartedPath)
+            ) {
+              return;
+            }
+            if (!NodeFS.existsSync(promptStartedPath)) return;
+            Deferred.doneUnsafe(
+              promptStarted,
+              Effect.sync(() => NodeFS.readFileSync(promptStartedPath, "utf8")),
+            );
+          });
+          yield* Effect.addFinalizer(() => Effect.sync(() => watcher.close()));
+          const request = yield* textGeneration
+            .generateCommitMessage({
+              cwd: process.cwd(),
+              branch: "feature/cursor-cancel",
+              stagedSummary: "M README.md",
+              stagedPatch: "diff --git a/README.md b/README.md",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("cursor"),
+                model: "composer-2",
+              },
+            })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          const metadataWorkspace = yield* Deferred.await(promptStarted);
+          expect(NodeFS.existsSync(metadataWorkspace)).toBe(true);
+
+          yield* Fiber.interrupt(request);
+
+          expect(NodeFS.existsSync(metadataWorkspace)).toBe(false);
+        }),
+    );
+  });
+
+  it.effect("keeps generated metadata when workspace cleanup fails", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      let metadataWorkspace: string | undefined;
-      cursorSdkMock.create.mockImplementationOnce(async (options) => {
-        metadataWorkspace = (options as { local: { cwd: string } }).local.cwd;
-        throw new Error("cursor request failed");
+      const tempDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-cleanup-"),
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true })),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const agentPath = makeAcpAgentWrapper(tempDir, {
+        T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        T3_ACP_PROMPT_RESPONSE_TEXT: '{"title":"Cleanup must not replace this title"}',
       });
-      const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {
-        CURSOR_API_KEY: "test-cursor-key",
-      });
-
-      const error = yield* Effect.flip(
-        textGeneration.generateCommitMessage({
-          cwd: process.cwd(),
-          branch: "feature/cursor-cleanup",
-          stagedSummary: "M README.md",
-          stagedPatch: "diff --git a/README.md b/README.md",
-          modelSelection: {
-            instanceId: ProviderInstanceId.make("cursor"),
-            model: "composer-2",
-          },
+      let leakedWorkspace: string | undefined;
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          if (leakedWorkspace) NodeFS.rmSync(leakedWorkspace, { recursive: true, force: true });
         }),
       );
-
-      expect(error.detail).toBe("Cursor SDK request failed.");
-      expect(metadataWorkspace).toBeDefined();
-      expect(yield* fileSystem.exists(metadataWorkspace!)).toBe(false);
-    }),
-  );
-
-  it.effect("returns on timeout and keeps the workspace until a late run settles", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const order: Array<string> = [];
-      let metadataWorkspace: string | undefined;
-      let resolveSend!: (run: unknown) => void;
-      const pendingSend = new Promise((resolve) => {
-        resolveSend = resolve;
-      });
-      let resolveWait!: (result: unknown) => void;
-      const pendingWait = new Promise((resolve) => {
-        resolveWait = resolve;
-      });
-      let resolveCancel!: () => void;
-      const pendingCancel = new Promise<void>((resolve) => {
-        resolveCancel = resolve;
-      });
-      let signalCancelCalled!: () => void;
-      const cancelCalled = new Promise<void>((resolve) => {
-        signalCancelCalled = resolve;
-      });
-      let signalWaitSettled!: () => void;
-      const waitSettled = new Promise<void>((resolve) => {
-        signalWaitSettled = resolve;
-      });
-      let signalCleanupDone!: () => void;
-      const cleanupDone = new Promise<void>((resolve) => {
-        signalCleanupDone = resolve;
-      });
-      cursorSdkMock.status = "running";
-      cursorSdkMock.create.mockImplementationOnce(async (options) => {
-        metadataWorkspace = (options as { local: { cwd: string } }).local.cwd;
-        return {
-          agentId: "agent-cursor-timeout",
-          send: cursorSdkMock.send,
-          close: vi.fn(),
-          reload: vi.fn(),
-          listArtifacts: vi.fn(),
-          downloadArtifact: vi.fn(),
-          [Symbol.asyncDispose]: async () => {
-            order.push("dispose");
-            expect(metadataWorkspace).toBeDefined();
-            expect(NodeFS.existsSync(metadataWorkspace!)).toBe(true);
-          },
-        };
-      });
-      cursorSdkMock.send.mockImplementationOnce(() => pendingSend);
-      cursorSdkMock.wait.mockImplementation(async () => {
-        const result = await pendingWait;
-        order.push("wait-settled");
-        signalWaitSettled();
-        return result;
-      });
-      cursorSdkMock.cancel.mockImplementationOnce(async () => {
-        order.push("cancel");
-        signalCancelCalled();
-        expect(metadataWorkspace).toBeDefined();
-        expect(NodeFS.existsSync(metadataWorkspace!)).toBe(true);
-        await pendingCancel;
-        cursorSdkMock.status = "cancelled";
-      });
-      const trackingFileSystem = FileSystem.FileSystem.of({
-        ...fileSystem,
-        remove: (path, options) =>
-          fileSystem.remove(path, options).pipe(Effect.tap(() => Effect.sync(signalCleanupDone))),
-      });
-      const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {
-        CURSOR_API_KEY: "test-cursor-key",
-      }).pipe(Effect.provideService(FileSystem.FileSystem, trackingFileSystem));
-
-      const fiber = yield* textGeneration
-        .generateCommitMessage({
-          cwd: process.cwd(),
-          branch: "feature/cursor-timeout",
-          stagedSummary: "M README.md",
-          stagedPatch: "diff --git a/README.md b/README.md",
-          modelSelection: {
-            instanceId: ProviderInstanceId.make("cursor"),
-            model: "composer-2",
-          },
-        })
-        .pipe(Effect.forkChild({ startImmediately: true }));
-      yield* TestClock.adjust(180_000);
-      const error = yield* Fiber.join(fiber).pipe(Effect.flip);
-
-      expect(error.detail).toBe("Cursor SDK request timed out.");
-      expect(metadataWorkspace).toBeDefined();
-      expect(yield* fileSystem.exists(metadataWorkspace!)).toBe(true);
-
-      resolveSend({
-        id: "run-cursor-timeout",
-        agentId: "agent-cursor-timeout",
-        supports: (operation: string) => operation === "cancel" || operation === "wait",
-        unsupportedReason: () => undefined,
-        wait: cursorSdkMock.wait,
-        cancel: cursorSdkMock.cancel,
-        get status() {
-          return cursorSdkMock.status;
-        },
-      });
-      yield* Effect.promise(() => cancelCalled);
-      expect(order).toEqual(["cancel"]);
-      expect(yield* fileSystem.exists(metadataWorkspace!)).toBe(true);
-
-      resolveWait({ id: "run-cursor-timeout", status: "cancelled" });
-      yield* Effect.promise(() => waitSettled);
-      expect(yield* fileSystem.exists(metadataWorkspace!)).toBe(true);
-
-      resolveCancel();
-      yield* Effect.promise(() => cleanupDone);
-      expect(order).toEqual(["cancel", "wait-settled", "dispose"]);
-      expect(yield* fileSystem.exists(metadataWorkspace!)).toBe(false);
-    }),
-  );
-
-  it.effect("keeps successful metadata when workspace removal fails", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      let metadataWorkspace: string | undefined;
-      cursorSdkMock.create.mockImplementationOnce(async (options) => {
-        metadataWorkspace = (options as { local: { cwd: string } }).local.cwd;
-        return {
-          agentId: "agent-cursor-cleanup-failure",
-          send: cursorSdkMock.send,
-          close: vi.fn(),
-          reload: vi.fn(),
-          listArtifacts: vi.fn(),
-          downloadArtifact: vi.fn(),
-          [Symbol.asyncDispose]: cursorSdkMock.dispose,
-        };
-      });
-      const removeFailure = new Error("forced workspace cleanup failure");
       const failingFileSystem = FileSystem.FileSystem.of({
         ...fileSystem,
-        remove: () => Effect.fail(removeFailure as never),
-      });
-      const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {
-        CURSOR_API_KEY: "test-cursor-key",
-      }).pipe(Effect.provideService(FileSystem.FileSystem, failingFileSystem));
-
-      const generated = yield* textGeneration
-        .generateCommitMessage({
-          cwd: process.cwd(),
-          branch: "feature/cursor-cleanup-failure",
-          stagedSummary: "M README.md",
-          stagedPatch: "diff --git a/README.md b/README.md",
-          modelSelection: {
-            instanceId: ProviderInstanceId.make("cursor"),
-            model: "composer-2",
-          },
-        })
-        .pipe(
-          Effect.ensuring(
-            Effect.suspend(() =>
-              metadataWorkspace === undefined
-                ? Effect.void
-                : fileSystem.remove(metadataWorkspace, { recursive: true, force: true }),
-            ).pipe(Effect.orDie),
-          ),
-        );
-
-      expect(generated.subject).toBe("Add generated commit message");
-      expect(generated.body).toBe("- verify cursor sdk text generation");
-    }),
-  );
-
-  it.effect("accepts json objects with extra assistant text around them", () =>
-    Effect.gen(function* () {
-      cursorSdkMock.wait.mockResolvedValueOnce({
-        id: "run-cursor-text-generation-test",
-        status: "finished",
-        result:
-          'Sure, here is the JSON:\n```json\n{\n  "subject": "Update README dummy comment with attribution and date",\n  "body": ""\n}\n```\nDone.',
-      });
-      const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {
-        CURSOR_API_KEY: "test-cursor-key",
-      });
-
-      const generated = yield* textGeneration.generateCommitMessage({
-        cwd: process.cwd(),
-        branch: "feature/cursor-noisy-json",
-        stagedSummary: "M README.md",
-        stagedPatch: "diff --git a/README.md b/README.md",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("cursor"),
-          model: "composer-2",
+        remove: (path, options) => {
+          if (!path.includes("t3-cursor-metadata-")) return fileSystem.remove(path, options);
+          leakedWorkspace = path;
+          return Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method: "remove",
+              pathOrDescriptor: path,
+              description: "forced metadata workspace cleanup failure",
+            }),
+          );
         },
       });
-
-      expect(generated.subject).toBe("Update README dummy comment with attribution and date");
-      expect(generated.body).toBe("");
-    }),
-  );
-
-  it.effect("generates thread titles through Cursor SDK text generation", () =>
-    Effect.gen(function* () {
-      cursorSdkMock.wait.mockResolvedValueOnce({
-        id: "run-cursor-title-generation-test",
-        status: "finished",
-        result: '{"title":"\\"Trim reconnect spinner status after resume.\\""}',
-      });
-      const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {
-        CURSOR_API_KEY: "test-cursor-key",
-      });
+      const textGeneration = yield* makeCursorTextGeneration(
+        decodeCursorSettings({ binaryPath: agentPath }),
+      ).pipe(Effect.provideService(FileSystem.FileSystem, failingFileSystem));
 
       const generated = yield* textGeneration.generateThreadTitle({
         cwd: process.cwd(),
-        message: "Fix the reconnect spinner after a resumed session.",
+        message: "Keep successful metadata despite cleanup failure.",
         modelSelection: {
           instanceId: ProviderInstanceId.make("cursor"),
           model: "composer-2",
         },
       });
 
-      expect(generated.title).toBe("Trim reconnect spinner status after resume.");
-    }),
+      expect(generated.title).toBe("Cleanup must not replace this title");
+      expect(leakedWorkspace).toContain("t3-cursor-metadata-");
+    }).pipe(Effect.scoped),
   );
 
-  it.effect("requires CURSOR_API_KEY before calling the SDK", () =>
-    Effect.gen(function* () {
-      const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {});
+  it.effect("accepts json objects with extra assistant text around them", () =>
+    withFakeAcpAgent(
+      {
+        T3_ACP_PROMPT_RESPONSE_TEXT:
+          'Sure, here is the JSON:\n```json\n{\n  "subject": "Update README dummy comment with attribution and date",\n  "body": ""\n}\n```\nDone.',
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/cursor-noisy-json",
+            stagedSummary: "M README.md",
+            stagedPatch: "diff --git a/README.md b/README.md",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("cursor"),
+              model: "composer-2",
+            },
+          });
 
-      const error = yield* Effect.flip(
-        textGeneration.generateCommitMessage({
-          cwd: process.cwd(),
-          branch: "feature/cursor-api-key",
-          stagedSummary: "M README.md",
-          stagedPatch: "diff --git a/README.md b/README.md",
-          modelSelection: {
-            instanceId: ProviderInstanceId.make("cursor"),
-            model: "composer-2",
-          },
+          expect(generated.subject).toBe("Update README dummy comment with attribution and date");
+          expect(generated.body).toBe("");
         }),
-      );
+    ),
+  );
 
-      expect(error.detail).toBe(
-        "Cursor API key is required. Add CURSOR_API_KEY in provider settings.",
+  it.effect("generates thread titles through Cursor ACP text generation", () =>
+    withFakeAcpAgent(
+      {
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+          title: '"Trim reconnect spinner status after resume."',
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Fix the reconnect spinner after a resumed session.",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("cursor"),
+              model: "composer-2",
+            },
+          });
+
+          expect(generated.title).toBe("Trim reconnect spinner status after resume.");
+        }),
+    ),
+  );
+
+  // Closing the runtime on Windows is taskkill /F, which never lets the mock
+  // agent reach its exit handler, so there is no exit log to assert on.
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "closes the ACP child process after text generation completes",
+    () => {
+      const exitLogDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-exit-log-"),
       );
-      expect(cursorSdkMock.create).not.toHaveBeenCalled();
-    }),
+      const exitLogPath = NodePath.join(exitLogDir, "exit.log");
+
+      return withFakeAcpAgent(
+        {
+          T3_ACP_EXIT_LOG_PATH: exitLogPath,
+          T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+            subject: "Close runtime after generation",
+            body: "",
+          }),
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const generated = yield* textGeneration.generateCommitMessage({
+              cwd: process.cwd(),
+              branch: "feature/cursor-runtime-close",
+              stagedSummary: "M apps/server/src/textGeneration/CursorTextGeneration.ts",
+              stagedPatch:
+                "diff --git a/apps/server/src/textGeneration/CursorTextGeneration.ts b/apps/server/src/textGeneration/CursorTextGeneration.ts",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("cursor"),
+                model: "composer-2",
+              },
+            });
+
+            expect(generated.subject).toBe("Close runtime after generation");
+
+            const exitLog = yield* waitForFileContent(exitLogPath);
+            expect(exitLog).toContain("exit:0");
+
+            NodeFS.rmSync(exitLogDir, { recursive: true, force: true });
+          }),
+      );
+    },
   );
 });

@@ -1,4 +1,4 @@
-import { type RuntimeRequestId } from "@t3tools/contracts";
+import { type ApprovalRequestId } from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { type PendingUserInput } from "../../session-logic";
 import {
@@ -12,7 +12,7 @@ import { ComposerBanner } from "./ComposerBanner";
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
-  respondingRequestIds: RuntimeRequestId[];
+  respondingRequestIds: ApprovalRequestId[];
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
   onToggleOption: (questionId: string, optionValue: string) => void;
@@ -59,9 +59,6 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
 }) {
-  // Message-mode requests remain answerable after their provider turn ends.
-  const canRespond = prompt.responseCapability !== "not_resumable";
-  const responseDisabled = isResponding || !canRespond;
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
   const autoAdvanceTimerRef = useRef<number | null>(null);
@@ -137,7 +134,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   // select prompts keep the existing auto-advance behavior. Collapsed prompts opt
   // out, since the numbers they refer to are not on screen.
   useEffect(() => {
-    if (!activeQuestion || responseDisabled || isCollapsed) return;
+    if (!activeQuestion || isResponding || isCollapsed) return;
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
@@ -161,7 +158,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, handleOptionSelection, isCollapsed, responseDisabled]);
+  }, [activeQuestion, handleOptionSelection, isCollapsed, isResponding]);
 
   if (!activeQuestion) {
     return null;

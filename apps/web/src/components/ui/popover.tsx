@@ -19,24 +19,20 @@ function PopoverTrigger({ className, children, ...props }: PopoverPrimitive.Trig
 function PopoverPopup({
   children,
   className,
-  positionerClassName,
   viewportClassName,
   side = "bottom",
   align = "center",
   sideOffset = 4,
   alignOffset = 0,
-  collisionAvoidance,
   tooltipStyle = false,
   anchor,
   ...props
 }: PopoverPrimitive.Popup.Props & {
-  positionerClassName?: string;
   viewportClassName?: string;
   side?: PopoverPrimitive.Positioner.Props["side"];
   align?: PopoverPrimitive.Positioner.Props["align"];
   sideOffset?: PopoverPrimitive.Positioner.Props["sideOffset"];
   alignOffset?: PopoverPrimitive.Positioner.Props["alignOffset"];
-  collisionAvoidance?: PopoverPrimitive.Positioner.Props["collisionAvoidance"];
   tooltipStyle?: boolean;
   anchor?: PopoverPrimitive.Positioner.Props["anchor"];
 }) {
@@ -46,11 +42,7 @@ function PopoverPopup({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
-        collisionAvoidance={collisionAvoidance}
-        className={cn(
-          "z-[130] h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-[top,left,right,bottom,transform] data-instant:transition-none",
-          positionerClassName,
-        )}
+        className="z-[130] h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-transform data-instant:transition-none"
         data-slot="popover-positioner"
         side={side}
         sideOffset={sideOffset}

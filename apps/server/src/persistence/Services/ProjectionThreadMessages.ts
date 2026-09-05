@@ -6,8 +6,14 @@
  *
  * @module ProjectionThreadMessageRepository
  */
-import { ChatAttachment, MessageId, ThreadId, TurnId, IsoDateTime } from "@t3tools/contracts";
-import { OrchestrationMessageRole } from "@t3tools/contracts/legacy-orchestration";
+import {
+  ChatAttachment,
+  MessageId,
+  OrchestrationMessageRole,
+  ThreadId,
+  TurnId,
+  IsoDateTime,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
 import * as Struct from "effect/Struct";

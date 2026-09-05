@@ -1,9 +1,9 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
   MessageId,
   ModelSelection,
+  OrchestrationThreadShell,
   ProviderInteractionMode,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
@@ -110,18 +110,10 @@ export interface ThreadComposerProps {
   readonly connectionState: RemoteClientConnectionState;
   readonly connectionError: string | null;
   readonly environmentLabel: string | null;
-  /**
-   * Message sync phase for the selected thread (drives the status pill):
-   * "loading" = first fetch, nothing to show yet; "syncing" = cached messages
-   * are on screen while they reconcile with the server.
-   */
-  readonly threadSyncPhase?: "loading" | "syncing" | null;
-  readonly selectedThread: EnvironmentThreadShell;
+  readonly selectedThread: OrchestrationThreadShell;
   readonly hasCompactableConversation: boolean;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
-  readonly activeThreadBusy: boolean;
-  readonly canStopThread: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
@@ -318,7 +310,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
-  const showStopAction = !hasContent && props.canStopThread;
+  const showStopAction =
+    !hasContent &&
+    (props.selectedThread.session?.status === "running" ||
+      props.selectedThread.session?.status === "starting");
 
   const sendLabel =
     props.connectionState !== "connected" || props.queueCount > 0 ? "Queue" : "Send";

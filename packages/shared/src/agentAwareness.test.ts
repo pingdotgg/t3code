@@ -2,86 +2,179 @@ import { describe, expect, it } from "@effect/vitest";
 
 import type {
   EnvironmentId,
-  OrchestrationV2ThreadShell,
-  Project,
+  OrchestrationProjectShell,
+  OrchestrationThreadShell,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
-import { ProviderInstanceId, RuntimeRequestId } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
+import { ProviderInstanceId } from "@t3tools/contracts";
 
-import { projectThreadAwarenessV2 } from "./agentAwareness.ts";
+import { projectThreadAwareness } from "./agentAwareness.ts";
 
 const NOW = "2026-05-22T12:00:00.000Z";
 
 const project = {
   title: "t3code",
-} satisfies Pick<Project, "title">;
+} satisfies Pick<OrchestrationProjectShell, "title">;
 
-describe("projectThreadAwarenessV2", () => {
-  const updatedAt = DateTime.makeUnsafe(NOW);
-  const v2Thread = (
-    overrides: Partial<
-      Pick<OrchestrationV2ThreadShell, "activityRunStatus" | "status" | "pendingRuntimeRequest">
-    > = {},
-  ) => ({
-    id: "thread-2" as ThreadId,
-    title: "Integrate orchestration",
+function thread(
+  overrides: Partial<OrchestrationThreadShell> = {},
+): Pick<
+  OrchestrationThreadShell,
+  | "id"
+  | "title"
+  | "modelSelection"
+  | "session"
+  | "latestTurn"
+  | "updatedAt"
+  | "hasPendingApprovals"
+  | "hasPendingUserInput"
+> {
+  return {
+    id: "thread-1" as ThreadId,
+    title: "Fix failing CI",
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-    status: "running" as const,
-    pendingRuntimeRequest: null,
-    updatedAt,
+    session: null,
+    latestTurn: null,
+    updatedAt: NOW,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
     ...overrides,
-  });
+  };
+}
 
-  it("projects V2 run state", () => {
+describe("projectThreadAwareness", () => {
+  it("returns null for idle threads without an active awareness state", () => {
     expect(
-      projectThreadAwarenessV2({
+      projectThreadAwareness({
         environmentId: "env-1" as EnvironmentId,
         project,
-        thread: v2Thread(),
+        thread: thread(),
       }),
-    ).toMatchObject({ phase: "running", headline: "Agent is working" });
+    ).toBeNull();
   });
 
-  it("keeps an older activity run visible over a newer cancelled run", () => {
-    expect(
-      projectThreadAwarenessV2({
-        environmentId: "env-1" as EnvironmentId,
-        project,
-        thread: v2Thread({ status: "cancelled", activityRunStatus: "running" }),
+  it("prioritizes approval requests over running state", () => {
+    const state = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({
+        hasPendingApprovals: true,
+        session: {
+          threadId: "thread-1" as ThreadId,
+          status: "running",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: "turn-1" as TurnId,
+          lastError: null,
+          updatedAt: NOW,
+        },
       }),
-    ).toMatchObject({ phase: "running", headline: "Agent is working" });
+    });
+
+    expect(state?.phase).toBe("waiting_for_approval");
+    expect(state?.headline).toBe("Approval needed");
   });
 
-  it("prioritizes V2 user-input requests", () => {
-    expect(
-      projectThreadAwarenessV2({
-        environmentId: "env-1" as EnvironmentId,
-        project,
-        thread: v2Thread({
-          pendingRuntimeRequest: {
-            id: RuntimeRequestId.make("request-1"),
-            kind: "user_input",
-            createdAt: updatedAt,
-          },
-        }),
+  it("projects running provider sessions", () => {
+    const state = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({
+        session: {
+          threadId: "thread-1" as ThreadId,
+          status: "running",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: "turn-1" as TurnId,
+          lastError: null,
+          updatedAt: NOW,
+        },
       }),
-    ).toMatchObject({ phase: "waiting_for_input", headline: "Waiting for input" });
+    });
+
+    expect(state).toMatchObject({
+      phase: "running",
+      headline: "Agent is working",
+      detail: "Codex is active.",
+      modelTitle: "gpt-5.4",
+      deepLink: "/threads/env-1/thread-1",
+    });
   });
 
-  it("does not present authentication refreshes as user approvals", () => {
-    expect(
-      projectThreadAwarenessV2({
-        environmentId: "env-1" as EnvironmentId,
-        project,
-        thread: v2Thread({
-          pendingRuntimeRequest: {
-            id: RuntimeRequestId.make("request-auth-refresh"),
-            kind: "auth_refresh",
-            createdAt: updatedAt,
-          },
-        }),
+  it("projects completed turns as completed even when teardown settled them as interrupted", () => {
+    const finishedTurn = {
+      turnId: "turn-1" as TurnId,
+      state: "interrupted" as const,
+      requestedAt: NOW,
+      startedAt: NOW,
+      completedAt: NOW,
+      assistantMessageId: null,
+    };
+    const state = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({ latestTurn: finishedTurn }),
+    });
+
+    // Session teardown settles still-running turns by session status, and
+    // that write can race turn.completed; the completion timestamp is the
+    // durable signal. Without this the thread resolves to null persistently
+    // and gets tombstoned off the lock-screen card instead of showing Done.
+    expect(state?.phase).toBe("completed");
+
+    const trulyInterrupted = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({ latestTurn: { ...finishedTurn, completedAt: null } }),
+    });
+    expect(trulyInterrupted).toBeNull();
+  });
+
+  it("projects ready sessions with no materialized turn as completed", () => {
+    // Quick threads without code changes never get a checkpoint, so the SQL
+    // shell has no latestTurn row and latest_turn_id is cleared when the
+    // session settles; the ready session is the only completion signal left.
+    const state = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({
+        session: {
+          threadId: "thread-1" as ThreadId,
+          status: "ready",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: NOW,
+        },
       }),
-    ).toMatchObject({ phase: "running", headline: "Agent is working" });
+    });
+
+    expect(state?.phase).toBe("completed");
+  });
+
+  it("projects failures with the session error detail", () => {
+    const state = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({
+        session: {
+          threadId: "thread-1" as ThreadId,
+          status: "error",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: "Provider process exited.",
+          updatedAt: NOW,
+        },
+      }),
+    });
+
+    expect(state).toMatchObject({
+      phase: "failed",
+      headline: "Agent failed",
+      detail: "Provider process exited.",
+    });
   });
 });

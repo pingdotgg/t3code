@@ -40,7 +40,7 @@ function instance(kind = driver): ProviderInstance {
     enabled: false,
     displayName: undefined,
     continuationIdentity: { driverKind: kind, continuationKey: instanceId },
-    get orchestrationAdapter(): never {
+    get adapter(): never {
       throw new Error("Installation must not start a provider session.");
     },
     get snapshot(): never {

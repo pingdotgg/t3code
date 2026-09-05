@@ -1,9 +1,5 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import {
-  ORCHESTRATION_PROTOCOL_HEADER,
-  ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-} from "@t3tools/contracts";
 import * as Result from "effect/Result";
 import { FetchHttpClient, type HttpClient, type HttpMethod } from "effect/unstable/http";
 
@@ -21,17 +17,6 @@ import {
 export interface EnvironmentHttpAuthHeaders {
   readonly authorization?: string;
   readonly dpop?: string;
-}
-
-export function withOrchestrationProtocolHeader(
-  headers: EnvironmentHttpAuthHeaders,
-): EnvironmentHttpAuthHeaders & {
-  readonly [ORCHESTRATION_PROTOCOL_HEADER]: typeof ORCHESTRATION_PROTOCOL_VERSION_TEXT;
-} {
-  return {
-    ...headers,
-    [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-  };
 }
 
 /**

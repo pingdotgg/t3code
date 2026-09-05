@@ -64,6 +64,7 @@ vi.mock("expo-file-system", () => ({
 
 vi.mock("../lib/composerImages", () => ({
   removePersistedComposerAttachmentFile: harness.removePersistedFile,
+  toUploadChatImageAttachments: () => [],
 }));
 
 vi.mock("../lib/uuid", () => ({

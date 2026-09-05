@@ -346,6 +346,5 @@ describe("uiStateStore persistence", () => {
       localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
     ) as PersistedUiState;
     expect(resolveProjectExpanded(persisted.projectExpandedById ?? {}, ["unknown"])).toBe(true);
-    expect(persisted).not.toHaveProperty("threadPanelOpen");
   });
 });

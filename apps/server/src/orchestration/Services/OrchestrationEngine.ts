@@ -1,9 +1,9 @@
 /**
- * Historical name for the application event-sourcing engine.
+ * OrchestrationEngineService - Service interface for orchestration command handling.
  *
- * This is not the agent orchestrator. It retains serialized project-command
- * validation, append, receipt, and projection transactions. Agent execution is
- * owned by orchestration V2, whose thread events use the same event store.
+ * Owns command validation/dispatch and in-memory read-model updates backed by
+ * `OrchestrationEventStore` persistence. It does not own provider process
+ * management or transport concerns (e.g. websocket request parsing).
  *
  * Uses Effect `Context.Service` for dependency injection. Command dispatch,
  * replay, and unknown-input decoding all return typed domain errors.
@@ -12,9 +12,10 @@
  */
 import type {
   OrchestrationClientOrigin,
+  OrchestrationCommand,
   OrchestrationEvent,
-  ProjectOrchestrationCommand,
-} from "@t3tools/contracts/legacy-orchestration";
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
@@ -22,6 +23,13 @@ import type * as Stream from "effect/Stream";
 
 import type { OrchestrationDispatchError } from "../Errors.ts";
 import type { OrchestrationEventStoreError } from "../../persistence/Errors.ts";
+import type { OrchestrationAggregateReplayStats } from "../../persistence/Services/OrchestrationEventStore.ts";
+
+export interface OrchestrationThreadReplayRange {
+  readonly threadId: ThreadId;
+  readonly fromSequenceExclusive: number;
+  readonly toSequenceInclusive: number;
+}
 
 /**
  * OrchestrationEngineShape - Service API for orchestration command and event flow.
@@ -33,14 +41,23 @@ export interface OrchestrationEngineShape {
    * @param fromSequenceExclusive - Sequence cursor (exclusive).
    * @param limit - Maximum number of events to read. Defaults to the event
    *   store's page-bounded default; pass a higher value when the caller must
-   *   read every event after the cursor (e.g. per-thread catch-up that filters
-   *   a small subset out of a potentially larger global range).
+   *   read a wider global range. Thread subscriptions use readThreadEvents.
    * @returns Stream containing ordered events.
    */
   readonly readEvents: (
     fromSequenceExclusive: number,
     limit?: number,
   ) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError, never>;
+
+  /** Read only this thread's events through a captured authoritative head. */
+  readonly readThreadEvents: (
+    input: OrchestrationThreadReplayRange & { readonly limit?: number },
+  ) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
+
+  /** Measure a bounded thread replay without decoding its event bodies. */
+  readonly getThreadReplayStats: (
+    input: OrchestrationThreadReplayRange & { readonly maxEvents: number },
+  ) => Effect.Effect<OrchestrationAggregateReplayStats, OrchestrationEventStoreError>;
 
   /**
    * Dispatch a validated orchestration command.
@@ -54,7 +71,7 @@ export interface OrchestrationEngineShape {
    * command receipts.
    */
   readonly dispatch: (
-    command: ProjectOrchestrationCommand,
+    command: OrchestrationCommand,
     options?: { readonly origin?: OrchestrationClientOrigin },
   ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never>;
 

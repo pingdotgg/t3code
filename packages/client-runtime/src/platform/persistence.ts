@@ -1,7 +1,7 @@
 import {
   type EnvironmentId,
-  type OrchestrationV2ShellSnapshot,
-  type OrchestrationV2ThreadDetailSnapshot,
+  type OrchestrationShellSnapshot,
+  type OrchestrationThreadDetailSnapshot,
   type ServerConfig,
   type ThreadId,
   type VcsListRefsResult,
@@ -60,21 +60,21 @@ export class EnvironmentCacheStore extends Context.Service<
   {
     readonly loadShell: (
       environmentId: EnvironmentId,
-    ) => Effect.Effect<Option.Option<OrchestrationV2ShellSnapshot>, ConnectionPersistenceError>;
+    ) => Effect.Effect<Option.Option<OrchestrationShellSnapshot>, ConnectionPersistenceError>;
     readonly saveShell: (
       environmentId: EnvironmentId,
-      snapshot: OrchestrationV2ShellSnapshot,
+      snapshot: OrchestrationShellSnapshot,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
     readonly loadThread: (
       environmentId: EnvironmentId,
       threadId: ThreadId,
     ) => Effect.Effect<
-      Option.Option<OrchestrationV2ThreadDetailSnapshot>,
+      Option.Option<OrchestrationThreadDetailSnapshot>,
       ConnectionPersistenceError
     >;
     readonly saveThread: (
       environmentId: EnvironmentId,
-      snapshot: OrchestrationV2ThreadDetailSnapshot,
+      snapshot: OrchestrationThreadDetailSnapshot,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
     readonly removeThread: (
       environmentId: EnvironmentId,

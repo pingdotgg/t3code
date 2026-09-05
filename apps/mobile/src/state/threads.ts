@@ -38,9 +38,8 @@ export function useEnvironmentThread(
       ? environmentThreads.stateAtom(environmentId, threadId)
       : EMPTY_THREAD_STATE_ATOM,
   );
-  const state = Option.getOrElse(
+  return Option.getOrElse(
     AsyncResult.value(result),
     () => EMPTY_ENVIRONMENT_THREAD_STATE,
   ) as EnvironmentThreadState;
-  return state;
 }

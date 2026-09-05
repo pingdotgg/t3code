@@ -14,12 +14,6 @@ import * as McpProviderSession from "./McpProviderSession.ts";
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
-  /**
-   * When false, the credential is minted without the "preview" capability so
-   * the user's choice to withhold agent browser access holds everywhere the
-   * token is honored (#7083). Defaults to full access.
-   */
-  readonly browserToolsAvailable?: boolean;
 }
 
 export interface McpIssuedCredential {
@@ -129,19 +123,12 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       const providerSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
-      const browserToolsAvailable = request.browserToolsAvailable ?? true;
       const scope: McpInvocationContext.McpInvocationScope = {
         environmentId,
         threadId: ThreadId.make(request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
-        capabilities: new Set(
-          browserToolsAvailable
-            ? McpInvocationContext.ALL_MCP_CAPABILITIES
-            : McpInvocationContext.ALL_MCP_CAPABILITIES.filter(
-                (capability) => capability !== "preview",
-              ),
-        ),
+        capabilities: new Set(["preview"]),
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
@@ -157,7 +144,6 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerInstanceId: scope.providerInstanceId,
           endpoint,
           authorizationHeader: `Bearer ${rawToken}`,
-          browserToolsAvailable,
         },
       };
     },
