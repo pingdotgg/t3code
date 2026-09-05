@@ -45,6 +45,7 @@ import {
 } from "../logicalProject";
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
+import { useUnvisitedCompletionsUnread } from "../hooks/useUnvisitedCompletionsUnread";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
@@ -149,6 +150,7 @@ function RootRouteView() {
         <ConfirmDialogHost />
         <SlowRpcRequestToastCoordinator />
         <HostedStaticEnvironmentBootstrap />
+        <UnvisitedCompletionsObserver />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
@@ -264,6 +266,11 @@ function HostedStaticEnvironmentBootstrap() {
     setActiveEnvironmentId(firstSavedEnvironment.environmentId);
   }, [activeEnvironmentId, environments]);
 
+  return null;
+}
+
+function UnvisitedCompletionsObserver() {
+  useUnvisitedCompletionsUnread();
   return null;
 }
 
