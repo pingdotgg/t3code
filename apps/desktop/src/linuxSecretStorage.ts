@@ -25,9 +25,6 @@ const ELECTRON_KDE_DESKTOP = "KDE";
 // Chromium recognizes LXQt and still selects basic text for it, so it does need a forced backend.
 const ELECTRON_UNPROTECTED_DESKTOPS = new Set(["LXQt"]);
 
-const KDE_NAME_PREFIXES = ["kde", "plasma"];
-const NEGATIVE_FLAG_VALUES = new Set(["0", "false", "no", "off"]);
-
 export function normalizeLinuxPasswordStorePreference(
   value: unknown,
 ): LinuxPasswordStorePreference {
@@ -77,102 +74,6 @@ function electronSelectsProtectedBackend(env: NodeJS.ProcessEnv): boolean {
   return false;
 }
 
-export function resolveLinuxSecretStorageUnavailableMessage(input: {
-  readonly configuredPreference: LinuxPasswordStorePreference;
-  readonly selectedBackend: string | null;
-  readonly env: NodeJS.ProcessEnv;
-}): string {
-  if (input.configuredPreference === "gnome-libsecret") {
-    return getGnomeKeyringRemediationMessage();
-  }
-
-  if (
-    input.configuredPreference === "kwallet" ||
-    input.configuredPreference === "kwallet5" ||
-    input.configuredPreference === "kwallet6"
-  ) {
-    return getKWalletRemediationMessage();
-  }
-
-  const backend = normalizeSelectedStorageBackend(input.selectedBackend);
-  if (backend === "gnome-libsecret") {
-    return getGnomeKeyringRemediationMessage();
-  }
-
-  if (
-    backend === "kwallet" ||
-    backend === "kwallet5" ||
-    backend === "kwallet6" ||
-    looksLikeKdeSession(input.env)
-  ) {
-    return getKWalletRemediationMessage();
-  }
-
-  return getGnomeKeyringRemediationMessage();
-}
-
-function getGnomeKeyringRemediationMessage(): string {
-  return "T3 Code could not access GNOME Keyring to save this environment credential. Install and start GNOME Keyring, then restart T3 Code.";
-}
-
-function getKWalletRemediationMessage(): string {
-  return "T3 Code could not access KWallet to save this environment credential. Enable the KDE wallet subsystem in System Settings, then restart T3 Code.";
-}
-
-// Advisory only: this picks between the GNOME Keyring and KWallet wording in the failure notice. It
-// never decides which backend to select, so a loose match costs a user slightly wrong instructions
-// rather than an unprotected credential store.
-function looksLikeKdeSession(env: NodeJS.ProcessEnv): boolean {
-  const currentDesktopNames = nonEmptyDesktopNames(env.XDG_CURRENT_DESKTOP);
-  if (currentDesktopNames.length > 0) {
-    return currentDesktopNames.some(isKdeDesktopName);
-  }
-
-  const legacyNames = legacyDesktopNames(env);
-  if (legacyNames.length > 0) {
-    return legacyNames.some(isKdeDesktopName);
-  }
-
-  return isSet(env.KDE_SESSION_VERSION) || isAffirmativeFlag(env.KDE_FULL_SESSION);
-}
-
-function isKdeDesktopName(name: string): boolean {
-  return KDE_NAME_PREFIXES.some((prefix) => name.startsWith(prefix));
-}
-
-function legacyDesktopNames(env: NodeJS.ProcessEnv): string[] {
-  return [env.XDG_SESSION_DESKTOP, env.DESKTOP_SESSION, env.GDMSESSION].flatMap((entry) => {
-    const normalized = normalizeDesktopName(entry);
-    return normalized ? [normalized] : [];
-  });
-}
-
-function nonEmptyDesktopNames(value: string | undefined): string[] {
-  return splitDesktopNameList(value).flatMap((entry) => {
-    const normalized = normalizeDesktopName(entry);
-    return normalized ? [normalized] : [];
-  });
-}
-
-function isSet(value: string | undefined): boolean {
-  return Boolean(value?.trim());
-}
-
-function isAffirmativeFlag(value: string | undefined): boolean {
-  const normalized = value?.trim().toLowerCase();
-  return normalized ? !NEGATIVE_FLAG_VALUES.has(normalized) : false;
-}
-
 function splitDesktopNameList(value: string | undefined): string[] {
   return value?.split(":") ?? [];
-}
-
-function normalizeDesktopName(value: string | undefined): string | null {
-  const normalized = value?.trim().toLowerCase();
-  return normalized && normalized.length > 0 ? normalized : null;
-}
-
-function normalizeSelectedStorageBackend(value: string | null): string | null {
-  const normalized = value?.trim().toLowerCase().replace(/_/gu, "-");
-  return normalized && normalized.length > 0 ? normalized : null;
 }
