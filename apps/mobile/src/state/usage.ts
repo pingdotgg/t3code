@@ -79,7 +79,7 @@ export interface UsageView {
    * improve by waiting on them, so they must not read as "still reporting".
    */
   readonly isPartial: boolean;
-  readonly refresh: (requestedInput?: UsageSummaryInput) => void;
+  readonly refresh: (requestedInput?: UsageSummaryInput) => Promise<void>;
 }
 
 export function useUsage(input: UsageSummaryInput): UsageView {
@@ -169,7 +169,7 @@ export function useUsage(input: UsageSummaryInput): UsageView {
           { reportFailure: false },
         ),
       );
-      void Promise.allSettled(rateRefreshes).then(() => {
+      return Promise.allSettled(rateRefreshes).then(() => {
         if (nextToken !== undefined && nextToken !== refreshToken) {
           setRefreshToken(nextToken);
           return;
