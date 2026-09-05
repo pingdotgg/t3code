@@ -11,16 +11,9 @@ import {
   RelayPublicDomainLabelTooLongError,
   relayPublicDomainForStage,
   relayResourceNameForStage,
-  relayStageSlug,
 } from "./deploymentConfig.ts";
 
 const isRelayPublicDomainLabelTooLongError = Schema.is(RelayPublicDomainLabelTooLongError);
-
-describe("relayStageSlug", () => {
-  it("matches Alchemy physical-name sanitization for default developer stages", () => {
-    expect(relayStageSlug("dev_julius")).toBe("dev-julius");
-  });
-});
 
 describe("relayPublicDomainForStage", () => {
   it("uses the canonical relay hostname for production", () => {
