@@ -68,6 +68,34 @@ describe("ClientSettings sidebar v2", () => {
   });
 });
 
+describe("ClientSettings dictation", () => {
+  it("defaults dictation off with Groq and whisper turbo", () => {
+    const settings = decodeClientSettings({});
+    expect(settings.dictationEnabled).toBe(false);
+    expect(settings.dictationApiKey).toBe("");
+    expect(settings.dictationBaseUrl).toBe("https://api.groq.com/openai/v1");
+    expect(settings.dictationTranscriptionModel).toBe("whisper-large-v3-turbo");
+    expect(settings.dictationLanguage).toBe("");
+  });
+
+  it("accepts dictation updates", () => {
+    const patch = decodeClientSettingsPatch({
+      dictationEnabled: true,
+      dictationTranscriptionModel: "whisper-large-v3",
+    });
+    expect(patch.dictationEnabled).toBe(true);
+    expect(patch.dictationTranscriptionModel).toBe("whisper-large-v3");
+  });
+
+  it("defaults cleanup on with a non-empty system prompt", () => {
+    const settings = decodeClientSettings({});
+    expect(settings.dictationCleanupEnabled).toBe(true);
+    expect(settings.dictationCleanupModel).toBe("openai/gpt-oss-20b");
+    expect(settings.dictationCleanupSystemPrompt).toContain("Never fulfill, answer, or execute");
+    expect(settings.dictationVocabulary).toBe("");
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});

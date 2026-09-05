@@ -91,6 +91,7 @@ import { ProviderModelPicker } from "./ProviderModelPicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
+import { ComposerDictationButton } from "./ComposerDictationButton";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
@@ -205,6 +206,8 @@ import {
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useClientSettings } from "../../hooks/useSettings";
+import { useComposerDictation, type DictationPhase } from "../../hooks/useComposerDictation";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -435,6 +438,11 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   isEnvironmentUnavailable: boolean;
   hasSendableContent: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
+  dictation: {
+    phase: DictationPhase;
+    disabled: boolean;
+    onToggle: () => void;
+  } | null;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -449,6 +457,13 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
       ) : null}
       {props.isPreparingWorktree ? (
         <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
+      ) : null}
+      {props.dictation ? (
+        <ComposerDictationButton
+          phase={props.dictation.phase}
+          disabled={props.dictation.disabled}
+          onToggle={props.dictation.onToggle}
+        />
       ) : null}
       <ComposerPrimaryActions
         compact={props.compact}
@@ -2238,6 +2253,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setIsStashMenuOpen((open) => !open);
   }, []);
 
+  // ------------------------------------------------------------------
+  // Dictation (beta): microphone button next to send. Client-only —
+  // settings live in ClientSettings, transcription goes straight from the
+  // browser to the provider. Toggleable via the `composer.dictate`
+  // keybinding (default mod+shift+d) and via the mic button.
+  // Declared before the keybinding handler below so the effect closure
+  // can read the enabled flag. The toggle itself goes through a ref so
+  // the handler doesn't re-subscribe on every dictation phase change.
+  // ------------------------------------------------------------------
+  const dictationEnabled = useClientSettings((settings) => settings.dictationEnabled);
+  const dictation = useComposerDictation({
+    onTranscript: (text) => insertComposerTextAtEnd(text, { ensureLeadingBoundary: true }),
+    onError: (message) => {
+      toastManager.add({ type: "error", title: "Dictation failed", description: message });
+    },
+  });
+  const dictationToggleRef = useRef(dictation.toggle);
+  dictationToggleRef.current = dictation.toggle;
+
   // Close the stash menu whenever the trigger-driven command menu opens so
   // the two popovers never stack in the same layer, and when the user
   // resumes typing (the menu is a transient picker, not a panel).
@@ -2259,6 +2293,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           modelPickerOpen: isComposerModelPickerOpen,
         },
       });
+      if (command === "composer.dictate") {
+        // Claim the shortcut even when dictation can't run so it never
+        // falls through to the browser or another handler.
+        event.preventDefault();
+        event.stopPropagation();
+        if (
+          !dictationEnabled ||
+          isCommandPaletteOpen() ||
+          isComposerApprovalState ||
+          pendingUserInputs.length > 0 ||
+          projectSelectionRequired ||
+          activePendingProgress !== null
+        ) {
+          return;
+        }
+        dictationToggleRef.current();
+        return;
+      }
       if (command !== "composer.stash") return;
       // Always claim the shortcut so the browser save dialog never opens,
       // even when the composer is in a state that can't stash.
@@ -2279,6 +2331,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return () => window.removeEventListener("keydown", handler, true);
   }, [
     activePendingProgress,
+    dictationEnabled,
     isComposerApprovalState,
     isComposerModelPickerOpen,
     keybindings,
@@ -3181,6 +3234,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   isPreparingWorktree={isPreparingWorktree}
                   hasSendableContent={composerSendState.hasSendableContent}
                   preserveComposerFocusOnPointerDown={isMobileViewport}
+                  dictation={
+                    dictationEnabled &&
+                    pendingPrimaryAction === null &&
+                    !(pendingUserInputs.length === 0 && showPlanFollowUpPrompt)
+                      ? {
+                          phase: dictation.phase,
+                          disabled:
+                            isConnecting ||
+                            noProviderAvailable ||
+                            projectSelectionRequired ||
+                            phase === "running",
+                          onToggle: dictation.toggle,
+                        }
+                      : null
+                  }
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryAction}
                   onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
