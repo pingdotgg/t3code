@@ -453,7 +453,7 @@ export function TerminalViewport({
     }),
   );
   const resizeTerminal = useEffectEvent((cols: number, rows: number) => {
-    if (!canResizeTerminal) return;
+    if (!canResizeTerminal || !hasTerminalWriteAccess()) return;
     return runTerminalResize({
       environmentId,
       input: { threadId, terminalId, cols, rows },
