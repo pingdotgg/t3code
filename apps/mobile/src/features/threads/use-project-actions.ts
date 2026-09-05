@@ -139,7 +139,7 @@ export function useCreateProjectThread() {
           messageId: metadata.messageId,
           createdAt: metadata.createdAt,
           text: initialMessageText,
-          ...(serverConfig.environment.capabilities.composerRecall === true
+          ...(serverConfig?.environment.capabilities.composerRecall === true
             ? { composerRecall: createComposerRecall(input.initialMessageText) }
             : {}),
           uploadedAttachments: prepared.attachments,
