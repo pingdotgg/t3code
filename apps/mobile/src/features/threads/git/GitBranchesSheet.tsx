@@ -89,14 +89,14 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
             label="Create & checkout"
             tone="primary"
             disabled={!canChangeThreadBranch || busy || newBranchName.trim().length === 0}
-            onPress={() => {
+            onPress={async () => {
               if (!canChangeThreadBranch) return;
               const branch = sanitizeFeatureBranchName(newBranchName.trim());
               if (branch.length === 0) return;
-              void gitActions.onCreateSelectedThreadBranch(branch).then(() => {
-                setNewBranchName("");
-                navigation.goBack();
-              });
+              const result = await gitActions.onCreateSelectedThreadBranch(branch);
+              if (result === null) return;
+              setNewBranchName("");
+              navigation.goBack();
             }}
           />
         </View>
@@ -127,15 +127,18 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
               worktreeBaseBranch.trim().length === 0 ||
               worktreeBranchName.trim().length === 0
             }
-            onPress={() => {
+            onPress={async () => {
               if (!canChangeThreadBranch) return;
               const baseBranch = worktreeBaseBranch.trim();
               const newBranch = worktreeBranchName.trim();
               if (baseBranch.length === 0 || newBranch.length === 0) return;
-              void gitActions.onCreateSelectedThreadWorktree({ baseBranch, newBranch }).then(() => {
-                setWorktreeBranchName("");
-                navigation.goBack();
+              const result = await gitActions.onCreateSelectedThreadWorktree({
+                baseBranch,
+                newBranch,
               });
+              if (result === null) return;
+              setWorktreeBranchName("");
+              navigation.goBack();
             }}
           />
         </View>
@@ -172,11 +175,11 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
                   branch.current ? "border-subtle-strong" : "border-border",
                 )}
                 disabled={!canChangeThreadBranch || busy || disabled}
-                onPress={() => {
+                onPress={async () => {
                   if (!canChangeThreadBranch) return;
-                  void gitActions.onCheckoutSelectedThreadBranch(branch.name).then(() => {
-                    navigation.goBack();
-                  });
+                  const result = await gitActions.onCheckoutSelectedThreadBranch(branch.name);
+                  if (result === null) return;
+                  navigation.goBack();
                 }}
               >
                 <View className="absolute inset-0 rounded-[18px] bg-card" />
