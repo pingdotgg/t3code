@@ -1783,6 +1783,13 @@ code {
   color: var(--contrast-muted-foreground);
 }
 
+.chat-markdown .katex-display {
+  margin: 0.65rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 0.15rem;
+}
+
 .chat-markdown section[data-footnotes] {
   margin-top: 1.25rem;
   border-top: 1px solid var(--contrast-border);

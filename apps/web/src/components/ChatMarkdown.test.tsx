@@ -280,6 +280,77 @@ describe("ChatMarkdown streaming", () => {
   });
 });
 
+describe("ChatMarkdown math", () => {
+  it.each([true, false])(
+    "renders inline and display LaTeX with accessible MathML when parseRawHtml=%s",
+    (parseRawHtml) => {
+      const html = renderToStaticMarkup(
+        <ChatMarkdown
+          cwd="/tmp/project"
+          parseRawHtml={parseRawHtml}
+          text={String.raw`Euler wrote $e^{i\pi} + 1 = 0$.
+
+$$
+\int_0^1 x^2\,dx = \frac{1}{3}
+$$`}
+        />,
+      );
+
+      expect(html).toContain("katex");
+      expect(html).toContain("katex-display");
+      expect(html).toContain("<math");
+      expect(html).toContain("e^{i\\pi} + 1 = 0");
+    },
+  );
+
+  it.each([true, false])(
+    "renders parenthesis and bracket LaTeX delimiters when parseRawHtml=%s",
+    (parseRawHtml) => {
+      const html = renderToStaticMarkup(
+        <ChatMarkdown
+          cwd="/tmp/project"
+          parseRawHtml={parseRawHtml}
+          text={String.raw`GenCast represents \(F\) using samples \(x_1,\ldots,x_M\).
+
+\[
+\boxed{\widehat{\operatorname{CRPS}} = \frac{1}{M}\sum_{i=1}^{M}|x_i-y|}
+\]`}
+        />,
+      );
+
+      expect(html).toContain("katex");
+      expect(html).toContain("katex-display");
+      expect(html).toContain("GenCast represents ");
+      expect(html).toContain("x_1,\\ldots,x_M");
+      expect(html).toContain("\\boxed{\\widehat{\\operatorname{CRPS}}");
+    },
+  );
+
+  it("does not interpret LaTeX delimiters inside code", () => {
+    const markdown = [
+      "Render \\(x^2\\), but keep `\\(inlineExample\\)` unchanged.",
+      "",
+      "```text",
+      String.raw`\[displayExample\]`,
+      "```",
+    ].join("\n");
+    const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={markdown} />);
+
+    expect(html).toContain("katex");
+    expect(html).toContain("\\(inlineExample\\)");
+    expect(html).toContain("\\[displayExample\\]");
+  });
+
+  it("keeps a lone dollar amount as text", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/tmp/project" text="The build costs $20." />,
+    );
+
+    expect(html).toContain("$20");
+    expect(html).not.toContain("katex");
+  });
+});
+
 describe("canUseMarkdownFileShellActions", () => {
   const environmentId = EnvironmentId.make("environment-1");
 
