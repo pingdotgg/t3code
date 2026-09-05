@@ -112,7 +112,7 @@ const withIdentity = <A, E, R>(
     readonly environment?: TestEnvironmentInput;
     readonly legacyPathExists?: boolean;
     readonly existingUserDataDirName?: string;
-    readonly legacyPathProbeError?: PlatformError.PlatformError;
+    readonly pathProbeError?: PlatformError.PlatformError;
     readonly packageJson?: string;
     readonly pngIconPath?: Option.Option<string>;
   } = {},
@@ -129,8 +129,8 @@ const withIdentity = <A, E, R>(
         Layer.provideMerge(
           FileSystem.layerNoop({
             exists: (path) =>
-              input.legacyPathProbeError
-                ? Effect.fail(input.legacyPathProbeError)
+              input.pathProbeError
+                ? Effect.fail(input.pathProbeError)
                 : Effect.succeed(
                     input.legacyPathExists === true &&
                       path.endsWith(input.existingUserDataDirName ?? "T3 Code (Alpha)"),
@@ -176,14 +176,47 @@ describe("DesktopAppIdentity", () => {
         const error = yield* identity.resolveUserDataPath.pipe(Effect.flip);
 
         assert.instanceOf(error, DesktopAppIdentity.DesktopUserDataPathResolutionError);
-        assert.equal(error.legacyPath, legacyPath);
+        assert.equal(error.candidatePath, legacyPath);
         assert.strictEqual(error.cause, cause);
         assert.equal(
           error.message,
-          `Failed to inspect legacy desktop user-data path at "${legacyPath}".`,
+          `Failed to inspect the desktop user-data path at "${legacyPath}".`,
         );
       }),
-      { legacyPathProbeError: cause },
+      { pathProbeError: cause },
+    );
+  });
+
+  it.effect("identifies a failed downstream stable-path probe", () => {
+    const stablePath = "/Users/alice/Library/Application Support/T3 Code (Fork)";
+    const cause = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "exists",
+      description: "permission denied",
+      pathOrDescriptor: stablePath,
+    });
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const error = yield* identity.resolveUserDataPath.pipe(Effect.flip);
+
+        assert.instanceOf(error, DesktopAppIdentity.DesktopUserDataPathResolutionError);
+        assert.equal(error.candidatePath, stablePath);
+        assert.strictEqual(error.cause, cause);
+        assert.equal(
+          error.message,
+          `Failed to inspect the desktop user-data path at "${stablePath}".`,
+        );
+      }),
+      {
+        pathProbeError: cause,
+        environment: {
+          appName: "T3 Code (Fork Nightly)",
+          appVersion: "0.0.38-nightly.20260901.1243",
+        },
+      },
     );
   });
 

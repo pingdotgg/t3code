@@ -1,3 +1,4 @@
+import { normalizeDesktopUpdateRepository } from "@t3tools/contracts";
 import type {
   BackgroundActivityProfile,
   BackgroundActivitySettings,
@@ -22,6 +23,14 @@ import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 
 export type DesktopUpdateTrack = DesktopUpdateChannel | "custom";
+
+/** Empty restores the bundled source; malformed non-empty values stay invalid. */
+export function parseDesktopUpdateRepositoryInput(
+  value: string,
+): DesktopUpdateRepository | undefined {
+  if (value.trim().length === 0) return null;
+  return normalizeDesktopUpdateRepository(value) ?? undefined;
+}
 
 export function resolveDesktopUpdateTrack(
   channel: DesktopUpdateChannel,

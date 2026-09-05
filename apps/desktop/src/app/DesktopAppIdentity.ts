@@ -21,12 +21,12 @@ const decodeAppPackageMetadata = Schema.decodeEffect(Schema.fromJsonString(AppPa
 export class DesktopUserDataPathResolutionError extends Schema.TaggedErrorClass<DesktopUserDataPathResolutionError>()(
   "DesktopUserDataPathResolutionError",
   {
-    legacyPath: Schema.String,
+    candidatePath: Schema.String,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Failed to inspect legacy desktop user-data path at "${this.legacyPath}".`;
+    return `Failed to inspect the desktop user-data path at "${this.candidatePath}".`;
   }
 }
 
@@ -53,7 +53,7 @@ export const resolveUserDataPath = Effect.gen(function* () {
       Effect.mapError(
         (cause) =>
           new DesktopUserDataPathResolutionError({
-            legacyPath: candidate,
+            candidatePath: candidate,
             cause,
           }),
       ),

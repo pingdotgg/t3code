@@ -18,10 +18,24 @@ import {
   hasChangedBackgroundActivitySettings,
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
+  parseDesktopUpdateRepositoryInput,
   resolveBackgroundActivityProfileOption,
   resolveDesktopUpdateTrack,
   setDesktopUpdateChannelAfterPendingRepositoryChange,
 } from "./SettingsPanels.logic";
+
+describe("desktop update repository input", () => {
+  it("uses an empty value to restore the bundled release source", () => {
+    expect(parseDesktopUpdateRepositoryInput("   ")).toBeNull();
+  });
+
+  it("normalizes valid repositories and rejects malformed non-empty values", () => {
+    expect(parseDesktopUpdateRepositoryInput(" https://github.com/acme/t3code.git ")).toBe(
+      "acme/t3code",
+    );
+    expect(parseDesktopUpdateRepositoryInput("not a repository")).toBeUndefined();
+  });
+});
 
 describe("desktop update track", () => {
   it("shows Custom for persisted and in-progress custom source selection", () => {

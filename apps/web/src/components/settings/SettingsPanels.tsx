@@ -5,8 +5,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type BackgroundActivityProfile,
-  type DesktopUpdateRepository,
-  normalizeDesktopUpdateRepository,
   ProviderDriverKind,
   type ProviderInstanceId,
   type ScopedThreadRef,
@@ -149,6 +147,7 @@ import {
   rememberEnabledProjectGroupingMode,
   resolveBackgroundActivityProfileOption,
   resolveDesktopUpdateTrack,
+  parseDesktopUpdateRepositoryInput,
   setDesktopUpdateChannelAfterPendingRepositoryChange,
 } from "./SettingsPanels.logic";
 import {
@@ -325,8 +324,8 @@ function AboutVersionSection() {
       const bridge = window.desktopBridge;
       if (!bridge || typeof bridge.setUpdateRepository !== "function") return;
 
-      const repository: DesktopUpdateRepository = normalizeDesktopUpdateRepository(value);
-      if (repository === null) {
+      const repository = parseDesktopUpdateRepositoryInput(value);
+      if (repository === undefined) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
