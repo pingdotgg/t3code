@@ -270,15 +270,13 @@ beforeEach(() => {
   ]);
   state.config = Atom.make({ keybindings: DEFAULT_RESOLVED_KEYBINDINGS });
   state.update.mockImplementation(async ({ environmentId, input }) => {
-    const { projectId, ...patch } = input;
+    const { projectId, ...updates } = input;
+    const patch = Object.fromEntries(
+      Object.entries(updates).filter(([, value]) => value !== undefined),
+    ) as Partial<Project>;
     state.projects = state.projects.map((project) =>
       project.environmentId === environmentId && project.id === projectId
-        ? {
-            ...project,
-            ...patch,
-            title: patch.title ?? project.title,
-            workspaceRoot: patch.workspaceRoot ?? project.workspaceRoot,
-          }
+        ? { ...project, ...patch }
         : project,
     );
     return AsyncResult.success(undefined);
