@@ -13,6 +13,7 @@ import {
   PreviewAutomationSetColorSchemeInput,
   PreviewAutomationSetColorSchemeResult,
   PreviewAutomationSnapshot,
+  PreviewAutomationSnapshotInput,
   PreviewAutomationStatus,
   PreviewAutomationTabTargetInput,
   PreviewAutomationTypeInput,
@@ -111,8 +112,8 @@ export const PreviewSetAppearanceTool = safeBrowserTool(
 export const PreviewSnapshotTool = readonlyBrowserTool(
   Tool.make("preview_snapshot", {
     description:
-      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot.",
-    parameters: PreviewAutomationTabTargetInput,
+      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot. Set save=true to also write the PNG to disk and get screenshotPath back; embed that path in your reply with markdown image syntax, ![screenshot](path), so the user sees it.",
+    parameters: PreviewAutomationSnapshotInput,
     success: PreviewAutomationSnapshot,
     failure: PreviewAutomationError,
     dependencies,
@@ -199,7 +200,7 @@ export const PreviewRecordingStartTool = safeBrowserTool(
 export const PreviewRecordingStopTool = safeBrowserTool(
   Tool.make("preview_recording_stop", {
     description:
-      "Stop recording the collaborative browser tab selected by tabId, or this agent session's current tab when omitted, and save it as a local evidence artifact.",
+      "Stop recording the collaborative browser tab selected by tabId, or this agent session's current tab when omitted, and save it as a local evidence artifact. Embed the returned path in your reply with markdown image syntax, ![recording](path), so the user sees it.",
     parameters: PreviewAutomationTabTargetInput,
     success: PreviewAutomationRecordingArtifact,
     failure: PreviewAutomationError,

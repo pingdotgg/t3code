@@ -3,11 +3,14 @@ import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
+import * as ServerConfig from "../config.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -36,8 +39,28 @@ const client = McpSchema.McpServerClient.of({
 });
 const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
-  Layer.provideMerge(PreviewAutomationBroker.layer.pipe(Layer.provide(NodeServices.layer))),
+  Layer.provideMerge(PreviewAutomationBroker.layer),
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-server-test-" })),
+  Layer.provideMerge(NodeServices.layer),
 );
+
+const snapshotResult = {
+  url: "http://example.test/",
+  title: "Example",
+  loading: false,
+  visibleText: "Example",
+  interactiveElements: [],
+  accessibilityTree: {},
+  consoleEntries: [],
+  networkEntries: [],
+  actionTimeline: [],
+  screenshot: {
+    mimeType: "image/png",
+    data: Buffer.from("png").toString("base64"),
+    width: 10,
+    height: 5,
+  },
+};
 
 it("normalizes empty successful notification responses to accepted", () => {
   const notificationResponse = McpHttpServer.normalizeMcpHttpResponse(
@@ -85,13 +108,108 @@ it.effect("returns bounded structural preview snapshot failures", () =>
         );
 
       expect(snapshot.isError).toBe(true);
-      expect(snapshot.content).toEqual([{ type: "text", text: "Preview snapshot failed." }]);
+      expect(snapshot.content).toEqual([
+        { type: "text", text: "Preview snapshot failed: PreviewAutomationExecutionError." },
+      ]);
       expect(snapshot.structuredContent).toEqual({
         error: {
           _tag: "PreviewAutomationExecutionError",
           operation: "snapshot",
           failureCount: 1,
         },
+      });
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("saves the snapshot screenshot to the browser artifacts directory on request", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const routedInputs: Array<unknown> = [];
+      const events = yield* broker.connect({
+        clientId: "mcp-save-client",
+        environmentId,
+      });
+      yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Effect.void;
+        routedInputs.push(event.request.input);
+        return broker.respond({
+          clientId: "mcp-save-client",
+          connectionId: event.connectionId,
+          requestId: event.request.requestId,
+          ok: true,
+          result: snapshotResult,
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const snapshot = yield* server
+        .callTool({ name: "preview_snapshot", arguments: { save: true } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+      expect(snapshot.isError).toBe(false);
+      // The browser never receives the server-only `save` flag.
+      expect(routedInputs).toEqual([{}]);
+      const structured = snapshot.structuredContent as { readonly screenshotPath?: string };
+      const screenshotPath = structured.screenshotPath;
+      expect(typeof screenshotPath).toBe("string");
+      expect(path.dirname(screenshotPath!)).toBe(config.browserArtifactsDir);
+      expect(path.basename(screenshotPath!)).toMatch(
+        /^browser-screenshot-example-test-[0-9a-z]+\.png$/,
+      );
+      expect(Buffer.from(yield* fileSystem.readFile(screenshotPath!)).toString()).toBe("png");
+      const textContent = snapshot.content.find((content) => content.type === "text");
+      expect(textContent?.type === "text" ? textContent.text : "").toContain(screenshotPath);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+it.effect("reports a tagged error when the screenshot cannot be saved", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      // A regular file where the artifacts directory should be makes every write fail.
+      yield* fileSystem.writeFileString(config.browserArtifactsDir, "");
+      const events = yield* broker.connect({
+        clientId: "mcp-save-failure-client",
+        environmentId,
+      });
+      yield* Stream.runForEach(events, (event) =>
+        event.type === "connected"
+          ? Effect.void
+          : broker.respond({
+              clientId: "mcp-save-failure-client",
+              connectionId: event.connectionId,
+              requestId: event.request.requestId,
+              ok: true,
+              result: snapshotResult,
+            }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const snapshot = yield* server
+        .callTool({ name: "preview_snapshot", arguments: { save: true } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+      expect(snapshot.isError).toBe(true);
+      expect(snapshot.content).toEqual([
+        { type: "text", text: "Preview snapshot failed: PreviewScreenshotSaveError." },
+      ]);
+      expect(snapshot.structuredContent).toEqual({
+        error: { _tag: "PreviewScreenshotSaveError", operation: "snapshot", failureCount: 1 },
       });
     }),
   ).pipe(Effect.provide(TestLayer)),
@@ -174,23 +292,7 @@ it.effect("registers annotated tools and preserves authenticated request context
           ok: true,
           result:
             event.request.operation === "snapshot"
-              ? {
-                  url: "http://example.test/",
-                  title: "Example",
-                  loading: false,
-                  visibleText: "Example",
-                  interactiveElements: [],
-                  accessibilityTree: {},
-                  consoleEntries: [],
-                  networkEntries: [],
-                  actionTimeline: [],
-                  screenshot: {
-                    mimeType: "image/png",
-                    data: Buffer.from("png").toString("base64"),
-                    width: 10,
-                    height: 5,
-                  },
-                }
+              ? snapshotResult
               : event.request.operation === "press"
                 ? undefined
                 : {
@@ -261,6 +363,7 @@ it.effect("registers annotated tools and preserves authenticated request context
       expect(snapshot.structuredContent).toMatchObject({
         screenshot: { mimeType: "image/png", width: 10, height: 5 },
       });
+      expect(snapshot.structuredContent).not.toHaveProperty("screenshotPath");
       expect(routedRequests.find(({ operation }) => operation === "snapshot")?.tabId).toBe(
         alternateTabId,
       );

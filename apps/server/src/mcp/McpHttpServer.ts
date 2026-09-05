@@ -1,8 +1,12 @@
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
@@ -10,6 +14,7 @@ import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import packageJson from "../../package.json" with { type: "json" };
+import * as ServerConfig from "../config.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -95,6 +100,52 @@ const McpAuthMiddlewareLive = HttpRouter.middleware<{
   provides: McpInvocationContext.McpInvocationContext;
 }>()(makeMcpAuthMiddleware).layer;
 
+export class PreviewScreenshotSaveError extends Schema.TaggedErrorClass<PreviewScreenshotSaveError>()(
+  "PreviewScreenshotSaveError",
+  { screenshotPath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not save preview screenshot to ${this.screenshotPath}.`;
+  }
+}
+
+const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+const MAX_SCREENSHOT_SITE_SLUG_LENGTH = 40;
+
+/** Hostname reduced to a filename-safe slug, mirroring the desktop's own screenshot names. */
+const screenshotSiteSlug = (rawUrl: string): string => {
+  try {
+    const slug = new URL(rawUrl).hostname
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, MAX_SCREENSHOT_SITE_SLUG_LENGTH)
+      .replace(/-+$/g, "");
+    return slug || "site";
+  } catch {
+    return "site";
+  }
+};
+
+/** Writes a snapshot PNG under the browser artifacts directory and returns its path. */
+const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
+  pageUrl: string,
+  data: Uint8Array,
+) {
+  const config = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const millis = yield* Clock.currentTimeMillis;
+  const fileName = `browser-screenshot-${screenshotSiteSlug(pageUrl)}-${millis.toString(36)}.png`;
+  const screenshotPath = path.join(config.browserArtifactsDir, fileName);
+  yield* fileSystem.makeDirectory(config.browserArtifactsDir, { recursive: true }).pipe(
+    Effect.andThen(fileSystem.writeFile(screenshotPath, data)),
+    Effect.mapError((cause) => new PreviewScreenshotSaveError({ screenshotPath, cause })),
+  );
+  return screenshotPath;
+});
+
 const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
   if (Cause.hasInterrupts(cause) || cause.reasons.some(Cause.isDieReason)) {
     return Effect.failCause(cause).pipe(Effect.orDie);
@@ -117,7 +168,8 @@ const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
         failureCount: failures.length,
       },
     },
-    content: [{ type: "text", text: "Preview snapshot failed." }],
+    // Agents usually see only the text content, so name the tag there too.
+    content: [{ type: "text", text: `Preview snapshot failed: ${errorTag}.` }],
   });
   return Effect.logWarning("preview snapshot failed", {
     operation: "snapshot",
@@ -129,6 +181,10 @@ const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
 const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot")(function* () {
   const server = yield* McpServer.McpServer;
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+  // The MCP tool runner only supplies the client, so hand the save path its services here.
+  const saveServices = yield* Effect.context<
+    ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path
+  >();
   const built = yield* PreviewSnapshotToolkit;
   const tool = PreviewSnapshotTool;
   yield* server.addTool({
@@ -160,10 +216,10 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
           Effect.flatMap(Effect.fromOption),
           Effect.provideService(PreviewAutomationBroker.PreviewAutomationBroker, broker),
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-          Effect.matchCauseEffect({
-            onFailure: previewSnapshotFailure,
-            onSuccess: ({ encodedResult }) => {
+          Effect.flatMap(({ encodedResult }) =>
+            Effect.gen(function* () {
               const snapshot = encodedResult as {
+                readonly url: string;
                 readonly screenshot: {
                   readonly mimeType: "image/png";
                   readonly data: string;
@@ -173,6 +229,9 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                 readonly [key: string]: unknown;
               };
               const { screenshot, ...page } = snapshot;
+              const png = new Uint8Array(Buffer.from(screenshot.data, "base64"));
+              const screenshotPath =
+                payload?.save === true ? yield* saveScreenshot(snapshot.url, png) : undefined;
               const metadata = {
                 ...page,
                 screenshot: {
@@ -180,22 +239,22 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                   width: screenshot.width,
                   height: screenshot.height,
                 },
+                ...(screenshotPath === undefined ? {} : { screenshotPath }),
               };
-              return Effect.succeed(
-                new McpSchema.CallToolResult({
-                  isError: false,
-                  structuredContent: metadata,
-                  content: [
-                    { type: "text", text: JSON.stringify(metadata) },
-                    {
-                      type: "image",
-                      data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
-                      mimeType: screenshot.mimeType,
-                    },
-                  ],
-                }),
-              );
-            },
+              return new McpSchema.CallToolResult({
+                isError: false,
+                structuredContent: metadata,
+                content: [
+                  { type: "text", text: encodeJsonText(metadata) },
+                  { type: "image", data: png, mimeType: screenshot.mimeType },
+                ],
+              });
+            }),
+          ),
+          Effect.provide(saveServices),
+          Effect.matchCauseEffect({
+            onFailure: previewSnapshotFailure,
+            onSuccess: Effect.succeed,
           }),
         );
       }),

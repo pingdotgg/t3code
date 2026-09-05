@@ -77,7 +77,11 @@ const handlers = {
     invokeTargeted<PreviewAutomationResizeResult>("resize", input, input.timeoutMs),
   preview_set_appearance: (input) =>
     invokeTargeted<PreviewAutomationSetColorSchemeResult>("setColorScheme", input),
-  preview_snapshot: (input) => invokeTargeted<PreviewAutomationSnapshot>("snapshot", input ?? {}),
+  // `save` is handled by the MCP server after the snapshot returns; the browser never sees it.
+  preview_snapshot: (input) => {
+    const { save: _save, ...operationInput } = input ?? {};
+    return invokeTargeted<PreviewAutomationSnapshot>("snapshot", operationInput);
+  },
   preview_click: (input) =>
     invokeTargeted<void>("click", input, input.timeoutMs).pipe(Effect.as({})),
   preview_type: (input) => invokeTargeted<void>("type", input, input.timeoutMs).pipe(Effect.as({})),
