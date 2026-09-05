@@ -48,7 +48,7 @@ import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions, type T3CodeToolAvailability } from "../CodexDeveloperInstructions.ts";
-import { registerMonitorSession, MonitorUnavailableError } from "../../mcp/MonitorSession.ts";
+import * as MonitorSession from "../../mcp/MonitorSession.ts";
 const isCodexRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
 const encodeMonitorWake = Schema.encodeSync(Schema.fromJsonString(Schema.Struct({ taskId: Schema.String, output: Schema.String })));
 const decodeBackgroundCleanResponse = Schema.decodeUnknownEffect(CodexBackgroundCleanResponse);
@@ -1298,10 +1298,14 @@ export const makeCodexSessionRuntime = (
 ): Effect.Effect<
   CodexSessionRuntimeShape,
   CodexErrors.CodexAppServerError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
+  | Scope.Scope
+  | MonitorSession.MonitorSessions
 > =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const monitorSessions = yield* MonitorSession.MonitorSessions;
     const runtimeScope = yield* Scope.Scope;
     const crypto = yield* Crypto.Crypto;
     const events = yield* Queue.unbounded<ProviderEvent>();
@@ -2537,17 +2541,12 @@ export const makeCodexSessionRuntime = (
     );
 
     if (options.mcpProviderSessionId) {
-      yield* registerMonitorSession(options.mcpProviderSessionId, {
+      yield* monitorSessions.register(options.mcpProviderSessionId, {
         subscribe: Effect.fn("CodexSessionRuntime.subscribeMonitor")(function* (processId) {
           if (!monitoringAvailable || suppressMonitorWakes || (yield* Ref.get(closedRef)))
-            return yield* new MonitorUnavailableError({
-              message: "Monitoring is unavailable or was stopped. Start a new turn to resume.",
-            });
+            return yield* new MonitorSession.MonitorStoppedError({});
           if (!backgroundTasks.subscribe(processId))
-            return yield* new MonitorUnavailableError({
-              message:
-                "No running background process with this session ID. Launch a watcher with exec_command first.",
-            });
+            return yield* new MonitorSession.MonitorProcessMissingError({});
         }),
         unsubscribe: (processId) => Effect.sync(() => backgroundTasks.unsubscribe(processId)),
       });
