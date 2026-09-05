@@ -25,7 +25,11 @@ import { UsageDailyChart } from "./UsageDailyChart";
 import { UsageLimitsSection, useRefreshLimits } from "./UsageLimitsSection";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors } from "./usageProviders";
-import { isUsagePullRefreshPending, usagePullRefreshTargets } from "./usagePullRefresh";
+import {
+  isUsagePullRefreshPending,
+  refreshRebasedUsageWindow,
+  usagePullRefreshTargets,
+} from "./usagePullRefresh";
 
 type UsageTab = "usage" | "limits";
 const TAB_OPTIONS = [
@@ -97,11 +101,11 @@ export function UsageRouteScreen() {
     [isPast24Hours, merged.daily, merged.hourly],
   );
 
-  // The pull spinner tracks re-scans of environments that have answered
-  // before. The initial scan renders its own placeholder, and an unreachable
-  // environment stays pending forever — neither may pin the spinner on.
+  // Completion tracks only environments that had answered when the pull
+  // began. The spinner also covers the preceding rate refresh, while an
+  // environment that was already unreachable cannot pin it on.
   const refreshPending = isUsagePullRefreshPending(environments, refreshTargets.current);
-  const refreshingUsage = isPullRefreshing && refreshPending;
+  const refreshingUsage = isPullRefreshing;
   const showingLimits = tab === "limits";
   // One ScrollView serves both tabs, so the offset would otherwise carry over
   // and a short Limits list could open scrolled past its own content.
@@ -162,11 +166,12 @@ export function UsageRouteScreen() {
       nextWindow.sinceTime !== window.sinceTime ||
       nextWindow.untilTime !== window.untilTime
     ) {
-      setWindowSelection({ days: windowDays, window: nextWindow });
-      refresh(nextWindow);
+      void refreshRebasedUsageWindow(nextWindow, refresh, (refreshedWindow) => {
+        setWindowSelection({ days: windowDays, window: refreshedWindow });
+      });
       return;
     }
-    refresh();
+    void refresh();
   };
 
   return (
