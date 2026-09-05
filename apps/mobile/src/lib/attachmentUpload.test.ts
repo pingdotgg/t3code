@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
+  canOperate: true,
   documentUri: "file:///documents",
   createAssetUrl: vi.fn(),
   createUploadUrl: Symbol("create-upload-url"),
@@ -48,6 +49,7 @@ vi.mock("../state/attachments", () => ({
 }));
 
 vi.mock("../state/session", () => ({
+  readEnvironmentScope: () => mocks.canOperate,
   environmentSession: {
     preparedConnectionValueAtom: () => mocks.preparedConnection,
   },
@@ -184,6 +186,7 @@ function removeCallsFor(attachmentId: string): number {
 
 describe("prepareTurnAttachments", () => {
   beforeEach(() => {
+    mocks.canOperate = true;
     mocks.documentUri = "file:///documents";
     mocks.createAssetUrl.mockReset();
     mocks.createAssetUrl.mockImplementation((target: unknown) => target);
@@ -210,6 +213,80 @@ describe("prepareTurnAttachments", () => {
         : { _tag: "Success", value: undefined },
     );
     mocks.upload.mockResolvedValue({ status: 204, body: "", headers: {} });
+  });
+
+  it("does not mint or transfer attachments without task operation access", async () => {
+    mocks.canOperate = false;
+    await expect(
+      prepareTurnAttachments({
+        environmentId,
+        attachments: [fileBackedImage],
+        supportsImageUploads: true,
+      }),
+    ).rejects.toThrow("cannot upload attachments");
+    expect(mocks.runAtomCommand).not.toHaveBeenCalled();
+    expect(mocks.upload).not.toHaveBeenCalled();
+  });
+
+  it("rechecks access after a signed URL is minted before sending any bytes", async () => {
+    mocks.runAtomCommand.mockImplementationOnce(async () => {
+      mocks.canOperate = false;
+      return {
+        _tag: "Success",
+        value: {
+          attachmentId: MINTED_ID,
+          relativeUrl: "/api/attachments/upload/signed",
+          expiresAt: 1,
+        },
+      };
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(
+        prepareTurnAttachments({
+          environmentId,
+          attachments: [fileBackedImage],
+          supportsImageUploads: true,
+        }),
+      ).rejects.toThrow("cannot upload attachments");
+      expect(mocks.upload).not.toHaveBeenCalled();
+      expect(mocks.runAtomCommand).toHaveBeenCalledTimes(1);
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it("does not replace an expired upload when access was revoked during verification", async () => {
+    mocks.executeAtomQuery.mockImplementationOnce(async () => {
+      mocks.canOperate = false;
+      return { _tag: "Failure", error: { _tag: "AssetAttachmentNotFoundError" } };
+    });
+    await expect(
+      prepareTurnAttachments({
+        environmentId,
+        attachments: [
+          {
+            ...fileBackedImage,
+            uploadedAttachmentId: MINTED_ID,
+            uploadEnvironmentId: environmentId,
+          },
+        ],
+        supportsImageUploads: true,
+      }),
+    ).rejects.toThrow("cannot upload attachments");
+    expect(mocks.runAtomCommand).not.toHaveBeenCalled();
+    expect(mocks.upload).not.toHaveBeenCalled();
+  });
+
+  it("rechecks deletion permission before retrying a failed cleanup", async () => {
+    mocks.runAtomCommand.mockImplementationOnce(async () => {
+      mocks.canOperate = false;
+      return { _tag: "Failure", error: new Error("Retry cleanup") };
+    });
+    await expect(releasePendingAttachmentUploads(environmentId, [MINTED_ID])).rejects.toThrow(
+      "cannot delete pending attachments",
+    );
+    expect(mocks.runAtomCommand).toHaveBeenCalledTimes(1);
   });
 
   it("keeps existing image attachments on the legacy wire path", async () => {

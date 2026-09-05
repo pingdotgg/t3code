@@ -1,3 +1,8 @@
+import {
+  AuthSettingsWriteScope,
+  AuthProvidersManageScope,
+  type AuthEnvironmentScope,
+} from "./auth.ts";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
@@ -1175,6 +1180,26 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
+
+/** A mixed settings patch must be authorized for every configuration domain it changes. */
+export function requiredScopesForServerSettingsPatch(
+  patch: ServerSettingsPatch,
+): ReadonlyArray<AuthEnvironmentScope> {
+  let changesProviders = false;
+  let changesSettings = false;
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    if (key === "providers" || key === "providerInstances" || key === "usageLimitSources") {
+      changesProviders = true;
+    } else {
+      changesSettings = true;
+    }
+  }
+  return [
+    ...(changesSettings || !changesProviders ? [AuthSettingsWriteScope] : []),
+    ...(changesProviders ? [AuthProvidersManageScope] : []),
+  ];
+}
 
 export const ClientSettingsPatch = Schema.Struct({
   appearanceContrast: Schema.optionalKey(AppearanceContrast),

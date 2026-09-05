@@ -1,4 +1,5 @@
 import {
+  AuthOrchestrationOperateScope,
   buildRemoteOpenUrl,
   EditorId,
   type EnvironmentId,
@@ -47,6 +48,8 @@ import {
 import { cn } from "~/lib/utils";
 import { shellEnvironment } from "~/state/shell";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import { useComposerMenuState } from "./useComposerMenuState";
 
 type OpenInOption = {
   label: string;
@@ -190,6 +193,10 @@ export const OpenInPicker = memo(function OpenInPicker({
 }) {
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const remote = useRemoteOpenState(environmentId);
+  const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const isHostEditorDenied = remote.mode === "local-exec" && !canOperateHost;
+  const canOpenEditor = remote.mode !== "remote-unavailable" && !isHostEditorDenied;
+  const [menuOpen, setMenuOpen] = useComposerMenuState(isHostEditorDenied);
   const remoteCapableEditors = useRemoteCapableEditors();
   const [remoteHintSeen, markRemoteHintSeen] = useRemoteOpenHint();
   const environmentLabel = useEnvironment(environmentId)?.label ?? "this machine";
@@ -225,6 +232,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         });
         return;
       }
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
       const result = openInEditorMutation({
         environmentId,
         input: {
@@ -252,18 +260,32 @@ export const OpenInPicker = memo(function OpenInPicker({
   );
 
   useEffect(() => {
-    if (!enableShortcut) return;
+    if (!enableShortcut || !canOpenEditor) return;
     const handler = (e: globalThis.KeyboardEvent) => {
       if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
       if (!openInCwd) return;
       if (!preferredEditor) return;
+      if (
+        remote.mode === "local-exec" &&
+        !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+      )
+        return;
 
       e.preventDefault();
       void openInEditor(preferredEditor);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [enableShortcut, keybindings, openInCwd, openInEditor, preferredEditor]);
+  }, [
+    canOpenEditor,
+    enableShortcut,
+    environmentId,
+    keybindings,
+    openInCwd,
+    openInEditor,
+    preferredEditor,
+    remote.mode,
+  ]);
 
   return (
     <Group aria-label="Open in editor">
@@ -272,7 +294,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         className="ps-[8.5px]"
         size="xs"
         variant="outline"
-        disabled={!preferredEditor || !openInCwd || remote.mode === "remote-unavailable"}
+        disabled={!preferredEditor || !openInCwd || !canOpenEditor}
         onClick={() => openInEditor(preferredEditor)}
       >
         {primaryOption?.Icon && (
@@ -292,8 +314,9 @@ export const OpenInPicker = memo(function OpenInPicker({
         </span>
       </Button>
       <GroupSeparator {...(!compact ? { className: "hidden @3xl/header-actions:block" } : {})} />
-      <Menu>
+      <Menu open={menuOpen} onOpenChange={setMenuOpen}>
         <MenuTrigger
+          disabled={isHostEditorDenied}
           render={
             <Button
               aria-label={compact ? "Choose editor" : "Copy options"}
@@ -311,7 +334,11 @@ export const OpenInPicker = memo(function OpenInPicker({
             <>
               {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
               {options.map(({ label, Icon, value, kind }) => (
-                <MenuItem key={value} onClick={() => openInEditor(value)}>
+                <MenuItem
+                  key={value}
+                  disabled={!openInCwd || !canOpenEditor}
+                  onClick={() => openInEditor(value)}
+                >
                   <Icon aria-hidden="true" className={getOpenInIconClass(kind)} />
                   {label}
                   {value === preferredEditor && openFavoriteEditorShortcutLabel && (

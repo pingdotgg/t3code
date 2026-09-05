@@ -1,13 +1,14 @@
 import { useAtomValue } from "@effect/atom-react";
-import type {
-  EnvironmentId,
-  ProviderConsumeResetCreditOutcome,
-  ProviderInstanceId,
-  ServerProvider,
-  ServerProviderResetCredits,
-  ServerProviderUsageWindow,
-  UsageLimitSourceAccount,
-  UsageProviderKind,
+import {
+  AuthProvidersManageScope,
+  type EnvironmentId,
+  type ProviderConsumeResetCreditOutcome,
+  type ProviderInstanceId,
+  type ServerProvider,
+  type ServerProviderResetCredits,
+  type ServerProviderUsageWindow,
+  type UsageLimitSourceAccount,
+  type UsageProviderKind,
 } from "@t3tools/contracts";
 import {
   collectLimitSources,
@@ -26,6 +27,7 @@ import { AppText as Text } from "../../components/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { useProviderColors } from "./usageProviders";
@@ -164,6 +166,7 @@ function ResetCredits(props: {
   readonly now: number;
 }) {
   const { environmentId, instanceId, credits, now } = props;
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, {
     reportFailure: false,
   });
@@ -182,6 +185,7 @@ function ResetCredits(props: {
         }`;
 
   const redeem = async () => {
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     setBusy(true);
     setStatus(null);
     const result = await consume({ environmentId, input: { instanceId } });
@@ -198,6 +202,7 @@ function ResetCredits(props: {
   };
 
   const confirm = () => {
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     Alert.alert(
       "Use a reset credit?",
       "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
@@ -214,15 +219,20 @@ function ResetCredits(props: {
       {credits.availableCount > 0 ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: busy }}
-          disabled={busy}
+          accessibilityState={{ disabled: busy || !canManageProviders }}
+          disabled={busy || !canManageProviders}
           onPress={confirm}
-          className="rounded-full bg-subtle-strong px-3 py-1.5"
+          className="rounded-full bg-subtle-strong px-3 py-1.5 disabled:opacity-[0.45]"
         >
           <Text className="text-sm font-t3-medium text-foreground">
             {busy ? "Using credit…" : "Use a reset credit"}
           </Text>
         </Pressable>
+      ) : null}
+      {!canManageProviders ? (
+        <Text className="text-xs text-foreground-tertiary">
+          This connection cannot manage provider accounts.
+        </Text>
       ) : null}
       {status ? <Text className="text-sm text-foreground">{status}</Text> : null}
     </View>

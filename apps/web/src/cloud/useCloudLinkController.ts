@@ -1,5 +1,6 @@
 import { useAuth } from "@clerk/react";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
+import { AuthRelayReadScope, AuthRelayWriteScope } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -9,13 +10,14 @@ import { useState } from "react";
 
 import { toastManager } from "../components/ui/toast";
 import { relayEnvironmentDiscovery } from "../state/relay";
+import { readEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   linkPrimaryEnvironment as linkPrimaryEnvironmentAtom,
   unlinkPrimaryEnvironment as unlinkPrimaryEnvironmentAtom,
   updatePrimaryEnvironmentPreferences as updatePrimaryEnvironmentPreferencesAtom,
 } from "./linkEnvironmentAtoms";
-import { usePrimaryCloudLinkState } from "./primaryCloudLinkState";
+import { readCachedPrimaryCloudLinkState, usePrimaryCloudLinkState } from "./primaryCloudLinkState";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
 
 export interface CloudLinkDesiredState {
@@ -84,8 +86,30 @@ export function useCloudLinkController() {
       reportUpdateFailure(new Error("Local environment is not ready yet."));
       return false;
     }
-    const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
+    const canManageLink = () => {
+      if (
+        !readEnvironmentScope(target.environmentId, AuthRelayReadScope) ||
+        !readEnvironmentScope(target.environmentId, AuthRelayWriteScope)
+      ) {
+        reportUpdateFailure(
+          new Error("This connection needs permission to view and manage T3 Connect settings."),
+        );
+        return false;
+      }
+      return true;
+    };
+    const readLinkState = () => {
+      const state = readCachedPrimaryCloudLinkState(target);
+      if (state === null) {
+        reportUpdateFailure(new Error("Wait until the current T3 Connect settings can be read."));
+      }
+      return state;
+    };
+    if (!canManageLink()) return false;
     const wantsLink = desired.managedTunnel || desired.publish;
+    if (wantsLink && readLinkState() === null) return false;
+    const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
+    if (!canManageLink()) return false;
 
     // A failure after this point may follow a partially applied mutation (e.g.
     // the link succeeded but the preference update did not), so every exit —
@@ -106,6 +130,8 @@ export function useCloudLinkController() {
         return false;
       }
     } else {
+      const currentLinkState = readLinkState();
+      if (currentLinkState === null) return false;
       if (tokenResult._tag === "Failure") {
         reportUpdateFailure(squashAtomCommandFailure(tokenResult));
         return false;
@@ -115,7 +141,8 @@ export function useCloudLinkController() {
         reportUpdateFailure(new Error("Sign in to T3 Connect before enabling this."));
         return false;
       }
-      if (!linked || managedTunnelActive !== desired.managedTunnel) {
+      const currentManagedTunnel = currentLinkState.managedTunnelActive ?? currentLinkState.linked;
+      if (!currentLinkState.linked || currentManagedTunnel !== desired.managedTunnel) {
         const linkResult = await linkPrimaryEnvironment({
           target,
           clerkToken,
@@ -128,6 +155,10 @@ export function useCloudLinkController() {
           primaryCloudLinkState.refresh();
           return false;
         }
+      }
+      if (!canManageLink() || readLinkState() === null) {
+        primaryCloudLinkState.refresh();
+        return false;
       }
       const prefResult = await updatePrimaryEnvironmentPreferences({
         target,

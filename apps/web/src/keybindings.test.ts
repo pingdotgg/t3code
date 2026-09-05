@@ -18,6 +18,7 @@ import {
   isTerminalSplitShortcut,
   isTerminalSplitVerticalShortcut,
   isTerminalToggleShortcut,
+  resolveChatShortcutCommand,
   resolveShortcutCommand,
   shouldShowThreadJumpHintsForModifiers,
   shortcutLabelForCommand,
@@ -735,6 +736,102 @@ describe("cross-command precedence", () => {
       "chat.new",
     );
   });
+});
+
+describe("resolveChatShortcutCommand", () => {
+  it("runs the active environment's script shortcut instead of the primary environment's", () => {
+    const primary = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
+    const active = compile([{ shortcut: modShortcut("t"), command: "script.setup.run" }]);
+
+    assert.strictEqual(
+      resolveChatShortcutCommand(event({ key: "t", ctrlKey: true }), primary, active, {
+        platform: "Linux",
+      }),
+      "script.setup.run",
+    );
+    assert.isNull(
+      resolveChatShortcutCommand(event({ key: "r", ctrlKey: true }), primary, active, {
+        platform: "Linux",
+      }),
+    );
+  });
+
+  it("resolves shared chords to the active environment's script ID", () => {
+    const primary = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
+    const active = compile([{ shortcut: modShortcut("r"), command: "script.deploy.run" }]);
+
+    assert.strictEqual(
+      resolveChatShortcutCommand(event({ key: "r", metaKey: true }), primary, active, {
+        platform: "MacIntel",
+      }),
+      "script.deploy.run",
+    );
+  });
+
+  it("does not run primary scripts before the active environment's bindings arrive", () => {
+    const primary = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
+
+    assert.isNull(
+      resolveChatShortcutCommand(event({ key: "r", ctrlKey: true }), primary, [], {
+        platform: "Linux",
+      }),
+    );
+  });
+
+  it("keeps primary app commands ahead of conflicting active script shortcuts", () => {
+    const primary = compile([{ shortcut: modShortcut("k"), command: "commandPalette.toggle" }]);
+    const active = compile([{ shortcut: modShortcut("k"), command: "script.setup.run" }]);
+
+    assert.strictEqual(
+      resolveChatShortcutCommand(event({ key: "k", ctrlKey: true }), primary, active, {
+        platform: "Linux",
+      }),
+      "commandPalette.toggle",
+    );
+  });
+
+  it("keeps app shortcuts on the primary environment when the active environment remaps them", () => {
+    const primary = compile([{ shortcut: modShortcut("j"), command: "terminal.toggle" }]);
+    const active = compile([{ shortcut: modShortcut("t"), command: "terminal.toggle" }]);
+
+    assert.strictEqual(
+      resolveChatShortcutCommand(event({ key: "j", ctrlKey: true }), primary, active, {
+        platform: "Linux",
+      }),
+      "terminal.toggle",
+    );
+    assert.isNull(
+      resolveChatShortcutCommand(event({ key: "t", ctrlKey: true }), primary, active, {
+        platform: "Linux",
+      }),
+    );
+  });
+
+  it.each([false, true])(
+    "preserves active binding precedence with terminalFocus=%s",
+    (terminalFocus) => {
+      const primary = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
+      const active = compile([
+        { shortcut: modShortcut("r"), command: "script.deploy.run" },
+        {
+          shortcut: modShortcut("r"),
+          command: "terminal.new",
+          whenAst: whenIdentifier("terminalFocus"),
+        },
+      ]);
+      const options = { platform: "Linux", context: { terminalFocus } };
+      const shortcut = event({ key: "r", ctrlKey: true });
+
+      assert.strictEqual(
+        resolveChatShortcutCommand(shortcut, primary, active, options),
+        terminalFocus ? null : "script.deploy.run",
+      );
+      assert.strictEqual(
+        resolveChatShortcutCommand(shortcut, active, active, options),
+        resolveShortcutCommand(shortcut, active, options),
+      );
+    },
+  );
 });
 
 describe("resolveShortcutCommand", () => {

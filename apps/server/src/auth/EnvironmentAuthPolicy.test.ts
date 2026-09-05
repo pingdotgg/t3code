@@ -36,6 +36,7 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
 
       expect(descriptor.policy).toBe("desktop-managed-local");
       expect(descriptor.bootstrapMethods).toEqual(["desktop-bootstrap"]);
+      expect(descriptor.serverUpdateScope).toBe("environment:maintain");
       // Packaged desktop has no devUrl, but still needs the port scope: it
       // scans upward from 3773 for a free port and binds 127.0.0.1, so a second
       // instance shares this one's hostname on a different port.
@@ -90,6 +91,7 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
 
       expect(descriptor.policy).toBe("loopback-browser");
       expect(descriptor.bootstrapMethods).toEqual(["one-time-token"]);
+      expect(descriptor.serverUpdateScope).toBe("environment:maintain");
       expect(descriptor.sessionCookieName).toMatch(/^t3_session_3773_[a-f0-9]{12}$/);
     }).pipe(
       Effect.provide(

@@ -6,7 +6,7 @@ import { useNavigation } from "@react-navigation/native";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import * as Effect from "effect/Effect";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Alert, Linking, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -35,9 +35,12 @@ import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
+import { environmentSession, readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironments } from "../../state/environments";
 import {
+  AuthRelayWriteScope,
+  AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
@@ -60,7 +63,10 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
-import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
+import {
+  resolveAgentAwarenessPlatformPresentation,
+  resolveAutoSettleReferenceEnvironmentId,
+} from "./SettingsRouteScreen.logic";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
@@ -325,6 +331,8 @@ function ConfiguredSettingsRouteScreen() {
           previousEnabled: liveActivitiesPreferenceEnabled,
           clerkToken: tokenResult.value,
           connections,
+          canConfigureEnvironment: (environmentId) =>
+            readEnvironmentScope(environmentId, AuthRelayWriteScope),
         }),
       ),
     );
@@ -350,7 +358,7 @@ function ConfiguredSettingsRouteScreen() {
       Alert.alert(
         "Live Activities enabled",
         environmentCount > 0
-          ? `${environmentCount} environment${environmentCount === 1 ? "" : "s"} linked for Live Activity updates.`
+          ? "Live Activity updates are enabled for this device."
           : "Live Activity updates are enabled. Add an environment to start receiving updates.",
       );
     } else {
@@ -414,6 +422,8 @@ function ConfiguredSettingsRouteScreen() {
                 previousEnabled: liveActivitiesPreferenceEnabled,
                 clerkToken: token,
                 connections,
+                canConfigureEnvironment: (environmentId) =>
+                  readEnvironmentScope(environmentId, AuthRelayWriteScope),
               }),
             ),
           );
@@ -555,9 +565,9 @@ const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterD
 
 /**
  * Auto-settlement is a user preference that every server has to hold. Mobile
- * has no primary environment, so the first eligible sync target provides the
- * reference value. Edits fan out to every eligible target, and a mismatch row
- * lets the user push the reference out.
+ * has no primary environment, so the first writable sync target provides the
+ * reference value. Edits fan out to writable targets, and a mismatch row lets
+ * the user push the reference out. Read-only connections still show settings.
  */
 function AutoSettleSettingsRows() {
   const { environments } = useEnvironments();
@@ -566,18 +576,54 @@ function AutoSettleSettingsRows() {
     reportFailure: true,
   });
 
-  const syncTargets = environments.filter(supportsSharedSettingsSync);
-  const reference = syncTargets[0] ?? null;
+  const settingsAccessAtom = useMemo(
+    () =>
+      Atom.make((get) =>
+        environments.filter(supportsSharedSettingsSync).map((environment) => {
+          const result = get(environmentSession.sessionStateAtom(environment.environmentId));
+          const session = result._tag === "Success" ? result.value : null;
+          return {
+            environmentId: environment.environmentId,
+            canWriteSettings:
+              result._tag === "Initial"
+                ? null
+                : session?.authenticated === true &&
+                  session.scopes?.includes(AuthSettingsWriteScope) === true,
+          };
+        }),
+      ),
+    [environments],
+  );
+  const settingsAccess = useAtomValue(settingsAccessAtom);
+  const writableEnvironmentIds = new Set(
+    settingsAccess.flatMap((environment) =>
+      environment.canWriteSettings ? [environment.environmentId] : [],
+    ),
+  );
+  const availableTargets = environments.filter(supportsSharedSettingsSync);
+  const syncTargets = availableTargets.filter((environment) =>
+    writableEnvironmentIds.has(environment.environmentId),
+  );
+  const canWriteSettings = syncTargets.length > 0;
+  const referenceEnvironmentId = resolveAutoSettleReferenceEnvironmentId(settingsAccess);
+  const reference =
+    availableTargets.find((environment) => environment.environmentId === referenceEnvironmentId) ??
+    null;
   const referenceSettings = reference?.serverConfig?.settings ?? null;
 
   const [daysDraft, setDaysDraft] = useState<string | null>(null);
 
   if (reference === null || referenceSettings === null) {
-    return null;
+    return availableTargets.length > 0 ? (
+      <View className="p-4">
+        <Text className="text-sm text-foreground-muted">Loading auto-settle settings…</Text>
+      </View>
+    ) : null;
   }
 
   const writeToAll = (patch: ServerSettingsPatch) => {
     for (const environment of syncTargets) {
+      if (!readEnvironmentScope(environment.environmentId, AuthSettingsWriteScope)) continue;
       void updateSettings({ environmentId: environment.environmentId, input: { patch } });
     }
   };
@@ -589,7 +635,7 @@ function AutoSettleSettingsRows() {
     environments: environments.map((environment) => ({
       environmentId: environment.environmentId,
       label: environment.label,
-      syncEligible: supportsSharedSettingsSync(environment),
+      syncEligible: writableEnvironmentIds.has(environment.environmentId),
       settings: environment.serverConfig?.settings ?? null,
       capabilities: environment.serverConfig?.environment.capabilities,
     })),
@@ -615,12 +661,14 @@ function AutoSettleSettingsRows() {
   return (
     <>
       <SettingsSwitchRow
+        disabled={!canWriteSettings}
         icon="arrow.triangle.branch"
         label="Auto-settle merged threads"
         value={referenceSettings.sidebarAutoSettleOnMerge}
         onValueChange={(value) => writeToAll({ sidebarAutoSettleOnMerge: value })}
       />
       <SettingsSwitchRow
+        disabled={!canWriteSettings}
         icon="clock"
         label="Auto-settle inactive threads"
         subtitle={afterDays === null ? undefined : `After ${afterDays} days without activity`}
@@ -633,6 +681,7 @@ function AutoSettleSettingsRows() {
         <View className="flex-row items-center gap-4 border-t border-border-subtle p-4">
           <Text className="flex-1 text-lg text-foreground">Days before auto-settle</Text>
           <TextInput
+            editable={canWriteSettings}
             className="min-h-10 w-20 rounded-xl px-3 py-2 text-center text-base"
             keyboardType="number-pad"
             returnKeyType="done"
@@ -642,6 +691,15 @@ function AutoSettleSettingsRows() {
             onSubmitEditing={commitDays}
             accessibilityLabel="Days before auto-settle"
           />
+        </View>
+      ) : null}
+      {syncTargets.length < availableTargets.length ? (
+        <View className="border-t border-border-subtle p-4">
+          <Text className="text-sm text-foreground-muted">
+            {canWriteSettings
+              ? "Changes apply only to environments this connection can configure."
+              : "This connection cannot change environment settings."}
+          </Text>
         </View>
       ) : null}
       {mismatches.length > 0 ? (
@@ -660,6 +718,7 @@ function AutoSettleSettingsRows() {
                 reference.serverConfig?.environment.capabilities,
               );
               for (const mismatch of mismatches) {
+                if (!readEnvironmentScope(mismatch.environmentId, AuthSettingsWriteScope)) continue;
                 const target = environments.find(
                   (candidate) => candidate.environmentId === mismatch.environmentId,
                 );
@@ -676,7 +735,9 @@ function AutoSettleSettingsRows() {
             }}
             className="rounded-full bg-subtle px-4 py-2 active:opacity-70"
           >
-            <Text className="text-base font-t3-medium text-foreground">Apply to all</Text>
+            <Text className="text-base font-t3-medium text-foreground">
+              {syncTargets.length < availableTargets.length ? "Apply settings" : "Apply to all"}
+            </Text>
           </Pressable>
         </View>
       ) : null}

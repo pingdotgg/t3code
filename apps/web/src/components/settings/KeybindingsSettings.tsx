@@ -21,6 +21,8 @@ import {
   useState,
 } from "react";
 import {
+  AuthOrchestrationOperateScope,
+  AuthSettingsWriteScope,
   type KeybindingCommand,
   type KeybindingWhenNode,
   type ServerRemoveKeybindingInput,
@@ -42,6 +44,7 @@ import {
   primaryServerKeybindingsConfigPathAtom,
   serverEnvironment,
 } from "../../state/server";
+import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -1339,6 +1342,14 @@ export function KeybindingsSettingsPanel() {
   const keybindingsConfigPath = useAtomValue(primaryServerKeybindingsConfigPathAtom);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   const primaryEnvironment = usePrimaryEnvironment();
+  const canWriteSettings = useEnvironmentScope(
+    primaryEnvironment?.environmentId ?? null,
+    AuthSettingsWriteScope,
+  );
+  const canOpenKeybindingsFile = useEnvironmentScope(
+    primaryEnvironment?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
+  );
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
   });
@@ -1384,7 +1395,12 @@ export function KeybindingsSettingsPanel() {
   }, []);
 
   const openKeybindingsFile = useCallback(() => {
-    if (!keybindingsConfigPath) return;
+    if (
+      !keybindingsConfigPath ||
+      !primaryEnvironment ||
+      !readEnvironmentScope(primaryEnvironment.environmentId, AuthOrchestrationOperateScope)
+    )
+      return;
     void (async () => {
       const result = await openInPreferredEditor(keybindingsConfigPath);
       if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
@@ -1398,11 +1414,15 @@ export function KeybindingsSettingsPanel() {
         type: "error",
       });
     })();
-  }, [keybindingsConfigPath, openInPreferredEditor]);
+  }, [keybindingsConfigPath, openInPreferredEditor, primaryEnvironment]);
 
   const saveKeybinding = useCallback(
     (input: ServerUpsertKeybindingInput) => {
-      if (!primaryEnvironment) return;
+      if (
+        !primaryEnvironment ||
+        !readEnvironmentScope(primaryEnvironment.environmentId, AuthSettingsWriteScope)
+      )
+        return;
       setSavingCommand(input.command);
       const payload: ServerUpsertKeybindingInput = {
         command: input.command,
@@ -1435,7 +1455,11 @@ export function KeybindingsSettingsPanel() {
 
   const removeKeybinding = useCallback(
     (row: KeybindingRow) => {
-      if (!primaryEnvironment) return;
+      if (
+        !primaryEnvironment ||
+        !readEnvironmentScope(primaryEnvironment.environmentId, AuthSettingsWriteScope)
+      )
+        return;
       setSavingCommand(row.command);
       void (async () => {
         const result = await removeKeybindingMutation({
@@ -1516,6 +1540,7 @@ export function KeybindingsSettingsPanel() {
                     type="button"
                     size="icon-xs"
                     variant="ghost-muted"
+                    disabled={!canWriteSettings}
                     onClick={() => setIsAddingBinding(true)}
                     aria-label="Add keybinding"
                   >
@@ -1532,7 +1557,7 @@ export function KeybindingsSettingsPanel() {
                     type="button"
                     size="icon-xs"
                     variant="ghost-muted"
-                    disabled={!keybindingsConfigPath}
+                    disabled={!keybindingsConfigPath || !canOpenKeybindingsFile}
                     onClick={openKeybindingsFile}
                     aria-label="Open keybindings.json"
                   >
@@ -1547,7 +1572,14 @@ export function KeybindingsSettingsPanel() {
       >
         {!isElectron ? <BrowserKeybindingNotice /> : null}
 
-        <KeybindingsList {...listProps} />
+        {!canWriteSettings ? (
+          <p className="mb-3 text-xs text-muted-foreground">
+            This connection can view keybindings but cannot change them.
+          </p>
+        ) : null}
+        <div inert={!canWriteSettings} className={!canWriteSettings ? "opacity-60" : undefined}>
+          <KeybindingsList {...listProps} />
+        </div>
       </SettingsSection>
     </SettingsPageContainer>
   );

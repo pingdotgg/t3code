@@ -1,6 +1,8 @@
 import type { Dispatch, ReactElement, SetStateAction } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  AuthProvidersManageScope,
+  type AuthEnvironmentScope,
   type EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -16,6 +18,7 @@ import type {
 
 const testState = vi.hoisted(() => ({
   groups: [] as LocalEnvironmentUpdateGroup[],
+  permittedEnvironmentIds: new Set<EnvironmentId>(),
   updateProvider: vi.fn(),
 }));
 
@@ -88,6 +91,15 @@ vi.mock("react/compiler-runtime", () => ({
 
 vi.mock("~/state/server", () => ({
   serverEnvironment: { updateProvider: Symbol("updateProvider") },
+}));
+
+vi.mock("~/state/session", () => ({
+  readEnvironmentScope: (environmentId: EnvironmentId, scope: AuthEnvironmentScope) =>
+    scope === AuthProvidersManageScope && testState.permittedEnvironmentIds.has(environmentId),
+  useEnvironmentScope: (environmentId: EnvironmentId | null, scope: AuthEnvironmentScope) =>
+    environmentId !== null &&
+    scope === AuthProvidersManageScope &&
+    testState.permittedEnvironmentIds.has(environmentId),
 }));
 
 vi.mock("~/state/use-atom-command", () => ({
@@ -176,6 +188,8 @@ describe("ProviderUpdateEnvironmentRows", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     hooks.reset();
+    testState.permittedEnvironmentIds.clear();
+    testState.permittedEnvironmentIds.add(environmentId);
     testState.updateProvider.mockReset();
     const candidate = provider() as ProviderUpdateCandidate;
     testState.groups = [

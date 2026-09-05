@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useEffect, useRef } from "react";
 
@@ -24,6 +24,7 @@ import {
   setComposerDraftAttachmentUpload,
 } from "./use-composer-drafts";
 import { useRemoteConnectionStatus } from "./use-remote-environment-registry";
+import { readEnvironmentScope, useEnvironmentsWithScope } from "./session";
 
 export { composerAttachmentUploadBlockReason } from "../lib/composerAttachmentUploadQueue";
 
@@ -45,6 +46,7 @@ export function useComposerAttachmentUploadState(
 }
 
 export function retryComposerAttachmentUpload(environmentId: EnvironmentId, attachmentId: string) {
+  if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
   uploadQueue?.retry(environmentId, attachmentId);
 }
 
@@ -54,6 +56,10 @@ export function useComposerAttachmentUploadWorker() {
   const queuedMessages = useThreadOutboxMessages();
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
+  const operableEnvironments = useEnvironmentsWithScope(
+    connectedEnvironments,
+    AuthOrchestrationOperateScope,
+  );
   const queueRef = useRef<ReturnType<typeof createComposerAttachmentUploadQueue> | null>(null);
 
   useEffect(() => {
@@ -114,7 +120,12 @@ export function useComposerAttachmentUploadWorker() {
     );
     const requests = Object.entries(drafts).flatMap(([key, draft]) => {
       const environmentId = composerDraftEnvironmentId(key, queued);
-      if (environmentId === null || !connected.has(environmentId)) return [];
+      if (
+        environmentId === null ||
+        !connected.has(environmentId) ||
+        !operableEnvironments.has(environmentId)
+      )
+        return [];
       return draft.attachments
         .filter((attachment) =>
           canUploadComposerAttachment(attachment, serverConfigs.get(environmentId)),
@@ -122,5 +133,5 @@ export function useComposerAttachmentUploadWorker() {
         .map((attachment) => ({ environmentId, attachment }));
     });
     queueRef.current?.sync(requests);
-  }, [connectedEnvironments, drafts, queuedMessages, serverConfigs]);
+  }, [connectedEnvironments, drafts, operableEnvironments, queuedMessages, serverConfigs]);
 }

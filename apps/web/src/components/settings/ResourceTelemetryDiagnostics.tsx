@@ -12,18 +12,19 @@ import {
   RefreshCwIcon,
   RotateCcwIcon,
 } from "lucide-react";
-import type {
-  BackgroundBooleanState,
-  ResourceAttributionEntry,
-  ResourceTelemetryAggregate,
-  ResourceTelemetryHistoryBucket,
-  ResourceTelemetryIoSemantics,
-  ResourceTelemetryProcess,
-  ResourceTelemetryProcessCategory,
-  ResourceTelemetryProcessSummary,
-  ResourceTelemetrySourceHealth,
-  ResourceTelemetrySourceStatus,
-  ServerProcessSignal,
+import {
+  AuthEnvironmentMaintainScope,
+  type BackgroundBooleanState,
+  type ResourceAttributionEntry,
+  type ResourceTelemetryAggregate,
+  type ResourceTelemetryHistoryBucket,
+  type ResourceTelemetryIoSemantics,
+  type ResourceTelemetryProcess,
+  type ResourceTelemetryProcessCategory,
+  type ResourceTelemetryProcessSummary,
+  type ResourceTelemetrySourceHealth,
+  type ResourceTelemetrySourceStatus,
+  type ServerProcessSignal,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -41,6 +42,7 @@ import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTime } from "../../timestampFormat";
 import { Button } from "../ui/button";
@@ -524,10 +526,12 @@ function canSignalProcess(process: ResourceTelemetryProcess): boolean {
 
 function ProcessActions({
   process,
+  canMaintainEnvironment,
   signalingKeys,
   onSignal,
 }: {
   process: ResourceTelemetryProcess;
+  canMaintainEnvironment: boolean;
   signalingKeys: ReadonlySet<string>;
   onSignal: (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => void;
 }) {
@@ -537,32 +541,48 @@ function ProcessActions({
   const isSignaling = signalingKeys.has(processIdentityKey(process));
   return (
     <div className="flex items-center justify-end gap-1.5">
-      <button
-        type="button"
-        disabled={isSignaling}
-        className="cursor-pointer text-[10px] font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
-        onClick={() => onSignal(process, "SIGINT")}
-      >
-        INT
-      </button>
-      <button
-        type="button"
-        disabled={isSignaling}
-        className="cursor-pointer text-[10px] font-semibold text-destructive hover:underline disabled:opacity-50"
-        onClick={() => onSignal(process, "SIGKILL")}
-      >
-        KILL
-      </button>
+      <Tooltip>
+        <TooltipTrigger render={<span className="inline-flex" />}>
+          <button
+            type="button"
+            disabled={isSignaling || !canMaintainEnvironment}
+            className="cursor-pointer text-[10px] font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+            onClick={() => onSignal(process, "SIGINT")}
+          >
+            INT
+          </button>
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          {canMaintainEnvironment ? "Send SIGINT" : "This connection cannot manage processes."}
+        </TooltipPopup>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger render={<span className="inline-flex" />}>
+          <button
+            type="button"
+            disabled={isSignaling || !canMaintainEnvironment}
+            className="cursor-pointer text-[10px] font-semibold text-destructive hover:underline disabled:opacity-50"
+            onClick={() => onSignal(process, "SIGKILL")}
+          >
+            KILL
+          </button>
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          {canMaintainEnvironment ? "Send SIGKILL" : "This connection cannot manage processes."}
+        </TooltipPopup>
+      </Tooltip>
     </div>
   );
 }
 
 function ProcessTable({
   processes,
+  canMaintainEnvironment,
   signalingKeys,
   onSignal,
 }: {
   processes: ReadonlyArray<ResourceTelemetryProcess>;
+  canMaintainEnvironment: boolean;
   signalingKeys: ReadonlySet<string>;
   onSignal: (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => void;
 }) {
@@ -670,6 +690,7 @@ function ProcessTable({
               <td className="px-2 py-2 text-right sm:pr-4">
                 <ProcessActions
                   process={process}
+                  canMaintainEnvironment={canMaintainEnvironment}
                   signalingKeys={signalingKeys}
                   onSignal={onSignal}
                 />
@@ -843,6 +864,10 @@ export function ResourceTelemetryDiagnostics() {
     bucketMs: selectedWindow.bucketMs,
   });
   const primaryEnvironment = usePrimaryEnvironment();
+  const canMaintainEnvironment = useEnvironmentScope(
+    primaryEnvironment?.environmentId ?? null,
+    AuthEnvironmentMaintainScope,
+  );
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
     reportFailure: false,
   });
@@ -857,6 +882,12 @@ export function ResourceTelemetryDiagnostics() {
 
   const signalProcess = useCallback(
     async (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => {
+      const targetEnvironmentId = primaryEnvironmentIdRef.current;
+      if (
+        targetEnvironmentId === undefined ||
+        !readEnvironmentScope(targetEnvironmentId, AuthEnvironmentMaintainScope)
+      )
+        return;
       const identityKey = processIdentityKey(process);
       if (signalingKeysRef.current.has(identityKey)) return;
       const nextSignalingKeys = new Set(signalingKeysRef.current).add(identityKey);
@@ -891,7 +922,11 @@ export function ResourceTelemetryDiagnostics() {
         }
       }
       const environmentId = primaryEnvironmentIdRef.current;
-      if (environmentId === undefined) {
+      if (
+        environmentId === undefined ||
+        environmentId !== targetEnvironmentId ||
+        !readEnvironmentScope(environmentId, AuthEnvironmentMaintainScope)
+      ) {
         clearSignaling();
         return;
       }
@@ -933,6 +968,12 @@ export function ResourceTelemetryDiagnostics() {
   );
 
   const retryCollector = useCallback(() => {
+    const environmentId = primaryEnvironmentIdRef.current;
+    if (
+      environmentId === undefined ||
+      !readEnvironmentScope(environmentId, AuthEnvironmentMaintainScope)
+    )
+      return;
     setIsRetrying(true);
     void retryTelemetry()
       .catch((error: unknown) => {
@@ -1094,10 +1135,24 @@ export function ResourceTelemetryDiagnostics() {
         icon={<GaugeIcon className="size-4 text-muted-foreground" />}
         headerAction={
           collectorNeedsRetry ? (
-            <Button size="xs" variant="outline" disabled={isRetrying} onClick={retryCollector}>
-              <RotateCcwIcon className={cn("size-3", isRetrying && "animate-spin")} />
-              Retry monitor
-            </Button>
+            <Tooltip>
+              <TooltipTrigger render={<span className="inline-flex" />}>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={isRetrying || !canMaintainEnvironment}
+                  onClick={retryCollector}
+                >
+                  <RotateCcwIcon className={cn("size-3", isRetrying && "animate-spin")} />
+                  Retry monitor
+                </Button>
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {canMaintainEnvironment
+                  ? "Restart the resource monitor."
+                  : "This connection cannot restart the resource monitor."}
+              </TooltipPopup>
+            </Tooltip>
           ) : null
         }
       >
@@ -1264,6 +1319,7 @@ export function ResourceTelemetryDiagnostics() {
         <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-[0_1px_1px_rgb(0_0_0/0.03)]">
           <ProcessTable
             processes={snapshot?.processes ?? []}
+            canMaintainEnvironment={canMaintainEnvironment}
             signalingKeys={signalingKeys}
             onSignal={signalProcess}
           />

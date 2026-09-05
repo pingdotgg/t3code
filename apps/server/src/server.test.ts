@@ -6,6 +6,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 
 import {
   AuthAccessTokenType,
+  AuthAdministrativeScopes,
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
@@ -50,7 +51,7 @@ import {
 } from "@t3tools/shared/dpop";
 import { RELAY_HEALTH_REQUEST_TYP, RELAY_MINT_REQUEST_TYP } from "@t3tools/shared/relayJwt";
 import * as RelayClient from "@t3tools/shared/relayClient";
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -495,6 +496,7 @@ const buildAppUnderTest = (options?: {
   onPairingChangesSubscribed?: Effect.Effect<void>;
   config?: Partial<ServerConfig.ServerConfig["Service"]>;
   layers?: {
+    processDiagnostics?: Partial<ProcessDiagnostics.ProcessDiagnostics["Service"]>;
     keybindings?: Partial<Keybindings.Keybindings["Service"]>;
     environmentTheme?: Partial<EnvironmentTheme.EnvironmentThemeService["Service"]>;
     providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
@@ -840,6 +842,7 @@ const buildAppUnderTest = (options?: {
               signaled: true,
               message: Option.none(),
             }),
+          ...options?.layers?.processDiagnostics,
         }),
       ),
       Layer.provide(
@@ -1313,9 +1316,7 @@ const exchangeAccessToken = (
         subject_token: credential,
         subject_token_type: AuthEnvironmentBootstrapTokenType,
         requested_token_type: AuthAccessTokenType,
-        scope:
-          options?.scope ??
-          "orchestration:read orchestration:operate terminal:operate review:write relay:read access:read access:write relay:write",
+        scope: options?.scope ?? AuthAdministrativeScopes.join(" "),
         ...(options?.clientMetadata?.label ? { client_label: options.clientMetadata.label } : {}),
         ...(options?.clientMetadata?.deviceType
           ? { client_device_type: options.clientMetadata.deviceType }
@@ -2385,10 +2386,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(tokenResponse.status, 200);
       assert.equal(tokenBody.issued_token_type, AuthAccessTokenType);
       assert.equal(tokenBody.token_type, "Bearer");
-      assert.equal(
-        tokenBody.scope,
-        "orchestration:read orchestration:operate terminal:operate review:write relay:read access:read access:write relay:write",
-      );
+      assert.equal(tokenBody.scope, AuthAdministrativeScopes.join(" "));
       assert.equal(typeof tokenBody.access_token, "string");
 
       const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
@@ -2406,16 +2404,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(sessionResponse.status, 200);
       assert.equal(sessionBody.authenticated, true);
       assert.equal(sessionBody.sessionMethod, "bearer-access-token");
-      assert.deepEqual(sessionBody.scopes, [
-        "orchestration:read",
-        "orchestration:operate",
-        "terminal:operate",
-        "review:write",
-        "relay:read",
-        "access:read",
-        "access:write",
-        "relay:write",
-      ]);
+      assert.deepEqual(sessionBody.scopes, AuthAdministrativeScopes);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -5895,6 +5884,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               instanceId: providerSetupInstanceId,
             }).pipe(Stream.runHead, Effect.map(Option.getOrThrow));
             assert.deepEqual(observed, providerSetupInstallState);
+            const refreshed = yield* client[WS_METHODS.serverRefreshProviders]({});
+            assert.deepEqual(refreshed.providers, []);
             const errors = [
               yield* client[WS_METHODS.providerInstallStart]({
                 instanceId: providerSetupInstanceId,
@@ -5909,7 +5900,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             for (const error of errors) {
               assert.equal(error._tag, "EnvironmentAuthorizationError");
               if (error._tag === "EnvironmentAuthorizationError") {
-                assert.equal(error.requiredScope, "orchestration:operate");
+                assert.equal(error.requiredScope, "providers:manage");
               }
             }
           }),
@@ -5917,6 +5908,114 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assert.equal(installStarts, 0);
       assert.equal(authCalls, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("grants settings, provider management and maintenance independently", () =>
+    Effect.gen(function* () {
+      let settingsWrites = 0;
+      let signIns = 0;
+      let processSignals = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          serverSettings: {
+            updateSettings: () =>
+              Effect.sync(() => {
+                settingsWrites += 1;
+                return DEFAULT_SERVER_SETTINGS;
+              }),
+          },
+          providerAuth: {
+            start: () =>
+              Effect.sync(() => {
+                signIns += 1;
+                return providerSetupAuthState;
+              }),
+          },
+          processDiagnostics: {
+            signal: (input) =>
+              Effect.sync(() => {
+                processSignals += 1;
+                return { ...input, signaled: true, message: Option.none() };
+              }),
+          },
+        },
+      });
+      for (const scope of [
+        "orchestration:operate",
+        "settings:write",
+        "providers:manage",
+        "environment:maintain",
+        "settings:write providers:manage",
+      ]) {
+        const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, { scope });
+        assert.equal(token.response.status, 200);
+        const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+          headers: { authorization: `Bearer ${token.body.access_token ?? ""}` },
+        });
+        const { ticket } = yield* responseJsonEffect<{ readonly ticket: string }>(ticketResponse);
+        const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              const check = <A, E>(request: Effect.Effect<A, E>, required: ReadonlyArray<string>) =>
+                Effect.gen(function* () {
+                  const missing = required.find((item) => !scope.split(" ").includes(item));
+                  if (missing === undefined) {
+                    yield* request;
+                  } else {
+                    const error = yield* request.pipe(Effect.flip);
+                    expect(error).toMatchObject({
+                      _tag: "EnvironmentAuthorizationError",
+                      requiredScope: missing,
+                    });
+                  }
+                });
+              yield* check(
+                client[WS_METHODS.serverUpdateSettings]({
+                  patch: { environmentIcon: null },
+                }),
+                ["settings:write"],
+              );
+              yield* check(
+                client[WS_METHODS.serverUpdateSettings]({
+                  patch: { providerInstances: {} },
+                }),
+                ["providers:manage"],
+              );
+              yield* check(
+                client[WS_METHODS.serverUpdateSettings]({
+                  patch: { providers: { codex: { enabled: false } }, usageLimitSources: {} },
+                }),
+                ["providers:manage"],
+              );
+              yield* check(
+                client[WS_METHODS.serverUpdateSettings]({
+                  patch: { environmentIcon: null, providerInstances: {} },
+                }),
+                ["settings:write", "providers:manage"],
+              );
+              yield* check(
+                client[WS_METHODS.providerAuthStart]({
+                  instanceId: providerSetupInstanceId,
+                }),
+                ["providers:manage"],
+              );
+              yield* check(
+                client[WS_METHODS.serverSignalProcess]({
+                  pid: 123,
+                  startTimeMs: 1,
+                  signal: "SIGINT",
+                }),
+                ["environment:maintain"],
+              );
+            }),
+          ),
+        );
+      }
+      assert.equal(settingsWrites, 7);
+      assert.equal(signIns, 2);
+      assert.equal(processSignals, 1);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
