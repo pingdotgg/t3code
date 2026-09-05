@@ -65,6 +65,40 @@ describe("KeybindingsSettings.logic", () => {
     ).toBe("mod+shift+k");
   });
 
+  it("captures digit shortcuts as numbers instead of shifted symbols", () => {
+    // Shift + 6 produces key: "^" on US layout, but code is "Digit6"
+    expect(
+      keybindingFromKeyboardEvent(
+        { key: "^", code: "Digit6", metaKey: false, ctrlKey: false, altKey: false, shiftKey: true },
+        "Win32",
+      ),
+    ).toBe("shift+6");
+
+    // Shift + 1 produces key: "!" on US layout, but code is "Digit1"
+    expect(
+      keybindingFromKeyboardEvent(
+        { key: "!", code: "Digit1", metaKey: false, ctrlKey: true, altKey: false, shiftKey: true },
+        "Win32",
+      ),
+    ).toBe("mod+shift+1");
+
+    // Numpad digits map to numbers
+    expect(
+      keybindingFromKeyboardEvent(
+        { key: "3", code: "Numpad3", metaKey: false, ctrlKey: true, altKey: false, shiftKey: false },
+        "Win32",
+      ),
+    ).toBe("mod+3");
+
+    // BracketLeft / BracketRight shortcuts with shift
+    expect(
+      keybindingFromKeyboardEvent(
+        { key: "{", code: "BracketLeft", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true },
+        "MacIntel",
+      ),
+    ).toBe("mod+shift+[");
+  });
+
   it("serializes shortcuts and when expressions for upserts", () => {
     expect(
       shortcutToKeybindingInput({

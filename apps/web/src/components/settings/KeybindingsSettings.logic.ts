@@ -291,7 +291,7 @@ function titleCaseCommandSegment(segment: string): string {
   return words.join(" ");
 }
 
-export function normalizeShortcutKeyToken(key: string): string | null {
+export function normalizeShortcutKeyToken(key: string, code?: string): string | null {
   const normalized = key.toLowerCase();
   if (
     normalized === "meta" ||
@@ -303,6 +303,12 @@ export function normalizeShortcutKeyToken(key: string): string | null {
   ) {
     return null;
   }
+  const digitMatch = code?.match(/^(?:Digit|Numpad)(\d)$/);
+  if (digitMatch?.[1]) {
+    return digitMatch[1];
+  }
+  if (code === "BracketLeft") return "[";
+  if (code === "BracketRight") return "]";
   if (normalized === " ") return "space";
   if (normalized === "escape") return "esc";
   if (normalized === "arrowup") return "arrowup";
@@ -322,10 +328,12 @@ export function normalizeShortcutKeyToken(key: string): string | null {
 }
 
 export function keybindingFromKeyboardEvent(
-  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
+  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey"> & {
+    code?: string | undefined;
+  },
   platform: string,
 ): string | null {
-  const keyToken = normalizeShortcutKeyToken(event.key);
+  const keyToken = normalizeShortcutKeyToken(event.key, event.code);
   if (!keyToken) return null;
 
   const parts: string[] = [];

@@ -540,6 +540,25 @@ describe("model picker navigation helpers", () => {
     assert.strictEqual(modelPickerJumpIndexFromCommand("modelPicker.jump.3"), 2);
     assert.isNull(modelPickerJumpIndexFromCommand("thread.jump.1"));
   });
+
+  it("resolves jump shortcuts with digit and numpad key codes", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "1", code: "Digit1", metaKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel", context: { modelPickerOpen: true } },
+      ),
+      "modelPicker.jump.1",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "1", code: "Numpad1", metaKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel", context: { modelPickerOpen: true } },
+      ),
+      "modelPicker.jump.1",
+    );
+  });
 });
 
 describe("chat/editor shortcuts", () => {
