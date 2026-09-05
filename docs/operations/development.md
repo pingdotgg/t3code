@@ -69,6 +69,15 @@ Use `vp run lint:mobile` for native mobile changes. CI owns the full suite; see
 The [manual Windows lane](../../.github/workflows/windows-tests.yml) is available for focused
 Windows investigation while that suite is not a required gate.
 
+### Unused code
+
+`vp run knip:check` runs the unused-file and dependency check enforced by CI.
+Use `vp run knip --workspace apps/web` to audit one workspace, including exports,
+or `vp run knip:production --workspace apps/web` to find code kept alive only by tests.
+The full export audit still has findings and is not a CI gate. Review callers before
+deleting code; production mode can also report development scripts and test fixtures.
+Runtime-discovered entrypoints and dependency exceptions belong in [knip.jsonc](../../knip.jsonc).
+
 ## Desktop artifacts
 
 Local artifact builds are unsigned by default and write to `release/`:
