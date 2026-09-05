@@ -16,6 +16,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
@@ -84,6 +85,7 @@ const setup = Effect.gen(function* () {
 
 const serviceLayers = (input: {
   readonly prefix: string;
+  readonly baseDir?: string;
   readonly home: string;
   readonly settings: Parameters<typeof ServerSettings.layerTest>[0];
   readonly onRatesFetch?: () => void;
@@ -92,7 +94,7 @@ const serviceLayers = (input: {
   readonly projectRepository?: ProjectionProjectRepository["Service"];
   readonly runtimeRepository?: ProviderSessionRuntime.ProviderSessionRuntimeRepository["Service"];
 }) =>
-  ServerConfig.layerTest(process.cwd(), { prefix: input.prefix }).pipe(
+  ServerConfig.layerTest(process.cwd(), input.baseDir ?? { prefix: input.prefix }).pipe(
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),
     Layer.provideMerge(
@@ -377,6 +379,71 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("does not prune files added by a newer source scan", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const baseDir = NodePath.join(home, "server-state");
+      const newerTranscript = NodePath.join(NodePath.dirname(transcript), "newer.jsonl");
+      const firstAggregationStarted = yield* Deferred.make<void>();
+      const releaseFirstAggregation = yield* Deferred.make<void>();
+      let projectReads = 0;
+      const unused = Effect.die(new Error("unused project repository operation"));
+      const projectRepository: ProjectionProjectRepository["Service"] = {
+        upsert: () => unused,
+        getById: () => unused,
+        listAll: () =>
+          Effect.gen(function* () {
+            projectReads += 1;
+            if (projectReads === 1) {
+              yield* Deferred.succeed(firstAggregationStarted, undefined);
+              yield* Deferred.await(releaseFirstAggregation);
+            }
+            return [];
+          }),
+        deleteById: () => unused,
+      };
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-prune-race-test",
+            baseDir,
+            home,
+            settings,
+            projectRepository,
+          }),
+        ),
+      );
+
+      const older = yield* service
+        .readSummary({ ...WINDOW, refreshToken: "older" })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(firstAggregationStarted);
+      yield* Effect.promise(() => NodeFSP.writeFile(newerTranscript, claudeLine(2, 7)));
+      yield* service.readSummary({
+        ...WINDOW,
+        timeZone: "America/Los_Angeles",
+        refreshToken: "newer",
+      });
+      yield* Deferred.succeed(releaseFirstAggregation, undefined);
+      yield* Fiber.join(older);
+
+      const persisted = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+        yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(baseDir, "userdata", "usage-scan-cache.json"), "utf8"),
+        ),
+      );
+      assert.isTrue(
+        typeof persisted === "object" &&
+          persisted !== null &&
+          "files" in persisted &&
+          typeof persisted.files === "object" &&
+          persisted.files !== null &&
+          Object.hasOwn(persisted.files, newerTranscript),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reuses a recent scan when only the date range changes", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
@@ -425,6 +492,82 @@ describe("UsageService", () => {
         Effect.provide(
           serviceLayers({ prefix: "usage-service-thread-source-cache-test", home, settings }),
         ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("does not let an older thread breakdown prune a newer source scan", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const baseDir = NodePath.join(home, "server-state");
+      const newerTranscript = NodePath.join(NodePath.dirname(transcript), "newer-thread.jsonl");
+      const threadAggregationStarted = yield* Deferred.make<void>();
+      const releaseThreadAggregation = yield* Deferred.make<void>();
+      let projectReads = 0;
+      const unused = Effect.die(new Error("unused project repository operation"));
+      const projectRepository: ProjectionProjectRepository["Service"] = {
+        upsert: () => unused,
+        getById: () => unused,
+        listAll: () =>
+          Effect.gen(function* () {
+            projectReads += 1;
+            if (projectReads === 1) {
+              yield* Deferred.succeed(threadAggregationStarted, undefined);
+              yield* Deferred.await(releaseThreadAggregation);
+            }
+            return [];
+          }),
+        deleteById: () => unused,
+      };
+      const runtimeRepository: ProviderSessionRuntime.ProviderSessionRuntimeRepository["Service"] =
+        {
+          upsert: () => unused,
+          getByThreadId: () => unused,
+          list: () => Effect.succeed([]),
+          deleteByThreadId: () => unused,
+        };
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-thread-prune-race-test",
+            baseDir,
+            home,
+            settings,
+            projectRepository,
+            runtimeRepository,
+          }),
+        ),
+      );
+
+      const olderThread = yield* service
+        .readThreadBreakdown({ ...WINDOW, refreshToken: "older-thread" })
+        .pipe(
+          Effect.tapCause(() => Deferred.succeed(threadAggregationStarted, undefined)),
+          Effect.forkChild,
+        );
+      yield* Deferred.await(threadAggregationStarted);
+      yield* Effect.promise(() => NodeFSP.writeFile(newerTranscript, claudeLine(2, 7)));
+      yield* service.readSummary({
+        ...WINDOW,
+        timeZone: "America/Los_Angeles",
+        refreshToken: "newer-summary",
+      });
+      yield* Deferred.succeed(releaseThreadAggregation, undefined);
+      yield* Fiber.join(olderThread);
+
+      const persisted = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+        yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(baseDir, "userdata", "usage-scan-cache.json"), "utf8"),
+        ),
+      );
+      assert.isTrue(
+        typeof persisted === "object" &&
+          persisted !== null &&
+          "files" in persisted &&
+          typeof persisted.files === "object" &&
+          persisted.files !== null &&
+          Object.hasOwn(persisted.files, newerTranscript),
       );
     }).pipe(Effect.scoped),
   );
