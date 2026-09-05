@@ -108,6 +108,7 @@ describe("ElectronApp", () => {
   });
 
   it("resolves packaged metadata without yielding before Electron ready", () => {
+    // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- This regression must reject asynchronous pre-ready initialization; it.effect would hide the Electron startup race.
     const metadata = Effect.runSync(ElectronApp.make.metadata);
     assert.equal(metadata.isPackaged, true);
   });

@@ -77,6 +77,7 @@ describe("DesktopClerk", () => {
   it("acquires the bridge synchronously before Electron ready", () => {
     storageMock.mockReturnValue(storageAdapter);
     createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+    // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- This regression must reject asynchronous pre-ready initialization; it.effect would hide the Electron startup race.
     Effect.runSync(Effect.scoped(Layer.build(makeDesktopClerkLayer(false))));
     assert.equal(createClerkBridgeMock.mock.calls.length, 1);
   });
