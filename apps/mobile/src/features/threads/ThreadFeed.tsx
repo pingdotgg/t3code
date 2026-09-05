@@ -177,6 +177,7 @@ import {
 } from "../files/filePath";
 import { fileChipMenu, resolveFileChipTarget, type FileChipAction } from "./fileChipMenu";
 import {
+  MarkdownImageAvailableWidthContext,
   ThreadMarkdownImage,
   ThreadMarkdownImageUnavailable,
   ThreadMarkdownImageView,
@@ -1331,6 +1332,8 @@ function renderFeedEntry(
     readonly reviewCommentBubbleWidth: number;
     readonly themeAppearance: "light" | "dark";
     readonly userBubbleMaxWidth: number;
+    /** Width assistant markdown lays out in, so images can size their frame before layout. */
+    readonly markdownContentWidth: number;
   },
 ) {
   const entry = info.item;
@@ -1452,14 +1455,16 @@ function renderFeedEntry(
             }}
           >
             {message.text.trim().length > 0 ? (
-              <UserMessageContent
-                text={renderedText}
-                markdownStyles={styles}
-                reviewCommentColors={props.reviewCommentColors}
-                skills={props.skills}
-                linkHandlers={props.markdownLinkHandlers}
-                renderImage={props.renderMarkdownImage}
-              />
+              <MarkdownImageAvailableWidthContext value={props.userBubbleMaxWidth - 28}>
+                <UserMessageContent
+                  text={renderedText}
+                  markdownStyles={styles}
+                  reviewCommentColors={props.reviewCommentColors}
+                  skills={props.skills}
+                  linkHandlers={props.markdownLinkHandlers}
+                  renderImage={props.renderMarkdownImage}
+                />
+              </MarkdownImageAvailableWidthContext>
             ) : null}
             {attachments.map((attachment) => {
               return isImageAttachment(attachment) ? (
@@ -1516,14 +1521,16 @@ function renderFeedEntry(
         {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
       >
         {renderedText.trim().length > 0 ? (
-          <AssistantMarkdownContent
-            markdown={renderedText}
-            markdownStyles={styles}
-            linkHandlers={props.markdownLinkHandlers}
-            onUseArtifactTemplate={props.onUseArtifactTemplate}
-            renderImage={props.renderMarkdownImage}
-            skills={props.skills}
-          />
+          <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
+            <AssistantMarkdownContent
+              markdown={renderedText}
+              markdownStyles={styles}
+              linkHandlers={props.markdownLinkHandlers}
+              onUseArtifactTemplate={props.onUseArtifactTemplate}
+              renderImage={props.renderMarkdownImage}
+              skills={props.skills}
+            />
+          </MarkdownImageAvailableWidthContext>
         ) : null}
         {attachments.map((attachment) => {
           return isImageAttachment(attachment) ? (
@@ -1942,6 +1949,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   });
   const contentWidth = Math.max(0, viewportWidth - contentHorizontalPadding * 2);
   const userBubbleMaxWidth = contentWidth * 0.85;
+  // Assistant rows sit inside px-1.
+  const markdownContentWidth = Math.max(0, contentWidth - 8);
   const reviewCommentBubbleWidth = Math.min(Math.max(280, contentWidth * 0.85), contentWidth);
   const insets = useSafeAreaInsets();
   const topContentInset = props.contentTopInset ?? insets.top + IOS_NAV_BAR_HEIGHT;
@@ -2620,6 +2629,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             reviewCommentBubbleWidth,
             themeAppearance,
             userBubbleMaxWidth,
+            markdownContentWidth,
             skills: props.skills,
             onUseArtifactTemplate: props.onUseArtifactTemplate,
           })}
@@ -2641,6 +2651,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentBubbleWidth,
       themeAppearance,
       userBubbleMaxWidth,
+      markdownContentWidth,
       onCopyWorkRow,
       markdownLinkHandlers,
       onPressPreview,
