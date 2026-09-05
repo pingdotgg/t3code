@@ -46,6 +46,29 @@ describe("readImageDimensions", () => {
     });
   });
 
+  it("swaps the axes for a JPEG whose EXIF orientation rotates it 90 degrees", () => {
+    // Big-endian TIFF with one IFD0 entry: tag 0x0112 (orientation), SHORT, count 1, value 6.
+    const tiff = [
+      0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08, 0x00, 0x01, 0x01, 0x12, 0x00, 0x03, 0x00,
+      0x00, 0x00, 0x01, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+    const exif = ["Exif\0\0", tiff] as const;
+    const app1 = bytes([0xff, 0xe1], u16(2 + 6 + tiff.length), ...exif);
+    const sof0 = bytes([0xff, 0xc0], u16(17), [8], u16(3024), u16(4032));
+    expect(readImageDimensions(bytes([0xff, 0xd8], [...app1], [...sof0]))).toEqual({
+      width: 3024,
+      height: 4032,
+    });
+    // Orientation 1 leaves the frame size alone.
+    const upright = [...tiff];
+    upright[19] = 0x01;
+    const app1Upright = bytes([0xff, 0xe1], u16(2 + 6 + upright.length), "Exif\0\0", upright);
+    expect(readImageDimensions(bytes([0xff, 0xd8], [...app1Upright], [...sof0]))).toEqual({
+      width: 4032,
+      height: 3024,
+    });
+  });
+
   it("does not mistake a Huffman table marker for a frame", () => {
     const dht = bytes([0xff, 0xc4], u16(4), [0, 0]);
     const sof2 = bytes([0xff, 0xc2], u16(17), [8], u16(10), u16(20));

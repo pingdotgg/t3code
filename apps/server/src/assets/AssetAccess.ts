@@ -49,7 +49,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
-import { openMediaFile, type OpenMediaFile } from "./MediaFile.ts";
+import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
 
@@ -232,8 +232,11 @@ const resolveCanonicalWorkspaceFileForRequest = (input: {
 /**
  * Reads pixel dimensions from an image's header so clients can reserve the
  * exact box before the bytes arrive. Best effort: an unreadable or unsupported
- * file just leaves the field out, and the client measures after decode.
+ * file just leaves the field out, and the client measures after decode. Only
+ * formats the parser understands are opened; SVG and the rest are skipped.
  */
+const HEADER_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+
 const readImageDimensionsFromHeader = Effect.fn("AssetAccess.readImageDimensionsFromHeader")(
   function* (filePath: string) {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -246,6 +249,13 @@ const readImageDimensionsFromHeader = Effect.fn("AssetAccess.readImageDimensions
     ).pipe(Effect.orElseSucceed((): ImageDimensions | null => null));
   },
 );
+
+/** Same, from the identity-checked handle the caller already holds, so no second open can be swapped. */
+const readImageDimensionsFromOpenFile = (file: OpenMediaFile) =>
+  readMediaFileHeader(file, IMAGE_DIMENSIONS_HEADER_BYTES).pipe(
+    Effect.map(readImageDimensions),
+    Effect.orElseSucceed((): ImageDimensions | null => null),
+  );
 
 export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (input: {
   readonly resource: AssetResource;
@@ -289,21 +299,31 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       if (hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null) {
         return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
       }
-      const identity = yield* openMediaFile(canonicalFile).pipe(
-        Effect.map((file) =>
-          file ? { device: file.info.dev.toString(), inode: file.info.ino.toString() } : null,
+      const wantsDimensions = HEADER_IMAGE_EXTENSIONS.has(
+        path.extname(canonicalFile).toLowerCase(),
+      );
+      const opened = yield* openMediaFile(canonicalFile).pipe(
+        Effect.flatMap((file) =>
+          file === null
+            ? Effect.succeed(null)
+            : Effect.map(
+                wantsDimensions ? readImageDimensionsFromOpenFile(file) : Effect.succeed(null),
+                (dimensions) => ({
+                  identity: { device: file.info.dev.toString(), inode: file.info.ino.toString() },
+                  dimensions,
+                }),
+              ),
         ),
         Effect.scoped,
         Effect.mapError(
           (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
         ),
       );
-      if (!identity) {
+      if (!opened) {
         return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
       }
-      if (isWorkspaceImagePreviewPath(canonicalFile)) {
-        imageDimensions = yield* readImageDimensionsFromHeader(canonicalFile);
-      }
+      const identity = opened.identity;
+      imageDimensions = opened.dimensions;
       claims = {
         version: 1,
         kind: "media-file-exact",
@@ -374,7 +394,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             }),
         ),
       );
-      if (isWorkspaceImagePreviewPath(resolved.relativePath)) {
+      if (HEADER_IMAGE_EXTENSIONS.has(path.extname(resolved.relativePath).toLowerCase())) {
         imageDimensions = yield* readImageDimensionsFromHeader(canonicalFile);
       }
       claims = isWorkspaceImagePreviewPath(resolved.relativePath)

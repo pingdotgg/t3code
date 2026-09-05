@@ -95,6 +95,17 @@ export const openMediaFile = Effect.fn("openMediaFile")(function* (
   );
 });
 
+/** Reads the leading bytes of an already-validated media file, never past the end. */
+export const readMediaFileHeader = (file: OpenMediaFile, byteCount: number) =>
+  Effect.tryPromise({
+    try: async () => {
+      const buffer = new Uint8Array(byteCount);
+      const { bytesRead } = await file.handle.read(buffer, 0, byteCount, 0);
+      return buffer.subarray(0, bytesRead);
+    },
+    catch: (cause) => new MediaFileStatError({ path: "<open handle>", cause }),
+  });
+
 export const statMediaFile = Effect.fn("statMediaFile")(function* (
   filePath: string,
   file: OpenMediaFile,

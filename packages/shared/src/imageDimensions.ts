@@ -91,6 +91,7 @@ function readJpeg(bytes: Uint8Array): ImageDimensions | null {
   if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
   const data = view(bytes);
   let offset = 2;
+  let rotated = false;
   while (offset + 9 <= bytes.length) {
     if (bytes[offset] !== 0xff) return null;
     const marker = bytes[offset + 1]!;
@@ -102,10 +103,41 @@ function readJpeg(bytes: Uint8Array): ImageDimensions | null {
     // Start-of-frame markers carry the dimensions; skip the arithmetic-coding
     // and Huffman-table markers that share the range.
     if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
-      return { height: data.getUint16(offset + 5), width: data.getUint16(offset + 7) };
+      const height = data.getUint16(offset + 5);
+      const width = data.getUint16(offset + 7);
+      return rotated ? { width: height, height: width } : { width, height };
     }
     if (marker === 0xd9 || marker === 0xda) return null;
-    offset += 2 + data.getUint16(offset + 2);
+    const length = data.getUint16(offset + 2);
+    // Viewers apply the EXIF orientation before display, so a phone photo
+    // stored on its side takes the swapped size on screen.
+    if (marker === 0xe1) rotated = exifOrientationSwapsAxes(bytes, offset + 4, offset + 2 + length);
+    offset += 2 + length;
   }
   return null;
+}
+
+/** Whether EXIF orientation 5-8 (a 90° rotation) applies. `start` is the APP1 payload. */
+function exifOrientationSwapsAxes(bytes: Uint8Array, start: number, end: number): boolean {
+  end = Math.min(end, bytes.length);
+  // "Exif\0\0" then a TIFF header: byte order, 0x2a, and the IFD0 offset.
+  if (end - start < 14 || String.fromCharCode(...bytes.subarray(start, start + 4)) !== "Exif") {
+    return false;
+  }
+  const tiff = start + 6;
+  const data = view(bytes);
+  const littleEndian = bytes[tiff] === 0x49 && bytes[tiff + 1] === 0x49;
+  if (!littleEndian && !(bytes[tiff] === 0x4d && bytes[tiff + 1] === 0x4d)) return false;
+  const ifd = tiff + data.getUint32(tiff + 4, littleEndian);
+  if (ifd + 2 > end) return false;
+  const entries = data.getUint16(ifd, littleEndian);
+  for (let i = 0; i < entries; i += 1) {
+    const entry = ifd + 2 + i * 12;
+    if (entry + 12 > end) return false;
+    if (data.getUint16(entry, littleEndian) === 0x0112) {
+      const orientation = data.getUint16(entry + 8, littleEndian);
+      return orientation >= 5 && orientation <= 8;
+    }
+  }
+  return false;
 }
