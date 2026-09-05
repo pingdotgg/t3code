@@ -427,6 +427,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(
       Layer.mergeAll(effectWorkerProvided, storesLayer, eventSinkProvided, idAllocatorLayer),
     ),
+    Layer.provide(serverSettingsLayer),
   );
   const replayRuntime = Layer.mergeAll(
     orchestratorProvided,

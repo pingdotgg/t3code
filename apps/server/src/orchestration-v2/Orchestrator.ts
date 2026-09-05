@@ -1909,9 +1909,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // decided serially against the projection, so a turn start that
     // re-engages the thread cannot race this detach.
     const detachSessionIds = new Set(
-      command.type === "thread.archive" ||
-        command.type === "thread.delete" ||
-        command.type === "thread.settle"
+      command.type === "thread.archive" || command.type === "thread.settle"
         ? projection.providerSessions.map((session) => session.id)
         : command.type === "thread.metadata.update" &&
             command.worktreePath !== undefined &&
@@ -1953,13 +1951,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ? "Thread archived."
                     : command.type === "thread.settle"
                       ? "Thread settled."
-                      : command.type === "thread.delete"
-                        ? "Thread deleted."
-                        : command.type === "thread.metadata.update"
-                          ? "Workspace changed."
-                          : command.type === "thread.runtime-mode.set"
-                            ? "Runtime mode changed."
-                            : "Provider or model selection changed.",
+                      : command.type === "thread.metadata.update"
+                        ? "Workspace changed."
+                        : command.type === "thread.runtime-mode.set"
+                          ? "Runtime mode changed."
+                          : "Provider or model selection changed.",
               },
             });
             const pendingEffect = {
@@ -1974,19 +1970,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ? "Thread archived."
                     : command.type === "thread.settle"
                       ? "Thread settled."
-                      : command.type === "thread.delete"
-                        ? "Thread deleted."
-                        : command.type === "thread.metadata.update"
-                          ? "Workspace changed."
-                          : command.type === "thread.runtime-mode.set"
-                            ? "Runtime mode changed."
-                            : "Provider or model selection changed.",
+                      : command.type === "thread.metadata.update"
+                        ? "Workspace changed."
+                        : command.type === "thread.runtime-mode.set"
+                          ? "Runtime mode changed."
+                          : "Provider or model selection changed.",
                 // Terminal detaches revoke the thread's MCP credentials; other
                 // detach reasons keep them so a re-attaching provider process
                 // stays authorized.
-                ...(command.type === "thread.archive" || command.type === "thread.delete"
-                  ? { revokeMcpCredential: true }
-                  : {}),
+                ...(command.type === "thread.archive" ? { revokeMcpCredential: true } : {}),
               },
             } satisfies PendingOrchestrationEffectV2;
             yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
@@ -1995,7 +1987,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
     }
 
-    if (command.type === "thread.archive" || command.type === "thread.delete") {
+    if (command.type === "thread.archive") {
       yield* Ref.update(effects, (existing) => [
         ...existing,
         {

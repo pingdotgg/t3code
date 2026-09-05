@@ -24,6 +24,7 @@ import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -908,7 +909,7 @@ it.layer(LegacyImportTestLayer)("OrchestrationV2 legacy import", (it) => {
   );
 });
 
-it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
+it.layer(Layer.merge(TestLayer, NodeServices.layer))("OrchestrationV2LayerLive lifecycle", (it) => {
   it.effect("applies lifecycle commands idempotently and emits archive/removal shell deltas", () =>
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;
@@ -1413,6 +1414,10 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
 
   it.effect("applies deferred settlement after safe completion and replays its receipt", () =>
     Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspacePath = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-runtime-layer-deferred-settle-",
+      });
       const orchestrator = yield* OrchestratorV2;
       const eventSink = yield* EventSinkV2;
       const sql = yield* SqlClient.SqlClient;
@@ -1433,7 +1438,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         runtimeMode: "full-access",
         interactionMode: "default",
         branch: null,
-        worktreePath: "/tmp/runtime-layer-deferred-settle",
+        worktreePath: workspacePath,
       });
       yield* orchestrator.dispatch({
         type: "thread.pin",
@@ -1464,7 +1469,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         providerSessionId,
         modelSelection,
         runtimePolicy: {
-          cwd: "/tmp/runtime-layer-deferred-settle",
+          cwd: workspacePath,
           runtimeMode: "full-access",
           interactionMode: "default",
         },
@@ -1570,6 +1575,10 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
 
   it.effect("archives after safe completion and discards stale or blocked deferred intents", () =>
     Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspacePath = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-runtime-layer-deferred-organization-",
+      });
       const orchestrator = yield* OrchestratorV2;
       const eventSink = yield* EventSinkV2;
       const sql = yield* SqlClient.SqlClient;
@@ -1591,7 +1600,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
             runtimeMode: "full-access",
             interactionMode: "default",
             branch: null,
-            worktreePath: `/tmp/runtime-layer-deferred-${suffix}`,
+            worktreePath: workspacePath,
           });
           yield* orchestrator.dispatch({
             type: "message.dispatch",
@@ -1655,7 +1664,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         providerSessionId,
         modelSelection,
         runtimePolicy: {
-          cwd: "/tmp/runtime-layer-deferred-archive",
+          cwd: workspacePath,
           runtimeMode: "full-access",
           interactionMode: "default",
         },
