@@ -2420,7 +2420,7 @@ export const makeCodexSessionRuntime = (
           if (!monitoringAvailable || suppressMonitorWakes || (yield* Ref.get(closedRef)))
             return yield* new MonitorSession.MonitorStoppedError({});
           if (!backgroundTasks.subscribe(processId))
-            return yield* new MonitorSession.MonitorProcessMissingError({});
+            return yield* new MonitorSession.MonitorProcessMissingError({ processId });
         }),
         unsubscribe: (processId) => Effect.sync(() => backgroundTasks.unsubscribe(processId)),
       });

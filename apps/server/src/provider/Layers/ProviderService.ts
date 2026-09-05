@@ -713,7 +713,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const prepareMcpSession = (
     threadId: ThreadId,
     providerInstanceId: ProviderInstanceId,
-    provider: string,
+    provider: ProviderDriverKind,
   ) =>
     Effect.gen(function* () {
       const capabilities: Array<McpCapability> = [];
