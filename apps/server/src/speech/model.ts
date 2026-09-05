@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalDate:off - low-level model file boundary.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalFetch:off - low-level streaming file boundary.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -45,7 +45,7 @@ export async function downloadSpeechModel(
 
   const partialPath = `${finalPath}.${NodeCrypto.randomUUID()}.part`;
   try {
-    const response = await fetch(SPEECH_MODEL.url, { signal });
+    const response = await fetch(SPEECH_MODEL.url, signal ? { signal } : undefined);
     if (!response.ok || !response.body) {
       throw new Error(`speech model download failed with status ${response.status}`);
     }
