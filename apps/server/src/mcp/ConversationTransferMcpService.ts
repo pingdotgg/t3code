@@ -3,6 +3,8 @@ import {
   type ConversationForkInput,
   type ConversationForkNativeEligibility,
   type ConversationForkResult,
+  type ConversationMergeBackInput,
+  type ConversationMergeBackResult,
   type ConversationTransferListInput,
   type ConversationTransferListResult,
   type ConversationTransferReceipt,
@@ -23,6 +25,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
+import { CommandReceiptStoreV2 } from "../orchestration-v2/CommandReceiptStore.ts";
 import type { OrchestratorV2DispatchResult } from "../orchestration-v2/Orchestrator.ts";
 import {
   ThreadManagementService,
@@ -41,6 +44,10 @@ export class ConversationTransferMcpService extends Context.Service<
       scope: McpInvocationScope,
       input: ConversationForkInput,
     ) => Effect.Effect<ConversationForkResult, OrchestratorMcpFailure>;
+    readonly mergeBack: (
+      scope: McpInvocationScope,
+      input: ConversationMergeBackInput,
+    ) => Effect.Effect<ConversationMergeBackResult, OrchestratorMcpFailure>;
   }
 >()("t3/mcp/ConversationTransferMcpService") {}
 
@@ -95,6 +102,12 @@ function forkCommandId(scope: McpInvocationScope, requestKey: string): CommandId
   );
 }
 
+function mergeBackCommandId(scope: McpInvocationScope, requestKey: string): CommandId {
+  return CommandId.make(
+    `command:mcp:${stablePart(scope.providerSessionId)}:thread-merge-back:${stablePart(requestKey)}`,
+  );
+}
+
 function sourceRun(
   projection: OrchestrationV2ThreadProjection,
   point: OrchestrationV2ThreadForkSourcePoint,
@@ -140,10 +153,14 @@ export function conversationForkNativeEligibility(
   return "eligible";
 }
 
-function receipt(result: OrchestratorV2DispatchResult, commandId: CommandId) {
+function receipt(
+  result: OrchestratorV2DispatchResult,
+  commandId: CommandId,
+  commandType: "thread.fork" | "thread.merge_back",
+) {
   return {
     commandId,
-    commandType: "thread.fork",
+    commandType,
     sequence: result.sequence,
     eventIds: result.storedEvents.map((stored) => stored.event.id),
   } satisfies ConversationTransferReceipt;
@@ -167,6 +184,7 @@ function forkTransfer(
 
 export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService;
+  const commandReceipts = yield* CommandReceiptStoreV2;
 
   const requireCapability = (scope: McpInvocationScope) =>
     scope.capabilities.has("orchestration")
@@ -242,10 +260,54 @@ export const make = Effect.gen(function* () {
           resolutionTiming: "first_target_turn",
           fallback: "provider_context_capabilities_checked_on_first_target_turn",
         },
-        receipt: receipt(input.dispatched, input.commandId),
+        receipt: receipt(input.dispatched, input.commandId, "thread.fork"),
       } satisfies ConversationForkResult;
     },
   );
+
+  const mergeBackResultFromDispatch = Effect.fn(
+    "ConversationTransferMcpService.mergeBackResultFromDispatch",
+  )(function* (input: {
+    readonly request: ConversationMergeBackInput;
+    readonly commandId: CommandId;
+    readonly dispatched: OrchestratorV2DispatchResult;
+  }) {
+    let transfer: OrchestrationV2ContextTransfer | undefined;
+    const supersededTransferIds: Array<OrchestrationV2ContextTransfer["id"]> = [];
+    for (const stored of input.dispatched.storedEvents) {
+      if (
+        stored.event.type === "context-transfer.created" &&
+        stored.event.payload.type === "merge_back"
+      ) {
+        transfer = stored.event.payload;
+      }
+      if (
+        stored.event.type === "context-transfer.updated" &&
+        stored.event.payload.type === "merge_back" &&
+        stored.event.payload.status === "superseded"
+      ) {
+        supersededTransferIds.push(stored.event.payload.id);
+      }
+    }
+    if (transfer === undefined || transfer.basePoint === null) {
+      return yield* failure(
+        "orchestration_error",
+        "The merge-back command committed without returning its provenance transfer event.",
+      );
+    }
+    return {
+      sourceThreadId: transfer.sourceThreadId,
+      targetThreadId: transfer.targetThreadId,
+      scope: "fork_delta_through_source_point",
+      requestedSourcePoint: input.request.sourcePoint,
+      canonicalSourcePoint: transfer.sourcePoint,
+      basePoint: transfer.basePoint,
+      transfer,
+      supersededTransferIds,
+      consumption: "next_target_turn",
+      receipt: receipt(input.dispatched, input.commandId, "thread.merge_back"),
+    } satisfies ConversationMergeBackResult;
+  });
 
   return ConversationTransferMcpService.of({
     list: (scope, input) =>
@@ -253,6 +315,7 @@ export const make = Effect.gen(function* () {
         const { target } = yield* loadScoped(scope, input.threadId);
         const limit = input.limit ?? 50;
         const matching = target.contextTransfers
+          .toReversed()
           .filter((transfer) => input.type === undefined || transfer.type === input.type)
           .toSorted(
             (left, right) =>
@@ -381,8 +444,186 @@ export const make = Effect.gen(function* () {
           source,
         });
       }),
+    mergeBack: (scope, input) =>
+      Effect.gen(function* () {
+        yield* requireCapability(scope);
+        const commandId = mergeBackCommandId(scope, input.clientRequestId);
+        const priorReceipt = yield* commandReceipts.getByCommandId(commandId).pipe(
+          Effect.map(
+            Option.filter(
+              (existing) =>
+                existing.status === "accepted" && existing.commandType === "thread.merge_back",
+            ),
+          ),
+          Effect.mapError((error) =>
+            failure(
+              "orchestration_error",
+              `Unable to inspect the merge-back retry receipt: ${errorMessage(error)}`,
+            ),
+          ),
+        );
+        if (Option.isSome(priorReceipt)) {
+          const caller = yield* threads
+            .getThreadProjection(scope.threadId)
+            .pipe(
+              Effect.mapError((error) =>
+                failure(
+                  "orchestration_error",
+                  `Unable to load the calling thread: ${errorMessage(error)}`,
+                ),
+              ),
+            );
+          const recordedTarget = yield* threads
+            .getThreadProjection(priorReceipt.value.threadId)
+            .pipe(
+              Effect.mapError((error) =>
+                failure(
+                  "orchestration_error",
+                  `Unable to load the accepted merge-back target: ${errorMessage(error)}`,
+                ),
+              ),
+            );
+          if (recordedTarget.thread.projectId !== caller.thread.projectId) {
+            return yield* failure(
+              "thread_not_found",
+              `The accepted merge-back target is not in the calling project.`,
+            );
+          }
+          const replayed = yield* threads
+            .dispatch({
+              type: "thread.merge_back",
+              createdBy: "agent",
+              creationSource: "mcp",
+              commandId,
+              sourceThreadId: input.sourceThreadId ?? scope.threadId,
+              targetThreadId: priorReceipt.value.threadId,
+              sourcePoint: input.sourcePoint,
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                failure(
+                  "orchestration_error",
+                  `Unable to replay the merge-back receipt: ${errorMessage(error)}`,
+                ),
+              ),
+            );
+          return yield* mergeBackResultFromDispatch({
+            request: input,
+            commandId,
+            dispatched: replayed,
+          });
+        }
+
+        const { parent, target: source } = yield* loadScoped(scope, input.sourceThreadId);
+        if (
+          runtimeModeRank(source.thread.runtimeMode) > runtimeModeRank(parent.thread.runtimeMode)
+        ) {
+          return yield* failure(
+            "runtime_mode_escalation_denied",
+            `The source thread's ${source.thread.runtimeMode} runtime mode exceeds the calling thread's ${parent.thread.runtimeMode} ceiling.`,
+          );
+        }
+        if (
+          interactionModeRank(source.thread.interactionMode) >
+          interactionModeRank(parent.thread.interactionMode)
+        ) {
+          return yield* failure(
+            "interaction_mode_escalation_denied",
+            `The source thread's ${source.thread.interactionMode} interaction mode exceeds the calling thread's ${parent.thread.interactionMode} ceiling.`,
+          );
+        }
+        const recordedTargetId = source.thread.lineage.parentThreadId;
+        if (source.thread.lineage.relationshipToParent !== "fork" || recordedTargetId === null) {
+          return yield* failure(
+            "invalid_request",
+            `Thread ${source.thread.id} is not a conversation fork and cannot merge back.`,
+          );
+        }
+        const requestedTargetId = input.targetThreadId ?? recordedTargetId;
+        if (requestedTargetId !== recordedTargetId) {
+          return yield* failure(
+            "invalid_request",
+            `Thread ${source.thread.id} can merge back only to its recorded parent ${recordedTargetId}.`,
+          );
+        }
+        const { target } = yield* loadScoped(scope, requestedTargetId);
+        if (
+          runtimeModeRank(target.thread.runtimeMode) > runtimeModeRank(parent.thread.runtimeMode)
+        ) {
+          return yield* failure(
+            "runtime_mode_escalation_denied",
+            `The target thread's ${target.thread.runtimeMode} runtime mode exceeds the calling thread's ${parent.thread.runtimeMode} ceiling.`,
+          );
+        }
+        if (
+          interactionModeRank(target.thread.interactionMode) >
+          interactionModeRank(parent.thread.interactionMode)
+        ) {
+          return yield* failure(
+            "interaction_mode_escalation_denied",
+            `The target thread's ${target.thread.interactionMode} interaction mode exceeds the calling thread's ${parent.thread.interactionMode} ceiling.`,
+          );
+        }
+        const run = sourceRun(source, input.sourcePoint);
+        if (run === undefined) {
+          return yield* failure(
+            "run_not_found",
+            `No run in thread ${source.thread.id} matches source point ${input.sourcePoint.type}.`,
+          );
+        }
+        if (run.status !== "completed" && run.status !== "waiting") {
+          return yield* failure(
+            "invalid_request",
+            `Merge-back source run ${run.id} is ${run.status}; only provider-finished runs are supported.`,
+          );
+        }
+        const forkTransfer = source.contextTransfers.findLast(
+          (transfer) =>
+            transfer.type === "fork" &&
+            transfer.sourceThreadId === target.thread.id &&
+            transfer.targetThreadId === source.thread.id,
+        );
+        if (forkTransfer === undefined) {
+          return yield* failure(
+            "invalid_request",
+            `No fork transfer connects ${target.thread.id} to ${source.thread.id}.`,
+          );
+        }
+
+        const dispatched = yield* threads
+          .dispatch({
+            type: "thread.merge_back",
+            createdBy: "agent",
+            creationSource: "mcp",
+            commandId,
+            sourceThreadId: source.thread.id,
+            targetThreadId: target.thread.id,
+            sourcePoint: input.sourcePoint,
+            policyCeiling: {
+              callerThreadId: parent.thread.id,
+              runtimeMode: parent.thread.runtimeMode,
+              interactionMode: parent.thread.interactionMode,
+            },
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Unable to queue conversation merge-back: ${errorMessage(error)}`,
+              ),
+            ),
+          );
+        return yield* mergeBackResultFromDispatch({
+          request: input,
+          commandId,
+          dispatched,
+        });
+      }),
   });
 });
 
-export const layer: Layer.Layer<ConversationTransferMcpService, never, ThreadManagementService> =
-  Layer.effect(ConversationTransferMcpService, make);
+export const layer: Layer.Layer<
+  ConversationTransferMcpService,
+  never,
+  CommandReceiptStoreV2 | ThreadManagementService
+> = Layer.effect(ConversationTransferMcpService, make);

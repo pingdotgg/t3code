@@ -110,3 +110,36 @@ export const ConversationForkResult = Schema.Struct({
   receipt: ConversationTransferReceipt,
 });
 export type ConversationForkResult = typeof ConversationForkResult.Type;
+
+export const ConversationMergeBackInput = Schema.Struct({
+  sourceThreadId: Schema.optional(
+    ThreadId.annotate({
+      description: "Fork thread containing the result; defaults to this thread.",
+    }),
+  ),
+  targetThreadId: Schema.optional(
+    ThreadId.annotate({
+      description: "Original parent thread; defaults to the fork's recorded parent.",
+    }),
+  ),
+  sourcePoint: OrchestrationV2ThreadForkSourcePoint.annotate({
+    description:
+      "Explicit provider-finished source: the latest completed run, one completed or waiting run id, or its checkpoint.",
+  }),
+  clientRequestId: WellFormedRequestKey,
+});
+export type ConversationMergeBackInput = typeof ConversationMergeBackInput.Type;
+
+export const ConversationMergeBackResult = Schema.Struct({
+  sourceThreadId: ThreadId,
+  targetThreadId: ThreadId,
+  scope: Schema.Literal("fork_delta_through_source_point"),
+  requestedSourcePoint: OrchestrationV2ThreadForkSourcePoint,
+  canonicalSourcePoint: OrchestrationV2ContextSourcePoint,
+  basePoint: OrchestrationV2ContextSourcePoint,
+  transfer: OrchestrationV2ContextTransfer,
+  supersededTransferIds: Schema.Array(OrchestrationV2ContextTransfer.fields.id),
+  consumption: Schema.Literal("next_target_turn"),
+  receipt: ConversationTransferReceipt,
+});
+export type ConversationMergeBackResult = typeof ConversationMergeBackResult.Type;

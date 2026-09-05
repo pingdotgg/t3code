@@ -330,6 +330,16 @@ turn planner then chooses native fork or checks portable-context capabilities.
 thread's durable context-transfer records. It is the read path for fork
 provenance and later resolution or consumption.
 
+`t3_thread_merge_back` validates that the source is a fork of the selected
+target and that its explicit source run is provider-finished before dispatching
+`thread.merge_back`. The committed transfer records both the selected result
+point and the original fork base. It stays pending until the target's next turn;
+a newer pending merge-back for the same pair supersedes the older transfer.
+The target runtime and interaction modes may not exceed the calling thread's
+captured or current ceiling. Stable request keys replay the same accepted
+command receipt and transfer before re-evaluating mutable lineage, lifecycle, or
+run state. This operation does not invoke Git or change workspace state.
+
 ## Delegated Task Lifecycle
 
 The MCP server is a command ingress into V2. It does not call provider adapters

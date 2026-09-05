@@ -1,6 +1,8 @@
 import {
   ConversationForkInput,
   ConversationForkResult,
+  ConversationMergeBackInput,
+  ConversationMergeBackResult,
   ConversationTransferListInput,
   ConversationTransferListResult,
   OrchestratorMcpCapabilitiesResult,
@@ -264,6 +266,18 @@ export const ThreadForkTool = Tool.make("t3_thread_fork", {
   .annotate(Tool.Title, "Fork a T3 conversation")
   .annotate(Tool.Destructive, true);
 
+export const ThreadMergeBackTool = Tool.make("t3_thread_merge_back", {
+  description:
+    "Queue a fork conversation's provider-finished result for context merge-back into its original parent thread. This changes T3 conversation context, not Git branches or workspaces. Omit sourceThreadId when called from the fork and targetThreadId to use its recorded parent. The durable result reports source, target, fork-base provenance, superseded pending transfers, and next-target-turn consumption. Reuse the required clientRequestId for retries.",
+  parameters: ConversationMergeBackInput,
+  success: ConversationMergeBackResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: transferDependencies,
+})
+  .annotate(Tool.Title, "Merge back conversation context")
+  .annotate(Tool.Destructive, true);
+
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
@@ -282,4 +296,5 @@ export const OrchestratorToolkit = Toolkit.make(
   ThreadInterruptTool,
   ThreadTransfersTool,
   ThreadForkTool,
+  ThreadMergeBackTool,
 );

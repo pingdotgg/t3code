@@ -3,10 +3,15 @@ import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { ConversationForkInput, ConversationTransferListInput } from "./conversationTransferMcp.ts";
+import {
+  ConversationForkInput,
+  ConversationMergeBackInput,
+  ConversationTransferListInput,
+} from "./conversationTransferMcp.ts";
 
 const decodeFork = Schema.decodeUnknownEffect(ConversationForkInput);
 const decodeList = Schema.decodeUnknownEffect(ConversationTransferListInput);
+const decodeMergeBack = Schema.decodeUnknownEffect(ConversationMergeBackInput);
 
 it.effect("requires an explicit stable fork source and a well-formed retry key", () =>
   Effect.gen(function* () {
@@ -34,5 +39,22 @@ it.effect("bounds transfer result pages", () =>
 
     expect(valid.limit).toBe(100);
     expect(Result.isFailure(tooLarge)).toBe(true);
+  }),
+);
+
+it.effect("keeps merge-back source and target explicit when supplied", () =>
+  Effect.gen(function* () {
+    const input = yield* decodeMergeBack({
+      sourceThreadId: "thread:fork",
+      targetThreadId: "thread:parent",
+      sourcePoint: { type: "checkpoint", checkpointId: "checkpoint:fork-result" },
+      clientRequestId: "merge-fork-result",
+    });
+
+    expect(input).toMatchObject({
+      sourceThreadId: "thread:fork",
+      targetThreadId: "thread:parent",
+      sourcePoint: { type: "checkpoint", checkpointId: "checkpoint:fork-result" },
+    });
   }),
 );
