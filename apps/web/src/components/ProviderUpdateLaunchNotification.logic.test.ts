@@ -289,6 +289,27 @@ describe("provider update launch notification logic", () => {
     });
   });
 
+  it("names providers in the one-click toast when multiple updates are available", () => {
+    const view = getProviderUpdateInitialToastView({
+      updateProviders: [
+        updateCandidate({ driver: driver("codex"), latestVersion: "1.1.0" }),
+        updateCandidate({ driver: driver("opencode"), latestVersion: "1.2.0" }),
+      ],
+      oneClickProviders: [
+        updateCandidate({ driver: driver("codex"), latestVersion: "1.1.0" }),
+        updateCandidate({ driver: driver("opencode"), latestVersion: "1.2.0" }),
+      ],
+    });
+
+    expect(view).toMatchObject({
+      phase: "initial",
+      type: "warning",
+      title: "Updates Available: 2 providers",
+      description:
+        "Updates available for Codex and OpenCode. Install now or review provider settings.",
+    });
+  });
+
   it("describes settings-only updates without one-click support", () => {
     const view = getProviderUpdateInitialToastView({
       updateProviders: [
