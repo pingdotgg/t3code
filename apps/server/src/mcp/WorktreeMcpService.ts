@@ -20,7 +20,6 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -327,12 +326,10 @@ const make = Effect.gen(function* () {
         creationSource: "mcp",
       })
       .pipe(
-        Effect.map(
-          (sendResult): WorktreeMcpContinuationStatus => ({
-            status: "scheduled",
-            delivery: sendResult.delivery,
-          }),
-        ),
+        Effect.map((sendResult): WorktreeMcpContinuationStatus => ({
+          status: "scheduled",
+          delivery: sendResult.delivery,
+        })),
         Effect.catchCause((cause) => {
           const detail = errorMessage(Cause.squash(cause));
           return Effect.logWarning("workspace transition continuation failed to queue", {
@@ -1913,6 +1910,11 @@ const make = Effect.gen(function* () {
                 workspacePath: targetWorkspacePath,
               })
             : ({ status: "skipped" } as const);
+          if (checkoutAction === "switched" || checkoutAction === "created") {
+            yield* vcsStatusBroadcaster
+              .refreshStatus(targetWorkspacePath)
+              .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach);
+          }
           const previous = {
             workspacePath: currentWorkspacePath ?? recordedWorkspacePath,
             recordedBranch: projection.thread.branch,

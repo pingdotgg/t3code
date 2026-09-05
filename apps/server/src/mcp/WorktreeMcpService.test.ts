@@ -805,6 +805,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     switchRef,
     createRef,
     invalidateLocalStatus,
+    refreshStatus,
     runForThread,
   };
 };
@@ -1898,6 +1899,31 @@ describe("t3_worktree_list", () => {
     });
   });
 
+  it.effect("reports typed status failures without swallowing defects or interruption", () =>
+    Effect.gen(function* () {
+      const typedResult = yield* runList(makeHarness({ localStatusFailure: "typed" }), {
+        limit: 1,
+      });
+      expect(typedResult.worktrees[0]).toMatchObject({ availability: "missing" });
+
+      const defectExit = yield* Effect.exit(
+        runList(makeHarness({ localStatusFailure: "defect" }), { limit: 1 }),
+      );
+      expect(Exit.isFailure(defectExit)).toBe(true);
+      if (Exit.isFailure(defectExit)) {
+        expect(Cause.hasDies(defectExit.cause)).toBe(true);
+      }
+
+      const interruptExit = yield* Effect.exit(
+        runList(makeHarness({ localStatusFailure: "interrupt" }), { limit: 1 }),
+      );
+      expect(Exit.isFailure(interruptExit)).toBe(true);
+      if (Exit.isFailure(interruptExit)) {
+        expect(Cause.hasInterruptsOnly(interruptExit.cause)).toBe(true);
+      }
+    }),
+  );
+
   it.effect("marks a stale checkout missing when status reports a non-repository path", () => {
     const stalePath = "/worktrees/project/stale";
     const harness = makeHarness({
@@ -2215,6 +2241,7 @@ describe("t3_thread_checkout", () => {
       expect(harness.switchRef.mock.invocationCallOrder[0]).toBeLessThan(
         harness.dispatch.mock.invocationCallOrder[0]!,
       );
+      expect(harness.refreshStatus).toHaveBeenCalledWith(workspaceRoot);
     });
   });
 
