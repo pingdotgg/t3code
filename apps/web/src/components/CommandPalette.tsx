@@ -1011,12 +1011,10 @@ function OpenCommandPaletteDialog(props: {
   );
   const browseResult = browseQuery.data;
   const isBrowsePending = hasBrowseTarget && (browseAccess.isPending || browseQuery.isPending);
-  const browseError =
-    !hasBrowseTarget || browseAccess.isPending
-      ? null
-      : browseAccess.canReadFiles
-        ? browseQuery.error
-        : (browseAccess.error ?? "This connection cannot browse host folders.");
+  const browseAccessError =
+    hasBrowseTarget && !browseAccess.isPending && !browseAccess.canReadFiles
+      ? (browseAccess.error ?? "This connection cannot browse host folders.")
+      : null;
   const browseEntries = browseResult?.entries ?? EMPTY_BROWSE_ENTRIES;
   const { visibleEntries: visibleBrowseEntries, exactEntry: exactBrowseEntry } = useMemo(
     () =>
@@ -2258,7 +2256,7 @@ function OpenCommandPaletteDialog(props: {
   const willCreateProjectPath =
     canSubmitBrowsePath &&
     !isBrowsePending &&
-    browseError === null &&
+    browseAccessError === null &&
     query.trim().length > 0 &&
     !hasHighlightedBrowseItem &&
     (hasTrailingPathSeparator(query) ? !browseResult : exactBrowseEntry === null);
@@ -2683,9 +2681,9 @@ function OpenCommandPaletteDialog(props: {
           </div>
         </div>
       ) : null}
-      {browseError ? (
+      {browseAccessError ? (
         <div role="alert" className="px-4 py-3 text-sm text-muted-foreground">
-          {browseError}
+          {browseAccessError}
         </div>
       ) : isBrowsePending && browseResult === null ? (
         <div role="status" className="px-4 py-3 text-sm text-muted-foreground">
