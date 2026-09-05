@@ -16,6 +16,10 @@ export interface UsagePriceDraft {
   readonly removed?: boolean;
 }
 
+function modelPrice(target: UsagePriceTarget, model: string) {
+  return target.prices && Object.hasOwn(target.prices, model) ? target.prices[model] : undefined;
+}
+
 export function usagePriceCell(
   targets: readonly UsagePriceTarget[],
   model: string,
@@ -23,7 +27,7 @@ export function usagePriceCell(
 ) {
   const optional = USAGE_PRICE_FIELDS.find((entry) => entry.key === field)!.optional;
   const values = targets.map((target) =>
-    target.prices?.[model] ? usagePriceForm(model, target.prices[model])[field] : null,
+    modelPrice(target, model) ? usagePriceForm(model, modelPrice(target, model))[field] : null,
   );
   if (targets.some((target) => target.prices === null))
     return { value: "", placeholder: "Unavailable" };
@@ -44,10 +48,10 @@ export function usagePriceTableChanges(
   for (const draft of drafts) {
     const model = draft.model.trim();
     if (draft.removed) {
-      if (target.prices?.[model]) changes.push({ model, price: null });
+      if (modelPrice(target, model)) changes.push({ model, price: null });
       continue;
     }
-    const original = usagePriceForm(model, target.prices?.[model]);
+    const original = usagePriceForm(model, modelPrice(target, model));
     const form = { ...original, ...draft.values };
     const parsed = parseUsagePriceForm(form);
     if (parsed === null) {

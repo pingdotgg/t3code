@@ -46,6 +46,28 @@ describe("price table edits", () => {
     ).toBe("Unavailable");
   });
 
+  it.each(["constructor", "toString", "__proto__"])(
+    "handles an exact model ID named %s",
+    (model) => {
+      const environment = target("a", {});
+      expect(usagePriceCell([environment], model, "inputCostPerMillionTokens")).toEqual({
+        value: "",
+        placeholder: "Automatic",
+      });
+      const result = usagePriceTableChanges(environment, [
+        {
+          ...draft({ inputCostPerMillionTokens: "2", outputCostPerMillionTokens: "8" }),
+          model,
+          isNew: true,
+        },
+      ]);
+      expect(result.changes).toEqual([{ model, price }]);
+      expect(
+        usagePriceCell([target("a", { [model]: price })], model, "inputCostPerMillionTokens").value,
+      ).toBe("2");
+    },
+  );
+
   it("changes only edited columns while preserving each environment's other prices and models", () => {
     const edits = [draft({ inputCostPerMillionTokens: "3" })];
     const a = usagePriceTableChanges(
