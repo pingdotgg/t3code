@@ -237,6 +237,11 @@ function threadTimeLabel(thread: SidebarThreadSummary): string {
   return compactSidebarTimeLabel(formatRelativeTimeLabel(timestamp));
 }
 
+function threadCompletedTimeLabel(thread: SidebarThreadSummary): string {
+  const timestamp = thread.latestTurn?.completedAt ?? thread.updatedAt;
+  return compactSidebarTimeLabel(formatRelativeTimeLabel(timestamp));
+}
+
 // Settled rows read "how long ago did this wrap up", matching their sort
 // key: both go through resolveSettledThreadTimestamp so label and order can't
 // disagree.
@@ -745,6 +750,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
 const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
+  compact: boolean;
   // Slim rows are either settled (action: un-settle) or merely quiet
   // (seen Ready threads — action: settle).
   variantAction: "settle" | "unsettle" | "unsnooze";
@@ -1475,6 +1481,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     );
   }
 
+  const compact = props.compact;
+  const compactCompleted =
+    compact && status === "ready" && !isWokeStatus && thread.latestTurn?.completedAt != null;
   const diff = latestTurnDiff(thread);
 
   const sortable = props.sortable;
@@ -1492,7 +1501,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       }
       {...(sortable?.listeners ?? {})}
       className={cn(
-        "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_96px]",
+        "list-none [content-visibility:auto]",
+        compact
+          ? "[contain-intrinsic-size:auto_36px]"
+          : "py-0.5 [contain-intrinsic-size:auto_96px]",
         sortable?.isDragging && "z-20 opacity-80",
       )}
     >
@@ -1503,7 +1515,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ref={rowRef}
               role="button"
               tabIndex={0}
-              data-testid="sidebar-row-card"
+              data-testid={compact ? "sidebar-row-compact" : "sidebar-row-card"}
               aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
               onClick={handleClick}
@@ -1513,8 +1525,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             />
           }
         >
-          <div className="relative z-10 h-[4.875rem] px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]">
-            <div className="flex h-5 min-w-0 items-center gap-1.5">
+          <div
+            className={cn(
+              "relative z-10",
+              compact
+                ? "flex h-9 items-center px-2.5"
+                : "h-[4.875rem] px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]",
+            )}
+          >
+            <div className="flex h-5 w-full min-w-0 items-center gap-1.5">
               {draftIndicator}
               <ProjectFavicon
                 environmentId={thread.environmentId}
@@ -1524,7 +1543,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 projectIcon={props.projectIcon}
                 className="size-4 shrink-0"
               />
-              {props.projectDisplayName ? (
+              {compact ? (
+                title
+              ) : props.projectDisplayName ? (
                 <span
                   className={cn(
                     "min-w-0 flex-1 truncate text-secondary-label text-xs",
@@ -1554,7 +1575,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                   )}
                 >
-                  {topStatus ? (
+                  {compactCompleted ? (
+                    <span
+                      role="status"
+                      aria-label={`Completed ${threadCompletedTimeLabel(thread)}`}
+                      className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300"
+                    >
+                      <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
+                      <span aria-hidden className="text-secondary-label">
+                        {threadCompletedTimeLabel(thread)}
+                      </span>
+                    </span>
+                  ) : topStatus ? (
                     isWokeStatus ? (
                       <Tooltip>
                         <TooltipTrigger
@@ -1590,7 +1622,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                         {/* The label alone is the live region: a role="status"
                             wrapper around the ticking duration would make
                             screen readers announce every second. */}
-                        <span role="status">{topStatus.label}</span>
+                        <span
+                          role="status"
+                          className={compact && status === "working" ? "sr-only" : undefined}
+                        >
+                          {topStatus.label}
+                        </span>
                         {status === "working" ? (
                           <span aria-hidden>
                             <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
@@ -1602,7 +1639,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     threadTimeLabel(thread)
                   )}
                 </span>
-                {props.settlementSupported || showSnoozeButton || hasUnsentDraft ? (
+                {props.settlementSupported ||
+                showSnoozeButton ||
+                hasUnsentDraft ||
+                (compact && prBadge) ? (
                   <span
                     className={cn(
                       // focus-visible, not focus-within: a mouse click leaves
@@ -1614,6 +1654,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       snoozeMenuOpen && "pointer-events-auto static opacity-100",
                     )}
                   >
+                    {compact ? prBadge : null}
                     {hasUnsentDraft ? (
                       <Tooltip>
                         <TooltipTrigger
@@ -1652,7 +1693,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                           }
                         >
                           <CheckIcon className="size-3.5" />
-                          Settle
+                          {compact ? null : "Settle"}
                         </TooltipTrigger>
                         <TooltipPopup>Settle thread</TooltipPopup>
                       </Tooltip>
@@ -1661,15 +1702,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 ) : null}
               </span>
             </div>
-            <div className="mt-1 flex min-w-0">
-              {title}
-              {isRegeneratingTitle ? (
-                <span role="status" className="sr-only">
-                  Regenerating title
-                </span>
-              ) : null}
-            </div>
-            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
+            <div className={compact ? "hidden" : "mt-1 flex min-w-0"}>{compact ? null : title}</div>
+            {isRegeneratingTitle ? (
+              <span role="status" className="sr-only">
+                Regenerating title
+              </span>
+            ) : null}
+            <div
+              className={
+                compact
+                  ? "hidden"
+                  : "mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs"
+              }
+            >
               {/* Always the branch. The plan step used to take this slot while
                   working, but it truncated to a half-sentence and dropped the
                   branch, so the row lost its most stable identifier. */}
@@ -1871,6 +1916,7 @@ export default function Sidebar() {
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const compactThreadRows = useClientSettings((s) => s.sidebarCompactThreadRows);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
@@ -3997,10 +4043,9 @@ export default function Sidebar() {
                     const threadKey = scopedThreadKey(
                       scopeThreadRef(thread.environmentId, thread.id),
                     );
-                    // Settled and snoozed are the ONLY things that collapse a
-                    // row: every other thread is a full card. Density comes
-                    // from users (or the auto rules) actually parking work,
-                    // not from the sidebar second-guessing what still matters.
+                    // Settled and snoozed always use slim rows. Active and
+                    // pinned threads use cards unless the user has explicitly
+                    // enabled the compact thread-list preference.
                     const isCard = section === "active" || section === "pinned";
                     const rowVariant = isCard ? "card" : "slim";
                     return (
@@ -4014,6 +4059,7 @@ export default function Sidebar() {
                         key={`${threadKey}:${rowVariant}`}
                         thread={thread}
                         variant={rowVariant}
+                        compact={compactThreadRows}
                         // Snoozed rows wake, settled rows un-settle, and cards settle.
                         variantAction={
                           section === "snoozed"
