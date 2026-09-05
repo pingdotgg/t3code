@@ -1110,30 +1110,57 @@ const makeWsRpcLayer = (
             }
 
             if (bootstrap?.prepareWorktree) {
-              let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
+              const baseBranch = bootstrap.prepareWorktree.baseBranch;
+              let worktreeBaseRef = baseBranch;
               // "Start from origin" is a stored default; repos without the
               // requested remote branch fall back to the local base branch.
-              const startFromOrigin =
-                bootstrap.prepareWorktree.startFromOrigin === true &&
-                (yield* gitWorkflow.remoteExists({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  remoteName: "origin",
-                }));
-              if (startFromOrigin) {
+              // The base may track a remote other than `origin` (e.g. `upstream/main`),
+              // so resolve the fetch target from the base ref instead of assuming `origin`.
+              // Otherwise we pay for a useless `fetch origin` and base the worktree
+              // on a stale ref while the real remote is never fetched.
+              const remotePrefix = baseBranch.includes("/")
+                ? baseBranch.slice(0, baseBranch.indexOf("/"))
+                : null;
+              let fetchRemoteName: string | null = null;
+              if (bootstrap.prepareWorktree.startFromOrigin === true) {
+                if (
+                  remotePrefix !== null &&
+                  (yield* gitWorkflow.remoteExists({
+                    cwd: bootstrap.prepareWorktree.projectCwd,
+                    remoteName: remotePrefix,
+                  }))
+                ) {
+                  fetchRemoteName = remotePrefix;
+                } else if (
+                  yield* gitWorkflow.remoteExists({
+                    cwd: bootstrap.prepareWorktree.projectCwd,
+                    remoteName: "origin",
+                  })
+                ) {
+                  fetchRemoteName = "origin";
+                }
+              }
+              if (fetchRemoteName !== null) {
                 yield* gitWorkflow.fetchRemote({
                   cwd: bootstrap.prepareWorktree.projectCwd,
-                  remoteName: "origin",
+                  remoteName: fetchRemoteName,
                 });
+                // remoteBranchExists concatenates refs/remotes/<remote>/<refName>,
+                // so strip the remote prefix when the base already carries it
+                // (`upstream/main` on `upstream` must look up `main`, not `upstream/main`).
+                const remoteRefName = baseBranch.startsWith(`${fetchRemoteName}/`)
+                  ? baseBranch.slice(fetchRemoteName.length + 1)
+                  : baseBranch;
                 const remoteBaseExists = yield* gitWorkflow.remoteBranchExists({
                   cwd: bootstrap.prepareWorktree.projectCwd,
-                  refName: bootstrap.prepareWorktree.baseBranch,
-                  remoteName: "origin",
+                  refName: remoteRefName,
+                  remoteName: fetchRemoteName,
                 });
                 if (remoteBaseExists) {
                   const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
                     cwd: bootstrap.prepareWorktree.projectCwd,
-                    refName: bootstrap.prepareWorktree.baseBranch,
-                    fallbackRemoteName: "origin",
+                    refName: baseBranch,
+                    fallbackRemoteName: fetchRemoteName,
                   });
                   worktreeBaseRef = resolvedRemoteBase.commitSha;
                 }

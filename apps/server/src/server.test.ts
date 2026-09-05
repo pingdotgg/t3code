@@ -10451,6 +10451,125 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect.each([
+    {
+      caseName: "a non-origin remote base",
+      baseBranch: "upstream/main",
+      fetchRemoteName: "upstream",
+      lookupRefName: "main",
+      remoteRefName: "upstream/main",
+    },
+    {
+      caseName: "an origin-prefixed base",
+      baseBranch: "origin/main",
+      fetchRemoteName: "origin",
+      lookupRefName: "main",
+      remoteRefName: "origin/main",
+    },
+  ])(
+    "fetches the base branch's own remote for $caseName",
+    ({ baseBranch, fetchRemoteName, lookupRefName, remoteRefName }) =>
+      Effect.gen(function* () {
+        const fetchedCommit = "abcdef0123456789abcdef0123456789abcdef01";
+        const remoteExists = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["remoteExists"]>[0]) =>
+            Effect.succeed(true),
+        );
+        const fetchRemote = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"]>[0]) => Effect.void,
+        );
+        const remoteBranchExists = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["remoteBranchExists"]>[0]) =>
+            Effect.succeed(true),
+        );
+        const resolveRemoteTrackingCommit = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["resolveRemoteTrackingCommit"]>[0]) =>
+            Effect.succeed({
+              commitSha: fetchedCommit,
+              remoteRefName,
+            }),
+        );
+        const createWorktree = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
+            Effect.succeed({
+              worktree: {
+                refName: "t3code/bootstrap-refName",
+                path: "/tmp/bootstrap-worktree",
+              },
+            }),
+        );
+
+        yield* buildAppUnderTest({
+          layers: {
+            gitVcsDriver: {
+              remoteExists,
+              fetchRemote,
+              remoteBranchExists,
+              resolveRemoteTrackingCommit,
+              createWorktree,
+            },
+            orchestrationEngine: {
+              dispatch: (command: OrchestrationCommand) =>
+                Effect.sync(() => ({ sequence: 1 })),
+              readEvents: () => Stream.empty,
+            },
+          },
+        });
+
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        const wsUrl = yield* getWsServerUrl("/ws");
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "thread.turn.start",
+              commandId: CommandId.make("cmd-bootstrap-turn-start-remote-base"),
+              threadId: ThreadId.make("thread-bootstrap-remote-base"),
+              message: {
+                messageId: MessageId.make("msg-bootstrap-remote-base"),
+                role: "user",
+                text: "hello",
+                attachments: [],
+              },
+              modelSelection: defaultModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              bootstrap: {
+                prepareWorktree: {
+                  projectCwd: "/tmp/project",
+                  baseBranch,
+                  branch: "t3code/bootstrap-refName",
+                  startFromOrigin: true,
+                },
+              },
+              createdAt,
+            }),
+          ),
+        );
+
+        assert.deepEqual(fetchRemote.mock.calls[0]?.[0], {
+          cwd: "/tmp/project",
+          remoteName: fetchRemoteName,
+        });
+        assert.deepEqual(remoteBranchExists.mock.calls[0]?.[0], {
+          cwd: "/tmp/project",
+          remoteName: fetchRemoteName,
+          refName: lookupRefName,
+        });
+        assert.deepEqual(resolveRemoteTrackingCommit.mock.calls[0]?.[0], {
+          cwd: "/tmp/project",
+          refName: baseBranch,
+          fallbackRemoteName: fetchRemoteName,
+        });
+        assert.deepEqual(createWorktree.mock.calls[0]?.[0], {
+          cwd: "/tmp/project",
+          refName: fetchedCommit,
+          newRefName: "t3code/bootstrap-refName",
+          baseRefName: baseBranch,
+          path: null,
+        });
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("records setup-script failures without aborting bootstrap turn start", () =>
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
