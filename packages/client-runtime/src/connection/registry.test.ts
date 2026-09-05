@@ -342,10 +342,17 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     connect: (entry, reportProgress) =>
       Effect.gen(function* () {
         const target = entry.target;
-        const prepared = {
+        const credential =
+          target._tag === "BearerConnectionTarget"
+            ? yield* credentialStore.get(target.connectionId)
+            : Option.none();
+        const prepared: PreparedConnection = {
           ...PREPARED,
           environmentId: target.environmentId,
           label: target.label,
+          httpAuthorization: Option.isSome(credential)
+            ? { _tag: "Bearer", token: credential.value.token }
+            : null,
           target,
         };
         yield* reportProgress({ stage: "preparing" });
@@ -705,6 +712,80 @@ describe("EnvironmentRegistry", () => {
         yield* Fiber.interrupt(subscription);
 
         expect(yield* Ref.get(labels)).toEqual([RELAY_TARGET.label, replacement.label]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("moves prepared credential observers when re-pairing an unchanged environment", () =>
+    Effect.gen(function* () {
+      const replacementCredential = new BearerConnectionCredential({ token: "replacement-token" });
+      const harness = yield* makeHarness(
+        [BEARER_TARGET],
+        [BEARER_PROFILE],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+      );
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const initialObserved = yield* Deferred.make<void>();
+        const replacementObserved = yield* Deferred.make<void>();
+        const tokens = yield* Ref.make<ReadonlyArray<string>>([]);
+        const followedSupervisors = yield* Ref.make(0);
+        yield* registry.start;
+
+        const subscription = yield* Effect.forkChild(
+          registry
+            .followStream(
+              BEARER_TARGET.environmentId,
+              Stream.unwrap(
+                Effect.gen(function* () {
+                  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+                  yield* Ref.update(followedSupervisors, (count) => count + 1);
+                  return SubscriptionRef.changes(supervisor.prepared);
+                }),
+              ),
+            )
+            .pipe(
+              Stream.filterMap((prepared) =>
+                Option.isSome(prepared) && prepared.value.httpAuthorization?._tag === "Bearer"
+                  ? Result.succeed(prepared.value.httpAuthorization.token)
+                  : Result.failVoid,
+              ),
+              Stream.changes,
+              Stream.runForEach((token) =>
+                Effect.gen(function* () {
+                  yield* Ref.update(tokens, (current) => [...current, token]);
+                  yield* Deferred.succeed(
+                    token === replacementCredential.token ? replacementObserved : initialObserved,
+                    undefined,
+                  );
+                }),
+              ),
+            ),
+        );
+
+        yield* Deferred.await(initialObserved);
+        yield* registry.register(new RelayConnectionRegistration({ target: RELAY_TARGET }));
+        yield* awaitConnectionState(
+          registry,
+          RELAY_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+        yield* registry.register(
+          new BearerConnectionRegistration({
+            target: new BearerConnectionTarget({ ...BEARER_TARGET }),
+            profile: new BearerConnectionProfile({ ...BEARER_PROFILE }),
+            credential: replacementCredential,
+          }),
+        );
+        yield* Deferred.await(replacementObserved);
+        yield* Fiber.interrupt(subscription);
+
+        expect(yield* Ref.get(tokens)).toEqual([
+          BEARER_CREDENTIAL.token,
+          replacementCredential.token,
+        ]);
+        expect(yield* Ref.get(followedSupervisors)).toBe(2);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
