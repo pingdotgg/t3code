@@ -598,6 +598,10 @@ export const make = Effect.gen(function* () {
             (instance) => instance.stop({ timeout: Duration.seconds(5) }),
             { concurrency: "unbounded" },
           );
+          // Some updater implementations launch the native installer before
+          // they emit before-quit-for-update. Close renderer processes first
+          // so package replacement cannot race their open file handles.
+          yield* electronWindow.destroyAll;
           yield* electronUpdater.quitAndInstall({
             isSilent: true,
             isForceRunAfter: true,
