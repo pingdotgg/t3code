@@ -110,6 +110,11 @@ export interface OrchestrationEventStoreShape {
   readonly streamApplicationEvents: (input?: {
     readonly afterSequence?: number;
   }) => Stream.Stream<ApplicationStoredEvent, OrchestrationEventStoreError>;
+  /** Project transport events before bounding replay and the live tail. */
+  readonly streamProjectedApplicationEvents: <A extends { readonly sequence: number }>(input: {
+    readonly afterSequence?: number;
+    readonly project: (event: ApplicationStoredEvent) => A;
+  }) => Stream.Stream<A, OrchestrationEventStoreError>;
   /**
    * Check whether an aggregate has an event after a sequence, optionally
    * restricted to one event type.

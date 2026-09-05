@@ -10,14 +10,9 @@ import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
+import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import {
-  executeEnvironmentHttpRequest,
-  makeEnvironmentHttpApiClient,
-  type RemoteEnvironmentRequestError,
-} from "../rpc/http.ts";
-import {
-  buildEnvironmentAuthHeaders,
-  withEnvironmentCredentials,
+  executeAuthenticatedEnvironmentHttpRequest,
   withOrchestrationProtocolHeader,
 } from "./environmentHttpAuth.ts";
 
@@ -114,7 +109,7 @@ export const threadSnapshotLoaderLayer: Layer.Layer<
     const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
     return ThreadSnapshotLoader.of({
       load: (prepared: PreparedConnection, threadId: ThreadId) =>
-        fetchEnvironmentThreadSnapshot({ prepared, threadId, signer }).pipe(
+        fetchEnvironmentThreadSnapshot({ prepared, threadId, signer, remoteAuthorization }).pipe(
           Effect.map((snapshot): ThreadSnapshotLoadResult => ({
             _tag: "present",
             snapshot,

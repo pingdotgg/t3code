@@ -20,7 +20,6 @@ import * as ConnectionCredentialStore from "./credentialStore.ts";
 import {
   credentialMissingError,
   environmentMismatchError,
-  mapManagedRelayError,
   mapRemoteEnvironmentError,
   profileMissingError,
 } from "./errors.ts";

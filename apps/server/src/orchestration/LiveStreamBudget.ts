@@ -269,14 +269,27 @@ export const bufferLiveStream = <A extends object, E, R>(
  * RPC delivery has its own budget, so the two stages retain at most twice the
  * configured item and byte limits.
  */
+type ReplayLiveInput<A extends { readonly sequence: number }, E, R> = {
+  readonly subscribe: Effect.Effect<PubSub.Subscription<A>, never, Scope.Scope>;
+  readonly latestSequence: Effect.Effect<number, E, R>;
+  readonly replay: (throughSequence: number) => Stream.Stream<A, E, R>;
+  readonly afterSequence?: number;
+  readonly filter?: (event: A) => boolean;
+};
+
 export const replayAndBufferLiveEvents = <A extends { readonly sequence: number }, E, R>(
-  input: {
-    readonly subscribe: Effect.Effect<PubSub.Subscription<A>, never, Scope.Scope>;
-    readonly latestSequence: Effect.Effect<number, E, R>;
-    readonly replay: (throughSequence: number) => Stream.Stream<A, E, R>;
-    readonly afterSequence?: number;
-    readonly filter?: (event: A) => boolean;
-  },
+  input: ReplayLiveInput<A, E, R>,
+  limits?: LiveStreamLimits,
+) => replayAndBufferProjectedLiveEvents({ ...input, project: (event: A) => event }, limits);
+
+/** Reduce transport payloads before either replay or live retention charges the byte budget. */
+export const replayAndBufferProjectedLiveEvents = <
+  A extends { readonly sequence: number },
+  B extends { readonly sequence: number },
+  E,
+  R,
+>(
+  input: ReplayLiveInput<A, E, R> & { readonly project: (event: A) => B },
   limits?: LiveStreamLimits,
 ) =>
   Stream.unwrap(
@@ -292,6 +305,7 @@ export const replayAndBufferLiveEvents = <A extends { readonly sequence: number 
           Stream.filter(
             (event) => event.sequence > throughSequence && (input.filter?.(event) ?? true),
           ),
+          Stream.map(input.project),
           Stream.ensuring(Scope.close(subscriptionScope, Exit.void)),
         ),
         budget,
@@ -305,7 +319,7 @@ export const replayAndBufferLiveEvents = <A extends { readonly sequence: number 
               // Charge only the item being delivered so a fast reader can
               // consume a page larger than the budget without overflowing.
               Stream.rechunk(1),
-              Stream.mapEffect((event) => budget.retain(event)),
+              Stream.mapEffect((event) => budget.retain(input.project(event))),
             );
           }),
         ),

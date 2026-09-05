@@ -10,6 +10,7 @@ import {
   StoredOrchestrationShellSnapshot,
   StoredOrchestrationThreadSnapshot,
   decodeOrDiscardOrchestrationCache,
+  putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
   removeCatalogValue,
   removeConnectionFromCatalog,
