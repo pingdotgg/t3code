@@ -13,7 +13,24 @@ diff --git a/dist/components/VirtualizedFile.d.ts b/dist/components/VirtualizedF
 diff --git a/dist/components/VirtualizedFile.js b/dist/components/VirtualizedFile.js
 --- a/dist/components/VirtualizedFile.js
 +++ b/dist/components/VirtualizedFile.js
-@@ -70,10 +70,12 @@ var VirtualizedFile = class extends File {
+@@ -20,6 +20,7 @@
+ 	cache = {
+ 		heights: /* @__PURE__ */ new Map(),
+ 		checkpoints: [],
++		codeWidth: void 0,
+ 		fileAnnotationHeight: 0
+ 	};
+ 	isVisible = false;
+@@ -31,6 +32,8 @@
+ 		super(options, workerManager, isContainerManaged);
+ 		this.virtualizer = virtualizer;
+ 		this.metrics = metrics;
++		const simpleVirtualizer = this.getSimpleVirtualizer();
++		if (simpleVirtualizer != null) this.resizeManager.onResize = () => simpleVirtualizer.requestHeightReconcile(this);
+ 	}
+ 	setMetrics(metrics, force = false) {
+ 		if (!force && areObjectsEqual(this.metrics, metrics)) return;
+@@ -70,10 +73,12 @@
  		if (this.isAdvancedMode()) throw new Error("VirtualizedFile.setThemeType cannot be used inside CodeView. Update CodeView options instead.");
  		super.setThemeType(themeType);
  	}
@@ -29,7 +46,21 @@ diff --git a/dist/components/VirtualizedFile.js b/dist/components/VirtualizedFil
  		if (this.cache.checkpoints.length > 0) this.cache.checkpoints.length = 0;
  		if (this.renderRange != null && resetRenderRange) this.renderRange = void 0;
  		if (recompute && this.isSimpleMode()) this.computeApproximateSize();
-@@ -287,11 +289,11 @@ var VirtualizedFile = class extends File {
+@@ -91,6 +96,13 @@
+ 		if (this.code == null) return hasHeightChange;
+ 		const content = this.code.children[1];
+ 		if (!(content instanceof HTMLElement)) return hasHeightChange;
++		const codeWidth = this.code.getBoundingClientRect().width;
++		if (!(codeWidth > 0)) return hasHeightChange;
++		if (this.cache.codeWidth != null && this.cache.codeWidth !== codeWidth) {
++			this.resetLayoutCache(false, false);
++			hasHeightChange = true;
++		}
++		this.cache.codeWidth = codeWidth;
+ 		const hasFileAnnotations = includesFileAnnotations(this.lineAnnotations);
+ 		if (this.renderRange != null && hasFileAnnotations && shouldRenderFileAnnotations(this.renderRange)) {
+ 			const nextFileAnnotationHeight = measureFileAnnotationHeight(content) ?? 0;
+@@ -287,11 +299,11 @@
  		this.forceRenderOverride = true;
  		this.virtualizer.instanceChanged(this, false);
  	}
@@ -95,6 +126,37 @@ index ff78e2a..f9df318 100644
  		try {
  			this.#fileInstance?.setSelectedLines(range, {
  				notify: false,
+diff --git a/dist/managers/ResizeManager.d.ts b/dist/managers/ResizeManager.d.ts
+--- a/dist/managers/ResizeManager.d.ts
++++ b/dist/managers/ResizeManager.d.ts
+@@ -5,6 +5,8 @@
+   columnVariables?: ResizeManagerColumnVariableMode;
+ }
+ declare class ResizeManager {
++  /** Schedule owner measurement after an observed code or gutter size change. */
++  onResize?: () => void;
+   private static resizeObserver;
+   private static managersByElement;
+   private static getResizeObserver;
+diff --git a/dist/managers/ResizeManager.js b/dist/managers/ResizeManager.js
+--- a/dist/managers/ResizeManager.js
++++ b/dist/managers/ResizeManager.js
+@@ -19,6 +19,7 @@
+ 		for (const [manager, managerEntries] of entriesByManager) manager.handleResizeEntries(managerEntries);
+ 	}
+ 	observedNodes = /* @__PURE__ */ new Map();
++	onResize;
+ 	setup(pre, { disableAnnotations, columnVariables = "apply" }) {
+ 		const annotationUpdates = /* @__PURE__ */ new Set();
+ 		const applyColumnVariables = columnVariables === "apply";
+@@ -212,6 +213,7 @@
+ 		this.applyAnnotationUpdates(annotationUpdates);
+ 		annotationUpdates.clear();
+ 		this.applyColumnUpdates(codeUpdates);
++		if (codeUpdates.size > 0) this.onResize?.();
+ 		codeUpdates.clear();
+ 	}
+ 	applyAnnotationUpdates(annotationUpdates) {
 diff --git a/dist/react/utils/useFileInstance.js b/dist/react/utils/useFileInstance.js
 index e9f62f5..af82a46 100644
 --- a/dist/react/utils/useFileInstance.js
