@@ -329,6 +329,11 @@ export const ThreadTokenUsageSnapshot = Schema.Struct({
   durationMs: Schema.optional(NonNegativeInt),
   compactsAutomatically: Schema.optional(Schema.Boolean),
   autoCompactThreshold: Schema.optional(PositiveInt),
+  /**
+   * Cumulative session cost in USD. Only OpenCode reports it today
+   * (session cost is not part of the Codex or Claude notification shapes).
+   */
+  cost: Schema.optional(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 export type ThreadTokenUsageSnapshot = typeof ThreadTokenUsageSnapshot.Type;
 
