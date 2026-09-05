@@ -1539,11 +1539,16 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   const relativePath = reference?.relativePath;
   const src = assetUrl._tag === "Success" ? assetUrl.url + (props.srcFragment ?? "") : null;
   // The server reads the pixel size from the file header, so the slot can be
-  // the image's final box instead of a 16:9 guess. An authored size still wins.
+  // the image's final box instead of a 16:9 guess. An authored size, or a
+  // caller's cap such as the viewed-image row's max height, layers on top.
   const knownSize = assetUrl._tag === "Success" ? assetUrl.imageDimensions : undefined;
+  const knownSizeStyle = knownSize
+    ? authoredImageSizeStyle(knownSize.width, knownSize.height)
+    : undefined;
   const style =
-    props.style ??
-    (knownSize ? authoredImageSizeStyle(knownSize.width, knownSize.height) : undefined);
+    knownSizeStyle && props.style
+      ? { ...knownSizeStyle, ...props.style }
+      : (props.style ?? knownSizeStyle);
   const actionsSource: MediaActionSource = {
     kind: props.kind ?? "image",
     name: props.alt || (props.kind ?? "image"),
