@@ -1494,6 +1494,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is already archived.`,
       });
     }
+    if (
+      command.type === "thread.archive" &&
+      command.requireNoPendingRuntimeRequests === true &&
+      projection.runtimeRequests.some((request) => request.status === "pending")
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} has a pending approval or user-input request and cannot be archived.`,
+      });
+    }
     if (command.type === "thread.unarchive" && thread.archivedAt === null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,

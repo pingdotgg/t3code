@@ -17,10 +17,14 @@ import {
   OrchestratorMcpTaskStatusInput,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
+  OrchestratorMcpThreadDeleteInput,
+  OrchestratorMcpThreadDeleteResult,
   OrchestratorMcpThreadListInput,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadInput,
   OrchestratorMcpThreadReadResult,
+  OrchestratorMcpThreadOrganizeInput,
+  OrchestratorMcpThreadOrganizeResult,
   OrchestratorMcpThreadSendInput,
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadStartInput,
@@ -190,6 +194,30 @@ export const ThreadReadTool = Tool.make("t3_thread_read", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
+export const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
+  description:
+    "Organize one T3 thread in the calling project, defaulting to this thread, or apply up to 20 operations with explicit per-item outcomes. Actions pin, unpin, reorder, snooze, unsnooze, settle, unsettle, archive, unarchive, and mark read or unread. The result returns the durable organization state after each successful action. clientRequestId makes retries idempotent.",
+  parameters: OrchestratorMcpThreadOrganizeInput,
+  success: OrchestratorMcpThreadOrganizeResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Organize T3 threads")
+  .annotate(Tool.Destructive, true);
+
+export const ThreadDeleteTool = Tool.make("t3_thread_delete", {
+  description:
+    "Permanently delete one T3 thread in the calling project, defaulting to this thread. This cancels its active work and removes it from thread listings. clientRequestId makes retries idempotent.",
+  parameters: OrchestratorMcpThreadDeleteInput,
+  success: OrchestratorMcpThreadDeleteResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Delete a T3 thread")
+  .annotate(Tool.Destructive, true);
+
 export const ThreadSendTool = Tool.make("t3_thread_send", {
   description:
     "Send a message to a T3 thread in the calling project. mode='auto' starts an idle thread, steers a fully active turn, or queues behind a turn that is not yet steerable. Use queue for a separate follow-up turn, steer for an in-flight update, or restart to interrupt-and-restart the active turn. clientRequestId makes retries idempotent.",
@@ -242,6 +270,8 @@ export const OrchestratorToolkit = Toolkit.make(
   ThreadStartTool,
   ThreadListTool,
   ThreadReadTool,
+  ThreadOrganizeTool,
+  ThreadDeleteTool,
   ThreadSendTool,
   ThreadWaitTool,
   ThreadInterruptTool,

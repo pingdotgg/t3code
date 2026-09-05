@@ -7,6 +7,7 @@ import {
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadListInput,
+  OrchestratorMcpThreadOrganizeInput,
   OrchestratorMcpThreadReadInput,
   OrchestratorMcpThreadSendInput,
   OrchestratorMcpThreadStartInput,
@@ -18,6 +19,7 @@ const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegate
 const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskResult);
 const decodeThreadInterruptInput = Schema.decodeUnknownSync(OrchestratorMcpThreadInterruptInput);
 const decodeThreadListInput = Schema.decodeUnknownSync(OrchestratorMcpThreadListInput);
+const decodeThreadOrganizeInput = Schema.decodeUnknownSync(OrchestratorMcpThreadOrganizeInput);
 const decodeThreadReadInput = Schema.decodeUnknownSync(OrchestratorMcpThreadReadInput);
 const decodeThreadSendInput = Schema.decodeUnknownSync(OrchestratorMcpThreadSendInput);
 const decodeThreadStartInput = Schema.decodeUnknownSync(OrchestratorMcpThreadStartInput);
@@ -138,6 +140,8 @@ describe("orchestrator MCP contracts", () => {
       decodeThreadListInput({
         statuses: ["running", "completed"],
         includeSubagents: false,
+        explicitlySettled: true,
+        hasSnoozeMarker: false,
         limit: 25,
       }).statuses,
     ).toEqual(["running", "completed"]);
@@ -169,5 +173,46 @@ describe("orchestrator MCP contracts", () => {
         reason: "Loop converged.",
       }).reason,
     ).toBe("Loop converged.");
+  });
+
+  it("decodes single-thread and bounded batch organization requests", () => {
+    expect(
+      decodeThreadOrganizeInput({
+        action: { type: "settle" },
+        clientRequestId: "settle-this-thread",
+      }),
+    ).toMatchObject({ action: { type: "settle" } });
+    expect(
+      decodeThreadOrganizeInput({
+        items: [
+          { threadId: "thread-a", action: { type: "pin", orderKey: "a0" } },
+          {
+            threadId: "thread-b",
+            action: { type: "snooze", until: "2026-08-30T10:00:00.000Z" },
+          },
+        ],
+      }),
+    ).toMatchObject({ items: [{ threadId: "thread-a" }, { threadId: "thread-b" }] });
+    expect(() =>
+      decodeThreadOrganizeInput({
+        items: Array.from({ length: 21 }, (_, index) => ({
+          threadId: `thread-${index}`,
+          action: { type: "unpin" },
+        })),
+      }),
+    ).toThrow();
+    expect(() => decodeThreadOrganizeInput({})).toThrow();
+    expect(() =>
+      decodeThreadOrganizeInput({
+        action: { type: "settle" },
+        items: [{ threadId: "thread-a", action: { type: "unpin" } }],
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeThreadOrganizeInput({
+        threadId: "thread-a",
+        items: [{ threadId: "thread-b", action: { type: "unpin" } }],
+      }),
+    ).toThrow();
   });
 });

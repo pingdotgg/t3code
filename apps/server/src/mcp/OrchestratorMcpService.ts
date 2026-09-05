@@ -5,6 +5,7 @@ import {
   type ModelSelection,
   NodeId,
   type OrchestrationV2Run,
+  type OrchestrationV2Command,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
@@ -31,11 +32,18 @@ import {
   type OrchestratorMcpThreadDetail,
   type OrchestratorMcpThreadInterruptInput,
   type OrchestratorMcpThreadInterruptResult,
+  type OrchestratorMcpThreadDeleteInput,
+  type OrchestratorMcpThreadDeleteResult,
   type OrchestratorMcpThreadListInput,
   type OrchestratorMcpThreadListItem,
   type OrchestratorMcpThreadListResult,
   type OrchestratorMcpThreadReadInput,
   type OrchestratorMcpThreadReadResult,
+  type OrchestratorMcpThreadOrganizeAction,
+  type OrchestratorMcpThreadOrganizeInput,
+  type OrchestratorMcpThreadOrganizeOutcome,
+  type OrchestratorMcpThreadOrganizeResult,
+  type OrchestratorMcpThreadOrganizationState,
   type OrchestratorMcpThreadRun,
   type OrchestratorMcpThreadSendInput,
   type OrchestratorMcpThreadSendResult,
@@ -146,6 +154,14 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadInterruptInput,
   ) => Effect.Effect<OrchestratorMcpThreadInterruptResult, OrchestratorMcpFailure>;
+  readonly organizeThreads: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpThreadOrganizeInput,
+  ) => Effect.Effect<OrchestratorMcpThreadOrganizeResult, OrchestratorMcpFailure>;
+  readonly deleteThread: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpThreadDeleteInput,
+  ) => Effect.Effect<OrchestratorMcpThreadDeleteResult, OrchestratorMcpFailure>;
 }
 
 export class OrchestratorMcpService extends Context.Service<
@@ -537,6 +553,28 @@ function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
     : `Act as the ${input.role} sub-agent for this task.\n\n${input.task}`;
 }
 
+function readState(input: {
+  readonly completedAt: DateTime.Utc | null | undefined;
+  readonly lastVisitedAt: DateTime.Utc | null | undefined;
+}): "read" | "unread" | "unknown" {
+  if (input.lastVisitedAt == null) return "unknown";
+  return input.completedAt != null &&
+    DateTime.toEpochMillis(input.completedAt) > DateTime.toEpochMillis(input.lastVisitedAt)
+    ? "unread"
+    : "read";
+}
+
+function iso(value: DateTime.Utc | null | undefined): string | null {
+  return value == null ? null : DateTime.formatIso(value);
+}
+
+function shellReadState(shell: OrchestrationV2ThreadShell): "read" | "unread" | "unknown" {
+  return readState({
+    completedAt: shell.latestRunCompletedAt,
+    lastVisitedAt: shell.lastVisitedAt,
+  });
+}
+
 function listItemFromShell(shell: OrchestrationV2ThreadShell): OrchestratorMcpThreadListItem {
   return {
     threadId: shell.id,
@@ -549,6 +587,19 @@ function listItemFromShell(shell: OrchestrationV2ThreadShell): OrchestratorMcpTh
     model: shell.modelSelection.model,
     runtimeMode: shell.runtimeMode,
     interactionMode: shell.interactionMode,
+    branch: shell.branch,
+    worktreePath: shell.worktreePath,
+    linkedPullRequest: shell.linkedPullRequest ?? null,
+    pinnedAt: iso(shell.pinnedAt),
+    pinOrderKey: shell.pinOrderKey ?? null,
+    settledOverride: shell.settledOverride,
+    settledAt: iso(shell.settledAt),
+    snoozedUntil: iso(shell.snoozedUntil),
+    snoozedAt: iso(shell.snoozedAt),
+    archived: shell.archivedAt !== null,
+    archivedAt: iso(shell.archivedAt),
+    readState: shellReadState(shell),
+    lastVisitedAt: iso(shell.lastVisitedAt),
     parentThreadId: shell.lineage.parentThreadId,
     relationshipToParent: shell.lineage.relationshipToParent,
     itemCount: shell.visibleItemCount,
@@ -583,9 +634,82 @@ function threadDetail(projection: OrchestrationV2ThreadProjection): Orchestrator
       (request) => request.status === "pending",
     ).length,
     archived: projection.thread.archivedAt !== null,
+    archivedAt: iso(projection.thread.archivedAt),
+    linkedPullRequest: projection.thread.linkedPullRequest ?? null,
+    pinnedAt: iso(projection.thread.pinnedAt),
+    pinOrderKey: projection.thread.pinOrderKey ?? null,
+    settledOverride: projection.thread.settledOverride,
+    settledAt: iso(projection.thread.settledAt),
+    snoozedUntil: iso(projection.thread.snoozedUntil),
+    snoozedAt: iso(projection.thread.snoozedAt),
+    readState: readState({
+      completedAt: latest?.completedAt,
+      lastVisitedAt: projection.thread.lastVisitedAt,
+    }),
+    lastVisitedAt: iso(projection.thread.lastVisitedAt),
     createdAt: DateTime.formatIso(projection.thread.createdAt),
     updatedAt: DateTime.formatIso(projection.updatedAt),
   };
+}
+
+function organizationState(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestratorMcpThreadOrganizationState {
+  return {
+    threadId: projection.thread.id,
+    pinnedAt: iso(projection.thread.pinnedAt),
+    pinOrderKey: projection.thread.pinOrderKey ?? null,
+    settledOverride: projection.thread.settledOverride,
+    settledAt: iso(projection.thread.settledAt),
+    snoozedUntil: iso(projection.thread.snoozedUntil),
+    snoozedAt: iso(projection.thread.snoozedAt),
+    archivedAt: iso(projection.thread.archivedAt),
+    readState: readState({
+      completedAt: latestRun(projection)?.completedAt,
+      lastVisitedAt: projection.thread.lastVisitedAt,
+    }),
+    lastVisitedAt: iso(projection.thread.lastVisitedAt),
+  };
+}
+
+function organizationCommand(input: {
+  readonly action: OrchestratorMcpThreadOrganizeAction;
+  readonly commandId: CommandId;
+  readonly target: OrchestrationV2ThreadProjection;
+}): OrchestrationV2Command {
+  const base = { commandId: input.commandId, threadId: input.target.thread.id } as const;
+  switch (input.action.type) {
+    case "pin":
+      return {
+        type: "thread.pin",
+        ...base,
+        ...(input.action.orderKey === undefined ? {} : { orderKey: input.action.orderKey }),
+      };
+    case "unpin":
+      return { type: "thread.unpin", ...base };
+    case "reorder":
+      return { type: "thread.pin.reorder", ...base, orderKey: input.action.orderKey };
+    case "snooze":
+      return { type: "thread.snooze", ...base, snoozedUntil: input.action.until };
+    case "unsnooze":
+      return { type: "thread.unsnooze", ...base, reason: "user" };
+    case "settle":
+      return { type: "thread.settle", ...base };
+    case "unsettle":
+      return { type: "thread.unsettle", ...base, reason: "user" };
+    case "archive":
+      return { type: "thread.archive", ...base, requireNoPendingRuntimeRequests: true };
+    case "unarchive":
+      return { type: "thread.unarchive", ...base };
+    case "mark_read":
+      return {
+        type: "thread.visit",
+        ...base,
+        visitedAt: DateTime.formatIso(input.target.updatedAt),
+      };
+    case "mark_unread":
+      return { type: "thread.mark-unread", ...base };
+  }
 }
 
 function threadRun(run: OrchestrationV2Run): OrchestratorMcpThreadRun {
@@ -1531,6 +1655,7 @@ const make = Effect.gen(function* () {
           .listProjectThreads({
             projectId: parent.thread.projectId,
             includeSubagents: input.includeSubagents !== false,
+            includeArchived: input.archived === true,
           })
           .pipe(
             Effect.mapError((error) =>
@@ -1548,6 +1673,32 @@ const make = Effect.gen(function* () {
             (thread) =>
               titleContains === undefined ||
               thread.title.toLocaleLowerCase().includes(titleContains),
+          )
+          .filter(
+            (thread) =>
+              input.archived === undefined || (thread.archivedAt !== null) === input.archived,
+          )
+          .filter(
+            (thread) => input.pinned === undefined || (thread.pinnedAt != null) === input.pinned,
+          )
+          .filter(
+            (thread) =>
+              input.explicitlySettled === undefined ||
+              (thread.settledOverride === "settled") === input.explicitlySettled,
+          )
+          .filter(
+            (thread) =>
+              input.hasSnoozeMarker === undefined ||
+              (thread.snoozedUntil != null) === input.hasSnoozeMarker,
+          )
+          .filter(
+            (thread) =>
+              input.unread === undefined || (shellReadState(thread) === "unread") === input.unread,
+          )
+          .filter(
+            (thread) =>
+              input.hasLinkedPullRequest === undefined ||
+              (thread.linkedPullRequest != null) === input.hasLinkedPullRequest,
           );
         const cursor = input.cursor ?? 0;
         const limit = input.limit ?? DEFAULT_THREAD_LIST_LIMIT;
@@ -1616,6 +1767,99 @@ const make = Effect.gen(function* () {
           nextPosition: page.at(-1)?.position ?? null,
           hasMore: page.length < matching.length,
         } satisfies OrchestratorMcpThreadReadResult;
+      }),
+    organizeThreads: (scope, input) =>
+      Effect.gen(function* () {
+        yield* requireCapability(scope);
+        const key = yield* requestKey(input.clientRequestId);
+        const items =
+          input.items !== undefined
+            ? input.items
+            : [{ threadId: input.threadId ?? scope.threadId, action: input.action! }];
+        const outcomes = yield* Effect.forEach(
+          items,
+          (item, index) =>
+            Effect.gen(function* () {
+              const { target } = yield* loadScopedThread(scope, item.threadId);
+              yield* threadManagement
+                .dispatch(
+                  organizationCommand({
+                    action: item.action,
+                    target,
+                    commandId: stableCommandId({
+                      scope,
+                      requestKey: key,
+                      operation: `thread-organize-${item.action.type}`,
+                      index,
+                    }),
+                  }),
+                )
+                .pipe(
+                  Effect.mapError((error) =>
+                    failure(
+                      "orchestration_error",
+                      `Unable to ${item.action.type} thread ${item.threadId}: ${errorMessage(error)}`,
+                    ),
+                  ),
+                );
+              const result = yield* loadScopedThread(scope, item.threadId);
+              return {
+                threadId: item.threadId,
+                action: item.action.type,
+                status: "applied",
+                state: organizationState(result.target),
+                error: null,
+              } satisfies OrchestratorMcpThreadOrganizeOutcome;
+            }).pipe(
+              Effect.catch((error) =>
+                Effect.succeed({
+                  threadId: item.threadId,
+                  action: item.action.type,
+                  status: "failed",
+                  state: null,
+                  error: error.message,
+                } satisfies OrchestratorMcpThreadOrganizeOutcome),
+              ),
+            ),
+          { concurrency: 1 },
+        );
+        return { outcomes } satisfies OrchestratorMcpThreadOrganizeResult;
+      }),
+    deleteThread: (scope, input) =>
+      Effect.gen(function* () {
+        const threadId = input.threadId ?? scope.threadId;
+        yield* requireCapability(scope);
+        const parent = yield* loadProjection(scope.threadId);
+        const target = threadId === scope.threadId ? parent : yield* loadProjection(threadId);
+        if (target.thread.projectId !== parent.thread.projectId) {
+          return yield* failure(
+            "thread_not_found",
+            `Thread ${threadId} was not found in the calling project.`,
+          );
+        }
+        if (target.thread.deletedAt !== null) {
+          return { threadId, deleted: true } satisfies OrchestratorMcpThreadDeleteResult;
+        }
+        const key = yield* requestKey(input.clientRequestId);
+        yield* threadManagement
+          .dispatch({
+            type: "thread.delete",
+            commandId: stableCommandId({
+              scope,
+              requestKey: key,
+              operation: "thread-delete",
+            }),
+            threadId,
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Unable to delete thread ${threadId}: ${errorMessage(error)}`,
+              ),
+            ),
+          );
+        return { threadId, deleted: true } satisfies OrchestratorMcpThreadDeleteResult;
       }),
     sendToThread: (scope, input) =>
       Effect.gen(function* () {

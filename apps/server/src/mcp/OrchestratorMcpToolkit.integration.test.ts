@@ -15,8 +15,10 @@ import {
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpTaskCancelResult,
   OrchestratorMcpThreadInterruptResult,
+  OrchestratorMcpThreadDeleteResult,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
+  OrchestratorMcpThreadOrganizeResult,
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadWaitResult,
   ProjectId,
@@ -96,8 +98,10 @@ const decodeTaskCancelResult = Schema.decodeUnknownEffect(OrchestratorMcpTaskCan
 const decodeThreadInterruptResult = Schema.decodeUnknownEffect(
   OrchestratorMcpThreadInterruptResult,
 );
+const decodeThreadDeleteResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadDeleteResult);
 const decodeThreadListResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadListResult);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
+const decodeThreadOrganizeResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadOrganizeResult);
 const decodeThreadSendResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadSendResult);
 const decodeThreadWaitResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadWaitResult);
 
@@ -174,6 +178,7 @@ function makeDeterministicAdapter(input: {
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
   readonly shouldComplete: (turn: ProviderAdapterV2TurnInput) => boolean;
+  readonly startedGate?: (turn: ProviderAdapterV2TurnInput) => Deferred.Deferred<void> | undefined;
   readonly terminalGate?: (turn: ProviderAdapterV2TurnInput) => Deferred.Deferred<void> | undefined;
   readonly response: (turn: ProviderAdapterV2TurnInput) => string;
 }): ProviderAdapterV2Shape {
@@ -276,6 +281,10 @@ function makeDeterministicAdapter(input: {
                   },
                 },
               ]);
+              const startedGate = input.startedGate?.(turnInput);
+              if (startedGate !== undefined) {
+                yield* Deferred.succeed(startedGate, undefined);
+              }
               const terminalGate = input.terminalGate?.(turnInput);
               if (terminalGate !== undefined) {
                 yield* Deferred.await(terminalGate);
@@ -471,6 +480,7 @@ describe("orchestrator MCP toolkit", () => {
         Effect.gen(function* () {
           const cwd = yield* checkpointWorkspace("orchestrator-mcp-toolkit");
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const providerStartGates = new Map<string, Deferred.Deferred<void>>();
           const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const deliveryTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const registryLayer = makeProviderAdapterRegistryLayer([
@@ -481,6 +491,7 @@ describe("orchestrator MCP toolkit", () => {
               capturedTurns,
               shouldComplete: (turn) =>
                 turn.threadId !== parentThreadId && turn.message.text !== cancellationPrompt,
+              startedGate: (turn) => providerStartGates.get(turn.message.text),
               terminalGate: (turn) =>
                 turn.message.text.startsWith("Delegated task") ||
                 turn.message.text.startsWith("Delegated tasks")
@@ -1185,6 +1196,14 @@ describe("orchestrator MCP toolkit", () => {
             expect(threadListTool?.tool.annotations?.idempotentHint).toBe(true);
             const threadReadTool = server.tools.find(({ tool }) => tool.name === "t3_thread_read");
             expect(threadReadTool?.tool.annotations?.readOnlyHint).toBe(false);
+            const threadOrganizeTool = server.tools.find(
+              ({ tool }) => tool.name === "t3_thread_organize",
+            );
+            expect(threadOrganizeTool?.tool.annotations?.destructiveHint).toBe(true);
+            const threadDeleteTool = server.tools.find(
+              ({ tool }) => tool.name === "t3_thread_delete",
+            );
+            expect(threadDeleteTool?.tool.annotations?.destructiveHint).toBe(true);
             const threadSendTool = server.tools.find(({ tool }) => tool.name === "t3_thread_send");
             expect(threadSendTool?.tool.annotations?.destructiveHint).toBe(true);
             const threadWaitTool = server.tools.find(({ tool }) => tool.name === "t3_thread_wait");
@@ -2026,6 +2045,112 @@ describe("orchestrator MCP toolkit", () => {
             expect(
               listed.threads.some((thread) => thread.relationshipToParent === "subagent"),
             ).toBe(false);
+
+            const partialOrganizeCall = yield* invoke("t3_thread_organize", {
+              items: [
+                { threadId: emptyThread.threadId, action: { type: "pin", orderKey: "m0" } },
+                { threadId: foreignThreadId, action: { type: "unpin" } },
+              ],
+              clientRequestId: "organize-partial-scope",
+            });
+            const partialOrganize = yield* decodeThreadOrganizeResult(
+              partialOrganizeCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(partialOrganize.outcomes).toMatchObject([
+              { threadId: emptyThread.threadId, status: "applied", action: "pin" },
+              { threadId: foreignThreadId, status: "failed", action: "unpin", state: null },
+            ]);
+
+            const archiveCall = yield* invoke("t3_thread_organize", {
+              threadId: emptyThread.threadId,
+              action: { type: "archive" },
+              clientRequestId: "organize-archive-discovery",
+            });
+            const archiveResult = yield* decodeThreadOrganizeResult(
+              archiveCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(archiveResult.outcomes[0]).toMatchObject({
+              status: "applied",
+              state: { archivedAt: expect.any(String) },
+            });
+            const activeAfterArchive = yield* decodeThreadListResult(
+              (yield* invoke("t3_thread_list", { limit: 100 })).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(
+              activeAfterArchive.threads.some((thread) => thread.threadId === emptyThread.threadId),
+            ).toBe(false);
+            const archivedOnly = yield* decodeThreadListResult(
+              (yield* invoke("t3_thread_list", { archived: true, limit: 100 })).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(
+              archivedOnly.threads.some((thread) => thread.threadId === emptyThread.threadId),
+            ).toBe(true);
+
+            const unarchiveCall = yield* invoke("t3_thread_organize", {
+              threadId: emptyThread.threadId,
+              action: { type: "unarchive" },
+              clientRequestId: "organize-unarchive-discovery",
+            });
+            const unarchiveResult = yield* decodeThreadOrganizeResult(
+              unarchiveCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(unarchiveResult.outcomes[0]).toMatchObject({
+              status: "applied",
+              state: { archivedAt: null },
+            });
+
+            const blockedThreadStarted = yield* Deferred.make<void>();
+            providerStartGates.set(cancellationPrompt, blockedThreadStarted);
+            const blockedThreadCall = yield* invoke("create_threads", {
+              threads: [{ prompt: cancellationPrompt, title: "Organization blockers" }],
+              clientRequestId: "organize-blockers-create",
+            });
+            const blockedThread = (yield* decodeCreateThreadsResult(
+              blockedThreadCall.structuredContent,
+            ).pipe(Effect.orDie)).threads[0]!;
+            yield* Deferred.await(blockedThreadStarted);
+            providerStartGates.delete(cancellationPrompt);
+            yield* invoke("t3_thread_send", {
+              threadId: blockedThread.threadId,
+              message: "Queue this behind the active run.",
+              mode: "queue",
+              clientRequestId: "organize-blockers-queue",
+            });
+            const blockedOrganize = yield* decodeThreadOrganizeResult(
+              (yield* invoke("t3_thread_organize", {
+                items: [
+                  { threadId: blockedThread.threadId, action: { type: "settle" } },
+                  {
+                    threadId: blockedThread.threadId,
+                    action: { type: "snooze", until: "2099-08-29T12:00:00.000Z" },
+                  },
+                ],
+                clientRequestId: "organize-blockers",
+              })).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(blockedOrganize.outcomes.map((outcome) => outcome.status)).toEqual([
+              "failed",
+              "failed",
+            ]);
+            yield* invoke("t3_thread_delete", {
+              threadId: blockedThread.threadId,
+              clientRequestId: "organize-blockers-delete",
+            });
+
+            const firstDelete = yield* decodeThreadDeleteResult(
+              (yield* invoke("t3_thread_delete", {
+                threadId: emptyThread.threadId,
+                clientRequestId: "organize-delete-retry",
+              })).structuredContent,
+            ).pipe(Effect.orDie);
+            const retryDelete = yield* decodeThreadDeleteResult(
+              (yield* invoke("t3_thread_delete", {
+                threadId: emptyThread.threadId,
+                clientRequestId: "organize-delete-retry",
+              })).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(firstDelete).toEqual({ threadId: emptyThread.threadId, deleted: true });
+            expect(retryDelete).toEqual(firstDelete);
 
             // A wait-mode delegation whose blocking wait times out no longer
             // owns delivery, so delegate_task upgrades the task to "always".
