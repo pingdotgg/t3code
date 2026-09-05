@@ -177,6 +177,29 @@ export function DiffFileTree({
       <FileTree
         model={model}
         aria-label={ariaLabel}
+        onClickCapture={(event) => {
+          if (
+            event.defaultPrevented ||
+            event.button !== 0 ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.shiftKey ||
+            event.altKey
+          ) {
+            return;
+          }
+          // Pierre does not emit a selection change for its sole selected row.
+          // Read selection before the row handles the click so new selections reveal only once.
+          const selected = model.getSelectedPaths();
+          const path = selected.length === 1 ? selected[0] : undefined;
+          if (!path || !filePathsRef.current.has(path)) return;
+          const clickedSelectedRow = event.nativeEvent
+            .composedPath()
+            .some(
+              (node) => node instanceof HTMLElement && node.getAttribute("data-item-path") === path,
+            );
+          if (clickedSelectedRow) onSelectFileRef.current(path);
+        }}
         className="min-h-0 flex-1 overflow-hidden"
         style={pierreTreeStyle(resolvedTheme)}
       />
