@@ -81,6 +81,7 @@ import {
 } from "./terminalInput";
 import { createTerminalPasteSession } from "./terminalPaste";
 import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiState";
+import { useTerminalGridSync } from "./useTerminalGridSync";
 
 function TerminalHeader(props: {
   readonly subtitle: string;
@@ -441,6 +442,15 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const terminalKey = selectedThread
     ? `${selectedThread.environmentId}:${selectedThread.id}:${terminalId}`
     : terminalId;
+  useTerminalGridSync({
+    environmentId: selectedThread?.environmentId ?? null,
+    threadId: selectedThread?.id ?? null,
+    terminalId,
+    canOperate: canOperateTerminal,
+    terminal,
+    size: lastGridSize,
+    resize: resizeTerminal,
+  });
   const bufferReplayKey = useMemo(
     () => getTerminalBufferReplayKey({ terminalKey, fontSize }),
     [fontSize, terminalKey],
@@ -916,32 +926,15 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       }
 
       setLastGridSize(size);
-      if (!canOperateTerminal || !selectedThread || !isRunning) {
-        return;
-      }
-
-      void resizeTerminal({
-        environmentId: selectedThread.environmentId,
-        input: {
-          threadId: selectedThread.id,
-          terminalId,
-          cols: size.cols,
-          rows: size.rows,
-        },
-      });
     },
     [
-      isRunning,
       lastGridSize.cols,
       lastGridSize.rows,
       bufferReplayKey,
       readyBufferReplayKey,
       routeEnvironmentId,
       routeThreadId,
-      resizeTerminal,
-      canOperateTerminal,
       scheduleBufferReplayReady,
-      selectedThread,
       terminalId,
       terminalKey,
     ],
