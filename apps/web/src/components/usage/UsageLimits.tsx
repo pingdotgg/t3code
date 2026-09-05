@@ -20,6 +20,7 @@ import {
   type LimitPace,
   paceOf,
   providerLimitsLabel,
+  resetCreditExpiryRemainingMs,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, useState } from "react";
@@ -312,6 +313,7 @@ function ResetCredits({
   const expiresIn = credits.nextExpiresAt
     ? formatDuration(Date.parse(credits.nextExpiresAt) - now)
     : null;
+  const expiresSoon = resetCreditExpiryRemainingMs(credits, now) !== null;
   const summary =
     credits.availableCount === 0
       ? "No reset credits banked"
@@ -338,7 +340,7 @@ function ResetCredits({
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-      <span className="tabular-nums">{summary}</span>
+      <span className={expiresSoon ? "tabular-nums text-warning" : "tabular-nums"}>{summary}</span>
       {credits.availableCount > 0 ? (
         <Button size="xs" variant="outline" disabled={busy} onClick={() => setConfirming(true)}>
           {busy ? "Using credit…" : "Use a reset credit"}

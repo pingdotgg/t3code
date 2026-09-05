@@ -13,6 +13,7 @@ import { ConfirmDialogHost } from "./components/ConfirmDialogHost";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
 import { prepareNativeShowcaseCapture } from "./features/showcase/nativeShowcaseScene";
 import { IncomingShareProvider } from "./features/sharing/IncomingShareProvider";
+import { ResetCreditExpiryAlert } from "./features/usage/ResetCreditExpiryAlert";
 import {
   AppearancePreferencesProvider,
   useAppearancePreferences,
@@ -93,6 +94,7 @@ function AppContent() {
               <IncomingShareProvider>
                 <Navigation linking={appLinking} theme={navigationTheme} />
               </IncomingShareProvider>
+              <ResetCreditExpiryAlert />
               <ConfirmDialogHost />
             </BlurTargetView>
             {/* Anchored-menu overlays render here — in-window, so the

@@ -18,6 +18,7 @@ import {
   limitsNotice,
   paceOf,
   providerLimitsLabel,
+  resetCreditExpiryRemainingMs,
 } from "@t3tools/shared/usageLimits";
 import { type ReactNode, useState } from "react";
 import { Alert, Pressable, View } from "react-native";
@@ -174,6 +175,7 @@ function ResetCredits(props: {
   const expiresIn = credits.nextExpiresAt
     ? formatDuration(Date.parse(credits.nextExpiresAt) - now)
     : null;
+  const expiresSoon = resetCreditExpiryRemainingMs(credits, now) !== null;
   const summary =
     credits.availableCount === 0
       ? "No reset credits banked"
@@ -210,7 +212,15 @@ function ResetCredits(props: {
 
   return (
     <View className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
-      <Text className="text-xs tabular-nums text-foreground-tertiary">{summary}</Text>
+      <Text
+        className={
+          expiresSoon
+            ? "text-xs tabular-nums text-warning"
+            : "text-xs tabular-nums text-foreground-tertiary"
+        }
+      >
+        {summary}
+      </Text>
       {credits.availableCount > 0 ? (
         <Pressable
           accessibilityRole="button"

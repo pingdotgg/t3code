@@ -71,6 +71,9 @@ vi.mock("./usageProviders", async (importOriginal) => {
 
 import { UsagePage } from "./UsagePage";
 
+const renderUsagePage = () =>
+  renderToStaticMarkup(<UsagePage metric={testState.metric} onMetricChange={vi.fn()} />);
+
 const providerTotals = (codex: number, claude: number) =>
   new Map([
     ["codex", { costUsd: codex, totalTokens: codex * 1_000 }],
@@ -158,7 +161,7 @@ beforeEach(() => {
 
 describe("UsagePage hourly breakdown", () => {
   it("keeps recent activity visible first without empty hourly rows", () => {
-    const markup = renderToStaticMarkup(<UsagePage />);
+    const markup = renderUsagePage();
     const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body.match(/<tr/g)).toHaveLength(2);
@@ -170,7 +173,7 @@ describe("UsagePage hourly breakdown", () => {
   it("keeps chronological ordering when the token metric is selected", () => {
     testState.metric = "tokens";
 
-    const markup = renderToStaticMarkup(<UsagePage />);
+    const markup = renderUsagePage();
     const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body).toMatch(/\$11\.00.*\$13\.00/);
@@ -181,7 +184,7 @@ describe("UsagePage model breakdown", () => {
   it("sorts models by cost when the cost metric is selected", () => {
     testState.breakdown = "model";
 
-    const markup = renderToStaticMarkup(<UsagePage />);
+    const markup = renderUsagePage();
     const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body).toMatch(/expensive-model.*token-heavy-model.*token-heavy-cheaper-model/);
@@ -191,7 +194,7 @@ describe("UsagePage model breakdown", () => {
     testState.metric = "tokens";
     testState.breakdown = "model";
 
-    const markup = renderToStaticMarkup(<UsagePage />);
+    const markup = renderUsagePage();
     const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body).toMatch(/token-heavy-model.*token-heavy-cheaper-model.*expensive-model/);

@@ -43,6 +43,12 @@ the dialog.
 compares quota consumed with time elapsed in each window, so you can judge your pace before the
 next reset.
 
+When Codex reports a banked reset credit, Limits shows its count, soonest expiry, and a confirmed
+**Use a reset credit** action. During the final seven days before that expiry, T3 Code highlights
+the countdown and shows an in-app reminder once per expiring credit set per app launch. The
+reminder only opens Limits; it never redeems a credit. Redemption still requires the separate
+confirmation.
+
 If a window looks stale, refresh Limits to re-check every provider and hub.
 
 API-key accounts may not report subscription limits. This also applies to Claude connections

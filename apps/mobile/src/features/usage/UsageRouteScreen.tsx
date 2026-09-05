@@ -1,4 +1,8 @@
-import { useNavigation } from "@react-navigation/native";
+import {
+  type NavigationProp,
+  useNavigation,
+  type StaticScreenProps,
+} from "@react-navigation/native";
 import type { DailyTotals, MergedUsage } from "@t3tools/shared/usageMerge";
 import {
   enumerateDays,
@@ -48,15 +52,26 @@ const METRIC_OPTIONS = [
 
 const CHART_HEIGHT = 180;
 
+type UsageRouteParams = {
+  readonly section?: string | readonly string[];
+};
+type UsageRouteNavigation = NavigationProp<
+  { readonly SettingsUsage: UsageRouteParams | undefined },
+  "SettingsUsage"
+>;
+
 /**
  * Two tabs over one screen. Usage is the transcript-derived spend for a
  * period; Limits is the live subscription quota, which has no period. Both
  * pull to refresh, each refreshing its own data.
  */
-export function UsageRouteScreen() {
-  const navigation = useNavigation();
+export function UsageRouteScreen({ route }: StaticScreenProps<UsageRouteParams | undefined>) {
+  const navigation = useNavigation<UsageRouteNavigation>();
   const insets = useSafeAreaInsets();
-  const [tab, setTab] = useState<UsageTab>("usage");
+  const routeSection = Array.isArray(route.params?.section)
+    ? route.params.section[0]
+    : route.params?.section;
+  const tab: UsageTab = routeSection === "limits" ? "limits" : "usage";
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
     window: makeWindow(30),
@@ -96,6 +111,10 @@ export function UsageRouteScreen() {
   // environment stays pending forever — neither may pin the spinner on.
   const refreshingUsage = environments.some((entry) => entry.isPending && entry.summary !== null);
   const showingLimits = tab === "limits";
+  const selectTab = (next: UsageTab) => {
+    if (next === tab) return;
+    navigation.setParams({ section: next === "limits" ? "limits" : undefined });
+  };
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
@@ -140,7 +159,7 @@ export function UsageRouteScreen() {
           />
         }
       >
-        <SegmentedControl options={TAB_OPTIONS} selected={tab} onSelect={setTab} role="tab" />
+        <SegmentedControl options={TAB_OPTIONS} selected={tab} onSelect={selectTab} role="tab" />
 
         {showingLimits ? (
           <UsageLimitsSection now={limits.now} failedLabels={limits.failedLabels} />

@@ -63,7 +63,7 @@ import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
 
-type UsageMetric = UsageChartMetric | "limits";
+export type UsageMetric = UsageChartMetric | "limits";
 const METRIC_OPTIONS = [
   { value: "cost", label: "Cost" },
   { value: "tokens", label: "Tokens" },
@@ -81,12 +81,17 @@ const WINDOW_OPTIONS = [
   { days: 90, label: "90 days" },
 ] as const;
 
-export function UsagePage() {
+export function UsagePage({
+  metric,
+  onMetricChange,
+}: {
+  readonly metric: UsageMetric;
+  readonly onMetricChange: (metric: UsageMetric) => void;
+}) {
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
     window: makeWindow(30),
   }));
-  const [metric, setMetric] = useState<UsageMetric>("cost");
   const showingLimits = metric === "limits";
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
@@ -195,7 +200,9 @@ export function UsagePage() {
           value={[metric]}
           onValueChange={(next) => {
             const value = next[0];
-            if (isUsageMetric(value)) setMetric(value);
+            if (isUsageMetric(value)) {
+              onMetricChange(value);
+            }
           }}
         >
           {METRIC_OPTIONS.map((option) => (
@@ -235,7 +242,9 @@ export function UsagePage() {
         <Select
           value={metric}
           onValueChange={(value) => {
-            if (isUsageMetric(value)) setMetric(value);
+            if (isUsageMetric(value)) {
+              onMetricChange(value);
+            }
           }}
         >
           <SelectTrigger

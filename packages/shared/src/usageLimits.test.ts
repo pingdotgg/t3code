@@ -11,14 +11,19 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   collectLimitSources,
   collectLimitsGroups,
+  collectResetCreditExpiryWarnings,
   elapsedShare,
   formatResetsIn,
   limitsNotice,
   paceOf,
   providersWithLimits,
+  resetCreditExpiryRemainingMs,
+  resetCreditExpiryNotificationKey,
+  resetCreditExpiryWarningView,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
+const nowIso = "2026-09-03T12:00:00.000Z";
 
 const window = {
   id: "five_hour",
@@ -143,6 +148,153 @@ describe("collectLimitsGroups", () => {
       "Laptop",
       "Desktop",
     ]);
+  });
+});
+
+describe("reset credit expiry warnings", () => {
+  const resetCredits = {
+    availableCount: 2,
+    nextExpiresAt: "2026-09-08T12:00:00.000Z",
+  };
+
+  it("warns during the final seven days but never after expiry", () => {
+    expect(resetCreditExpiryRemainingMs(resetCredits, now)).toBe(5 * 24 * 60 * 60_000);
+    expect(
+      resetCreditExpiryRemainingMs(
+        { ...resetCredits, nextExpiresAt: "2026-09-11T12:00:00.001Z" },
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      resetCreditExpiryRemainingMs(
+        { ...resetCredits, nextExpiresAt: "2026-09-03T12:00:00.000Z" },
+        now,
+      ),
+    ).toBeNull();
+    expect(resetCreditExpiryRemainingMs({ availableCount: 0 }, now)).toBeNull();
+  });
+
+  it("sorts the soonest expiry first and deduplicates a signed-in account across environments", () => {
+    const sharedAccount = provider({
+      displayName: "Personal",
+      auth: { status: "authenticated", email: "Person@example.com" },
+      usageLimits: { checkedAt: nowIso, windows: [window], resetCredits },
+    });
+    const soonerAccount = provider({
+      instanceId: ProviderInstanceId.make("codex-work"),
+      displayName: "Work",
+      auth: { status: "authenticated", email: "work@example.com" },
+      usageLimits: {
+        checkedAt: nowIso,
+        windows: [window],
+        resetCredits: { availableCount: 1, nextExpiresAt: "2026-09-04T12:00:00.000Z" },
+      },
+    });
+    const presentations = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          entry: { target: { label: "Laptop" } },
+          serverConfig: { providers: [sharedAccount, soonerAccount] },
+        },
+      ],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: {
+            providers: [
+              {
+                ...sharedAccount,
+                instanceId: ProviderInstanceId.make("codex-personal-remote"),
+                auth: { status: "authenticated" as const, email: " person@EXAMPLE.com " },
+                usageLimits: {
+                  checkedAt: nowIso,
+                  windows: [window],
+                  resetCredits: {
+                    availableCount: 2,
+                    nextExpiresAt: "2026-09-06T12:00:00.000Z",
+                  },
+                },
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+
+    const warnings = collectResetCreditExpiryWarnings(presentations, now);
+    expect(warnings).toMatchObject([
+      { environmentId: "env-a", availableCount: 1, remainingMs: 24 * 60 * 60_000 },
+      { environmentId: "env-b", availableCount: 2, remainingMs: 3 * 24 * 60 * 60_000 },
+    ]);
+    expect(resetCreditExpiryNotificationKey(warnings)).not.toBeNull();
+    expect(resetCreditExpiryWarningView(warnings, () => "Codex")).toEqual({
+      title: "Reset credits expire soon",
+      description:
+        "2 provider accounts have reset credits expiring within seven days. The soonest expires in 1d 0h. Open Usage → Limits to review them.",
+    });
+  });
+
+  it("identifies one provider and environment in the reminder", () => {
+    const personal = provider({
+      displayName: "Codex Personal",
+      usageLimits: {
+        checkedAt: nowIso,
+        windows: [window],
+        resetCredits: { availableCount: 1, nextExpiresAt: "2026-09-04T12:00:00.000Z" },
+      },
+    });
+    const warnings = collectResetCreditExpiryWarnings(
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          { entry: { target: { label: "Laptop" } }, serverConfig: { providers: [personal] } },
+        ],
+      ]),
+      now,
+    );
+
+    expect(resetCreditExpiryWarningView(warnings, () => "Codex")).toEqual({
+      title: "Codex Personal reset credit expires soon",
+      description:
+        "Your banked reset credit on Laptop expires in 1d 0h. Open Usage → Limits to use it before then.",
+    });
+    const warning = warnings[0]!;
+    expect(
+      resetCreditExpiryNotificationKey([
+        { ...warning, key: "a" },
+        { ...warning, key: "b|c" },
+      ]),
+    ).not.toBe(
+      resetCreditExpiryNotificationKey([
+        { ...warning, key: "a|b" },
+        { ...warning, key: "c" },
+      ]),
+    );
+  });
+
+  it("ignores disabled, unavailable, and unreported providers", () => {
+    const expiring = provider({
+      usageLimits: { checkedAt: nowIso, windows: [window], resetCredits },
+    });
+    const presentations = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          entry: { target: { label: "Laptop" } },
+          serverConfig: {
+            providers: [
+              { ...expiring, enabled: false },
+              { ...expiring, availability: "unavailable" as const },
+              provider({}),
+            ],
+          },
+        },
+      ],
+    ]);
+
+    expect(collectResetCreditExpiryWarnings(presentations, now)).toEqual([]);
   });
 });
 
