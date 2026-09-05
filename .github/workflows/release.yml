@@ -216,6 +216,8 @@ jobs:
       - name: Typecheck
         run: vp run typecheck
 
+      - uses: ./.github/actions/setup-apt-mirrors
+
       - name: Install browser secret helper build libraries
         run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
 
@@ -526,6 +528,9 @@ jobs:
             Write-Error "Visual Studio Installer failed with exit code $code"
             exit $code
           }
+
+      - uses: ./.github/actions/setup-apt-mirrors
+        if: matrix.platform == 'linux'
 
       - name: Install Linux desktop build libraries
         if: matrix.platform == 'linux'
