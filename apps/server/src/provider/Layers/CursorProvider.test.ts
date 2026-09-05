@@ -395,6 +395,56 @@ describe("Cursor skills", () => {
       }),
     ));
 
+  it("treats a symlinked skill outside the root as a package boundary", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const userHome = yield* fileSystem.makeTempDirectory({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-skills-home-",
+        });
+        const workspace = yield* fileSystem.makeTempDirectory({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-skills-workspace-",
+        });
+        const library = yield* fileSystem.makeTempDirectory({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-skills-library-",
+        });
+        const writeSkill = Effect.fn("writeCursorSkill")(function* (
+          directory: string,
+          contents: string,
+        ) {
+          yield* fileSystem.makeDirectory(directory, { recursive: true });
+          yield* fileSystem.writeFileString(path.join(directory, "SKILL.md"), contents);
+        });
+
+        // A skill package managed in a config repo and installed by symlink.
+        // Its own SKILL.md must be discovered under the link name, but nothing
+        // below the target may be walked.
+        yield* writeSkill(path.join(library, "shared-review"), "---\ndescription: shared\n---\n");
+        yield* writeSkill(path.join(library, "shared-review", "hidden"), "---\n---\n");
+        const root = path.join(workspace, ".cursor", "skills");
+        yield* fileSystem.makeDirectory(root, { recursive: true });
+        yield* fileSystem.symlink(path.join(library, "shared-review"), path.join(root, "review"));
+
+        const skills = yield* discoverCursorSkills(workspace, { HOME: userHome });
+        expect(skills).toEqual([
+          {
+            name: "review",
+            description: "shared",
+            path: path.join(root, "review", "SKILL.md"),
+            scope: "project",
+            enabled: true,
+          },
+        ]);
+        expect(
+          (yield* probeCursorSkills(workspace, { HOME: userHome }).pipe(Effect.result))._tag,
+        ).toBe("Success");
+      }),
+    ));
+
   it("rewrites only discovered skill mentions into Cursor slash invocations", () => {
     expect(hasCursorSkillMention("use $Review_Pr:V2 here")).toBe(true);
     expect(hasCursorSkillMention("please $review this")).toBe(true);
@@ -404,6 +454,24 @@ describe("Cursor skills", () => {
     expect(rewriteCursorSkillMentions("please $review this", new Set(["review"]))).toBe(
       "please /review this",
     );
+  });
+
+  it("detects and invokes digit-leading Cursor skills without rewriting money", () => {
+    const names = new Set(["2spec", "20k", "100M", "1e6"]);
+    // Repeated presence checks must not carry a global-regex cursor.
+    expect(hasCursorSkillMention("use $2spec here")).toBe(true);
+    expect(hasCursorSkillMention("use $2spec here")).toBe(true);
+    expect(rewriteCursorSkillMentions("use $2spec here", names)).toBe("use /2spec here");
+    expect(rewriteCursorSkillMentions("use $2spec here", new Set())).toBe("use $2spec here");
+    for (const text of [
+      "pay $20 tomorrow",
+      "budget $20k here",
+      "cost $100M total",
+      "limit $1e6 here",
+    ]) {
+      expect(hasCursorSkillMention(text)).toBe(false);
+      expect(rewriteCursorSkillMentions(text, names)).toBe(text);
+    }
   });
 });
 

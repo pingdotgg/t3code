@@ -86,6 +86,7 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
+import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import {
   hasNativeSelectableMarkdownText,
   SelectableMarkdownText,
@@ -596,7 +597,8 @@ const MarkdownExternalLink = memo(function MarkdownExternalLink(props: {
   readonly href: string;
   readonly onPress: (href: string) => void;
 }) {
-  const [failed, setFailed] = useState(() => failedMarkdownFaviconHosts.has(props.host));
+  const [failedHost, setFailedHost] = useState<string | null>(null);
+  const faviconUrl = faviconUrlForOrigin(`https://${props.host}`);
 
   return (
     <NativeText
@@ -607,15 +609,17 @@ const MarkdownExternalLink = memo(function MarkdownExternalLink(props: {
         textDecorationLine: "none",
       }}
     >
-      {!failed ? (
+      {faviconUrl !== null &&
+      failedHost !== props.host &&
+      !failedMarkdownFaviconHosts.has(props.host) ? (
         <Image
           source={{
-            uri: `https://www.google.com/s2/favicons?domain=${encodeURIComponent(props.host)}&sz=32`,
+            uri: faviconUrl,
           }}
           style={[markdownLinkStyles.inlineIcon, markdownLinkStyles.favicon]}
           onError={() => {
             failedMarkdownFaviconHosts.add(props.host);
-            setFailed(true);
+            setFailedHost(props.host);
           }}
         />
       ) : (

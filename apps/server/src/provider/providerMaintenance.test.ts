@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { expect, it } from "@effect/vitest";
 import * as NodeFS from "node:fs";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -8,6 +9,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import { HttpClient } from "effect/unstable/http";
 import {
   createProviderVersionAdvisory,
@@ -362,9 +364,9 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           provider: driver("nativePackageTool"),
           packageName: "@example/native-package-tool",
           update: {
-            command: "native-package-tool update",
+            command: `${nativePackageToolPath} update`,
 
-            executable: "native-package-tool",
+            executable: nativePackageToolPath,
 
             args: ["update"],
 
@@ -399,9 +401,9 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           provider: driver("scopedPackageTool"),
           packageName: "@example/scoped-package-tool",
           update: {
-            command: "scoped-package-tool upgrade",
+            command: `${scopedPackageToolPath} upgrade`,
 
-            executable: "scoped-package-tool",
+            executable: scopedPackageToolPath,
 
             args: ["upgrade"],
 
@@ -410,6 +412,50 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         });
       }),
   );
+
+  it.effect.skipIf(windowsHost)("runs an explicit native updater outside PATH", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-native-update-" });
+      const nativeBinDir = NodePath.join(tempDir, "with spaces", ".scoped-package-tool", "bin");
+      yield* fs.makeDirectory(nativeBinDir, { recursive: true });
+      const binaryPath = NodePath.join(nativeBinDir, "scoped-package-tool");
+      yield* fs.writeFileString(binaryPath, "#!/bin/sh\nprintf '%s' \"$1\"\n");
+      yield* fs.chmod(binaryPath, 0o755);
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+        scopedPackageToolUpdate,
+        { binaryPath, env: { PATH: "" } },
+      );
+      const update = capabilities.update;
+      expect(update).not.toBeNull();
+      if (!update) return;
+      const result = NodeChildProcess.spawnSync(update.executable, update.args, {
+        env: { PATH: "" },
+        encoding: "utf8",
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("upgrade");
+    }).pipe(Effect.scoped),
+  );
+
+  it.each([
+    "/Users/example/.local/bin/native-package-tool",
+    "C:\\Users\\Example User\\.local\\bin\\native-package-tool.exe",
+  ])("preserves a configured native executable path: %s", (binaryPath) => {
+    expect(nativePackageToolUpdate.resolve({ binaryPath }).update?.executable).toBe(binaryPath);
+  });
+
+  it("uses the resolved launcher when its symlink target identifies a native install", () => {
+    const launcher = "/custom tools/native-launcher";
+    const capabilities = nativePackageToolUpdate.resolve({
+      binaryPath: launcher,
+      resolvedCommandPath: launcher,
+      realCommandPath: "/Users/example/.local/bin/native-package-tool",
+    });
+    expect(capabilities.update?.executable).toBe(launcher);
+  });
 
   it("switches native-package-tool to Homebrew updates when the binary resolves through Homebrew", () => {
     expect(
