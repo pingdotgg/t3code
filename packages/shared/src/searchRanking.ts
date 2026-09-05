@@ -135,7 +135,7 @@ export function scoreQueryMatch(input: {
   return null;
 }
 
-export function compareRankedSearchResults<T>(
+function compareRankedSearchResults<T>(
   left: RankedSearchResult<T>,
   right: RankedSearchResult<T>,
 ): number {
