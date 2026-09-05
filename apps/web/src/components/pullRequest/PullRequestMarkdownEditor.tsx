@@ -1,7 +1,12 @@
 import { useState } from "react";
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  AuthSourceControlWriteScope,
+  type EnvironmentId,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
@@ -43,6 +48,7 @@ export function PullRequestMarkdownEditor({
   readonly onSave: (next: string) => void;
   readonly onCancel: () => void;
 }) {
+  const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const [draft, setDraft] = useState(value);
   const [preview, setPreview] = useState(false);
   // The words this draft started from. React keeps a component instance wherever the same
@@ -55,7 +61,7 @@ export function PullRequestMarkdownEditor({
     setDraft(value);
   }
   const empty = draft.trim().length === 0;
-  const saveDisabled = saving || (empty && !allowEmpty);
+  const saveDisabled = !canWriteSourceControl || saving || (empty && !allowEmpty);
 
   return (
     <div
@@ -70,7 +76,7 @@ export function PullRequestMarkdownEditor({
         ) {
           event.preventDefault();
           event.stopPropagation();
-          if (!saveDisabled && !event.repeat) onSave(draft);
+          if (!saveDisabled && !event.repeat && readEnvironmentScope(environmentId, AuthSourceControlWriteScope)) onSave(draft);
           return;
         }
         if (event.key !== "Escape" || saving) return;
@@ -119,7 +125,20 @@ export function PullRequestMarkdownEditor({
         <Button size="xs" variant="ghost" disabled={saving} onClick={onCancel}>
           Cancel
         </Button>
-        <Button size="xs" variant="outline" disabled={saveDisabled} onClick={() => onSave(draft)}>
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={!canWriteSourceControl || saving || (empty && !allowEmpty)}
+          onClick={() => {
+            if (
+              !readEnvironmentScope(environmentId, AuthSourceControlWriteScope) ||
+              saving ||
+              (empty && !allowEmpty)
+            )
+              return;
+            onSave(draft);
+          }}
+        >
           {saving ? "Saving..." : "Save"}
         </Button>
       </div>
