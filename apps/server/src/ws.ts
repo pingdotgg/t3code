@@ -2840,7 +2840,7 @@ const layerWsRpc = (
             Effect.acquireRelease(
               terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
               (unsubscribe) => Effect.sync(unsubscribe),
-            ),
+            ).pipe(Effect.catchCause((cause) => Queue.failCause(queue, cause))),
           ),
         [WS_METHODS.terminalWrite]: (input) => terminalManager.write(input),
         [WS_METHODS.terminalResize]: (input) => terminalManager.resize(input),
@@ -2852,7 +2852,7 @@ const layerWsRpc = (
             Effect.acquireRelease(
               terminalManager.observeStream(input, (event) => Queue.offer(queue, event)),
               (unsubscribe) => Effect.sync(unsubscribe),
-            ),
+            ).pipe(Effect.catchCause((cause) => Queue.failCause(queue, cause))),
           ),
         [WS_METHODS.subscribeTerminalEvents]: (_input) =>
           Stream.callback<TerminalEvent>((queue) =>
