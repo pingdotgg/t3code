@@ -56,9 +56,18 @@ export const layer = Layer.effect(
         ON CONFLICT(thread_id, file_path) DO UPDATE SET source_json = excluded.source_json
       `;
         },
-        Effect.mapError(
-          (cause) => new AgentSessionScanError({ operation: "read-projects", cause }),
-        ),
+        (effect, threadId, source) =>
+          effect.pipe(
+            Effect.mapError(
+              (cause) =>
+                new AgentSessionScanError({
+                  operation: "record-import-source",
+                  threadId,
+                  filePath: source.filePath,
+                  cause,
+                }),
+            ),
+          ),
       ),
     });
   }),
