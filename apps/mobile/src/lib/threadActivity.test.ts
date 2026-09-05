@@ -2910,6 +2910,126 @@ describe("quiet timeline: nested agents", () => {
     },
   );
 
+  it("folds bypassed Claude workflow members into the coordinator's batch and settles them with it", () => {
+    const turnId = TurnId.make("turn-workflow");
+    const at = (seconds: number) => `2026-04-01T00:00:${String(seconds).padStart(2, "0")}.000Z`;
+    const thread = makeThread({
+      id: ThreadId.make("thread-workflow"),
+      projectId: ProjectId.make("project-1"),
+      title: "Workflow",
+      activities: [
+        makeActivity({
+          id: EventId.make("wf-progress"),
+          kind: "task.progress",
+          summary: "Workflow running",
+          createdAt: at(1),
+          turnId,
+          payload: {
+            taskId: "wf-1",
+            taskType: "local_workflow",
+            workflowName: "review",
+            agentKind: "agent",
+            title: "review",
+            status: "running",
+          },
+        }),
+        // Members are synthesized with timelineBypass and never render alone.
+        ...[0, 1].map((index) =>
+          makeActivity({
+            id: EventId.make(`member-${index}`),
+            kind: "task.progress",
+            summary: `Agent ${index}`,
+            createdAt: at(2 + index),
+            turnId,
+            payload: {
+              taskId: `wf-1:wf:${index}`,
+              agentKind: "agent",
+              title: `Reviewer ${index}`,
+              description: `Reviewer ${index}`,
+              status: index === 0 ? "completed" : "running",
+              parentAgentId: "wf-1",
+              timelineBypass: true,
+            },
+          }),
+        ),
+        makeActivity({
+          id: EventId.make("wf-done"),
+          kind: "task.completed",
+          summary: "Task completed",
+          createdAt: at(10),
+          turnId,
+          payload: {
+            taskId: "wf-1",
+            taskType: "local_workflow",
+            workflowName: "review",
+            agentKind: "agent",
+            status: "completed",
+            title: "review",
+          },
+        }),
+      ],
+    });
+    const rows = buildThreadFeed(thread).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(rows).toHaveLength(1);
+    // The member that never reported its own end settles with the coordinator.
+    expect(rows[0]).toMatchObject({
+      id: "wf-progress",
+      summary: "Ran 2 subagents · completed",
+      lifecycleStatus: "completed",
+      workEntry: {
+        agentSpawn: {
+          workflowId: "wf-1",
+          agentTaskIds: ["wf-1", "wf-1:wf:0", "wf-1:wf:1"],
+        },
+      },
+    });
+    expect(rows[0]?.getFullDetail()).toBe("Reviewer 0 · completed\nReviewer 1 · completed");
+  });
+
+  it("treats a Codex child's idle turn end as a finished batch member", () => {
+    const turnId = TurnId.make("turn-codex");
+    const child = (
+      id: string,
+      kind: "task.started" | "task.updated",
+      status: string,
+      seconds: number,
+    ) =>
+      makeActivity({
+        id: EventId.make(id),
+        kind,
+        summary: `${status}`,
+        createdAt: `2026-04-01T00:00:${String(seconds).padStart(2, "0")}.000Z`,
+        turnId,
+        payload: {
+          taskId: "child-1",
+          agentKind: "agent",
+          title: "math_one",
+          status,
+          timelineBypass: true,
+        },
+      });
+    const thread = makeThread({
+      id: ThreadId.make("thread-codex"),
+      projectId: ProjectId.make("project-1"),
+      title: "Codex children",
+      activities: [
+        child("c-start", "task.started", "running", 1),
+        child("c-running", "task.updated", "running", 2),
+        child("c-idle", "task.updated", "idle", 5),
+      ],
+    });
+    const rows = buildThreadFeed(thread).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      summary: "Ran 1 subagent · completed",
+      lifecycleStatus: "completed",
+    });
+  });
+
   it("keeps a nested agent's terminal row but hides its background work", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-nested"),

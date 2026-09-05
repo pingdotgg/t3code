@@ -404,10 +404,12 @@ function isTerminalTaskUpdate(activity: OrchestrationThreadActivity): boolean {
 
 /**
  * Quiet-timeline guarantee (mirrors web's session-logic): agent-internal
- * activity lives in the Agents sheet, not the work log. Terminal rows are
- * kept — with no Agents surface on mobile they are the terminal signal
- * (a surface that hides rows must keep its own terminal signal). That means
- * task.completed and terminal task.updated, including Antigravity cancellation.
+ * activity lives in the Agents sheet, not the work log. Agent lifecycle rows
+ * pass even when bypassed or owned by another agent, because they fold into
+ * their spawn batch rather than rendering on their own; that is how Codex
+ * children (all bypassed) and Claude workflow members reach the batch row.
+ * Terminal rows are kept regardless — with no Agents surface on mobile they
+ * are the terminal signal.
  */
 function isAgentInternalActivity(activity: OrchestrationThreadActivity): boolean {
   const payload =
@@ -417,20 +419,26 @@ function isAgentInternalActivity(activity: OrchestrationThreadActivity): boolean
   if (!payload) {
     return false;
   }
-  const isTerminalTaskRow = activity.kind === "task.completed" || isTerminalTaskUpdate(activity);
-  if (payload.timelineBypass === true && !isTerminalTaskRow) {
-    return true;
-  }
-  // agentId marks ownership, not "hide me": a NESTED AGENT's terminal row is
-  // the only signal mobile gets (no Agents sheet), so it stays. Only an
-  // agent's own background work (stamped "background") is internal — same
-  // rule as web (review finding: hiding on agentId alone dropped nested
-  // completions with no replacement UI).
+  const isTaskRow =
+    activity.kind === "task.progress" ||
+    activity.kind === "task.updated" ||
+    activity.kind === "task.completed";
   const ownedByAgent = typeof payload.agentId === "string" && payload.agentId.trim().length > 0;
-  if (!ownedByAgent) {
-    return false;
+  if (isTaskRow) {
+    if (!ownedByAgent && payload.timelineBypass !== true) {
+      return false;
+    }
+    // An agent's own shells stay internal; the agents themselves fold into
+    // their batch. A bypassed batch marker keeps its terminal row.
+    if (typeof payload.taskId === "string" && payload.agentKind === "agent") {
+      return false;
+    }
+    if (ownedByAgent) {
+      return true;
+    }
+    return !(activity.kind === "task.completed" || isTerminalTaskUpdate(activity));
   }
-  return !(isTerminalTaskRow && payload.agentKind === "agent");
+  return payload.timelineBypass === true || ownedByAgent;
 }
 
 function deriveWorkLogEntries(
@@ -603,6 +611,11 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (!toolLifecycleStatus && activity.kind === "tool.completed") {
     toolLifecycleStatus = "completed";
   }
+  // A Codex child that finishes its turn reports "idle" (resumable, not
+  // terminal). For the batch row that is a finished member.
+  if (!toolLifecycleStatus && isTaskActivity && payload?.status === "idle") {
+    toolLifecycleStatus = "completed";
+  }
   if (toolLifecycleStatus) {
     entry.toolLifecycleStatus = toolLifecycleStatus;
   }
@@ -635,8 +648,19 @@ function agentSpawnRow(
   anchor: DerivedWorkLogEntry,
   workflowId: string | null,
   agentTaskIds: ReadonlyArray<string>,
-  agents: NonNullable<WorkLogEntry["agentSpawn"]>["agents"],
+  members: NonNullable<WorkLogEntry["agentSpawn"]>["agents"],
 ): DerivedWorkLogEntry {
+  // A finished coordinator settles members that never reported their own
+  // end; Claude stops synthesizing member ticks once the workflow is done.
+  const coordinator = workflowId === null ? undefined : members[agentTaskIds.indexOf(workflowId)];
+  const agents =
+    coordinator?.status !== undefined && coordinator.status !== "inProgress"
+      ? members.map((agent) =>
+          agent.status === undefined || agent.status === "inProgress"
+            ? { ...agent, status: coordinator.status }
+            : agent,
+        )
+      : members;
   const agentSpawn = { workflowId, agentTaskIds, agents };
   // The batch row has no detail of its own: its body lists the members.
   const { detail: _detail, ...anchorWithoutDetail } = anchor;
