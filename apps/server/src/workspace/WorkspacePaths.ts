@@ -202,8 +202,10 @@ export const make = Effect.gen(function* () {
       .run({
         operation: "WorkspacePaths.isBareRepositoryLayout",
         command: "git",
-        args: ["--git-dir", gitDir, "rev-parse", "--is-bare-repository"],
+        // Let Git read its own gitfile syntax; the parsed target is only a fast-path filter.
+        args: ["--git-dir", gitPath, "rev-parse", "--is-bare-repository"],
         cwd: normalizedWorkspaceRoot,
+        env: { GIT_WORK_TREE: undefined },
         allowNonZeroExit: true,
         timeoutMs: 5_000,
         maxOutputBytes: 4_096,

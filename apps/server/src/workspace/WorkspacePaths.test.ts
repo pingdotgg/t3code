@@ -255,6 +255,79 @@ it.layer(TestLayer)("WorkspacePathsLive", (it) => {
       }),
     );
 
+    it.effect("lets Git reject malformed gitfiles instead of probing an unrelated target", () =>
+      Effect.gen(function* () {
+        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+        const vcsProcess = yield* VcsProcess.VcsProcess;
+        const root = yield* makeBareRoot();
+        for (const pointer of ["metadata\ngitdir: .bare\n", "gitdir:.bare\n", " gitdir: .bare\n"]) {
+          yield* writeTextFile(root, ".git", pointer);
+          const native = yield* vcsProcess.run({
+            operation: "WorkspacePaths.test.malformedGitfile",
+            command: "git",
+            cwd: root,
+            args: ["rev-parse", "--is-bare-repository"],
+            allowNonZeroExit: true,
+          });
+          expect(native.exitCode).not.toBe(0);
+          expect(yield* workspacePaths.ensureNotBareRepositoryLayout(root)).toBe(root);
+        }
+      }),
+    );
+
+    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+      "preserves trailing spaces in POSIX gitdir names",
+      () =>
+        Effect.gen(function* () {
+          const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+          const path = yield* Path.Path;
+          const root = yield* makeTempDir();
+          yield* runGit(root, ["init", "--separate-git-dir", path.join(root, "store ")]);
+          yield* runGit(root, ["init", "--bare", path.join(root, "store")]);
+          expect((yield* runGit(root, ["rev-parse", "--is-inside-work-tree"])).stdout.trim()).toBe(
+            "true",
+          );
+
+          expect(yield* workspacePaths.ensureNotBareRepositoryLayout(root)).toBe(root);
+        }),
+    );
+
+    it.effect(
+      "classifies the root independently of inherited Git worktree and gitdir overrides",
+      () =>
+        Effect.gen(function* () {
+          const vcsProcess = yield* VcsProcess.VcsProcess;
+          const path = yield* Path.Path;
+          const root = yield* makeBareRoot();
+          const otherRoot = yield* makeTempDir();
+          yield* runGit(otherRoot, ["init"]);
+          for (const inheritedEnv of [
+            { GIT_WORK_TREE: root },
+            { GIT_DIR: path.join(otherRoot, ".git") },
+          ]) {
+            const native = yield* vcsProcess.run({
+              operation: "WorkspacePaths.test.inheritedGitEnvironment",
+              command: "git",
+              cwd: root,
+              args: ["rev-parse", "--is-bare-repository"],
+              env: inheritedEnv,
+            });
+            expect(native.stdout.trim()).toBe("false");
+            const workspacePaths = yield* WorkspacePaths.make.pipe(
+              Effect.provideService(VcsProcess.VcsProcess, {
+                run: (input) =>
+                  vcsProcess.run({ ...input, env: { ...inheritedEnv, ...input.env } }),
+              }),
+            );
+
+            const error = yield* workspacePaths
+              .ensureNotBareRepositoryLayout(root)
+              .pipe(Effect.flip);
+            expect(error).toBeInstanceOf(WorkspacePaths.WorkspaceRootBareRepositoryLayoutError);
+          }
+        }),
+    );
+
     it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
       "preserves literal backslashes in POSIX gitdir names",
       () =>
