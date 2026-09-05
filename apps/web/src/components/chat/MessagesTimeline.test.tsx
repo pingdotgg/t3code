@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
+import { formatDayAwareTimestamp } from "../../timestampFormat";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
 
@@ -140,6 +141,8 @@ function matchMedia() {
 let MessagesTimeline: typeof import("./MessagesTimeline").MessagesTimeline;
 
 beforeAll(async () => {
+  const ElementStub = class ElementStub {};
+  vi.stubGlobal("Element", ElementStub);
   const classList = {
     add: () => {},
     remove: () => {},
@@ -154,6 +157,7 @@ beforeAll(async () => {
     clear: () => {},
   });
   vi.stubGlobal("window", {
+    Element: ElementStub,
     matchMedia,
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -1330,6 +1334,9 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Working for");
     expect(markup).toContain("Running pnpm");
+    // The live row is transient (it becomes a collapsed group when the turn
+    // settles), so it intentionally carries no timestamp.
+    expect(markup).not.toContain(formatDayAwareTimestamp(MESSAGE_CREATED_AT, "locale"));
   });
 
   it("scopes a live row failure to the tool named by the row", () => {
@@ -1601,5 +1608,121 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("lucide-circle-alert");
     expect(markup).toContain("text-destructive");
+  });
+
+  it("shows a hover timestamp on a plain tool row without adding a tab stop", () => {
+    const createdAt = "2026-03-17T19:12:28.000Z";
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt,
+            entry: {
+              id: "work-1",
+              createdAt,
+              label: "Ran command",
+              tone: "tool",
+              command: "pnpm test",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("pnpm test");
+    expect(markup).not.toContain('tabindex="0"');
+    expect(markup).toContain("group/timeline-row");
+    // The timestamp must be hidden until the row is hovered or focused, so
+    // the assertions pin the reveal itself, not just the text.
+    expect(markup).toContain("opacity-0");
+    expect(markup).toContain("group-hover/timeline-row:opacity-100");
+    expect(markup).toContain("group-focus-within/timeline-row:opacity-100");
+    expect(markup).toContain(formatDayAwareTimestamp(createdAt, "locale"));
+  });
+
+  it("shows a hover timestamp on non-tool activity summaries", () => {
+    const createdAt = "2026-03-17T19:12:28.000Z";
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt,
+            entry: {
+              id: "work-1",
+              createdAt,
+              label: "Context compacted",
+              tone: "info",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Context compacted");
+    expect(markup).toContain("group/timeline-row");
+    expect(markup).toContain("group-hover/timeline-row:opacity-100");
+    expect(markup).toContain("group-focus-within/timeline-row:opacity-100");
+    // The unified activity-summary button is already the keyboard path.
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain(formatDayAwareTimestamp(createdAt, "locale"));
+  });
+
+  it("shows a hover timestamp on the worked-for turn fold", () => {
+    const turnId = TurnId.make("turn-folded");
+    const workCreatedAt = "2026-03-17T19:12:28.000Z";
+    const assistantUpdatedAt = "2026-03-17T19:14:30.000Z";
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        latestTurn={{
+          turnId,
+          state: "completed",
+          startedAt: workCreatedAt,
+          completedAt: assistantUpdatedAt,
+        }}
+        timelineEntries={[
+          {
+            id: "entry-work",
+            kind: "work",
+            createdAt: workCreatedAt,
+            entry: {
+              id: "work-1",
+              createdAt: workCreatedAt,
+              turnId,
+              label: "Ran command",
+              tone: "tool",
+              command: "pnpm test",
+            },
+          },
+          {
+            id: "entry-assistant",
+            kind: "message",
+            createdAt: assistantUpdatedAt,
+            message: {
+              id: MessageId.make("message-folded"),
+              role: "assistant",
+              text: "Done.",
+              turnId,
+              createdAt: assistantUpdatedAt,
+              updatedAt: assistantUpdatedAt,
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    // The work entry folds behind the turn fold, so the fold row is the only
+    // place the work entry's start time can render from.
+    expect(markup).toContain("Worked for");
+    expect(markup).toContain(formatDayAwareTimestamp(workCreatedAt, "locale"));
+    // The assistant metadata row keeps its own (later) timestamp.
+    expect(markup).toContain(formatDayAwareTimestamp(assistantUpdatedAt, "locale"));
   });
 });
