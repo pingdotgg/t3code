@@ -2,6 +2,10 @@ import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
@@ -10,7 +14,7 @@ import { useEffect, useMemo, useRef } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
-import { toastManager } from "~/components/ui/toast";
+import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
@@ -20,6 +24,7 @@ import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
+import { resolveLiteralFilePath, useFileManagerActionForEnvironment } from "~/fileManagerReveal";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
@@ -41,6 +46,12 @@ interface FileBrowserPanelProps {
 
 function treePath(entry: ProjectEntry): string {
   return entry.kind === "directory" ? `${entry.path}/` : entry.path;
+}
+
+type FileBrowserContextMenuAction = "copy-mention" | "add-to-chat" | "reveal-in-file-manager";
+
+function fileBrowserEntryTargetPath(cwd: string, rowPath: string): string {
+  return resolveLiteralFilePath(rowPath.replace(/\/$/, ""), cwd);
 }
 
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
@@ -106,6 +117,7 @@ export default function FileBrowserPanel({
   const composerRef = useComposerHandleContext();
   const entriesQuery = useProjectEntriesQuery(environmentId, cwd);
   const entries = entriesQuery.data?.entries ?? [];
+  const fileManagerAction = useFileManagerActionForEnvironment(environmentId);
   const entryKinds = useMemo(
     () => new Map(entries.map((entry) => [entry.path, entry.kind] as const)),
     [entries],
@@ -144,20 +156,22 @@ export default function FileBrowserPanel({
     }
     const relativePath = item.path.replace(/\/$/, "");
     const mention = serializeComposerFileLink(relativePath);
+    const revealAction = fileManagerAction?.reveal ?? null;
     const pointer = contextMenuPointerRef.current;
     const pointerIsFresh = pointer !== null && performance.now() - pointer.at < 1000;
     const anchorRect = context.anchorElement.getBoundingClientRect();
     const position = pointerIsFresh
       ? { x: pointer.x, y: pointer.y }
       : { x: anchorRect.left, y: anchorRect.bottom };
+    const menuItems: ReadonlyArray<{ id: FileBrowserContextMenuAction; label: string }> = [
+      { id: "copy-mention", label: "Copy mention" },
+      { id: "add-to-chat", label: "Add to chat" },
+      ...(revealAction === null
+        ? []
+        : [{ id: "reveal-in-file-manager" as const, label: revealAction.label }]),
+    ];
     try {
-      const clicked = await api.contextMenu.show(
-        [
-          { id: "copy-mention", label: "Copy mention" },
-          { id: "add-to-chat", label: "Add to chat" },
-        ],
-        position,
-      );
+      const clicked = await api.contextMenu.show(menuItems, position);
       if (clicked === "copy-mention") {
         try {
           await writeTextToClipboard(mention);
@@ -188,6 +202,31 @@ export default function FileBrowserPanel({
             title: "Unable to add to chat",
             description: "The chat isn't ready to accept input right now.",
           });
+        }
+        return;
+      }
+      if (clicked === "reveal-in-file-manager" && revealAction !== null) {
+        const targetPath = fileBrowserEntryTargetPath(cwd, relativePath);
+        const failureTitle = `Unable to reveal ${item.kind === "directory" ? "folder" : "file"}`;
+        try {
+          const result = await revealAction.run(targetPath);
+          if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: failureTitle,
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        } catch (cause) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: failureTitle,
+              description: cause instanceof Error ? cause.message : "An error occurred.",
+            }),
+          );
         }
       }
     } finally {

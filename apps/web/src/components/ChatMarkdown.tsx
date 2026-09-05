@@ -94,10 +94,6 @@ import { resolveProtocolRelativeMediaUrl } from "./media/mediaContent";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import {
-  revealInFileExplorerLabelForKind,
-  revealInFileExplorerLabelForOs,
-} from "./preview/fileExplorerLabel";
-import {
   resolveExternalWebLinkHost,
   showExternalLinkContextMenu,
 } from "./chat/externalLinkContextMenu";
@@ -122,6 +118,7 @@ import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
+import { useFileManagerActionForEnvironment } from "../fileManagerReveal";
 import {
   chatMarkdownClipboardPayload,
   serializeTableElementToCsv,
@@ -146,7 +143,6 @@ import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
-import { shellEnvironment } from "../state/shell";
 import { assetEnvironment } from "../state/assets";
 import { usePreparedConnection } from "../state/session";
 import { previewEnvironment } from "../state/preview";
@@ -2212,17 +2208,10 @@ function useChatMarkdownState({
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
   const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
-  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
-    reportFailure: false,
-  });
-  const revealInFileManagerLabel =
-    environmentId !== null &&
-    serverConfig?.shellRevealInFileManager === true &&
-    serverConfig.availableEditors.includes("file-manager")
-      ? serverConfig.shellRevealInFileManagerKind === undefined
-        ? revealInFileExplorerLabelForOs(serverConfig.environment.platform.os)
-        : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind)
-      : undefined;
+  const environmentFileManagerAction = useFileManagerActionForEnvironment(environmentId);
+  const fileManagerAction = canUseShellActions ? environmentFileManagerAction : null;
+  const fileManagerReveal = fileManagerAction?.reveal ?? null;
+  const revealInFileManagerLabel = fileManagerReveal?.label;
   const revealFileInFileManager = useCallback(
     (filePath: string) => {
       if (environmentId === null) {
@@ -2232,12 +2221,12 @@ function useChatMarkdownState({
           ),
         );
       }
-      return openInEditor({
-        environmentId,
-        input: { cwd: filePath, editor: "file-manager", reveal: true },
-      });
+      if (fileManagerReveal === null) {
+        return Promise.reject(new Error("File-manager reveal is unavailable."));
+      }
+      return fileManagerReveal.run(filePath);
     },
-    [environmentId, openInEditor],
+    [environmentId, fileManagerReveal],
   );
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownFileLinkMetaByHref = useMemo(() => {
@@ -2503,7 +2492,7 @@ function useChatMarkdownState({
           }
           openInEditorMenuLabel={preferredEditorMenuLabel}
           onReveal={
-            canUseShellActions && revealInFileManagerLabel !== undefined
+            canUseShellActions && fileManagerReveal !== null
               ? () => revealMarkdownFileInFileManager(fileLinkMeta)
               : undefined
           }
@@ -2521,6 +2510,7 @@ function useChatMarkdownState({
     },
     [
       canUseShellActions,
+      fileManagerReveal,
       fileLinkParentSuffixByPath,
       openFileInPanel,
       openInPreferredEditor,

@@ -8177,6 +8177,7 @@ export default function ChatView(props: ChatViewProps) {
           maximized={rightPanelMaximized}
           surfaces={renderedRightPanelSurfaces}
           environmentId={activeThreadRef.environmentId}
+          workspaceRoot={activeWorkspaceRoot ?? null}
           activeSurfaceId={renderedRightPanelSurface?.id ?? null}
           pendingSurfaceIds={pendingFileSurfaceIds}
           previewSessions={activePreviewState.sessions}
@@ -8227,6 +8228,7 @@ export default function ChatView(props: ChatViewProps) {
             }
             surfaces={renderedRightPanelSurfaces}
             environmentId={activeThreadRef.environmentId}
+            workspaceRoot={activeWorkspaceRoot ?? null}
             activeSurfaceId={renderedRightPanelSurface?.id ?? null}
             pendingSurfaceIds={pendingFileSurfaceIds}
             previewSessions={activePreviewState.sessions}
