@@ -3019,6 +3019,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ) {
         return false;
       }
+      // A typed draft with no active recall can never step, so skip the
+      // layout read and the entry build for that common case.
+      if (promptHistoryPositionRef.current === null && promptRef.current.length > 0) {
+        return false;
+      }
       const editor = composerEditorRef.current;
       if (!editor?.isCaretOnVisualEdge(direction === "backward" ? "start" : "end")) {
         return false;
