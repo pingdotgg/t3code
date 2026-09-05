@@ -1,3 +1,5 @@
+import * as NodeEvents from "node:events";
+
 import { it as effectIt } from "@effect/vitest";
 import { DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
 import type { DesktopPreviewRecordingFrame } from "@t3tools/contracts";
@@ -219,6 +221,7 @@ interface TestHostWebContents {
   readonly id: number;
   readonly mainFrame: { readonly frameTreeNodeId: number };
   readonly executeJavaScript: ReturnType<typeof vi.fn>;
+  readonly send: ReturnType<typeof vi.fn>;
   readonly isDestroyed: () => boolean;
   readonly session: {
     readonly setDisplayMediaRequestHandler: ReturnType<typeof vi.fn>;
@@ -236,6 +239,7 @@ const makeTestHostWebContents = (): TestHostWebContents => {
     id: 7,
     mainFrame: { frameTreeNodeId: 7 },
     executeJavaScript: vi.fn(async () => true),
+    send: vi.fn(),
     isDestroyed: () => false,
     session: {
       setDisplayMediaRequestHandler: vi.fn((next: TestDisplayMediaHandler) => {
@@ -283,6 +287,73 @@ const makeTestPreviewWebContents = (
     },
     capturePage,
   } as unknown as TestPreviewWebContents;
+};
+
+const makeAutomationWebContents = (id = 42, host = makeTestHostWebContents()) => {
+  const events = new NodeEvents.EventEmitter();
+  const debuggerEvents = new NodeEvents.EventEmitter();
+  let destroyed = false;
+  let attached = false;
+  const sendCommand = vi.fn(
+    async (method: string, params?: Record<string, unknown>): Promise<unknown> =>
+      method === "Runtime.evaluate"
+        ? {
+            result: {
+              value:
+                params?.expression === "42"
+                  ? 42
+                  : {
+                      url: "https://example.com",
+                      title: "Example",
+                      loading: false,
+                      visibleText: "Example",
+                      interactiveElements: [],
+                    },
+            },
+          }
+        : undefined,
+  );
+  const wc = Object.assign(
+    makeTestPreviewWebContents(
+      async () => ({
+        toJPEG: () => Buffer.from("jpeg"),
+        toPNG: () => Buffer.from("png"),
+        getSize: () => ({ width: 100, height: 80 }),
+      }),
+      id,
+      host,
+    ),
+    {
+      isDestroyed: () => destroyed,
+      isDevToolsOpened: () => false,
+      focus: vi.fn(),
+      on: events.on.bind(events),
+      once: events.once.bind(events),
+      off: events.off.bind(events),
+      debugger: {
+        isAttached: () => attached,
+        attach: vi.fn(() => {
+          attached = true;
+        }),
+        detach: vi.fn(() => {
+          attached = false;
+          debuggerEvents.emit("detach", {}, "target closed");
+        }),
+        sendCommand,
+        on: debuggerEvents.on.bind(debuggerEvents),
+        off: debuggerEvents.off.bind(debuggerEvents),
+      },
+    },
+  );
+  return {
+    wc,
+    host,
+    sendCommand,
+    destroy: () => {
+      destroyed = true;
+      events.emit("destroyed");
+    },
+  };
 };
 
 /** Two ready tabs (41, 42) sharing one window, so they contend for the single display-media slot. */
@@ -2534,6 +2605,409 @@ describe("PreviewManager", () => {
           cause: { _tag: "TimeoutError" },
         });
         expect(yield* Fiber.join(evaluate)).toBe(42);
+      }),
+    ),
+  );
+
+  effectIt.effect("retires a stalled evaluation before admitting another guest", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const first = makeAutomationWebContents();
+        const replacement = makeAutomationWebContents(43, first.host);
+        fromId.mockImplementation((id) => (id === 43 ? replacement.wc : first.wc));
+        yield* manager.createTab("tab_deadline");
+        yield* manager.registerWebview("tab_deadline", 42);
+        yield* manager.automationEvaluate("tab_deadline", { expression: "42" });
+        const entered = yield* Deferred.make<void>();
+        const pending = Promise.withResolvers<unknown>();
+        first.sendCommand.mockClear().mockImplementation(async (method, params) => {
+          if (method === "Runtime.evaluate") {
+            queueMicrotask(() => Deferred.doneUnsafe(entered, Effect.void));
+            expect(params?.awaitPromise).toBe(true);
+            return pending.promise;
+          }
+        });
+        const evaluation = yield* manager
+          .automationEvaluate("tab_deadline", {
+            expression: "new Promise(() => {})",
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(entered);
+        yield* TestClock.adjust(1_000);
+        const queued = yield* manager
+          .automationEvaluate("tab_deadline", {
+            expression: "document.title = 'queued'",
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(9_000);
+        expect(first.host.send).toHaveBeenCalledExactlyOnceWith(
+          "desktop:preview-webview-reset",
+          "tab_deadline",
+          42,
+        );
+        expect(evaluation.pollUnsafe()).toBeUndefined();
+        expect(queued.pollUnsafe()).toBeUndefined();
+        const registration = yield* manager
+          .registerWebview("tab_deadline", 43)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        expect(registration.pollUnsafe()).toBeUndefined();
+        expect(replacement.sendCommand).not.toHaveBeenCalled();
+        expect(
+          first.sendCommand.mock.calls.filter(([method]) => method === "Runtime.evaluate"),
+        ).toHaveLength(1);
+
+        first.destroy();
+        const evaluationExit = yield* Fiber.await(evaluation);
+        expect(Exit.isFailure(evaluationExit)).toBe(true);
+        expect(Exit.isFailure(yield* Fiber.await(queued))).toBe(true);
+        yield* Fiber.join(registration);
+        pending.resolve({ result: { value: "late first reply" } });
+        yield* Effect.promise(() => pending.promise);
+        expect(yield* manager.automationEvaluate("tab_deadline", { expression: "42" })).toBe(42);
+        expect(
+          first.sendCommand.mock.calls.filter(([method]) => method === "Runtime.evaluate"),
+        ).toHaveLength(1);
+        expect(evaluation.pollUnsafe()).toEqual(evaluationExit);
+      }),
+    ),
+  );
+
+  effectIt.effect("keeps the tab unavailable when native guest teardown does not finish", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const first = makeAutomationWebContents();
+        const replacement = makeAutomationWebContents(43, first.host);
+        fromId.mockImplementation((id) => (id === 43 ? replacement.wc : first.wc));
+        yield* manager.createTab("tab_reset_failure");
+        yield* manager.registerWebview("tab_reset_failure", 42);
+        yield* manager.automationEvaluate("tab_reset_failure", { expression: "42" });
+        const pending = Promise.withResolvers<unknown>();
+        const entered = yield* Deferred.make<void>();
+        first.sendCommand.mockImplementation(async (method) => {
+          if (method === "Runtime.evaluate") {
+            queueMicrotask(() => Deferred.doneUnsafe(entered, Effect.void));
+            return pending.promise;
+          }
+        });
+        const evaluation = yield* manager
+          .automationEvaluate("tab_reset_failure", {
+            expression: "new Promise(() => {})",
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(entered);
+        yield* TestClock.adjust(12_000);
+        expect(Exit.isFailure(yield* Fiber.await(evaluation))).toBe(true);
+        expect((yield* manager.automationStatus("tab_reset_failure")).available).toBe(false);
+        const blocked = yield* Effect.exit(
+          manager.automationEvaluate("tab_reset_failure", { expression: "42" }),
+        );
+        expect(Exit.isFailure(blocked)).toBe(true);
+        if (Exit.isFailure(blocked)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(blocked.cause))).toMatchObject({
+            _tag: "PreviewAutomationGuestRetiredError",
+            webContentsId: 42,
+          });
+        }
+        const registration = yield* manager
+          .registerWebview("tab_reset_failure", 43)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(2_000);
+        expect(Exit.isFailure(yield* Fiber.await(registration))).toBe(true);
+        expect(replacement.sendCommand).not.toHaveBeenCalled();
+        pending.resolve({ result: { value: "late" } });
+        yield* Effect.promise(() => pending.promise);
+        expect((yield* manager.automationStatus("tab_reset_failure")).available).toBe(false);
+        expect(
+          Exit.isFailure(yield* Effect.exit(manager.registerWebview("tab_reset_failure", 42))),
+        ).toBe(true);
+
+        first.destroy();
+        yield* manager.registerWebview("tab_reset_failure", 43);
+        expect(yield* manager.automationEvaluate("tab_reset_failure", { expression: "42" })).toBe(
+          42,
+        );
+      }),
+    ),
+  );
+
+  effectIt.effect("counts a pending debugger reply against the waitFor deadline", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const guest = makeAutomationWebContents();
+        fromId.mockReturnValue(guest.wc);
+        yield* manager.createTab("tab_wait_deadline");
+        yield* manager.registerWebview("tab_wait_deadline", 42);
+        yield* manager.automationEvaluate("tab_wait_deadline", { expression: "42" });
+        const entered = yield* Deferred.make<void>();
+        guest.sendCommand.mockImplementation(async (method) => {
+          if (method === "Runtime.evaluate") {
+            queueMicrotask(() => Deferred.doneUnsafe(entered, Effect.void));
+            return new Promise(() => {});
+          }
+        });
+        guest.host.send.mockImplementation(() => guest.destroy());
+        const wait = yield* manager
+          .automationWaitFor("tab_wait_deadline", {
+            text: "ready",
+            timeoutMs: 500,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(entered);
+        yield* TestClock.adjust(500);
+        const exit = yield* Fiber.await(wait);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "PreviewAutomationTimeoutError",
+            operation: "waitFor",
+            timeoutMs: 500,
+          });
+        }
+        expect(guest.host.send).toHaveBeenCalledOnce();
+      }),
+    ),
+  );
+
+  effectIt.effect("does not reset a responsive guest when a condition never matches", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const guest = makeAutomationWebContents();
+        fromId.mockReturnValue(guest.wc);
+        yield* manager.createTab("tab_wait_condition");
+        yield* manager.registerWebview("tab_wait_condition", 42);
+        guest.sendCommand.mockImplementation(async (method, params) =>
+          method === "Runtime.evaluate"
+            ? { result: { value: params?.expression === "42" ? 42 : { matched: false } } }
+            : undefined,
+        );
+        const wait = yield* manager
+          .automationWaitFor("tab_wait_condition", {
+            text: "missing",
+            timeoutMs: 500,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(500);
+        expect(Exit.isFailure(yield* Fiber.await(wait))).toBe(true);
+        expect(guest.host.send).not.toHaveBeenCalled();
+        expect(yield* manager.automationEvaluate("tab_wait_condition", { expression: "42" })).toBe(
+          42,
+        );
+      }),
+    ),
+  );
+
+  effectIt.effect("does not reset or release the active guest when a queued waiter expires", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const guest = makeAutomationWebContents();
+        const states: PreviewManager.PreviewTabState[] = [];
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+        fromId.mockReturnValue(guest.wc);
+        yield* manager.createTab("tab_wait_queue");
+        yield* manager.registerWebview("tab_wait_queue", 42);
+        yield* manager.automationEvaluate("tab_wait_queue", { expression: "42" });
+        const pending = Promise.withResolvers<unknown>();
+        const entered = yield* Deferred.make<void>();
+        guest.sendCommand.mockImplementation(async (method) => {
+          if (method === "Runtime.evaluate") {
+            queueMicrotask(() => Deferred.doneUnsafe(entered, Effect.void));
+            return pending.promise;
+          }
+        });
+        const evaluation = yield* manager
+          .automationEvaluate("tab_wait_queue", {
+            expression: "new Promise(() => {})",
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(entered);
+        const wait = yield* manager
+          .automationWaitFor("tab_wait_queue", { text: "ready", timeoutMs: 500 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(500);
+        expect(Exit.isFailure(yield* Fiber.await(wait))).toBe(true);
+        expect(guest.host.send).not.toHaveBeenCalled();
+        expect(states.at(-1)?.controller).toBe("agent");
+        pending.resolve({ result: { value: 42 } });
+        expect(yield* Fiber.join(evaluation)).toBe(42);
+      }),
+    ),
+  );
+
+  effectIt.effect("retires the guest when a key release command stalls", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const guest = makeAutomationWebContents();
+        fromId.mockReturnValue(guest.wc);
+        yield* manager.createTab("tab_cleanup_deadline");
+        yield* manager.registerWebview("tab_cleanup_deadline", 42);
+        yield* manager.automationEvaluate("tab_cleanup_deadline", { expression: "42" });
+        const entered = yield* Deferred.make<void>();
+        guest.sendCommand.mockImplementation(async (method, params) => {
+          if (method === "Input.dispatchKeyEvent" && params?.type === "keyUp") {
+            queueMicrotask(() => Deferred.doneUnsafe(entered, Effect.void));
+            return new Promise(() => {});
+          }
+        });
+        guest.host.send.mockImplementation(() => guest.destroy());
+        const press = yield* manager
+          .automationPress("tab_cleanup_deadline", { key: "x" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(entered);
+        yield* TestClock.adjust(1_000);
+        expect(Exit.isFailure(yield* Fiber.await(press))).toBe(true);
+        expect(guest.host.send).toHaveBeenCalledOnce();
+        expect(guest.sendCommand).not.toHaveBeenCalledWith("Emulation.setFocusEmulationEnabled", {
+          enabled: false,
+        });
+      }),
+    ),
+  );
+
+  effectIt.effect("bounds stalled debugger initialization before accepting automation", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const guest = makeAutomationWebContents();
+        const second = makeAutomationWebContents(43);
+        fromId.mockImplementation((id) => (id === 43 ? second.wc : guest.wc));
+        const entered = yield* Deferred.make<void>();
+        guest.sendCommand.mockImplementation(async (method) => {
+          if (method === "Runtime.enable") {
+            queueMicrotask(() => Deferred.doneUnsafe(entered, Effect.void));
+            return new Promise(() => {});
+          }
+        });
+        guest.host.send.mockImplementation(() => guest.destroy());
+        yield* manager.createTab("tab_init_deadline");
+        yield* manager.registerWebview("tab_init_deadline", 42);
+        yield* Deferred.await(entered);
+        yield* manager.createTab("tab_init_independent");
+        yield* manager.registerWebview("tab_init_independent", 43);
+        expect(
+          yield* manager.automationEvaluate("tab_init_independent", { expression: "42" }),
+        ).toBe(42);
+        const evaluation = yield* manager
+          .automationEvaluate("tab_init_deadline", { expression: "42" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(10_000);
+        expect(Exit.isFailure(yield* Fiber.await(evaluation))).toBe(true);
+        expect(guest.host.send).toHaveBeenCalledOnce();
+        expect(guest.sendCommand.mock.calls.some(([method]) => method === "Runtime.evaluate")).toBe(
+          false,
+        );
+      }),
+    ),
+  );
+
+  effectIt.effect("retires pending evaluation before detaching for DevTools", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const guest = makeAutomationWebContents();
+        fromId.mockReturnValue(guest.wc);
+        yield* manager.createTab("tab_detach");
+        yield* manager.registerWebview("tab_detach", 42);
+        yield* manager.automationEvaluate("tab_detach", { expression: "42" });
+        const resetRequested = yield* Deferred.make<void>();
+        guest.host.send.mockImplementation(() => Deferred.doneUnsafe(resetRequested, Effect.void));
+        const entered = yield* Deferred.make<void>();
+        const pending = Promise.withResolvers<unknown>();
+        guest.sendCommand.mockImplementation(async (method) => {
+          if (method === "Runtime.evaluate") {
+            queueMicrotask(() => Deferred.doneUnsafe(entered, Effect.void));
+            return pending.promise;
+          }
+        });
+        guest.wc.debugger.detach.mockImplementation(() => {
+          pending.reject(new Error("target closed while handling command"));
+        });
+        const evaluation = yield* manager
+          .automationEvaluate("tab_detach", {
+            expression: "new Promise(() => {})",
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(entered);
+        const detach = yield* manager
+          .openDevTools("tab_detach")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(resetRequested);
+        expect(guest.host.send).toHaveBeenCalledOnce();
+        expect(guest.wc.debugger.detach).not.toHaveBeenCalled();
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(manager.navigate("tab_detach", "https://new.example.com")),
+          ),
+        ).toBe(true);
+        guest.destroy();
+        expect(Exit.isFailure(yield* Fiber.await(detach))).toBe(true);
+        expect(Exit.isFailure(yield* Fiber.await(evaluation))).toBe(true);
+        expect(guest.wc.debugger.detach).toHaveBeenCalledOnce();
+      }),
+    ),
+  );
+
+  effectIt.effect("keeps a transport-rejected evaluation from releasing its guest for reuse", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const guest = makeAutomationWebContents();
+        fromId.mockReturnValue(guest.wc);
+        yield* manager.createTab("tab_external_detach");
+        yield* manager.registerWebview("tab_external_detach", 42);
+        yield* manager.automationEvaluate("tab_external_detach", { expression: "42" });
+        const entered = yield* Deferred.make<void>();
+        const pending = Promise.withResolvers<unknown>();
+        guest.sendCommand.mockImplementation(async (method) => {
+          if (method === "Runtime.evaluate") {
+            queueMicrotask(() => Deferred.doneUnsafe(entered, Effect.void));
+            return pending.promise;
+          }
+        });
+        const evaluation = yield* manager
+          .automationEvaluate("tab_external_detach", {
+            expression: "new Promise(() => {})",
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(entered);
+        guest.wc.debugger.detach();
+        pending.reject(new Error("target closed while handling command"));
+        expect(Exit.isFailure(yield* Fiber.await(evaluation))).toBe(true);
+        expect((yield* manager.automationStatus("tab_external_detach")).available).toBe(false);
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(
+              manager.automationEvaluate("tab_external_detach", { expression: "42" }),
+            ),
+          ),
+        ).toBe(true);
+        guest.destroy();
+      }),
+    ),
+  );
+
+  effectIt.effect("releases action history when a tab closes", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const first = makeAutomationWebContents();
+        const replacement = makeAutomationWebContents(43);
+        fromId.mockImplementation((id) => (id === 43 ? replacement.wc : first.wc));
+        yield* manager.createTab("tab_history");
+        yield* manager.registerWebview("tab_history", 42);
+        yield* manager.automationEvaluate("tab_history", { expression: "42" });
+        expect(
+          (yield* manager.automationSnapshot("tab_history")).actionTimeline.some(
+            (event) => event.action === "evaluate",
+          ),
+        ).toBe(true);
+        yield* manager.closeTab("tab_history");
+        yield* manager.createTab("tab_history");
+        yield* manager.registerWebview("tab_history", 43);
+        expect(
+          (yield* manager.automationSnapshot("tab_history")).actionTimeline.map(
+            (event) => event.action,
+          ),
+        ).toEqual(["snapshot"]);
       }),
     ),
   );

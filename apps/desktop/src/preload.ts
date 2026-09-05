@@ -303,6 +303,24 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       return () =>
         ipcRenderer.removeListener(IpcChannels.PREVIEW_STATE_CHANGE_CHANNEL, wrappedListener);
     },
+    onWebviewReset: (listener) => {
+      const wrappedListener = (
+        _event: Electron.IpcRendererEvent,
+        tabId: unknown,
+        webContentsId: unknown,
+      ) => {
+        if (
+          typeof tabId !== "string" ||
+          typeof webContentsId !== "number" ||
+          !Number.isInteger(webContentsId)
+        )
+          return;
+        listener(tabId, webContentsId);
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_WEBVIEW_RESET_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.PREVIEW_WEBVIEW_RESET_CHANNEL, wrappedListener);
+    },
     onPointerEvent: (listener) => {
       const wrappedListener = (_event: Electron.IpcRendererEvent, pointerEvent: unknown) => {
         if (typeof pointerEvent !== "object" || pointerEvent === null) return;
