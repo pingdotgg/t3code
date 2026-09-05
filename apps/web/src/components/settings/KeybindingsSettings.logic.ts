@@ -303,7 +303,7 @@ export function normalizeShortcutKeyToken(key: string, code?: string): string | 
   ) {
     return null;
   }
-  const digitMatch = code?.match(/^(?:Digit|Numpad)(\d)$/);
+  const digitMatch = code?.match(/^Digit(\d)$/);
   if (digitMatch?.[1]) {
     return digitMatch[1];
   }
