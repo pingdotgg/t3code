@@ -10,6 +10,20 @@ import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
 
+/**
+ * The raw path a `.git` file points at, or undefined when it is not a gitdir
+ * pointer. Callers apply the path semantics appropriate to their use.
+ */
+export const parseGitDirPointer = (gitFileContents: string): string | undefined => {
+  const gitdir = gitFileContents
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.startsWith("gitdir:"))
+    ?.slice("gitdir:".length)
+    .trim();
+  return gitdir === undefined || gitdir.length === 0 ? undefined : gitdir;
+};
+
 export const WORKTREE_BRANCH_PREFIX = "t3code";
 // Canonical form is `t3code/<8 hex>`. Older mobile builds generated `t3code/<uuid>`
 // via Crypto.randomUUID() (always RFC 4122 v4), so the matcher also accepts exactly

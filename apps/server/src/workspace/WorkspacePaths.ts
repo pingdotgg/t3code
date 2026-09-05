@@ -13,8 +13,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import { parseGitDirPointer } from "@t3tools/shared/git";
 
 import { expandHomePathWith } from "../pathExpansion.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 
 export class WorkspaceRootNotExistsError extends Schema.TaggedErrorClass<WorkspaceRootNotExistsError>()(
   "WorkspaceRootNotExistsError",
@@ -79,11 +81,24 @@ export class WorkspacePathOutsideRootError extends Schema.TaggedErrorClass<Works
   }
 }
 
+export class WorkspaceRootBareRepositoryLayoutError extends Schema.TaggedErrorClass<WorkspaceRootBareRepositoryLayoutError>()(
+  "WorkspaceRootBareRepositoryLayoutError",
+  {
+    workspaceRoot: Schema.String,
+    normalizedWorkspaceRoot: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `'${this.normalizedWorkspaceRoot}' points at a bare Git repository instead of a working tree. Add an individual worktree directory instead.`;
+  }
+}
+
 export const WorkspacePathsError = Schema.Union([
   WorkspaceRootNotExistsError,
   WorkspaceRootCreateFailedError,
   WorkspaceRootStatFailedError,
   WorkspaceRootNotDirectoryError,
+  WorkspaceRootBareRepositoryLayoutError,
   WorkspacePathOutsideRootError,
 ]);
 export type WorkspacePathsError = typeof WorkspacePathsError.Type;
@@ -103,6 +118,14 @@ export class WorkspacePaths extends Context.Service<
       | WorkspaceRootStatFailedError
       | WorkspaceRootNotDirectoryError
     >;
+    /**
+     * Reject a normalized root whose in-root gitdir is still a bare repository.
+     * Only the paths that add a project
+     * call this; every other caller keeps working with such a root.
+     */
+    readonly ensureNotBareRepositoryLayout: (
+      normalizedWorkspaceRoot: string,
+    ) => Effect.Effect<string, WorkspaceRootBareRepositoryLayoutError>;
     /**
      * Resolve a relative path within a validated workspace root.
      *
@@ -125,6 +148,7 @@ function toPosixRelativePath(input: string): string {
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const vcsProcess = yield* VcsProcess.VcsProcess;
 
   const statWorkspaceRoot = Effect.fn("WorkspacePaths.statWorkspaceRoot")(function* (
     workspaceRoot: string,
@@ -147,6 +171,49 @@ export const make = Effect.gen(function* () {
         onSuccess: Effect.succeed,
       }),
     );
+  });
+
+  // An in-root gitdir can also belong to a valid separate-git-dir checkout.
+  // Trust Git's current bare status, not index presence or historical intent:
+  // a previously bare root converted to a working tree remains accepted.
+  const isBareRepositoryLayout = Effect.fn("WorkspacePaths.isBareRepositoryLayout")(function* (
+    normalizedWorkspaceRoot: string,
+  ) {
+    const gitPath = path.join(normalizedWorkspaceRoot, ".git");
+    const gitStat = yield* fileSystem.stat(gitPath).pipe(Effect.option);
+    if (gitStat._tag === "None" || gitStat.value.type !== "File") return false;
+
+    const gitFile = yield* fileSystem.readFileString(gitPath).pipe(Effect.orElseSucceed(() => ""));
+    const gitDirTarget = parseGitDirPointer(gitFile);
+    if (gitDirTarget === undefined) return false;
+
+    const gitDir = path.resolve(normalizedWorkspaceRoot, gitDirTarget);
+    const gitDirFromRoot = path.relative(normalizedWorkspaceRoot, gitDir);
+    if (
+      gitDirFromRoot.length === 0 ||
+      gitDirFromRoot === ".." ||
+      gitDirFromRoot.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(gitDirFromRoot)
+    ) {
+      return false;
+    }
+
+    return yield* vcsProcess
+      .run({
+        operation: "WorkspacePaths.isBareRepositoryLayout",
+        command: "git",
+        // Let Git read its own gitfile syntax; the parsed target is only a fast-path filter.
+        args: ["--git-dir", gitPath, "rev-parse", "--is-bare-repository"],
+        cwd: normalizedWorkspaceRoot,
+        env: { GIT_WORK_TREE: undefined },
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+        maxOutputBytes: 4_096,
+      })
+      .pipe(
+        Effect.map((result) => result.exitCode === 0 && result.stdout.trim() === "true"),
+        Effect.orElseSucceed(() => false),
+      );
   });
 
   const normalizeWorkspaceRoot: WorkspacePaths["Service"]["normalizeWorkspaceRoot"] = Effect.fn(
@@ -190,6 +257,17 @@ export const make = Effect.gen(function* () {
     return normalizedWorkspaceRoot;
   });
 
+  const ensureNotBareRepositoryLayout: WorkspacePaths["Service"]["ensureNotBareRepositoryLayout"] =
+    Effect.fn("WorkspacePaths.ensureNotBareRepositoryLayout")(function* (normalizedWorkspaceRoot) {
+      if (yield* isBareRepositoryLayout(normalizedWorkspaceRoot)) {
+        return yield* new WorkspaceRootBareRepositoryLayoutError({
+          workspaceRoot: normalizedWorkspaceRoot,
+          normalizedWorkspaceRoot,
+        });
+      }
+      return normalizedWorkspaceRoot;
+    });
+
   const resolveRelativePathWithinRoot: WorkspacePaths["Service"]["resolveRelativePathWithinRoot"] =
     Effect.fn("WorkspacePaths.resolveRelativePathWithinRoot")(function* (input) {
       const normalizedInputPath = input.relativePath.trim();
@@ -221,7 +299,11 @@ export const make = Effect.gen(function* () {
       };
     });
 
-  return WorkspacePaths.of({ normalizeWorkspaceRoot, resolveRelativePathWithinRoot });
+  return WorkspacePaths.of({
+    normalizeWorkspaceRoot,
+    ensureNotBareRepositoryLayout,
+    resolveRelativePathWithinRoot,
+  });
 });
 
-export const layer = Layer.effect(WorkspacePaths, make);
+export const layer = Layer.effect(WorkspacePaths, make).pipe(Layer.provide(VcsProcess.layer));
