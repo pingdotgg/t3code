@@ -86,7 +86,7 @@ const promptForOutOfBandOAuthCode = Effect.fn("cloud.cli.prompt_for_out_of_band_
   },
 );
 
-export function formatHeadlessAuthorizationPrompt(authorizeUrl: string): string {
+function formatHeadlessAuthorizationPrompt(authorizeUrl: string): string {
   return [
     "Headless authorization",
     "Open this URL on a device with a browser:",
@@ -464,7 +464,7 @@ const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E
 
 const connectedAs = (identity: string | null): string => (identity ? ` as ${identity}` : "");
 
-export function formatRelayClientReady(version: string): string {
+function formatRelayClientReady(version: string): string {
   return `✓ Relay client ready · cloudflared ${version}`;
 }
 
