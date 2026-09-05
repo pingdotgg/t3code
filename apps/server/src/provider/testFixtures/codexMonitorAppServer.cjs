@@ -98,6 +98,14 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       else reply(id, {});
       break;
     case "turn/start": {
+      if (params.input?.[0]?.text === "reject-resume") {
+        write({ id, error: { code: -32603, message: "Resume rejected" } });
+        break;
+      }
+      if (params.input?.[0]?.text === "timeout-resume") {
+        barrier();
+        break;
+      }
       if (scenario === "stall-turn") {
         barrier();
         break;
