@@ -142,9 +142,9 @@ function ChatRouteGlobalShortcuts() {
         command === "preview.zoomOut" ||
         command === "preview.resetZoom"
       ) {
-        if (!canOperatePreview) return;
         event.preventDefault();
         event.stopPropagation();
+        if (!canOperatePreview) return;
         const action =
           command === "preview.refresh"
             ? "refresh"
