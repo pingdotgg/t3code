@@ -53,6 +53,12 @@ const handlers = {
       const service = yield* OrchestratorMcpService;
       return yield* service.deleteScheduledTask(scope, input);
     }),
+  run_scheduled_task_now: (input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext;
+      const service = yield* OrchestratorMcpService;
+      return yield* service.runScheduledTaskNow(scope, input);
+    }),
   create_threads: (input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;

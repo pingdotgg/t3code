@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
+  CommandId,
   ContextTransferId,
   IsoDateTime,
   MessageId,
@@ -44,6 +45,35 @@ const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512)
 const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(256),
 ).annotate({ description: "Stable idempotency key to reuse when retrying this mutation." });
+
+function isWellFormedUnicode(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      if (index + 1 >= value.length) return false;
+      const nextCodeUnit = value.charCodeAt(index + 1);
+      if (nextCodeUnit < 0xdc00 || nextCodeUnit > 0xdfff) return false;
+      index += 1;
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
+
+const OrchestratorMcpWellFormedClientRequestId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(256),
+).check(
+  Schema.makeFilter(
+    (value) => isWellFormedUnicode(value) || "Idempotency key must contain well-formed Unicode.",
+  ),
+);
+
+const OrchestratorMcpWellFormedScheduledTaskId = ScheduledTaskId.check(
+  Schema.makeFilter(
+    (value) => isWellFormedUnicode(value) || "Scheduled task id must contain well-formed Unicode.",
+  ),
+);
 
 /**
  * OpenCode 1.15 has been observed serializing nested MCP union objects as JSON
@@ -560,6 +590,34 @@ export const OrchestratorMcpDeleteScheduledTaskResult = Schema.Struct({
 });
 export type OrchestratorMcpDeleteScheduledTaskResult =
   typeof OrchestratorMcpDeleteScheduledTaskResult.Type;
+
+export const OrchestratorMcpRunScheduledTaskNowInput = Schema.Struct({
+  scheduledTaskId: OrchestratorMcpWellFormedScheduledTaskId,
+  clientRequestId: OrchestratorMcpWellFormedClientRequestId.annotate({
+    description:
+      "Required stable idempotency key. Reuse it only when retrying this exact manual run.",
+  }),
+});
+export type OrchestratorMcpRunScheduledTaskNowInput =
+  typeof OrchestratorMcpRunScheduledTaskNowInput.Type;
+
+export const OrchestratorMcpRunScheduledTaskNowResult = Schema.Struct({
+  scheduledTaskId: ScheduledTaskId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  runId: RunId,
+  status: OrchestrationV2RunStatus,
+  replayed: Schema.Boolean,
+  receipt: Schema.Struct({
+    commandId: CommandId,
+    acceptedAt: IsoDateTime,
+    resultSequence: NonNegativeInt,
+  }),
+  nextRunAt: Schema.NullOr(IsoDateTime),
+  runCount: Schema.NullOr(NonNegativeInt),
+});
+export type OrchestratorMcpRunScheduledTaskNowResult =
+  typeof OrchestratorMcpRunScheduledTaskNowResult.Type;
 
 export class OrchestratorMcpFailure extends Schema.TaggedErrorClass<OrchestratorMcpFailure>()(
   "OrchestratorMcpFailure",

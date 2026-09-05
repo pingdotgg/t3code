@@ -126,6 +126,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getShellSnapshot: unused,
     ensureLegacyTranscript: unused,
     dispatch: unused,
+    getCommandReceipt: unused,
     getThreadProjection: unused,
     getCheckpointContext: unused,
     getThreadSnapshot: unused,
