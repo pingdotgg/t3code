@@ -173,14 +173,3 @@ export function resolvePreviewViewport(
     height: input.height,
   };
 }
-
-export function previewViewportLabel(viewport: PreviewViewportSetting): string {
-  return viewport._tag === "fill" ? "Fill panel" : `${viewport.width} × ${viewport.height}`;
-}
-
-export function previewViewportPresetOrientation(
-  viewport: PreviewViewportSetting,
-): "portrait" | "landscape" | null {
-  if (viewport._tag === "fill" || viewport.width === viewport.height) return null;
-  return viewport.width > viewport.height ? "landscape" : "portrait";
-}

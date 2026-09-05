@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  PREVIEW_VIEWPORT_PRESETS,
-  previewViewportLabel,
-  previewViewportPresetOrientation,
-  resolvePreviewViewport,
-} from "./previewViewport.ts";
+import { PREVIEW_VIEWPORT_PRESETS, resolvePreviewViewport } from "./previewViewport.ts";
 
 describe("previewViewport", () => {
   it("resolves fill and exact freeform viewports", () => {
@@ -58,13 +53,5 @@ describe("previewViewport", () => {
       "Nest Hub",
       "Nest Hub Max",
     ]);
-  });
-
-  it("formats settings for compact UI", () => {
-    expect(previewViewportLabel({ _tag: "fill" })).toBe("Fill panel");
-    expect(previewViewportLabel({ _tag: "freeform", width: 393, height: 852 })).toBe("393 × 852");
-    expect(previewViewportPresetOrientation({ _tag: "freeform", width: 852, height: 393 })).toBe(
-      "landscape",
-    );
   });
 });
