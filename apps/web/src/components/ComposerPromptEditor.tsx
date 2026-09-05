@@ -937,21 +937,32 @@ interface ComposerPromptEditorProps {
 }
 
 /**
- * Client rect of the line the collapsed caret is on. A collapsed range
- * reports zero-height rects at some positions, so probe the adjacent
- * character. When the range container is the paragraph itself (an empty
- * line, or a caret beside an inline chip) measure the child next to the
- * caret before falling back to the paragraph.
+ * Client rect of the line the collapsed caret is on, as seen from `edge`.
+ * A caret at a soft-wrap boundary belongs to two visual lines and the
+ * range reports a rect for each, so take the one farthest from the edge
+ * under test: an ambiguous caret then never claims the key and the arrow
+ * moves the caret as usual. A collapsed range reports zero-height rects at
+ * some positions, so probe the adjacent character on the same side. When
+ * the range container is the paragraph itself (an empty line, or a caret
+ * beside an inline chip) measure the child next to the caret before
+ * falling back to the paragraph.
  */
-function caretLineRect(range: Range): DOMRect | null {
-  const collapsedRect = Array.from(range.getClientRects()).find((rect) => rect.height > 0);
+function caretLineRect(range: Range, edge: "start" | "end"): DOMRect | null {
+  const collapsedRects = Array.from(range.getClientRects()).filter((rect) => rect.height > 0);
+  const collapsedRect = edge === "start" ? collapsedRects.at(-1) : collapsedRects[0];
   if (collapsedRect) return collapsedRect;
 
   const container = range.startContainer;
   if (container.nodeType === Node.TEXT_NODE) {
     const textNode = container as Text;
     if (textNode.data.length === 0) return null;
-    const probeStart = Math.min(range.startOffset, textNode.data.length - 1);
+    const probeStart = Math.max(
+      0,
+      Math.min(
+        edge === "start" ? range.startOffset : range.startOffset - 1,
+        textNode.data.length - 1,
+      ),
+    );
     const probeRange = document.createRange();
     probeRange.setStart(textNode, probeStart);
     probeRange.setEnd(textNode, probeStart + 1);
@@ -1875,7 +1886,7 @@ function ComposerPromptEditorInner({
         ) {
           return false;
         }
-        const caretRect = caretLineRect(selection.getRangeAt(0));
+        const caretRect = caretLineRect(selection.getRangeAt(0), edge);
         if (!caretRect) return false;
         const edgeElement =
           edge === "start" ? rootElement.firstElementChild : rootElement.lastElementChild;
