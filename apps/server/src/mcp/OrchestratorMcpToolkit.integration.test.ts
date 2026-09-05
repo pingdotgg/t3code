@@ -898,7 +898,7 @@ describe("orchestrator MCP toolkit", () => {
                 text: "Rewrite the automatic delivery.",
               })
               .pipe(Effect.flip);
-            expect(completionEditError._tag).toBe("OrchestratorDispatchError");
+            expect(completionEditError._tag).toBe("OrchestratorCommandRejectedError");
             const completionReorderError = yield* orchestrator
               .dispatch({
                 type: "queued-run.reorder",

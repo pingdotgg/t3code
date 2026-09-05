@@ -2375,7 +2375,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
           text: "   ",
         })
         .pipe(Effect.flip);
-      assert.equal(emptyEditError._tag, "OrchestratorDispatchError");
+      assert.equal(emptyEditError._tag, "OrchestratorCommandRejectedError");
 
       yield* orchestrator.dispatch({
         type: "queued-run.cancel",
