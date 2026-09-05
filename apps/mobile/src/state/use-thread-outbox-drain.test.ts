@@ -478,12 +478,12 @@ describe("thread outbox attachment preparation", () => {
 describe("thread outbox model handoff", () => {
   const mobileModel = {
     instanceId: ProviderInstanceId.make("codex"),
-    model: "gpt-5.6-sol",
+    model: "ModelA",
     options: [{ id: "reasoningEffort", value: "low" }],
   };
   const desktopModel = {
     ...mobileModel,
-    model: "gpt-6-astra",
+    model: "ModelB",
     options: [{ id: "reasoningEffort", value: "medium" }],
   };
   const desktopThread = {
