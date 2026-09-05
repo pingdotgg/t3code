@@ -14,6 +14,7 @@ import {
   type SDKAssistantMessage,
   type SDKAPIRetryMessage,
   type SDKMessage,
+  type SDKRateLimitInfo,
   type SDKResultMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -2164,6 +2165,55 @@ function buildAssistantArtifacts(input: {
   };
 }
 
+const CLAUDE_USAGE_LIMIT_WINDOWS = {
+  five_hour: "5-hour",
+  seven_day: "7-day",
+  seven_day_opus: "7-day Opus",
+  seven_day_sonnet: "7-day Sonnet",
+  seven_day_overage_included: "7-day model",
+  overage: "overage",
+} satisfies Record<NonNullable<SDKRateLimitInfo["rateLimitType"]>, string>;
+
+/** Beyond this the reset time is not credible, so the row ships without a wait. */
+const CLAUDE_USAGE_LIMIT_MAX_WAIT_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * `resetsAt` is epoch seconds. The row states the remaining wait rather than a
+ * wall-clock time: this renders on the server, while the row is read on clients
+ * that may sit in another timezone and locale, and that carry their own
+ * timestamp preference. A wait reads the same everywhere.
+ */
+function describeClaudeUsageLimit(
+  info: SDKRateLimitInfo,
+  nowMs: number,
+  names: ClaudeScopedLimitNames,
+): string {
+  const label =
+    info.rateLimitType === "seven_day_overage_included" && names.overageIncluded
+      ? `7-day ${names.overageIncluded}`
+      : info.rateLimitType
+        ? CLAUDE_USAGE_LIMIT_WINDOWS[info.rateLimitType]
+        : undefined;
+  const resetsAtMs = info.resetsAt === undefined ? undefined : info.resetsAt * 1000;
+  const waitMs =
+    resetsAtMs === undefined || !Number.isFinite(nowMs) ? undefined : resetsAtMs - nowMs;
+  const wait =
+    waitMs !== undefined && waitMs > 0 && waitMs <= CLAUDE_USAGE_LIMIT_MAX_WAIT_MS
+      ? formatClaudeUsageLimitWait(waitMs)
+      : undefined;
+  return `Claude usage limit reached. This turn is paused until the ${
+    label ? `${label} ` : ""
+  }limit resets${wait ? ` in ${wait}` : ""}.`;
+}
+
+function formatClaudeUsageLimitWait(waitMs: number): string {
+  const totalMinutes = Math.ceil(waitMs / 60_000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${totalMinutes}m`;
+  return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
+}
+
 interface ActiveClaudeTurnContext {
   readonly input: ProviderAdapterV2TurnInput;
   readonly nativeTurnId: string;
@@ -2178,6 +2228,7 @@ interface ActiveClaudeTurnContext {
   };
   readonly toolCalls: Map<string, ActiveClaudeToolCall>;
   readonly ignoredTaskIds: Set<string>;
+  readonly announcedUsageLimits: Set<string>;
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
   readonly subagentNodesByTaskId: Map<string, OrchestrationV2ExecutionNode["id"]>;
@@ -4307,13 +4358,69 @@ export function makeClaudeAdapterV2(
 
           const message = input.message;
           if (message.type === "rate_limit_event") {
+            const rateLimitInfo = message.rate_limit_info;
+            if (!rateLimitInfo) return;
             const names = adapterOptions.scopedLimitNames
               ? yield* Ref.get(adapterOptions.scopedLimitNames)
               : { overageIncluded: undefined };
-            const update = claudeRateLimitEventToUpdate(message.rate_limit_info, names);
+            const update = claudeRateLimitEventToUpdate(rateLimitInfo, names);
+            const now = yield* DateTime.now;
             if (update && adapterOptions.onUsageLimits) {
-              const checkedAt = DateTime.formatIso(yield* DateTime.now);
-              yield* adapterOptions.onUsageLimits({ ...update, checkedAt });
+              yield* adapterOptions.onUsageLimits({
+                ...update,
+                checkedAt: DateTime.formatIso(now),
+              });
+            }
+            const context = yield* Ref.get(activeTurn);
+            // Rejected windows pause the SDK without ending its turn. Overage
+            // and warnings keep running; repeats of a window need only one notice.
+            if (
+              context !== null &&
+              rateLimitInfo.status === "rejected" &&
+              rateLimitInfo.overageStatus !== "allowed" &&
+              rateLimitInfo.overageStatus !== "allowed_warning" &&
+              rateLimitInfo.isUsingOverage !== true &&
+              rateLimitInfo.overageInUse !== true
+            ) {
+              const limitKey = `${rateLimitInfo.rateLimitType ?? "unknown"}:${rateLimitInfo.resetsAt ?? "unknown"}`;
+              if (!context.announcedUsageLimits.has(limitKey)) {
+                context.announcedUsageLimits.add(limitKey);
+                const nativeItemId = `usage-limit:${context.providerTurnId}:${limitKey}`;
+                const notice = describeClaudeUsageLimit(
+                  rateLimitInfo,
+                  DateTime.toEpochMillis(now),
+                  names,
+                );
+                yield* emitProviderEvent({
+                  type: "turn_item.updated",
+                  driver: CLAUDE_PROVIDER,
+                  turnItem: {
+                    id: idAllocator.derive.turnItemFromProviderItem({
+                      driver: CLAUDE_PROVIDER,
+                      nativeItemId,
+                    }),
+                    threadId: context.input.threadId,
+                    runId: context.input.runId,
+                    nodeId: context.input.rootNodeId,
+                    providerThreadId: context.input.providerThread.id,
+                    providerTurnId: context.providerTurnId,
+                    nativeItemRef: {
+                      driver: CLAUDE_PROVIDER,
+                      nativeId: nativeItemId,
+                      strength: "weak",
+                    },
+                    parentItemId: null,
+                    ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                    type: "system_notice",
+                    status: "completed",
+                    title: notice,
+                    message: notice,
+                    startedAt: now,
+                    completedAt: now,
+                    updatedAt: now,
+                  },
+                });
+              }
             }
             return;
           }
@@ -5277,6 +5384,7 @@ export function makeClaudeAdapterV2(
               },
               toolCalls: new Map(),
               ignoredTaskIds: new Set(),
+              announcedUsageLimits: new Set(),
               subagentsByTaskId: new Map(),
               subagentsByToolUseId: new Map(),
               subagentNodesByTaskId: new Map(),

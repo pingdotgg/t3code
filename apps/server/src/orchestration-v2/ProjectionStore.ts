@@ -181,6 +181,11 @@ export interface ProjectionProviderControlTarget {
   readonly messageId?: MessageId;
 }
 
+export type ProjectionPendingUserInputs = Pick<
+  OrchestrationV2ThreadProjection,
+  "runtimeRequests" | "nodes" | "turnItems"
+>;
+
 export interface ProjectionStoreV2Shape {
   readonly apply: (
     event: OrchestrationV2DomainEvent,
@@ -201,6 +206,10 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error>;
+  readonly getPendingNativeUserInputs: (
+    threadId: ThreadId,
+    providerTurnId: ProviderTurnId,
+  ) => Effect.Effect<ProjectionPendingUserInputs, ProjectionStoreV2Error>;
   readonly getRuntimeRequest: (
     threadId: ThreadId,
     requestId: RuntimeRequestId,
@@ -3062,6 +3071,47 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ? cause
         : new ProjectionStoreReadError({ threadId, cause });
 
+    const getPendingNativeUserInputs: ProjectionStoreV2Shape["getPendingNativeUserInputs"] = (
+      threadId,
+      providerTurnId,
+    ) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const rows = yield* sql<PayloadRow>`
+          SELECT payload_json FROM orchestration_v2_projection_runtime_requests
+          WHERE thread_id = ${threadId} AND provider_turn_id = ${providerTurnId}
+            AND kind = 'user_input' AND status = 'pending'
+        `;
+            const runtimeRequests = (yield* decodeRows(
+              decodeRuntimeRequestPayload,
+              threadId,
+            )(rows)).filter((request) => request.responseCapability.type !== "message");
+            if (runtimeRequests.length === 0) return { runtimeRequests, nodes: [], turnItems: [] };
+            const nodeRows = yield* sql<PayloadRow>`
+          SELECT payload_json FROM orchestration_v2_projection_nodes
+          WHERE thread_id = ${threadId} AND ${sql.in(
+            "node_id",
+            runtimeRequests.map((request) => request.nodeId),
+          )}
+        `;
+            const itemRows = yield* sql<PayloadRow>`
+          SELECT payload_json FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId} AND provider_turn_id = ${providerTurnId}
+            AND type = 'user_input_request'
+        `;
+            const requestIds = new Set(runtimeRequests.map((request) => request.id));
+            return {
+              runtimeRequests,
+              nodes: yield* decodeRows(decodeNodePayload, threadId)(nodeRows),
+              turnItems: (yield* decodeRows(decodeTurnItemPayload, threadId)(itemRows)).filter(
+                (item) => item.type === "user_input_request" && requestIds.has(item.requestId),
+              ),
+            };
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(threadId)));
+
     const getRuntimeRequest: ProjectionStoreV2Shape["getRuntimeRequest"] = (threadId, requestId) =>
       sql
         .withTransaction(
@@ -3849,6 +3899,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getSettlementCandidates,
       getThreadProjection,
       getCheckpointContext,
+      getPendingNativeUserInputs,
       getRuntimeRequest,
       getProviderControlContext,
       getRecoveryThreadIds,
@@ -3963,6 +4014,27 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             .map((projection) => projection.thread.id);
         }),
       getUnreadableThreadIds: () => Effect.succeed([]),
+      getPendingNativeUserInputs: (threadId, providerTurnId) =>
+        Effect.gen(function* () {
+          const projection = (yield* Ref.get(replayState)).projections.get(threadId);
+          if (projection === undefined) return { runtimeRequests: [], nodes: [], turnItems: [] };
+          const runtimeRequests = projection.runtimeRequests.filter(
+            (request) =>
+              request.providerTurnId === providerTurnId &&
+              request.kind === "user_input" &&
+              request.status === "pending" &&
+              request.responseCapability.type !== "message",
+          );
+          const requestIds = new Set(runtimeRequests.map((request) => request.id));
+          const nodeIds = new Set(runtimeRequests.map((request) => request.nodeId));
+          return {
+            runtimeRequests,
+            nodes: projection.nodes.filter((node) => nodeIds.has(node.id)),
+            turnItems: projection.turnItems.filter(
+              (item) => item.type === "user_input_request" && requestIds.has(item.requestId),
+            ),
+          };
+        }),
       getRuntimeRequest: (threadId, requestId) =>
         Effect.gen(function* () {
           const projection = (yield* Ref.get(replayState)).projections.get(threadId);

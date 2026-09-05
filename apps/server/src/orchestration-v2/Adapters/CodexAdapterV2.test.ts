@@ -50,6 +50,7 @@ import {
   CODEX_DEFAULT_INSTANCE_ID,
   CODEX_DRIVER_KIND,
   codexBackgroundCommandDetail,
+  codexFileChangeApprovalPrompt,
   codexProviderTurnTokenUsage,
   codexThreadRuntimeParams,
   type CodexAgentMessageDeltaUpdate,
@@ -64,6 +65,56 @@ import {
 import { makeReplayServerConfig } from "./CodexAdapterV2.testkit.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+
+describe("CodexAdapterV2 file change approvals", () => {
+  it("uses nonblank reasons before sorted file operations and renamed paths", () => {
+    const fileChanges = {
+      "/tmp/removed.md": { type: "delete" as const, content: "gone" },
+      "/tmp/added.ts": { type: "add" as const, content: "export {};" },
+      "/tmp/moved.ts": {
+        type: "update" as const,
+        unified_diff: "@@",
+        move_path: "/tmp/renamed.ts",
+      },
+    };
+    assert.equal(
+      codexFileChangeApprovalPrompt({ reason: "  Update configuration. ", fileChanges }),
+      "Update configuration.",
+    );
+    assert.equal(
+      codexFileChangeApprovalPrompt({ reason: " ", fileChanges }),
+      "add /tmp/added.ts\nupdate /tmp/moved.ts -> /tmp/renamed.ts\ndelete /tmp/removed.md",
+    );
+  });
+
+  it("falls back to a nonblank grant root and omits empty details", () => {
+    assert.equal(
+      codexFileChangeApprovalPrompt({ reason: " ", grantRoot: " /workspace " }),
+      "/workspace",
+    );
+    assert.equal(
+      codexFileChangeApprovalPrompt({ fileChanges: {}, grantRoot: "/workspace" }),
+      "/workspace",
+    );
+    assert.isUndefined(
+      codexFileChangeApprovalPrompt({ reason: " ", grantRoot: " ", fileChanges: {} }),
+    );
+  });
+
+  it("bounds large patch descriptions without losing the remaining count", () => {
+    const fileChanges = Object.fromEntries(
+      Array.from({ length: 25 }, (_, index) => [
+        `/tmp/file-${String(index).padStart(2, "0")}.ts`,
+        { type: "add" as const, content: "" },
+      ]),
+    );
+    const detail = codexFileChangeApprovalPrompt({ fileChanges });
+    assert.equal(detail?.split("\n").length, 21);
+    assert.isTrue(detail?.startsWith("add /tmp/file-00.ts") ?? false);
+    assert.isTrue(detail?.endsWith("+5 more") ?? false);
+    assert.notInclude(detail, "file-20.ts");
+  });
+});
 
 describe("CodexAdapterV2 context usage", () => {
   it("uses the current context rather than cumulative processed tokens", () => {

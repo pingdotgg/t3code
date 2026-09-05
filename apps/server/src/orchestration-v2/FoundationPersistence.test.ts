@@ -14,6 +14,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -61,6 +62,7 @@ import { ProjectionStoreV2, layer as projectionStoreLayer } from "./ProjectionSt
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 
 const isLiveStreamBufferError = Schema.is(LiveStreamBufferError);
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const databaseLayer = SqlitePersistenceMemory;
 const eventStoreProvided = eventStoreLayer.pipe(Layer.provideMerge(databaseLayer));
@@ -257,6 +259,102 @@ it.effect("verifies thread membership using only the thread-created partial inde
 );
 
 it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
+  it.effect("projects oversized tool bodies before both replay and live RPC retention", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const sink = yield* EventSinkV2;
+        const store = yield* EventStoreV2;
+        const projections = yield* ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const thread = makeThread(ThreadId.make("thread:large-stream-body"), now);
+        const output = {
+          content: [{ type: "text", text: "first line\n" + "x".repeat(9 * 1024 * 1024) }],
+        };
+        const tool: OrchestrationV2TurnItem = {
+          id: TurnItemId.make("tool:large-stream-body"),
+          type: "dynamic_tool",
+          threadId: thread.id,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "running",
+          title: "Large tool",
+          toolName: "mcp__large_tool",
+          input: { query: "details" },
+          output,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        };
+        const [created] = yield* sink.write({
+          events: [
+            threadCreatedEvent({ id: "event:large-stream-body:created", thread, now }),
+            {
+              id: EventId.make("event:large-stream-body:replay"),
+              type: "turn-item.updated",
+              threadId: thread.id,
+              occurredAt: now,
+              payload: tool,
+            },
+          ],
+        });
+        const pull = yield* Stream.toPull(
+          sink.stream({
+            threadId: thread.id,
+            afterSequence: created!.sequence,
+            bounded: true,
+          }),
+        );
+        const replay = yield* pull;
+        assert.lengthOf(replay, 1);
+        assert.equal(replay[0]!.event.type, "turn-item.updated");
+        assert.isBelow(Buffer.byteLength(yield* encodeJson(replay)), 4_000);
+        const [completed] = yield* sink.write({
+          events: [
+            {
+              id: EventId.make("event:large-stream-body:live"),
+              type: "turn-item.updated",
+              threadId: thread.id,
+              occurredAt: now,
+              payload: { ...tool, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        const live = yield* pull;
+        assert.deepEqual(
+          live.map((stored) => stored.sequence),
+          [completed!.sequence],
+        );
+        assert.isBelow(Buffer.byteLength(yield* encodeJson(live)), 4_000);
+        for (const stored of [...replay, ...live]) {
+          assert.equal(stored.event.type, "turn-item.updated");
+          if (stored.event.type !== "turn-item.updated") return;
+          assert.equal(stored.event.payload.type, "dynamic_tool");
+          if (stored.event.payload.type !== "dynamic_tool") return;
+          assert.deepInclude(stored.event.payload.output, { truncated: true });
+        }
+        const persisted = yield* store.read({ threadId: thread.id }).pipe(Stream.runCollect);
+        const fullEvent = persisted.find(
+          (stored) => stored.sequence === completed!.sequence,
+        )!.event;
+        assert.equal(fullEvent.type, "turn-item.updated");
+        if (fullEvent.type !== "turn-item.updated") return;
+        assert.equal(fullEvent.payload.type, "dynamic_tool");
+        if (fullEvent.payload.type !== "dynamic_tool") return;
+        assert.deepEqual(fullEvent.payload.output, output);
+        const detail = (yield* projections.getThreadProjection(thread.id)).turnItems.find(
+          (item) => item.id === tool.id,
+        )!;
+        assert.equal(detail.type, "dynamic_tool");
+        if (detail.type === "dynamic_tool") assert.deepEqual(detail.output, output);
+      }),
+    ),
+  );
+
   for (const phase of ["high-water", "replay"] as const) {
     it.effect(`bounds live events while the V2 ${phase} query is blocked`, () =>
       Effect.scoped(

@@ -6,6 +6,8 @@ import {
   ProviderThreadId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
+  NodeId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -18,7 +20,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { replayAndBufferLiveEvents } from "../orchestration/LiveStreamBudget.ts";
+import { replayAndBufferProjectedLiveEvents } from "../orchestration/LiveStreamBudget.ts";
+import { projectDomainEventForWire } from "./WireProjection.ts";
 
 import {
   CommandReceiptStoreV2,
@@ -80,15 +83,18 @@ export type EventSinkV2Error = typeof EventSinkV2Error.Type;
  */
 export interface EventSinkV2Shape {
   readonly write: (input: {
+    readonly guardPendingUserInputCancellations?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
   readonly writeWithEffects: (input: {
+    readonly guardPendingUserInputCancellations?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<PendingOrchestrationEffectV2>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
   readonly writeIfRunCurrent: (input: {
+    readonly guardPendingUserInputCancellations?: boolean;
     readonly commandId?: CommandId;
     readonly threadId: ThreadId;
     readonly runId: RunId;
@@ -109,6 +115,7 @@ export interface EventSinkV2Shape {
    * a newer attempt that already claimed the thread.
    */
   readonly writeIfProviderThreadOwner: (input: {
+    readonly guardPendingUserInputCancellations?: boolean;
     readonly commandId?: CommandId;
     readonly providerThreadId: ProviderThreadId;
     readonly runId: RunId;
@@ -190,6 +197,51 @@ const baseLayer: Layer.Layer<
     const turnItemPositions = yield* TurnItemPositionStoreV2;
     const liveEvents = yield* PubSub.unbounded<OrchestrationV2StoredEvent>();
 
+    // A user can answer after terminal normalization reads the pending request.
+    // Recheck inside the write transaction so stale cleanup cannot erase answers.
+    const guardUserInputCancellations = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
+      Effect.gen(function* () {
+        const staleRequests = new Set<RuntimeRequestId>();
+        const staleNodes = new Set<NodeId>();
+        for (const event of events) {
+          if (
+            event.type !== "runtime-request.updated" ||
+            event.payload.kind !== "user_input" ||
+            event.payload.status !== "cancelled"
+          )
+            continue;
+          const current = yield* projectionStore.getRuntimeRequest(
+            event.threadId,
+            event.payload.id,
+          );
+          if (
+            current?.status !== "pending" ||
+            current.kind !== "user_input" ||
+            current.providerTurnId !== event.payload.providerTurnId ||
+            current.responseCapability.type === "message"
+          ) {
+            staleRequests.add(event.payload.id);
+            staleNodes.add(event.payload.nodeId);
+          }
+        }
+        return events.filter((event) => {
+          switch (event.type) {
+            case "runtime-request.updated":
+              return event.payload.status !== "cancelled" || !staleRequests.has(event.payload.id);
+            case "node.updated":
+              return event.payload.status !== "cancelled" || !staleNodes.has(event.payload.id);
+            case "turn-item.updated":
+              return (
+                event.payload.type !== "user_input_request" ||
+                event.payload.status !== "cancelled" ||
+                !staleRequests.has(event.payload.requestId)
+              );
+            default:
+              return true;
+          }
+        });
+      });
+
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
       const runOrdinals = new Map(
         events.flatMap((event) =>
@@ -254,7 +306,11 @@ const baseLayer: Layer.Layer<
 
       const storedEvents = yield* sql.withTransaction(
         Effect.gen(function* () {
-          const normalized = yield* normalizeEvents(input.events);
+          const normalized = yield* normalizeEvents(
+            input.guardPendingUserInputCancellations === true
+              ? yield* guardUserInputCancellations(input.events)
+              : input.events,
+          );
           const committed = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
             events: normalized,
@@ -307,7 +363,11 @@ const baseLayer: Layer.Layer<
               };
             }
 
-            const normalized = yield* normalizeEvents(input.events);
+            const normalized = yield* normalizeEvents(
+              input.guardPendingUserInputCancellations === true
+                ? yield* guardUserInputCancellations(input.events)
+                : input.events,
+            );
             const storedEvents = yield* eventStore.append({
               ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
               events: normalized,
@@ -364,7 +424,11 @@ const baseLayer: Layer.Layer<
             };
           }
 
-          const normalized = yield* normalizeEvents(input.events);
+          const normalized = yield* normalizeEvents(
+            input.guardPendingUserInputCancellations === true
+              ? yield* guardUserInputCancellations(input.events)
+              : input.events,
+          );
           const storedEvents = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
             events: normalized,
@@ -532,12 +596,13 @@ const baseLayer: Layer.Layer<
           ...(input?.threadId === undefined ? {} : { threadId: input.threadId }),
         });
       if (input?.bounded === true) {
-        return replayAndBufferLiveEvents({
+        return replayAndBufferProjectedLiveEvents({
           subscribe: PubSub.subscribe(liveEvents),
           latestSequence: eventStore.latestSequence(),
           afterSequence,
           filter: matchesThread,
           replay,
+          project: (stored) => ({ ...stored, event: projectDomainEventForWire(stored.event) }),
         });
       }
       return Stream.unwrap(

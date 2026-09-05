@@ -20,6 +20,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/unstable/http";
 import { Atom } from "effect/unstable/reactivity";
 
+import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
@@ -167,6 +168,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const historyController = yield* Effect.serviceOption(ThreadHistoryController);
   const httpClient = yield* Effect.serviceOption(HttpClient.HttpClient);
   const dpopSigner = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
   const environmentId = supervisor.target.environmentId;
   const retained = resumeCache?.snapshot;
@@ -554,6 +556,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         threadId,
         cursor: requestCursor,
         signer: dpopSigner,
+        remoteAuthorization,
       }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient.value), Effect.result);
 
       if (Result.isFailure(pageResult)) {
