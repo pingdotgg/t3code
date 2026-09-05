@@ -1329,6 +1329,184 @@ it.layer(
     }),
   );
 
+  it.effect("clears Kitty keyboard flags a dead process left in inherited history", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      // Codex CLI pushes event-type reporting, then the shell dies before it
+      // can pop (server restart). The query is stripped; the push survives.
+      process.emitData("prompt % codex\n\u001b[>7u\u001b[?u");
+
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+      assert.equal(reopened.history, "prompt % codex\n\u001b[>7u\u001b[=0;1u");
+    }),
+  );
+
+  it.effect("resets mouse and focus modes a dead process left in inherited history", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      // Claude Code tracks mouse motion and focus; replaying that into a fresh
+      // shell would make the client send reports the shell echoes as junk.
+      process.emitData("prompt % claude\n\u001b[?1004h\u001b[?1003;1006h");
+
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      assert.equal(
+        reopened.history,
+        "prompt % claude\n\u001b[?1004h\u001b[?1003;1006h\u001b[?1004l\u001b[?1003l\u001b[?1006l",
+      );
+    }),
+  );
+
+  it.effect("leaves the alternate screen before restoring the cursor in inherited history", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      // DECSTR leaves every tracked mode alone in libghostty-vt, so it must not
+      // be mistaken for a reset.
+      process.emitData("prompt % nvim\n\u001b[?25l\u001b[?1049h\u001b[!p");
+
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      assert.equal(
+        reopened.history,
+        "prompt % nvim\n\u001b[?25l\u001b[?1049h\u001b[!p\u001b[?1049l\u001b[?25h",
+      );
+    }),
+  );
+
+  it.effect("leaves inherited history alone when its process restored the terminal", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      // A clean exit pops its flags and resets its modes; a later RIS wipes
+      // everything before it, including a dangling alternate screen.
+      process.emitData("\u001b[>7u\u001b[?1003h\u001b[<u\u001b[?1003l");
+      process.emitData("\u001b[?1049h\u001b[=1;1u\u001bc");
+      process.emitData("prompt % ");
+
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      assert.equal(
+        reopened.history,
+        "\u001b[>7u\u001b[?1003h\u001b[<u\u001b[?1003l\u001b[?1049h\u001b[=1;1u\u001bcprompt % ",
+      );
+    }),
+  );
+
+  it.effect("keeps Kitty keyboard stacks per screen while neutralizing inherited history", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      // A push on the main screen survives an alternate-screen round trip even
+      // when the app pops while on the alternate screen (libghostty keeps one
+      // stack per screen), so the main screen still needs its reset.
+      process.emitData("\u001b[>7u\u001b[?1049h\u001b[<u\u001b[?1049l");
+
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      assert.equal(reopened.history, "\u001b[>7u\u001b[?1049h\u001b[<u\u001b[?1049l\u001b[=0;1u");
+    }),
+  );
+
+  it.effect("leaves the alternate screen without resetting Kitty flags pushed only there", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      // Dying inside the alternate screen with flags pushed there: leaving the
+      // screen makes the untouched main stack active, so no Kitty reset is due.
+      process.emitData("\u001b[?1049h\u001b[>7u");
+
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      assert.equal(reopened.history, "\u001b[?1049h\u001b[>7u\u001b[?1049l");
+    }),
+  );
+
+  it.effect("applies Kitty set modes when tracking inherited flags", () =>
+    Effect.gen(function* () {
+      // Mode 3 clears only the named bits, so clearing none leaves 7 active.
+      const clearNone = yield* createManager();
+      yield* clearNone.manager.open(openInput());
+      clearNone.ptyAdapter.processes[0]!.emitData("\u001b[>7u\u001b[=0;3u");
+      yield* clearNone.manager.close({ threadId: "thread-1" });
+      const afterClearNone = yield* clearNone.manager.open(openInput());
+      assert.equal(afterClearNone.history, "\u001b[>7u\u001b[=0;3u\u001b[=0;1u");
+
+      // Clearing every bit set by the push needs no reset; OR-ing bits in does.
+      const clearAll = yield* createManager();
+      yield* clearAll.manager.open(openInput());
+      clearAll.ptyAdapter.processes[0]!.emitData("\u001b[>7u\u001b[=7;3u\u001b[=2;2u");
+      yield* clearAll.manager.close({ threadId: "thread-1" });
+      const afterOr = yield* clearAll.manager.open(openInput());
+      assert.equal(afterOr.history, "\u001b[>7u\u001b[=7;3u\u001b[=2;2u\u001b[=0;1u");
+
+      const cleared = yield* createManager();
+      yield* cleared.manager.open(openInput());
+      cleared.ptyAdapter.processes[0]!.emitData("\u001b[>7u\u001b[=7;3u");
+      yield* cleared.manager.close({ threadId: "thread-1" });
+      const afterCleared = yield* cleared.manager.open(openInput());
+      assert.equal(afterCleared.history, "\u001b[>7u\u001b[=7;3u");
+    }),
+  );
+
+  it.effect("neutralizes inherited history once across repeated restarts", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      // Two pushes with one pop, as a TUI that spawned a child and then died leaves.
+      process.emitData("\u001b[>1u\u001b[>7u\u001b[<u\u001b[?1004h");
+
+      yield* manager.close({ threadId: "thread-1" });
+      const first = yield* manager.open(openInput());
+      yield* manager.close({ threadId: "thread-1" });
+      const second = yield* manager.open(openInput());
+
+      assert.equal(
+        first.history,
+        "\u001b[>1u\u001b[>7u\u001b[<u\u001b[?1004h\u001b[?1004l\u001b[=0;1u",
+      );
+      assert.equal(second.history, first.history);
+    }),
+  );
+
   it.effect("strips replayable CSI and DCS traffic while preserving setters", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();

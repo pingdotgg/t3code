@@ -985,6 +985,117 @@ export class BoundedTerminalHistory {
   }
 }
 
+// A shell that dies mid-app (server restart or crash while Codex CLI, Claude
+// Code, or another TUI runs) never gets to restore the terminal modes the app
+// set. The next shell inherits that history on open, the client replays it
+// into a fresh emulator, and the renderer then encodes key releases, mouse
+// motion, or focus changes for a shell that never asked. Undo whatever the
+// inherited history leaves deviating from power-on defaults; a program that
+// wants a mode again sets its own.
+//
+// DEC private modes worth restoring, with their power-on defaults. Frame-scoped
+// modes such as synchronized output (2026) are excluded: they never outlive
+// the frame that opened them.
+const INHERITED_DEC_MODE_DEFAULTS = new Map<number, boolean>([
+  [1, false], // application cursor keys
+  [6, false], // origin mode
+  [7, true], // autowrap
+  [9, false], // X10 mouse reporting
+  [25, true], // cursor visible
+  [47, false], // legacy alternate screen
+  [1000, false], // mouse press/release tracking
+  [1002, false], // mouse button-event tracking
+  [1003, false], // mouse any-event tracking
+  [1004, false], // focus reporting
+  [1005, false], // UTF-8 mouse encoding
+  [1006, false], // SGR mouse encoding
+  [1015, false], // urxvt mouse encoding
+  [1047, false], // alternate screen buffer
+  [1049, false], // alternate screen with cursor save
+  [2004, false], // bracketed paste
+]);
+// The three alternate-screen modes toggle one underlying screen.
+const ALTERNATE_SCREEN_DEC_MODES = [47, 1047, 1049];
+// Kitty keyboard flags live on a stack: `CSI > flags u` pushes, `CSI < n u`
+// pops, `CSI = flags ; mode u` edits the top (mode 1 replaces, 2 sets bits,
+// 3 clears bits). The main and alternate screens keep separate stacks, and
+// the encoder only reads the active top, so zeroing it is enough; only RIS
+// clears the stacks.
+const KITTY_KEYBOARD_CLEAR = "\u001b[=0;1u";
+// Every sequence of interest starts with ESC (after folding the 8-bit CSI
+// byte into ESC `[`), so the history is split there and each fragment's head
+// is matched: DEC mode set/reset, Kitty keyboard push/pop/set, or RIS (`c`).
+// RIS is the only reset that touches these in libghostty-vt; DECSTR
+// (`CSI ! p`) leaves every one of them alone, so it is deliberately not
+// tracked.
+const ESCAPE = "\u001b";
+const CSI_8BIT = "\u009b";
+const INHERITED_MODE_SEQUENCE =
+  /^(?:\[(?:\?([0-9;]+)([hl])|([<>=])([0-9]*)(?:;([0-9]*))?[0-9;]*u)|(c))/u;
+
+function neutralizeInheritedHistory(history: string): string {
+  if (history.length === 0) return history;
+  const modes = new Map<number, boolean>();
+  const kittyStacks = { main: [0], alternate: [0] };
+  let screen: keyof typeof kittyStacks = "main";
+  const fragments = history.replaceAll(CSI_8BIT, `${ESCAPE}[`).split(ESCAPE);
+  for (const fragment of fragments.slice(1)) {
+    const match = INHERITED_MODE_SEQUENCE.exec(fragment);
+    if (match === null) continue;
+    if (match[6] !== undefined) {
+      modes.clear();
+      kittyStacks.main = [0];
+      kittyStacks.alternate = [0];
+      screen = "main";
+      continue;
+    }
+    if (match[3] !== undefined) {
+      const stack = kittyStacks[screen];
+      const parameter = Number.parseInt(match[4] ?? "", 10);
+      if (match[3] === ">") {
+        stack.push(Number.isNaN(parameter) ? 0 : parameter);
+      } else if (match[3] === "=") {
+        const flags = Number.isNaN(parameter) ? 0 : parameter;
+        const top = stack.length - 1;
+        const current = stack[top] ?? 0;
+        const setMode = Number.parseInt(match[5] ?? "", 10);
+        stack[top] = setMode === 2 ? current | flags : setMode === 3 ? current & ~flags : flags;
+      } else {
+        const count = Number.isNaN(parameter) ? 1 : parameter;
+        stack.length = Math.max(1, stack.length - count);
+      }
+      continue;
+    }
+    const enabled = match[2] === "h";
+    for (const parameter of (match[1] ?? "").split(";")) {
+      const mode = Number.parseInt(parameter, 10);
+      if (!INHERITED_DEC_MODE_DEFAULTS.has(mode)) continue;
+      if (ALTERNATE_SCREEN_DEC_MODES.includes(mode)) {
+        for (const alias of ALTERNATE_SCREEN_DEC_MODES) modes.delete(alias);
+        screen = enabled ? "alternate" : "main";
+      }
+      modes.set(mode, enabled);
+    }
+  }
+  const deviations = [...modes].filter(
+    ([mode, enabled]) => enabled !== INHERITED_DEC_MODE_DEFAULTS.get(mode),
+  );
+  // Leave the alternate screen before the other resets: exiting it restores
+  // saved cursor state, which must not undo a cursor-show reset.
+  deviations.sort(
+    ([left], [right]) =>
+      Number(!ALTERNATE_SCREEN_DEC_MODES.includes(left)) -
+      Number(!ALTERNATE_SCREEN_DEC_MODES.includes(right)),
+  );
+  const decReset = deviations
+    .map(([mode]) => `\u001b[?${mode}${INHERITED_DEC_MODE_DEFAULTS.get(mode) ? "h" : "l"}`)
+    .join("");
+  // The alternate screen has been left by now, so the main stack is active.
+  const mainStack = kittyStacks.main;
+  const kittyReset = mainStack[mainStack.length - 1] === 0 ? "" : KITTY_KEYBOARD_CLEAR;
+  return `${history}${decReset}${kittyReset}`;
+}
+
 function isCsiFinalByte(codePoint: number): boolean {
   return codePoint >= 0x40 && codePoint <= 0x7e;
 }
@@ -2447,7 +2558,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const existing = yield* getSession(input.threadId, terminalId);
     if (Option.isNone(existing)) {
       yield* flushPersist(input.threadId, terminalId);
-      const history = yield* readHistory(input.threadId, terminalId);
+      const history = neutralizeInheritedHistory(yield* readHistory(input.threadId, terminalId));
       const cols = input.cols ?? DEFAULT_OPEN_COLS;
       const rows = input.rows ?? DEFAULT_OPEN_ROWS;
       const session: TerminalSessionState = {
