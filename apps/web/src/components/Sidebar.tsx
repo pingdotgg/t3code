@@ -36,7 +36,13 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import type { TimestampFormat } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_SIDEBAR_THREAD_ROW_LAYOUT,
+  type SidebarThreadRowLayoutMode,
+  type SidebarThreadRowPlacement,
+  type TimestampFormat,
+} from "@t3tools/contracts/settings";
+import { ThreadRowLayout } from "./ThreadRowLayout";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
@@ -740,6 +746,8 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
 const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
+  layoutMode: SidebarThreadRowLayoutMode;
+  customLayout: ReadonlyArray<SidebarThreadRowPlacement>;
   // Slim rows are either settled (action: un-settle) or merely quiet
   // (seen Ready threads — action: settle).
   variantAction: "settle" | "unsettle" | "unsnooze";
@@ -1321,6 +1329,263 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     )
   ) : null;
 
+  if (props.layoutMode !== "standard") {
+    const rowActivity =
+      status === "working" ? (
+        <span
+          role="status"
+          aria-label="Working"
+          className="inline-flex shrink-0 items-center gap-1 text-sky-600 tabular-nums dark:text-sky-400"
+        >
+          <CircleDashedIcon aria-hidden className="size-4" />
+          <span aria-hidden>
+            <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
+          </span>
+        </span>
+      ) : isWokeStatus ? (
+        <Tooltip disabled={snoozeMenuOpen}>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label="Dismiss Woke notification"
+                onClick={handleAcknowledgeWokeClick}
+                className={cn(
+                  "inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-sm text-xs font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring",
+                  topStatus.className,
+                )}
+              />
+            }
+          >
+            <AlarmClockIcon aria-hidden className="size-3" />
+            <span role="status">{topStatus.label}</span>
+          </TooltipTrigger>
+          <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
+        </Tooltip>
+      ) : status === "ready" && thread.latestTurn?.completedAt != null ? (
+        <span
+          role="status"
+          aria-label={`Completed ${compactSidebarTimeLabel(formatRelativeTimeLabel(thread.latestTurn?.completedAt ?? thread.updatedAt))}`}
+          className="inline-flex shrink-0 items-center gap-1 text-emerald-700 tabular-nums dark:text-emerald-300"
+        >
+          <CircleCheckIcon aria-hidden className="size-4" />
+          <span aria-hidden className="text-secondary-label">
+            {compactSidebarTimeLabel(
+              formatRelativeTimeLabel(thread.latestTurn?.completedAt ?? thread.updatedAt),
+            )}
+          </span>
+        </span>
+      ) : topStatus ? (
+        <span role="status" className={cn("shrink-0 text-xs font-medium", topStatus.className)}>
+          {topStatus.label}
+        </span>
+      ) : (
+        <span className="shrink-0 text-xs text-secondary-label tabular-nums">
+          {threadTimeLabel(thread)}
+        </span>
+      );
+
+    const pinIndicator = props.isPinned ? (
+      props.pinningSupported ? (
+        <button
+          type="button"
+          aria-label="Unpin thread"
+          onClick={handleUnpinClick}
+          className="rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <PinIcon aria-hidden className="size-3" />
+        </button>
+      ) : (
+        <PinIcon role="img" aria-label="Pinned" className="size-3" />
+      )
+    ) : null;
+    const statusIndicator = isWokeStatus ? (
+      rowActivity
+    ) : (
+      <span role="status" className={cn("truncate", topStatus?.className)}>
+        {topStatus?.label ??
+          (variantAction === "unsnooze"
+            ? "Snoozed"
+            : variantAction === "unsettle"
+              ? "Settled"
+              : "Ready")}
+      </span>
+    );
+    const snoozeLabel =
+      variantAction === "unsnooze" && props.snoozeWakeLabelText ? (
+        <span className="truncate text-blue-600 dark:text-blue-400">
+          {props.snoozeWakeLabelText}
+        </span>
+      ) : null;
+    const components = {
+      projectIcon: (
+        <ProjectFavicon
+          environmentId={thread.environmentId}
+          cwd={props.projectCwd ?? ""}
+          projectName={props.projectTitle ?? ""}
+          projectIcon={props.projectIcon}
+          faviconPath={props.projectFaviconPath}
+          className="size-4 shrink-0"
+        />
+      ),
+      title,
+      pin: pinIndicator,
+      activity: snoozeLabel ?? rowActivity,
+      status: statusIndicator,
+      duration:
+        status === "working" ? (
+          <span aria-label="Working duration" className="tabular-nums">
+            <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
+          </span>
+        ) : null,
+      project: props.projectDisplayName ? (
+        <span className="truncate">{props.projectDisplayName}</span>
+      ) : null,
+      environment: props.environmentLabel ? (
+        <span className="truncate">{props.environmentLabel}</span>
+      ) : null,
+      provider: driverKind ? (
+        <ProviderInstanceIcon
+          driverKind={driverKind}
+          displayName={thread.session?.providerName ?? modelInstanceId}
+          iconClassName="size-3.5"
+        />
+      ) : null,
+      model: <span className="truncate">{modelLabel}</span>,
+      branch: thread.branch ? (
+        <span className="inline-flex min-w-0 items-center gap-1">
+          <GitBranchIcon className="size-3 shrink-0" />
+          <span className="truncate">{thread.branch}</span>
+        </span>
+      ) : null,
+      worktree: thread.worktreePath?.trim() ? <ThreadWorktreeIndicator thread={thread} /> : null,
+      pullRequest: prBadge,
+      terminal: terminalStatusIcon,
+      updated: <span className="truncate tabular-nums">{threadTimeLabel(thread)}</span>,
+      created: (
+        <span className="truncate tabular-nums">
+          {compactSidebarTimeLabel(formatRelativeTimeLabel(thread.createdAt))}
+        </span>
+      ),
+      completed: thread.latestTurn?.completedAt ? (
+        <span className="truncate tabular-nums">
+          {compactSidebarTimeLabel(formatRelativeTimeLabel(thread.latestTurn.completedAt))}
+        </span>
+      ) : null,
+      snooze: snoozeLabel,
+    };
+    const chosenLayout =
+      props.layoutMode === "custom" ? props.customLayout : DEFAULT_SIDEBAR_THREAD_ROW_LAYOUT;
+    // A hidden title must still be editable from the context menu or double-click.
+    const layout =
+      isRenaming && !chosenLayout.some((item) => item.component === "title")
+        ? [
+            { component: "title" as const, row: 1 as const, alignment: "left" as const },
+            ...chosenLayout,
+          ]
+        : chosenLayout;
+    return (
+      <li
+        data-thread-item
+        ref={props.sortable?.setNodeRef}
+        style={
+          props.sortable
+            ? {
+                transform: CSS.Translate.toString(props.sortable.transform),
+                transition: props.sortable.transition,
+              }
+            : undefined
+        }
+        {...(props.sortable?.listeners ?? {})}
+        className={cn(
+          "list-none [content-visibility:auto] [contain-intrinsic-size:auto_36px]",
+          props.sortable?.isDragging && "z-20 opacity-80",
+        )}
+      >
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <div
+                ref={rowRef}
+                role="button"
+                tabIndex={0}
+                aria-label={thread.title}
+                data-testid={`sidebar-row-${props.layoutMode}`}
+                aria-busy={isRegeneratingTitle || undefined}
+                className={cn(
+                  rowSurfaceClassName,
+                  "flex min-h-9 items-center px-2.5 py-1.5 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                )}
+                onClick={handleClick}
+                onDoubleClick={handleDoubleClick}
+                onKeyDown={handleKeyDown}
+                onContextMenu={handleContextMenu}
+              />
+            }
+          >
+            {draftIndicator}
+            <ThreadRowLayout layout={layout} components={components} />
+            {isRegeneratingTitle ? (
+              <span className="sr-only" role="status">
+                Regenerating title
+              </span>
+            ) : null}
+            <span
+              className={cn(
+                "pointer-events-none flex w-0 shrink-0 items-center overflow-hidden opacity-0 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:ml-1 has-[:focus-visible]:w-auto has-[:focus-visible]:overflow-visible has-[:focus-visible]:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:ml-1 group-hover/sidebar-row:w-auto group-hover/sidebar-row:overflow-visible group-hover/sidebar-row:opacity-100",
+                snoozeMenuOpen && "pointer-events-auto ml-1 w-auto overflow-visible opacity-100",
+              )}
+            >
+              {hasUnsentDraft ? (
+                <button
+                  type="button"
+                  aria-label="Discard draft"
+                  onClick={handleDiscardDraftClick}
+                  className="rounded p-1 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <XIcon className="size-3.5" />
+                </button>
+              ) : null}
+              {variantAction === "unsnooze" && props.snoozeSupported ? (
+                <button
+                  type="button"
+                  aria-label="Wake thread now"
+                  onClick={handleUnsnoozeClick}
+                  className="rounded p-1 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <AlarmClockOffIcon className="size-3.5" />
+                </button>
+              ) : showSnoozeButton ? (
+                <SnoozePopoverButton
+                  open={snoozeMenuOpen}
+                  onOpenChange={setSnoozeMenuOpen}
+                  onSnooze={handleSnoozePreset}
+                  timestampFormat={props.timestampFormat}
+                />
+              ) : null}
+              {props.settlementSupported && variantAction !== "unsnooze" ? (
+                <button
+                  type="button"
+                  aria-label={variantAction === "unsettle" ? "Un-settle thread" : "Settle thread"}
+                  onClick={variantAction === "unsettle" ? handleUnsettleClick : handleSettleClick}
+                  className="rounded p-1 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {variantAction === "unsettle" ? (
+                    <Undo2Icon className="size-3.5" />
+                  ) : (
+                    <CheckIcon className="size-3.5" />
+                  )}
+                </button>
+              ) : null}
+            </span>
+            {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
+          </TooltipTrigger>
+          {detailsTooltip}
+        </Tooltip>
+      </li>
+    );
+  }
+
   if (variant === "slim") {
     return (
       <li
@@ -1866,6 +2131,12 @@ export default function Sidebar() {
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const layoutMode = useClientSettings((s) =>
+    s.sidebarThreadRowLayoutMode === "standard" && s.sidebarCompactThreadRows
+      ? "compact"
+      : s.sidebarThreadRowLayoutMode,
+  );
+  const customLayout = useClientSettings((s) => s.sidebarThreadRowLayout);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
@@ -4001,6 +4272,8 @@ export default function Sidebar() {
                         key={`${threadKey}:${rowVariant}`}
                         thread={thread}
                         variant={rowVariant}
+                        layoutMode={layoutMode}
+                        customLayout={customLayout}
                         // Snoozed rows wake, settled rows un-settle, and cards settle.
                         variantAction={
                           section === "snoozed"
