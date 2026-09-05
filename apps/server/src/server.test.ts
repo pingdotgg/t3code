@@ -2,6 +2,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
+import * as NodeNet from "node:net";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
@@ -1519,6 +1520,52 @@ const responseJsonEffect = <A>(response: HttpClientResponse.HttpClientResponse) 
 const responseOk = (response: HttpClientResponse.HttpClientResponse) =>
   response.status >= 200 && response.status < 300;
 
+const openTcpForward = (targetPort: number) =>
+  Effect.acquireRelease(
+    Effect.tryPromise({
+      try: () =>
+        new Promise<{
+          readonly port: number;
+          readonly server: NodeNet.Server;
+          readonly sockets: Set<NodeNet.Socket>;
+        }>((resolve, reject) => {
+          const sockets = new Set<NodeNet.Socket>();
+          const server = NodeNet.createServer((client) => {
+            const upstream = NodeNet.createConnection({
+              host: "127.0.0.1",
+              port: targetPort,
+            });
+            sockets.add(client);
+            sockets.add(upstream);
+            client.on("close", () => sockets.delete(client));
+            upstream.on("close", () => sockets.delete(upstream));
+            client.on("error", () => upstream.destroy());
+            upstream.on("error", () => client.destroy());
+            client.pipe(upstream);
+            upstream.pipe(client);
+          });
+          server.once("error", reject);
+          server.listen(0, "127.0.0.1", () => {
+            const address = server.address();
+            if (address === null || typeof address === "string") {
+              reject(new Error("Expected a TCP forward address."));
+              return;
+            }
+            resolve({ port: address.port, server, sockets });
+          });
+        }),
+      catch: (cause) => new TestHttpRequestError({ cause }),
+    }),
+    ({ server, sockets }) =>
+      Effect.promise(
+        () =>
+          new Promise<void>((resolve) => {
+            for (const socket of sockets) socket.destroy();
+            server.close(() => resolve());
+          }),
+      ),
+  );
+
 const getAuthenticatedSessionCookieHeader = (credential = defaultDesktopBootstrapToken) =>
   Effect.gen(function* () {
     const { response, cookie } = yield* bootstrapBrowserSession(credential);
@@ -2714,6 +2761,88 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(linkProofResponse.status, 400);
       assert.equal(body._tag, "EnvironmentHttpBadRequestError");
       assert.equal(body.message, "Invalid managed endpoint origin.");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("uses the server listener port for managed tunnel link proofs", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const linkProofUrl = yield* getHttpServerUrl("/api/connect/link-proof");
+      const serverPort = Number(new URL(linkProofUrl).port);
+      const { port: forwardedPort } = yield* openTcpForward(serverPort);
+      const forwardedLinkProofUrl = `http://127.0.0.1:${forwardedPort}/api/connect/link-proof`;
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const linkProofRequest = HttpClientRequest.post(forwardedLinkProofUrl, {
+        headers: { cookie: ownerCookie },
+      }).pipe(
+        HttpClientRequest.bodyText(
+          jsonRequestBody({
+            challenge: "relay-link-challenge",
+            relayIssuer: "https://relay.example.test",
+            endpoint: {
+              httpBaseUrl: `http://127.0.0.1:${forwardedPort}`,
+              wsBaseUrl: `ws://127.0.0.1:${forwardedPort}/ws`,
+              providerKind: "cloudflare_tunnel",
+            },
+            origin: {
+              localHttpHost: "127.0.0.1",
+              localHttpPort: forwardedPort,
+            },
+          }),
+          "application/json",
+        ),
+      );
+      const linkProofResponse = yield* HttpClient.execute(linkProofRequest).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.mapError((cause) => new TestHttpRequestError({ cause })),
+      );
+      const proof = yield* responseJsonEffect<unknown>(linkProofResponse);
+
+      assert.equal(linkProofResponse.status, 200);
+      assert.equal(typeof proof, "string");
+      const payload = decodeCompactJwtPayload<{
+        readonly origin?: { readonly localHttpHost?: string; readonly localHttpPort?: number };
+      }>(proof as string);
+
+      assert.equal(payload.origin?.localHttpHost, "127.0.0.1");
+      assert.equal(payload.origin?.localHttpPort, serverPort);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects unauthenticated managed tunnel link proofs through a TCP forward", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const linkProofUrl = yield* getHttpServerUrl("/api/connect/link-proof");
+      const serverPort = Number(new URL(linkProofUrl).port);
+      const { port: forwardedPort } = yield* openTcpForward(serverPort);
+      const linkProofRequest = HttpClientRequest.post(
+        `http://127.0.0.1:${forwardedPort}/api/connect/link-proof`,
+      ).pipe(
+        HttpClientRequest.bodyText(
+          jsonRequestBody({
+            challenge: "relay-link-challenge",
+            relayIssuer: "https://relay.example.test",
+            endpoint: {
+              httpBaseUrl: `http://127.0.0.1:${forwardedPort}`,
+              wsBaseUrl: `ws://127.0.0.1:${forwardedPort}/ws`,
+              providerKind: "cloudflare_tunnel",
+            },
+            origin: {
+              localHttpHost: "127.0.0.1",
+              localHttpPort: forwardedPort,
+            },
+          }),
+          "application/json",
+        ),
+      );
+      const linkProofResponse = yield* HttpClient.execute(linkProofRequest).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.mapError((cause) => new TestHttpRequestError({ cause })),
+      );
+
+      assert.equal(linkProofResponse.status, 401);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
