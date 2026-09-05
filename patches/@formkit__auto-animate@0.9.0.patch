@@ -1,5 +1,5 @@
 diff --git a/index.mjs b/index.mjs
-index 7ad811c..075ef36 100644
+index 7ad811c..fb275fd 100644
 --- a/index.mjs
 +++ b/index.mjs
 @@ -142,17 +142,20 @@ function updatePos(el, debounce = true) {
@@ -25,7 +25,7 @@ index 7ad811c..075ef36 100644
  }
  /**
   * Updates all positions that are currently being tracked.
-@@ -160,7 +163,13 @@ function updatePos(el, debounce = true) {
+@@ -160,7 +163,14 @@ function updatePos(el, debounce = true) {
  function updateAllPos() {
      clearTimeout(debounces.get(root));
      debounces.set(root, setTimeout(() => {
@@ -33,14 +33,15 @@ index 7ad811c..075ef36 100644
 +        parents.forEach((parent) => {
 +            const observer = mutationObservers.get(parent);
 +            forEach(parent, (el) => lowPriority(() => {
-+                if (mutationObservers.get(parent) === observer)
++                if (mutationObservers.get(parent) === observer &&
++                    (el === parent || el.parentElement === parent))
 +                    updatePos(el);
 +            }));
 +        });
      }, 100));
  }
  /**
-@@ -172,9 +181,14 @@ function updateAllPos() {
+@@ -172,9 +182,14 @@ function updateAllPos() {
   * @param el - Element
   */
  function poll(el) {
@@ -58,7 +59,7 @@ index 7ad811c..075ef36 100644
  }
  /**
   * Perform some operation that is non critical at some point.
-@@ -537,10 +551,16 @@ function add(el) {
+@@ -537,10 +552,16 @@ function add(el) {
  function cleanUp(el, styles) {
      var _a;
      el.remove();
@@ -75,7 +76,7 @@ index 7ad811c..075ef36 100644
      setTimeout(() => {
          if (DEL in el)
              delete el[DEL];
-@@ -774,9 +794,18 @@ function autoAnimate(el, config = {}) {
+@@ -774,9 +795,18 @@ function autoAnimate(el, config = {}) {
              parents.delete(el);
              options.delete(el);
              const mo = mutationObservers.get(el);

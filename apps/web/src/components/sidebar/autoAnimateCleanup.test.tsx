@@ -272,6 +272,27 @@ describe("AutoAnimate controller cleanup", () => {
     }
   });
 
+  it("does not resume observing a removed child from queued root-resize work", async () => {
+    const child = new TestElement();
+    parent.appendChild(child);
+    const controller = await start();
+    await vi.advanceTimersByTimeAsync(250);
+    const resize = TestObserver.instances.find((observer) => observer.observed.has(root))!;
+    resize.callback([{ target: root } as unknown as MutationRecord]);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(idleCallbacks).toHaveLength(2);
+    const observer = queueRemoval(child);
+    observer.callback(observer.takeRecords());
+    child.animate.mock.results[0]!.value.finish();
+    parent.animate.mock.results[0]!.value.finish();
+    await vi.advanceTimersByTimeAsync(1);
+    idleCallbacks.splice(0).forEach((callback) => callback());
+    await vi.advanceTimersByTimeAsync(250);
+    expect(TestObserver.instances.some((item) => item.observed.has(child))).toBe(false);
+    controller.destroy?.();
+    expectStopped();
+  });
+
   it("registers an initially large sidebar only after it becomes small", async () => {
     const { useSidebarThreadListAutoAnimate } = await import("./useSidebarThreadListAutoAnimate");
     function ThreadList({ rowCount }: { rowCount: number }) {
