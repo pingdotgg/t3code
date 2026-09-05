@@ -7,12 +7,15 @@ import {
   resolveAssetUrl,
 } from "@t3tools/client-runtime/state/assets";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 
 import { assetEnvironment } from "~/state/assets";
-import { usePreparedConnection, useEnvironmentScope, readEnvironmentScope } from "~/state/session";
+import { environmentSession, usePreparedConnection, useEnvironmentScope } from "~/state/session";
+import { useEnvironmentPresentation } from "~/state/presentation";
+import { useEnvironmentQuery } from "~/state/query";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 export { resolveAssetUrl, type AssetUrlState } from "@t3tools/client-runtime/state/assets";
@@ -21,16 +24,26 @@ export function useAssetUrlState(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
 ): AssetUrlState {
-  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
+  const fileAccessSession = useEnvironmentQuery(
+    environmentId === null ? null : environmentSession.sessionStateAtom(environmentId),
+  );
+  const fileEnvironment = useEnvironmentPresentation(environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
   const canReadResource =
-    canReadFiles || (resource?._tag !== "workspace-file" && resource?._tag !== "media-file");
+    fileAccess.canReadFiles ||
+    (resource?._tag !== "workspace-file" && resource?._tag !== "media-file");
   const preparedConnection = usePreparedConnection(environmentId);
   const result = useAtomValue(
     !canReadResource || environmentId === null || resource === null
       ? EMPTY_ASSET_URL_ATOM
       : assetEnvironment.createUrl({ environmentId, input: { resource } }),
   );
-  if (!canReadResource) return { _tag: "Failure" };
+  if (!canReadResource) return { _tag: fileAccess.isPending ? "Loading" : "Failure" };
   return assetUrlStateFromResult(
     result,
     preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null,
@@ -55,11 +68,6 @@ export function useAssetUrlRefresh(
   });
   return useCallback(async () => {
     if (environmentId === null || resource === null) return;
-    if (
-      (resource._tag === "workspace-file" || resource._tag === "media-file") &&
-      !readEnvironmentScope(environmentId, AuthFilesystemReadScope)
-    )
-      return;
     const result = await refresh({ environmentId, input: { resource } });
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
   }, [environmentId, resource, refresh]);

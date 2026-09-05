@@ -1,59 +1,52 @@
-import { AuthFilesystemReadScope } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import {
-  type EnvironmentConnectionPhase,
-  presentConnectionState,
-} from "@t3tools/client-runtime/connection";
+import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import {
   assetUrlStateFromResult,
   createAssetEnvironmentAtoms,
   EMPTY_ASSET_URL_ATOM,
 } from "@t3tools/client-runtime/state/assets";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
-import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback } from "react";
 
-import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { type AssetUrlState, deriveAssetUrlState } from "./asset-url-state";
-import { usePreparedConnection, useEnvironmentScope, readEnvironmentScope } from "./session";
+import { environmentSession, usePreparedConnection } from "./session";
+import { useEnvironmentPresentation } from "./presentation";
+import { useEnvironmentQuery } from "./query";
 import { useAtomQueryRunner } from "./use-atom-query-runner";
 
 export type { AssetUrlFailureReason, AssetUrlState } from "./asset-url-state";
 
 export const assetEnvironment = createAssetEnvironmentAtoms(connectionAtomRuntime);
 
-const EMPTY_CONNECTION_STATE_ATOM = Atom.make(AsyncResult.initial<never, never>(false)).pipe(
-  Atom.withLabel("mobile-asset-connection-state:empty"),
-);
-
-function useConnectionPhase(environmentId: EnvironmentId | null): EnvironmentConnectionPhase {
-  const state = useAtomValue(
-    environmentId === null
-      ? EMPTY_CONNECTION_STATE_ATOM
-      : environmentCatalog.stateAtom(environmentId),
-  );
-  const value = Option.getOrNull(AsyncResult.value(state));
-  return value === null ? "available" : presentConnectionState(value).phase;
-}
-
 export function useAssetUrlState(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
 ): AssetUrlState {
-  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
+  const fileAccessSession = useEnvironmentQuery(
+    environmentId === null ? null : environmentSession.sessionStateAtom(environmentId),
+  );
+  const fileEnvironment = useEnvironmentPresentation(environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
   const canReadResource =
-    canReadFiles || (resource?._tag !== "workspace-file" && resource?._tag !== "media-file");
+    fileAccess.canReadFiles ||
+    (resource?._tag !== "workspace-file" && resource?._tag !== "media-file");
   const preparedConnection = usePreparedConnection(environmentId);
-  const connectionPhase = useConnectionPhase(environmentId);
+  const connectionPhase = fileEnvironment.presentation?.connection.phase ?? "available";
   const result = useAtomValue(
     !canReadResource || environmentId === null || resource === null
       ? EMPTY_ASSET_URL_ATOM
       : assetEnvironment.createUrl({ environmentId, input: { resource } }),
   );
   const shared = !canReadResource
-    ? { _tag: "Failure" as const }
+    ? fileAccess.isPending
+      ? { _tag: "Loading" as const }
+      : { _tag: "Failure" as const }
     : assetUrlStateFromResult(
         result,
         preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null,
@@ -88,11 +81,6 @@ export function useRefreshAssetUrl(
   });
   return useCallback(async () => {
     if (environmentId === null || resource === null || httpBaseUrl === null) return null;
-    if (
-      (resource._tag === "workspace-file" || resource._tag === "media-file") &&
-      !readEnvironmentScope(environmentId, AuthFilesystemReadScope)
-    )
-      return null;
     const state = assetUrlStateFromResult(
       await createUrl({ environmentId, input: { resource } }),
       httpBaseUrl,
