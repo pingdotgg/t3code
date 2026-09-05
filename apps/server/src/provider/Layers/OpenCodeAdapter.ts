@@ -8,6 +8,7 @@ import {
   RuntimeItemId,
   RuntimeRequestId,
   ThreadId,
+  type ThreadTokenUsageSnapshot,
   type ToolLifecycleItemType,
   type TurnTokenUsage,
   TurnId,
@@ -60,6 +61,10 @@ import {
 import * as Option from "effect/Option";
 
 const PROVIDER = ProviderDriverKind.make("opencode");
+
+// Best-effort timeout for context-usage metadata probes. A wedged fetch
+// must not hang session start.
+const OPENCODE_CONTEXT_METADATA_PROBE_TIMEOUT_MS = 2_000;
 
 /**
  * Version tag stamped into the OpenCode resume cursor. Bump if the cursor
@@ -166,6 +171,94 @@ export function isSameOpenCodeDirectory(
     canonicalize(lexicalLeft),
     canonicalize(lexicalRight),
     (canonicalLeft, canonicalRight) => canonicalLeft === canonicalRight,
+  );
+}
+
+// OpenCode reports cumulative token counts per assistant message.
+export interface OpenCodeAssistantTokenCounts {
+  readonly input?: number;
+  readonly output?: number;
+  readonly reasoning?: number;
+  readonly cache?: { readonly read?: number; readonly write?: number };
+}
+
+// Token input queued for ordered background usage emission. Carries its own
+// turn/raw so each emission is stamped like an inline one.
+interface PendingOpenCodeContextWindowUsage {
+  readonly tokens: OpenCodeAssistantTokenCounts;
+  readonly providerID: string;
+  readonly modelID: string;
+  readonly turnId: TurnId | undefined;
+  readonly raw: unknown;
+}
+
+function sanitizeCounter(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value) : 0;
+}
+
+export function openCodeTokenTotal(
+  tokens: OpenCodeAssistantTokenCounts | null | undefined,
+): number {
+  return (
+    sanitizeCounter(tokens?.input) +
+    sanitizeCounter(tokens?.output) +
+    sanitizeCounter(tokens?.reasoning) +
+    sanitizeCounter(tokens?.cache?.read) +
+    sanitizeCounter(tokens?.cache?.write)
+  );
+}
+
+// Build a usage snapshot from cumulative counts. Returns undefined when no
+// tokens. Clamps usedTokens to maxTokens so the meter never exceeds 100%.
+export function buildOpenCodeContextWindowUsage(input: {
+  readonly tokens: OpenCodeAssistantTokenCounts | null | undefined;
+  readonly modelContextWindow?: number | null | undefined;
+  readonly compactsAutomatically?: boolean | undefined;
+}): ThreadTokenUsageSnapshot | undefined {
+  const inputTokens = sanitizeCounter(input.tokens?.input);
+  const outputTokens = sanitizeCounter(input.tokens?.output);
+  const reasoningTokens = sanitizeCounter(input.tokens?.reasoning);
+  const cachedReadTokens = sanitizeCounter(input.tokens?.cache?.read);
+  const cachedWriteTokens = sanitizeCounter(input.tokens?.cache?.write);
+  const rawUsedTokens =
+    inputTokens + outputTokens + reasoningTokens + cachedReadTokens + cachedWriteTokens;
+  if (rawUsedTokens <= 0) return undefined;
+
+  const maxTokens =
+    typeof input.modelContextWindow === "number" &&
+    Number.isInteger(input.modelContextWindow) &&
+    Number.isFinite(input.modelContextWindow) &&
+    input.modelContextWindow > 0
+      ? input.modelContextWindow
+      : undefined;
+  const usedTokens = maxTokens !== undefined ? Math.min(rawUsedTokens, maxTokens) : rawUsedTokens;
+
+  return {
+    usedTokens,
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    inputTokens,
+    cachedInputTokens: cachedReadTokens,
+    outputTokens,
+    reasoningOutputTokens: reasoningTokens,
+    compactsAutomatically: input.compactsAutomatically ?? true,
+  };
+}
+
+// Dedupe re-broadcast assistant messages with identical counts.
+export function isSameOpenCodeContextWindowUsage(
+  previous: ThreadTokenUsageSnapshot | undefined,
+  next: ThreadTokenUsageSnapshot | undefined,
+): boolean {
+  return (
+    previous !== undefined &&
+    next !== undefined &&
+    previous.usedTokens === next.usedTokens &&
+    previous.maxTokens === next.maxTokens &&
+    previous.inputTokens === next.inputTokens &&
+    previous.cachedInputTokens === next.cachedInputTokens &&
+    previous.outputTokens === next.outputTokens &&
+    previous.reasoningOutputTokens === next.reasoningOutputTokens &&
+    previous.compactsAutomatically === next.compactsAutomatically
   );
 }
 
@@ -339,6 +432,11 @@ interface OpenCodeSessionContext {
   readonly partById: Map<string, Part>;
   readonly emittedTextByPartId: Map<string, string>;
   readonly completedAssistantPartIds: Set<string>;
+  readonly modelContextWindowCache: Map<string, number | null>;
+  modelContextWindowCacheLoaded: boolean;
+  compactsAutomatically: boolean;
+  lastEmittedContextWindowUsage: ThreadTokenUsageSnapshot | undefined;
+  modelContextWindowQueue: Queue.Queue<PendingOpenCodeContextWindowUsage> | undefined;
   turnTokenUsage: OpenCodeTurnTokenUsageAccumulator | undefined;
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
@@ -1069,6 +1167,159 @@ export function makeOpenCodeAdapter(
         readonly event: Record<string, unknown>;
       },
     ) => writeNativeEvent(threadId, event).pipe(Effect.catchCause(() => Effect.void));
+
+    const resolveModelContextWindow = (
+      context: OpenCodeSessionContext,
+      providerID: string,
+      modelID: string,
+    ): number | null => context.modelContextWindowCache.get(`${providerID}/${modelID}`) ?? null;
+
+    // Lazy per-session probe for context window + auto-compaction. Best-effort
+    // with per-probe timeout; a failed probe is not retried.
+    const loadContextUsageMetadata = Effect.fn("loadContextUsageMetadata")(function* (
+      context: OpenCodeSessionContext,
+    ) {
+      if (context.modelContextWindowCacheLoaded) return;
+      context.modelContextWindowCacheLoaded = true;
+
+      const [providersProbe, configProbe] = yield* Effect.all(
+        [
+          runOpenCodeSdk("config.providers", () =>
+            context.client.config.providers({ directory: context.directory }),
+          )
+            .pipe(Effect.exit)
+            .pipe(Effect.timeoutOption(OPENCODE_CONTEXT_METADATA_PROBE_TIMEOUT_MS)),
+          runOpenCodeSdk("config.get", () =>
+            context.client.config.get({ directory: context.directory }),
+          )
+            .pipe(Effect.exit)
+            .pipe(Effect.timeoutOption(OPENCODE_CONTEXT_METADATA_PROBE_TIMEOUT_MS)),
+        ],
+        { concurrency: "unbounded" },
+      );
+      if (Option.isSome(providersProbe) && Exit.isSuccess(providersProbe.value)) {
+        for (const provider of providersProbe.value.value.data?.providers ?? []) {
+          for (const [modelId, model] of Object.entries(provider.models ?? {})) {
+            const w = (model as { limit?: { context?: unknown } }).limit?.context;
+            context.modelContextWindowCache.set(
+              `${provider.id}/${modelId}`,
+              typeof w === "number" && Number.isInteger(w) && Number.isFinite(w) && w > 0
+                ? w
+                : null,
+            );
+          }
+        }
+      }
+      if (Option.isSome(configProbe) && Exit.isSuccess(configProbe.value)) {
+        const auto = configProbe.value.value.data?.compaction?.auto;
+        if (typeof auto === "boolean") context.compactsAutomatically = auto;
+      }
+    });
+
+    // Build a usage snapshot from the cached metadata and emit it unless
+    // it duplicates the last emission. Reads the cache only — never touches
+    // the config probes. Runs on the session's background usage worker (see
+    // below), the sole writer of lastEmittedContextWindowUsage, so the
+    // check-then-stamp stays atomic. Stamp only after a successful emit: a
+    // failed emit must not mark the snapshot published, or an identical
+    // re-broadcast would dedupe against it and the meter would never show it.
+    const emitUsageSnapshot = Effect.fn("emitUsageSnapshot")(function* (
+      context: OpenCodeSessionContext,
+      tokens: OpenCodeAssistantTokenCounts,
+      providerID: string,
+      modelID: string,
+      turnId: TurnId | undefined,
+      raw: unknown,
+    ) {
+      const usage = buildOpenCodeContextWindowUsage({
+        tokens,
+        modelContextWindow: resolveModelContextWindow(context, providerID, modelID),
+        compactsAutomatically: context.compactsAutomatically,
+      });
+      if (
+        usage === undefined ||
+        isSameOpenCodeContextWindowUsage(context.lastEmittedContextWindowUsage, usage)
+      )
+        return;
+      yield* emit({
+        ...(yield* buildEventBase({ threadId: context.session.threadId, turnId, raw })),
+        type: "thread.token-usage.updated",
+        payload: { usage },
+      });
+      context.lastEmittedContextWindowUsage = usage;
+    });
+
+    // Ordered background worker for usage snapshots. Takes pending inputs
+    // FIFO so an older message can never overwrite newer usage: every
+    // snapshot is built from the metadata cache as of its own turn in line.
+    // Failures are handled per iteration — one bad snapshot must not end the
+    // worker, or the queue would stay set with nothing reading it and the
+    // meter would go silent for the rest of the session. Any interruption —
+    // pure or mixed with failures — still propagates so session teardown
+    // never waits on this loop.
+    const runContextWindowUsageWorker = Effect.fn("runContextWindowUsageWorker")(function* (
+      context: OpenCodeSessionContext,
+      queue: Queue.Queue<PendingOpenCodeContextWindowUsage>,
+    ) {
+      while (true) {
+        const pending = yield* Queue.take(queue);
+        yield* Effect.gen(function* () {
+          yield* loadContextUsageMetadata(context).pipe(Effect.ignore);
+          yield* emitUsageSnapshot(
+            context,
+            pending.tokens,
+            pending.providerID,
+            pending.modelID,
+            pending.turnId,
+            pending.raw,
+          );
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.void,
+          ),
+        );
+      }
+    });
+
+    // Emit deduped token-usage snapshot. Bails early on zero tokens so empty
+    // broadcasts spawn no probe or worker. Inputs are queued for the
+    // session's background worker — never probed inline: the first
+    // token-bearing message would otherwise stall the sequential event pump
+    // for up to the probe timeout while config.providers/config.get is
+    // wedged, delaying text deltas, approvals, and idle/completion events
+    // queued behind it.
+    const emitContextWindowUsage = Effect.fn("emitContextWindowUsage")(function* (
+      context: OpenCodeSessionContext,
+      tokens: OpenCodeAssistantTokenCounts,
+      providerID: string,
+      modelID: string,
+      turnId: TurnId | undefined,
+      raw: unknown,
+    ) {
+      if (openCodeTokenTotal(tokens) <= 0) return;
+      const pending: PendingOpenCodeContextWindowUsage = {
+        tokens,
+        providerID,
+        modelID,
+        turnId,
+        raw,
+      };
+      const existing = context.modelContextWindowQueue;
+      if (existing !== undefined) {
+        yield* Queue.offer(existing, pending);
+        return;
+      }
+      // Single-flight: every caller runs on the sequential pump and the
+      // queue field is only assigned here, so exactly one worker exists per
+      // session and every input flows through it in arrival order.
+      const queue = yield* Queue.unbounded<PendingOpenCodeContextWindowUsage>();
+      context.modelContextWindowQueue = queue;
+      yield* Queue.offer(queue, pending);
+      yield* runContextWindowUsageWorker(context, queue).pipe(
+        Effect.catchCause((cause) => (Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.void)),
+        Effect.forkIn(context.sessionScope),
+      );
+    });
 
     const cancelIdleReconciliation = Effect.fn("cancelIdleReconciliation")(function* (
       context: OpenCodeSessionContext,
@@ -2256,6 +2507,37 @@ export function makeOpenCodeAdapter(
           event.type === "todo.updated" ||
           (event.type === "message.updated" && event.properties.info.role === "assistant"));
       if (suppressInterruptedParentOutput) {
+        // Still emit token usage for interrupted turns so the meter doesn't
+        // underreport. Stamp on the aborted turn, not the next one.
+        if (
+          event.type === "message.updated" &&
+          event.properties.info.role === "assistant" &&
+          event.properties.info.tokens !== undefined
+        ) {
+          const usageTurnId =
+            context.interruptedTurnId ??
+            context.pendingIdleReconciliation?.turnId ??
+            (context.awaitingBusyAfterInterruption ? undefined : turnId);
+          if (usageTurnId !== undefined) {
+            yield* emitContextWindowUsage(
+              context,
+              event.properties.info.tokens,
+              event.properties.info.providerID,
+              event.properties.info.modelID,
+              usageTurnId,
+              event,
+            );
+          } else if (!context.awaitingBusyAfterInterruption) {
+            yield* emitContextWindowUsage(
+              context,
+              event.properties.info.tokens,
+              event.properties.info.providerID,
+              event.properties.info.modelID,
+              turnId,
+              event,
+            );
+          }
+        }
         return;
       }
 
@@ -2347,6 +2629,17 @@ export function makeOpenCodeAdapter(
                 if (ownership === "owned") accumulateOpenCodeStepUsage(usage, part);
               }
               yield* emitAssistantTextDelta(context, part, turnId, event);
+            }
+            // Surface cumulative token counts as the live usage snapshot.
+            if (event.properties.info.tokens !== undefined) {
+              yield* emitContextWindowUsage(
+                context,
+                event.properties.info.tokens,
+                event.properties.info.providerID,
+                event.properties.info.modelID,
+                turnId,
+                event,
+              );
             }
           }
           break;
@@ -2967,6 +3260,11 @@ export function makeOpenCodeAdapter(
           emittedTextByPartId: new Map(),
           messageRoleById: new Map(),
           completedAssistantPartIds: new Set(),
+          modelContextWindowCache: new Map(),
+          modelContextWindowCacheLoaded: false,
+          compactsAutomatically: true,
+          lastEmittedContextWindowUsage: undefined,
+          modelContextWindowQueue: undefined,
           turnTokenUsage: undefined,
           activeTurnId: undefined,
           activeAgent: undefined,
