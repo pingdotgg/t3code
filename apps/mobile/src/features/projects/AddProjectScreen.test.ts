@@ -10,8 +10,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 const state = vi.hoisted(() => ({
   scopes: new Set<string>(),
+  otherScopes: new Set<string>(),
   baseDirectory: "",
   projects: [] as string[],
+  createRequests: [] as { environmentId: string; workspaceRoot: string }[],
 }));
 
 vi.mock("react", async (importOriginal) => ({
@@ -46,8 +48,10 @@ vi.mock("../../components/ErrorBanner", () => ({ ErrorBanner: "ErrorBanner" }));
 vi.mock("../../components/SourceControlIcon", () => ({ SourceControlIcon: "SourceControlIcon" }));
 vi.mock("../../lib/uuid", () => ({ uuidv4: () => "project" }));
 vi.mock("../../state/session", () => ({
-  useEnvironmentScope: (_environmentId: unknown, scope: string) => state.scopes.has(scope),
-  readEnvironmentScope: (_environmentId: unknown, scope: string) => state.scopes.has(scope),
+  useEnvironmentScope: (environmentId: string, scope: string) =>
+    (environmentId === "environment" ? state.scopes : state.otherScopes).has(scope),
+  readEnvironmentScope: (environmentId: string, scope: string) =>
+    (environmentId === "environment" ? state.scopes : state.otherScopes).has(scope),
 }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => [],
@@ -60,16 +64,27 @@ vi.mock("../../state/entities", () => ({
           settings: { addProjectBaseDirectory: state.baseDirectory },
         },
       ],
+      [
+        "other-environment",
+        {
+          environment: { platform: { os: "linux" } },
+          settings: { addProjectBaseDirectory: state.baseDirectory },
+        },
+      ],
     ]),
 }));
 vi.mock("../../state/use-remote-environment-registry", () => ({
   useRemoteEnvironmentRuntime: () => ({ connectionState: "connected" }),
   useRemoteConnectionStatus: () => ({
-    connectedEnvironments: [{ environmentId: "environment", connectionState: "connected" }],
+    connectedEnvironments: [
+      { environmentId: "environment", connectionState: "connected" },
+      { environmentId: "other-environment", connectionState: "connected" },
+    ],
   }),
   useSavedRemoteConnections: () => ({
     savedConnectionsById: {
       connection: { environmentId: "environment", environmentLabel: "Environment" },
+      other: { environmentId: "other-environment", environmentLabel: "Other environment" },
     },
   }),
 }));
@@ -90,8 +105,16 @@ vi.mock("../../state/sourceControl", () => ({
 }));
 vi.mock("../../state/projects", () => ({
   projectEnvironment: {
-    create: async ({ input }: { input: { workspaceRoot: string } }) => {
-      if (!state.scopes.has(AuthOrchestrationOperateScope)) {
+    create: async ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: { workspaceRoot: string };
+    }) => {
+      state.createRequests.push({ environmentId, workspaceRoot: input.workspaceRoot });
+      const scopes = environmentId === "environment" ? state.scopes : state.otherScopes;
+      if (!scopes.has(AuthOrchestrationOperateScope)) {
         return AsyncResult.failure(Cause.fail(new Error("Project creation denied")));
       }
       state.projects.push(input.workspaceRoot);
@@ -100,12 +123,12 @@ vi.mock("../../state/projects", () => ({
   },
 }));
 
-import { AddProjectDestinationScreen } from "./AddProjectScreen";
+import { AddProjectDestinationScreen, AddProjectLocalFolderScreen } from "./AddProjectScreen";
 
-function findCloneAction(node: ReactNode): (() => unknown) | null {
+function findAction(node: ReactNode, label: string): (() => unknown) | null {
   if (Array.isArray(node)) {
     for (const child of node) {
-      const action = findCloneAction(child);
+      const action = findAction(child, label);
       if (action) return action;
     }
     return null;
@@ -113,19 +136,26 @@ function findCloneAction(node: ReactNode): (() => unknown) | null {
   if (!isValidElement<{ label?: string; onPress?: () => unknown; children?: ReactNode }>(node)) {
     return null;
   }
-  if (node.props.label === "Clone project") return node.props.onPress ?? null;
-  return findCloneAction(node.props.children);
+  if (node.props.label === label) return node.props.onPress ?? null;
+  return findAction(node.props.children, label);
 }
 
 function cloneAction() {
-  const action = findCloneAction(
+  const action = findAction(
     AddProjectDestinationScreen({
       environmentId: "environment",
       remoteUrl: "https://example.com/repo.git",
       repositoryName: "repo",
     }),
+    "Clone project",
   );
   if (!action) throw new Error("Clone action missing");
+  return action;
+}
+
+function localProjectAction(environmentId = "environment") {
+  const action = findAction(AddProjectLocalFolderScreen({ environmentId }), "Add project");
+  if (!action) throw new Error("Add project action missing");
   return action;
 }
 
@@ -135,7 +165,9 @@ describe("clone project permissions", () => {
       NodePath.join(NodeOS.tmpdir(), "t3-clone-permissions-"),
     );
     state.scopes = new Set([AuthSourceControlWriteScope]);
+    state.otherScopes = new Set();
     state.projects = [];
+    state.createRequests = [];
   });
 
   afterEach(async () => {
@@ -168,6 +200,68 @@ describe("clone project permissions", () => {
 
       expect(NodeFS.existsSync(NodePath.join(state.baseDirectory, "repo"))).toBe(false);
       expect(state.projects).toEqual([]);
+    },
+  );
+});
+
+describe("local project permissions", () => {
+  beforeEach(() => {
+    state.baseDirectory = "/workspace/project";
+    state.scopes = new Set();
+    state.otherScopes = new Set();
+    state.projects = [];
+    state.createRequests = [];
+  });
+
+  it.each([false, true])(
+    "does not dispatch project creation without the current grant (revoked: %s)",
+    async (revokeBeforeSubmit) => {
+      if (revokeBeforeSubmit) state.scopes.add(AuthOrchestrationOperateScope);
+      const submit = localProjectAction();
+      state.scopes.delete(AuthOrchestrationOperateScope);
+
+      await submit();
+
+      expect(state.createRequests).toEqual([]);
+      expect(state.projects).toEqual([]);
+    },
+  );
+
+  it("adds a typed local path with only task-operation permission", async () => {
+    state.scopes.add(AuthOrchestrationOperateScope);
+
+    await localProjectAction()();
+
+    expect(state.createRequests).toEqual([
+      { environmentId: "environment", workspaceRoot: state.baseDirectory },
+    ]);
+    expect(state.projects).toEqual([state.baseDirectory]);
+  });
+
+  it("uses a grant added while the local-folder form is open", async () => {
+    const submit = localProjectAction();
+    state.scopes.add(AuthOrchestrationOperateScope);
+
+    await submit();
+
+    expect(state.projects).toEqual([state.baseDirectory]);
+  });
+
+  it.each([false, true])(
+    "uses the selected environment's grant (allowed: %s)",
+    async (allowSelectedEnvironment) => {
+      (allowSelectedEnvironment ? state.otherScopes : state.scopes).add(
+        AuthOrchestrationOperateScope,
+      );
+
+      await localProjectAction("other-environment")();
+
+      expect(state.createRequests).toEqual(
+        allowSelectedEnvironment
+          ? [{ environmentId: "other-environment", workspaceRoot: state.baseDirectory }]
+          : [],
+      );
+      expect(state.projects).toEqual(allowSelectedEnvironment ? [state.baseDirectory] : []);
     },
   );
 });
