@@ -50,6 +50,7 @@ const TERMINAL_LINE_START = "\u0001";
 const TERMINAL_LINE_END = "\u0005";
 const TERMINAL_DELETE_TO_LINE_START = "\u0015";
 const EVENT_CODE_KEY_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  Backquote: ["`"],
   BracketLeft: ["["],
   BracketRight: ["]"],
   Digit0: ["0"],
