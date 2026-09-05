@@ -1,6 +1,11 @@
-import { AuthOrchestrationOperateScope, EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  EnvironmentAuthorizationError,
+  EnvironmentId,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { beforeEach, expect, it, vi } from "vite-plus/test";
+import { assert, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   allowed: new Set<string>(),
@@ -37,7 +42,11 @@ beforeEach(() => {
 it("does not use another environment's grant or change preferences when denied", async () => {
   state.allowed.add(primary);
   const open = useOpenInPreferredEditor(secondary, ["vscode"]);
-  expect((await open("/work/readme.md"))._tag).toBe("Failure");
+  const result = await open("/work/readme.md");
+  assert(result._tag === "Failure");
+  const error = Cause.squash(result.cause);
+  expect(error).toBeInstanceOf(EnvironmentAuthorizationError);
+  expect(error).toMatchObject({ requiredScope: AuthOrchestrationOperateScope });
   expect(state.run).not.toHaveBeenCalled();
   expect(state.getPreference).not.toHaveBeenCalled();
   expect(state.setPreference).not.toHaveBeenCalled();
