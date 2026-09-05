@@ -246,6 +246,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["new worktrees latest matching remote branch local"],
   },
   {
+    id: "open-default-folder-on-startup",
+    title: "Open default folder on startup",
+    to: "/settings/general",
+    searchTerms: ["launch restart reopen default local directory folder machine"],
+  },
+  {
     id: "add-project-starts-in",
     title: "Add project starts in",
     to: "/settings/general",

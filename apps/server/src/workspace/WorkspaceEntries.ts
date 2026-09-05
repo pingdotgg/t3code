@@ -198,7 +198,9 @@ export const make = Effect.gen(function* () {
         Effect.catchIf(
           (error) => {
             const code = (error.cause as NodeJS.ErrnoException | undefined)?.code;
-            return code === "EACCES" || code === "EPERM";
+            return (
+              input.requireReadableDirectory !== true && (code === "EACCES" || code === "EPERM")
+            );
           },
           () => Effect.succeed([]),
         ),

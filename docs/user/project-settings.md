@@ -16,3 +16,9 @@ upstream.
 T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
 local work, resolve it yourself before automatic pulls can resume.
+
+## Choose the folder opened at startup
+
+In **Settings → General → Projects & threads**, set **Add project starts in** to a folder on this environment and enable **Open default folder on startup**. The app opens a local draft in that folder when it starts, even if your most recent project was on another machine. An empty folder setting uses your home directory.
+
+The folder must already exist. If it becomes unavailable, you can retry or change the setting instead of opening a different project. The preference stays on the environment where you set it. Turn it off to return to opening the most recently active project. Explicit links to threads still open their requested destination.

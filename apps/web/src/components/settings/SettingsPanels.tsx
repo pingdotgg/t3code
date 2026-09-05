@@ -574,6 +574,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
         ? ["New worktrees start from origin"]
         : []),
+      ...(settings.openDefaultFolderOnStartup ? ["Open default folder on startup"] : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
@@ -611,6 +612,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.composerCollapseOnBlur,
       settings.composerCollapseOnScroll,
       settings.addProjectBaseDirectory,
+      settings.openDefaultFolderOnStartup,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
       settings.diffIgnoreWhitespace,
@@ -733,6 +735,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
+      openDefaultFolderOnStartup: DEFAULT_UNIFIED_SETTINGS.openDefaultFolderOnStartup,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
@@ -2627,6 +2630,28 @@ export function GeneralSettingsPanel() {
                 updateSettings({ newWorktreesStartFromOrigin: Boolean(checked) })
               }
               aria-label="Start new worktrees from origin by default"
+            />
+          }
+        />
+        <SettingsRow
+          serverScoped
+          {...searchableSetting("open-default-folder-on-startup")}
+          description="Open a local draft in the “Add project starts in” folder when this app starts. Saved only for this environment."
+          resetAction={
+            settings.openDefaultFolderOnStartup ? (
+              <SettingResetButton
+                label="open default folder on startup"
+                onClick={() => updateSettings({ openDefaultFolderOnStartup: false })}
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.openDefaultFolderOnStartup}
+              onCheckedChange={(checked) =>
+                updateSettings({ openDefaultFolderOnStartup: Boolean(checked) })
+              }
+              aria-label="Open default folder on startup"
             />
           }
         />

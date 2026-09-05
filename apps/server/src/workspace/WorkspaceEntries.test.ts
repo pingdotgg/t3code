@@ -721,16 +721,59 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect("returns an empty listing when the OS denies directory access", () =>
+    for (const code of ["EACCES", "EPERM"]) {
+      it.effect(
+        `returns an empty picker listing for ${code} unless strict validation is enabled`,
+        () =>
+          Effect.gen(function* () {
+            const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+            const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-denied-" });
+            const partialPath = yield* appendSeparator(cwd);
+            const denied = Object.assign(new Error(`${code}: permission denied`), { code });
+
+            vi.mocked(NodeFSP.readdir).mockRejectedValueOnce(denied);
+            const defaultResult = yield* workspaceEntries.browse({ partialPath });
+            expect(defaultResult).toEqual({ parentPath: cwd, entries: [] });
+
+            vi.mocked(NodeFSP.readdir).mockRejectedValueOnce(denied);
+            const nonStrictResult = yield* workspaceEntries.browse({
+              partialPath,
+              requireReadableDirectory: false,
+            });
+            expect(nonStrictResult).toEqual({ parentPath: cwd, entries: [] });
+          }),
+      );
+
+      it.effect(`rejects ${code} when directory readability is required`, () =>
+        Effect.gen(function* () {
+          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+          const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-strict-denied-" });
+          const partialPath = yield* appendSeparator(cwd);
+          const denied = Object.assign(new Error(`${code}: permission denied`), { code });
+          vi.mocked(NodeFSP.readdir).mockRejectedValueOnce(denied);
+
+          const error = yield* workspaceEntries
+            .browse({ partialPath, requireReadableDirectory: true })
+            .pipe(Effect.flip);
+
+          expect(error).toMatchObject({
+            _tag: "WorkspaceEntriesReadDirectoryError",
+            parentPath: cwd,
+            partialPath,
+            cause: denied,
+          });
+        }),
+      );
+    }
+
+    it.effect("accepts an empty readable directory when strict validation is enabled", () =>
       Effect.gen(function* () {
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-eacces-" });
-
-        const denied = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
-        vi.mocked(NodeFSP.readdir).mockRejectedValueOnce(denied);
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-strict-empty-" });
 
         const result = yield* workspaceEntries.browse({
           partialPath: yield* appendSeparator(cwd),
+          requireReadableDirectory: true,
         });
         expect(result).toEqual({ parentPath: cwd, entries: [] });
       }),

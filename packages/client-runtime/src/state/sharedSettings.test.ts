@@ -38,6 +38,14 @@ describe("supportsSharedSettingsSync", () => {
 });
 
 describe("splitSharedServerPatch", () => {
+  it("keeps startup folder preferences on their owning machine", () => {
+    const patch = { openDefaultFolderOnStartup: true, addProjectBaseDirectory: "~/WIP" };
+    expect(splitSharedServerPatch(patch)).toEqual({ sharedPatch: {}, localPatch: patch });
+    expect(pickSharedServerSettings({ ...DEFAULT_SERVER_SETTINGS, ...patch })).not.toHaveProperty(
+      "openDefaultFolderOnStartup",
+    );
+  });
+
   it("routes preference keys to the shared patch and machine keys to the local patch", () => {
     const { sharedPatch, localPatch } = splitSharedServerPatch({
       sidebarAutoSettleAfterDays: 7,
@@ -206,7 +214,12 @@ describe("findSharedSettingsMismatches", () => {
           environmentId: boxId,
           label: "Remote Box",
           syncEligible: true,
-          settings: { ...primarySettings, enableAgentBrowserAccess: false },
+          settings: {
+            ...primarySettings,
+            enableAgentBrowserAccess: false,
+            openDefaultFolderOnStartup: true,
+            addProjectBaseDirectory: "~/RemoteProjects",
+          },
         },
       ],
     });
