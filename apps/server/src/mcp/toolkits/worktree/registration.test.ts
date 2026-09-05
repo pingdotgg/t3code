@@ -110,6 +110,12 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       const toolNames = tools.map((tool) => tool.name);
       expect(toolNames).toContain("t3_worktree_handoff");
       expect(toolNames).toContain("t3_worktree_status");
+      expect(toolNames).toContain("t3_queue_list");
+      expect(toolNames).toContain("t3_queue_read");
+      expect(toolNames).toContain("t3_queue_edit");
+      expect(toolNames).toContain("t3_queue_reorder");
+      expect(toolNames).toContain("t3_queue_cancel");
+      expect(toolNames).toContain("t3_queue_promote_to_steer");
       // The worktree registration merges alongside the other toolkits rather
       // than replacing them.
       expect(toolNames).toContain("preview_status");
@@ -125,6 +131,12 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       const status = tools.find((tool) => tool.name === "t3_worktree_status");
       expect(status?.annotations?.readOnlyHint).toBe(true);
       expect(status?.annotations?.destructiveHint).toBe(false);
+      const queueList = tools.find((tool) => tool.name === "t3_queue_list");
+      expect(queueList?.annotations?.readOnlyHint).toBe(true);
+      expect(queueList?.annotations?.destructiveHint).toBe(false);
+      const queueCancel = tools.find((tool) => tool.name === "t3_queue_cancel");
+      expect(queueCancel?.annotations?.readOnlyHint).toBe(false);
+      expect(queueCancel?.annotations?.destructiveHint).toBe(true);
 
       // MCP requires every tool input schema to be a top-level object schema.
       // A non-object schema (e.g. the anyOf produced by an empty

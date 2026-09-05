@@ -2236,6 +2236,14 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     queuedRunId: RunId,
     targetRunId: RunId,
+    /** Optional caller ceiling enforced against fresh caller and target projections. */
+    policyCeiling: Schema.optional(
+      Schema.Struct({
+        callerThreadId: ThreadId,
+        runtimeMode: RuntimeMode,
+        interactionMode: ProviderInteractionMode,
+      }),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("queued-run.reorder"),
@@ -2256,6 +2264,14 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     runId: RunId,
     text: Schema.String,
+    /** Optional caller ceiling enforced against fresh caller and target projections. */
+    policyCeiling: Schema.optional(
+      Schema.Struct({
+        callerThreadId: ThreadId,
+        runtimeMode: RuntimeMode,
+        interactionMode: ProviderInteractionMode,
+      }),
+    ),
     // Full replacement list. Absent = leave the message's attachments as-is,
     // so pre-attachment clients editing text keep the original attachments.
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
