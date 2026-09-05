@@ -1,9 +1,17 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId, UsageProviderKind } from "@t3tools/contracts";
+import {
+  USAGE_CONTRACT_VERSION,
+  type EnvironmentId,
+  type UsageProviderKind,
+} from "@t3tools/contracts";
 import { CircleAlertIcon, ChevronDownIcon, CircleDashedIcon, RefreshCwIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
+import {
+  isCompatibleUsageContractVersion,
+  type DailyTotals,
+  type HourlyTotals,
+} from "@t3tools/shared/usageMerge";
 
 import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
@@ -679,7 +687,11 @@ function UsageEnvironmentFilter({
             const status =
               environment.error !== null
                 ? "Unavailable"
-                : staleEnvironments.includes(environment.environmentId)
+                : environment.summary !== null &&
+                    !isCompatibleUsageContractVersion(
+                      environment.summary.contractVersion,
+                      USAGE_CONTRACT_VERSION,
+                    )
                   ? "Update required"
                   : environment.summary === null
                     ? "Scanning…"
