@@ -248,7 +248,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
 const snapshot = (
   projection: OrchestrationV2ThreadProjection,
   snapshotSequence = 1,
-): OrchestrationV2ThreadStreamItem => ({
+): Extract<OrchestrationV2ThreadStreamItem, { readonly kind: "snapshot" }> => ({
   kind: "snapshot",
   snapshotSequence,
   projection,
@@ -891,6 +891,54 @@ describe("EnvironmentThreads", () => {
       expect(saved?.projection.thread.title).toBe("Full socket snapshot");
       expect(saved?.historyCursor).toBeUndefined();
       expect(saved?.hasMoreHistory).toBeUndefined();
+    }),
+  );
+
+  it.effect("bounded socket fallback replaces progressive history meta during resume", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        cached: {
+          ...BASE_PROJECTION,
+          thread: { ...BASE_PROJECTION.thread, title: "Warm progressive" },
+        },
+        cachedHistory: {
+          historyCursor: "stale-cursor",
+          hasMoreHistory: true,
+          latestLocalTurnOrdinal: 3,
+        },
+      });
+
+      yield* Queue.offer(harness.inputs, {
+        ...snapshot(
+          {
+            ...BASE_PROJECTION,
+            thread: { ...BASE_PROJECTION.thread, title: "Bounded resume fallback" },
+          },
+          CACHED_SNAPSHOT_SEQUENCE + 1,
+        ),
+        historyCursor: "replacement-cursor",
+        hasMoreHistory: true,
+        latestLocalTurnOrdinal: 9,
+        payloadBudgetExceeded: false,
+      });
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.getOrNull(value.data)?.thread.title === "Bounded resume fallback" &&
+          value.history.historyCursor === "replacement-cursor",
+      );
+
+      expect(state.history).toMatchObject({
+        historyCursor: "replacement-cursor",
+        hasMoreHistory: true,
+        latestLocalTurnOrdinal: 9,
+        expanded: false,
+        loading: false,
+        error: null,
+      });
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE);
     }),
   );
 

@@ -24,6 +24,7 @@ import {
   THREAD_HISTORY_CURSOR_MAX_LENGTH,
   THREAD_HISTORY_PAGE_POLICY,
 } from "./threadHistoryPaging.ts";
+import { buildBoundedThreadSnapshotStreamItem } from "./ThreadStream.ts";
 import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
 const NOW = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
@@ -158,6 +159,22 @@ function makeProjection(visibleTurnItems: OrchestrationV2ProjectedTurnItem[]) {
 }
 
 describe("threadHistoryPaging", () => {
+  it("builds a resumable bounded socket snapshot frame", () => {
+    const projection = makeProjection(Array.from({ length: 90 }, (_, index) => makeRow(index)));
+    const item = buildBoundedThreadSnapshotStreamItem({
+      snapshotSequence: 23,
+      projection,
+    });
+
+    expect(item.kind).toBe("snapshot");
+    expect(item.snapshotSequence).toBe(23);
+    expect(item.projection.visibleTurnItems).toHaveLength(THREAD_HISTORY_PAGE_POLICY.maxItems);
+    expect(item.historyCursor).not.toBeNull();
+    expect(item.hasMoreHistory).toBe(true);
+    expect(item.latestLocalTurnOrdinal).toBe(90);
+    expect(item.payloadBudgetExceeded).toBe(false);
+  });
+
   it("encodes opaque cursors with stable source identity", () => {
     const cursor = encodeThreadHistoryCursor({
       snapshotSequence: 9,

@@ -111,10 +111,12 @@ import { ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION } from "./orchestration-v2/P
 import { bufferLiveStream } from "./orchestration/LiveStreamBudget.ts";
 import { coalesceThreadLiveStream } from "./orchestration-v2/ThreadLiveEventCoalescer.ts";
 import {
+  buildBoundedThreadSnapshotStreamItem,
   decideThreadResume,
   threadReplayEncodedBytes,
   THREAD_RESUME_MAX_REPLAY_EVENTS,
 } from "./orchestration-v2/ThreadStream.ts";
+import { THREAD_HISTORY_PAGE_POLICY } from "./orchestration-v2/threadHistoryPaging.ts";
 import {
   projectDomainEventForWire,
   projectThreadProjectionForWire,
@@ -867,25 +869,28 @@ const makeWsRpcLayer = (
 
           const snapshotThenLive = Effect.fn("ws.orchestrationV2.threadSnapshotThenLive")(
             function* () {
-              const snapshot = yield* threadManagement.getThreadSnapshot(input.threadId).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationV2GetThreadProjectionError({
-                      threadId: input.threadId,
-                      message: `Failed to load orchestration V2 thread ${input.threadId}`,
-                      cause,
-                    }),
-                ),
-              );
+              const snapshot = yield* threadManagement
+                .getThreadSnapshotWindow(input.threadId, {
+                  // Keep socket fallback under the same count and byte budgets as HTTP.
+                  rowLimit: THREAD_HISTORY_PAGE_POLICY.maxItems + 2,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationV2GetThreadProjectionError({
+                        threadId: input.threadId,
+                        message: `Failed to load orchestration V2 thread ${input.threadId}`,
+                        cause,
+                      }),
+                  ),
+                );
               const { snapshotSequence } = snapshot;
               const projection = projectThreadProjectionForWire(snapshot.projection);
               return Stream.concat(
                 Stream.concat(
-                  Stream.make({
-                    kind: "snapshot" as const,
-                    snapshotSequence,
-                    projection,
-                  }),
+                  Stream.make(
+                    buildBoundedThreadSnapshotStreamItem({ snapshotSequence, projection }),
+                  ),
                   completionMarker,
                 ),
                 eventStreamFrom(snapshotSequence),
