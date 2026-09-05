@@ -45,6 +45,39 @@ layer("ProjectionThreadActivityRepository", (it) => {
           )
       `;
 
+      yield* repository.upsert({
+        activityId: EventId.make("activity-task-untitled"),
+        threadId,
+        turnId: null,
+        tone: "info",
+        kind: "task.progress",
+        summary: "Still running",
+        payload: { taskId: "task-1" },
+        sequence: 5,
+        createdAt: "2026-03-01T00:00:04.000Z",
+      });
+      yield* repository.upsert({
+        activityId: EventId.make("activity-task-blank-title"),
+        threadId,
+        turnId: null,
+        tone: "info",
+        kind: "task.progress",
+        summary: "Still running",
+        payload: { taskId: "task-1", title: " \t\n\u00a0" },
+        sequence: 6,
+        createdAt: "2026-03-01T00:00:05.000Z",
+      });
+
+      const recent = yield* repository.listByThreadId({
+        threadId,
+        activityKinds: ["task.progress"],
+        limit: 2,
+      });
+      assert.deepEqual(
+        recent.map((entry) => entry.activityId),
+        ["activity-task-untitled", "activity-task-blank-title"],
+      );
+
       const activity = yield* repository.getLatestTaskActivity({
         threadId,
         taskId: "task-1",

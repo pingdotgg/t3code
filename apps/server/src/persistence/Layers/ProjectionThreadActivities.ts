@@ -48,6 +48,10 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
       : toPersistenceSqlError(sqlOperation)(cause);
 }
 
+// Match String.trim so blank saved titles cannot hide an earlier task name.
+const taskTitleWhitespace =
+  "\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
+
 const makeProjectionThreadActivityRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -93,7 +97,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
   const listProjectionThreadActivityRows = SqlSchema.findAll({
     Request: ListProjectionThreadActivitiesInput,
     Result: ProjectionThreadActivityDbRowSchema,
-    execute: ({ threadId }) =>
+    execute: ({ threadId, activityKinds, limit }) =>
       sql`
         SELECT
           activity_id AS "activityId",
@@ -105,8 +109,14 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
           payload_json AS "payload",
           sequence,
           created_at AS "createdAt"
-        FROM projection_thread_activities
-        WHERE thread_id = ${threadId}
+        FROM (
+          SELECT *
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId}
+            ${activityKinds === undefined ? sql`` : sql`AND ${sql.in("kind", activityKinds)}`}
+          ORDER BY sequence DESC, created_at DESC, activity_id DESC
+          ${limit === undefined ? sql`` : sql`LIMIT ${limit}`}
+        ) AS recent_activities
         ORDER BY
           CASE WHEN sequence IS NULL THEN 0 ELSE 1 END ASC,
           sequence ASC,
@@ -164,6 +174,16 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
         WHERE thread_id = ${threadId}
           AND kind IN ('task.started', 'task.progress')
           AND json_extract(payload_json, '$.taskId') = ${taskId}
+          AND length(trim(
+            CASE
+              WHEN json_type(payload_json, '$.title') = 'text'
+                THEN json_extract(payload_json, '$.title')
+              WHEN kind = 'task.started' AND json_type(payload_json, '$.detail') = 'text'
+                THEN json_extract(payload_json, '$.detail')
+              ELSE ''
+            END,
+            ${taskTitleWhitespace}
+          )) > 0
         ORDER BY sequence DESC, created_at DESC, activity_id DESC
         LIMIT 1
       `,
