@@ -6,6 +6,7 @@ import {
   IsoDateTime,
   MessageId,
   type ModelSelection,
+  NodeId,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
@@ -19,12 +20,16 @@ import {
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadWaitResult,
+  PendingRequestMcpListResult,
+  PendingRequestMcpReadResult,
+  PendingRequestMcpRespondResult,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderOptionDescriptor,
   ProviderThreadId,
   ProviderTurnId,
+  RuntimeRequestId,
   type ScheduledTask,
   ScheduledTaskId,
   type ScheduledTaskUpsertInput,
@@ -52,6 +57,7 @@ import { layer as threadManagementServiceLayer } from "../orchestration-v2/Threa
 import {
   type ProviderAdapterV2Event,
   ProviderAdapterProtocolError,
+  type ProviderAdapterV2RuntimeRequestResponseInput,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2TurnInput,
 } from "../orchestration-v2/ProviderAdapter.ts";
@@ -88,6 +94,7 @@ const cancellationPrompt = "Remain active until the parent cancels this delegate
 const createdThreadPrompt = "Complete the newly created ordinary thread.";
 const queuedFollowupPrompt = "Complete the queued follow-up and return the final result.";
 const queuedFollowupResult = "Queued delegated follow-up completed.";
+const delegatedQuestionPrompt = "Ask which editor to configure, then finish after the answer.";
 
 const decodeCreateThreadsResult = Schema.decodeUnknownEffect(OrchestratorMcpCreateThreadsResult);
 const decodeCreatedThread = Schema.decodeUnknownEffect(OrchestratorMcpCreatedThread);
@@ -100,6 +107,11 @@ const decodeThreadListResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadL
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 const decodeThreadSendResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadSendResult);
 const decodeThreadWaitResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadWaitResult);
+const decodePendingRequestListResult = Schema.decodeUnknownEffect(PendingRequestMcpListResult);
+const decodePendingRequestReadResult = Schema.decodeUnknownEffect(PendingRequestMcpReadResult);
+const decodePendingRequestRespondResult = Schema.decodeUnknownEffect(
+  PendingRequestMcpRespondResult,
+);
 
 const codexSelection = {
   instanceId: codexInstanceId,
@@ -175,6 +187,10 @@ function makeDeterministicAdapter(input: {
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
   readonly shouldComplete: (turn: ProviderAdapterV2TurnInput) => boolean;
   readonly terminalGate?: (turn: ProviderAdapterV2TurnInput) => Deferred.Deferred<void> | undefined;
+  readonly userInput?: {
+    readonly shouldAsk: (turn: ProviderAdapterV2TurnInput) => boolean;
+    readonly response: Deferred.Deferred<ProviderAdapterV2RuntimeRequestResponseInput>;
+  };
   readonly response: (turn: ProviderAdapterV2TurnInput) => string;
 }): ProviderAdapterV2Shape {
   return {
@@ -276,6 +292,96 @@ function makeDeterministicAdapter(input: {
                   },
                 },
               ]);
+              if (input.userInput?.shouldAsk(turnInput) === true) {
+                const runtimeRequestId = RuntimeRequestId.make(
+                  `request:${input.instanceId}:${turnInput.threadId}:${turnInput.runOrdinal}:editor`,
+                );
+                const requestNodeId = NodeId.make(
+                  `node:${input.instanceId}:${turnInput.threadId}:${turnInput.runOrdinal}:editor`,
+                );
+                yield* publish([
+                  {
+                    type: "node.updated",
+                    driver: input.driver,
+                    node: {
+                      id: requestNodeId,
+                      threadId: turnInput.threadId,
+                      runId: turnInput.runId,
+                      parentNodeId: turnInput.rootNodeId,
+                      rootNodeId: turnInput.rootNodeId,
+                      kind: "user_input_request",
+                      status: "waiting",
+                      countsForRun: false,
+                      providerThreadId: turnInput.providerThread.id,
+                      providerTurnId,
+                      nativeItemRef: null,
+                      runtimeRequestId,
+                      checkpointScopeId: null,
+                      startedAt: eventTime,
+                      completedAt: null,
+                    },
+                  },
+                  {
+                    type: "runtime_request.updated",
+                    driver: input.driver,
+                    threadId: turnInput.threadId,
+                    runtimeRequest: {
+                      id: runtimeRequestId,
+                      nodeId: requestNodeId,
+                      providerTurnId,
+                      nativeRequestRef: null,
+                      kind: "user_input",
+                      status: "pending",
+                      responseCapability: {
+                        type: "live",
+                        providerSessionId: sessionInput.providerSessionId,
+                      },
+                      createdAt: eventTime,
+                      resolvedAt: null,
+                    },
+                  },
+                  {
+                    type: "turn_item.updated",
+                    driver: input.driver,
+                    turnItem: {
+                      id: TurnItemId.make(
+                        `turn-item:${input.instanceId}:${turnInput.threadId}:${turnInput.runOrdinal}:editor`,
+                      ),
+                      threadId: turnInput.threadId,
+                      runId: turnInput.runId,
+                      nodeId: requestNodeId,
+                      providerThreadId: turnInput.providerThread.id,
+                      providerTurnId,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: turnInput.runOrdinal * 100 + 1,
+                      status: "waiting",
+                      title: null,
+                      startedAt: eventTime,
+                      completedAt: null,
+                      updatedAt: eventTime,
+                      type: "user_input_request",
+                      requestId: runtimeRequestId,
+                      questions: [
+                        {
+                          id: "editor",
+                          header: "Editor",
+                          question: "Which editor should the delegated task configure?",
+                          options: [
+                            { label: "Vim", description: "Configure Vim." },
+                            { label: "Zed", description: "Configure Zed." },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ]);
+                // A real adapter returns after starting the provider turn; its
+                // notification stream remains live while the provider waits.
+                // Keeping the deterministic adapter's effect worker free is
+                // essential because runtime-request.respond is a later effect.
+                return;
+              }
               const terminalGate = input.terminalGate?.(turnInput);
               if (terminalGate !== undefined) {
                 yield* Deferred.await(terminalGate);
@@ -384,7 +490,10 @@ function makeDeterministicAdapter(input: {
                 },
               ]);
             }),
-          respondToRuntimeRequest: () => Effect.void,
+          respondToRuntimeRequest: (response) =>
+            input.userInput === undefined
+              ? Effect.void
+              : Deferred.succeed(input.userInput.response, response).pipe(Effect.asVoid),
           readThreadSnapshot: () =>
             unsupported(input.driver, "readThreadSnapshot is unused in this test"),
           rollbackThread: () => unsupported(input.driver, "rollbackThread is unused in this test"),
@@ -471,6 +580,8 @@ describe("orchestrator MCP toolkit", () => {
         Effect.gen(function* () {
           const cwd = yield* checkpointWorkspace("orchestrator-mcp-toolkit");
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const delegatedQuestionResponse =
+            yield* Deferred.make<ProviderAdapterV2RuntimeRequestResponseInput>();
           const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const deliveryTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const registryLayer = makeProviderAdapterRegistryLayer([
@@ -481,6 +592,10 @@ describe("orchestrator MCP toolkit", () => {
               capturedTurns,
               shouldComplete: (turn) =>
                 turn.threadId !== parentThreadId && turn.message.text !== cancellationPrompt,
+              userInput: {
+                shouldAsk: (turn) => turn.message.text === delegatedQuestionPrompt,
+                response: delegatedQuestionResponse,
+              },
               terminalGate: (turn) =>
                 turn.message.text.startsWith("Delegated task") ||
                 turn.message.text.startsWith("Delegated tasks")
@@ -611,7 +726,10 @@ describe("orchestrator MCP toolkit", () => {
               runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
             }),
           );
-          const testLayer = McpHttpServer.OrchestratorToolkitRegistrationLive.pipe(
+          const testLayer = Layer.merge(
+            McpHttpServer.OrchestratorToolkitRegistrationLive,
+            McpHttpServer.PendingRequestToolkitRegistrationLive,
+          ).pipe(
             Layer.provideMerge(McpServer.McpServer.layer),
             Layer.provideMerge(orchestrationLayer),
             Layer.provide(providerRegistryLayer),
@@ -1307,6 +1425,123 @@ describe("orchestrator MCP toolkit", () => {
               scheduledTaskId: serializedScheduledTaskId,
             });
             expect(yield* Ref.get(scheduledStore)).toHaveLength(0);
+
+            const questionTaskCall = yield* invoke("delegate_task", {
+              task: delegatedQuestionPrompt,
+              target: {
+                providerInstanceId: codexInstanceId,
+                model: codexModel,
+              },
+              mode: "async",
+              clientRequestId: "delegate-codex-question-1",
+            });
+            expect(questionTaskCall.isError).toBe(false);
+            const questionTask = yield* decodeDelegateTaskResult(
+              questionTaskCall.structuredContent,
+            ).pipe(Effect.orDie);
+            const pendingRequestStored = yield* orchestrator
+              .streamStoredEventsFrom({ threadId: questionTask.childThreadId })
+              .pipe(
+                Stream.filter(
+                  (stored) =>
+                    stored.event.type === "runtime-request.updated" &&
+                    stored.event.payload.kind === "user_input" &&
+                    stored.event.payload.status === "pending",
+                ),
+                Stream.runHead,
+              );
+            if (
+              pendingRequestStored._tag === "None" ||
+              pendingRequestStored.value.event.type !== "runtime-request.updated"
+            ) {
+              return yield* Effect.die(new Error("Delegated user-input request was not stored."));
+            }
+            const delegatedRequestId = pendingRequestStored.value.event.payload.id;
+
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-parent:question-ceiling:downgrade"),
+              threadId: parentThreadId,
+              runtimeMode: "approval-required",
+            });
+            const deniedByFreshCallerMode = yield* orchestrator
+              .dispatch({
+                type: "runtime-request.respond",
+                commandId: CommandId.make("command:mcp-parent:question-ceiling:denied"),
+                threadId: questionTask.childThreadId,
+                requestId: delegatedRequestId,
+                answers: { editor: "Vim" },
+                policyCeiling: {
+                  callerThreadId: parentThreadId,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                },
+              })
+              .pipe(Effect.flip);
+            expect(deniedByFreshCallerMode._tag).toBe("OrchestratorDispatchError");
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-parent:question-ceiling:restore"),
+              threadId: parentThreadId,
+              runtimeMode: "full-access",
+            });
+
+            const pendingListCall = yield* invoke("t3_pending_request_list", {});
+            expect(pendingListCall.isError).toBe(false);
+            const pendingList = yield* decodePendingRequestListResult(
+              pendingListCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(pendingList.requests).toEqual([
+              expect.objectContaining({
+                taskId: questionTask.taskId,
+                childThreadId: questionTask.childThreadId,
+                requestId: delegatedRequestId,
+                status: "pending",
+                resumable: true,
+              }),
+            ]);
+
+            const pendingReadCall = yield* invoke("t3_pending_request_read", {
+              childThreadId: questionTask.childThreadId,
+              requestId: delegatedRequestId,
+            });
+            expect(pendingReadCall.isError).toBe(false);
+            const pendingRead = yield* decodePendingRequestReadResult(
+              pendingReadCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(pendingRead.questions).toEqual([expect.objectContaining({ id: "editor" })]);
+
+            const pendingRespondCall = yield* invoke("t3_pending_request_respond", {
+              childThreadId: questionTask.childThreadId,
+              requestId: delegatedRequestId,
+              answers: { editor: "Vim" },
+              clientRequestId: "answer-delegated-editor-1",
+            });
+            expect(pendingRespondCall.isError).toBe(false);
+            const pendingRespond = yield* decodePendingRequestRespondResult(
+              pendingRespondCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(pendingRespond).toMatchObject({
+              replayed: false,
+              request: { requestId: delegatedRequestId, status: "resolved" },
+            });
+            expect(yield* Deferred.await(delegatedQuestionResponse)).toEqual({
+              requestId: delegatedRequestId,
+              answers: { editor: "Vim" },
+            });
+
+            const replayedPendingRespondCall = yield* invoke("t3_pending_request_respond", {
+              childThreadId: questionTask.childThreadId,
+              requestId: delegatedRequestId,
+              answers: { editor: "Vim" },
+              clientRequestId: "answer-delegated-editor-1",
+            });
+            expect(replayedPendingRespondCall.isError).toBe(false);
+            expect(replayedPendingRespondCall.structuredContent).toMatchObject({
+              commandId: pendingRespond.commandId,
+              receiptSequence: pendingRespond.receiptSequence,
+              replayed: true,
+            });
 
             const delegatedCall = yield* invoke("delegate_task", {
               task: delegatedPrompt,
