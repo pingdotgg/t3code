@@ -29,6 +29,7 @@ import {
   type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
   TerminalNotRunningError,
+  TerminalSessionLookupError,
   type OrchestrationCommand,
   type OrchestrationEvent,
   ORCHESTRATION_WS_METHODS,
@@ -11955,6 +11956,32 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
+
+  for (const method of [WS_METHODS.terminalObserve, WS_METHODS.terminalAttach]) {
+    it.effect(`routes websocket rpc ${method} lookup errors`, () =>
+      Effect.gen(function* () {
+        const input = { threadId: "thread-1", terminalId: "missing-terminal" };
+        const terminalError = new TerminalSessionLookupError(input);
+        yield* buildAppUnderTest({
+          layers: {
+            terminalManager: {
+              observeStream: () => Effect.fail(terminalError),
+              attachStream: () => Effect.fail(terminalError),
+            },
+          },
+        });
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const result = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) => client[method](input).pipe(Stream.runHead)).pipe(
+            Effect.result,
+          ),
+        );
+
+        assertFailure(result, terminalError);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
 
   it.effect("routes websocket rpc terminal.write errors", () =>
     Effect.gen(function* () {
