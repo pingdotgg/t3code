@@ -1,4 +1,5 @@
 import {
+  AuthPreviewOperateScope,
   DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
   ThreadId,
@@ -16,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { __resetClientSettingsPersistenceForTests } from "~/hooks/useSettings";
 import { readThreadPreviewState, resetPreviewStateForTests } from "~/previewStateStore";
 import { appAtomRegistry, AppAtomRegistryProvider } from "~/rpc/atomRegistry";
+import * as Session from "~/state/session";
 
 import { PreviewAutomationHosts } from "./PreviewAutomationHosts";
 
@@ -108,6 +110,10 @@ let renderer: ReactTestRenderer | null = null;
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  vi.spyOn(Session, "useEnvironmentScope").mockImplementation(
+    (targetEnvironmentId, scope) =>
+      targetEnvironmentId === environmentId && scope === AuthPreviewOperateScope,
+  );
   mocks.getClientSettings.mockReset().mockResolvedValue(savedSettings);
   mocks.respond.mockReset();
   __resetClientSettingsPersistenceForTests();

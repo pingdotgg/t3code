@@ -9,6 +9,7 @@ import {
   AuthAdministrativeScopes,
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
+  AuthPreviewOperateScope,
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
@@ -524,6 +525,7 @@ const buildAppUnderTest = (options?: {
       ProviderSessionDirectory.ProviderSessionDirectory["Service"]
     >;
     terminalManager?: Partial<TerminalManager.TerminalManager["Service"]>;
+    previewManager?: Partial<PreviewManager.PreviewManager["Service"]>;
     orchestrationEngine?: Partial<OrchestrationEngine.OrchestrationEngineService["Service"]>;
     threadDeletionReactor?: Partial<ThreadDeletionReactor["Service"]>;
     analyticsService?: Partial<AnalyticsService.AnalyticsService["Service"]>;
@@ -925,6 +927,7 @@ const buildAppUnderTest = (options?: {
             subscribeEvents: Effect.flatMap(PubSub.unbounded<PreviewEvent>(), (pubsub) =>
               PubSub.subscribe(pubsub),
             ),
+            ...options?.layers?.previewManager,
           }),
           Layer.mock(PortScanner.PortDiscovery)({
             scan: () => Effect.succeed([]),
@@ -5773,6 +5776,71 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.strictEqual(error.threadId, threadId);
         assert.strictEqual(error.message, `Failed to upload feedback for thread ${threadId}.`);
         assert.isDefined(error.cause);
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("requires an explicit preview grant for control and automation streams", () =>
+    Effect.gen(function* () {
+      let refreshes = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          previewManager: {
+            refresh: () =>
+              Effect.sync(() => {
+                refreshes += 1;
+              }),
+          },
+        },
+      });
+      const threadId = ThreadId.make("preview-scope-thread");
+      const host = {
+        clientId: "preview-scope-host",
+        environmentId: testEnvironmentDescriptor.environmentId,
+      } as const;
+      const legacyScopes = "orchestration:read orchestration:operate";
+      for (const scope of [legacyScopes, `${legacyScopes} ${AuthPreviewOperateScope}`]) {
+        const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, { scope });
+        assert.equal(token.response.status, 200);
+        const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+          headers: { authorization: `Bearer ${token.body.access_token ?? ""}` },
+        });
+        const { ticket } = yield* responseJsonEffect<{ readonly ticket: string }>(ticketResponse);
+        const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              const previews = yield* client[WS_METHODS.previewList]({ threadId });
+              assert.deepEqual(previews.sessions, []);
+              if (scope === legacyScopes) {
+                const errors = [
+                  yield* client[WS_METHODS.previewRefresh]({ threadId, tabId: "tab" }).pipe(
+                    Effect.flip,
+                  ),
+                  yield* client[WS_METHODS.previewAutomationConnect](host).pipe(
+                    Stream.runHead,
+                    Effect.flip,
+                  ),
+                ];
+                for (const error of errors) {
+                  assert.equal(error._tag, "EnvironmentAuthorizationError");
+                  if (error._tag === "EnvironmentAuthorizationError") {
+                    assert.equal(error.requiredScope, AuthPreviewOperateScope);
+                  }
+                }
+                assert.equal(refreshes, 0);
+              } else {
+                yield* client[WS_METHODS.previewRefresh]({ threadId, tabId: "tab" });
+                const connected = yield* client[WS_METHODS.previewAutomationConnect](host).pipe(
+                  Stream.runHead,
+                  Effect.map(Option.getOrThrow),
+                );
+                assert.equal(connected.type, "connected");
+                assert.equal(refreshes, 1);
+              }
+            }),
+          ),
+        );
       }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

@@ -19,6 +19,7 @@ import {
   AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthPreviewOperateScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
   AuthSourceControlWriteScope,
@@ -217,6 +218,11 @@ const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
     scope: AuthEnvironmentMaintainScope,
     title: "Maintain environment",
     description: "Update the server and control environment processes.",
+  },
+  {
+    scope: AuthPreviewOperateScope,
+    title: "Control previews",
+    description: "Open browser previews and host browser automation.",
   },
   {
     scope: AuthTerminalOperateScope,

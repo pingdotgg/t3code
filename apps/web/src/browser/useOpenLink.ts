@@ -1,4 +1,4 @@
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import { AuthPreviewOperateScope, type ScopedThreadRef } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -8,6 +8,7 @@ import { useCallback } from "react";
 import { recordVisitForThread } from "~/browserHistoryStore";
 import { readLocalApi } from "~/localApi";
 import { previewEnvironment } from "~/state/preview";
+import { readEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import {
@@ -46,7 +47,10 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
         url,
         event: options.event ?? NO_MODIFIER,
         preference: await resolveBrowserLinkTargetPreference(),
-        canOpenInApp: canOpenLinksInApp(Boolean(targetThreadRef)),
+        canOpenInApp:
+          targetThreadRef != null &&
+          readEnvironmentScope(targetThreadRef.environmentId, AuthPreviewOperateScope) &&
+          canOpenLinksInApp(true),
       });
       if (target === "app" && targetThreadRef) {
         const result = await openUrlInPreview({ threadRef: targetThreadRef, url, openPreview });

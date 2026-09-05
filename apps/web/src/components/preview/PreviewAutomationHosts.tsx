@@ -3,6 +3,7 @@
 import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  AuthPreviewOperateScope,
   FILL_PREVIEW_VIEWPORT,
   PREVIEW_AUTOMATION_OPERATIONS,
   type EnvironmentId,
@@ -51,6 +52,7 @@ import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { isElectron } from "~/env";
 import { useEnvironments } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
+import { useEnvironmentScope } from "~/state/session";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -275,13 +277,18 @@ export function PreviewAutomationHosts() {
        * lets the subscription runtime own reconnects for every saved target.
        */}
       {environments.map((environment) => (
-        <PreviewAutomationHost
+        <AuthorizedPreviewAutomationHost
           key={environment.environmentId}
           environmentId={environment.environmentId}
         />
       ))}
     </>
   );
+}
+
+function AuthorizedPreviewAutomationHost(props: { readonly environmentId: EnvironmentId }) {
+  const canOperatePreview = useEnvironmentScope(props.environmentId, AuthPreviewOperateScope);
+  return canOperatePreview ? <PreviewAutomationHost {...props} /> : null;
 }
 
 function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId }) {

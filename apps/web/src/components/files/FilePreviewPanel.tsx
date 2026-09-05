@@ -1,9 +1,10 @@
-import type {
-  ChatFileAttachment,
-  EditorId,
-  EnvironmentId,
-  ResolvedKeybindingsConfig,
-  ScopedThreadRef,
+import {
+  AuthPreviewOperateScope,
+  type ChatFileAttachment,
+  type EditorId,
+  type EnvironmentId,
+  type ResolvedKeybindingsConfig,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { AuthFilesystemWriteScope } from "@t3tools/contracts";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
@@ -975,6 +976,7 @@ export default function FilePreviewPanel({
 }: FilePreviewPanelProps) {
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
+  const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const remoteOpenState = useRemoteOpenState(environmentId);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
@@ -1047,6 +1049,7 @@ export default function FilePreviewPanel({
     ? setRenderMarkdownPreferred
     : setRenderBrowserFilePreferred;
   const canOpenInBrowser =
+    canOperatePreview &&
     relativePath !== null &&
     attachment === undefined &&
     !isVideo &&
@@ -1087,7 +1090,7 @@ export default function FilePreviewPanel({
   };
 
   const handleOpenInBrowser = useCallback(() => {
-    if (!canReadFiles || !absolutePath || !environmentHttpBaseUrl) return;
+    if (!canReadFiles || !canOperatePreview || !absolutePath || !environmentHttpBaseUrl) return;
     void (async () => {
       const result = await openFileInPreview({
         threadRef,
@@ -1112,6 +1115,7 @@ export default function FilePreviewPanel({
   }, [
     absolutePath,
     canReadFiles,
+    canOperatePreview,
     createAssetUrl,
     cwd,
     environmentHttpBaseUrl,
