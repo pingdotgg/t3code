@@ -52,6 +52,7 @@ import {
   PROVIDER_STATUS_STYLES,
   getProviderSummary,
   getProviderVersionLabel,
+  isUncheckedAntigravityAuth,
   type ProviderStatusKey,
 } from "./providerStatus";
 
@@ -421,9 +422,11 @@ export function ProviderInstanceCard({
   const enabled = resolveProviderInstanceEnabled(instance);
   // A locally disabled provider reads "Disabled" with a muted dot even if its
   // last server status is stale. Enabled providers use the server status.
-  const statusKey: ProviderStatusKey = enabled
-    ? ((liveProvider?.status as ProviderStatusKey | undefined) ?? "warning")
-    : "disabled";
+  const statusKey: ProviderStatusKey = !enabled
+    ? "disabled"
+    : liveProvider && isUncheckedAntigravityAuth(liveProvider)
+      ? "ready"
+      : ((liveProvider?.status as ProviderStatusKey | undefined) ?? "warning");
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
   const summary = enabled
     ? getProviderSummary(liveProvider)

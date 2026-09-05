@@ -1,7 +1,7 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { getProviderSummary } from "./providerStatus";
+import { getProviderSummary, isUncheckedAntigravityAuth } from "./providerStatus";
 
 const provider: ServerProvider = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -67,5 +67,44 @@ describe("getProviderSummary", () => {
 
   it("treats a disabled provider status as disabled even before its enabled flag updates", () => {
     expect(getProviderSummary({ ...provider, status: "disabled" }).headline).toBe("Disabled");
+  });
+
+  it("does not treat Antigravity's unchecked auth after a restart as a failure", () => {
+    const antigravity: ServerProvider = {
+      ...provider,
+      instanceId: ProviderInstanceId.make("antigravity"),
+      driver: ProviderDriverKind.make("antigravity"),
+      status: "warning",
+      auth: { status: "unknown" },
+      message: "Antigravity is installed. Google account access is not checked yet.",
+    };
+
+    expect(isUncheckedAntigravityAuth(antigravity)).toBe(true);
+    expect(getProviderSummary(antigravity)).toEqual({
+      headline: "Available",
+      detail: "Antigravity is installed. Google account access is not checked yet.",
+    });
+    expect(getProviderSummary({ ...antigravity, auth: { status: "authenticated" } })).toEqual({
+      headline: "Needs attention",
+      detail: "Antigravity is installed. Google account access is not checked yet.",
+    });
+    expect(getProviderSummary({ ...antigravity, auth: { status: "unauthenticated" } })).toEqual({
+      headline: "Not authenticated",
+      detail: "Antigravity is installed. Google account access is not checked yet.",
+    });
+    expect(getProviderSummary({ ...antigravity, installed: false }).headline).toBe("Not found");
+    expect(getProviderSummary({ ...antigravity, status: "error" }).headline).toBe("Unavailable");
+    expect(
+      isUncheckedAntigravityAuth({
+        ...antigravity,
+        driver: ProviderDriverKind.make("codex"),
+      }),
+    ).toBe(false);
+    expect(
+      getProviderSummary({
+        ...antigravity,
+        driver: ProviderDriverKind.make("codex"),
+      }).headline,
+    ).toBe("Needs attention");
   });
 });
