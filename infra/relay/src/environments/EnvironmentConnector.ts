@@ -111,6 +111,10 @@ export class EnvironmentMintResponseInvalid extends Schema.TaggedErrorClass<Envi
   {
     environmentId: Schema.String,
     operation: Schema.Literals(["connect", "status"]),
+    // Only set when this wraps a real failure (a decoded EnvironmentHttp*Error
+    // response, or a schema decode error) instead of a proof-verification
+    // mismatch, which has no underlying error to attach.
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -151,7 +155,7 @@ const decodeMintResponseProof = Schema.decodeUnknownEffect(
 const decodeHealthResponseProof = Schema.decodeUnknownEffect(
   RelayEnvironmentHealthResponseProofPayload,
 );
-const isEnvironmentHealthError = Schema.is(
+const isEnvironmentCloudResponseError = Schema.is(
   Schema.Union([
     EnvironmentHttpBadRequestError,
     EnvironmentHttpUnauthorizedError,
@@ -161,14 +165,25 @@ const isEnvironmentHealthError = Schema.is(
   ]),
 );
 
+// A schema decode failure or a well-typed EnvironmentHttpCloudErrors response
+// both mean the endpoint was reached and answered, just not with a usable
+// credential/health payload. Only genuine transport failures (connection
+// refused, DNS, TLS, timeout) mean the endpoint itself is unreachable.
+function isEnvironmentResponseInvalid(cause: unknown): boolean {
+  return isEnvironmentCloudResponseError(cause) || Schema.isSchemaError(cause);
+}
+
+// Only the status() path returns this over the wire (as the "offline" status
+// error), so its wording stays health-specific even though the underlying
+// classification is now shared with connect()'s (log-only) failure reason.
 function environmentHealthRequestFailureMessage(cause: unknown): string {
-  return isEnvironmentHealthError(cause)
+  return isEnvironmentCloudResponseError(cause)
     ? `Managed endpoint health request failed: ${cause.message}`
     : "Managed endpoint health request failed.";
 }
 
-function environmentHealthRequestFailureReason(cause: unknown): string {
-  if (isEnvironmentHealthError(cause)) {
+function environmentRequestFailureReason(cause: unknown): string {
+  if (isEnvironmentCloudResponseError(cause)) {
     return cause._tag;
   }
   if (HttpClientError.isHttpClientError(cause)) {
@@ -493,7 +508,7 @@ const make = Effect.gen(function* () {
         };
       }
       if (responseOption.value._tag === "Failure") {
-        const failureReason = environmentHealthRequestFailureReason(responseOption.value.cause);
+        const failureReason = environmentRequestFailureReason(responseOption.value.cause);
         yield* Effect.annotateCurrentSpan({
           "relay.environment_health.outcome": "failure",
           "relay.environment_health.failure_reason": failureReason,
@@ -621,32 +636,55 @@ const make = Effect.gen(function* () {
         ),
       );
       const environmentClient = yield* makeEnvironmentClient(endpoint.httpBaseUrl);
-      const decoded = yield* environmentClient.connect
+      const traceId = yield* currentTraceId;
+      const mintOption = yield* environmentClient.connect
         .t3MintCredential({ payload: { proof } })
         .pipe(
           withoutRedirects,
-          Effect.mapError(
-            (cause) =>
-              new EnvironmentMintRequestFailed({
-                environmentId: input.environmentId,
-                operation: "connect",
-                cause,
-              }),
-          ),
+          Effect.match({
+            onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
+            onSuccess: (response) => ({ _tag: "Success" as const, response }),
+          }),
           Effect.timeoutOption(Duration.millis(ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS)),
-          Effect.flatMap(
-            Option.match({
-              onNone: () =>
-                Effect.fail(
-                  new EnvironmentMintRequestTimedOut({
-                    environmentId: input.environmentId,
-                    timeoutMs: ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS,
-                  }),
-                ),
-              onSome: Effect.succeed,
-            }),
-          ),
         );
+      if (Option.isNone(mintOption)) {
+        return yield* new EnvironmentMintRequestTimedOut({
+          environmentId: input.environmentId,
+          timeoutMs: ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS,
+        });
+      }
+      const mintResult = mintOption.value;
+      if (mintResult._tag === "Failure") {
+        const failureReason = environmentRequestFailureReason(mintResult.cause);
+        yield* Effect.annotateCurrentSpan({
+          "relay.environment_mint.outcome": "failure",
+          "relay.environment_mint.failure_reason": failureReason,
+          "relay.environment_mint.trace_id": traceId,
+        });
+        yield* Effect.logWarning("Managed endpoint mint request failed", {
+          environmentId: link.environmentId,
+          endpoint: endpoint.httpBaseUrl,
+          failureReason,
+          traceId,
+        });
+        // The endpoint was reached and answered (a decoded application error,
+        // or a response that didn't match the expected schema): that's a
+        // different failure than the endpoint being unreachable, so it must
+        // not be reported as "endpoint unavailable".
+        if (isEnvironmentResponseInvalid(mintResult.cause)) {
+          return yield* new EnvironmentMintResponseInvalid({
+            environmentId: input.environmentId,
+            operation: "connect",
+            cause: mintResult.cause,
+          });
+        }
+        return yield* new EnvironmentMintRequestFailed({
+          environmentId: input.environmentId,
+          operation: "connect",
+          cause: mintResult.cause,
+        });
+      }
+      const decoded = mintResult.response;
       const verified = yield* verifyEnvironmentResponse({
         response: decoded,
         environmentId: input.environmentId,
