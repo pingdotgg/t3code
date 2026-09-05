@@ -1083,6 +1083,13 @@ describe("OrchestrationEngine", () => {
           threadId,
           projectId,
           snapshotSequence: observed.sequence,
+          expected: {
+            workspaceRoot: "/tmp/pr-race-project",
+            branch: "feature",
+            worktreePath: null,
+            linkedPullRequest: previous,
+            branchPullRequest: null,
+          },
           branchPullRequest: replacement,
           linkedPullRequest: replacement,
         } satisfies OrchestrationCommand;
@@ -1104,7 +1111,7 @@ describe("OrchestrationEngine", () => {
     },
   );
 
-  it("saves PR associations while messages stream without changing their activity timestamp", async () => {
+  it("saves PR associations through streaming and unrelated metadata edits", async () => {
     const system = await createOrchestrationSystem();
     try {
       const projectId = ProjectId.make("pr-sync-project");
@@ -1154,18 +1161,43 @@ describe("OrchestrationEngine", () => {
       );
       await system.run(
         system.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("pr-sync-title-and-model"),
+          threadId,
+          title: "Renamed thread",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        }),
+      );
+      await system.run(
+        system.engine.dispatch({
+          type: "project.meta.update",
+          commandId: CommandId.make("pr-sync-project-title"),
+          projectId,
+          title: "Renamed project",
+        }),
+      );
+      const beforeSync = (await system.readModel()).threads[0];
+      await system.run(
+        system.engine.dispatch({
           type: "thread.pull-request.sync",
           commandId: CommandId.make("pr-sync-discovery"),
           projectId,
           threadId,
           snapshotSequence: created.sequence,
+          expected: {
+            workspaceRoot: "/tmp/pr-sync-project",
+            branch: "feature",
+            worktreePath: null,
+            linkedPullRequest: null,
+            branchPullRequest: null,
+          },
           branchPullRequest: reference,
         }),
       );
       const current = (await system.readModel()).threads[0];
       expect(current?.branchPullRequest).toEqual(reference);
       expect(current?.linkedPullRequest ?? null).toBeNull();
-      expect(current?.updatedAt).toBe(activityAt);
+      expect(current?.updatedAt).toBe(beforeSync?.updatedAt);
     } finally {
       await system.dispose();
     }

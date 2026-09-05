@@ -13,6 +13,7 @@ import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as References from "effect/References";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
@@ -30,16 +31,21 @@ import {
   TextGenerationError,
 } from "@t3tools/contracts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as GitLabCli from "../sourceControl/GitLabCli.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubSourceControlProvider from "../sourceControl/GitHubSourceControlProvider.ts";
+import * as GitLabSourceControlProvider from "../sourceControl/GitLabSourceControlProvider.ts";
+import type { SourceControlProvider } from "../sourceControl/SourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitManager from "./GitManager.ts";
+
+const encodeCliJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 interface FakeGhScenario {
   prListSequence?: string[];
@@ -620,6 +626,7 @@ function preparePullRequestThread(
 
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
+  sourceControlProvider?: SourceControlProvider["Service"];
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
@@ -659,7 +666,10 @@ function makeManager(input?: {
       );
   const sourceControlRegistryLayer = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
-    GitHubSourceControlProvider.make.pipe(
+    (input?.sourceControlProvider === undefined
+      ? GitHubSourceControlProvider.make
+      : Effect.succeed(input.sourceControlProvider)
+    ).pipe(
       Effect.map((provider) =>
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           get: () => Effect.succeed(provider),
@@ -1428,8 +1438,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
                 updatedAt: "2026-04-07T15:00:00Z",
               },
             ]),
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
-            JSON.stringify([
+            encodeCliJson([
               {
                 number: 221,
                 title: "New PR on the same branch",
@@ -1663,8 +1672,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         "git@github.example.com:alice/repository.git",
         forkDir,
       );
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
-      const output = JSON.stringify([
+      const output = encodeCliJson([
         {
           number: 2,
           title: "Another fork",
@@ -1703,6 +1711,94 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         number: 1,
         repositoryKey: "github.example.com/team/repository",
       });
+    }),
+  );
+
+  it.effect.each([
+    "git@gitlab.com:Group/Subgroup/Fork.git",
+    "https://gitlab.com/Group/Subgroup/Fork.git",
+  ])("matches nested GitLab forks through the adapter for %s", (remoteUrl) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const forkDir = yield* createBareRemote();
+      const branch = "feature/NestedGroups";
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
+      yield* runGit(repoDir, ["checkout", "-b", branch]);
+      yield* runGit(repoDir, ["push", "-u", "fork", branch]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@gitlab.com:Group/Upstream/Repository.git",
+        originDir,
+      );
+      yield* configureVisibleRemoteUrlWithLocalRewrite(repoDir, "fork", remoteUrl, forkDir);
+      const output = encodeCliJson([
+        {
+          iid: 2,
+          title: "Another subgroup's fork",
+          web_url: "https://gitlab.com/Group/Upstream/Repository/-/merge_requests/2",
+          target_branch: "main",
+          source_branch: branch,
+          state: "opened",
+          updated_at: "2026-04-08T15:00:00Z",
+          source_project_id: 102,
+          target_project_id: 100,
+          source_project: { path_with_namespace: "Group/Other/Fork" },
+        },
+        {
+          iid: 1,
+          title: "This subgroup's fork",
+          web_url: "https://gitlab.com/Group/Upstream/Repository/-/merge_requests/1",
+          target_branch: "main",
+          source_branch: branch,
+          state: "opened",
+          updated_at: "2026-04-07T15:00:00Z",
+          source_project_id: 101,
+          target_project_id: 100,
+          source_project: { path_with_namespace: "Group/Subgroup/Fork" },
+        },
+      ]);
+      const calls: VcsProcess.VcsProcessInput[] = [];
+      const provider = yield* GitLabSourceControlProvider.make.pipe(
+        Effect.provide(
+          GitLabCli.layer.pipe(
+            Layer.provide(
+              Layer.mock(VcsProcess.VcsProcess)({
+                run: (input) =>
+                  Effect.sync(() => {
+                    calls.push(input);
+                    return fakeGhOutput(output);
+                  }),
+              }),
+            ),
+          ),
+        ),
+      );
+      const { manager } = yield* makeManager({ sourceControlProvider: provider });
+
+      expect(yield* manager.branchPullRequest({ cwd: repoDir, branch })).toMatchObject({
+        number: 1,
+        repositoryKey: "gitlab.com/group/upstream/repository",
+      });
+      expect(calls.length).toBeGreaterThan(0);
+      for (const call of calls) {
+        expect(call.command).toBe("glab");
+        expect(call.args).toEqual([
+          "mr",
+          "list",
+          "--source-branch",
+          branch,
+          "--all",
+          "--per-page",
+          "20",
+          "--output",
+          "json",
+        ]);
+      }
     }),
   );
 
