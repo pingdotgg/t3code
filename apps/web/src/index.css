@@ -2020,3 +2020,52 @@ code {
     transform: scaleX(0.9);
   }
 }
+
+/* Only the thread-list surface participates; the titlebar and footer stay anchored. */
+.sidebar-pull-surface {
+  transform: translateY(var(--sidebar-pull-offset, 0px));
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.sidebar-pull-root .sidebar-stage-backdrop {
+  height: calc(5rem + var(--sidebar-pull-offset, 0px));
+  transition: height 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.sidebar-pull-root[data-pulling="true"] .sidebar-pull-surface,
+.sidebar-pull-root[data-pulling="true"] .sidebar-stage-backdrop {
+  transition: none;
+}
+
+@keyframes sidebar-star-twinkle {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  35% {
+    opacity: 0.25;
+  }
+  65% {
+    opacity: 1;
+    stroke-width: 1.2;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .sidebar-pull-root[data-pulling="true"] .stage-night-sparkle {
+    animation: sidebar-star-twinkle 700ms ease-in-out both;
+  }
+  .sidebar-pull-root[data-pulling="true"] .stage-night-sparkle:nth-child(2) {
+    animation-delay: 90ms;
+  }
+  .sidebar-pull-root[data-pulling="true"] .stage-night-sparkle:nth-child(3) {
+    animation-delay: 180ms;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-pull-surface,
+  .sidebar-pull-root .sidebar-stage-backdrop {
+    transition: none;
+  }
+}
