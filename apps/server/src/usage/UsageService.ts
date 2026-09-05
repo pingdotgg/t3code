@@ -1198,7 +1198,15 @@ function pathMatchesWorktree(
   if (firstSegment === undefined) return false;
   if (provider === "claude") {
     for (const worktree of worktrees) {
-      if (firstSegment === worktree.replaceAll(/[^A-Za-z0-9]/g, "-")) return true;
+      const encodedWorktree = worktree.replaceAll(/[^A-Za-z0-9]/g, "-");
+      const isWindowsWorktree = /^[A-Za-z]:\//.test(worktree);
+      if (
+        isWindowsWorktree
+          ? firstSegment.toLowerCase() === encodedWorktree.toLowerCase()
+          : firstSegment === encodedWorktree
+      ) {
+        return true;
+      }
     }
     return false;
   }

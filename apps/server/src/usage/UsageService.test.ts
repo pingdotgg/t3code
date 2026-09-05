@@ -749,6 +749,26 @@ describe("transcriptFileMayMatchThread", () => {
     );
   });
 
+  it("matches encoded Claude worktrees case-insensitively only for Windows paths", () => {
+    const windowsTarget: UsageService.ThreadTranscriptTarget = {
+      sessionIds: new Map(),
+      worktrees: new Set(["C:/Users/Alex/App/.wt/Thread-1"]),
+    };
+    const matchesTarget = (filePath: string, target: UsageService.ThreadTranscriptTarget) =>
+      UsageService.transcriptFileMayMatchThread({
+        path: NodePath,
+        provider: "claude",
+        filePath,
+        root: "/claude",
+        target,
+      });
+
+    assert.isTrue(
+      matchesTarget("/claude/C--Users-Alex-App--wt-Thread-1/legacy-session.jsonl", windowsTarget),
+    );
+    assert.isFalse(matchesTarget("/claude/-Work-App--wt-thread-1/legacy-session.jsonl", target));
+  });
+
   it("selects Codex rollouts from their bounded session metadata", () => {
     const path = "/codex/2026/09/rollout-2026-09-05T12-00-00-other-session.jsonl";
     assert.isFalse(matches("codex", path, "/codex"));
