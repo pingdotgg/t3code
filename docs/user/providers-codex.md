@@ -69,3 +69,16 @@ In an existing Codex thread, send `/feedback` with an optional description, for
 example `/feedback The agent stopped before finishing the tests`. This uploads
 the conversation and Codex logs to OpenAI. The returned thread ID can be shared
 with OpenAI support.
+
+## Monitor background changes
+
+With Codex 0.153.2 or later, ask Codex to watch a CI job, log, or other changing
+source and react when something happens. It can leave a watcher running after
+its response finishes and subscribe to its events with the built-in monitoring
+tools. No special prompt syntax is needed. On web and desktop, the thread shows
+**Monitoring** between turns and wakes when the watcher reports an event.
+Ordinary background commands do not wake the agent just because they print output.
+
+Use **Stop** in the thread to cancel background work and pending monitor events.
+Watchers belong to the current provider session; after stopping that session or
+restarting the environment, ask Codex to start the watch again.

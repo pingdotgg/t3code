@@ -23,6 +23,13 @@ import {
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
 
+import { MonitorToolkit } from "./toolkits/monitor/tools.ts";
+import { MonitorToolkitHandlersLive } from "./toolkits/monitor/handlers.ts";
+
+export const MonitorToolkitRegistrationLive = McpServer.toolkit(MonitorToolkit).pipe(
+  Layer.provide(MonitorToolkitHandlersLive),
+);
+
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
     error: "invalid_mcp_credential",
@@ -222,4 +229,7 @@ const McpTransportLive = McpServer.layerHttp({
   protocols: [McpProtocol.v2025_06_18],
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
-export const layer = PreviewToolkitRegistrationLive.pipe(Layer.provideMerge(McpTransportLive));
+export const layer = Layer.mergeAll(
+  PreviewToolkitRegistrationLive,
+  MonitorToolkitRegistrationLive,
+).pipe(Layer.provideMerge(McpTransportLive));

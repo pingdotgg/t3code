@@ -4,10 +4,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
+import * as McpSessionRegistry from "./McpSessionRegistry.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -285,4 +288,79 @@ it.effect("registers annotated tools and preserves authenticated request context
       }
     }),
   ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("HTTP tool discovery only advertises monitors to monitoring credentials", () =>
+  Effect.gen(function* () {
+    yield* HttpRouter.serve(McpHttpServer.layer, {
+      disableListenLog: true,
+      disableLogger: true,
+    }).pipe(Layer.build);
+    const registry = yield* McpSessionRegistry.McpSessionRegistry;
+    const httpClient = yield* HttpClient.HttpClient;
+    for (const capabilities of [["preview"], ["monitor"], []] as const) {
+      const { config } = yield* registry.issue({
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("test"),
+        capabilities,
+      });
+      const headers = {
+        authorization: config.authorizationHeader,
+        accept: "application/json, text/event-stream",
+      };
+      const initialized = yield* httpClient.post("/mcp", {
+        headers,
+        body: HttpBody.text(
+          '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"mcp-test","version":"1.0.0"}}}',
+          "application/json",
+        ),
+      });
+      const sessionId = initialized.headers["mcp-session-id"]!;
+      expect(initialized.status).toBe(200);
+      yield* initialized.text;
+      const listed = yield* httpClient.post("/mcp", {
+        headers: { ...headers, "mcp-session-id": sessionId, "mcp-protocol-version": "2025-06-18" },
+        body: HttpBody.text(
+          '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}',
+          "application/json",
+        ),
+      });
+      const decoded = yield* listed.json.pipe(
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(
+            Schema.Struct({
+              result: Schema.Struct({
+                tools: Schema.Array(Schema.Struct({ name: Schema.String })),
+              }),
+            }),
+          ),
+        ),
+      );
+      const monitorNames = decoded.result.tools
+        .map((tool) => tool.name)
+        .filter((name) => name.startsWith("monitor_"));
+      expect(monitorNames).toEqual(
+        capabilities.some((capability) => capability === "monitor")
+          ? ["monitor_subscribe", "monitor_unsubscribe"]
+          : [],
+      );
+    }
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(McpSessionRegistry.layer, PreviewAutomationBroker.layer).pipe(
+        Layer.provide(
+          Layer.succeed(
+            ServerEnvironment.ServerEnvironment,
+            ServerEnvironment.ServerEnvironment.of({
+              getEnvironmentId: Effect.succeed(environmentId),
+              getDescriptor: Effect.die("unused"),
+            }),
+          ),
+        ),
+        Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ),
 );

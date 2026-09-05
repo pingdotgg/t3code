@@ -70,6 +70,7 @@ import {
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { CodexBackgroundTaskEvent, CodexMonitorOutput } from "./CodexBackgroundTasks.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import { codexRateLimitsToUpdate } from "./codexUsageLimits.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
@@ -1296,6 +1297,43 @@ function mapToRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
 ): ReadonlyArray<ProviderRuntimeEvent> {
+  if (event.kind === "notification" && event.method === "backgroundMonitor/delivered") {
+    const output = readPayload(CodexMonitorOutput, event.payload);
+    if (!output) return [];
+    return [
+      {
+        ...runtimeEventBase(event, canonicalThreadId),
+        type: "item.completed",
+        payload: {
+          itemType: "dynamic_tool_call",
+          status: "completed",
+          title: "Monitor event",
+          detail: output.output,
+        },
+      },
+    ];
+  }
+  if (event.kind === "notification" && event.method === "backgroundTask/changed") {
+    const task = readPayload(CodexBackgroundTaskEvent, event.payload);
+    if (!task) return [];
+    const base = runtimeEventBase(event, canonicalThreadId);
+    const taskId = RuntimeTaskId.make(task.taskId);
+    return task.status === "running"
+      ? [
+          {
+            ...base,
+            type: "task.started",
+            payload: { taskId, description: task.description, taskType: "shell" },
+          },
+        ]
+      : [
+          {
+            ...base,
+            type: "task.completed",
+            payload: { taskId, status: task.status, taskType: "shell" },
+          },
+        ];
+  }
   if (event.kind === "notification" && event.method.startsWith("collabAgent/")) {
     return mapCollabAgentEvent(event, canonicalThreadId);
   }
@@ -2268,6 +2306,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ...(serviceTier ? { serviceTier } : {}),
           ...(mcpSession
             ? {
+                mcpProviderSessionId: mcpSession.providerSessionId,
+                browserToolsAvailable: mcpSession.capabilities?.includes("preview") ?? true,
                 environment: {
                   ...(options?.environment ?? process.env),
                   T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
