@@ -1742,7 +1742,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.notEqual(beforeFetch, remoteHead);
 
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* driver.fetchRemote({ cwd, remoteName: "origin" });
+        yield* driver.fetchRemote({ cwd, remoteName: "origin", refName: initialBranch });
 
         assert.equal(
           yield* driver.remoteBranchExists({
@@ -1804,6 +1804,62 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const status = yield* driver.statusDetails(worktreePath);
         assert.equal(status.aheadCount, 0);
         assert.equal(status.aheadOfDefaultCount, 0);
+      }),
+    );
+
+    it.effect("fetches only the requested branch, skipping other heads and tags", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "origin", initialBranch]);
+        yield* git(cwd, ["branch", "other-branch"]);
+        yield* git(cwd, ["tag", "v1"]);
+        yield* git(cwd, ["push", "origin", "other-branch", "v1"]);
+        // Forget everything the pushes recorded locally so the fetch is the
+        // only thing that can bring refs back.
+        yield* git(cwd, ["update-ref", "-d", `refs/remotes/origin/${initialBranch}`]);
+        yield* git(cwd, ["update-ref", "-d", "refs/remotes/origin/other-branch"]);
+        yield* git(cwd, ["tag", "-d", "v1"]);
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.fetchRemote({ cwd, remoteName: "origin", refName: initialBranch });
+
+        assert.equal(
+          yield* git(cwd, ["rev-parse", `refs/remotes/origin/${initialBranch}`]),
+          yield* git(cwd, ["rev-parse", initialBranch]),
+        );
+        assert.equal(yield* git(cwd, ["for-each-ref", "refs/remotes/origin/other-branch"]), "");
+        assert.equal(yield* git(cwd, ["tag", "--list"]), "");
+      }),
+    );
+
+    it.effect("fetches from the remote named by a remote-qualified refName", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const origin = yield* makeTmpDir("git-remote-origin-");
+        const upstream = yield* makeTmpDir("git-remote-upstream-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(origin, ["init", "--bare"]);
+        yield* git(upstream, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", origin]);
+        yield* git(cwd, ["remote", "add", "upstream", upstream]);
+        yield* git(cwd, ["push", "upstream", initialBranch]);
+        yield* git(cwd, ["update-ref", "-d", `refs/remotes/upstream/${initialBranch}`]);
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.fetchRemote({
+          cwd,
+          remoteName: "origin",
+          refName: `upstream/${initialBranch}`,
+        });
+
+        assert.equal(
+          yield* git(cwd, ["rev-parse", `refs/remotes/upstream/${initialBranch}`]),
+          yield* git(cwd, ["rev-parse", initialBranch]),
+        );
       }),
     );
 

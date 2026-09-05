@@ -201,6 +201,8 @@ export interface GitFetchRemoteTrackingBranchInput {
 export interface GitFetchRemoteInput {
   cwd: string;
   remoteName: string;
+  // Branch to narrow the fetch to, in either `main` or `<remote>/main` form.
+  refName: string;
 }
 
 export interface GitRemoteExistsInput {

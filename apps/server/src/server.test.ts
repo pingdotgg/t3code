@@ -10291,6 +10291,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.deepEqual(fetchRemote.mock.calls[0]?.[0], {
           cwd: "/tmp/project",
           remoteName: "origin",
+          refName: "main",
         });
         assert.deepEqual(remoteBranchExists.mock.calls[0]?.[0], {
           cwd: "/tmp/project",

@@ -41,7 +41,9 @@ import { ServerConfig } from "../config.ts";
 const DEFAULT_TIMEOUT_MS = 30_000;
 // `git worktree add` checks out the full tree, so on large repositories it can
 // take well beyond the default 30s (e.g. a 375k-file repo takes ~40s on an idle
-// machine). Give it generous headroom while still bounding a genuinely hung git.
+// machine with a sequential checkout, and still tens of seconds with the
+// parallel checkout createWorktree requests). Give it generous headroom while
+// still bounding a genuinely hung git.
 const WORKTREE_ADD_TIMEOUT_MS = 300_000;
 const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
@@ -2838,9 +2840,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     const repoName = path.basename(input.cwd);
     const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
+    // Git checks the tree out on a single thread by default; `checkout.workers`
+    // below 1 means one worker per logical core, which roughly halves worktree
+    // creation on large trees. Only applied when the user has not configured a
+    // value themselves, since `-c` would silently override an intentional one.
+    const checkoutWorkersConfigured = yield* executeGit(
+      "GitVcsDriver.createWorktree.checkoutWorkersConfigured",
+      input.cwd,
+      ["config", "--get", "checkout.workers"],
+      { allowNonZeroExit: true },
+    ).pipe(Effect.map((result) => result.exitCode === 0));
+    const checkoutArgs = checkoutWorkersConfigured ? [] : ["-c", "checkout.workers=0"];
     const args = input.newRefName
-      ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
-      : ["worktree", "add", worktreePath, input.refName];
+      ? [...checkoutArgs, "worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
+      : [...checkoutArgs, "worktree", "add", worktreePath, input.refName];
 
     yield* executeGit("GitVcsDriver.createWorktree", input.cwd, args, {
       fallbackErrorDetail: "git worktree add failed",
@@ -3003,13 +3016,31 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchRemote: GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"] = Effect.fn("fetchRemote")(
     function* (input) {
+      // The fetch is narrowed to the one branch the caller is about to resolve
+      // instead of every head plus tags. The ref is parsed the same way
+      // resolveRemoteTrackingCommit parses it, and the explicit refspec targets
+      // the parsed remote, so the tracking ref resolved next is exactly the one
+      // made current (including a base like `upstream/main` naming another remote).
+      const remoteNames = yield* listRemoteNames(input.cwd).pipe(Effect.orElseSucceed(() => []));
+      const parsedRef = parseRemoteRefWithRemoteNames(
+        input.refName,
+        remoteNames.toSorted((left, right) => right.length - left.length),
+      );
+      const remoteName = parsedRef?.remoteName ?? input.remoteName;
+      const branchName = parsedRef?.branchName ?? input.refName;
       yield* executeGit(
         "GitVcsDriver.fetchRemote",
         input.cwd,
-        ["fetch", "--quiet", input.remoteName],
+        [
+          "fetch",
+          "--quiet",
+          "--no-tags",
+          remoteName,
+          `+refs/heads/${branchName}:refs/remotes/${remoteName}/${branchName}`,
+        ],
         {
           env: STATUS_UPSTREAM_REFRESH_ENV,
-          fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
+          fallbackErrorDetail: `git fetch ${remoteName} failed`,
         },
       );
     },
