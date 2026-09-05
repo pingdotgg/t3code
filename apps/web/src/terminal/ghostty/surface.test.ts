@@ -168,7 +168,12 @@ describe("GhosttyTerminalSurface visibility", () => {
       resize() {
         for (const callback of resizeCallbacks) callback();
       },
-      pointer(type: string, clientX: number, buttons: number) {
+      pointer(
+        type: string,
+        clientX: number,
+        buttons: number,
+        modifiers: Partial<Pick<MouseEvent, "ctrlKey" | "metaKey">> = {},
+      ) {
         canvas.dispatchEvent(
           Object.assign(new Event(type, { cancelable: true }), {
             clientX,
@@ -176,6 +181,7 @@ describe("GhosttyTerminalSurface visibility", () => {
             pointerId: 1,
             button: 0,
             buttons,
+            ...modifiers,
           }),
         );
       },
@@ -208,6 +214,51 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("gates path link feedback and activation while keeping selection and URLs available", async () => {
+    const harness = createHarness();
+    let canOpenPaths = false;
+    const openLink = vi.fn();
+    const surface = await harness.create({
+      canActivateLink: (text) => text.startsWith("https://") || canOpenPaths,
+      onLinkActivate: openLink,
+    });
+    surface.write("/repo/file.ts");
+    harness.flushFrame();
+    harness.pointer("pointermove", 5, 0, { ctrlKey: true });
+    expect(surface.canvas.style.cursor).toBe("");
+    harness.pointer("pointerdown", 5, 1, { ctrlKey: true });
+    harness.pointer("pointerup", 5, 0, { ctrlKey: true });
+    expect(openLink).not.toHaveBeenCalled();
+
+    harness.pointer("pointerdown", 5, 1);
+    harness.pointer("pointermove", 37, 1);
+    harness.pointer("pointerup", 37, 0);
+    expect(surface.getSelection()).toBe("/repo");
+
+    harness.pointer("pointermove", 5, 0, { ctrlKey: true });
+    canOpenPaths = true;
+    surface.refreshLinkActivation();
+    expect(surface.canvas.style.cursor).toBe("pointer");
+    harness.pointer("pointerdown", 5, 1, { ctrlKey: true });
+    harness.pointer("pointerup", 5, 0, { ctrlKey: true });
+    expect(openLink).toHaveBeenCalledExactlyOnceWith("/repo/file.ts", expect.any(Event));
+
+    harness.pointer("pointerdown", 5, 1, { ctrlKey: true });
+    canOpenPaths = false;
+    surface.refreshLinkActivation();
+    expect(surface.canvas.style.cursor).toBe("");
+    harness.pointer("pointerup", 5, 0, { ctrlKey: true });
+    expect(openLink).toHaveBeenCalledOnce();
+
+    surface.resetAndWrite("https://t3.codes");
+    harness.flushFrame();
+    harness.pointer("pointermove", 5, 0, { ctrlKey: true });
+    expect(surface.canvas.style.cursor).toBe("pointer");
+    harness.pointer("pointerdown", 5, 1, { ctrlKey: true });
+    harness.pointer("pointerup", 5, 0, { ctrlKey: true });
+    expect(openLink).toHaveBeenLastCalledWith("https://t3.codes", expect.any(Event));
   });
 
   it("resends an unchanged grid when authorization and attachment become ready", async () => {

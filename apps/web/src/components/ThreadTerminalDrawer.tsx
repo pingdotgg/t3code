@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import {
   AuthPreviewOperateScope,
+  AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
   type ContextMenuItem,
   type ProviderInstanceId,
@@ -377,7 +378,14 @@ export function TerminalViewport({
   const visibleRef = useRef(visible);
   const environmentId = threadRef.environmentId;
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
-  const hasTerminalWriteAccess = useEffectEvent(() => canOperateTerminal);
+  const hasTerminalWriteAccess = useEffectEvent(() =>
+    readEnvironmentScope(environmentId, AuthTerminalOperateScope),
+  );
+  const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const canActivateTerminalLink = useEffectEvent(
+    (text: string) =>
+      isTerminalUrl(text) || readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),
+  );
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
@@ -402,7 +410,7 @@ export function TerminalViewport({
   const keybindingsRef = useRef(keybindings);
   const runtimeEnvKey = useMemo(() => runtimeEnvSignature(runtimeEnv), [runtimeEnv]);
   const handleSessionExited = useEffectEvent(() => {
-    if (canOperateTerminal) onSessionExited();
+    if (hasTerminalWriteAccess()) onSessionExited();
   });
   const handleAddTerminalContext = useEffectEvent((selection: TerminalContextSelection) => {
     onAddTerminalContext?.(selection);
@@ -498,6 +506,11 @@ export function TerminalViewport({
     if (terminalRef.current) terminalRef.current.input.readOnly = !canOperateTerminal;
   }, [canOperateTerminal]);
 
+  // A grant can change while the pointer remains over a link.
+  useEffect(() => {
+    terminalRef.current?.refreshLinkActivation();
+  }, [canOpenHostEditor]);
+
   useEffect(() => {
     if (resizeSessionGeneration === null) return;
     // The first fit can finish before authorization or the attach snapshot.
@@ -541,6 +554,7 @@ export function TerminalViewport({
         onSelectionChange: () => handleSelectionChange(),
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
+        canActivateLink: (text) => canActivateTerminalLink(text),
         // The surface listens from construction, so a right-click can land
         // while `create` is still awaiting WASM — before the handler below it
         // exists. The ref is only assigned once that setup has run.
@@ -830,7 +844,7 @@ export function TerminalViewport({
       }
 
       function handleLinkActivate(text: string, event: MouseEvent): void {
-        if (!isTerminalLinkActivation(event)) return;
+        if (!isTerminalLinkActivation(event) || !canActivateTerminalLink(text)) return;
         const latestTerminal = terminalRef.current;
         if (!latestTerminal) return;
         if (isTerminalUrl(text)) {
