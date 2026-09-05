@@ -1129,33 +1129,52 @@ describe("applyThreadDetailEvent", () => {
   });
 
   describe("thread.turn-diff-completed", () => {
-    it("adds a checkpoint and updates latestTurn", () => {
-      const result = applyThreadDetailEvent(baseThread, {
-        ...baseEventFields,
-        sequence: 13,
-        occurredAt: "2026-04-01T12:00:00.000Z",
-        aggregateKind: "thread",
-        aggregateId: ThreadId.make("thread-1"),
-        type: "thread.turn-diff-completed",
-        payload: {
-          threadId: ThreadId.make("thread-1"),
-          turnId: TurnId.make("turn-1"),
-          checkpointTurnCount: 1,
-          checkpointRef: CheckpointRef.make("ref-1"),
-          status: "ready",
-          files: [],
-          assistantMessageId: MessageId.make("msg-3"),
-          completedAt: "2026-04-01T12:00:00.000Z",
-        },
-      });
+    it.each([null, "interrupted"] as const)(
+      "adds a checkpoint without replacing a %s turn outcome",
+      (previousState) => {
+        const result = applyThreadDetailEvent(
+          {
+            ...baseThread,
+            latestTurn:
+              previousState === null
+                ? null
+                : {
+                    turnId: TurnId.make("turn-1"),
+                    state: previousState,
+                    requestedAt: "2026-04-01T11:00:00.000Z",
+                    startedAt: "2026-04-01T11:00:00.000Z",
+                    completedAt: "2026-04-01T12:00:00.000Z",
+                    assistantMessageId: null,
+                  },
+          },
+          {
+            ...baseEventFields,
+            sequence: 13,
+            occurredAt: "2026-04-01T12:00:00.000Z",
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-1"),
+            type: "thread.turn-diff-completed",
+            payload: {
+              threadId: ThreadId.make("thread-1"),
+              turnId: TurnId.make("turn-1"),
+              checkpointTurnCount: 1,
+              checkpointRef: CheckpointRef.make("ref-1"),
+              status: "ready",
+              files: [],
+              assistantMessageId: MessageId.make("msg-3"),
+              completedAt: "2026-04-01T12:00:00.000Z",
+            },
+          },
+        );
 
-      expect(result.kind).toBe("updated");
-      if (result.kind === "updated") {
-        expect(result.thread.checkpoints).toHaveLength(1);
-        expect(result.thread.latestTurn?.turnId).toBe("turn-1");
-        expect(result.thread.latestTurn?.state).toBe("completed");
-      }
-    });
+        expect(result.kind).toBe("updated");
+        if (result.kind === "updated") {
+          expect(result.thread.checkpoints).toHaveLength(1);
+          expect(result.thread.latestTurn?.turnId).toBe("turn-1");
+          expect(result.thread.latestTurn?.state).toBe(previousState ?? "completed");
+        }
+      },
+    );
   });
 
   describe("thread.reverted", () => {

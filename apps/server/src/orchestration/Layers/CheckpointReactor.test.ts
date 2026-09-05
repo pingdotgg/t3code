@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import {
   CommandId,
+  CheckpointRef,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
@@ -666,6 +667,167 @@ describe("CheckpointReactor", () => {
       expect(reverted?.checkpoints).toEqual([]);
     }),
   );
+
+  effectIt.effect.each(["turn.completed", "turn.aborted"] as const)(
+    "captures every edit after a mid-turn diff update on %s",
+    (terminalEventType) =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({ seedFilesystemCheckpoints: false }),
+        );
+        const threadId = ThreadId.make("thread-1");
+        const turnId = asTurnId("turn-1");
+        const assistantMessageId = MessageId.make("assistant:mid-turn");
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-mid-turn-running"),
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+          createdAt,
+        });
+        harness.provider.emit({
+          type: "turn.started",
+          eventId: EventId.make("evt-mid-turn-start"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt,
+          threadId,
+          turnId,
+        });
+        expect(yield* harness.nextReceipt).toMatchObject({
+          type: "checkpoint.baseline.captured",
+        });
+
+        NodeFS.writeFileSync(NodePath.join(harness.cwd, "early.ts"), "export const early = 1;\n");
+        yield* harness.engine.dispatch({
+          type: "thread.turn.diff.complete",
+          commandId: CommandId.make("cmd-mid-turn-diff"),
+          threadId,
+          turnId,
+          completedAt: createdAt,
+          checkpointRef: CheckpointRef.make("provider-diff:mid-turn"),
+          assistantMessageId,
+          status: "missing",
+          files: [],
+          checkpointTurnCount: 1,
+          createdAt,
+        });
+        yield* Effect.promise(harness.drain);
+
+        NodeFS.writeFileSync(NodePath.join(harness.cwd, "late.ts"), "export const late = 2;\n");
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-mid-turn-settled"),
+          threadId,
+          session: {
+            threadId,
+            status: terminalEventType === "turn.aborted" ? "interrupted" : "ready",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+          createdAt,
+        });
+        harness.provider.emit({
+          eventId: EventId.make("evt-mid-turn-complete"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt,
+          threadId,
+          turnId,
+          ...(terminalEventType === "turn.completed"
+            ? { type: "turn.completed", payload: { state: "completed" } }
+            : { type: "turn.aborted", payload: { reason: "Interrupted by user." } }),
+        });
+        yield* Effect.promise(harness.drain);
+        expect(gitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 1))).toBe(true);
+        expect(yield* harness.nextReceipt).toMatchObject({
+          type: "checkpoint.diff.finalized",
+          turnId,
+          checkpointTurnCount: 1,
+        });
+        expect(yield* harness.nextReceipt).toMatchObject({
+          type: "turn.processing.quiesced",
+          turnId,
+        });
+        yield* Effect.promise(harness.drain);
+        const thread = (yield* Effect.promise(harness.readModel)).threads.find(
+          (entry) => entry.id === threadId,
+        );
+        expect(thread?.checkpoints).toHaveLength(1);
+        expect(thread?.checkpoints[0]?.status).toBe("ready");
+        expect(thread?.latestTurn?.state).toBe(
+          terminalEventType === "turn.aborted" ? "interrupted" : "completed",
+        );
+        expect(thread?.checkpoints[0]?.assistantMessageId).toBe(assistantMessageId);
+        expect(thread?.checkpoints[0]?.files.map((file) => file.path)).toEqual([
+          "early.ts",
+          "late.ts",
+        ]);
+        expect(
+          gitShowFileAtRef(harness.cwd, checkpointRefForThreadTurn(threadId, 1), "late.ts"),
+        ).toBe("export const late = 2;\n");
+
+        const followUpTurnId = asTurnId("turn-2");
+        harness.provider.emit({
+          type: "turn.started",
+          eventId: EventId.make("evt-follow-up-start"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt,
+          threadId,
+          turnId: followUpTurnId,
+        });
+        harness.provider.emit({
+          type: "turn.completed",
+          eventId: EventId.make("evt-follow-up-complete"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt,
+          threadId,
+          turnId: followUpTurnId,
+          payload: { state: "completed" },
+        });
+        expect(yield* harness.nextReceipt).toMatchObject({
+          type: "checkpoint.diff.finalized",
+          turnId: followUpTurnId,
+          checkpointTurnCount: 2,
+        });
+        const followUp = (yield* Effect.promise(harness.readModel)).threads.find(
+          (entry) => entry.id === threadId,
+        );
+        expect(
+          followUp?.checkpoints.find((checkpoint) => checkpoint.turnId === followUpTurnId),
+        ).toMatchObject({ checkpointTurnCount: 2, files: [] });
+      }),
+  );
+
+  it("does not capture an aborted turn without a matching start or active session", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    harness.provider.emit({
+      type: "turn.aborted",
+      eventId: EventId.make("evt-untracked-abort"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-untracked"),
+      payload: { reason: "Interrupted before the turn started." },
+    });
+    await harness.drain();
+
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === "thread-1");
+    expect(thread?.checkpoints).toEqual([]);
+    expect(
+      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1)),
+    ).toBe(false);
+  });
 
   it("refreshes local git status state on turn completion using the session cwd", async () => {
     const gitStatusRefreshCalls: string[] = [];

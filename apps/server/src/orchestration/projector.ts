@@ -64,7 +64,7 @@ function retainThreadActivities(activities: OrchestrationThread["activities"]) {
 
 function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error") {
   if (status === "error") return "error" as const;
-  if (status === "missing") return "interrupted" as const;
+  // Match SQL and client projections: a missing git ref is not an interruption.
   return "completed" as const;
 }
 
@@ -746,7 +746,11 @@ export function projectEvent(
               ? thread.latestTurn
               : {
                   turnId: payload.turnId,
-                  state: checkpointStatusToLatestTurnState(payload.status),
+                  state:
+                    thread.latestTurn?.turnId === payload.turnId &&
+                    thread.latestTurn.state === "interrupted"
+                      ? "interrupted"
+                      : checkpointStatusToLatestTurnState(payload.status),
                   requestedAt:
                     thread.latestTurn?.turnId === payload.turnId
                       ? thread.latestTurn.requestedAt
