@@ -78,6 +78,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { isElectron } from "../env";
+import { sidebarPinKeyframes } from "../sidebarPinMotion";
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
@@ -492,7 +493,7 @@ const sidebarThreadListAnimation: AutoAnimationPlugin = (
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const pinInFlight = document.body.dataset.pinFlight === "true";
   const timing: KeyframeEffectOptions = {
-    duration: reduceMotion ? 0 : pinInFlight ? 760 : 150,
+    duration: reduceMotion ? 0 : pinInFlight ? 550 : 150,
     easing: pinInFlight ? "cubic-bezier(.22,.68,.18,1)" : "ease-out",
   };
 
@@ -504,10 +505,8 @@ const sidebarThreadListAnimation: AutoAnimationPlugin = (
       pinInFlight
         ? [
             { transform: `translate(${x}px, ${y}px)`, offset: 0 },
-            { transform: `translate(${x}px, ${y}px)`, offset: 0.44 },
-            { transform: `translate(${x * 0.9}px, ${y * 0.9}px)`, offset: 0.58 },
-            { transform: `translate(${x * 0.5}px, ${y * 0.5}px)`, offset: 0.78 },
-            { transform: "translate(0, 4px)", offset: 0.93 },
+            { transform: `translate(${x}px, ${y}px)`, offset: 0.08 },
+            { transform: "translate(0, 0.5px)", offset: 0.92 },
             { transform: "translate(0, 0)", offset: 1 },
           ]
         : [{ transform: `translate(${x}px, ${y}px)` }, { transform: "translate(0, 0)" }],
@@ -2827,7 +2826,7 @@ export default function Sidebar() {
           listStyle: "none",
           borderRadius: "8px",
           background: "var(--sidebar)",
-          boxShadow: "0 12px 28px rgb(0 0 0 / 0.28)",
+          boxShadow: "0 3px 10px rgb(0 0 0 / 0.16)",
           contain: "layout paint style",
           transformOrigin: "center",
           backfaceVisibility: "hidden",
@@ -2893,19 +2892,11 @@ export default function Sidebar() {
     const destinationRect = destination.getBoundingClientRect();
     const x = destinationRect.left - flight.sourceRect.left;
     const y = destinationRect.top - flight.sourceRect.top;
-    const bow = Math.min(120, Math.max(88, flight.sourceRect.width * 0.42));
-    const animation = flight.clone.animate(
-      [
-        { transform: "translate(0, 0) scale(1)", offset: 0 },
-        { transform: "translate(0, 42px) scale(.98)", offset: 0.16 },
-        { transform: `translate(${bow * 0.8}px, ${y * 0.2 + 34}px) scale(1.015)`, offset: 0.4 },
-        { transform: `translate(${bow}px, ${y * 0.58}px) scale(1.03)`, offset: 0.66 },
-        { transform: `translate(${x + bow * 0.35}px, ${y * 0.86}px) scale(1.025)`, offset: 0.84 },
-        { transform: `translate(${x + 6}px, ${y - 5}px) scale(1.018)`, offset: 0.94 },
-        { transform: `translate(${x}px, ${y}px) scale(1)`, offset: 1 },
-      ],
-      { duration: 780, easing: "cubic-bezier(.2,.7,.16,1)", fill: "forwards" },
-    );
+    const animation = flight.clone.animate(sidebarPinKeyframes(x, y), {
+      duration: 550,
+      easing: "cubic-bezier(.32,0,.18,1)",
+      fill: "forwards",
+    });
     flight.animation = animation;
     void animation.finished.catch(() => undefined).then(() => finishPinFlight(pinMotionThreadKey));
   }, [finishPinFlight, pinMotionThreadKey, pinnedThreads]);
