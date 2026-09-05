@@ -197,6 +197,7 @@ describe("GitHubCli.layer", () => {
       const result = yield* gh.listOpenPullRequests({
         cwd: "/repo",
         headSelector: "feature/pr-list",
+        repository: "T3Tools/t3code",
       });
 
       assert.deepStrictEqual(result, [
@@ -209,6 +210,273 @@ describe("GitHubCli.layer", () => {
           state: "open",
         },
       ]);
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "pr",
+          "list",
+          "--head",
+          "feature/pr-list",
+          "--state",
+          "open",
+          "--limit",
+          "1",
+          "--repo",
+          "T3Tools/t3code",
+          "--json",
+          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("creates pull requests against the parent of an origin fork", () =>
+    Effect.gen(function* () {
+      mockRun
+        .mockReturnValueOnce(
+          Effect.succeed(processOutput("github.com/pingdotgg/t3code\tgithub.com/octocat/t3code\n")),
+        )
+        .mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.createPullRequest({
+        cwd: "/repo",
+        baseBranch: "main",
+        headSelector: "feature/fork-pr",
+        headRepository: "octocat/t3code",
+        title: "Target upstream",
+        bodyFile: "/tmp/pr-body.md",
+      });
+
+      expect(mockRun).toHaveBeenNthCalledWith(1, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "repo",
+          "view",
+          "octocat/t3code",
+          "--json",
+          "nameWithOwner,parent,url",
+          "--jq",
+          '. as $repo | (.url | capture("^https?://(?<host>[^/]+)").host) as $host | [if $repo.parent then "\\($host)/\\($repo.parent.owner.login)/\\($repo.parent.name)" else "\\($host)/\\($repo.nameWithOwner)" end, "\\($host)/\\($repo.nameWithOwner)"] | @tsv',
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(2, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "api",
+          "--hostname",
+          "github.com",
+          "repos/pingdotgg/t3code/pulls",
+          "--method",
+          "POST",
+          "-f",
+          "title=Target upstream",
+          "-f",
+          "head=octocat:feature/fork-pr",
+          "-f",
+          "head_repo=t3code",
+          "-f",
+          "base=main",
+          "-F",
+          "body=@/tmp/pr-body.md",
+          "-F",
+          "maintainer_can_modify=true",
+          "--silent",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("filters qualified fork heads after listing the target repository", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 44,
+                title: "Same branch from another fork",
+                url: "https://github.com/pingdotgg/t3code/pull/44",
+                baseRefName: "main",
+                headRefName: "feature/shared",
+                state: "OPEN",
+                headRepositoryOwner: { login: "hubot" },
+              },
+              {
+                number: 45,
+                title: "Requested fork",
+                url: "https://github.com/pingdotgg/t3code/pull/45",
+                baseRefName: "main",
+                headRefName: "feature/shared",
+                state: "OPEN",
+                headRepositoryOwner: { login: "octocat" },
+              },
+            ]),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const pullRequests = yield* gh.listOpenPullRequests({
+        cwd: "/repo",
+        headSelector: "octocat:feature/shared",
+        repository: "pingdotgg/t3code",
+        limit: 1,
+      });
+
+      assert.deepStrictEqual(
+        pullRequests.map((pullRequest) => pullRequest.number),
+        [45],
+      );
+      expect(mockRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          args: expect.arrayContaining([
+            "pr",
+            "list",
+            "--head",
+            "feature/shared",
+            "--state",
+            "open",
+            "--limit",
+            "100",
+          ]),
+        }),
+      );
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("creates pull requests from organization-owned forks through the API", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.createPullRequest({
+        cwd: "/repo",
+        baseBranch: "main",
+        headSelector: "acme:feature/fork-pr",
+        repository: "github.com/pingdotgg/t3code",
+        headRepository: "github.com/acme/t3code",
+        title: "Target upstream",
+        bodyFile: "/tmp/pr-body.md",
+      });
+
+      expect(mockRun).toHaveBeenCalledTimes(1);
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: expect.arrayContaining([
+          "repos/pingdotgg/t3code/pulls",
+          "head=acme:feature/fork-pr",
+          "head_repo=t3code",
+        ]),
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("uses the normal create command for same-repository pull requests", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.createPullRequest({
+        cwd: "/repo",
+        baseBranch: "main",
+        headSelector: "feature/local-pr",
+        repository: "github.com/pingdotgg/t3code",
+        headRepository: "github.com/pingdotgg/t3code",
+        title: "Local pull request",
+        bodyFile: "/tmp/pr-body.md",
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "pr",
+          "create",
+          "--base",
+          "main",
+          "--head",
+          "feature/local-pr",
+          "--title",
+          "Local pull request",
+          "--body-file",
+          "/tmp/pr-body.md",
+          "--repo",
+          "github.com/pingdotgg/t3code",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("inherits a GitHub Enterprise host for a host-less fork", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.createPullRequest({
+        cwd: "/repo",
+        baseBranch: "main",
+        headSelector: "feature/fork-pr",
+        repository: "github.example.com/pingdotgg/t3code",
+        headRepository: "octocat/t3code",
+        title: "Target Enterprise upstream",
+        bodyFile: "/tmp/pr-body.md",
+      });
+
+      expect(mockRun).toHaveBeenCalledTimes(1);
+      expect(mockRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          args: expect.arrayContaining([
+            "--hostname",
+            "github.example.com",
+            "repos/pingdotgg/t3code/pulls",
+            "head=octocat:feature/fork-pr",
+          ]),
+        }),
+      );
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("omits a GitHub Enterprise HTTPS port from the API hostname", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.createPullRequest({
+        cwd: "/repo",
+        baseBranch: "main",
+        headSelector: "feature/fork-pr",
+        repository: "github.example.com:8443/pingdotgg/t3code",
+        headRepository: "github.example.com:8443/octocat/t3code",
+        title: "Target ported Enterprise upstream",
+        bodyFile: "/tmp/pr-body.md",
+      });
+
+      expect(mockRun).toHaveBeenCalledTimes(1);
+      expect(mockRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          args: expect.arrayContaining([
+            "--hostname",
+            "github.example.com",
+            "repos/pingdotgg/t3code/pulls",
+          ]),
+        }),
+      );
     }).pipe(Effect.provide(layer)),
   );
 
