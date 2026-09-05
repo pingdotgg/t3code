@@ -4,8 +4,9 @@ Open **Settings → Appearance** to choose a theme and follow the system appeara
 or dark mode. To use different themes for light and dark mode, select the corresponding preview
 within each theme. Appearance preferences are saved separately on each device or browser.
 
-Mobile has its own themes and text, code, and terminal preferences. It does not follow environment
-themes or defaults.
+React Native mobile has its own themes and text, code, and terminal preferences. SwiftUI mobile
+supports system, light, and dark appearance without custom themes. Neither mobile app follows
+environment themes or defaults.
 
 ## Motion
 

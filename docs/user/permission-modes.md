@@ -28,4 +28,10 @@ actions still require approval.
 Antigravity can still send native approval requests in **Full access**. It only offers remembered
 approvals for actions that support them.
 
+On SwiftUI mobile, open **Thread actions**, then **Permissions**, to choose
+**Automatic** or **Full access** for that thread. New threads start in **Full access**.
+Existing threads keep their saved mode. If a thread uses **Supervised** or
+**Auto-accept edits**, SwiftUI mobile shows that saved mode as the current value.
+Choose **Automatic** or **Full access** to replace it.
+
 See the [provider guides](./install.md#providers) for setup and provider-specific limits.
