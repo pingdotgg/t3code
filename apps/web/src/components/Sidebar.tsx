@@ -3816,7 +3816,7 @@ export default function Sidebar() {
             {
               id: "settle",
               label: `Settle (${count})`,
-              disabled: !canOperateThreads(settlingThreads),
+              disabled: settlingThreads.length === 0 || !canOperateThreads(settlingThreads),
             },
             ...(canSnoozeSelection
               ? [
@@ -3860,8 +3860,14 @@ export default function Sidebar() {
           : clicked.value === "regenerate-title"
             ? regeneratableTitleThreads
             : clicked.value === "settle"
-              ? settlingThreads
+              ? settlingThreads.flatMap((thread) => {
+                  const current = threadByKeyRef.current.get(
+                    scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+                  );
+                  return current && current.settledOverride !== "settled" ? [current] : [];
+                })
               : selectedThreads;
+      if (clicked.value === "settle" && actionTargets.length === 0) return;
       if (clicked.value !== "mark-unread" && !checkThreadOperations(actionTargets)) return;
       if (clicked.value?.startsWith("snooze:")) {
         const preset = snoozePresets.find(
@@ -3960,10 +3966,7 @@ export default function Sidebar() {
         // valid mixed selection. Pinned rows ARE included: the decider
         // clears the pin as part of settling, so they park like the rest.
         const coSettlingKeys = new Set(threadKeys);
-        for (const thread of settlingThreads) {
-          const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-          const currentThread = threadByKeyRef.current.get(threadKey);
-          if (!currentThread || currentThread.settledOverride === "settled") continue;
+        for (const thread of actionTargets) {
           attemptSettle(scopeThreadRef(thread.environmentId, thread.id), { coSettlingKeys });
         }
         clearSelection();
