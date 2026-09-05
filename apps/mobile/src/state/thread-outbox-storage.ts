@@ -44,8 +44,13 @@ export class ThreadOutboxStorageError extends Schema.TaggedErrorClass<ThreadOutb
   }
 }
 
+export interface ThreadOutboxLoadResult {
+  readonly messages: ReadonlyArray<QueuedThreadMessage>;
+  readonly errors: ReadonlyArray<ThreadOutboxStorageError>;
+}
+
 export interface ThreadOutboxStorage {
-  readonly load: () => Promise<ReadonlyArray<QueuedThreadMessage>>;
+  readonly load: () => Promise<ThreadOutboxLoadResult>;
   readonly write: (message: QueuedThreadMessage) => Promise<void>;
   readonly remove: (message: QueuedThreadMessage) => Promise<void>;
 }
@@ -69,6 +74,7 @@ async function getMessageFile(messageId: MessageId) {
 export const expoThreadOutboxStorage: ThreadOutboxStorage = {
   load: async () => {
     const messages: QueuedThreadMessage[] = [];
+    const errors: ThreadOutboxStorageError[] = [];
     try {
       const { File } = await import("expo-file-system");
       const directory = await getOutboxDirectory();
@@ -80,20 +86,21 @@ export const expoThreadOutboxStorage: ThreadOutboxStorage = {
         try {
           messages.push(decodeQueuedThreadMessage(JSON.parse(await entry.text()) as unknown));
         } catch (cause) {
-          // A partial queue hides attachment owners from cleanup. Keep all
-          // records untouched until every persisted message can be read.
-          throw new ThreadOutboxStorageError({
-            operation: "read-message",
-            environmentId: null,
-            threadId: null,
-            messageId: null,
-            fileName: entry.name,
-            cause,
-          });
+          // Recover readable messages without treating their attachment
+          // owners as the complete inventory needed for cleanup.
+          errors.push(
+            new ThreadOutboxStorageError({
+              operation: "read-message",
+              environmentId: null,
+              threadId: null,
+              messageId: null,
+              fileName: entry.name,
+              cause,
+            }),
+          );
         }
       }
     } catch (cause) {
-      if (cause instanceof ThreadOutboxStorageError) throw cause;
       throw new ThreadOutboxStorageError({
         operation: "load",
         environmentId: null,
@@ -103,7 +110,7 @@ export const expoThreadOutboxStorage: ThreadOutboxStorage = {
         cause,
       });
     }
-    return messages;
+    return { messages, errors };
   },
   write: async (message) => {
     const fileName = messageFileName(message.messageId);
