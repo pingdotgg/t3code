@@ -14,6 +14,31 @@ const CURRENCY = new Intl.NumberFormat("en-US", {
 });
 
 const INTEGER = new Intl.NumberFormat("en-US");
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_CUSTOM_WINDOW_DAYS = 90;
+
+function usageDayOrdinal(value: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (match === null) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12) return null;
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  if (daysInMonth === undefined || day < 1 || day > daysInMonth) return null;
+  return year * 372 + (month - 1) * 31 + day;
+}
+
+/** Compares two strict `YYYY-MM-DD` calendar days, or returns null if either is invalid. */
+export function compareUsageDays(left: string, right: string): -1 | 0 | 1 | null {
+  const leftOrdinal = usageDayOrdinal(left);
+  const rightOrdinal = usageDayOrdinal(right);
+  if (leftOrdinal === null || rightOrdinal === null) return null;
+  if (leftOrdinal < rightOrdinal) return -1;
+  if (leftOrdinal > rightOrdinal) return 1;
+  return 0;
+}
 
 export function formatUsd(value: number): string {
   return CURRENCY.format(value);
@@ -82,14 +107,14 @@ export function enumerateDays(sinceDay: string, untilDay: string): readonly stri
 
 const HOUR_MS = 60 * 60 * 1000;
 
-/** Every fixed-duration bucket start in an hourly rolling window. */
+/** Fully covered fixed-duration bucket starts in an hourly rolling window. */
 export function enumerateHourStarts(sinceTime: string, untilTime: string): readonly string[] {
   const starts: string[] = [];
   const start = Date.parse(sinceTime);
   const end = Date.parse(untilTime);
   if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return starts;
 
-  for (let cursor = start; cursor < end; cursor += HOUR_MS) {
+  for (let cursor = start; cursor + HOUR_MS <= end; cursor += HOUR_MS) {
     starts.push(new Date(cursor).toISOString());
   }
   return starts;
@@ -142,6 +167,19 @@ export function formatDateTimeShort(instant: string, timeZone?: string): string 
   }).format(date);
 }
 
+/** `2026-08-11T14:37:00Z` to `Aug 11, 2:37 PM` for coverage boundaries. */
+export function formatCoverageTime(instant: string, timeZone?: string): string {
+  const date = new Date(instant);
+  if (Number.isNaN(date.getTime())) return instant;
+  return new Intl.DateTimeFormat("en-US", {
+    ...(timeZone === undefined ? {} : { timeZone }),
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
 /** An hourly tooltip label relative to the rolling window's end date. */
 export function formatRelativeHourShort(
   hourStart: string,
@@ -168,6 +206,33 @@ export function formatRelativeHourShort(
   if (calendarDaysAgo === 0) return `${hour} today`;
   if (calendarDaysAgo === 1) return `${hour} yesterday`;
   return formatDateTimeShort(hourStart, timeZone);
+}
+
+/**
+ * A daily window over an explicit inclusive day range, in the viewer's zone.
+ * Bounds arrive from date inputs or a chart brush; out-of-order bounds are
+ * swapped rather than rejected so callers can pass a drag's raw endpoints.
+ * Typed spans are capped at the same 90 days as the largest preset so day
+ * enumeration remains bounded.
+ */
+export function makeCustomWindow(sinceDay: string, untilDay: string): UsageSummaryInput {
+  const comparison = compareUsageDays(sinceDay, untilDay);
+  if (comparison === null)
+    throw new RangeError("Usage window bounds must be valid YYYY-MM-DD dates");
+  const [first, requestedLast] = comparison <= 0 ? [sinceDay, untilDay] : [untilDay, sinceDay];
+  const firstMs = Date.parse(`${first}T00:00:00Z`);
+  const requestedLastMs = Date.parse(`${requestedLast}T00:00:00Z`);
+  const maximumLastMs = firstMs + (MAX_CUSTOM_WINDOW_DAYS - 1) * DAY_MS;
+  const last =
+    requestedLastMs > maximumLastMs
+      ? new Date(maximumLastMs).toISOString().slice(0, 10)
+      : requestedLast;
+  return {
+    sinceDay: UsageDay.make(first),
+    untilDay: UsageDay.make(last),
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    resolution: "day",
+  };
 }
 
 /**
@@ -198,12 +263,11 @@ export function makeWindow(
       day: "2-digit",
     });
   }
-  const untilDay = format.format(now);
+  const today = format.format(now);
   if (resolution === "hour") {
-    // Minute-aligned bounds keep labels readable while still representing an
-    // exact rolling 24-hour duration. Fixed-duration buckets remain correct
-    // across offset changes and daylight-saving transitions.
-    const untilTimeMs = Math.floor(now.getTime() / 60_000) * 60_000;
+    // Half-hour-aligned bounds keep the common rolling window stable long
+    // enough for the server's background snapshot to answer it immediately.
+    const untilTimeMs = Math.floor(now.getTime() / (30 * 60_000)) * (30 * 60_000);
     const sinceTimeMs = untilTimeMs - 24 * HOUR_MS;
     const sinceTime = new Date(sinceTimeMs);
     const untilTime = new Date(untilTimeMs);
@@ -219,10 +283,14 @@ export function makeWindow(
   // Subtracting fixed milliseconds from `now` lands on the wrong calendar day
   // around a DST transition. The window start is pure calendar arithmetic on
   // the local end day, done in UTC where days are uniform.
-  const [year = 0, month = 1, dayOfMonth = 1] = untilDay
+  // Daily views only expose complete calendar days. The current day remains
+  // open, so including it would make a partial snapshot look complete.
+  const [year = 0, month = 1, dayOfMonth = 1] = today
     .split("-")
     .map((part) => Number.parseInt(part, 10));
-  const start = new Date(Date.UTC(year, month - 1, dayOfMonth - (days - 1)));
+  const yesterday = new Date(Date.UTC(year, month - 1, dayOfMonth - 1));
+  const untilDay = yesterday.toISOString().slice(0, 10);
+  const start = new Date(Date.UTC(year, month - 1, dayOfMonth - days));
   return {
     sinceDay: UsageDay.make(start.toISOString().slice(0, 10)),
     untilDay: UsageDay.make(untilDay),

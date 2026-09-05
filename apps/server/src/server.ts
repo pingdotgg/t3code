@@ -28,6 +28,8 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import { ProjectionProjectRepositoryLive } from "./persistence/Layers/ProjectionProjects.ts";
+import { ProjectionThreadRepositoryLive } from "./persistence/Layers/ProjectionThreads.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
@@ -196,7 +198,14 @@ const BackgroundLayerLive = BackgroundPolicy.layer.pipe(
   Layer.provideMerge(ServerSettingsLayerLive),
 );
 
-const UsageLayerLive = UsageService.layer.pipe(Layer.provide(ServerSettingsLayerLive));
+const UsageLayerLive = UsageService.layer.pipe(
+  // Projects resolve each session's cwd to the project it ran in; threads and
+  // resume cursors attribute sessions to threads for the drill-down.
+  Layer.provide(ProjectionProjectRepositoryLive),
+  Layer.provide(ProjectionThreadRepositoryLive),
+  Layer.provide(ProviderSessionRuntime.layer),
+  Layer.provide(ServerSettingsLayerLive),
+);
 
 const ResourceDiagnosticsLayerLive = Layer.mergeAll(
   ResourceTelemetryLayerLive,
@@ -748,12 +757,25 @@ export const makeServerLayer = Layer.unwrap(
       disableLogger: !config.logWebSocketEvents,
       routerConfig: HTTP_ROUTER_CONFIG,
     }).pipe(Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)));
+    const usageBackgroundRefreshLayer = Layer.effectDiscard(
+      Effect.gen(function* () {
+        const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+        const usage = yield* UsageService.UsageService;
+        // Command readiness is the existing startup boundary. The refresh is
+        // forked here so it is independent of the Usage page and runs exactly
+        // once after startup, followed by the service's 30-minute cadence.
+        yield* Effect.forkScoped(
+          startup.awaitCommandReady.pipe(Effect.andThen(usage.startBackgroundRefresh)),
+        );
+      }),
+    );
     const serverApplicationLayer = Layer.mergeAll(
       routesLayer,
       httpListeningLayer,
       runtimeStateLayer,
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
+      usageBackgroundRefreshLayer,
     );
 
     return serverApplicationLayer.pipe(

@@ -1,12 +1,18 @@
-import { EnvironmentId, UsageDay, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, UsageDay, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
+import type { ComponentProps, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
   useUsage: vi.fn(),
-  metric: "cost" as "cost" | "tokens",
-  breakdown: "time" as "model" | "time",
+  usageThreadTable: vi.fn((_props: unknown) => null),
+  metric: "cost" as "cost" | "tokens" | "limits",
+  breakdown: "time" as "model" | "project" | "thread" | "time",
+  projectFilter: undefined as string | null | undefined,
+  refresh: vi.fn(),
+  setWindowSelection: vi.fn(),
+  refreshWindow: undefined as (() => void) | undefined,
 }));
 
 vi.mock("react", async (importOriginal) => {
@@ -30,15 +36,42 @@ vi.mock("react", async (importOriginal) => {
           ? testState.metric
           : initial === "model"
             ? testState.breakdown
-            : initial,
-      vi.fn(),
+            : initial === undefined
+              ? testState.projectFilter
+              : initial,
+      typeof initial === "function" ? testState.setWindowSelection : vi.fn(),
     ]),
   };
 });
 
 vi.mock("../../env", () => ({ isElectron: false }));
 vi.mock("../../state/usage", () => ({ useUsage: testState.useUsage }));
-vi.mock("../ui/button", () => ({ Button: "button" }));
+vi.mock("../ui/button", () => ({
+  Button: (props: { "aria-label"?: string; children?: ReactNode; onClick?: () => void }) => {
+    if (props["aria-label"] === "Refresh usage") testState.refreshWindow = props.onClick;
+    return <button aria-label={props["aria-label"]}>{props.children}</button>;
+  },
+}));
+vi.mock("../ui/input", () => ({
+  Input: ({
+    nativeInput: _nativeInput,
+    size,
+    variant,
+    ...props
+  }: Omit<ComponentProps<"input">, "size"> & {
+    nativeInput?: boolean;
+    size?: string;
+    variant?: string;
+  }) => <input data-size={size} data-variant={variant} {...props} />,
+}));
+vi.mock("../ui/menu", () => ({
+  Menu: "div",
+  MenuCheckboxItem: "div",
+  MenuItem: "button",
+  MenuPopup: "div",
+  MenuSeparator: "hr",
+  MenuTrigger: "button",
+}));
 vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));
 vi.mock("../ui/select", () => ({
   Select: "div",
@@ -57,6 +90,7 @@ vi.mock("../WorkspaceBreadcrumb", () => ({
 vi.mock("../WorkspacePageContainer", () => ({ WorkspacePageContainer: "main" }));
 vi.mock("../WorkspacePageHeader", () => ({ WorkspacePageHeader: "header" }));
 vi.mock("./UsageProviderChart", () => ({ UsageProviderChart: "div" }));
+vi.mock("./UsageThreadTable", () => ({ UsageThreadTable: testState.usageThreadTable }));
 vi.mock("./UsagePriceOverrides", () => ({ UsagePriceOverrides: () => null }));
 vi.mock("./usageProviders", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./usageProviders")>();
@@ -83,6 +117,8 @@ const modelTotals = Object.freeze([
     provider: "claude" as const,
     costUsd: 10,
     totalTokens: 100,
+    cacheWriteTokens: 40,
+    cacheWriteUsd: 2.5,
     records: 1,
     costShare: 10 / 16,
   },
@@ -91,6 +127,8 @@ const modelTotals = Object.freeze([
     provider: "codex" as const,
     costUsd: 5,
     totalTokens: 1_000,
+    cacheWriteTokens: 0,
+    cacheWriteUsd: 0,
     records: 1,
     costShare: 5 / 16,
   },
@@ -99,8 +137,35 @@ const modelTotals = Object.freeze([
     provider: "codex" as const,
     costUsd: 1,
     totalTokens: 1_000,
+    cacheWriteTokens: 0,
+    cacheWriteUsd: 0,
     records: 1,
     costShare: 1 / 16,
+  },
+]);
+
+const projectTotals = Object.freeze([
+  {
+    projectId: ProjectId.make("project-expensive"),
+    projectKey: "id:project-expensive",
+    project: "Expensive Project",
+    costUsd: 9,
+    totalTokens: 200,
+    cacheWriteTokens: 60,
+    cacheWriteUsd: 1.75,
+    records: 2,
+    costShare: 9 / 20,
+  },
+  {
+    projectId: null,
+    projectKey: null,
+    project: null,
+    costUsd: 7,
+    totalTokens: 900,
+    cacheWriteTokens: 0,
+    cacheWriteUsd: 0,
+    records: 1,
+    costShare: 7 / 20,
   },
 ]);
 
@@ -118,7 +183,12 @@ const environments = [
       timeZone: "UTC",
       buckets: [],
       sources: [],
-      pricing: { status: "fresh", source: "test", fetchedAt: null, knownModels: 1 },
+      pricing: { status: "fresh" as const, source: "test", fetchedAt: null, knownModels: 1 },
+      coverage: {
+        availableThroughDay: UsageDay.make("2026-08-11"),
+        availableThroughTime: null,
+        generatedAt: "2026-08-11T12:37:00.000Z",
+      },
       scanDurationMs: 1,
     },
   },
@@ -127,10 +197,16 @@ const environments = [
 beforeEach(() => {
   testState.metric = "cost";
   testState.breakdown = "time";
+  testState.projectFilter = undefined;
+  testState.usageThreadTable.mockClear();
+  testState.refresh.mockReset();
+  testState.setWindowSelection.mockReset();
+  testState.refreshWindow = undefined;
   testState.useUsage.mockReturnValue({
     merged: {
       ...mergeUsage([], USAGE_CONTRACT_VERSION),
       models: modelTotals,
+      projects: projectTotals,
       hourly: [
         {
           day: "2026-08-10",
@@ -152,11 +228,32 @@ beforeEach(() => {
     selectedEnvironments: environments,
     isPending: false,
     isPartial: false,
-    refresh: vi.fn(),
+    isRefreshing: false,
+    refreshError: null,
+    refresh: testState.refresh,
   });
 });
 
 describe("UsagePage hourly breakdown", () => {
+  it("refreshes after rebasing a rolling window", () => {
+    renderToStaticMarkup(<UsagePage />);
+
+    testState.refreshWindow?.();
+
+    expect(testState.setWindowSelection).toHaveBeenCalledOnce();
+    expect(testState.refresh).toHaveBeenCalledOnce();
+  });
+
+  it("keeps custom date fields available in both desktop and compact layouts", () => {
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup.match(/aria-label="From day"/g)).toHaveLength(2);
+    expect(markup.match(/aria-label="To day"/g)).toHaveLength(2);
+    expect(testState.useUsage).toHaveBeenLastCalledWith(expect.anything(), undefined, false, null);
+    expect(markup.match(/data-size="segmented"/g)).toHaveLength(4);
+    expect(markup.match(/data-variant="segmented"/g)).toHaveLength(4);
+  });
+
   it("keeps recent activity visible first without empty hourly rows", () => {
     const markup = renderToStaticMarkup(<UsagePage />);
     const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
@@ -177,6 +274,157 @@ describe("UsagePage hourly breakdown", () => {
   });
 });
 
+describe("UsagePage project breakdown", () => {
+  it("offers a lone project filter when unknown attribution remains in the totals", () => {
+    const usage = testState.useUsage();
+    testState.useUsage.mockReturnValue({
+      ...usage,
+      merged: {
+        ...usage.merged,
+        costUsd: 10,
+        totalTokens: 300,
+        projects: [projectTotals[0]],
+      },
+    });
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup.match(/aria-label="Project filter"/g)).toHaveLength(2);
+  });
+
+  it("hides a lone project filter when it would not narrow the totals", () => {
+    const usage = testState.useUsage();
+    testState.useUsage.mockReturnValue({
+      ...usage,
+      merged: {
+        ...usage.merged,
+        costUsd: 9,
+        totalTokens: 200,
+        projects: [projectTotals[0]],
+      },
+    });
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup).not.toContain('aria-label="Project filter"');
+  });
+
+  it("ranks projects by cost and labels unattributed work", () => {
+    testState.breakdown = "project";
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+
+    expect(body).toMatch(/Expensive Project.*Outside projects/);
+    expect(body).toContain("$9.00");
+    expect(body).toContain("$7.00");
+    expect(body).toContain("45.0%");
+    expect(body).toContain("35.0%");
+  });
+
+  it("ranks projects by tokens when the token metric is selected", () => {
+    testState.metric = "tokens";
+    testState.breakdown = "project";
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+
+    expect(body).toMatch(/Outside projects.*Expensive Project/);
+  });
+
+  it("shows only the selected project in the project breakdown", () => {
+    testState.breakdown = "project";
+    testState.projectFilter = "id:project-expensive";
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+
+    expect(body).toContain("Expensive Project");
+    expect(body).not.toContain("Outside projects");
+    expect(body).toContain("100.0%");
+  });
+
+  it("distinguishes unattributed usage from an empty window", () => {
+    testState.breakdown = "project";
+    const usage = testState.useUsage();
+    testState.useUsage.mockReturnValue({
+      ...usage,
+      merged: { ...usage.merged, projects: [], records: 1 },
+    });
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup).toContain("No project attribution in this window.");
+    expect(markup).not.toContain("No activity in this window.");
+  });
+
+  it("keeps the empty-window message when there is no usage", () => {
+    testState.breakdown = "project";
+    const usage = testState.useUsage();
+    testState.useUsage.mockReturnValue({
+      ...usage,
+      merged: { ...usage.merged, projects: [], records: 0 },
+    });
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup).toContain("No activity in this window.");
+    expect(markup).not.toContain("No project attribution in this window.");
+  });
+});
+
+describe("UsagePage thread breakdown", () => {
+  it("requests thread rows in the selected project scope", () => {
+    testState.breakdown = "thread";
+    testState.projectFilter = "id:project-expensive";
+
+    renderToStaticMarkup(<UsagePage />);
+
+    expect(testState.usageThreadTable).toHaveBeenCalledOnce();
+    expect(testState.usageThreadTable.mock.calls[0]?.[0]).toMatchObject({
+      input: {
+        sinceDay: "2026-08-10",
+        untilDay: "2026-08-11",
+        timeZone: "UTC",
+        sinceTime: "2026-08-10T12:37:00.000Z",
+        untilTime: "2026-08-11T12:37:00.000Z",
+        projectKey: "id:project-expensive",
+      },
+      providerContributions: [],
+    });
+    expect(testState.useUsage).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "id:project-expensive",
+      true,
+      null,
+    );
+  });
+
+  it("counts failed thread sources only within the selected environments", () => {
+    testState.breakdown = "thread";
+    const usage = testState.useUsage();
+    const selected = environments[0]!;
+    const unselectedFailed = {
+      ...selected,
+      environmentId: EnvironmentId.make("unselected-failed"),
+      label: "Unselected failed",
+      error: "Usage failed",
+      summary: null,
+    };
+    testState.useUsage.mockReturnValue({
+      ...usage,
+      environments: [selected, unselectedFailed],
+      selectedEnvironments: [selected],
+    });
+
+    renderToStaticMarkup(<UsagePage />);
+
+    expect(testState.usageThreadTable.mock.calls[0]?.[0]).toMatchObject({
+      summaryFailedEnvironments: 0,
+    });
+  });
+});
+
 describe("UsagePage model breakdown", () => {
   it("sorts models by cost when the cost metric is selected", () => {
     testState.breakdown = "model";
@@ -185,6 +433,35 @@ describe("UsagePage model breakdown", () => {
     const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body).toMatch(/expensive-model.*token-heavy-model.*token-heavy-cheaper-model/);
+  });
+
+  it("shows cache-write cost per row, with a dash for write-free providers", () => {
+    testState.breakdown = "model";
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+
+    // Claude row carries its cache-write dollars; codex rows never bill writes.
+    expect(body).toContain("$2.50");
+    expect(body).toMatch(/token-heavy-model.*>-</);
+  });
+
+  it("does not present an incomplete cache-write estimate as zero", () => {
+    testState.breakdown = "model";
+    const usage = testState.useUsage();
+    testState.useUsage.mockReturnValue({
+      ...usage,
+      merged: {
+        ...usage.merged,
+        models: [{ ...modelTotals[0], cacheWriteUsd: null }],
+        costQuality: { ...usage.merged.costQuality, cacheWriteUsd: null },
+      },
+    });
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup.match(/Unavailable/g)).toHaveLength(2);
+    expect(markup).not.toContain("NaN%");
   });
 
   it("sorts models by token usage when the token metric is selected", () => {
@@ -200,5 +477,23 @@ describe("UsagePage model breakdown", () => {
       "token-heavy-model",
       "token-heavy-cheaper-model",
     ]);
+  });
+
+  it("shows the coverage boundary from the server snapshot", () => {
+    testState.useUsage.mockReturnValueOnce({
+      merged: {
+        ...mergeUsage([], USAGE_CONTRACT_VERSION),
+        availableThroughDay: "2026-08-10",
+        lastUpdatedAt: "2026-08-11T12:00:00.000Z",
+      },
+      environments,
+      selectedEnvironments: environments,
+      isPending: false,
+      isPartial: false,
+      isRefreshing: false,
+      refresh: vi.fn(),
+    });
+
+    expect(renderToStaticMarkup(<UsagePage />)).toContain("Data available through Aug 10.");
   });
 });

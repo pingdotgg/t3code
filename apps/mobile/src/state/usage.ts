@@ -12,19 +12,36 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   USAGE_CONTRACT_VERSION,
+  USAGE_EXPLICIT_REFRESH_SINCE,
   type EnvironmentId,
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
-import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
+import {
+  makeUsageRefreshToken,
+  mergeUsage,
+  retainUsageStatuses,
+  usageRefreshTargets,
+  type EnvironmentUsage,
+  type MergedUsage,
+  type SettledUsageStatuses,
+} from "@t3tools/shared/usageMerge";
+import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
+import {
+  completeUsageRefresh,
+  refreshStateForWindowChange,
+  startUsageRefresh,
+  type UsageRefreshState,
+} from "@t3tools/shared/usageRefreshState";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { appAtomRegistry } from "./atom-registry";
 import { environmentPresentations } from "./presentation";
+import { uuidv4 } from "../lib/uuid";
+import { appAtomRegistry } from "./atom-registry";
 import { serverEnvironment } from "./server";
+import { useAtomCommand } from "./use-atom-command";
 
 export interface EnvironmentUsageStatus {
   readonly environmentId: EnvironmentId;
@@ -72,11 +89,14 @@ export interface UsageView {
    * improve by waiting on them, so they must not read as "still reporting".
    */
   readonly isPartial: boolean;
-  readonly refresh: () => void;
+  /** True while a previously loaded snapshot is being refreshed. */
+  readonly isRefreshing: boolean;
+  readonly refreshError?: string | null;
+  readonly refresh: (requestedInput?: UsageSummaryInput) => void;
 }
 
 export function useUsage(input: UsageSummaryInput): UsageView {
-  const windowKey = useMemo(
+  const rangeKey = useMemo(
     () =>
       JSON.stringify({
         sinceDay: input.sinceDay,
@@ -95,55 +115,185 @@ export function useUsage(input: UsageSummaryInput): UsageView {
       input.untilTime,
     ],
   );
+  const windowKey = rangeKey;
   const atom = usageByWindowAtom(windowKey);
-  const environments = useAtomValue(atom);
-
-  // Refreshing only the derived atom would re-read the per-environment SWR
-  // queries within their stale window and change nothing. Refresh each
-  // environment's query so pull-to-refresh always rescans.
-  //
-  // Each environment refetches model pricing first, so a model released since
-  // its last daily fetch gets priced by the rescan. The rescan runs whether or
-  // not the refetch succeeds: an offline environment still recounts tokens.
-  const refresh = useCallback(() => {
-    const input = JSON.parse(windowKey) as UsageSummaryInput;
-    for (const environment of environments) {
-      const { environmentId } = environment;
-      const query = serverEnvironment.usageSummary({ environmentId, input });
-      void runAtomCommand(
-        appAtomRegistry,
-        serverEnvironment.refreshUsageRates,
-        { environmentId, input: {} },
-        { reportFailure: false },
-      ).finally(() => appAtomRegistry.refresh(query));
-    }
-  }, [environments, windowKey]);
-
-  const merged = useMemo(() => {
-    const answered: EnvironmentUsage[] = environments.flatMap((environment) =>
-      environment.summary === null
-        ? []
-        : [
-            {
-              environmentId: environment.environmentId,
-              label: environment.label,
-              summary: environment.summary,
-            },
-          ],
+  const currentEnvironments = useAtomValue(atom);
+  const settledStatuses = useRef<SettledUsageStatuses<EnvironmentUsageStatus> | null>(null);
+  const retained = retainUsageStatuses(rangeKey, currentEnvironments, settledStatuses.current);
+  settledStatuses.current = retained.settled;
+  const environments = retained.visible;
+  const answered = useMemo<readonly EnvironmentUsage[]>(
+    () =>
+      environments.flatMap((environment) =>
+        environment.summary === null
+          ? []
+          : [
+              {
+                environmentId: environment.environmentId,
+                label: environment.label,
+                summary: environment.summary,
+              },
+            ],
+      ),
+    [environments],
+  );
+  const refreshUsageSummary = useAtomCommand(serverEnvironment.refreshUsageSummary, {
+    reportFailure: false,
+  });
+  const refreshUsageRates = useAtomCommand(serverEnvironment.refreshUsageRates, {
+    reportFailure: false,
+  });
+  const [manualRefreshState, setManualRefreshState] = useState<UsageRefreshState>({
+    windowKey: rangeKey,
+    requestId: 0,
+    refreshing: false,
+    error: null as string | null,
+  });
+  const currentWindowKey = useRef(rangeKey);
+  const currentRefreshId = useRef(0);
+  const pendingRefreshWindowKey = useRef(rangeKey);
+  useEffect(() => {
+    currentWindowKey.current = rangeKey;
+  }, [rangeKey]);
+  useEffect(() => {
+    // A refresh started while selecting the next window already targets this
+    // committed key. Keep its request id and state so the completion can settle
+    // after React commits the selection.
+    const nextState = refreshStateForWindowChange(
+      manualRefreshState,
+      rangeKey,
+      pendingRefreshWindowKey.current,
     );
-    return mergeUsage(answered, USAGE_CONTRACT_VERSION);
-  }, [environments]);
+    if (nextState === manualRefreshState) return;
+    // A refresh belongs to one window. Invalidate its completion and clear the
+    // state so switching away and back cannot resurrect an old spinner/error.
+    currentRefreshId.current = nextState.requestId;
+    pendingRefreshWindowKey.current = rangeKey;
+    setManualRefreshState(nextState);
+  }, [manualRefreshState, rangeKey]);
+
+  // Explicit refresh is a server command, so it really rescans and publishes
+  // a new last-good snapshot. The normal query remains snapshot-only.
+  const refresh = useCallback(
+    (requestedInput?: UsageSummaryInput) => {
+      const refreshEnvironments = usageRefreshTargets(environments);
+      if (refreshEnvironments.length === 0) return;
+      const input = requestedInput ?? (JSON.parse(rangeKey) as UsageSummaryInput);
+      const requestWindowKey =
+        requestedInput === undefined
+          ? rangeKey
+          : JSON.stringify({
+              sinceDay: input.sinceDay,
+              untilDay: input.untilDay,
+              timeZone: input.timeZone,
+              resolution: input.resolution,
+              sinceTime: input.sinceTime,
+              untilTime: input.untilTime,
+            });
+      const nextRefreshState = startUsageRefresh(currentRefreshId.current, requestWindowKey);
+      const requestId = nextRefreshState.requestId;
+      currentRefreshId.current = requestId;
+      pendingRefreshWindowKey.current = requestWindowKey;
+      setManualRefreshState(nextRefreshState);
+      void Promise.allSettled(
+        refreshEnvironments.map((environment) =>
+          refreshUsageRates({ environmentId: environment.environmentId, input: {} }),
+        ),
+      )
+        .then(() => {
+          const explicitRefreshes = refreshEnvironments.flatMap((environment) =>
+            (environment.summary?.contractVersion ?? 0) < USAGE_EXPLICIT_REFRESH_SINCE
+              ? []
+              : [refreshUsageSummary({ environmentId: environment.environmentId, input })],
+          );
+          const legacyOrUnknown = refreshEnvironments.filter(
+            (environment) =>
+              (environment.summary?.contractVersion ?? 0) < USAGE_EXPLICIT_REFRESH_SINCE,
+          );
+          const legacyAnswered = legacyOrUnknown.flatMap((environment) =>
+            environment.summary === null
+              ? []
+              : [
+                  {
+                    environmentId: environment.environmentId,
+                    label: environment.label,
+                    summary: environment.summary,
+                  },
+                ],
+          );
+          const refreshToken = JSON.stringify([
+            makeUsageRefreshToken(legacyAnswered) ?? "unknown",
+            uuidv4(),
+          ]);
+          const fallbackRefreshes = legacyOrUnknown.map(async (environment) => {
+            const refreshed = await executeAtomQuery(
+              appAtomRegistry,
+              serverEnvironment.usageSummary({
+                environmentId: environment.environmentId,
+                input: { ...input, refreshToken },
+              }),
+              { reportFailure: false, refresh: true },
+            );
+            if (refreshed._tag === "Failure") return refreshed;
+            const baseAtom = serverEnvironment.usageSummary({
+              environmentId: environment.environmentId,
+              input,
+            });
+            if (appAtomRegistry.get(baseAtom).waiting) {
+              await executeAtomQuery(appAtomRegistry, baseAtom, {
+                reportFailure: false,
+              });
+            }
+            return executeAtomQuery(appAtomRegistry, baseAtom, {
+              reportFailure: false,
+              refresh: true,
+            });
+          });
+          return Promise.all([...explicitRefreshes, ...fallbackRefreshes]);
+        })
+        .then((results) => {
+          const nextState = completeUsageRefresh(
+            currentWindowKey.current,
+            currentRefreshId.current,
+            requestWindowKey,
+            requestId,
+            results.some((result) => result._tag === "Failure")
+              ? "Refresh failed. Showing the last successful usage snapshot."
+              : null,
+          );
+          if (nextState !== null) setManualRefreshState(nextState);
+        })
+        .catch(() => {
+          const nextState = completeUsageRefresh(
+            currentWindowKey.current,
+            currentRefreshId.current,
+            requestWindowKey,
+            requestId,
+            "Refresh failed. Showing the last successful usage snapshot.",
+          );
+          if (nextState !== null) setManualRefreshState(nextState);
+        });
+    },
+    [environments, rangeKey, refreshUsageRates, refreshUsageSummary],
+  );
+
+  const merged = useMemo(() => mergeUsage(answered, USAGE_CONTRACT_VERSION), [answered]);
 
   const answeredCount = environments.filter((environment) => environment.summary !== null).length;
   const stillReporting = environments.filter(
     (environment) => environment.summary === null && environment.error === null,
   ).length;
+  const isRefreshing =
+    environments.some((environment) => environment.isPending && environment.summary !== null) ||
+    (manualRefreshState.windowKey === rangeKey && manualRefreshState.refreshing);
 
   return {
     merged,
     environments,
     isPending: answeredCount === 0 && stillReporting > 0,
     isPartial: answeredCount > 0 && stillReporting > 0,
+    isRefreshing,
+    refreshError: manualRefreshState.windowKey === rangeKey ? manualRefreshState.error : null,
     refresh,
   };
 }

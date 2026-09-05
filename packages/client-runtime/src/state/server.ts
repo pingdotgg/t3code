@@ -955,6 +955,13 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerLifecycle>;
   }) => welcomeFamily(target.environmentId);
 
+  const usageSummary = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:server:usage-summary",
+    tag: WS_METHODS.serverGetUsageSummary,
+    staleTimeMs: 60_000,
+    refreshTrigger: ({ environmentId }) => usagePricesAtom(environmentId),
+  });
+
   return {
     configValueAtom,
     updateStateAtom,
@@ -1030,11 +1037,23 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     // A cold transcript scan is measured in seconds, so keep the result around
     // long enough that switching windows or re-rendering does not rescan.
-    usageSummary: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:server:usage-summary",
-      tag: WS_METHODS.serverGetUsageSummary,
+    usageSummary,
+    refreshUsageSummary: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:refresh-usage-summary",
+      tag: WS_METHODS.serverRefreshUsageSummary,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input]),
+      },
+      onSuccess: ({ environmentId, input }, registry) =>
+        Effect.sync(() => registry.refresh(usageSummary({ environmentId, input }))),
+    }),
+    // Fetched only when the thread view is opened; scans are cache-warm after
+    // the summary, so a minute of staleness matches it.
+    usageThreadBreakdown: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:usage-thread-breakdown",
+      tag: WS_METHODS.serverGetUsageThreadBreakdown,
       staleTimeMs: 60_000,
-      refreshTrigger: ({ environmentId }) => usagePricesAtom(environmentId),
     }),
     configProjection,
     welcome,
