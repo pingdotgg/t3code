@@ -55,7 +55,6 @@ export const DesktopIpcError = Schema.Union([
   DesktopIpcUnregistrationError,
 ]);
 export type DesktopIpcError = typeof DesktopIpcError.Type;
-export const isDesktopIpcError = Schema.is(DesktopIpcError);
 
 export interface DesktopIpcMethod<E, R> {
   readonly channel: string;
