@@ -487,8 +487,7 @@ const make = Effect.gen(function* () {
   /**
    * Recreates a thread's worktree from its branch when the directory has
    * disappeared. Provider sessions resume into the persisted cwd, so a missing
-   * worktree makes every later turn fail as a bogus "session not found".
-   * Best-effort: on failure the turn proceeds and reports the real error.
+   * worktree must be repaired or rebound before another turn can start.
    */
   const ensureThreadWorktree = Effect.fnUntraced(function* (thread: {
     readonly id: ThreadId;
@@ -498,15 +497,19 @@ const make = Effect.gen(function* () {
   }) {
     const { worktreePath, branch } = thread;
     if (!worktreePath || !branch) {
-      return;
+      return null;
     }
-    const exists = yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true));
-    if (exists) {
-      return;
+    const isDirectory = yield* fileSystem.stat(worktreePath).pipe(
+      Effect.map((worktreeStat) => worktreeStat.type === "Directory"),
+      Effect.catch((statError) => Effect.succeed(statError.reason._tag !== "NotFound")),
+    );
+    if (isDirectory) {
+      return null;
     }
+    const repairFailureDetail = `This thread's worktree no longer exists at ${worktreePath}, and T3 could not recreate branch '${branch}'. Restore that worktree or select another branch for this thread, then retry.`;
     const project = yield* resolveProject(thread.projectId);
     if (!project) {
-      return;
+      return repairFailureDetail;
     }
     const cwd = project.workspaceRoot;
     yield* Effect.logWarning("provider command reactor recreating missing worktree", {
@@ -516,8 +519,9 @@ const make = Effect.gen(function* () {
     });
     // A directory deleted without `git worktree remove` leaves an admin entry
     // that makes `git worktree add` refuse the path; prune clears it.
-    yield* gitWorkflow.pruneWorktrees({ cwd }).pipe(
+    return yield* gitWorkflow.pruneWorktrees({ cwd }).pipe(
       Effect.andThen(gitWorkflow.createWorktree({ cwd, refName: branch, path: worktreePath })),
+      Effect.as(null as string | null),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.failCause(cause)
@@ -525,7 +529,7 @@ const make = Effect.gen(function* () {
               threadId: thread.id,
               worktreePath,
               cause: Cause.pretty(cause),
-            }),
+            }).pipe(Effect.as(repairFailureDetail)),
       ),
     );
   });
@@ -1294,7 +1298,19 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* ensureThreadWorktree(thread);
+    const worktreeRepairFailure = yield* ensureThreadWorktree(thread);
+    if (worktreeRepairFailure !== null) {
+      yield* setThreadSessionErrorOnTurnStartFailure({
+        threadId: event.payload.threadId,
+        detail: worktreeRepairFailure,
+        createdAt: event.payload.createdAt,
+      }).pipe(
+        Effect.flatMap(() =>
+          appendTurnStartFailure("Provider turn start failed", worktreeRepairFailure),
+        ),
+      );
+      return;
+    }
 
     const isCompactCommand = isCompactCommandMessage(message);
     const nonCompactUserMessageCount = thread.messages.filter(

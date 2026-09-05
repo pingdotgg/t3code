@@ -10,6 +10,7 @@ import {
   resolveEffectiveEnvMode,
   resolveEnvModeLabel,
   resolveBranchTriggerLabel,
+  resolveBranchWorkspaceCwd,
   resolveBranchToolbarPrBranch,
   resolveBranchToolbarValue,
   resolveLockedWorkspaceLabel,
@@ -20,6 +21,7 @@ import {
   shouldIncludeBranchPickerItem,
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
+  shouldShowGitControls,
 } from "./BranchToolbar.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -469,6 +471,41 @@ describe("shouldShowComposerContextStrip", () => {
   });
 });
 
+describe("shouldShowGitControls", () => {
+  it("shows controls for the active Git workspace", () => {
+    expect(
+      shouldShowGitControls({
+        activeWorkspaceIsGitRepo: true,
+        hasActiveProject: true,
+        hasActiveWorktree: false,
+        projectCheckoutIsGitRepo: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("shows recovery controls when the worktree is missing but the project checkout is valid", () => {
+    expect(
+      shouldShowGitControls({
+        activeWorkspaceIsGitRepo: false,
+        hasActiveProject: true,
+        hasActiveWorktree: true,
+        projectCheckoutIsGitRepo: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("hides controls when neither workspace is a Git repository", () => {
+    expect(
+      shouldShowGitControls({
+        activeWorkspaceIsGitRepo: false,
+        hasActiveProject: true,
+        hasActiveWorktree: true,
+        projectCheckoutIsGitRepo: false,
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("resolveEffectiveEnvMode", () => {
   it("treats draft threads already attached to a worktree as current-checkout mode", () => {
     expect(
@@ -708,6 +745,38 @@ describe("resolveBranchSelectionTarget", () => {
       nextWorktreePath: "/repo/.t3/worktrees/feature-a",
       reuseExistingWorktree: false,
     });
+  });
+});
+
+describe("resolveBranchWorkspaceCwd", () => {
+  it("keeps using an available worktree", () => {
+    expect(
+      resolveBranchWorkspaceCwd({
+        activeProjectCwd: "/repo",
+        activeWorktreePath: "/repo/.t3/worktrees/feature-a",
+        activeWorktreeIsRepo: true,
+      }),
+    ).toBe("/repo/.t3/worktrees/feature-a");
+  });
+
+  it("uses the project checkout when the thread worktree is unavailable", () => {
+    expect(
+      resolveBranchWorkspaceCwd({
+        activeProjectCwd: "/repo",
+        activeWorktreePath: "/repo/.t3/worktrees/deleted",
+        activeWorktreeIsRepo: false,
+      }),
+    ).toBe("/repo");
+  });
+
+  it("uses the project checkout for a local thread", () => {
+    expect(
+      resolveBranchWorkspaceCwd({
+        activeProjectCwd: "/repo",
+        activeWorktreePath: null,
+        activeWorktreeIsRepo: null,
+      }),
+    ).toBe("/repo");
   });
 });
 
