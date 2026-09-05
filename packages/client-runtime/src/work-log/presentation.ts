@@ -313,6 +313,13 @@ export function workLogEntryIsLocalCodeSearch(entry: WorkLogPresentationEntry): 
 }
 
 export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupAction {
+  if (
+    entry.sourceActivityKind === "approval.requested" ||
+    entry.sourceActivityKind === "approval.resolved" ||
+    entry.sourceActivityKind === "provider.approval.respond.failed"
+  ) {
+    return "update";
+  }
   if (resolveWorkEntryToolPresentation(entry)?.icon === "browser") return "browser";
   if (
     entry.requestKind === "file-read" ||

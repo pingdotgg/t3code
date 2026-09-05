@@ -4,13 +4,20 @@
  * Every server keeps its own `settings.json`, but some keys are user
  * preferences that only live on the server because the server has to act on
  * them (auto-settlement runs with no client attached). A user does not want
- * those to differ per machine. Clients write these keys to every connected
- * environment, and warn when a connected environment still holds a different
- * value so the user can push their current value out.
+ * those to differ per machine. Clients write these keys to every shared-settings
+ * sync target, and warn when another target still holds a different value so
+ * the user can push their current value out.
  */
-import type { EnvironmentId, ServerSettings, ServerSettingsPatch } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ExecutionEnvironmentCapabilities,
+  ServerSettings,
+  ServerSettingsPatch,
+} from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import * as Struct from "effect/Struct";
+
+import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 
 /** Server keys that hold a user preference rather than machine config. */
 export const SHARED_SERVER_SETTING_KEYS = [
@@ -50,18 +57,37 @@ export function pickSharedServerSettings(settings: ServerSettings): ServerSettin
   return Struct.pick(settings, SHARED_SERVER_SETTING_KEYS);
 }
 
+/**
+ * Whether an environment can participate in shared-settings sync right now.
+ * Auto-settlement is the newest feature backed by a shared key, so a server
+ * advertising `threadAutoSettlement` can hold every shared key.
+ */
+export function supportsSharedSettingsSync(environment: {
+  readonly connection: { readonly phase: EnvironmentConnectionPhase };
+  readonly serverConfig: {
+    readonly environment: {
+      readonly capabilities: Pick<ExecutionEnvironmentCapabilities, "threadAutoSettlement">;
+    };
+  } | null;
+}): boolean {
+  return (
+    environment.connection.phase === "connected" &&
+    environment.serverConfig?.environment.capabilities.threadAutoSettlement === true
+  );
+}
+
 export interface SharedSettingsEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  readonly connected: boolean;
+  readonly syncEligible: boolean;
   readonly settings: ServerSettings | null;
 }
 
 /**
- * Connected environments whose shared settings differ from the primary
- * environment's. Offline environments are skipped: nothing can be read from
- * or written to them, and the warning would never clear. With no primary
- * settings loaded there is nothing to compare against, so nothing is
+ * Shared-settings sync targets whose values differ from the primary
+ * environment's. Other environments are skipped: nothing can be read from or
+ * written to them, or their server cannot hold every shared key. With no
+ * primary settings loaded there is nothing to compare against, so nothing is
  * reported. Callers must pass the real loaded settings, never a default
  * fallback, or "apply to all" would push defaults over real values.
  */
@@ -77,7 +103,7 @@ export function findSharedSettingsMismatches(input: {
   return input.environments.flatMap((environment) => {
     if (
       environment.environmentId === input.primaryEnvironmentId ||
-      !environment.connected ||
+      !environment.syncEligible ||
       environment.settings === null
     ) {
       return [];
