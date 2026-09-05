@@ -112,7 +112,8 @@ describe("subscription widget snapshots", () => {
       ]),
       deepLink,
     );
-    expect(snapshot.rows[0]).toMatchObject({ usedPercent: null, window: "Limits unavailable" });
+    expect(snapshot.rows[0]).toMatchObject({ window: "Limits unavailable" });
+    expect(snapshot.rows[0]).not.toHaveProperty("usedPercent");
     expect(JSON.stringify(snapshot)).not.toContain("token secret");
     expect(
       buildSubscriptionUsageSnapshot(

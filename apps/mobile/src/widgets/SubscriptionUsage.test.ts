@@ -67,4 +67,28 @@ describe("iOS subscription widget", () => {
     expect(tree).not.toContain("Resets tomorrow");
     expect(tree).toContain("90% used");
   });
+  it("renders an omitted quota as unavailable rather than zero", () => {
+    const tree = JSON.stringify(
+      SubscriptionUsage(
+        {
+          ...snapshot,
+          rows: [
+            {
+              label: "Claude",
+              window: "No subscription limits",
+              resetLabel: "Open app for details",
+              checkedAt: now,
+              expiresAt: 0,
+            },
+          ],
+          totalRows: 1,
+        },
+        { date: new Date(now), widgetFamily: "systemSmall", configuration: undefined },
+      ),
+    );
+    expect(tree).toContain("—");
+    expect(tree).toContain("No subscription limits");
+    expect(tree).not.toContain("ProgressView");
+    expect(tree).not.toContain("0% used");
+  });
 });

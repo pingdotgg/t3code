@@ -31,13 +31,13 @@ export function SubscriptionUsage(
         </Text>
         <Spacer />
         <Text modifiers={[font({ size: 12 }), foregroundStyle("primary")]}>
-          {row.usedPercent === null ? "—" : `${row.usedPercent}% used`}
+          {typeof row.usedPercent !== "number" ? "—" : `${row.usedPercent}% used`}
         </Text>
       </HStack>
       <Text modifiers={[font({ size: 10 }), foregroundStyle("secondary"), lineLimit(1)]}>
         {row.window}
       </Text>
-      {row.usedPercent !== null ? (
+      {typeof row.usedPercent === "number" ? (
         <ProgressView
           value={row.usedPercent / 100}
           modifiers={[
@@ -60,7 +60,7 @@ export function SubscriptionUsage(
       <Text
         modifiers={[font({ size: 14, weight: "bold" }), foregroundStyle("primary"), lineLimit(1)]}
       >
-        Subscription usage
+        {environment.widgetFamily === "systemSmall" ? "Usage limits" : "Subscription usage"}
       </Text>
       {visible.length === 0 ? (
         <Text modifiers={[font({ size: 12 }), foregroundStyle("secondary")]}>
@@ -77,9 +77,14 @@ export function SubscriptionUsage(
       <Spacer minLength={0} />
       <Text modifiers={[font({ size: 10 }), foregroundStyle("secondary"), lineLimit(1)]}>
         {visible.length > 0
-          ? `As of ${new Date(Math.min(...visible.map((row) => row.checkedAt))).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}${props.totalRows > visible.length ? ` · +${props.totalRows - visible.length} more` : ""}`
+          ? `As of ${new Date(Math.min(...visible.map((row) => row.checkedAt))).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
           : "Tap to open Usage"}
       </Text>
+      {props.totalRows > visible.length ? (
+        <Text modifiers={[font({ size: 10 }), foregroundStyle("secondary"), lineLimit(1)]}>
+          {`+${props.totalRows - visible.length} more`}
+        </Text>
+      ) : null}
     </VStack>
   );
 }
