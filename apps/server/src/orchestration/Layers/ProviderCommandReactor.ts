@@ -1,5 +1,8 @@
 import {
   type ChatAttachment,
+  type ApprovalRequestId,
+  type ProviderRequestFailureReason,
+  OrchestrationRequestResponseFailedPayload,
   CommandId,
   EventId,
   type ModelSelection,
@@ -243,47 +246,13 @@ export function providerErrorLabelFromInstanceHint(input: {
   );
 }
 
-function findProviderAdapterRequestError(
+function requestFailureReason(
   cause: Cause.Cause<ProviderServiceError>,
-): ProviderAdapterRequestError | undefined {
-  const failReason = cause.reasons.find(Cause.isFailReason);
-  return isProviderAdapterRequestError(failReason?.error) ? failReason.error : undefined;
-}
-
-function isUnknownPendingApprovalRequestError(cause: Cause.Cause<ProviderServiceError>): boolean {
-  const error = findProviderAdapterRequestError(cause);
-  if (error) {
-    const detail = error.detail.toLowerCase();
-    return (
-      detail.includes("unknown pending approval request") ||
-      detail.includes("unknown pending permission request") ||
-      detail.includes("unknown pending codex approval request")
-    );
-  }
-  const message = Cause.pretty(cause).toLowerCase();
-  return (
-    message.includes("unknown pending approval request") ||
-    message.includes("unknown pending permission request") ||
-    message.includes("unknown pending codex approval request")
-  );
-}
-
-function isUnknownPendingUserInputRequestError(cause: Cause.Cause<ProviderServiceError>): boolean {
-  const error = findProviderAdapterRequestError(cause);
-  if (error) {
-    const detail = error.detail.toLowerCase();
-    return (
-      detail.includes("unknown pending user-input request") ||
-      detail.includes("unknown pending user input request") ||
-      detail.includes("unknown pending codex user input request")
-    );
-  }
-  const message = Cause.pretty(cause).toLowerCase();
-  return (
-    message.includes("unknown pending user-input request") ||
-    message.includes("unknown pending user input request") ||
-    message.includes("unknown pending codex user input request")
-  );
+): ProviderRequestFailureReason {
+  const failure = cause.reasons.find(Cause.isFailReason);
+  return isProviderAdapterRequestError(failure?.error)
+    ? (failure.error.reason ?? "provider-error")
+    : "provider-error";
 }
 
 function stalePendingRequestDetail(
@@ -348,20 +317,29 @@ const make = Effect.gen(function* () {
   const compactingThreadIds = new Set<ThreadId>();
   const stoppingThreadIds = new Set<ThreadId>();
 
-  const appendProviderFailureActivity = (input: {
-    readonly threadId: ThreadId;
-    readonly kind:
-      | "provider.turn.start.failed"
-      | "provider.turn.interrupt.failed"
-      | "provider.approval.respond.failed"
-      | "provider.user-input.respond.failed"
-      | "provider.session.stop.failed";
-    readonly summary: string;
-    readonly detail: string;
-    readonly turnId: TurnId | null;
-    readonly createdAt: string;
-    readonly requestId?: string;
-  }) =>
+  const appendProviderFailureActivity = (
+    input: {
+      readonly threadId: ThreadId;
+      readonly summary: string;
+      readonly detail: string;
+      readonly turnId: TurnId | null;
+      readonly createdAt: string;
+    } & (
+      | {
+          readonly kind: "provider.approval.respond.failed" | "provider.user-input.respond.failed";
+          readonly requestId: ApprovalRequestId;
+          readonly reason: ProviderRequestFailureReason;
+        }
+      | {
+          readonly kind:
+            | "provider.turn.start.failed"
+            | "provider.turn.interrupt.failed"
+            | "provider.session.stop.failed";
+          readonly requestId?: string;
+          readonly reason?: never;
+        }
+    ),
+  ) =>
     Effect.all({
       commandId: serverCommandId("provider-failure-activity"),
       eventId: serverEventId(),
@@ -376,10 +354,18 @@ const make = Effect.gen(function* () {
             tone: "error",
             kind: input.kind,
             summary: input.summary,
-            payload: {
-              detail: input.detail,
-              ...(input.requestId ? { requestId: input.requestId } : {}),
-            },
+            payload:
+              input.kind === "provider.approval.respond.failed" ||
+              input.kind === "provider.user-input.respond.failed"
+                ? OrchestrationRequestResponseFailedPayload.make({
+                    detail: input.detail,
+                    requestId: input.requestId,
+                    reason: input.reason,
+                  })
+                : {
+                    detail: input.detail,
+                    ...(input.requestId ? { requestId: input.requestId } : {}),
+                  },
             turnId: input.turnId,
             createdAt: input.createdAt,
           },
@@ -1553,6 +1539,7 @@ const make = Effect.gen(function* () {
         kind: "provider.approval.respond.failed",
         summary: "Provider approval response failed",
         detail: "No active provider session is bound to this thread.",
+        reason: "provider-error",
         turnId: null,
         createdAt: event.payload.createdAt,
         requestId: event.payload.requestId,
@@ -1566,19 +1553,22 @@ const make = Effect.gen(function* () {
         decision: event.payload.decision,
       })
       .pipe(
-        Effect.catchCause((cause) =>
-          appendProviderFailureActivity({
+        Effect.catchCause((cause) => {
+          const reason = requestFailureReason(cause);
+          return appendProviderFailureActivity({
             threadId: event.payload.threadId,
             kind: "provider.approval.respond.failed",
             summary: "Provider approval response failed",
-            detail: isUnknownPendingApprovalRequestError(cause)
-              ? stalePendingRequestDetail("approval", event.payload.requestId)
-              : Cause.pretty(cause),
+            reason,
+            detail:
+              reason === "request-not-found"
+                ? stalePendingRequestDetail("approval", event.payload.requestId)
+                : Cause.pretty(cause),
             turnId: null,
             createdAt: event.payload.createdAt,
             requestId: event.payload.requestId,
-          }),
-        ),
+          });
+        }),
       );
   });
 
@@ -1597,6 +1587,7 @@ const make = Effect.gen(function* () {
           kind: "provider.user-input.respond.failed",
           summary: "Provider user input response failed",
           detail: "No active provider session is bound to this thread.",
+          reason: "provider-error",
           turnId: null,
           createdAt: event.payload.createdAt,
           requestId: event.payload.requestId,
@@ -1610,19 +1601,22 @@ const make = Effect.gen(function* () {
           answers: event.payload.answers,
         })
         .pipe(
-          Effect.catchCause((cause) =>
-            appendProviderFailureActivity({
+          Effect.catchCause((cause) => {
+            const reason = requestFailureReason(cause);
+            return appendProviderFailureActivity({
               threadId: event.payload.threadId,
               kind: "provider.user-input.respond.failed",
               summary: "Provider user input response failed",
-              detail: isUnknownPendingUserInputRequestError(cause)
-                ? stalePendingRequestDetail("user-input", event.payload.requestId)
-                : Cause.pretty(cause),
+              reason,
+              detail:
+                reason === "request-not-found"
+                  ? stalePendingRequestDetail("user-input", event.payload.requestId)
+                  : Cause.pretty(cause),
               turnId: null,
               createdAt: event.payload.createdAt,
               requestId: event.payload.requestId,
-            }),
-          ),
+            });
+          }),
         );
     },
   );

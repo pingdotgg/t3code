@@ -1,5 +1,7 @@
+import * as Option from "effect/Option";
 import {
   type AgentSessionImportSource,
+  ApprovalRequestId,
   CheckpointRef,
   EventId,
   MessageId,
@@ -25,6 +27,8 @@ import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts"
 import { encodeThreadDetailPageCursor } from "../threadDetailCursor.ts";
 import { projectThreadDetailSnapshot } from "../ActivityPayloadProjection.ts";
 import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
@@ -2710,11 +2714,11 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         const ids = new Set(
           detailWithPinnedRequests.value.activities.map((activity) => activity.id),
         );
-        assert.equal(detailWithPinnedRequests.value.activities.length, 503);
+        assert.equal(detailWithPinnedRequests.value.activities.length, 502);
         assert.equal(ids.has(asEventId("approval-old")), true);
         assert.equal(ids.has(asEventId("user-input-old")), true);
         assert.equal(ids.has(asEventId("user-input-closed")), false);
-        assert.equal(ids.has(asEventId("user-input-tied-z-request")), true);
+        assert.equal(ids.has(asEventId("user-input-tied-z-request")), false);
       }
 
       const windowWithPinnedRequests = yield* snapshotQuery.getThreadDetailSnapshot(threadW, {
@@ -2725,11 +2729,11 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         const ids = new Set(
           windowWithPinnedRequests.value.thread.activities.map((activity) => activity.id),
         );
-        assert.equal(windowWithPinnedRequests.value.thread.activities.length, 503);
+        assert.equal(windowWithPinnedRequests.value.thread.activities.length, 502);
         assert.equal(ids.has(asEventId("approval-old")), true);
         assert.equal(ids.has(asEventId("user-input-old")), true);
         assert.equal(ids.has(asEventId("user-input-closed")), false);
-        assert.equal(ids.has(asEventId("user-input-tied-z-request")), true);
+        assert.equal(ids.has(asEventId("user-input-tied-z-request")), false);
       }
 
       const fullSnapshot = yield* snapshotQuery.getThreadDetailSnapshot(threadW);
@@ -2785,6 +2789,162 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         });
       }
     }),
+  );
+
+  it.effect.each([
+    { requestKind: "approval", closeKind: "approval.resolved", reason: undefined, closed: true },
+    {
+      requestKind: "approval",
+      closeKind: "provider.approval.respond.failed",
+      reason: "request-not-found",
+      closed: true,
+    },
+    {
+      requestKind: "user-input",
+      closeKind: "user-input.resolved",
+      reason: undefined,
+      closed: true,
+    },
+    {
+      requestKind: "user-input",
+      closeKind: "provider.user-input.respond.failed",
+      reason: "request-not-found",
+      closed: true,
+    },
+    {
+      requestKind: "user-input",
+      closeKind: "provider.user-input.respond.failed",
+      reason: "provider-error",
+      closed: false,
+    },
+    {
+      requestKind: "user-input",
+      closeKind: "provider.user-input.respond.failed",
+      reason: null,
+      closed: false,
+    },
+    {
+      requestKind: "user-input",
+      closeKind: "provider.user-input.respond.failed",
+      reason: "future-reason",
+      closed: false,
+    },
+    {
+      requestKind: "user-input",
+      closeKind: "provider.user-input.respond.failed",
+      reason: undefined,
+      closed: true,
+    },
+  ])(
+    "keeps $closeKind with reason $reason paired across activity limits and turn windows",
+    (input) =>
+      Effect.gen(function* () {
+        yield* seedFanOutThread();
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`DELETE FROM projection_thread_activities`;
+        yield* sql`
+        WITH RECURSIVE activity_rows(sequence) AS (
+          SELECT 1 UNION ALL SELECT sequence + 1 FROM activity_rows WHERE sequence < 501
+        )
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        )
+        SELECT printf('work-%04d', sequence), 'thread-w', 'turn-5', 'tool',
+          'tool.completed', 'Work completed', '{}', sequence, '2026-03-01T00:04:00.000Z'
+        FROM activity_rows
+      `;
+        const requestedPayload = {
+          requestId: "paired-request",
+          requestKind: "command",
+          responseMode: "message",
+          questions: [{ id: "answer", header: "Answer", question: "Continue?", options: [] }],
+        };
+        const closedPayload = {
+          requestId: "paired-request",
+          ...(input.reason !== undefined ? { reason: input.reason } : {}),
+          detail:
+            input.reason === "request-not-found"
+              ? "The callback has ended."
+              : `Unknown pending ${input.requestKind} request`,
+        };
+        yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        ) VALUES
+          ('paired-request', 'thread-w', 'turn-5', 'approval', ${`${input.requestKind}.requested`},
+            'Request opened', ${encodeJson(requestedPayload)}, 502, '2026-03-01T00:04:00.000Z'),
+          ('paired-terminal', 'thread-w', 'turn-1', 'info', ${input.closeKind},
+            'Reply result', ${encodeJson(closedPayload)}, NULL, '2026-03-01T00:00:00.000Z')
+      `;
+
+        const details = [
+          yield* snapshotQuery.getThreadDetailById(threadW),
+          (yield* snapshotQuery.getThreadDetailSnapshot(threadW)).pipe(
+            Option.map((snapshot) => snapshot.thread),
+          ),
+          (yield* snapshotQuery.getThreadDetailSnapshot(threadW, { turnLimit: 1 })).pipe(
+            Option.map((snapshot) => snapshot.thread),
+          ),
+        ];
+        for (const detail of details) {
+          const thread = Option.getOrThrow(detail);
+          const ids = new Set(thread.activities.map((activity) => activity.id));
+          assert.equal(ids.has(asEventId("paired-request")), true);
+          assert.equal(ids.has(asEventId("paired-terminal")), input.closed);
+          assert.equal(thread.activities.length, input.closed ? 501 : 500);
+        }
+        if (input.requestKind === "user-input") {
+          const request = yield* snapshotQuery.getUserInputActivity({
+            threadId: threadW,
+            requestId: ApprovalRequestId.make("paired-request"),
+          });
+          assert.equal(
+            Option.getOrThrow(request).kind,
+            input.closed ? input.closeKind : "user-input.requested",
+          );
+        }
+        const filtered = yield* snapshotQuery.getThreadDetailById(threadW, {
+          activityKinds: ["approval.requested", "user-input.requested"],
+        });
+        assert.deepEqual(
+          Option.getOrThrow(filtered).activities.map((activity) => activity.id),
+          ["paired-request"],
+        );
+      }),
+  );
+
+  it.effect(
+    "checks terminal state once when the loaded activity window contains many requests",
+    () =>
+      Effect.gen(function* () {
+        yield* seedFanOutThread();
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`DELETE FROM projection_thread_activities`;
+        yield* sql`
+        WITH RECURSIVE requests(sequence) AS (
+          SELECT 1 UNION ALL SELECT sequence + 1 FROM requests WHERE sequence < 500
+        )
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        )
+        SELECT printf('request-%04d', sequence), 'thread-w', 'turn-5', 'approval',
+          'user-input.requested', 'Question', json_object('requestId', printf('request-%04d', sequence)),
+          sequence, '2026-03-01T00:04:00.000Z'
+        FROM requests
+      `;
+        const requestReads = makeSqlStatementCounter();
+        const requests = yield* snapshotQuery
+          .getThreadDetailById(threadW)
+          .pipe(Effect.withTracer(requestReads.tracer));
+        assert.equal(Option.getOrThrow(requests).activities.length, 500);
+
+        yield* sql`UPDATE projection_thread_activities SET kind = 'tool.completed'`;
+        const toolReads = makeSqlStatementCounter();
+        yield* snapshotQuery.getThreadDetailById(threadW).pipe(Effect.withTracer(toolReads.tracer));
+        assert.equal(requestReads.count(), toolReads.count() + 1);
+      }),
   );
 
   it.effect("a thread with no turns returns its content unwindowed on the first page", () =>

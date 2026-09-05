@@ -5036,6 +5036,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           provider: PROVIDER,
           method: "item/requestApproval/decision",
           detail: `Unknown pending approval request: ${requestId}`,
+          reason: "request-not-found",
         });
       }
 
@@ -5054,6 +5055,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         provider: PROVIDER,
         method: "item/tool/respondToUserInput",
         detail: `Unknown pending user-input request: ${requestId}`,
+        reason: "request-not-found",
       });
     }
 

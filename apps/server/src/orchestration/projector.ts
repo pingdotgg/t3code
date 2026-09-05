@@ -1,3 +1,4 @@
+import { isRequestResponseStale } from "@t3tools/shared/requestActivity";
 import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
 import {
   isImportedAgentSessionMessageId,
@@ -42,26 +43,37 @@ type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
 
-// Async questions can stay open while the agent produces more activity.
-// Match the database snapshot's pending-question retention.
+// Async questions can stay open beyond the activity window. A retained request
+// must keep its terminal activity too, even when their sequences differ.
 function retainThreadActivities(activities: OrchestrationThread["activities"]) {
   const recentStart = activities.length - 500;
   if (recentStart <= 0) return activities;
   const pending = new Map<string, OrchestrationThread["activities"][number]>();
+  const terminals = new Map<string, OrchestrationThread["activities"][number]>();
   for (const activity of activities) {
     if (!Predicate.isObject(activity.payload)) continue;
     const requestId = activity.payload.requestId;
     if (typeof requestId !== "string") continue;
     if (activity.kind === "user-input.requested" && activity.payload.responseMode === "message") {
-      pending.set(requestId, activity);
-    } else if (activity.kind === "user-input.resolved") {
+      if (!terminals.has(requestId)) pending.set(requestId, activity);
+    } else if (
+      activity.kind === "approval.resolved" ||
+      activity.kind === "user-input.resolved" ||
+      isRequestResponseStale(activity)
+    ) {
+      terminals.set(requestId, activity);
       pending.delete(requestId);
     }
   }
-  const pendingActivities = new Set(pending.values());
-  return activities.filter(
-    (activity, index) => index >= recentStart || pendingActivities.has(activity),
-  );
+  const retained = new Set([...activities.slice(recentStart), ...pending.values()]);
+  for (const activity of retained) {
+    if (activity.kind !== "approval.requested" && activity.kind !== "user-input.requested")
+      continue;
+    const requestId = Predicate.isObject(activity.payload) ? activity.payload.requestId : undefined;
+    const terminal = typeof requestId === "string" ? terminals.get(requestId) : undefined;
+    if (terminal) retained.add(terminal);
+  }
+  return activities.filter((activity) => retained.has(activity));
 }
 
 function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error") {

@@ -176,6 +176,7 @@ describe("OrchestrationEngine", () => {
             createdAt: now(),
             activity: {
               id: EventId.make("async-question"),
+              sequence: 1,
               kind: "user-input.requested",
               summary: "User input requested",
               tone: "info",
@@ -212,6 +213,7 @@ describe("OrchestrationEngine", () => {
                 createdAt,
                 activity: {
                   id: EventId.make(`${prefix}-${index}`),
+                  sequence: index + 2,
                   kind: "tool.completed",
                   summary: "Work continued",
                   payload: {},

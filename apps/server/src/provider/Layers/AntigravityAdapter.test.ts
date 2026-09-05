@@ -302,6 +302,28 @@ const layer = ServerConfig.layerTest(process.cwd(), {
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
 it.layer(layer)("AntigravityAdapter", (it) => {
+  it.effect("marks missing permission and question callbacks as unavailable", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+      const requestId = ApprovalRequestId.make("missing-request");
+      const permission = yield* h.adapter
+        .respondToRequest(threadId, requestId, "accept")
+        .pipe(Effect.flip);
+      const question = yield* h.adapter
+        .respondToUserInput(threadId, requestId, { choice: "yes" })
+        .pipe(Effect.flip);
+      expect(permission).toMatchObject({
+        _tag: "ProviderAdapterRequestError",
+        reason: "request-not-found",
+      });
+      expect(question).toMatchObject({
+        _tag: "ProviderAdapterRequestError",
+        reason: "request-not-found",
+      });
+    }),
+  );
+
   it.effect(
     "runs native auth, resume, models, commands, and streaming through the ACP transport",
     () =>

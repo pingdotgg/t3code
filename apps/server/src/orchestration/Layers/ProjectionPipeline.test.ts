@@ -2473,7 +2473,8 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             summary: "Provider approval response failed",
             payload: {
               requestId: "approval-request-stale-1",
-              detail: "Unknown pending permission request: approval-request-stale-1",
+              detail: "The callback has ended.",
+              reason: "request-not-found",
             },
             turnId: null,
             createdAt: "2026-02-26T12:30:03.000Z",
