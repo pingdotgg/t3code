@@ -236,6 +236,8 @@ import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
+import { SidebarPullSurface } from "./sidebar/SidebarPullSurface";
+import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import {
@@ -4373,8 +4375,10 @@ export default function Sidebar() {
     (projectGroups.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
   return (
-    <>
-      <SidebarChromeHeader isElectron={isElectron} />
+    <SidebarPullSurface
+      header={<SidebarChromeHeader isElectron={isElectron} />}
+      footer={<SidebarChromeFooter />}
+    >
       <SidebarContent
         className="min-h-full"
         fixedHeader={
@@ -4927,7 +4931,6 @@ export default function Sidebar() {
           ) : null}
         </SidebarGroup>
       </SidebarContent>
-      <SidebarChromeFooter />
-    </>
+    </SidebarPullSurface>
   );
 }

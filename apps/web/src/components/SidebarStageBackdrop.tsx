@@ -183,7 +183,7 @@ function NightlySkyArt({ compact = false }: { compact?: boolean }) {
             strokeWidth="0.6"
           >
             {NIGHTLY_SPARKLES.map((sparkle) => (
-              <g key={`${sparkle.x}-${sparkle.y}`}>
+              <g className="stage-night-sparkle" key={`${sparkle.x}-${sparkle.y}`}>
                 <path d={`M${sparkle.x - 1.5} ${sparkle.y}H${sparkle.x + 1.5}`} />
                 <path d={`M${sparkle.x} ${sparkle.y - 1.5}V${sparkle.y + 1.5}`} />
               </g>
