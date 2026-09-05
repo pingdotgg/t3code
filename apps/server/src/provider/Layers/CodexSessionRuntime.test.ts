@@ -18,6 +18,7 @@ import {
   isRecoverableThreadResumeError,
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
+  shouldSuppressForeignConversationNotification,
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
@@ -689,6 +690,61 @@ describe("makeMemoryConsolidationNotificationFilter", () => {
           turnId: "later-turn",
         },
       }),
+      false,
+    );
+  });
+});
+
+describe("shouldSuppressForeignConversationNotification", () => {
+  it("suppresses background memory output without waiting for thread/started", () => {
+    const leakedDelta = {
+      method: "item/agentMessage/delta" as const,
+      params: {
+        delta: "internal memory update",
+        itemId: "memory-message",
+        threadId: "memory-thread",
+        turnId: "memory-turn",
+      },
+    };
+
+    NodeAssert.equal(
+      shouldSuppressForeignConversationNotification(leakedDelta, "root-thread"),
+      true,
+    );
+    NodeAssert.equal(
+      shouldSuppressForeignConversationNotification(
+        {
+          method: "item/completed",
+          params: {
+            completedAtMs: 0,
+            item: {
+              id: "memory-message",
+              text: "internal memory update",
+              type: "agentMessage",
+            },
+            threadId: "memory-thread",
+            turnId: "memory-turn",
+          },
+        },
+        "root-thread",
+      ),
+      true,
+    );
+    NodeAssert.equal(
+      shouldSuppressForeignConversationNotification(
+        { ...leakedDelta, params: { ...leakedDelta.params, threadId: "root-thread" } },
+        "root-thread",
+      ),
+      false,
+    );
+    NodeAssert.equal(
+      shouldSuppressForeignConversationNotification(
+        {
+          method: "serverRequest/resolved",
+          params: { requestId: "memory-approval", threadId: "memory-thread" },
+        },
+        "root-thread",
+      ),
       false,
     );
   });

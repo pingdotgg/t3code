@@ -778,6 +778,28 @@ function readNotificationThreadId(notification: CodexServerNotification): string
   }
 }
 
+/**
+ * A notification addressed to another provider thread cannot belong in this
+ * session's chat. This does not depend on seeing that thread's lifecycle
+ * start first: background Codex threads can already be running when a session
+ * subscribes and begin with item deltas.
+ *
+ * `serverRequest/resolved` is the one cross-thread notification the parent
+ * owns because it clears approval correlation state.
+ */
+export function shouldSuppressForeignConversationNotification(
+  notification: CodexServerNotification,
+  rootThreadId: string | undefined,
+): boolean {
+  const notificationThreadId = readNotificationThreadId(notification);
+  return (
+    notificationThreadId !== undefined &&
+    rootThreadId !== undefined &&
+    notificationThreadId !== rootThreadId &&
+    notification.method !== "serverRequest/resolved"
+  );
+}
+
 export function makeMemoryConsolidationNotificationFilter(): (
   notification: CodexServerNotification,
 ) => boolean {
@@ -1749,25 +1771,21 @@ export const makeCodexSessionRuntime = (
           return;
         }
 
-        // Suppression applies to receiver-map children (v1) AND to any
-        // conversation that is not the root thread. The live capture
-        // (codexMultiAgentWire.json) shows a child's thread/status/changed
-        // arriving BEFORE anything registers the child — pre-registration
-        // lifecycle must not reach the parent path, where the adapter maps
-        // thread/* onto parent session state. Root-id-known guard keeps the
-        // root's own early notifications flowing during session open.
+        // Receiver-map children (v1) retain their existing lifecycle routing.
+        // Any known notification addressed to a different provider thread is
+        // wholly foreign to the parent chat. This identity boundary also
+        // covers background memory work that begins emitting item deltas
+        // without a thread/started notification on this subscription.
+        // Registered v2 children were intercepted above, and unknown methods
+        // still fall through because readNotificationThreadId only recognizes
+        // protocol methods whose ownership shape we know.
         const suppressRootId = currentProviderThreadId(yield* Ref.get(sessionRef));
-        const foreignConversation = (() => {
-          const providerConversationId = readNotificationThreadId(notification);
-          return (
-            providerConversationId !== undefined &&
-            suppressRootId !== undefined &&
-            providerConversationId !== suppressRootId
-          );
-        })();
+        const suppressForeignConversationNotification =
+          shouldSuppressForeignConversationNotification(notification, suppressRootId);
         if (
-          (childParentTurnId !== undefined || foreignConversation) &&
-          shouldSuppressChildConversationNotification(notification.method)
+          (childParentTurnId !== undefined &&
+            shouldSuppressChildConversationNotification(notification.method)) ||
+          suppressForeignConversationNotification
         ) {
           // Stop-everything must not depend on registration timing: a
           // child's turn/started can arrive before the subAgentActivity that

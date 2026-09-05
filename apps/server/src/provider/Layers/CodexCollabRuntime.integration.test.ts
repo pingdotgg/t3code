@@ -62,6 +62,30 @@ function buildScript() {
         },
       },
     },
+    // A real memory leak began at these item notifications without any
+    // thread/started lifecycle notification for the memory thread.
+    {
+      method: "item/agentMessage/delta",
+      params: {
+        delta: "internal memory update",
+        itemId: "memory-message",
+        threadId: MEMORY,
+        turnId: "memory-turn",
+      },
+    },
+    {
+      method: "item/completed",
+      params: {
+        completedAtMs: 0,
+        item: {
+          id: "memory-message",
+          text: "internal memory update",
+          type: "agentMessage",
+        },
+        threadId: MEMORY,
+        turnId: "memory-turn",
+      },
+    },
     // Child terminal lifecycle AFTER the receiver map knows the children —
     // pre-fix, the legacy suppressor dropped these before interception saw
     // them, so no synthetic agent events were emitted.
@@ -467,6 +491,16 @@ describe("CodexSessionRuntime collab integration", () => {
         leaked.map((event) => event.method),
         [],
         "child thread/* lifecycle must not appear as parent events",
+      );
+
+      const leakedMemory = events.filter((event) => {
+        const payload = event.payload as { threadId?: string } | undefined;
+        return payload?.threadId === MEMORY;
+      });
+      assert.deepEqual(
+        leakedMemory.map((event) => event.method),
+        [],
+        "memory output must not appear without a preceding thread/started notification",
       );
 
       yield* runtime.close;
