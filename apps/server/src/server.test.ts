@@ -7,6 +7,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import {
   AuthAccessTokenType,
   AuthAdministrativeScopes,
+  AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   AuthPreviewOperateScope,
   AuthStandardClientScopes,
