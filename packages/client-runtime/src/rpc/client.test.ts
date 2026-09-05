@@ -469,6 +469,7 @@ describe("environment RPC", () => {
     Effect.gen(function* () {
       const defect = new Error("subscription invariant failed");
       let expectedFailureCount = 0;
+      const observedDefects: unknown[] = [];
       const client = {
         [WS_METHODS.subscribeTerminalEvents]: () => Stream.die(defect),
       } as unknown as WsRpcProtocolClient;
@@ -479,6 +480,10 @@ describe("environment RPC", () => {
         WS_METHODS.subscribeTerminalEvents,
         {},
         {
+          onDefect: (cause) =>
+            Effect.sync(() => {
+              observedDefects.push(Cause.squash(cause));
+            }),
           onExpectedFailure: () =>
             Effect.sync(() => {
               expectedFailureCount += 1;
@@ -495,6 +500,7 @@ describe("environment RPC", () => {
         expect(Cause.hasDies(exit.cause)).toBe(true);
       }
       expect(expectedFailureCount).toBe(0);
+      expect(observedDefects).toEqual([defect]);
     }),
   );
 });
