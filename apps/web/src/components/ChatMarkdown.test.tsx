@@ -2,9 +2,15 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
+import ReactMarkdown from "react-markdown";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
+import remarkBreaks from "remark-breaks";
+import remarkGfm from "remark-gfm";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 
@@ -61,6 +67,7 @@ import ChatMarkdown, {
   canUseMarkdownFileShellActions,
   hasMarkdownFilePrimaryAction,
   orderedListGutterStyle,
+  sourceOrderedListItemValue,
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./ChatMarkdown";
 
@@ -678,6 +685,98 @@ describe("orderedListGutterStyle", () => {
   it("treats a missing/zero item count as a single item", () => {
     expect(orderedListGutterStyle(0, undefined)).toBeUndefined();
     expect(orderedListGutterStyle(0, 100)).toEqual({ "--list-gutter": "4ch" });
+  });
+
+  it.each([
+    [15, "3ch"],
+    [150, "4ch"],
+    [999999999, "10ch"],
+  ])("fits a later literal marker %s without losing the two-digit gutter", (value, width) => {
+    expect(orderedListGutterStyle(2, 1, value)).toEqual({ "--list-gutter": width });
+  });
+});
+
+type ParsedListNode = {
+  type: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  position?: { start: { offset?: number } };
+  children?: ParsedListNode[];
+};
+
+function parsedListElements(markdown: string, parseRawHtml = false): ParsedListNode[] {
+  const elements: ParsedListNode[] = [];
+  // Execute react-markdown's actual parser/converter without rendering static markup.
+  ReactMarkdown({
+    children: markdown,
+    remarkPlugins: [remarkGfm, remarkNormalizeListItemIndentation, remarkBreaks],
+    rehypePlugins: [
+      ...(parseRawHtml ? [rehypeRaw, rehypeSanitize] : []),
+      () => (tree: ParsedListNode) => {
+        const visit = (node: ParsedListNode) => {
+          if (node.tagName === "ol" || node.tagName === "li") elements.push(node);
+          node.children?.forEach(visit);
+        };
+        visit(tree);
+      },
+    ],
+  });
+  return elements;
+}
+
+describe("sourceOrderedListItemValue with parsed Markdown", () => {
+  it.each([
+    ["reported gaps", "1. test\n5. test\n8. test\n15. test", [1, 5, 8, 15]],
+    ["non-one start", "5. five\n8. eight", [5, 8]],
+    ["repeated ones", "1. one\n1. two\n1. three", [1, 1, 1]],
+    ["nested resets", "3. outer\n\n   8. nested\n   2. reset\n\n9. tail", [3, 8, 2, 9]],
+    ["parenthesis markers", "4) four\n9) nine", [4, 9]],
+    ["quoted lists", "> 3. quoted\n> 8. next", [3, 8]],
+    ["CRLF input", "1. one\r\n5. five\r\n15. fifteen", [1, 5, 15]],
+    ["zero start", "0. zero\n0. another", [0, 0]],
+    ["nine-digit marker", "1. one\n999999999. large", [1, 999999999]],
+  ])("reads %s from the parser's source positions", (_name, markdown, expected) => {
+    const values = parsedListElements(markdown)
+      .filter((node) => node.tagName === "li")
+      .map((node) => sourceOrderedListItemValue(markdown, node.position?.start.offset));
+    expect(values).toEqual(expected);
+  });
+
+  it.each([
+    ["escaped punctuation", "1\\. one\n5\\. five"],
+    ["fenced source", "```text\n1. one\n5. five\n```"],
+  ])("does not derive list values from %s", (_name, markdown) => {
+    expect(parsedListElements(markdown)).toEqual([]);
+  });
+
+  it("does not assign ordinals to bullet items", () => {
+    const markdown = "- one\n- two";
+    expect(
+      parsedListElements(markdown).map((node) =>
+        sourceOrderedListItemValue(markdown, node.position?.start.offset),
+      ),
+    ).toEqual([undefined, undefined]);
+  });
+
+  it("leaves the standard parser's implicit counters unchanged", () => {
+    const elements = parsedListElements("5. five\n8. eight\n1. reset");
+    expect(elements.find((node) => node.tagName === "ol")?.properties?.start).toBe(5);
+    expect(
+      elements.filter((node) => node.tagName === "li").map((node) => node.properties?.value),
+    ).toEqual([undefined, undefined, undefined]);
+  });
+
+  it("does not replace sanitized raw-HTML values with source ordinals", () => {
+    const markdown = '<ol start="3"><li value="5">five</li><li>six</li></ol>';
+    const items = parsedListElements(markdown, true).filter((node) => node.tagName === "li");
+    expect(items.map((node) => node.properties?.value)).toEqual(["5", undefined]);
+    expect(
+      items.map((node) => sourceOrderedListItemValue(markdown, node.position?.start.offset)),
+    ).toEqual([undefined, undefined]);
+  });
+
+  it("leaves generated nodes without source positions alone", () => {
+    expect(sourceOrderedListItemValue("1. one", undefined)).toBeUndefined();
   });
 });
 

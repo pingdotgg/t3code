@@ -193,6 +193,8 @@ interface ChatMarkdownProps {
   className?: string;
   /** Treat single newlines as hard breaks — chat-style user input. */
   lineBreaks?: boolean;
+  /** Keep the ordinals the author typed instead of renumbering ordered lists. */
+  literalListNumbers?: boolean;
   /** Parse sanitized raw HTML instead of displaying its source text. */
   parseRawHtml?: boolean;
   /** Append a prompt that invokes a newly created artifact-template skill. */
@@ -343,13 +345,29 @@ function findTaskListMarkerOffset(markdown: string, listItemStart: number): numb
 export function orderedListGutterStyle(
   itemCount: number,
   start: unknown,
+  widestMarkerNumber?: number,
 ): { "--list-gutter": string } | undefined {
   const parsedStart = Number.parseInt(String(start ?? 1), 10);
   const firstNumber = Number.isNaN(parsedStart) ? 1 : parsedStart;
-  const lastNumber = firstNumber + Math.max(itemCount - 1, 0);
+  const lastNumber = Math.max(firstNumber + Math.max(itemCount - 1, 0), widestMarkerNumber ?? 0);
   const markerWidth = Math.max(String(firstNumber).length, String(lastNumber).length);
   if (markerWidth <= 1) return undefined;
   return { "--list-gutter": `${markerWidth + 1}ch` };
+}
+
+/** Reads the typed ordinal at a parsed list item's source position. */
+export function sourceOrderedListItemValue(
+  markdown: string,
+  listItemStart: number | undefined,
+): number | undefined {
+  if (typeof listItemStart !== "number") return undefined;
+  const firstLineEnd = markdown.indexOf("\n", listItemStart);
+  const firstLine = markdown.slice(
+    listItemStart,
+    firstLineEnd === -1 ? markdown.length : firstLineEnd,
+  );
+  const match = firstLine.match(/^\s*(\d{1,9})[.)]/);
+  return match?.[1] ? Number.parseInt(match[1], 10) : undefined;
 }
 
 type MarkdownImageHastNode = {
@@ -2133,6 +2151,7 @@ function useChatMarkdownState({
   onTaskListChange,
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
+  literalListNumbers = false,
   onUseArtifactTemplate,
   imageBaseDir,
   onImageExpand,
@@ -2544,6 +2563,7 @@ function useChatMarkdownState({
       imageBaseDir,
       inlineCodeFileLinkMetaByText,
       isStreaming,
+      literalListNumbers,
       linkTargetPreference,
       markdownFileLinkMetaByHref,
       onTaskListChange,
@@ -2570,6 +2590,7 @@ function useChatMarkdownState({
       imageBaseDir,
       inlineCodeFileLinkMetaByText,
       isStreaming,
+      literalListNumbers,
       linkTargetPreference,
       markdownFileLinkMetaByHref,
       onTaskListChange,
@@ -2636,21 +2657,37 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   ol: function MarkdownOrderedList({ node, start, style, ...props }) {
-    const itemCount =
-      node?.children?.filter((child) => child.type === "element" && child.tagName === "li")
-        .length ?? 0;
-    const gutterStyle = orderedListGutterStyle(itemCount, start);
-    return (
-      <ol {...props} start={start} style={gutterStyle ? { ...style, ...gutterStyle } : style} />
-    );
+    const { text, literalListNumbers } = use(ChatMarkdownRendererContext);
+    const items =
+      node?.children?.filter((child) => child.type === "element" && child.tagName === "li") ?? [];
+    const widestMarkerNumber = literalListNumbers
+      ? items.reduce<number | undefined>((widest, item) => {
+          const value = sourceOrderedListItemValue(text, item.position?.start.offset);
+          return value !== undefined && (widest === undefined || value > widest) ? value : widest;
+        }, undefined)
+      : undefined;
+    const gutterStyle = orderedListGutterStyle(items.length, start, widestMarkerNumber);
+    // Nested lists otherwise use alpha/roman markers instead of the typed digits.
+    const literalStyle =
+      widestMarkerNumber !== undefined ? ({ listStyleType: "decimal" } as const) : undefined;
+    const mergedStyle =
+      gutterStyle || literalStyle ? { ...style, ...gutterStyle, ...literalStyle } : style;
+    return <ol {...props} start={start} style={mergedStyle} />;
   },
-  li: function MarkdownListItem({ node, children, ...props }) {
-    const { text, skills } = use(ChatMarkdownRendererContext);
+  li: function MarkdownListItem({ node, children, value, ...props }) {
+    const { text, skills, literalListNumbers } = use(ChatMarkdownRendererContext);
     const listItemStart = node?.position?.start.offset;
     const markerOffset =
       typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
+    const literalValue = literalListNumbers
+      ? sourceOrderedListItemValue(text, listItemStart)
+      : undefined;
     return (
-      <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
+      <li
+        {...props}
+        value={literalValue ?? value}
+        data-task-marker-offset={markerOffset ?? undefined}
+      >
         {renderSkillInlineMarkdownChildren(children, skills)}
       </li>
     );

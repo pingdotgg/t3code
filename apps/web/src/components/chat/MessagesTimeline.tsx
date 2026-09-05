@@ -2393,6 +2393,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
             skills={props.skills}
             className="text-message-foreground"
             lineBreaks
+            literalListNumbers
             parseRawHtml={false}
           />
         ) : null}
@@ -2416,6 +2417,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
                   skills={props.skills}
                   className="text-message-foreground"
                   lineBreaks
+                  literalListNumbers
                   parseRawHtml={false}
                 />
               </div>
@@ -2505,6 +2507,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
           skills={props.skills}
           className="text-message-foreground"
           lineBreaks
+          literalListNumbers
           parseRawHtml={false}
         />,
       );
@@ -2531,6 +2534,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       skills={props.skills}
       className="text-message-foreground"
       lineBreaks
+      literalListNumbers
       parseRawHtml={false}
     />
   );
