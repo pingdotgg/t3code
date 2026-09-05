@@ -7,6 +7,7 @@ import {
   type ErrorComponentProps,
   useLocation,
   useNavigate,
+  useRouter,
 } from "@tanstack/react-router";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
@@ -304,6 +305,36 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
   // Router pathname rather than window.location: desktop uses hash history, where the window path is always "/".
   const pathname = useLocation({ select: (location) => location.pathname });
   const report = useMemo(() => errorReport(error, pathname), [error, pathname]);
+
+  // The root error boundary is shown when beforeLoad's startup probe
+  // (resolveInitialServerAuthGateState -> fetchSessionState) throws. That failure
+  // is frequently transient (backend still starting, a flaky session call), but
+  // the boundary persists until a manual reload. Auto-retry when the window
+  // regains focus/visibility or the network returns, so a recovered backend
+  // un-sticks the app instead of stranding the user here. reset() only resets the
+  // boundary; router.invalidate() re-runs beforeLoad. See #3513.
+  const router = useRouter();
+  const retryingRef = useRef(false);
+  useEffect(() => {
+    const retry = () => {
+      if (retryingRef.current) return;
+      retryingRef.current = true;
+      void router.invalidate().finally(() => {
+        retryingRef.current = false;
+      });
+    };
+    const retryIfVisible = () => {
+      if (document.visibilityState === "visible") retry();
+    };
+    document.addEventListener("visibilitychange", retryIfVisible);
+    window.addEventListener("focus", retry);
+    window.addEventListener("online", retry);
+    return () => {
+      document.removeEventListener("visibilitychange", retryIfVisible);
+      window.removeEventListener("focus", retry);
+      window.removeEventListener("online", retry);
+    };
+  }, [router]);
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
