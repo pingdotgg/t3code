@@ -3,7 +3,10 @@ import {
   type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
-import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -54,6 +57,7 @@ export function PullRequestThreadDialog({
   const [reference, setReference] = useState(initialReference ?? "");
   const [referenceDirty, setReferenceDirty] = useState(false);
   const [preparingMode, setPreparingMode] = useState<"local" | "worktree" | null>(null);
+  const [prepareErrorMessage, setPrepareErrorMessage] = useState<string | null>(null);
   const [debouncedReference, referenceDebouncer] = useDebouncedValue(
     reference,
     { wait: 450 },
@@ -151,6 +155,7 @@ export function PullRequestThreadDialog({
       if (!parsedReference || !resolvedPullRequest || !cwd) {
         return;
       }
+      setPrepareErrorMessage(null);
       setPreparingMode(mode);
       const result = await preparePullRequestThreadAction.run({
         reference: parsedReference,
@@ -161,6 +166,13 @@ export function PullRequestThreadDialog({
       if (result._tag === "Failure") {
         if (isAtomCommandInterrupted(result)) {
           preparePullRequestThreadAction.resetError();
+        } else {
+          const error = squashAtomCommandFailure(result);
+          setPrepareErrorMessage(
+            error instanceof Error
+              ? error.message
+              : `Failed to prepare ${terminology.singular} thread.`,
+          );
         }
         return;
       }
@@ -178,6 +190,7 @@ export function PullRequestThreadDialog({
       parsedReference,
       preparePullRequestThreadAction,
       resolvedPullRequest,
+      terminology.singular,
       threadId,
     ],
   );
@@ -191,6 +204,7 @@ export function PullRequestThreadDialog({
         : null;
   const errorMessage =
     validationMessage ??
+    prepareErrorMessage ??
     (resolvedPullRequest === null && pullRequestResolution.error
       ? pullRequestResolution.error
       : preparePullRequestThreadAction.error instanceof Error
