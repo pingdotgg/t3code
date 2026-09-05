@@ -4,7 +4,6 @@ import { describe, expect, it } from "vite-plus/test";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { HomeProjectScope } from "../home/homeThreadList";
 import {
-  getOnlySelectableProject,
   getProjectScopeSelectionTarget,
   resolveDraftProjectSelection,
 } from "./new-task-project-selection";
@@ -35,18 +34,6 @@ function makeScope(projects: ReadonlyArray<EnvironmentProject>): HomeProjectScop
     })),
   };
 }
-
-describe("getOnlySelectableProject", () => {
-  it("auto-selects when there is exactly one physical project", () => {
-    const project = makeProject("t3code");
-    expect(getOnlySelectableProject([makeScope([project])])).toBe(project);
-  });
-
-  it("selects the representative when one logical project has multiple workspaces", () => {
-    const projects = [makeProject("t3code"), makeProject("t3code-2"), makeProject("t3code-3")];
-    expect(getOnlySelectableProject([makeScope(projects)])).toBe(projects[0]);
-  });
-});
 
 describe("getProjectScopeSelectionTarget", () => {
   it("keeps the current environment when it hosts the selected logical project", () => {
