@@ -18,11 +18,15 @@ function timeOfDayLabel(date: Date, timestampFormat: TimestampFormat): string {
 export function resolveSnoozePresets(
   now: Date,
   timestampFormat: TimestampFormat,
+  options?: { readonly limitsResetAt?: string | null },
 ): ReadonlyArray<SnoozePreset> {
-  return resolveSharedSnoozePresets(now).map((preset) => {
+  return resolveSharedSnoozePresets(now, options).map((preset) => {
     const wake = parseTimestampDate(preset.snoozedUntil);
     if (wake === null) return preset;
     const time = timeOfDayLabel(wake, timestampFormat);
+    if (preset.id === "limits-reset") {
+      return { ...preset, whenLabel: dayAwareWhenLabel(wake, now, time) };
+    }
     return {
       ...preset,
       whenLabel:
@@ -31,6 +35,18 @@ export function resolveSnoozePresets(
           : time,
     };
   });
+}
+
+/** Time only when `wake` falls on the same calendar day as `now`, otherwise
+    weekday + time — the same day-aware split `snoozeWakeDescription` uses,
+    without its "tomorrow"/date-beyond-a-week special cases. */
+function dayAwareWhenLabel(wake: Date, now: Date, time: string): string {
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  const dayDelta = Math.floor((wake.getTime() - startOfToday.getTime()) / DAY_MS);
+  if (dayDelta === 0) return time;
+  const weekday = wake.toLocaleDateString(undefined, { weekday: "short" });
+  return `${weekday} ${time}`;
 }
 
 /**

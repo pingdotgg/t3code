@@ -19,6 +19,7 @@ import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSym
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProviderInstanceIcon } from "../../components/ProviderIcon";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
+import { exhaustedUntil } from "@t3tools/shared/usageLimits";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
@@ -497,9 +498,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     snoozable: canSnooze(thread, { now: new Date().toISOString() }),
     snoozed: snoozedRow,
   });
+  // Re-read on the parent minute tick with the presets, so the row's own
+  // "Until limits reset" offer expires with the limit.
+  const limitsResetAt = exhaustedUntil(props.providerInstance?.usageLimits, Date.now());
   const snoozePresets = useMemo(
-    () => (swipeActions.secondary === "snooze" ? resolveSnoozePresets(new Date()) : ([] as const)),
-    [props.snoozePresetMinute, swipeActions.secondary],
+    () =>
+      swipeActions.secondary === "snooze"
+        ? resolveSnoozePresets(new Date(), { limitsResetAt })
+        : ([] as const),
+    [props.snoozePresetMinute, limitsResetAt, swipeActions.secondary],
   );
   const snoozePresetActions = useMemo<MenuAction[]>(
     () =>
@@ -619,6 +626,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         event: nativeEvent.event,
         displayedPresets: snoozePresets,
         now: new Date(),
+        limitsResetAt,
       });
       if (snoozeSelection._tag === "selected") {
         handleSnooze(snoozeSelection.preset.snoozedUntil);
@@ -641,6 +649,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleUnsettle,
       handleUnsnooze,
       snoozePresets,
+      limitsResetAt,
     ],
   );
   const primaryAction = useMemo(() => {
