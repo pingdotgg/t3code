@@ -1127,6 +1127,7 @@ function ImportStep({
         : 0;
     let importedThreadCount = 0;
     let skippedThreadCount = 0;
+    let shouldRefreshScan = false;
     for (const candidate of selection) {
       if (
         importGeneration !== importGenerationRef.current ||
@@ -1135,7 +1136,7 @@ function ImportStep({
         return;
       }
       if (importedProjects.has(candidate.path)) continue;
-      let projectId = resolveOnboardingProjectId(readProjects(), environmentId, candidate.path);
+      let projectId = resolveOnboardingProjectId(readProjects(), environmentId, candidate);
       if (projectId === null) {
         let attempt = projectAttempts.get(candidate.path);
         if (attempt === undefined) {
@@ -1165,14 +1166,17 @@ function ImportStep({
           return;
         }
         if (result._tag !== "Success") {
-          if (!isAtomCommandInterrupted(result)) projectAttempts.delete(candidate.path);
+          if (!isAtomCommandInterrupted(result)) {
+            projectAttempts.delete(candidate.path);
+            shouldRefreshScan = true;
+          }
           continue;
         }
       }
 
       const threadImportResult = await importThreads({
         environmentId,
-        input: { projectId },
+        input: { projectId, expectedWorkspaceRoot: candidate.path },
       });
       if (
         importGeneration !== importGenerationRef.current ||
@@ -1195,8 +1199,10 @@ function ImportStep({
         }
       } else if (!isAtomCommandInterrupted(threadImportResult)) {
         projectAttempts.delete(candidate.path);
+        shouldRefreshScan = true;
       }
     }
+    if (shouldRefreshScan) scan.refresh();
     setIsImporting(false);
     if (importedProjectsCount < selection.length) {
       if (importedThreadCount > 0 && skippedThreadCount > 0) {

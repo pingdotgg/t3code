@@ -235,7 +235,9 @@ describe("resolveOnboardingProviderLoginCommand", () => {
 
   it.each([
     ["~/my tools/codex", "~/'my tools/codex' login"],
+    ["~\\my tools/codex", "~/'my tools/codex' login"],
     ["~/tools/codex's build", `~/'tools/codex'"'"'s build' login`],
+    ["~\\tools\\codex's build", `~/'tools\\codex'"'"'s build' login`],
     ["~/tools/codex; echo unsafe", "~/'tools/codex; echo unsafe' login"],
   ])("keeps the home prefix expandable while quoting %s", (binaryPath, expectedCommand) => {
     expect(

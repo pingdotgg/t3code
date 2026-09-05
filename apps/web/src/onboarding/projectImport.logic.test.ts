@@ -65,6 +65,38 @@ describe("resolveOnboardingProjectId", () => {
   const remoteEnvironmentId = EnvironmentId.make("remote");
   const localProjectId = ProjectId.make("local-project");
 
+  it("uses the scanned project ID before the project reaches the client", () => {
+    expect(
+      resolveOnboardingProjectId(
+        [],
+        localEnvironmentId,
+        candidate("/projects/repo", { projectId: localProjectId }),
+      ),
+    ).toBe(localProjectId);
+  });
+
+  it("uses the scanned project ID when the client still has an older project at that root", () => {
+    expect(
+      resolveOnboardingProjectId(
+        [
+          {
+            id: ProjectId.make("stale-project"),
+            environmentId: localEnvironmentId,
+            workspaceRoot: "/projects/repo",
+          },
+        ],
+        localEnvironmentId,
+        candidate("/projects/repo", { projectId: localProjectId }),
+      ),
+    ).toBe(localProjectId);
+  });
+
+  it("returns null to create a project when neither the scan nor the client has a project ID", () => {
+    expect(
+      resolveOnboardingProjectId([], localEnvironmentId, candidate("/projects/new")),
+    ).toBeNull();
+  });
+
   it("finds an existing project by normalized root in the target environment", () => {
     expect(
       resolveOnboardingProjectId(
@@ -81,7 +113,7 @@ describe("resolveOnboardingProjectId", () => {
           },
         ],
         localEnvironmentId,
-        "c:/work/repo",
+        candidate("c:/work/repo"),
       ),
     ).toBe(localProjectId);
   });
@@ -97,7 +129,7 @@ describe("resolveOnboardingProjectId", () => {
           },
         ],
         localEnvironmentId,
-        "/projects/repo",
+        candidate("/projects/repo"),
       ),
     ).toBeNull();
   });
@@ -113,12 +145,12 @@ describe("resolveOnboardingProjectId", () => {
           },
         ],
         localEnvironmentId,
-        "/real/projects/repo",
+        candidate("/real/projects/repo"),
       ),
     ).toBe(localProjectId);
   });
 
-  it("prefers the current root owner over a stale scanner hint", () => {
+  it("finds the current root owner when the scan has no project ID", () => {
     const recreatedProjectId = ProjectId.make("recreated-project");
     expect(
       resolveOnboardingProjectId(
@@ -135,12 +167,12 @@ describe("resolveOnboardingProjectId", () => {
           },
         ],
         localEnvironmentId,
-        "/projects/repo",
+        candidate("/projects/repo"),
       ),
     ).toBe(recreatedProjectId);
   });
 
-  it("does not reuse a project after its root changed since the scan", () => {
+  it("does not reuse a moved project when the scan has no project ID", () => {
     expect(
       resolveOnboardingProjectId(
         [
@@ -151,7 +183,7 @@ describe("resolveOnboardingProjectId", () => {
           },
         ],
         localEnvironmentId,
-        "/projects/repo",
+        candidate("/projects/repo"),
       ),
     ).toBeNull();
   });

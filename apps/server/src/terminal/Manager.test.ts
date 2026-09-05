@@ -1944,6 +1944,55 @@ it.layer(
     }),
   );
 
+  it.effect.each([
+    {
+      name: "Codex home",
+      driver: "codex",
+      variable: "CODEX_HOME",
+      config: { homePath: "/configured/codex" },
+      expectedHome: "/configured/codex",
+    },
+    {
+      name: "Codex shadow home",
+      driver: "codex",
+      variable: "CODEX_HOME",
+      config: { homePath: "/configured/codex", shadowHomePath: "/configured/codex-shadow" },
+      expectedHome: "/configured/codex-shadow",
+    },
+    {
+      name: "Claude home",
+      driver: "claudeAgent",
+      variable: "CLAUDE_CONFIG_DIR",
+      config: { homePath: "/configured/claude" },
+      expectedHome: "/configured/claude",
+    },
+  ])("prefers $name over the instance environment", ({ driver, variable, config, expectedHome }) =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+        serverSettings,
+        path,
+        rawProviderInstanceId: "configured_home",
+        env: undefined,
+      });
+
+      expect(environment[variable]).toBe(path.resolve(expectedHome));
+    }).pipe(
+      Effect.provide(
+        ServerSettings.layerTest({
+          providerInstances: {
+            [ProviderInstanceId.make("configured_home")]: {
+              driver: ProviderDriverKind.make(driver),
+              environment: [{ name: variable, value: "~/.environment-account", sensitive: false }],
+              config,
+            },
+          },
+        }),
+      ),
+    ),
+  );
+
   it.effect("resolves the legacy Codex default instance", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

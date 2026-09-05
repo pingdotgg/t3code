@@ -25,7 +25,7 @@ function quoteProviderBinary(
   }
   if (platform === "windows") return `& '${binaryPath.replaceAll("'", "''")}'`;
   if (platform === "darwin" || platform === "linux") {
-    if (binaryPath.startsWith("~/")) {
+    if (binaryPath.startsWith("~/") || binaryPath.startsWith("~\\")) {
       return `~/'${binaryPath.slice(2).replaceAll("'", `'"'"'`)}'`;
     }
     return `'${binaryPath.replaceAll("'", `'"'"'`)}'`;

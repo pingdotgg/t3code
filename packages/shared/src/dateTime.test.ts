@@ -12,9 +12,40 @@ describe("compareDateTimeStrings", () => {
     ).toBeGreaterThan(0);
   });
 
+  it.each([
+    ["2024-02-29T12:00:00Z", "2024-02-29T17:30:00+05:30"],
+    ["2000-02-29T00:00:00.100Z", "2000-02-28T20:30:00.1-03:30"],
+    ["0000-01-01T00:00:00.000Z", "+000000-01-01T00:00:00.000+00:00"],
+    ["+010000-01-01T00:00:00.000Z", "9999-12-31T23:00:00.000-01:00"],
+  ])("preserves equal ISO instants %s and %s", (left, right) => {
+    expect(compareDateTimeStrings(left, right)).toBe(0);
+  });
+
   it("sorts malformed values before valid values", () => {
     expect(compareDateTimeStrings("invalid", "2026-09-01T12:00:00.000Z")).toBeLessThan(0);
     expect(compareDateTimeStrings("2026-09-01T12:00:00.000Z", "invalid")).toBeGreaterThan(0);
+  });
+
+  it.each([
+    "2014-02-30",
+    "2014-03-02",
+    "2014-03-02T00:00:00",
+    "2014-03-02T00:00:00.000",
+    "03/02/2014",
+    "March 2, 2014",
+    "Sun, 02 Mar 2014 00:00:00 GMT",
+    "2014-03-02T00:00:00.000Z\n",
+    "2014-02-30T00:00:00.000Z",
+    "1900-02-29T00:00:00.000-07:00",
+    "2024-04-31T00:00:00.000+05:30",
+    "2024-03-02T12:00:00.000+24:00",
+  ])("treats %s as malformed without native date guessing", (malformed) => {
+    const valid = "1970-01-01T00:00:00.000Z";
+    expect(compareDateTimeStrings(malformed, valid)).toBeLessThan(0);
+    expect(compareDateTimeStrings(valid, malformed)).toBeGreaterThan(0);
+    expect(compareDateTimeStrings(malformed, "invalid")).toBeLessThan(0);
+    expect(compareDateTimeStrings("invalid", malformed)).toBeGreaterThan(0);
+    expect(compareDateTimeStrings(malformed, malformed)).toBe(0);
   });
 
   it("uses code-unit order for malformed date-time strings", () => {

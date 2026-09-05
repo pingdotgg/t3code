@@ -4,6 +4,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
   AgentSessionSource,
   AgentSessionScanError,
@@ -16,6 +17,7 @@ import {
   type AgentSessionImportResult,
   type OrchestrationThread,
 } from "@t3tools/contracts";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -114,6 +116,13 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
     ),
   );
   const workspaceRoot = project.workspaceRoot;
+  if (
+    input.expectedWorkspaceRoot !== undefined &&
+    normalizeProjectPathForComparison(workspaceRoot) !==
+      normalizeProjectPathForComparison(input.expectedWorkspaceRoot)
+  ) {
+    return yield* new AgentSessionImportProjectChangedError({ projectId: input.projectId });
+  }
   const threads = scanner.recentThreads(workspaceRoot);
   let importedCount = 0;
   let skippedCount = 0;

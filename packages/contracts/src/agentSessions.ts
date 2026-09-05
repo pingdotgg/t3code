@@ -41,6 +41,7 @@ export type AgentSessionScanResult = typeof AgentSessionScanResult.Type;
 
 export const AgentSessionImportInput = Schema.Struct({
   projectId: ProjectId,
+  expectedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
 });
 export type AgentSessionImportInput = typeof AgentSessionImportInput.Type;
 
@@ -50,6 +51,15 @@ export class AgentSessionImportProjectNotFoundError extends Schema.TaggedErrorCl
 ) {
   override get message(): string {
     return `Project '${this.projectId}' does not exist.`;
+  }
+}
+
+export class AgentSessionImportProjectChangedError extends Schema.TaggedErrorClass<AgentSessionImportProjectChangedError>()(
+  "AgentSessionImportProjectChangedError",
+  { projectId: ProjectId },
+) {
+  override get message(): string {
+    return `Project '${this.projectId}' changed directories. Scan for projects again before importing history.`;
   }
 }
 

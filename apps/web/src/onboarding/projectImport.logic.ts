@@ -20,7 +20,7 @@ export function partitionOnboardingProjects(
   };
 }
 
-/** Resolve the active project for a scanned root. This recovers retries after a project was created. */
+/** Use the server's project match before the client snapshot, which can lag behind the scan. */
 export function resolveOnboardingProjectId(
   projects: ReadonlyArray<{
     readonly id: ProjectId;
@@ -28,10 +28,11 @@ export function resolveOnboardingProjectId(
     readonly workspaceRoot: string;
   }>,
   environmentId: EnvironmentId,
-  workspaceRoot: string,
+  candidate: Pick<AgentSessionProjectCandidate, "path" | "projectId">,
 ): ProjectId | null {
+  if (candidate.projectId !== undefined) return candidate.projectId;
   const environmentProjects = projects.filter((project) => project.environmentId === environmentId);
-  const currentRootMatch = findProjectByPath(environmentProjects, workspaceRoot);
+  const currentRootMatch = findProjectByPath(environmentProjects, candidate.path);
   if (currentRootMatch !== undefined) return currentRootMatch.id;
   return null;
 }

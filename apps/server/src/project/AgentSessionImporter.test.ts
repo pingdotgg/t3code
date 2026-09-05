@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, vi } from "@effect/vitest";
 import {
+  AgentSessionImportProjectChangedError,
   CommandId,
   MessageId,
   ProjectId,
@@ -162,8 +163,14 @@ const runImport = (input: {
   readonly engine: OrchestrationEngine.OrchestrationEngineService["Service"];
   readonly directory: ProviderSessionDirectory.ProviderSessionDirectory["Service"];
   readonly snapshots: ReturnType<typeof makeSnapshotsLayer>;
+  readonly expectedWorkspaceRoot?: string;
 }) =>
-  importRecentAgentThreads({ projectId: PROJECT_ID }).pipe(
+  importRecentAgentThreads({
+    projectId: PROJECT_ID,
+    ...(input.expectedWorkspaceRoot === undefined
+      ? {}
+      : { expectedWorkspaceRoot: input.expectedWorkspaceRoot }),
+  }).pipe(
     Effect.provideService(AgentSessionScanner.AgentSessionScanner, input.scanner),
     Effect.provideService(OrchestrationEngine.OrchestrationEngineService, input.engine),
     Effect.provideService(ProviderSessionDirectory.ProviderSessionDirectory, input.directory),
@@ -214,6 +221,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           engine,
           directory,
           snapshots: makeSnapshotsLayer({ project: makeProject() }),
+          expectedWorkspaceRoot: `${WORKSPACE_ROOT}/`,
         });
 
         expect(result).toEqual({ importedCount: 2, skippedCount: 0 });
@@ -255,6 +263,37 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
             runtimePayload: { cwd: WORKSPACE_ROOT },
           },
         ]);
+      }),
+    );
+
+    it.effect("rejects a changed project root before scanning or writing", () =>
+      Effect.gen(function* () {
+        const recentThreads = vi.fn(() => Stream.empty);
+        const error = yield* importRecentAgentThreads({
+          projectId: PROJECT_ID,
+          expectedWorkspaceRoot: WORKSPACE_ROOT,
+        }).pipe(
+          Effect.provideService(
+            AgentSessionScanner.AgentSessionScanner,
+            AgentSessionScanner.AgentSessionScanner.of({
+              scan: Effect.die("must not scan a changed project"),
+              recentThreads,
+            }),
+          ),
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(OrchestrationEngine.OrchestrationEngineService)({}),
+              Layer.mock(ProviderSessionDirectory.ProviderSessionDirectory)({}),
+              makeSnapshotsLayer({
+                project: { ...makeProject(), workspaceRoot: "/tmp/project-moved" },
+              }),
+            ),
+          ),
+          Effect.flip,
+        );
+
+        expect(error).toEqual(new AgentSessionImportProjectChangedError({ projectId: PROJECT_ID }));
+        expect(recentThreads).not.toHaveBeenCalled();
       }),
     );
 
