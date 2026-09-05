@@ -4,20 +4,27 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { pullRequestDetailToVcsStatus } from "@t3tools/client-runtime/state/pull-requests";
-import type { EnvironmentId, ThreadLinkedPullRequest, VcsStatusResult } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  resolveEnvironmentMachineKind,
+  type ThreadLinkedPullRequest,
+  type VcsStatusResult,
+} from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
-import { CloudIcon, FolderGit2Icon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
+import { FolderGit2Icon, TerminalIcon } from "lucide-react";
 import { useMemo } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
+import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
-import { linkedPullRequestDetailAtom } from "../state/pullRequests";
+import { linkedPullRequestDetailAtom, useSharedPullRequestSummary } from "../state/pullRequests";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { vcsEnvironment } from "../state/vcs";
 import { useUiStateStore } from "../uiStateStore";
 import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
+import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import type { SidebarThreadSummary } from "../types";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -48,7 +55,7 @@ export function useLinkedThreadPullRequest(
   environmentId: EnvironmentId | null,
   linkedPullRequest: ThreadLinkedPullRequest | null | undefined,
 ): LinkedThreadPullRequestStatus | null {
-  const detail = useEnvironmentQuery(
+  const queried = useEnvironmentQuery(
     environmentId === null || linkedPullRequest == null
       ? null
       : linkedPullRequestDetailAtom({
@@ -60,6 +67,7 @@ export function useLinkedThreadPullRequest(
           },
         }),
   ).data;
+  const detail = useSharedPullRequestSummary(environmentId, linkedPullRequest ?? null, queried);
 
   return useMemo(
     () =>
@@ -77,9 +85,15 @@ export function useLinkedThreadPullRequest(
   );
 }
 
-export function settledPrHoverColorClass(state: NonNullable<ThreadPr>["state"]): string {
+export function settledPrHoverColorClass(
+  state: NonNullable<ThreadPr>["state"],
+  isDraft = false,
+): string {
   switch (state) {
     case "open":
+      if (isDraft) {
+        return "group-hover/v2-row:text-zinc-500 dark:group-hover/v2-row:text-zinc-400/80";
+      }
       return "group-hover/v2-row:text-emerald-600 dark:group-hover/v2-row:text-emerald-300/90";
     case "merged":
       return "group-hover/v2-row:text-violet-600 dark:group-hover/v2-row:text-violet-300/90";
@@ -92,12 +106,13 @@ export function prStatusIndicator(
   pr: ThreadPr,
   provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
 ): PrStatusIndicator | null {
-  function formatPrState(state: NonNullable<ThreadPr>["state"]): string {
-    return state.charAt(0).toUpperCase() + state.slice(1);
+  function formatPrState(pr: NonNullable<ThreadPr>): string {
+    if (pr.state === "open" && pr.isDraft === true) return "Draft";
+    return pr.state.charAt(0).toUpperCase() + pr.state.slice(1);
   }
 
   function formatPrStatusLead(pr: NonNullable<ThreadPr>, changeRequestShortName: string): string {
-    return `${changeRequestShortName} #${pr.number} - ${formatPrState(pr.state)}`;
+    return `${changeRequestShortName} #${pr.number} - ${formatPrState(pr)}`;
   }
   if (!pr) return null;
   const presentation = resolveChangeRequestPresentation(provider);
@@ -106,9 +121,12 @@ export function prStatusIndicator(
   const tooltip = `${tooltipLead}: ${pr.title}`;
 
   if (pr.state === "open") {
+    const isDraft = pr.isDraft === true;
     return {
-      label: `${presentation.shortName} open`,
-      colorClass: "text-emerald-600 dark:text-emerald-300/90",
+      label: `${presentation.shortName} ${isDraft ? "draft" : "open"}`,
+      colorClass: isDraft
+        ? "text-zinc-500 dark:text-zinc-400/80"
+        : "text-emerald-600 dark:text-emerald-300/90",
       tooltip,
       tooltipLead,
       tooltipTitle: pr.title,
@@ -138,8 +156,16 @@ export function prStatusIndicator(
   return null;
 }
 
-export function ChangeRequestStatusIcon({ className }: { className?: string }) {
-  return <GitPullRequestIcon className={className} />;
+export function ChangeRequestStatusIcon({
+  state,
+  isDraft = false,
+  className,
+}: Pick<NonNullable<ThreadPr>, "state"> & {
+  readonly isDraft?: boolean | undefined;
+  readonly className?: string | undefined;
+}) {
+  const presentation = resolvePullRequestState({ state, isDraft });
+  return <presentation.Icon className={className} />;
 }
 
 export function PrStatusTooltipContent({ status }: { status: PrStatusIndicator }) {
@@ -223,6 +249,7 @@ export function threadChangeRequestSnapshotsEqual(
     left.pr.baseRef === right.pr.baseRef &&
     left.pr.headRef === right.pr.headRef &&
     left.pr.state === right.pr.state &&
+    left.pr.isDraft === right.pr.isDraft &&
     (left.pr.updatedAt ?? null) === (right.pr.updatedAt ?? null) &&
     sourceControlProvidersEqual(left.sourceControlProvider, right.sourceControlProvider) &&
     linkedPullRequestsEqual(left.linkedPullRequest, right.linkedPullRequest)
@@ -567,7 +594,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
 
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5">
-      {prStatus ? (
+      {prStatus && pr ? (
         <Tooltip>
           <TooltipTrigger
             render={
@@ -577,7 +604,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
               />
             }
           >
-            <ChangeRequestStatusIcon className="size-3" />
+            <ChangeRequestStatusIcon state={pr.state} isDraft={pr.isDraft} className="size-3" />
           </TooltipTrigger>
           <TooltipPopup side="top">
             <PrStatusTooltipContent status={prStatus} />
@@ -601,10 +628,12 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
   });
   const environment = useEnvironment(thread.environmentId);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const isRemoteThread =
-    primaryEnvironmentId !== null && thread.environmentId !== primaryEnvironmentId;
+  // No primary (the hosted app) means every thread is remote, and the machine
+  // glyph is what tells the environments apart.
+  const isRemoteThread = thread.environmentId !== primaryEnvironmentId;
   const remoteEnvLabel = environment?.label ?? null;
   const threadEnvironmentLabel = isRemoteThread ? (remoteEnvLabel ?? "Remote") : null;
+  const remoteMachine = resolveEnvironmentMachineKind(environment?.serverConfig ?? null);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
 
   if (!terminalStatus && !isRemoteThread) {
@@ -641,7 +670,10 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
               />
             }
           >
-            <CloudIcon className="size-3 text-muted-foreground/60" />
+            <EnvironmentMachineIcon
+              kind={remoteMachine}
+              className="size-3 text-muted-foreground/60"
+            />
           </TooltipTrigger>
           <TooltipPopup side="top">{threadEnvironmentLabel}</TooltipPopup>
         </Tooltip>

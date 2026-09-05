@@ -1,4 +1,5 @@
 import { isMacPlatform } from "../../lib/utils";
+import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "../../lib/selectionActions";
 import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
 import {
   GhosttyTerminalCore,
@@ -513,7 +514,7 @@ export function advanceTerminalSelectionClickSequence(
 ): TerminalSelectionClickSequence {
   const repeats =
     previous !== null &&
-    event.timeStamp - previous.time <= 500 &&
+    event.timeStamp - previous.time <= SELECTION_MULTI_CLICK_INTERVAL_MS &&
     Math.hypot(event.clientX - previous.x, event.clientY - previous.y) <= 4;
   return {
     count: repeats ? (previous.count >= 3 ? 1 : previous.count + 1) : 1,
@@ -531,6 +532,8 @@ export interface GhosttySelectionPosition {
 export interface GhosttyTerminalSurfaceOptions {
   readonly theme: GhosttyTheme;
   readonly font?: GhosttyTerminalFont;
+  /** Read after font and WASM loading. Hosts can supply a getter for the latest value. */
+  readonly visible?: boolean;
   readonly onData: (data: string) => void;
   readonly onResize: (cols: number, rows: number) => void;
   readonly onSelectionChange: () => void;
@@ -555,6 +558,8 @@ export class GhosttyTerminalSurface {
   private readonly context: CanvasRenderingContext2D;
   private readonly core: GhosttyTerminalCore;
   private readonly options: GhosttyTerminalSurfaceOptions;
+  private visible: boolean;
+  private hasSize = false;
   private metrics: GhosttyCellMetrics;
   private fontFamily: string;
   private requestedFontFamily: string | undefined;
@@ -642,6 +647,7 @@ export class GhosttyTerminalSurface {
     this.mouseAnyEventTracking = core.isMouseAnyEventTracking();
     this.metrics = metrics;
     this.options = options;
+    this.visible = options.visible ?? true;
     this.theme = options.theme;
     this.fontFamily = fontFamily;
     this.requestedFontFamily = options.font?.family;
@@ -724,8 +730,22 @@ export class GhosttyTerminalSurface {
       options,
     );
     surface.fit();
-    surface.requestRender();
     return surface;
+  }
+
+  /** Pause canvas work without interrupting output parsing or terminal replies. */
+  setVisible(visible: boolean): void {
+    if (this.disposed || this.visible === visible) return;
+    this.visible = visible;
+    this.cursorOn = true;
+    this.forceFullRender = true;
+    this.scrollbarDirty = true;
+    if (!visible) {
+      this.cancelRender();
+      this.setSelectionAutoscroll(0);
+      return;
+    }
+    this.fit();
   }
 
   write(data: string): void {
@@ -823,10 +843,16 @@ export class GhosttyTerminalSurface {
   };
 
   fit(): boolean {
-    if (this.disposed) return false;
+    if (this.disposed || !this.visible) return false;
     const width = this.mount.clientWidth;
     const height = this.mount.clientHeight;
-    if (width <= 0 || height <= 0) return false;
+    if (width <= 0 || height <= 0) {
+      this.hasSize = false;
+      this.forceFullRender = true;
+      this.cancelRender();
+      return false;
+    }
+    this.hasSize = true;
     const ratio = window.devicePixelRatio || 1;
     const pixelWidth = Math.max(1, Math.round(width * ratio));
     const pixelHeight = Math.max(1, Math.round(height * ratio));
@@ -863,7 +889,7 @@ export class GhosttyTerminalSurface {
     // Rendering synchronously keeps the repaint inside the same frame as the
     // layout change: ResizeObserver fires before paint, so the browser never
     // composites the old backing store stretched into the new element box.
-    if (shouldRender) this.renderFrame();
+    if (shouldRender || this.forceFullRender) this.renderFrame();
     return true;
   }
 
@@ -882,6 +908,7 @@ export class GhosttyTerminalSurface {
   }
 
   focus(): void {
+    if (this.disposed || !this.visible) return;
     this.input.focus({ preventScroll: true });
   }
 
@@ -981,8 +1008,7 @@ export class GhosttyTerminalSurface {
       // the surface unmounts inside the debounce window.
       this.options.onResize(this.cols, this.rows);
     }
-    if (this.frame !== 0) window.cancelAnimationFrame(this.frame);
-    if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
+    this.cancelRender();
     if (this.compositionSuppressionTimer !== null) {
       window.clearTimeout(this.compositionSuppressionTimer);
     }
@@ -1675,18 +1701,38 @@ export class GhosttyTerminalSurface {
   }
 
   private requestRender(): void {
-    if (this.disposed || this.frame !== 0) return;
+    if (this.disposed || !this.visible || !this.hasSize || this.frame !== 0) return;
     this.frame = window.requestAnimationFrame(() => {
       this.frame = 0;
       this.renderFrame();
     });
   }
 
-  private renderFrame(): void {
-    if (this.disposed) return;
+  private cancelRender(): void {
     if (this.frame !== 0) {
       window.cancelAnimationFrame(this.frame);
       this.frame = 0;
+    }
+    if (this.cursorTimer !== null) {
+      window.clearTimeout(this.cursorTimer);
+      this.cursorTimer = null;
+    }
+  }
+
+  private renderFrame(): void {
+    if (this.disposed || !this.visible) return;
+    if (this.frame !== 0) {
+      window.cancelAnimationFrame(this.frame);
+      this.frame = 0;
+    }
+    // Hidden thread drawers stay mounted so switching back is instant, but a
+    // display:none canvas has nothing to show. Ghostty keeps parsing; the
+    // ResizeObserver refits and repaints in full once the mount has a size.
+    if (this.mount.clientWidth === 0 || this.mount.clientHeight === 0) {
+      this.hasSize = false;
+      this.forceFullRender = true;
+      this.cancelRender();
+      return;
     }
     this.snapshot = this.core.snapshot();
     // A cursor that is not blinking right now must be drawn, never caught in an
@@ -1753,7 +1799,7 @@ export class GhosttyTerminalSurface {
 
   private blinkEnabled(): boolean {
     const snapshot = this.snapshot;
-    if (!snapshot) return false;
+    if (!snapshot || !this.visible || !this.hasSize) return false;
     return shouldBlinkTerminalCursor({
       focused: this.focused,
       cursorBlinking: snapshot.cursorBlinking,

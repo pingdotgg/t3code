@@ -248,7 +248,7 @@ export function ComposerEditor({
         }
         contentInsetVertical={contentInsetVertical}
         singleLineCentered={props.singleLineCentered ?? false}
-        editable={props.editable ?? true}
+        editable={(props.editable ?? true) && !(props.readOnly ?? false)}
         scrollEnabled={props.scrollEnabled ?? true}
         autoFocus={props.autoFocus ?? false}
         autoCorrect={props.autoCorrect ?? true}
