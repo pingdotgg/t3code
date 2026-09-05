@@ -123,6 +123,18 @@ export function writeTerminalOutputUpdate(
   }
 }
 
+export function synchronizeTerminalOutput(
+  terminal: Pick<GhosttyTerminalSurface, "resetAndWrite" | "write" | "clearSelection">,
+  session: Pick<TerminalSessionState, "output" | "version">,
+  cursor: TerminalOutputCursor,
+): TerminalOutputCursor {
+  if (session.version === 0) return cursor;
+  const update = readTerminalOutputUpdate(session.output, cursor);
+  writeTerminalOutputUpdate(terminal, update);
+  terminal.clearSelection();
+  return update.cursor;
+}
+
 function parseTerminalColor(value: string, fallback: GhosttyColor): GhosttyColor {
   if (typeof document === "undefined") return fallback;
 
@@ -984,10 +996,7 @@ export function TerminalViewport({
       return;
     }
 
-    const outputUpdate = readTerminalOutputUpdate(current.output, outputCursorRef.current);
-    writeTerminalOutputUpdate(terminal, outputUpdate);
-    outputCursorRef.current = outputUpdate.cursor;
-    terminal.clearSelection();
+    outputCursorRef.current = synchronizeTerminalOutput(terminal, current, outputCursorRef.current);
 
     if (current.error !== null && current.error !== previous.error) {
       writeSystemMessage(terminal, current.error);
