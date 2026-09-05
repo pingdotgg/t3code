@@ -18,7 +18,6 @@ import {
   readThreadPreviewState,
   reconcilePreviewServerSessions,
   rememberPreviewUrl,
-  removePreviewThread,
   resetPreviewStateForTests,
   subscribeThreadPreviewState,
   setActivePreviewTab,
@@ -608,13 +607,5 @@ describe("previewStateStore (single-tab)", () => {
     expect(state.recentlySeenUrls[0]).toBe(
       `http://localhost:${5000 + __testing.RECENT_URL_LIMIT + 4}/`,
     );
-  });
-
-  it("removeThread strips the entry", () => {
-    const snapshot = makeSnapshot();
-    applyPreviewServerSnapshot(ref, snapshot);
-    removePreviewThread(ref);
-    const state = readThreadPreviewState(ref);
-    expect(state).toEqual(__testing.EMPTY_THREAD_PREVIEW_STATE);
   });
 });
