@@ -10,12 +10,13 @@ type EditorDefinition = {
   readonly commands: readonly [string, ...string[]] | null;
   readonly baseArgs?: readonly string[];
   readonly launchStyle: EditorLaunchStyle;
-  /**
-   * URL scheme for editors that support VS Code's remote deep links
-   * (`<scheme>://vscode-remote/ssh-remote+<host><path>`). Only set for VS Code
-   * and forks that ship the Remote-SSH machinery.
-   */
-  readonly remoteScheme?: string;
+  readonly remoteOpen?: RemoteEditorOpenDefinition;
+};
+
+export type RemoteEditorOpenDefinition = {
+  readonly scheme: string;
+  readonly urlHost: string;
+  readonly sshPathPrefix: string;
 };
 
 export const EDITORS = [
@@ -24,7 +25,7 @@ export const EDITORS = [
     label: "Cursor",
     commands: ["cursor"],
     launchStyle: "goto",
-    remoteScheme: "cursor",
+    remoteOpen: { scheme: "cursor", urlHost: "vscode-remote", sshPathPrefix: "ssh-remote+" },
   },
   { id: "trae", label: "Trae", commands: ["trae"], launchStyle: "goto" },
   { id: "kiro", label: "Kiro", commands: ["kiro"], baseArgs: ["ide"], launchStyle: "goto" },
@@ -33,23 +34,33 @@ export const EDITORS = [
     label: "VS Code",
     commands: ["code"],
     launchStyle: "goto",
-    remoteScheme: "vscode",
+    remoteOpen: { scheme: "vscode", urlHost: "vscode-remote", sshPathPrefix: "ssh-remote+" },
   },
   {
     id: "vscode-insiders",
     label: "VS Code Insiders",
     commands: ["code-insiders"],
     launchStyle: "goto",
-    remoteScheme: "vscode-insiders",
+    remoteOpen: {
+      scheme: "vscode-insiders",
+      urlHost: "vscode-remote",
+      sshPathPrefix: "ssh-remote+",
+    },
   },
   {
     id: "vscodium",
     label: "VSCodium",
     commands: ["codium"],
     launchStyle: "goto",
-    remoteScheme: "vscodium",
+    remoteOpen: { scheme: "vscodium", urlHost: "vscode-remote", sshPathPrefix: "ssh-remote+" },
   },
-  { id: "zed", label: "Zed", commands: ["zed", "zeditor"], launchStyle: "direct-path" },
+  {
+    id: "zed",
+    label: "Zed",
+    commands: ["zed", "zeditor"],
+    launchStyle: "direct-path",
+    remoteOpen: { scheme: "zed", urlHost: "ssh", sshPathPrefix: "" },
+  },
   { id: "antigravity", label: "Antigravity", commands: ["agy"], launchStyle: "goto" },
   { id: "idea", label: "IntelliJ IDEA", commands: ["idea"], launchStyle: "line-column" },
   { id: "aqua", label: "Aqua", commands: ["aqua"], launchStyle: "line-column" },
@@ -82,37 +93,42 @@ export const LaunchEditorInput = Schema.Struct({
 });
 export type LaunchEditorInput = typeof LaunchEditorInput.Type;
 
-const remoteSchemeOf = (editor: EditorDefinition): string | undefined => editor.remoteScheme;
+const remoteOpenOf = (editor: EditorDefinition): RemoteEditorOpenDefinition | undefined =>
+  editor.remoteOpen;
 
-/** Editors that can open a remote workspace via `vscode-remote` deep links. */
+/** Editors that can open a remote workspace over SSH from the viewing machine. */
 export const REMOTE_CAPABLE_EDITOR_IDS: ReadonlyArray<EditorId> = EDITORS.flatMap((editor) =>
-  remoteSchemeOf(editor) !== undefined ? [editor.id] : [],
+  remoteOpenOf(editor) !== undefined ? [editor.id] : [],
 );
 
-export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
+export const remoteOpenDefinitionForEditor = (
+  id: EditorId,
+): RemoteEditorOpenDefinition | undefined => {
   const editor = EDITORS.find((candidate) => candidate.id === id);
-  return editor === undefined ? undefined : remoteSchemeOf(editor);
+  return editor === undefined ? undefined : remoteOpenOf(editor);
 };
 
 /**
- * Builds a `<scheme>://vscode-remote/ssh-remote+<host><path>` deep link that
- * opens `absolutePath` on `host` in the local editor over SSH. Returns
- * undefined for editors without remote deep-link support.
+ * Builds the editor-specific deep link that opens `absolutePath` on `host`
+ * from the viewing machine over SSH. Returns undefined for editors without
+ * remote deep-link support.
  */
 export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
   readonly host: string;
   readonly absolutePath: string;
 }): string | undefined => {
-  const scheme = remoteSchemeForEditor(input.editor);
-  if (scheme === undefined) {
+  const remoteOpen = remoteOpenDefinitionForEditor(input.editor);
+  if (remoteOpen === undefined) {
     return undefined;
   }
-  // Windows server paths (`C:\...`) appear as `/C:/...` in vscode-remote URIs.
+  // Windows server paths (`C:\...`) appear as `/C:/...` in remote editor URIs.
   const posixPath = input.absolutePath.replaceAll("\\", "/");
   const rootedPath = posixPath.startsWith("/") ? posixPath : `/${posixPath}`;
   const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
-  return `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(input.host)}${encodedPath}`;
+  const encodedHost = encodeURIComponent(input.host);
+
+  return `${remoteOpen.scheme}://${remoteOpen.urlHost}/${remoteOpen.sshPathPrefix}${encodedHost}${encodedPath}`;
 };
 
 /**

@@ -9,6 +9,7 @@ import {
   PickFolderOptionsSchema,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   REMOTE_CAPABLE_EDITOR_IDS,
+  remoteOpenDefinitionForEditor,
   SystemSettingsPaneSchema,
   type DesktopEnvironmentBootstrap,
   type PickedThemeFile,
@@ -313,13 +314,19 @@ export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL,
   payload: Schema.Undefined,
   result: Schema.Array(EditorId),
-  // Probes THIS machine (where the renderer runs) for remote-capable editor
-  // CLIs, unlike the server's probe which walks the environment host's PATH.
-  // A Finder-launched app can miss PATH entries; an empty result makes the
-  // renderer fall back to VS Code only, so that fails soft.
+  // Probes THIS machine (where the renderer runs), unlike the server's probe
+  // which walks the environment host's PATH. Protocol handlers cover packaged
+  // editors whose optional CLI is absent from a Finder-launched app's PATH.
   handler: Effect.fn("desktop.ipc.window.probeRemoteEditors")(function* () {
+    const shell = yield* ElectronShell.ElectronShell;
     const available: Array<EditorId> = [];
     for (const editorId of REMOTE_CAPABLE_EDITOR_IDS) {
+      const remoteOpen = remoteOpenDefinitionForEditor(editorId);
+      if (remoteOpen !== undefined && (yield* shell.hasProtocolHandler(remoteOpen.scheme))) {
+        available.push(editorId);
+        continue;
+      }
+
       const commands = EDITORS.find((editor) => editor.id === editorId)?.commands;
       if (!commands) continue;
       for (const command of commands) {

@@ -141,8 +141,18 @@ describe("buildRemoteOpenUrl", () => {
     ).toBe("vscode://vscode-remote/ssh-remote+sol/C%3A/Users/theo");
   });
 
+  it("builds a Zed SSH deep link", () => {
+    expect(
+      buildRemoteOpenUrl({
+        editor: "zed",
+        host: "sol.tail1234.ts.net",
+        absolutePath: "/home/theo/code/my repo",
+      }),
+    ).toBe("zed://ssh/sol.tail1234.ts.net/home/theo/code/my%20repo");
+  });
+
   it("returns undefined for editors without remote support", () => {
-    expect(buildRemoteOpenUrl({ editor: "zed", host: "sol", absolutePath: "/tmp/x" })).toBe(
+    expect(buildRemoteOpenUrl({ editor: "idea", host: "sol", absolutePath: "/tmp/x" })).toBe(
       undefined,
     );
   });

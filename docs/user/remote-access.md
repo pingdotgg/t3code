@@ -106,6 +106,13 @@ In the desktop app, open **Settings → Connections → Add environment**, choos
 or reuses a server there and opens the port forward for you. Projects, provider
 credentials, and agent work stay on the remote machine.
 
+For an environment with an SSH route, **Open in VS Code** or **Open in Zed**
+launches the editor on your current device and connects it to the remote project.
+VS Code requires the Remote - SSH extension; Zed supports SSH projects directly.
+Zed and Zed Preview share the `zed://` handler, so the release channel that last
+registered it opens the link. To choose one, run **cli: register zed scheme** from
+its command palette, then restart T3 Code Desktop.
+
 The remote host needs a compatible [Node.js installation](./install.md#requirements)
 and [provider setup](./install.md#providers). If launch cannot find Node or reports
 an incompatible version, check it through a non-interactive SSH session:
