@@ -461,6 +461,55 @@ export const VSCodium: Icon = (props) => {
   );
 };
 
+export const SublimeTextIcon: Icon = (props) => {
+  const id = useId();
+  const gradientId = `${id}-sublime-text-gradient`;
+
+  return (
+    <svg
+      {...props}
+      viewBox="0 0 36 46.759"
+      style={{
+        clipRule: "evenodd",
+        fillRule: "evenodd",
+        strokeLinejoin: "round",
+        strokeMiterlimit: 1.41421,
+      }}
+    >
+      <path
+        d="M35.995 26.563c0-.548-.405-.864-.902-.707L.902 36.698c-.498.158-.902.731-.902 1.278v11.081c0 .548.404.865.902.707l34.191-10.841c.497-.158.902-.731.902-1.279z"
+        fill={`url(#${gradientId})`}
+        transform="translate(0 -3.045)"
+      />
+      <path
+        d="M0 26.21c0 .548.404 1.121.902 1.279l34.196 10.843c.498.158.902-.159.902-.706V26.544c0-.547-.404-1.12-.902-1.278L.902 14.423c-.498-.158-.902.158-.902.706Z"
+        fill="#ff9800"
+        transform="translate(0 -3.045)"
+      />
+      <path
+        d="M35.995 3.793c0-.548-.405-.865-.902-.707L.902 13.927c-.498.158-.902.731-.902 1.279v11.081c0 .548.404.864.902.707l34.191-10.842c.497-.158.902-.731.902-1.278z"
+        fill="#ff9800"
+        transform="translate(0 -3.045)"
+      />
+      <defs>
+        <linearGradient
+          id={gradientId}
+          x1="0"
+          x2="1"
+          y1="0"
+          y2="0"
+          gradientTransform="matrix(3.08228 -10.3064 8.72379 3.56577 19.84 42.498)"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset="0" stopColor="#ff9700" />
+          <stop offset=".53" stopColor="#f48e00" />
+          <stop offset="1" stopColor="#d06f00" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+};
+
 export const Zed: Icon = (props) => {
   const id = useId();
   const clipPathId = `${id}-zed-logo-a`;
