@@ -8,6 +8,8 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+import { acquireServerOwnershipLock } from "./serverOwnershipLock.ts";
+
 import type {
   PendingServiceUpdate,
   ServiceLauncherChildMessage,
@@ -94,32 +96,44 @@ async function syncDirectory(directory: string): Promise<void> {
   }
 }
 
+/** Exclude a concurrent foreground start while update backup or rollback touches SQLite. */
+async function withDatabaseOwnership(dbPath: string, run: () => Promise<void>): Promise<void> {
+  const lock = await acquireServerOwnershipLock(NodePath.dirname(dbPath));
+  try {
+    await run();
+  } finally {
+    lock.close();
+  }
+}
+
 /**
  * Snapshots the database once per update before the first trial. A completed
  * backup is never overwritten because a restarted launcher may be looking at
  * database writes from an earlier attempt by the same trial.
  */
 async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate): Promise<void> {
-  const backupDir = databaseBackupDir(baseDir, pending.id);
-  if (await pathExists(backupDir)) return;
+  return withDatabaseOwnership(pending.dbPath, async () => {
+    const backupDir = databaseBackupDir(baseDir, pending.id);
+    if (await pathExists(backupDir)) return;
 
-  const stagingDir = `${backupDir}.staging`;
-  await NodeFSP.rm(stagingDir, { recursive: true, force: true });
-  await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
-  try {
-    for (const suffix of DB_FILE_SUFFIXES) {
-      const source = `${pending.dbPath}${suffix}`;
-      if (suffix !== "" && !(await pathExists(source))) continue;
-      const destination = databaseBackupFile(stagingDir, suffix);
-      await NodeFSP.copyFile(source, destination);
-      await syncFile(destination);
+    const stagingDir = `${backupDir}.staging`;
+    await NodeFSP.rm(stagingDir, { recursive: true, force: true });
+    await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
+    try {
+      for (const suffix of DB_FILE_SUFFIXES) {
+        const source = `${pending.dbPath}${suffix}`;
+        if (suffix !== "" && !(await pathExists(source))) continue;
+        const destination = databaseBackupFile(stagingDir, suffix);
+        await NodeFSP.copyFile(source, destination);
+        await syncFile(destination);
+      }
+      await NodeFSP.rename(stagingDir, backupDir);
+      await syncDirectory(NodePath.dirname(backupDir));
+    } catch (cause) {
+      await NodeFSP.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
+      throw cause;
     }
-    await NodeFSP.rename(stagingDir, backupDir);
-    await syncDirectory(NodePath.dirname(backupDir));
-  } catch (cause) {
-    await NodeFSP.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
-    throw cause;
-  }
+  });
 }
 
 const restoreMarkerPath = (baseDir: string, updateId: string) =>
@@ -147,21 +161,23 @@ async function restoreDatabaseBackup(
   baseDir: string,
   pending: PendingServiceUpdate,
 ): Promise<void> {
-  const backupDir = databaseBackupDir(baseDir, pending.id);
-  if (!(await pathExists(backupDir))) return;
+  return withDatabaseOwnership(pending.dbPath, async () => {
+    const backupDir = databaseBackupDir(baseDir, pending.id);
+    if (!(await pathExists(backupDir))) return;
 
-  await markDatabaseRestorePending(backupDir);
-  for (const suffix of DB_FILE_SUFFIXES) {
-    const target = `${pending.dbPath}${suffix}`;
-    const source = databaseBackupFile(backupDir, suffix);
-    if (await pathExists(source)) {
-      await NodeFSP.copyFile(source, target);
-      await syncFile(target);
-    } else {
-      await NodeFSP.rm(target, { force: true });
+    await markDatabaseRestorePending(backupDir);
+    for (const suffix of DB_FILE_SUFFIXES) {
+      const target = `${pending.dbPath}${suffix}`;
+      const source = databaseBackupFile(backupDir, suffix);
+      if (await pathExists(source)) {
+        await NodeFSP.copyFile(source, target);
+        await syncFile(target);
+      } else {
+        await NodeFSP.rm(target, { force: true });
+      }
     }
-  }
-  await syncDirectory(NodePath.dirname(pending.dbPath));
+    await syncDirectory(NodePath.dirname(pending.dbPath));
+  });
 }
 
 async function discardDatabaseBackup(baseDir: string, updateId: string): Promise<void> {

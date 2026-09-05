@@ -1,10 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ProcessRunner from "./processRunner.ts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import { Launcher, readServiceState, writeServiceState } from "./serviceLauncher.ts";
+import { acquireServerOwnership } from "./serverOwnership.ts";
 import {
   compareExactServiceVersions,
   decodeServiceState,
@@ -12,6 +15,8 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
+
+const TestPlatformLayer = ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
 it("accepts only exact semantic versions", () => {
   for (const version of ["0.0.0", "1.2.3", "1.2.3-alpha.1", "1.2.3-0", "1.2.3+001"]) {
@@ -75,7 +80,7 @@ it("rejects contradictory service state", () => {
   );
 });
 
-it.layer(NodeServices.layer)("service state persistence", (it) => {
+it.layer(TestPlatformLayer)("service state persistence", (it) => {
   it.effect("durably replaces and strictly reads one state document", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -89,6 +94,41 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
 
       yield* Effect.promise(() => writeServiceState(statePath, state));
       assert.deepEqual(yield* Effect.promise(() => readServiceState(statePath)), state);
+    }),
+  );
+
+  it.effect("does not restore an update backup over another active owner", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launcher-owner-test-" });
+      const dbPath = path.join(root, "userdata", "state.sqlite");
+      const backup = path.join(root, "runtime", "db-backup", "update-1");
+      yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
+      yield* fs.makeDirectory(backup, { recursive: true });
+      yield* fs.writeFileString(dbPath, "active owner data");
+      yield* fs.writeFileString(path.join(backup, "database"), "old backup");
+      yield* acquireServerOwnership(path.join(root, "userdata", "server-runtime.json"));
+      const launcher = new Launcher(root, {
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: "1.0.0",
+        update: {
+          id: "update-1",
+          fromVersion: "1.0.0",
+          targetVersion: "1.1.0",
+          dbPath,
+          status: "pending",
+        },
+      });
+      const failed = yield* Effect.promise(() =>
+        launcher.run().then(
+          () => false,
+          () => true,
+        ),
+      );
+      assert.isTrue(failed);
+      assert.equal(yield* fs.readFileString(dbPath), "active owner data");
+      assert.isFalse(yield* fs.exists(path.join(backup, ".restore-pending")));
     }),
   );
 

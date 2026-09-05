@@ -1,4 +1,12 @@
-import { assert, describe, it } from "@effect/vitest";
+// @effect-diagnostics nodeBuiltinImport:off - Run the remote shell script against isolated local processes.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeHttp from "node:http";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeEvents from "node:events";
+import * as NodeUtil from "node:util";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import * as Duration from "effect/Duration";
@@ -13,6 +21,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { SshPasswordPrompt } from "./auth.ts";
+import { remoteStateKey } from "./command.ts";
 import {
   buildRemoteLaunchScript,
   buildRemotePairingScript,
@@ -171,7 +180,6 @@ describe("ssh tunnel scripts", () => {
       buildRemoteLaunchScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE }),
       '[ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null',
     );
-    assert.include(buildRemoteLaunchScript(), "RUNNER_CHANGED=1");
     assert.include(buildRemoteLaunchScript(), "ensure_remote_node_path()");
     assert.include(buildRemoteLaunchScript(), "if ! ensure_remote_node_path; then");
     assert.include(
@@ -201,10 +209,13 @@ describe("ssh tunnel scripts", () => {
     assert.include(buildRemotePairingScript(target, { packageSpec: "t3@nightly" }), "t3@nightly");
     assert.include(
       buildRemoteStopScript(target),
-      'if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ]',
+      '[ "$REMOTE_STARTED_AT" = "$CURRENT_STARTED_AT" ]',
     );
     assert.include(buildRemoteStopScript(target), 'kill "$REMOTE_PID" 2>/dev/null || true');
-    assert.include(buildRemoteStopScript(target), 'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"');
+    assert.include(
+      buildRemoteStopScript(target),
+      'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$STARTED_FILE"',
+    );
     assert.include(
       buildRemoteLaunchScript(),
       'DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"',
@@ -218,15 +229,11 @@ describe("ssh tunnel scripts", () => {
       buildRemoteLaunchScript(),
       "if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port))",
     );
-    assert.include(buildRemoteLaunchScript(), 'PID_TO_STOP="${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"');
+
     assert.include(buildRemoteLaunchScript(), 'REMOTE_PORT="$DEFAULT_REMOTE_PORT"');
     assert.include(buildRemoteLaunchScript(), 'rm -f "$PID_FILE"');
     assert.include(buildRemoteLaunchScript(), "printf 'external\\n' >\"$MANAGED_FILE\"");
     assert.include(buildRemoteLaunchScript(), 'if [ -z "$REMOTE_PORT" ]; then');
-    assert.isBelow(
-      buildRemoteLaunchScript().indexOf('if [ "$REMOTE_MANAGED" = "managed" ]'),
-      buildRemoteLaunchScript().indexOf("printf 'external\\n' >\"$MANAGED_FILE\""),
-    );
     assert.isBelow(
       buildRemoteLaunchScript().indexOf('DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port'),
       buildRemoteLaunchScript().indexOf('elif [ -n "$REMOTE_PID" ]'),
@@ -444,3 +451,185 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 });
+
+// oxlint-disable-next-line t3code/no-global-process-runtime -- These shell tests require the real host platform before the test runtime starts.
+const itOnPosix = it.skipIf(process.platform === "win32");
+
+// Run the actual remote shell script locally with a disposable HOME. A saved
+// PID from another process must not be killed when service discovery succeeds.
+itOnPosix("reconnects to the managed service instead of the saved SSH port", async () => {
+  const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-service-test-"));
+  const oldProcess = NodeChildProcess.spawn(process.execPath, ["-e", "process.stdin.resume()"], {
+    stdio: ["pipe", "ignore", "ignore"],
+  });
+  const oldExit = NodeEvents.EventEmitter.once(oldProcess, "exit");
+  const service = NodeHttp.createServer((_request, response) => response.end("ready"));
+  service.listen(0, "127.0.0.1");
+  await NodeEvents.EventEmitter.once(service, "listening");
+  try {
+    const address = service.address();
+    assert.isObject(address);
+    if (!address || typeof address === "string") throw new Error("Expected TCP address");
+    const stateDir = NodePath.join(home, ".t3", "ssh-launch", "test");
+    await NodeFSP.mkdir(stateDir, { recursive: true });
+    await NodeFSP.mkdir(NodePath.join(home, ".t3", "userdata"));
+    await NodeFSP.writeFile(NodePath.join(stateDir, "pid"), String(oldProcess.pid));
+    await NodeFSP.writeFile(NodePath.join(stateDir, "port"), "3773");
+    await NodeFSP.writeFile(NodePath.join(stateDir, "managed"), "managed");
+    await NodeFSP.writeFile(
+      NodePath.join(home, ".t3", "userdata", "server-runtime.json"),
+      JSON.stringify({
+        version: 1,
+        pid: process.pid,
+        port: address.port,
+        origin: `http://127.0.0.1:${address.port}`,
+      }),
+    );
+    const result = await NodeUtil.promisify(NodeChildProcess.execFile)(
+      "sh",
+      ["-c", buildRemoteLaunchScript(), "sh", "test"],
+      {
+        env: { ...process.env, HOME: home },
+      },
+    );
+    assert.deepEqual(JSON.parse(result.stdout), {
+      remotePort: address.port,
+      serverKind: "external",
+    });
+    assert.equal(oldProcess.exitCode, null);
+    assert.equal(oldProcess.signalCode, null);
+    process.kill(oldProcess.pid!, 0);
+    assert.equal(await NodeFSP.readFile(NodePath.join(stateDir, "managed"), "utf8"), "external\n");
+  } finally {
+    oldProcess.kill("SIGTERM");
+    await oldExit;
+    await new Promise<void>((resolve, reject) =>
+      service.close((error) => (error ? reject(error) : resolve())),
+    );
+    await NodeFSP.rm(home, { recursive: true, force: true });
+  }
+});
+
+itOnPosix.for(["missing", "mismatch", "matching"] as const)(
+  "checks the saved process start time before SSH disconnect stops a process: %s",
+  async (identity) => {
+    const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-stop-test-"));
+    const target = { alias: "test", hostname: "test.invalid", username: null, port: null };
+    const stateDir = NodePath.join(home, ".t3", "ssh-launch", remoteStateKey(target));
+    const child = NodeChildProcess.spawn(process.execPath, ["-e", "process.stdin.resume()"], {
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    const exited = NodeEvents.EventEmitter.once(child, "exit");
+    try {
+      await NodeFSP.mkdir(stateDir, { recursive: true });
+      await NodeFSP.writeFile(NodePath.join(stateDir, "pid"), String(child.pid));
+      await NodeFSP.writeFile(NodePath.join(stateDir, "managed"), "managed");
+      if (identity !== "missing") {
+        const actual = await NodeUtil.promisify(NodeChildProcess.execFile)(
+          "ps",
+          ["-p", String(child.pid), "-o", "lstart="],
+          { env: { ...process.env, LC_ALL: "C" } },
+        );
+        await NodeFSP.writeFile(
+          NodePath.join(stateDir, "started-at"),
+          identity === "matching" ? actual.stdout : "old process start time",
+        );
+      }
+      await NodeUtil.promisify(NodeChildProcess.execFile)(
+        "sh",
+        ["-c", buildRemoteStopScript(target)],
+        { env: { ...process.env, HOME: home } },
+      );
+      if (identity === "matching") {
+        await exited;
+        assert.equal(child.signalCode, "SIGTERM");
+      } else {
+        assert.equal(child.exitCode, null);
+        assert.equal(child.signalCode, null);
+      }
+    } finally {
+      child.kill("SIGTERM");
+      await exited;
+      await NodeFSP.rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
+itOnPosix.for(["reused", "missing", "matching"] as const)(
+  "checks saved PID identity before blocking SSH reconnect: %s",
+  async (identity) => {
+    const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-reuse-test-"));
+    const stateDir = NodePath.join(home, ".t3", "ssh-launch", "test");
+    const marker = NodePath.join(home, "launched-pid");
+    const entry = NodePath.join(home, "server.mjs");
+    const unrelated = NodeChildProcess.spawn(process.execPath, ["-e", "process.stdin.resume()"], {
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    const exited = NodeEvents.EventEmitter.once(unrelated, "exit");
+    const reservation = NodeHttp.createServer();
+    reservation.listen(0, "127.0.0.1");
+    await NodeEvents.EventEmitter.once(reservation, "listening");
+    const address = reservation.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP address");
+    await new Promise<void>((resolve) => reservation.close(() => resolve()));
+    try {
+      await NodeFSP.mkdir(stateDir, { recursive: true });
+      await NodeFSP.writeFile(NodePath.join(stateDir, "pid"), String(unrelated.pid));
+      await NodeFSP.writeFile(NodePath.join(stateDir, "port"), String(address.port));
+      await NodeFSP.writeFile(NodePath.join(stateDir, "managed"), "managed");
+      if (identity !== "missing") {
+        const actual = await NodeUtil.promisify(NodeChildProcess.execFile)(
+          "ps",
+          ["-p", String(unrelated.pid), "-o", "lstart="],
+          { env: { ...process.env, LC_ALL: "C" } },
+        );
+        await NodeFSP.writeFile(
+          NodePath.join(stateDir, "started-at"),
+          identity === "matching" ? actual.stdout : "old process start time",
+        );
+      }
+      await NodeFSP.writeFile(
+        entry,
+        `
+import * as http from "node:http";
+import * as fs from "node:fs";
+fs.writeFileSync(${JSON.stringify(marker)}, String(process.pid));
+const port = Number(process.argv[process.argv.indexOf("--port") + 1]);
+const server = http.createServer((_request, response) => {
+  response.end("ready");
+  server.close();
+});
+server.listen(port, "127.0.0.1");
+`,
+      );
+      const run = NodeUtil.promisify(NodeChildProcess.execFile)(
+        "sh",
+        ["-c", buildRemoteLaunchScript({ nodeScriptPath: entry }), "sh", "test"],
+        { env: { ...process.env, HOME: home } },
+      );
+      if (identity === "matching") {
+        await expect(run).rejects.toThrow("still running but is not ready");
+        await expect(NodeFSP.readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
+      } else {
+        const result = await run;
+        assert.equal(JSON.parse(result.stdout).serverKind, "managed");
+        assert.notEqual(Number(await NodeFSP.readFile(marker, "utf8")), unrelated.pid);
+      }
+      assert.equal(unrelated.exitCode, null);
+      assert.equal(unrelated.signalCode, null);
+    } finally {
+      const pid = await NodeFSP.readFile(marker, "utf8").catch(() => undefined);
+      if (pid !== undefined) {
+        // This PID was captured by the fixture at spawn, not found by a process scan.
+        try {
+          process.kill(Number(pid), "SIGTERM");
+        } catch {
+          /* The one-request fixture already exited. */
+        }
+      }
+      unrelated.kill("SIGTERM");
+      await exited;
+      await NodeFSP.rm(home, { recursive: true, force: true });
+    }
+  },
+);

@@ -461,6 +461,7 @@ DEFAULT_SERVER_HOME="$HOME/.t3"
 DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
+STARTED_FILE="$STATE_DIR/started-at"
 MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
@@ -473,10 +474,6 @@ trap cleanup_runner_next EXIT
 cat >"$RUNNER_NEXT" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
-RUNNER_CHANGED=0
-if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
-  RUNNER_CHANGED=1
-fi
 mv "$RUNNER_NEXT" "$RUNNER_FILE"
 chmod 700 "$RUNNER_FILE"
 if ! ensure_remote_node_path; then
@@ -527,33 +524,20 @@ REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
-DEFAULT_RUNTIME_PID=""
 DEFAULT_REMOTE_PORT=""
 if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
-  DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
   DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
 fi
 if [ -n "$DEFAULT_REMOTE_PORT" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
-    if [ "$REMOTE_MANAGED" = "managed" ]; then
-      PID_TO_STOP="\${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"
-      if [ -n "$PID_TO_STOP" ] && kill -0 "$PID_TO_STOP" 2>/dev/null; then
-        kill "$PID_TO_STOP" 2>/dev/null || true
-        wait_for_pid_exit "$PID_TO_STOP"
-      fi
-      REMOTE_PID=""
-      REMOTE_PORT="$DEFAULT_REMOTE_PORT"
-      REMOTE_MANAGED="external"
-      rm -f "$PID_FILE"
-      printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
-      printf 'external\\n' >"$MANAGED_FILE"
-    else
-      printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
-      printf 'external\\n' >"$MANAGED_FILE"
-      REMOTE_PID=""
-      REMOTE_MANAGED="external"
-    fi
+    # Discovery owns the current address. Saved SSH PIDs can refer to an old
+    # server or an unrelated process after PID reuse. Never signal them here.
+    REMOTE_PID=""
+    REMOTE_MANAGED="external"
+    rm -f "$PID_FILE"
+    printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+    printf 'external\\n' >"$MANAGED_FILE"
   else
     REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
     REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
@@ -567,15 +551,15 @@ if [ "$REMOTE_MANAGED" = "external" ]; then
     REMOTE_MANAGED=""
   fi
 elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
-  if [ "$RUNNER_CHANGED" -eq 1 ]; then
-    kill "$REMOTE_PID" 2>/dev/null || true
-    wait_for_pid_exit "$REMOTE_PID"
-    REMOTE_PID=""
-    REMOTE_PORT=""
-    REMOTE_MANAGED=""
-  elif ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
-    kill "$REMOTE_PID" 2>/dev/null || true
-    wait_for_pid_exit "$REMOTE_PID"
+  if ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+    REMOTE_STARTED_AT="$(cat "$STARTED_FILE" 2>/dev/null || true)"
+    CURRENT_STARTED_AT="$(LC_ALL=C ps -p "$REMOTE_PID" -o lstart= 2>/dev/null || true)"
+    if [ -n "$REMOTE_STARTED_AT" ] && [ "$REMOTE_STARTED_AT" = "$CURRENT_STARTED_AT" ]; then
+      printf 'The saved SSH server is still running but is not ready. Finish active work and stop it through its original launcher before reconnecting.\\n' >&2
+      exit 1
+    fi
+    # A stale or unverified PID is only a hint. The new server's ownership
+    # check decides whether this state directory can accept another server.
     REMOTE_PID=""
     REMOTE_PORT=""
     REMOTE_MANAGED=""
@@ -594,6 +578,7 @@ if [ -z "$REMOTE_PORT" ]; then
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
+  LC_ALL=C ps -p "$REMOTE_PID" -o lstart= >"$STARTED_FILE" 2>/dev/null || rm -f "$STARTED_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
   if ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
@@ -605,7 +590,7 @@ if [ -z "$REMOTE_PORT" ]; then
     fi
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
-    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$STARTED_FILE"
     exit 1
   fi
 fi
@@ -628,11 +613,18 @@ PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
 export const REMOTE_STOP_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
 PID_FILE="$STATE_DIR/pid"
+STARTED_FILE="$STATE_DIR/started-at"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+REMOTE_STARTED_AT="$(cat "$STARTED_FILE" 2>/dev/null || true)"
+CURRENT_STARTED_AT=""
+case "$REMOTE_PID" in
+  ''|*[!0-9]*) ;;
+  *) CURRENT_STARTED_AT="$(LC_ALL=C ps -p "$REMOTE_PID" -o lstart= 2>/dev/null || true)" ;;
+esac
+if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_STARTED_AT" ] && [ "$REMOTE_STARTED_AT" = "$CURRENT_STARTED_AT" ]; then
   kill "$REMOTE_PID" 2>/dev/null || true
   WAIT_COUNT=0
   while kill -0 "$REMOTE_PID" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
@@ -640,7 +632,7 @@ if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMO
     sleep 0.1
   done
 fi
-rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$STARTED_FILE"
 printf '{"stopped":true}\\n'
 `;
 

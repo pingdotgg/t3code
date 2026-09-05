@@ -16,6 +16,11 @@ import * as Schema from "effect/Schema";
 
 import * as ProcessRunner from "../processRunner.ts";
 import {
+  requireServerStopped,
+  ServerAlreadyRunningError,
+  ServerOwnershipError,
+} from "../serverOwnership.ts";
+import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
@@ -469,7 +474,9 @@ export type BootServiceError =
   | BootServiceInstallError
   | BootServicePrerequisiteError
   | BootServiceUpdatePendingError
-  | BootServiceDowngradeRefusedError;
+  | BootServiceDowngradeRefusedError
+  | ServerAlreadyRunningError
+  | ServerOwnershipError;
 
 export interface BootServiceStatus {
   readonly supported: boolean;
@@ -696,6 +703,16 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       .makeDirectory(input.logsDir, { recursive: true })
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
 
+    const runtimeStatePath = path.join(input.baseDir, "userdata", "server-runtime.json");
+    const installed = yield* fs
+      .exists(unitPath)
+      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+    if (!installed)
+      yield* requireServerStopped(runtimeStatePath).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(ProcessRunner.ProcessRunner, runner),
+      );
+
     // A permissions failure must not leave a partial install or stop a working server.
     if (manager.kind === "systemd") {
       yield* requireSystemdPrerequisites.pipe(Effect.tapError(logFailure));
@@ -754,12 +771,18 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       .readFileString(launcherSourcePath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
 
-    const installed = yield* fs
-      .exists(unitPath)
-      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
     if (installed) {
       yield* runSteps(manager.stop);
     }
+
+    // Stopping a managed unit does not stop an SSH or foreground server.
+    // Check again after preparation and before changing service configuration.
+    // Keep this outside restart recovery. An older installed runtime may not
+    // honor the lock, so restarting it could duplicate the unmanaged owner.
+    yield* requireServerStopped(runtimeStatePath).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
+    );
 
     yield* Effect.gen(function* () {
       if (installed) {
