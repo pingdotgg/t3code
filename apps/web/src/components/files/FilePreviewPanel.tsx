@@ -12,6 +12,7 @@ import {
 import { VirtualizedFile, type SelectedLineRange } from "@pierre/diffs";
 import { Editor } from "@pierre/diffs/editor";
 import { EditProvider, File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
+import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -46,7 +47,6 @@ import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
-import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
@@ -71,9 +71,8 @@ import {
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
 } from "./filePreviewMode";
-import { FileSaveCoordinator } from "./fileSaveCoordinator";
+import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import {
-  confirmProjectFileQueryData,
   getOptimisticProjectFileQueryData,
   setProjectFileQueryData,
   useProjectFileQuery,
@@ -100,7 +99,6 @@ interface FilePreviewPanelProps {
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
-const FILE_SAVE_DEBOUNCE_MS = 500;
 const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 const FILE_LINK_REVEAL_UNSAFE_CSS = `
   ${DIFF_SURFACE_THEME_UNSAFE_CSS}
@@ -612,37 +610,6 @@ interface FileSelectionOverride {
   range: SelectedLineRange | null;
 }
 
-function useFileSaveCoordinator({
-  environmentId,
-  cwd,
-  relativePath,
-  onPendingChange,
-}: Pick<
-  EditableFileSurfaceProps,
-  "environmentId" | "cwd" | "relativePath" | "onPendingChange"
->): FileSaveCoordinator {
-  const writeFile = useAtomCommand(projectEnvironment.writeFile);
-  const coordinator = useMemo(
-    () =>
-      new FileSaveCoordinator({
-        debounceMs: FILE_SAVE_DEBOUNCE_MS,
-        onPendingChange: (pending) => onPendingChange(relativePath, pending),
-        persist: (nextContents) =>
-          writeFile({
-            environmentId,
-            input: { cwd, relativePath, contents: nextContents },
-          }),
-        onConfirmed: (confirmedContents) => {
-          confirmProjectFileQueryData(environmentId, cwd, relativePath, confirmedContents);
-        },
-      }),
-    [cwd, environmentId, onPendingChange, relativePath, writeFile],
-  );
-
-  useEffect(() => () => coordinator.dispose(), [coordinator]);
-  return coordinator;
-}
-
 function EditableFileSurface({
   environmentId,
   cwd,
@@ -773,42 +740,47 @@ function EditableFileSurface({
     ],
   );
 
-  const beginComment = useCallback((range: SelectedLineRange) => {
-    const { startLine, endLine } = normalizeFileCommentRange(range);
-    const draftEntry: FileCommentAnnotationEntry = {
-      id: nextFileCommentId(),
-      kind: "draft",
-      startLine,
-      endLine,
-      text: "",
-    };
-    setLineAnnotations((current) => {
-      const withoutDraft = current.flatMap((annotation) => {
-        const entries = annotation.metadata.entries.filter((entry) => entry.kind !== "draft");
-        return entries.length > 0 ? [{ ...annotation, metadata: { entries } }] : [];
+  const beginComment = useCallback(
+    (range: SelectedLineRange) => {
+      editor.setSelections([]);
+      editor.blur();
+      const { startLine, endLine } = normalizeFileCommentRange(range);
+      const draftEntry: FileCommentAnnotationEntry = {
+        id: nextFileCommentId(),
+        kind: "draft",
+        startLine,
+        endLine,
+        text: "",
+      };
+      setLineAnnotations((current) => {
+        const withoutDraft = current.flatMap((annotation) => {
+          const entries = annotation.metadata.entries.filter((entry) => entry.kind !== "draft");
+          return entries.length > 0 ? [{ ...annotation, metadata: { entries } }] : [];
+        });
+        const existingIndex = withoutDraft.findIndex(
+          (annotation) => annotation.lineNumber === endLine,
+        );
+        if (existingIndex < 0) {
+          return [
+            ...withoutDraft,
+            {
+              lineNumber: endLine,
+              metadata: { entries: [draftEntry] },
+            },
+          ];
+        }
+        return withoutDraft.map((annotation, index) =>
+          index === existingIndex
+            ? {
+                ...annotation,
+                metadata: { entries: [...annotation.metadata.entries, draftEntry] },
+              }
+            : annotation,
+        );
       });
-      const existingIndex = withoutDraft.findIndex(
-        (annotation) => annotation.lineNumber === endLine,
-      );
-      if (existingIndex < 0) {
-        return [
-          ...withoutDraft,
-          {
-            lineNumber: endLine,
-            metadata: { entries: [draftEntry] },
-          },
-        ];
-      }
-      return withoutDraft.map((annotation, index) =>
-        index === existingIndex
-          ? {
-              ...annotation,
-              metadata: { entries: [...annotation.metadata.entries, draftEntry] },
-            }
-          : annotation,
-      );
-    });
-  }, []);
+    },
+    [editor],
+  );
   const hasOpenCommentForm = lineAnnotations.some((annotation) =>
     annotation.metadata.entries.some((entry) => entry.kind === "draft"),
   );
@@ -1294,7 +1266,11 @@ export default function FilePreviewPanel({
             </div>
           ) : relativePath && file.data ? (
             isMarkdown && renderMarkdown ? (
+              // Markdown reconciles in place across text updates, so a file
+              // switch needs a new key or the previous file's disclosure and
+              // wrap state carries into the next document.
               <RenderedMarkdownSurface
+                key={relativePath}
                 environmentId={environmentId}
                 cwd={cwd}
                 relativePath={relativePath}
@@ -1304,46 +1280,50 @@ export default function FilePreviewPanel({
                 onPendingChange={onPendingChange}
               />
             ) : file.data.truncated || isHostFile ? (
-              <Virtualizer
-                key={`${relativePath}:${resolvedTheme}:${file.data.byteLength}`}
-                className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
-                config={{
-                  overscrollSize: 600,
-                  intersectionObserverMargin: 1200,
-                }}
-              >
-                <File
-                  file={{
-                    name: relativePath,
-                    contents: file.data.contents,
-                    cacheKey: projectFileCacheKey(cwd, relativePath, file.data.contents),
+              <DiffWorkerPoolProvider>
+                <Virtualizer
+                  key={`${relativePath}:${resolvedTheme}:${file.data.byteLength}`}
+                  className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
+                  config={{
+                    overscrollSize: 600,
+                    intersectionObserverMargin: 1200,
                   }}
-                  options={{
-                    disableFileHeader: true,
-                    overflow: wordWrap ? "wrap" : "scroll",
-                    theme: resolveDiffThemeName(resolvedTheme),
-                    preferredHighlighter: PREFERRED_HIGHLIGHTER,
-                    themeType: resolvedTheme,
-                    unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
-                    onPostRender: onFilePostRender,
-                  }}
-                  className="min-h-full"
-                />
-              </Virtualizer>
+                >
+                  <File
+                    file={{
+                      name: relativePath,
+                      contents: file.data.contents,
+                      cacheKey: projectFileCacheKey(cwd, relativePath, file.data.contents),
+                    }}
+                    options={{
+                      disableFileHeader: true,
+                      overflow: wordWrap ? "wrap" : "scroll",
+                      theme: resolveDiffThemeName(resolvedTheme),
+                      preferredHighlighter: PREFERRED_HIGHLIGHTER,
+                      themeType: resolvedTheme,
+                      unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
+                      onPostRender: onFilePostRender,
+                    }}
+                    className="min-h-full"
+                  />
+                </Virtualizer>
+              </DiffWorkerPoolProvider>
             ) : (
-              <EditableFileSurface
-                key={`${relativePath}:${resolvedTheme}`}
-                environmentId={environmentId}
-                cwd={cwd}
-                relativePath={relativePath}
-                composerDraftTarget={composerDraftTarget}
-                contents={file.data.contents}
-                resolvedTheme={resolvedTheme}
-                revealRequestId={revealRequestId}
-                wordWrap={wordWrap}
-                onPostRender={onFilePostRender}
-                onPendingChange={onPendingChange}
-              />
+              <DiffWorkerPoolProvider>
+                <EditableFileSurface
+                  key={`${relativePath}:${resolvedTheme}`}
+                  environmentId={environmentId}
+                  cwd={cwd}
+                  relativePath={relativePath}
+                  composerDraftTarget={composerDraftTarget}
+                  contents={file.data.contents}
+                  resolvedTheme={resolvedTheme}
+                  revealRequestId={revealRequestId}
+                  wordWrap={wordWrap}
+                  onPostRender={onFilePostRender}
+                  onPendingChange={onPendingChange}
+                />
+              </DiffWorkerPoolProvider>
             )
           ) : null}
         </div>

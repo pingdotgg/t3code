@@ -564,7 +564,7 @@ export function useSettingsRestore(onRestored?: () => void) {
         : []),
       ...(settings.continueThreadsAfterServerUpdate !==
       DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
-        ? ["Continue threads after server updates"]
+        ? ["Continue threads after restarts"]
         : []),
       ...(isBackgroundActivityDirty ? ["Background activity"] : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
@@ -2308,7 +2308,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("proactive-panels")}
-          description="Open linked pull requests when found and turn diffs when work finishes."
+          description="Open linked pull requests when found and turn diffs when work changes files."
           resetAction={
             settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled ? (
               <SettingResetButton
@@ -2438,12 +2438,13 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("continue-threads-after-server-update")}
-          description="Automatically resume active threads after a server update restarts the environment."
+          serverScoped
+          description="Automatically resume interrupted threads after an update, crash, or machine restart. Applies to this environment and all connected environments that support it. Update older servers first."
           resetAction={
             settings.continueThreadsAfterServerUpdate !==
             DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate ? (
               <SettingResetButton
-                label="continue threads after server updates"
+                label="continue threads after restarts"
                 onClick={() =>
                   updateSettings({
                     continueThreadsAfterServerUpdate:
@@ -2459,7 +2460,7 @@ export function GeneralSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ continueThreadsAfterServerUpdate: Boolean(checked) })
               }
-              aria-label="Continue threads after server updates"
+              aria-label="Continue threads after restarts"
             />
           }
         />
@@ -2600,37 +2601,35 @@ export function GeneralSettingsPanel() {
           }
         />
 
-        {settings.defaultThreadEnvMode === "worktree" ? (
-          <SettingsRow
-            serverScoped
-            className="bg-muted/20 sm:pl-9"
-            title={searchableSetting("start-from-origin").title}
-            description="Creates the worktree from the latest matching branch on origin instead of your local branch."
-            resetAction={
-              settings.newWorktreesStartFromOrigin !==
-              DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin ? (
-                <SettingResetButton
-                  label="new worktrees start from origin"
-                  onClick={() =>
-                    updateSettings({
-                      newWorktreesStartFromOrigin:
-                        DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
-                    })
-                  }
-                />
-              ) : null
-            }
-            control={
-              <Switch
-                checked={settings.newWorktreesStartFromOrigin}
-                onCheckedChange={(checked) =>
-                  updateSettings({ newWorktreesStartFromOrigin: Boolean(checked) })
+        <SettingsRow
+          serverScoped
+          className="bg-muted/20 sm:pl-9"
+          title={searchableSetting("start-from-origin").title}
+          description="Creates the worktree from the latest matching branch on origin instead of your local branch."
+          resetAction={
+            settings.newWorktreesStartFromOrigin !==
+            DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin ? (
+              <SettingResetButton
+                label="new worktrees start from origin"
+                onClick={() =>
+                  updateSettings({
+                    newWorktreesStartFromOrigin:
+                      DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
+                  })
                 }
-                aria-label="Start new worktrees from origin by default"
               />
-            }
-          />
-        ) : null}
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.newWorktreesStartFromOrigin}
+              onCheckedChange={(checked) =>
+                updateSettings({ newWorktreesStartFromOrigin: Boolean(checked) })
+              }
+              aria-label="Start new worktrees from origin by default"
+            />
+          }
+        />
         <SettingsRow
           serverScoped
           {...searchableSetting("add-project-starts-in")}
@@ -2744,7 +2743,7 @@ export function GeneralSettingsPanel() {
         {isElectron ? (
           <SettingsRow
             {...searchableSetting("quit-confirmation")}
-            description="Choose whether the desktop app quits immediately, after a hold, or after two quick presses."
+            description="Hold mode also quits on two quick presses."
             resetAction={
               settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? (
                 <SettingResetButton

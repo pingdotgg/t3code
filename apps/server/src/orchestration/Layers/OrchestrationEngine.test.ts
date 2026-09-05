@@ -325,6 +325,8 @@ describe("OrchestrationEngine", () => {
           }),
         ),
       hasEventAfter: () => Effect.succeed(false),
+      readAggregateRange: () => Stream.die("unused aggregate replay"),
+      getAggregateReplayStats: () => Effect.die("unused aggregate replay stats"),
     };
 
     const projectionSnapshot = {
@@ -416,8 +418,10 @@ describe("OrchestrationEngine", () => {
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getProjectShellById: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+          getImportedAgentSessionSources: () => Effect.die("unused"),
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
           getFullThreadDiffContext: () => Effect.succeed(Option.none()),
+          getThreadRuntimeContext: () => Effect.die("unused"),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
@@ -1234,6 +1238,8 @@ describe("OrchestrationEngine", () => {
         return Stream.fromIterable(events);
       },
       hasEventAfter: () => Effect.succeed(false),
+      readAggregateRange: () => Stream.die("unused aggregate replay"),
+      getAggregateReplayStats: () => Effect.die("unused aggregate replay stats"),
     };
 
     const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -1472,6 +1478,8 @@ describe("OrchestrationEngine", () => {
         return Stream.fromIterable(events);
       },
       hasEventAfter: () => Effect.succeed(false),
+      readAggregateRange: () => Stream.die("unused aggregate replay"),
+      getAggregateReplayStats: () => Effect.die("unused aggregate replay stats"),
     };
 
     let shouldFailProjection = true;

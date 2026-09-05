@@ -1,17 +1,21 @@
-# Import browser logins
+# Import browser sessions
 
-In the desktop app, open **Settings → Integrations → Browser profiles → Add profile**
-and choose a browser under **Import from**. The import copies cookies into a T3 Code browser
-profile so you can use existing logins in the preview browser. Changes made afterward stay
-separate from the source browser.
+The desktop app can import cookies from another browser so you can reuse its signed-in sessions
+in the preview browser.
 
-Linux discovery includes Helium and both native and Snap installations of Firefox. Windows
-discovery includes Firefox and Helium builds that still use Windows' standard profile
-encryption. Other Chromium-based browsers on Windows use app-bound cookie encryption and cannot
-be imported. A browser appears once it has a profile with a cookie database. Close the source
-browser before importing; the import wizard will prompt you if it is still running.
+Open **Settings → Integrations → Browser profiles → Add profile**, then choose a browser under
+**Import from**. Close the source browser before importing, and allow an operating-system keyring
+unlock prompt if one appears.
 
-On Linux, Chromium-based browsers use your desktop keyring to protect their cookies. T3 Code
-includes the keyring reader; no separate command-line tool is needed. Allow the desktop unlock
-prompt if one appears. If the keyring cannot be accessed, T3 Code reports that failure when no
-cookies can be imported. Partitioned cookies are skipped.
+This is a one-time copy. Later login changes stay separate between the two browsers, and some
+sites may still require you to sign in again.
+
+On macOS, Safari is also available. Safari protects its cookies with Full Disk Access rather than
+a keychain, so the import wizard asks you to grant it: **Open System Settings** takes you to the
+right pane, and macOS may ask you to quit and reopen T3 Code before the grant applies. You can
+revoke Full Disk Access after the import is done. Only Safari's primary profile is imported; cookies
+kept by additional Safari profiles are not.
+
+On Windows, import supports Firefox and Helium profiles that use standard profile encryption.
+Other Chromium-based browsers use app-bound encryption and cannot be imported. Partitioned cookies
+are skipped on all platforms.

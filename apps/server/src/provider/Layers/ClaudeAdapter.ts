@@ -14,6 +14,7 @@ import {
   type PermissionResult,
   type PermissionUpdate,
   type SDKMessage,
+  type SDKRateLimitInfo,
   type SDKResultMessage,
   type SettingSource,
   type SDKUserMessage,
@@ -24,6 +25,7 @@ import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { type ClaudeScopedLimitNames, claudeRateLimitEventToUpdate } from "./claudeUsageLimits.ts";
 import {
   ApprovalRequestId,
+  classifyTaskAgentKind,
   type CanonicalItemType,
   type CanonicalRequestType,
   type ClaudeSettings,
@@ -38,6 +40,7 @@ import {
   type ProviderSendTurnInput,
   type ProviderSession,
   type ThreadTokenUsageSnapshot,
+  type TurnTokenUsage,
   type ProviderUserInputAnswers,
   type RuntimeContentStreamKind,
   RuntimeItemId,
@@ -154,6 +157,7 @@ interface ClaudeTurnState {
   readonly capturedProposedPlanKeys: Set<string>;
   latestAssistantUsage: unknown | undefined;
   compactedSinceLatestAssistantUsage: boolean;
+  hasSubagents: boolean;
   nextSyntheticAssistantBlockIndex: number;
 }
 
@@ -324,6 +328,8 @@ interface ClaudeSessionContext {
   lastKnownTotalProcessedTokens: number | undefined;
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
+  /** Limits already announced for the running turn, keyed `window:resetsAt`. */
+  announcedUsageLimits: { turnId: string; keys: Set<string> } | undefined;
   stopped: boolean;
 }
 
@@ -434,10 +440,45 @@ function resultErrorsText(result: SDKResultMessage): string {
  * so they must never become the error banner.
  */
 function resultUserFacingError(result: SDKResultMessage): string | undefined {
-  if (result.subtype === "success" || !Array.isArray(result.errors)) {
-    return undefined;
+  const listed =
+    result.subtype === "success" || !Array.isArray(result.errors)
+      ? undefined
+      : result.errors.find((error) => !error.startsWith("[ede_diagnostic]"));
+  if (listed) {
+    return listed;
   }
-  return result.errors.find((error) => !error.startsWith("[ede_diagnostic]"));
+  // Structured failure markers for results whose error list is empty or
+  // diagnostic-only: an overloaded API (529) and the terminal reasons the
+  // CLI stamps when it gives up on a turn.
+  if (isOverloadedResult(result)) {
+    return "Claude API is overloaded (529). Try again shortly.";
+  }
+  switch (result.terminal_reason) {
+    case "api_error":
+      return "Claude gave up after repeated API errors.";
+    case "malformed_tool_use_exhausted":
+      return "Claude gave up after repeated malformed tool calls.";
+    case "budget_exhausted":
+      return "Claude stopped: the turn's token budget was exhausted.";
+    case "structured_output_retry_exhausted":
+      return "Claude could not produce the requested structured output.";
+    case "tool_deferred_unavailable":
+      return "Claude could not resume a deferred tool call: the tool is no longer available.";
+    case "turn_setup_failed":
+      return "Claude could not start the turn.";
+    case "blocking_limit":
+      return "Claude stopped: a usage limit blocked the request.";
+    case "rapid_refill_breaker":
+      return "Claude stopped: the context refilled too quickly after compaction.";
+    case "prompt_too_long":
+      return "Claude stopped: the prompt exceeds the model's context window.";
+    case "image_error":
+      return "Claude stopped: an image in the conversation could not be processed.";
+    case "model_error":
+      return "Claude stopped: the model returned an error.";
+    default:
+      return undefined;
+  }
 }
 
 function isInterruptedResult(result: SDKResultMessage): boolean {
@@ -463,6 +504,55 @@ function isInterruptedResult(result: SDKResultMessage): boolean {
       errors.includes("interrupted by user") ||
       errors.includes("aborted"))
   );
+}
+
+const CLAUDE_USAGE_LIMIT_WINDOWS = {
+  five_hour: "5-hour",
+  seven_day: "7-day",
+  seven_day_opus: "7-day Opus",
+  seven_day_sonnet: "7-day Sonnet",
+  seven_day_overage_included: "7-day model",
+  overage: "overage",
+} satisfies Record<NonNullable<SDKRateLimitInfo["rateLimitType"]>, string>;
+
+/** Beyond this the reset time is not credible, so the row ships without a wait. */
+const CLAUDE_USAGE_LIMIT_MAX_WAIT_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * `resetsAt` is epoch seconds. The row states the remaining wait rather than a
+ * wall-clock time: this renders on the server, while the row is read on clients
+ * that may sit in another timezone and locale, and that carry their own
+ * timestamp preference. A wait reads the same everywhere.
+ */
+function describeClaudeUsageLimit(
+  info: SDKRateLimitInfo,
+  nowMs: number,
+  names: ClaudeScopedLimitNames,
+): string {
+  const label =
+    info.rateLimitType === "seven_day_overage_included" && names.overageIncluded
+      ? `7-day ${names.overageIncluded}`
+      : info.rateLimitType
+        ? CLAUDE_USAGE_LIMIT_WINDOWS[info.rateLimitType]
+        : undefined;
+  const resetsAtMs = info.resetsAt === undefined ? undefined : info.resetsAt * 1000;
+  const waitMs =
+    resetsAtMs === undefined || !Number.isFinite(nowMs) ? undefined : resetsAtMs - nowMs;
+  const wait =
+    waitMs !== undefined && waitMs > 0 && waitMs <= CLAUDE_USAGE_LIMIT_MAX_WAIT_MS
+      ? formatClaudeUsageLimitWait(waitMs)
+      : undefined;
+  return `Claude usage limit reached. This turn is paused until the ${
+    label ? `${label} ` : ""
+  }limit resets${wait ? ` in ${wait}` : ""}.`;
+}
+
+function formatClaudeUsageLimitWait(waitMs: number): string {
+  const totalMinutes = Math.ceil(waitMs / 60_000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${totalMinutes}m`;
+  return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
 }
 
 function asRuntimeItemId(value: string): RuntimeItemId {
@@ -606,6 +696,85 @@ function normalizeClaudeActiveTokenUsage(
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(totalProcessedTokens !== undefined ? { totalProcessedTokens } : {}),
   });
+}
+
+function normalizeClaudeTurnTokenUsage(
+  result: SDKResultMessage | undefined,
+  hasSubagents: boolean,
+  terminalStatus: ProviderRuntimeTurnStatus,
+): TurnTokenUsage {
+  const usage = result?.usage as Record<string, unknown> | undefined;
+  if (!usage) {
+    return {
+      usageStatus: "unavailable",
+      usageScope: "main_agent",
+      hasSubagents,
+    };
+  }
+
+  const uncachedInputTokens = finiteNonNegativeInteger(usage.input_tokens);
+  const cachedInputTokens = finiteNonNegativeInteger(usage.cache_read_input_tokens);
+  const cacheCreationTokens = finiteNonNegativeInteger(usage.cache_creation_input_tokens);
+  const rawOutputTokens = finiteNonNegativeInteger(usage.output_tokens);
+  const outputDetails = usage.output_tokens_details as Record<string, unknown> | undefined;
+  const thinkingTokens = finiteNonNegativeInteger(outputDetails?.thinking_tokens);
+  const cachedInputContribution = usage.cache_read_input_tokens == null ? 0 : cachedInputTokens;
+  const cacheCreationContribution =
+    usage.cache_creation_input_tokens == null ? 0 : cacheCreationTokens;
+  const inputTokens =
+    uncachedInputTokens !== undefined &&
+    cachedInputContribution !== undefined &&
+    cacheCreationContribution !== undefined
+      ? uncachedInputTokens + cachedInputContribution + cacheCreationContribution
+      : undefined;
+  const hasKnownUsage =
+    uncachedInputTokens !== undefined ||
+    cachedInputTokens !== undefined ||
+    cacheCreationTokens !== undefined ||
+    rawOutputTokens !== undefined;
+  const hasPositiveUsage =
+    (uncachedInputTokens ?? 0) +
+      (cachedInputTokens ?? 0) +
+      (cacheCreationTokens ?? 0) +
+      (rawOutputTokens ?? 0) >
+    0;
+
+  if (!hasKnownUsage || (result?.subtype !== "success" && !hasPositiveUsage)) {
+    return {
+      usageStatus: "unavailable",
+      usageScope: "main_agent",
+      hasSubagents,
+    };
+  }
+
+  const commonUsage = {
+    usageScope: "main_agent",
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(cacheCreationTokens !== undefined ? { cacheCreationTokens } : {}),
+    ...(thinkingTokens !== undefined && rawOutputTokens !== undefined
+      ? { reasoningTokens: Math.min(rawOutputTokens, thinkingTokens) }
+      : {}),
+    hasSubagents,
+  } as const;
+  if (
+    terminalStatus === "completed" &&
+    result?.subtype === "success" &&
+    inputTokens !== undefined &&
+    rawOutputTokens !== undefined
+  ) {
+    return {
+      ...commonUsage,
+      usageStatus: "complete",
+      inputTokens,
+      outputTokens: rawOutputTokens,
+    };
+  }
+  return {
+    ...commonUsage,
+    usageStatus: "partial",
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(rawOutputTokens !== undefined ? { outputTokens: rawOutputTokens } : {}),
+  };
 }
 
 function compactBoundaryTokenUsageSnapshot(
@@ -1390,7 +1559,43 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
   return buildUserMessage({ sdkContent });
 });
 
+/**
+ * terminal_reason values the CLI classifies as dead turns: the turn died
+ * rather than finished, even when the result subtype is success and the
+ * error list is empty. Kept in sync with the messages in
+ * resultUserFacingError.
+ */
+const FAILED_TERMINAL_REASONS: ReadonlySet<NonNullable<SDKResultMessage["terminal_reason"]>> =
+  new Set([
+    "api_error",
+    "malformed_tool_use_exhausted",
+    "budget_exhausted",
+    "structured_output_retry_exhausted",
+    "tool_deferred_unavailable",
+    "turn_setup_failed",
+    "blocking_limit",
+    "rapid_refill_breaker",
+    "prompt_too_long",
+    "image_error",
+    "model_error",
+  ]);
+
+/**
+ * The CLI reports repeated 529 overload failures as a success-subtype result
+ * with api_error_status 529 and an empty error list; the status code is the
+ * only structured failure signal.
+ */
+function isOverloadedResult(result: SDKResultMessage): boolean {
+  return result.subtype === "success" && result.api_error_status === 529;
+}
+
 function turnStatusFromResult(result: SDKResultMessage): ProviderRuntimeTurnStatus {
+  if (
+    isOverloadedResult(result) ||
+    (result.terminal_reason !== undefined && FAILED_TERMINAL_REASONS.has(result.terminal_reason))
+  ) {
+    return "failed";
+  }
   if (result.subtype === "success") {
     return "completed";
   }
@@ -2432,6 +2637,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? { totalCostUsd: result.total_cost_usd }
           : {}),
         ...(errorMessage ? { errorMessage } : {}),
+        tokenUsage: normalizeClaudeTurnTokenUsage(result, turnState.hasSubagents, status),
       },
       providerRefs: nativeProviderRefs(context),
     });
@@ -2976,6 +3182,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         capturedProposedPlanKeys: new Set(),
         latestAssistantUsage: undefined,
         compactedSinceLatestAssistantUsage: false,
+        hasSubagents: false,
         nextSyntheticAssistantBlockIndex: -1,
       };
       context.session = {
@@ -3174,15 +3381,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     // Undeclared-but-real subtypes (absent from the SDK's union, so they can't
     // be switch cases): consumed intentionally without emitting, otherwise
     // they fall through to the unknown-subtype warning and surface as spurious
-    // error rows in client work logs. `background_tasks_changed` is a roster
-    // snapshot ({tasks: [...]}) — the task_* lifecycle events carry the
-    // authoritative per-agent data and the typed background_tasks control
-    // request is the reconciliation source. `vcs_state_changed`
+    // error rows in client work logs. `vcs_state_changed`
     // ({kind: commit|push|rebase}) and `code_change_published`
     // ({provider, url, repo}) are informational CLI notices; the work log
     // already shows the underlying git/gh tool calls.
     switch (message.subtype as string) {
-      case "background_tasks_changed":
       case "vcs_state_changed":
       case "code_change_published":
         return;
@@ -3286,6 +3489,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             )
           : undefined;
         const owningAgentId = launchingTool?.agentId;
+        if (
+          context.turnState &&
+          classifyTaskAgentKind({
+            taskType: message.task_type,
+            ...(owningAgentId ? { agentId: owningAgentId } : {}),
+          }) === "agent"
+        ) {
+          context.turnState.hasSubagents = true;
+        }
         // Model/effort: the Agent tool's input carries explicit overrides;
         // absent ones inherit the session's selection (SDK behavior).
         // Subagent assistant snapshots refine model with the authoritative API
@@ -3495,14 +3707,48 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           yield* emitRuntimeWarning(context, message.text, message);
         }
         return;
+      case "model_refusal_fallback":
+        // A safety fallback switched the model mid-session (e.g. Fable 5
+        // retried on Opus 4.8 after a flagged request). The CLI ships the
+        // user-facing notice in `content`; surface it like high-priority
+        // notifications so the rest of the session isn't silently served
+        // by a different model.
+        yield* emitRuntimeWarning(context, message.content, message);
+        return;
       // Inner protocol/UX details with no T3 surface today — consumed
       // deliberately so they don't masquerade as unknown-subtype warnings.
-      case "model_refusal_fallback":
+      // `background_tasks_changed` is a roster snapshot ({tasks: [...]}); the
+      // task_* lifecycle events carry the authoritative per-agent data and
+      // the typed background_tasks control request is the reconciliation
+      // source. `control_request_progress` is a liveness heartbeat for an
+      // in-flight control request. `worker_shutting_down` is a Remote
+      // Control worker notice; the session close path reports the outcome.
       case "local_command_output":
       case "plugin_install":
       case "commands_changed":
       case "memory_recall":
       case "elicitation_complete":
+      case "background_tasks_changed":
+      case "control_request_progress":
+      case "worker_shutting_down":
+        return;
+      case "informational":
+        // Transcript-level CLI notes. Only warnings (e.g. a Stop hook that
+        // refused continuation) warrant a work-log row; info/notice/
+        // suggestion levels are CLI chrome.
+        if (message.level === "warning") {
+          yield* emitRuntimeWarning(context, message.content, message);
+        }
+        return;
+      case "model_refusal_no_fallback":
+        // The API refused the request and no fallback model was available.
+        // The terminal result reports the failed turn; this row carries the
+        // refusal explanation the result's error list lacks.
+        yield* emitRuntimeWarning(
+          context,
+          message.api_refusal_explanation?.trim() || message.content,
+          message,
+        );
         return;
       case "permission_denied":
         yield* offerRuntimeEvent({
@@ -3528,7 +3774,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         // handled above, so `message` narrows to never here — a new SDK
         // release adding a subtype fails this typecheck instead of silently
         // warning at runtime. The runtime fallback still catches undeclared
-        // wire-only subtypes (like background_tasks_changed used to be).
+        // wire-only subtypes (like vcs_state_changed).
         message satisfies never;
         const unknownMessage = message as never as { subtype: string };
         yield* emitRuntimeWarning(
@@ -3608,16 +3854,52 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (message.type === "rate_limit_event") {
+      const rateLimitInfo = message.rate_limit_info;
+      if (!rateLimitInfo) return;
       const names = options?.scopedLimitNames
         ? yield* Ref.get(options.scopedLimitNames)
         : { overageIncluded: undefined };
-      const limits = claudeRateLimitEventToUpdate(message.rate_limit_info, names);
-      if (!limits) return;
-      yield* offerRuntimeEvent({
-        ...base,
-        type: "account.rate-limits.updated",
-        payload: { limits },
-      });
+      const limits = claudeRateLimitEventToUpdate(rateLimitInfo, names);
+      if (limits) {
+        yield* offerRuntimeEvent({
+          ...base,
+          type: "account.rate-limits.updated",
+          payload: { limits },
+        });
+      }
+      // A rejected window parks the turn inside the SDK: no further messages
+      // arrive and no result lands, so without a row the thread just spins.
+      // Warnings (allowed_warning) still have headroom and stay quiet, an
+      // account spending provisioned overage keeps running despite the reject,
+      // and between turns there is no turn to report as paused.
+      if (
+        rateLimitInfo.status === "rejected" &&
+        rateLimitInfo.overageStatus !== "allowed" &&
+        rateLimitInfo.overageStatus !== "allowed_warning" &&
+        rateLimitInfo.isUsingOverage !== true &&
+        rateLimitInfo.overageInUse !== true &&
+        context.turnState !== undefined
+      ) {
+        // Tracked per turn as a set of limit identities, not as the rendered
+        // row: a parked window re-fires while the remaining wait shrinks, and a
+        // turn can park on more than one window, so a single slot would let an
+        // interleaved repeat through. A new turn — including a synthetic one —
+        // starts a fresh set and announces its pause again.
+        const turnId = context.turnState.turnId;
+        if (context.announcedUsageLimits?.turnId !== turnId) {
+          context.announcedUsageLimits = { turnId, keys: new Set() };
+        }
+        const limitKey = `${rateLimitInfo.rateLimitType ?? "unknown"}:${rateLimitInfo.resetsAt ?? "unknown"}`;
+        if (!context.announcedUsageLimits.keys.has(limitKey)) {
+          context.announcedUsageLimits.keys.add(limitKey);
+          const notice = describeClaudeUsageLimit(
+            rateLimitInfo,
+            Date.parse(stamp.createdAt),
+            names,
+          );
+          yield* emitRuntimeWarning(context, notice, rateLimitInfo);
+        }
+      }
       return;
     }
   });
@@ -3657,7 +3939,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         yield* handleSdkTelemetryMessage(context, message);
         return;
       // Composer prompt suggestions have no T3 surface; consumed deliberately.
+      // `conversation_reset` announces a CLI-side conversation id swap
+      // (e.g. /clear); T3 keeps its own thread identity and resume cursor.
       case "prompt_suggestion":
+      case "conversation_reset":
         return;
       default: {
         // Exhaustiveness guard (see handleSystemMessage): new SDK top-level
@@ -4498,6 +4783,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastKnownTotalProcessedTokens: undefined,
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
+        announcedUsageLimits: undefined,
         stopped: false,
       };
       yield* Ref.set(contextRef, context);
@@ -4649,6 +4935,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         capturedProposedPlanKeys: new Set(),
         latestAssistantUsage: undefined,
         compactedSinceLatestAssistantUsage: false,
+        hasSubagents: false,
         nextSyntheticAssistantBlockIndex: -1,
       };
 

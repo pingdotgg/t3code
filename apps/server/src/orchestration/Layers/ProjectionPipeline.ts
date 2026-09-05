@@ -1,10 +1,12 @@
 import {
   ApprovalRequestId,
+  isImportedAgentSessionMessageId,
   type ChatAttachment,
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
   ThreadId,
 } from "@t3tools/contracts";
+import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -248,7 +250,7 @@ function retainProjectionMessagesAfterRevert(
   }
 
   for (const message of messages) {
-    if (message.role === "system") {
+    if (message.role === "system" || isImportedAgentSessionMessageId(message.messageId)) {
       retainedMessageIds.add(message.messageId);
       continue;
     }
@@ -258,7 +260,10 @@ function retainProjectionMessagesAfterRevert(
   }
 
   const retainedUserCount = messages.filter(
-    (message) => message.role === "user" && retainedMessageIds.has(message.messageId),
+    (message) =>
+      message.role === "user" &&
+      !isImportedAgentSessionMessageId(message.messageId) &&
+      retainedMessageIds.has(message.messageId),
   ).length;
   const missingUserCount = Math.max(0, turnCount - retainedUserCount);
   if (missingUserCount > 0) {
@@ -271,7 +276,7 @@ function retainProjectionMessagesAfterRevert(
       )
       .toSorted(
         (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) ||
+          compareDateTimeStrings(left.createdAt, right.createdAt) ||
           left.messageId.localeCompare(right.messageId),
       )
       .slice(0, missingUserCount);
@@ -281,7 +286,10 @@ function retainProjectionMessagesAfterRevert(
   }
 
   const retainedAssistantCount = messages.filter(
-    (message) => message.role === "assistant" && retainedMessageIds.has(message.messageId),
+    (message) =>
+      message.role === "assistant" &&
+      !isImportedAgentSessionMessageId(message.messageId) &&
+      retainedMessageIds.has(message.messageId),
   ).length;
   const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
   if (missingAssistantCount > 0) {
@@ -294,7 +302,7 @@ function retainProjectionMessagesAfterRevert(
       )
       .toSorted(
         (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) ||
+          compareDateTimeStrings(left.createdAt, right.createdAt) ||
           left.messageId.localeCompare(right.messageId),
       )
       .slice(0, missingAssistantCount);
@@ -587,26 +595,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         return;
       }
 
-      const [messages, proposedPlans, activities, pendingApprovals] = yield* Effect.all([
-        projectionThreadMessageRepository.listByThreadId({ threadId }),
-        projectionThreadProposedPlanRepository.listByThreadId({ threadId }),
-        projectionThreadActivityRepository.listUserInputLifecycleByThreadId({ threadId }),
-        projectionPendingApprovalRepository.listByThreadId({ threadId }),
-      ]);
+      const [latestUserMessageAt, proposedPlans, activities, pendingApprovalCount] =
+        yield* Effect.all([
+          projectionThreadMessageRepository.getLatestUserMessageAt({ threadId }),
+          projectionThreadProposedPlanRepository.listByThreadId({ threadId }),
+          projectionThreadActivityRepository.listUserInputLifecycleByThreadId({ threadId }),
+          projectionPendingApprovalRepository.countPendingByThreadId({ threadId }),
+        ]);
 
-      let latestUserMessageAt: string | null = null;
-      for (const message of messages) {
-        if (
-          message.role === "user" &&
-          (latestUserMessageAt === null || message.createdAt > latestUserMessageAt)
-        ) {
-          latestUserMessageAt = message.createdAt;
-        }
-      }
-
-      const pendingApprovalCount = pendingApprovals.filter(
-        (approval) => approval.status === "pending",
-      ).length;
       const pendingUserInputCount = derivePendingUserInputCountFromActivities(activities);
       const hasActionableProposedPlan = deriveHasActionableProposedPlan({
         latestTurnId: existingRow.value.latestTurnId,
@@ -915,6 +911,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             updatedAt: event.occurredAt,
             latestUserMessageAt:
               event.payload.role === "user" &&
+              !isImportedAgentSessionMessageId(event.payload.messageId) &&
               (previousLatest === null || event.payload.createdAt > previousLatest)
                 ? event.payload.createdAt
                 : previousLatest,
@@ -1585,7 +1582,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             yield* projectionTurnRepository.upsertByTurnId({
               ...existingTurn.value,
               assistantMessageId: event.payload.assistantMessageId,
-              state: turnStillRunning ? existingTurn.value.state : nextState,
+              state:
+                turnStillRunning || existingTurn.value.state === "interrupted"
+                  ? existingTurn.value.state
+                  : nextState,
               checkpointTurnCount: event.payload.checkpointTurnCount,
               checkpointRef: event.payload.checkpointRef,
               checkpointStatus: event.payload.status,
@@ -1959,11 +1959,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             prunedThreadRelativePaths: new Map<string, Set<string>>(),
           };
           yield* sql.withTransaction(
-            Effect.forEach(
-              projectors,
-              (projector) => applyProjectorForEvent(projector, event, attachmentSideEffects),
-              { concurrency: 1, discard: true },
-            ),
+            Effect.gen(function* () {
+              yield* Effect.forEach(
+                projectors,
+                (projector) => projector.apply(event, attachmentSideEffects),
+                { concurrency: 1, discard: true },
+              );
+              // Runtime projectors commit together. Bootstrap still advances each cursor separately.
+              yield* projectionStateRepository.upsertMany(
+                projectors.map((projector) => ({
+                  projector: projector.name,
+                  lastAppliedSequence: event.sequence,
+                  updatedAt: event.occurredAt,
+                })),
+              );
+            }),
           );
           // Return the cleanup effect so the caller runs it after the outer transaction commits.
           // @effect-diagnostics-next-line returnEffectInGen:off

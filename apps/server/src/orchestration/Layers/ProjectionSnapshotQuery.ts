@@ -1,4 +1,5 @@
 import {
+  AgentSessionImportSource,
   ApprovalRequestId,
   ChatAttachment,
   CheckpointRef,
@@ -75,6 +76,14 @@ import {
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeShellSnapshot = Schema.decodeUnknownEffect(OrchestrationShellSnapshot);
 const decodeThread = Schema.decodeUnknownEffect(OrchestrationThread);
+const decodeImportedTranscriptsPayload = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      importedTranscripts: Schema.Array(Schema.Unknown),
+    }),
+  ),
+);
+const decodeAgentSessionImportSource = Schema.decodeUnknownOption(AgentSessionImportSource);
 // Keep detail reads consistent with the in-memory projector's retained
 // activity window. Applying the limit in SQL avoids decoding an unbounded
 // payload_json set before the projector can enforce that invariant.
@@ -113,6 +122,11 @@ const ProjectionThreadActivityIdRowSchema = Schema.Struct({
   activityId: ProjectionThreadActivity.fields.activityId,
 });
 const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession;
+const ProjectionThreadRuntimeContextDbRowSchema = Schema.Struct({
+  id: ThreadId,
+  title: Schema.String,
+  session: Schema.NullOr(ProjectionThreadSessionDbRowSchema),
+});
 const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
   Struct.assign({
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
@@ -158,6 +172,10 @@ const WorkspaceRootLookupInput = Schema.Struct({
 });
 const ProjectIdLookupInput = Schema.Struct({
   projectId: ProjectId,
+});
+const ProjectionImportedAgentSessionSourcesRowSchema = Schema.Struct({
+  threadId: ThreadId,
+  runtimePayload: Schema.Unknown,
 });
 const ThreadIdLookupInput = Schema.Struct({
   threadId: ThreadId,
@@ -978,6 +996,33 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const listImportedAgentSessionSourceRows = SqlSchema.findAll({
+    Request: ProjectIdLookupInput,
+    Result: ProjectionImportedAgentSessionSourcesRowSchema,
+    execute: ({ projectId }) =>
+      sql`
+        SELECT
+          threads.thread_id AS "threadId",
+          runtime.runtime_payload_json AS "runtimePayload"
+        FROM projection_threads AS threads
+        INNER JOIN projection_projects AS projects
+          ON projects.project_id = threads.project_id
+        INNER JOIN provider_session_runtime AS runtime
+          ON runtime.thread_id = threads.thread_id
+        WHERE threads.project_id = ${projectId}
+          AND threads.deleted_at IS NULL
+          AND threads.archived_at IS NULL
+          AND projects.deleted_at IS NULL
+          AND EXISTS (
+            SELECT 1
+            FROM projection_thread_messages AS messages
+            WHERE messages.thread_id = threads.thread_id
+              AND messages.message_id GLOB 'import:*'
+          )
+        ORDER BY threads.thread_id ASC
+      `,
+  });
+
   const getThreadCheckpointContextThreadRow = SqlSchema.findOneOption({
     Request: ThreadIdLookupInput,
     Result: ProjectionThreadCheckpointContextThreadRowSchema,
@@ -1036,6 +1081,40 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           AND archived_at IS NULL
         LIMIT 1
       `,
+  });
+
+  const getThreadRuntimeContextRow = SqlSchema.findOneOption({
+    Request: ThreadIdLookupInput,
+    Result: ProjectionThreadRuntimeContextDbRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          threads.thread_id AS id,
+          threads.title,
+          sessions.thread_id AS "threadId",
+          sessions.status,
+          sessions.provider_name AS "providerName",
+          sessions.provider_instance_id AS "providerInstanceId",
+          sessions.runtime_mode AS "runtimeMode",
+          sessions.active_turn_id AS "activeTurnId",
+          sessions.last_error AS "lastError",
+          sessions.updated_at AS "updatedAt"
+        FROM projection_threads AS threads
+        LEFT JOIN projection_thread_sessions AS sessions
+          ON sessions.thread_id = threads.thread_id
+        WHERE threads.thread_id = ${threadId}
+          AND threads.deleted_at IS NULL
+          AND threads.archived_at IS NULL
+        LIMIT 1
+      `.pipe(
+        Effect.map((rows) =>
+          rows.map((row) => ({
+            id: row.id,
+            title: row.title,
+            session: row.threadId === null ? null : row,
+          })),
+        ),
+      ),
   });
 
   const listThreadMessageRowsByThread = SqlSchema.findAll({
@@ -2624,6 +2703,33 @@ pending_approval_requests AS (
         Effect.map(Option.map((row) => row.threadId)),
       );
 
+  const getImportedAgentSessionSources: ProjectionSnapshotQueryShape["getImportedAgentSessionSources"] =
+    Effect.fn("ProjectionSnapshotQuery.getImportedAgentSessionSources")(function* (projectId) {
+      const rows = yield* listImportedAgentSessionSourceRows({ projectId }).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.getImportedAgentSessionSources:query",
+            "ProjectionSnapshotQuery.getImportedAgentSessionSources:decodeRows",
+          ),
+        ),
+      );
+      return rows.flatMap((row) => {
+        const payload = decodeImportedTranscriptsPayload(row.runtimePayload);
+        if (Option.isNone(payload)) return [];
+        return payload.value.importedTranscripts.flatMap((entry) => {
+          const source = decodeAgentSessionImportSource(entry);
+          if (
+            Option.isNone(source) ||
+            row.threadId !==
+              `import:${source.value.providerInstanceId}:${source.value.providerSessionId}`
+          ) {
+            return [];
+          }
+          return [{ threadId: row.threadId, source: source.value }];
+        });
+      });
+    });
+
   const getThreadCheckpointContext: ProjectionSnapshotQueryShape["getThreadCheckpointContext"] = (
     threadId,
   ) =>
@@ -2762,6 +2868,23 @@ pending_approval_requests AS (
         ),
         planProgress: threadPlanProgress.getThreadPlanProgress(threadRow.value.threadId),
       } satisfies OrchestrationThreadShell);
+    });
+
+  const getThreadRuntimeContext: ProjectionSnapshotQueryShape["getThreadRuntimeContext"] =
+    Effect.fn("ProjectionSnapshotQuery.getThreadRuntimeContext")(function* (threadId) {
+      const context = yield* getThreadRuntimeContextRow({ threadId }).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.getThreadRuntimeContext:query",
+            "ProjectionSnapshotQuery.getThreadRuntimeContext:decodeRow",
+          ),
+        ),
+      );
+      return Option.map(context, (row) => ({
+        id: row.id,
+        title: row.title,
+        session: row.session === null ? null : mapSessionRow(row.session),
+      }));
     });
 
   // Contiguous turn range bounding a windowed detail read; undefined loads the
@@ -3095,33 +3218,6 @@ pending_approval_requests AS (
           );
 
           const oldest = windowRows[0];
-          // An empty window (no turns before the cursor, or a thread with no
-          // turns at all) still returns thread metadata with empty collections
-          // for turn-linked rows; turnless rows are bounded to the same empty
-          // range. The first page of a turnless thread stays unwindowed so
-          // pre-turn content (e.g. a just-created thread) is not hidden.
-          const bounds: ThreadDetailBounds | undefined =
-            oldest === undefined && cursor === null
-              ? undefined
-              : {
-                  minAnchorAt: oldest?.anchorAt ?? "",
-                  minTurnKey: oldest?.turnKey ?? "",
-                  beforeAnchorAt: cursor?.beforeAnchorAt ?? ANCHOR_UNBOUNDED,
-                  beforeTurnKey: cursor?.beforeTurnId ?? "",
-                };
-          // Empty window behind a cursor: nothing older remains.
-          const emptyBounds =
-            oldest === undefined && cursor !== null
-              ? { minAnchorAt: "", minTurnKey: "", beforeAnchorAt: "", beforeTurnKey: "" }
-              : undefined;
-
-          const thread = yield* getThreadDetailByIdBounded(threadId, emptyBounds ?? bounds, {
-            mode: "client",
-          });
-          if (Option.isNone(thread)) {
-            return Option.none<OrchestrationThreadDetailSnapshot>();
-          }
-
           const hasMore =
             oldest !== undefined &&
             (yield* listTurnWindowRows({
@@ -3138,6 +3234,34 @@ pending_approval_requests AS (
                 ),
               ),
             )).length > 0;
+          // An empty window (no turns before the cursor, or a thread with no
+          // turns at all) still returns thread metadata with empty collections
+          // for turn-linked rows; turnless rows are bounded to the same empty
+          // range. The first page of a turnless thread stays unwindowed so
+          // pre-turn content (e.g. a just-created thread) is not hidden. Once
+          // paging reaches the oldest turn, include turnless messages before
+          // the first turn, such as history imported from a provider session.
+          const bounds: ThreadDetailBounds | undefined =
+            oldest === undefined && cursor === null
+              ? undefined
+              : {
+                  minAnchorAt: hasMore ? (oldest?.anchorAt ?? "") : "",
+                  minTurnKey: hasMore ? (oldest?.turnKey ?? "") : "",
+                  beforeAnchorAt: cursor?.beforeAnchorAt ?? ANCHOR_UNBOUNDED,
+                  beforeTurnKey: cursor?.beforeTurnId ?? "",
+                };
+          // Empty window behind a cursor: nothing older remains.
+          const emptyBounds =
+            oldest === undefined && cursor !== null
+              ? { minAnchorAt: "", minTurnKey: "", beforeAnchorAt: "", beforeTurnKey: "" }
+              : undefined;
+
+          const thread = yield* getThreadDetailByIdBounded(threadId, emptyBounds ?? bounds, {
+            mode: "client",
+          });
+          if (Option.isNone(thread)) {
+            return Option.none<OrchestrationThreadDetailSnapshot>();
+          }
 
           const { snapshotSequence } = yield* getSnapshotSequence();
           const watermarkRow = yield* getThreadEventWatermarkRow({
@@ -3197,9 +3321,11 @@ pending_approval_requests AS (
     getActiveProjectByWorkspaceRoot,
     getProjectShellById,
     getFirstActiveThreadIdByProjectId,
+    getImportedAgentSessionSources,
     getThreadCheckpointContext,
     getFullThreadDiffContext,
     getThreadShellById,
+    getThreadRuntimeContext,
     getThreadDetailById,
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;

@@ -1,4 +1,5 @@
 import {
+  type AgentSessionImportSource,
   CheckpointRef,
   EventId,
   MessageId,
@@ -11,6 +12,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -22,6 +24,7 @@ import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { encodeThreadDetailPageCursor } from "../threadDetailCursor.ts";
 import { projectThreadDetailSnapshot } from "../ActivityPayloadProjection.ts";
+import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
@@ -560,6 +563,38 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           },
         ]);
       }
+
+      const counter = makeSqlStatementCounter();
+      const context = yield* snapshotQuery
+        .getThreadRuntimeContext(ThreadId.make("thread-1"))
+        .pipe(Effect.withTracer(counter.tracer));
+      assert.equal(counter.count(), 1);
+      assert.equal(context._tag, "Some");
+      if (context._tag === "Some") {
+        assert.deepEqual(context.value, {
+          id: ThreadId.make("thread-1"),
+          title: "Thread 1",
+          session: snapshot.threads[0]?.session,
+        });
+      }
+
+      yield* sql`
+        UPDATE projection_thread_sessions
+        SET status = 'starting', active_turn_id = NULL, provider_name = 'claudeAgent',
+            provider_instance_id = 'claude-secondary', last_error = 'Starting another session'
+        WHERE thread_id = 'thread-1'
+      `;
+      const changedContext = yield* snapshotQuery.getThreadRuntimeContext(
+        ThreadId.make("thread-1"),
+      );
+      assert.equal(changedContext._tag, "Some");
+      if (changedContext._tag === "Some") {
+        assert.equal(changedContext.value.session?.status, "starting");
+        assert.equal(changedContext.value.session?.activeTurnId, null);
+        assert.equal(changedContext.value.session?.providerName, "claudeAgent");
+        assert.equal(changedContext.value.session?.providerInstanceId, "claude-secondary");
+        assert.equal(changedContext.value.session?.lastError, "Starting another session");
+      }
     }),
   );
 
@@ -680,6 +715,22 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         [ThreadId.make("thread-archived")],
       );
       assert.equal(archivedShellSnapshot.threads[0]?.archivedAt, "2026-04-06T00:00:06.000Z");
+      const activeContext = yield* snapshotQuery.getThreadRuntimeContext(
+        ThreadId.make("thread-active"),
+      );
+      assert.equal(activeContext._tag, "Some");
+      if (activeContext._tag === "Some") assert.equal(activeContext.value.session, null);
+      for (const threadId of ["thread-archived", "thread-missing"]) {
+        assert.equal(
+          (yield* snapshotQuery.getThreadRuntimeContext(ThreadId.make(threadId)))._tag,
+          "None",
+        );
+      }
+      yield* sql`UPDATE projection_threads SET deleted_at = '2026-04-06T00:00:08.000Z' WHERE thread_id = 'thread-active'`;
+      assert.equal(
+        (yield* snapshotQuery.getThreadRuntimeContext(ThreadId.make("thread-active")))._tag,
+        "None",
+      );
     }),
   );
 
@@ -2085,7 +2136,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
   //
   // Straggler user message at T03.5 (turn_id NULL, not any pending_message_id)
   // and a turnless activity at T03.6 — both belong to the page containing T03+.
-  const seedFanOutThread = Effect.fnUntraced(function* () {
+  const seedFanOutThread = Effect.fnUntraced(function* (options?: {
+    readonly importedMessageCount?: number;
+  }) {
     const sql = yield* SqlClient.SqlClient;
 
     // Tests in this block share one in-memory database; reset before seeding.
@@ -2113,6 +2166,20 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
         'turn-5', 0, 0, 0, '2026-03-01T00:00:00.000Z', '2026-03-01T00:00:10.000Z', NULL)
     `;
+
+    if (options?.importedMessageCount) {
+      for (let index = 0; index < options.importedMessageCount; index += 1) {
+        const messageId = `import:codex:session-w:${String(index).padStart(6, "0")}`;
+        const role = index % 2 === 0 ? "user" : "assistant";
+        yield* sql`
+          INSERT INTO projection_thread_messages (
+            message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+          )
+          VALUES (${messageId}, 'thread-w', NULL, ${role}, ${"imported message " + index}, 0,
+            '2026-02-28T00:00:00.000Z', '2026-02-28T00:00:00.000Z')
+        `;
+      }
+    }
 
     const turns: ReadonlyArray<{
       turn: string;
@@ -2344,6 +2411,51 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         assert.equal(olderPage.value.page?.hasMore, false);
         assert.equal(olderPage.value.page?.beforeCursor, null);
       }
+    }),
+  );
+
+  it.effect("keeps imported history on the oldest page after resumed turns", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread({ importedMessageCount: 12 });
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      const completePage = yield* snapshotQuery.getThreadDetailSnapshot(threadW, { turnLimit: 50 });
+      assert.equal(completePage._tag, "Some");
+      if (completePage._tag !== "Some") return;
+      assert.equal(
+        completePage.value.thread.messages.filter((message) => message.id.startsWith("import:"))
+          .length,
+        12,
+      );
+      assert.equal(completePage.value.page?.hasMore, false);
+      assert.equal(completePage.value.page?.beforeCursor, null);
+
+      const recentPage = yield* snapshotQuery.getThreadDetailSnapshot(threadW, { turnLimit: 2 });
+      assert.equal(recentPage._tag, "Some");
+      if (recentPage._tag !== "Some") return;
+      assert.equal(
+        recentPage.value.thread.messages.some((message) => message.id.startsWith("import:")),
+        false,
+      );
+      const cursor = recentPage.value.page?.beforeCursor;
+      assert.notEqual(cursor, null);
+      assert.notEqual(cursor, undefined);
+      if (cursor === null || cursor === undefined) return;
+
+      const oldestPage = yield* snapshotQuery.getThreadDetailSnapshot(threadW, {
+        turnLimit: 1,
+        beforeCursor: cursor,
+      });
+      assert.equal(oldestPage._tag, "Some");
+      if (oldestPage._tag !== "Some") return;
+
+      const importedIds = oldestPage.value.thread.messages
+        .map((message) => message.id)
+        .filter((messageId) => messageId.startsWith("import:"));
+      assert.equal(importedIds.length, 12);
+      assert.equal(new Set(importedIds).size, 12);
+      assert.equal(oldestPage.value.page?.hasMore, false);
+      assert.equal(oldestPage.value.page?.beforeCursor, null);
     }),
   );
 
@@ -2727,6 +2839,240 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         assert.equal(snapshot.value.page?.hasMore, false);
         assert.equal(snapshot.value.page?.beforeCursor, null);
       }
+    }),
+  );
+});
+
+projectionSnapshotLayer("ProjectionSnapshotQuery imported sources", (it) => {
+  const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+  const source: AgentSessionImportSource = {
+    provider: "codex",
+    providerInstanceId: ProviderInstanceId.make("codex-home"),
+    providerSessionId: "native-session",
+    filePath: "/tmp/transcript.jsonl",
+    size: 128,
+    mtimeMs: 1_700_000_000_000,
+    device: 1,
+    inode: 2,
+    birthtimeMs: 1_699_000_000_000,
+  };
+
+  const seedImportedSession = Effect.fn("seedImportedSession")(function* (
+    projectId: ProjectId,
+    source: AgentSessionImportSource,
+  ) {
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = ThreadId.make(
+      `import:${source.providerInstanceId}:${source.providerSessionId}`,
+    );
+    const timestamp = "2026-03-02T00:00:00.000Z";
+    yield* sql`
+      INSERT OR IGNORE INTO projection_projects (
+        project_id, title, workspace_root, scripts_json, created_at, updated_at
+      ) VALUES (${projectId}, 'Imported project', '/tmp/imported-project', '[]',
+        ${timestamp}, ${timestamp})
+    `;
+    yield* sql`
+      INSERT INTO projection_threads (
+        thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+        created_at, updated_at
+      ) VALUES (${threadId}, ${projectId}, 'Imported thread',
+        ${encodeJson({ instanceId: source.providerInstanceId, model: "gpt-5-codex" })},
+        'full-access', 'default',
+        ${timestamp}, ${timestamp})
+    `;
+    yield* sql`
+      INSERT INTO provider_session_runtime (
+        thread_id, provider_name, provider_instance_id, adapter_key, runtime_mode, status,
+        last_seen_at, resume_cursor_json, runtime_payload_json
+      ) VALUES (${threadId}, ${source.provider}, ${source.providerInstanceId},
+        ${source.provider}, 'full-access', 'stopped', ${timestamp},
+        ${encodeJson({ threadId: source.providerSessionId })},
+        ${encodeJson({ importedTranscripts: [source] })})
+    `;
+    yield* sql`
+      INSERT INTO projection_thread_messages (
+        message_id, thread_id, role, text, is_streaming, created_at, updated_at
+      ) VALUES (${`${threadId}:000000`}, ${threadId}, 'user', 'Imported history', 0,
+        ${timestamp}, ${timestamp})
+    `;
+    return { threadId, source };
+  });
+
+  it.effect("reads completed source copies without decoding message bodies", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const query = yield* ProjectionSnapshotQuery;
+      const projectId = ProjectId.make("project-import-metadata");
+      const imported = yield* seedImportedSession(projectId, source);
+      const copiedSource = {
+        ...source,
+        filePath: "/tmp/transcript-copy.jsonl",
+        mtimeMs: null,
+        inode: null,
+        birthtimeMs: null,
+      };
+      yield* sql`
+        UPDATE provider_session_runtime
+        SET runtime_payload_json = ${encodeJson({
+          cwd: "/tmp/imported-project",
+          importedTranscripts: [source, copiedSource],
+        })}
+        WHERE thread_id = ${imported.threadId}
+      `;
+      yield* sql`
+        UPDATE projection_thread_messages SET attachments_json = 'not-json'
+        WHERE thread_id = ${imported.threadId}
+      `;
+
+      const counter = makeSqlStatementCounter();
+      const sources = yield* query
+        .getImportedAgentSessionSources(projectId)
+        .pipe(Effect.withTracer(counter.tracer));
+      assert.deepEqual(sources, [imported, { threadId: imported.threadId, source: copiedSource }]);
+      assert.equal(counter.count(), 1);
+    }),
+  );
+
+  it.effect("requires active project threads, a binding, and an imported message", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const query = yield* ProjectionSnapshotQuery;
+      const projectId = ProjectId.make("project-import-completion");
+      const completed = yield* seedImportedSession(projectId, {
+        ...source,
+        providerSessionId: "completed",
+      });
+      yield* sql`
+        UPDATE projection_thread_messages SET message_id = ${`${completed.threadId}:legacy`}
+        WHERE thread_id = ${completed.threadId}
+      `;
+      const partials = yield* Effect.forEach(
+        [
+          "no-binding",
+          "no-history",
+          "no-imported-message",
+          "wrong-message-thread",
+          "archived",
+          "deleted",
+        ],
+        (providerSessionId) => seedImportedSession(projectId, { ...source, providerSessionId }),
+      );
+      const [noBinding, noHistory, noImportedMessage, wrongMessageThread, archived, deleted] =
+        partials;
+      assert.isDefined(noBinding);
+      assert.isDefined(noHistory);
+      assert.isDefined(noImportedMessage);
+      assert.isDefined(wrongMessageThread);
+      assert.isDefined(archived);
+      assert.isDefined(deleted);
+      yield* sql`DELETE FROM provider_session_runtime WHERE thread_id = ${noBinding.threadId}`;
+      yield* sql`DELETE FROM projection_thread_messages WHERE thread_id = ${noHistory.threadId}`;
+      yield* sql`
+        UPDATE projection_thread_messages SET message_id = ${`normal:${noImportedMessage.threadId}`}
+        WHERE thread_id = ${noImportedMessage.threadId}
+      `;
+      yield* sql`
+        UPDATE projection_thread_messages SET thread_id = 'unrelated-thread'
+        WHERE thread_id = ${wrongMessageThread.threadId}
+      `;
+      yield* sql`
+        UPDATE projection_threads SET archived_at = '2026-03-03T00:00:00.000Z'
+        WHERE thread_id = ${archived.threadId}
+      `;
+      yield* sql`
+        UPDATE projection_threads SET deleted_at = '2026-03-03T00:00:00.000Z'
+        WHERE thread_id = ${deleted.threadId}
+      `;
+      const otherProjectId = ProjectId.make("project-import-other");
+      const otherProject = yield* seedImportedSession(otherProjectId, {
+        ...source,
+        providerSessionId: "other-project",
+      });
+      const deletedProjectId = ProjectId.make("project-import-deleted");
+      yield* seedImportedSession(deletedProjectId, {
+        ...source,
+        providerSessionId: "deleted-project",
+      });
+      yield* sql`
+        UPDATE projection_projects SET deleted_at = '2026-03-03T00:00:00.000Z'
+        WHERE project_id = ${deletedProjectId}
+      `;
+
+      assert.deepEqual(yield* query.getImportedAgentSessionSources(projectId), [completed]);
+      assert.deepEqual(yield* query.getImportedAgentSessionSources(otherProjectId), [otherProject]);
+      assert.deepEqual(yield* query.getImportedAgentSessionSources(deletedProjectId), []);
+      assert.deepEqual(
+        yield* query.getImportedAgentSessionSources(ProjectId.make("project-import-missing")),
+        [],
+      );
+    }),
+  );
+
+  it.effect("keeps original sources when the current runtime provider and cursor change", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const query = yield* ProjectionSnapshotQuery;
+      const projectId = ProjectId.make("project-import-switched");
+      const imported = yield* seedImportedSession(projectId, {
+        ...source,
+        provider: "claudeAgent",
+        providerInstanceId: ProviderInstanceId.make("claude-original"),
+        providerSessionId: "original-session",
+      });
+      yield* sql`
+        UPDATE provider_session_runtime
+        SET provider_name = 'codex', provider_instance_id = 'codex-new', adapter_key = 'codex',
+          resume_cursor_json = '{"threadId":"new-session"}'
+        WHERE thread_id = ${imported.threadId}
+      `;
+
+      assert.deepEqual(yield* query.getImportedAgentSessionSources(projectId), [imported]);
+    }),
+  );
+
+  it.effect("skips invalid source payloads and entries without dropping valid sources", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const query = yield* ProjectionSnapshotQuery;
+      const projectId = ProjectId.make("project-import-invalid");
+      const imported = yield* seedImportedSession(projectId, {
+        ...source,
+        providerSessionId: "a-invalid",
+      });
+      const valid = yield* seedImportedSession(projectId, {
+        ...source,
+        providerSessionId: "z-valid",
+      });
+      for (const payload of [null, "not-json", "null", "[]", "{}", '{"importedTranscripts":{}}']) {
+        yield* sql`
+          UPDATE provider_session_runtime SET runtime_payload_json = ${payload}
+          WHERE thread_id = ${imported.threadId}
+        `;
+        assert.deepEqual(yield* query.getImportedAgentSessionSources(projectId), [valid]);
+      }
+      yield* sql`
+        UPDATE provider_session_runtime SET runtime_payload_json = X'FF'
+        WHERE thread_id = ${imported.threadId}
+      `;
+      assert.deepEqual(yield* query.getImportedAgentSessionSources(projectId), [valid]);
+
+      yield* sql`
+        UPDATE provider_session_runtime
+        SET runtime_payload_json = ${encodeJson({
+          importedTranscripts: [
+            null,
+            {},
+            { ...imported.source, size: -1 },
+            { ...imported.source, provider: "cursor" },
+            { ...imported.source, providerInstanceId: "wrong-instance" },
+            { ...imported.source, providerSessionId: "wrong-session" },
+            imported.source,
+          ],
+        })}
+        WHERE thread_id = ${imported.threadId}
+      `;
+      assert.deepEqual(yield* query.getImportedAgentSessionSources(projectId), [imported, valid]);
     }),
   );
 });

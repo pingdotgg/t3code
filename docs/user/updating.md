@@ -1,95 +1,65 @@
-# Keeping T3 Code in Sync
+# Updating T3 Code
 
-The T3 Code web or desktop app and the server it connects to work best when they use the same
-version. If they do not match, T3 Code shows a warning with the right update option for that server.
+The app you use and the server running your agents can be on different machines.
+When a server is behind your web or desktop app, an update notice appears in the
+conversation and **Settings → Connections**. Update the machine named in that
+notice.
 
-## Where to Find the Update
+## Before you update
 
-You may see the warning in either of these places:
+Server updates restart the connection and can interrupt active agents and
+terminal commands. Saved threads, settings, and project files remain.
 
-- above the message box in the current conversation
-- **Settings** → **Connections**, beside the affected connection
+**Settings → General → Continue threads after restarts** is off by default.
+Enable it to resume supported active threads after an update, crash, or machine
+restart. Changes are saved to connected environments that support this setting;
+update older servers first. If a supported environment was offline or has a
+different value, use **Apply to all** in Settings after it connects.
+T3 Code must start again on that machine;
+the setting does not enable automatic startup. Terminal commands may still be
+interrupted, and threads without saved provider resume state need a new message.
+If you previously enabled continuation for updates, enable this setting once
+to allow recovery without a connected client.
 
-Dismissing the conversation warning only hides that reminder for those two versions. It does not
-update the server, and the version difference remains visible in Connections.
+## Update a connected server
 
-## Before You Update
+The offered action depends on how the server runs:
 
-Updating restarts the server, so the connection will disappear briefly. **Settings** → **General**
-has a **Continue threads after server updates** preference. It is off by default. When enabled, the
-update buttons automatically resume supported provider threads after the replacement server is
-ready. Providers with native promptless continuation use it; other providers receive a short
-instruction to continue where they left off. Terminal commands and other running work may still be
-interrupted during the update.
+| Action                     | What to do                                                                                                                                                                                      |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Update server**          | Keep the client open while it installs and reconnects. Supported background services update remotely. For a desktop-hosted server, this also closes and relaunches the desktop app on the host. |
+| **Update the desktop app** | Update the desktop app on the machine running the server, then reopen it if needed.                                                                                                             |
+| **Copy update command**    | Stop the command-line server on its host and relaunch with the copied command, keeping your usual startup options.                                                                              |
 
-The update does not remove saved threads, settings, or project files.
-
-## Choose the Action You See
-
-| Action                     | What to do                                                                                                                                                                                                                                                                                                                                                                    |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Update server**          | Available for the T3 Code Linux background service and for servers run by a current T3 Code desktop app. Select the button and leave T3 Code open while it downloads, installs, restarts, and reconnects. For desktop-app servers this closes and relaunches the desktop app on that machine. If installation fails, the desktop app stays open and reconnects to its server. |
-| **Update the desktop app** | Shown for desktop apps that predate remote updates. Open the T3 Code desktop app on the machine that runs the server and install the app update there. Reopen it if needed.                                                                                                                                                                                                   |
-| **Copy update command**    | Copy the command, open a terminal on the server machine, stop the current T3 Code server, and relaunch it with the copied command and any startup options you normally use.                                                                                                                                                                                                   |
-
-The available action depends on how that server was started. T3 Code does not update connected
-servers silently in the background.
-
-An older background-service launcher may ask you to run the exact
-`npx t3@<version> service update` command on the server machine. That one local update installs the
-rollback support needed for later remote updates, including versions that change the database.
-
-After selecting **Update**, the notice becomes a live status line: **Downloading…** while the new
-version is fetched and verified, then **Restarting…** while the server restarts into it. The same
-status appears in the conversation and in Connections, so navigating between them does not lose the
-update. A failure remains visible with its error and an option to retry.
-
-**Copy update command** gives you `npx t3@<client-version>`, which relaunches the server directly
-at the matching version. Add whatever startup options you normally use.
-
-If the server instead runs as the T3 Code background service, update the service on the host and
-pin the same version:
+For a background service, run the matching version's CLI on the host:
 
 ```sh
 npx t3@<client-version> service update
 ```
 
-`service update` installs the version of the CLI that invoked it, so `npx t3@latest service update`
-only resolves the skew when your client happens to be on the latest release. The exact version from
-the warning always works.
+Replace `<client-version>` with the version shown in the notice. Using
+`@latest` only resolves the mismatch if your client is on that release. An older
+service launcher may require this local update before it supports remote updates
+and rollback.
 
-See [Running T3 Code in the Background](./background-service.md) for install, status, and removal
-commands.
+For a foreground server, the copied command is `npx t3@<client-version>`. Add
+`serve` if you normally run without a browser, and preserve options such as
+`--host` or `--tailscale-serve`. See
+[background services](./background-service.md) for service management.
 
-## Nightly desktop release notes
+## If an update fails
 
-The desktop app shows a compact release-notes preview when a nightly update is available. Changes
-appear newest first within each release. Each release links to its exact page on GitHub, even when
-all changes fit in the preview.
-
-The preview shows up to eight changes from each of six releases. When it leaves out changes or older
-releases, it shows the exact number and links to the rest. Contributor credits do not count as
-changes.
-
-## After the Update
-
-Keep the web or desktop app open while the server restarts. The update completes only after the
-service launcher reports that exact update committed and the replacement server is ready to accept
-commands. A rollback is reported immediately instead of waiting for a generic reconnect timeout.
-
-If a step fails:
+Keep the client open until it reconnects or reports a failure. A failed service
+update can roll back to the previous version. If the update still fails:
 
 1. Retry the offered action once.
-2. Make sure you updated the machine named in the warning, not only the device you are using.
-3. For a command-line server, relaunch it with `npx t3@<client-version>`, replacing
-   `<client-version>` with the client version shown in the warning.
+2. Check that you updated the server's machine, not only the device you are using.
+3. For a command-line server, stop it and relaunch the exact version shown in the notice.
 
-## The Mobile App
+## Mobile updates
 
-The mobile app keeps itself current on its own. When it finds a new version, it downloads it in the
-background and installs it automatically the next time you leave the app. Unsent drafts and queued
-messages are saved before the restart. Only if the app stays open long enough that the update never
-gets that chance does it ask whether to install right away; choosing **Later** is safe and keeps the
-automatic install armed.
-
-For remote connection setup and access troubleshooting, see [Remote Access](./remote-access.md).
+Install App Store or Google Play releases as usual. The mobile app can also
+download updates in the background and apply them when you next leave the app.
+It saves drafts and queued messages before restarting. If you keep the app open
+for a long time, it may ask to install immediately; choosing **Later** leaves the
+update queued for the next suitable moment.

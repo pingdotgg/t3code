@@ -31,8 +31,6 @@ import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { serverEnvironment } from "../../state/server";
-import { ProviderSetupLink } from "../settings/ProviderSetupLink";
-import type { ProviderSetupRouteParams } from "../settings/SettingsProviderSetupRouteScreen";
 import { availableCloudEnvironmentPresentation } from "../cloud/cloudEnvironmentPresentation";
 import { deregisterManagedRelayEnvironmentCommand } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
@@ -43,7 +41,6 @@ import { type RelayEnvironmentView, useConnectionController } from "./useConnect
 interface CloudEnvironmentRowsProps {
   readonly connectedCloudEnvironments: ReadonlyArray<ConnectedEnvironmentSummary>;
   readonly onReconnectEnvironment: (environmentId: EnvironmentId) => void;
-  readonly onSetupProvider?: (target: ProviderSetupRouteParams) => void;
   readonly showcaseAvailableEnvironments?: ReadonlyArray<RelayEnvironmentView>;
   readonly showcaseSignedIn?: boolean;
   /**
@@ -104,7 +101,7 @@ function CloudEnvironmentRowsContent(
     : [];
   const [expandedErrorId, setExpandedErrorId] = useState<string | null>(null);
   // Deregistrations run serially per account, so a second tap queues behind the
-  // first; every queued row stays disabled until its own command settles.
+  // first; every queued row stays disabled through its discovery refresh.
   const [deregisteringEnvironmentIds, setDeregisteringEnvironmentIds] = useState<
     ReadonlySet<EnvironmentId>
   >(() => new Set());
@@ -146,24 +143,27 @@ function CloudEnvironmentRowsContent(
               setDeregisteringEnvironmentIds((current) =>
                 new Set(current).add(environment.environmentId),
               );
-              const result = await deregisterEnvironment({
-                accountId: managedRelaySession.accountId,
-                environmentId: environment.environmentId,
-              });
-              setDeregisteringEnvironmentIds((current) => {
-                const next = new Set(current);
-                next.delete(environment.environmentId);
-                return next;
-              });
-              if (AsyncResult.isSuccess(result)) {
-                await controller.refreshRelayEnvironments();
-                return;
+              try {
+                const result = await deregisterEnvironment({
+                  accountId: managedRelaySession.accountId,
+                  environmentId: environment.environmentId,
+                });
+                if (AsyncResult.isSuccess(result)) {
+                  await controller.refreshRelayEnvironments();
+                  return;
+                }
+                const error = Cause.squash(result.cause);
+                Alert.alert(
+                  "Could not deregister environment",
+                  error instanceof Error ? error.message : "The environment could not be removed.",
+                );
+              } finally {
+                setDeregisteringEnvironmentIds((current) => {
+                  const next = new Set(current);
+                  next.delete(environment.environmentId);
+                  return next;
+                });
               }
-              const error = Cause.squash(result.cause);
-              Alert.alert(
-                "Could not deregister environment",
-                error instanceof Error ? error.message : "The environment could not be removed.",
-              );
             },
           },
         ],
@@ -214,7 +214,6 @@ function CloudEnvironmentRowsContent(
               onDisconnect={() => handleDisconnectCloudEnvironment(environment.environmentId)}
               errorExpanded={expandedErrorId === environment.environmentId}
               onToggleError={() => handleToggleCloudError(environment.environmentId)}
-              onSetupProvider={props.onSetupProvider}
             />
           ))}
           {availableCloudEnvironments.map((environment, index) => (
@@ -280,7 +279,6 @@ function ConnectedCloudEnvironmentRow(props: {
   readonly onConnect: () => void;
   readonly onDisconnect: () => void;
   readonly onToggleError: () => void;
-  readonly onSetupProvider?: (target: ProviderSetupRouteParams) => void;
 }) {
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(props.environment.environmentId),
@@ -305,23 +303,6 @@ function ConnectedCloudEnvironmentRow(props: {
         onToggleError={props.onToggleError}
         value={props.environment.connectionState !== "available"}
       />
-      {props.onSetupProvider
-        ? serverConfig?.providers
-            .filter((provider) => provider.setup?.canAuthenticate || provider.setup?.canInstall)
-            .map((provider) => (
-              <ProviderSetupLink
-                key={provider.instanceId}
-                provider={provider}
-                disabled={props.environment.connectionState !== "connected"}
-                onPress={() =>
-                  props.onSetupProvider?.({
-                    environmentId: props.environment.environmentId,
-                    instanceId: provider.instanceId,
-                  })
-                }
-              />
-            ))
-        : null}
     </View>
   );
 }

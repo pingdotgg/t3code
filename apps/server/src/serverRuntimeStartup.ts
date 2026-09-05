@@ -168,15 +168,7 @@ export const recordStartupHeartbeat = Effect.gen(function* () {
   });
 });
 
-export const launchStartupHeartbeat = recordStartupHeartbeat.pipe(
-  Effect.annotateSpans({ "startup.phase": "heartbeat.record" }),
-  Effect.withSpan("server.startup.heartbeat.record"),
-  Effect.ignoreCause({ log: true }),
-  Effect.forkScoped,
-  Effect.asVoid,
-);
-
-export const getAutoBootstrapThreadModelSelection = (): ModelSelection => ({
+const getAutoBootstrapThreadModelSelection = (): ModelSelection => ({
   instanceId: ProviderInstanceId.make("codex"),
   model: DEFAULT_MODEL,
 });
@@ -202,6 +194,8 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
 
   let bootstrapProjectId: ProjectId | undefined;
   let bootstrapThreadId: ThreadId | undefined;
+  let bootstrapProjectCreated = false;
+  let bootstrapThreadCreated = false;
 
   if (serverConfig.autoBootstrapProjectFromCwd) {
     yield* Effect.gen(function* () {
@@ -224,44 +218,78 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
           workspaceRoot: serverConfig.cwd,
           createdAt,
         });
+        bootstrapProjectId = nextProjectId;
+        bootstrapProjectCreated = true;
       } else {
         nextProjectId = existingProject.value.id;
+        bootstrapProjectId = nextProjectId;
         nextThreadModelSelection =
           existingProject.value.defaultModelSelection ?? getAutoBootstrapThreadModelSelection();
       }
 
-      const existingThreadId =
-        yield* projectionReadModelQuery.getFirstActiveThreadIdByProjectId(nextProjectId);
-      if (Option.isNone(existingThreadId)) {
-        const createdAt = DateTime.formatIso(yield* DateTime.now);
-        const createdThreadId = ThreadId.make(yield* randomUUID);
-        yield* orchestrationEngine.dispatch({
-          type: "thread.create",
-          commandId: CommandId.make(yield* randomUUID),
-          threadId: createdThreadId,
-          projectId: nextProjectId,
-          title: "New thread",
-          modelSelection: nextThreadModelSelection,
-          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-          runtimeMode: "full-access",
-          branch: null,
-          worktreePath: null,
-          createdAt,
-        });
-        bootstrapProjectId = nextProjectId;
-        bootstrapThreadId = createdThreadId;
-      } else {
-        bootstrapProjectId = nextProjectId;
-        bootstrapThreadId = existingThreadId.value;
-      }
+      yield* Effect.gen(function* () {
+        const existingThreadId =
+          yield* projectionReadModelQuery.getFirstActiveThreadIdByProjectId(nextProjectId);
+        if (Option.isNone(existingThreadId)) {
+          const createdAt = DateTime.formatIso(yield* DateTime.now);
+          const createdThreadId = ThreadId.make(yield* randomUUID);
+          yield* orchestrationEngine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(yield* randomUUID),
+            threadId: createdThreadId,
+            projectId: nextProjectId,
+            title: "New thread",
+            modelSelection: nextThreadModelSelection,
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+          });
+          bootstrapThreadId = createdThreadId;
+          bootstrapThreadCreated = true;
+        } else {
+          bootstrapThreadId = existingThreadId.value;
+        }
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterrupts(cause)
+            ? Effect.failCause(cause)
+            : Effect.logWarning("startup thread auto-bootstrap failed", {
+                bootstrapProjectId: nextProjectId,
+                cause,
+              }),
+        ),
+      );
     });
   }
 
   return {
     ...(bootstrapProjectId ? { bootstrapProjectId } : {}),
     ...(bootstrapThreadId ? { bootstrapThreadId } : {}),
+    ...(bootstrapProjectId ? { bootstrapProjectCreated } : {}),
+    ...(bootstrapThreadId ? { bootstrapThreadCreated } : {}),
   } as const;
 });
+
+export const completeAutoBootstrapWelcome = <A extends object, E, R>(
+  bootstrap: Effect.Effect<A, E, R>,
+) =>
+  bootstrap.pipe(
+    Effect.matchCauseEffect({
+      onFailure: (cause) =>
+        Cause.hasInterrupts(cause)
+          ? Effect.failCause(cause)
+          : Effect.logWarning("startup auto-bootstrap failed", { cause }).pipe(
+              Effect.as({ bootstrapStatus: "complete" as const }),
+            ),
+      onSuccess: (targets) =>
+        Effect.succeed({
+          ...targets,
+          bootstrapStatus: "complete" as const,
+        }),
+    }),
+  );
 
 const resolveStartupBrowserTarget = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
@@ -394,6 +422,7 @@ export const markRunningProviderSessionsForContinuation = Effect.gen(function* (
         runtimePayload: {
           ...readRuntimePayload(binding.value.runtimePayload),
           [SERVER_UPDATE_CONTINUATION_KEY]: activeTurnId,
+          continueAfterServerUpdatePrepared: null,
         },
       });
       marked.push(thread.id);
@@ -423,6 +452,7 @@ const clearContinuationMarkers = (
                 runtimePayload: {
                   ...readRuntimePayload(binding.runtimePayload),
                   [SERVER_UPDATE_CONTINUATION_KEY]: null,
+                  continueAfterServerUpdatePrepared: null,
                 },
               }),
           }),
@@ -443,17 +473,56 @@ export const reconcileProviderSessions = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
   const providerService = yield* ProviderService.ProviderService;
   const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const continueAfterRestart = yield* settings.getSettings.pipe(
+    Effect.map((value) => value.continueThreadsAfterServerUpdate),
+    Effect.catch((cause) =>
+      Effect.logWarning("could not read restart continuation preference", { cause }).pipe(
+        Effect.as(false),
+      ),
+    ),
+  );
 
   const liveThreadIds = new Set(
     (yield* providerService.listSessions()).map((session) => session.threadId),
   );
   const { threads } = yield* query.getCommandReadModel();
+  // Provider startup can report ready before the continuation is submitted.
+  // Find those markers in one read rather than querying every idle thread.
+  const preparedThreadIds = new Set(
+    (yield* directory.listBindings().pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("failed to read prepared provider continuations", { cause }).pipe(
+          Effect.andThen(
+            Effect.forEach(
+              threads.filter(
+                (thread) => thread.session?.status === "ready" && !liveThreadIds.has(thread.id),
+              ),
+              (thread) =>
+                directory.getBinding(thread.id).pipe(Effect.orElseSucceed(() => Option.none())),
+            ),
+          ),
+          Effect.map((bindings) =>
+            bindings.flatMap((binding) => (Option.isSome(binding) ? [binding.value] : [])),
+          ),
+        ),
+      ),
+    ))
+      .filter(
+        (binding) =>
+          readServerUpdateContinuationTurnId(binding.runtimePayload) !== null &&
+          readRuntimePayload(binding.runtimePayload).activeTurnId === null &&
+          readRuntimePayload(binding.runtimePayload).continueAfterServerUpdatePrepared === true,
+      )
+      .map((binding) => binding.threadId),
+  );
   const orphanedThreads = threads.filter(
     (thread) =>
       thread.session !== null &&
       (thread.session.status === "starting" ||
         thread.session.status === "running" ||
-        thread.session.activeTurnId !== null) &&
+        thread.session.activeTurnId !== null ||
+        (thread.session.status === "ready" && preparedThreadIds.has(thread.id))) &&
       !liveThreadIds.has(thread.id),
   );
 
@@ -479,7 +548,27 @@ export const reconcileProviderSessions = Effect.gen(function* () {
       : null;
     const continuationMarked =
       continuationTurnId !== null &&
-      (session.activeTurnId === null || continuationTurnId === session.activeTurnId);
+      (session.activeTurnId === null || continuationTurnId === session.activeTurnId) &&
+      Option.isSome(binding) &&
+      (readRuntimePayload(binding.value.runtimePayload).activeTurnId == null ||
+        readRuntimePayload(binding.value.runtimePayload).activeTurnId === continuationTurnId);
+    const preparedWhileReady =
+      session.status === "ready" &&
+      session.activeTurnId === null &&
+      continuationMarked &&
+      Option.isSome(binding) &&
+      readRuntimePayload(binding.value.runtimePayload).activeTurnId === null &&
+      readRuntimePayload(binding.value.runtimePayload).continueAfterServerUpdatePrepared === true;
+    // Abrupt shutdowns cannot write an update marker. Require both durable
+    // records to agree on an unfinished turn before recovering one implicitly.
+    const interruptedByRestart =
+      continueAfterRestart &&
+      session.status === "running" &&
+      session.activeTurnId !== null &&
+      Option.isSome(binding) &&
+      binding.value.status === "running" &&
+      binding.value.resumeCursor != null &&
+      readRuntimePayload(binding.value.runtimePayload).activeTurnId === session.activeTurnId;
     const settleAsError = (lastError: string) =>
       Effect.gen(function* () {
         yield* Effect.gen(function* () {
@@ -490,7 +579,12 @@ export const reconcileProviderSessions = Effect.gen(function* () {
               runtimePayload: {
                 ...readRuntimePayload(binding.value.runtimePayload),
                 activeTurnId: null,
-                ...(continuationMarkerPresent ? { [SERVER_UPDATE_CONTINUATION_KEY]: null } : {}),
+                ...(continuationMarkerPresent || interruptedByRestart
+                  ? {
+                      [SERVER_UPDATE_CONTINUATION_KEY]: null,
+                      continueAfterServerUpdatePrepared: null,
+                    }
+                  : {}),
               },
             });
           }
@@ -535,7 +629,9 @@ export const reconcileProviderSessions = Effect.gen(function* () {
 
     if (
       Option.isSome(binding) &&
-      continuationMarked &&
+      (continuationMarked || interruptedByRestart) &&
+      (session.status === "running" || session.status === "starting" || preparedWhileReady) &&
+      binding.value.resumeCursor != null &&
       thread.archivedAt === null &&
       thread.deletedAt === null
     ) {
@@ -545,6 +641,9 @@ export const reconcileProviderSessions = Effect.gen(function* () {
           status: "starting",
           runtimePayload: {
             ...readRuntimePayload(binding.value.runtimePayload),
+            // Keep recovery durable if this process also exits before sending.
+            [SERVER_UPDATE_CONTINUATION_KEY]: session.activeTurnId ?? continuationTurnId,
+            continueAfterServerUpdatePrepared: true,
             activeTurnId: null,
           },
         });
@@ -608,12 +707,12 @@ export const reconcileProviderSessions = Effect.gen(function* () {
             }
             return;
           }
-          yield* Effect.logWarning("failed to continue provider session after server update", {
+          yield* Effect.logWarning("failed to continue provider session after server restart", {
             threadId: thread.id,
             cause: continuationExit.cause,
           });
           yield* settleAsError(
-            "Could not continue this thread after the server update. Send a new message to continue.",
+            "Could not continue this thread after the server restart. Send a new message to continue.",
           ).pipe(Effect.ignoreCause);
         }),
       );
@@ -776,36 +875,31 @@ export const make = (options?: StartupOptions) =>
           runStartupPhase(
             "welcome.autobootstrap",
             Effect.gen(function* () {
-              const bootstrapTargets = yield* resolveAutoBootstrapWelcomeTargets.pipe(
-                Effect.provideService(Crypto.Crypto, crypto),
+              const bootstrapCompletion = yield* completeAutoBootstrapWelcome(
+                resolveAutoBootstrapWelcomeTargets.pipe(
+                  Effect.provideService(Crypto.Crypto, crypto),
+                ),
               );
-              if (!bootstrapTargets.bootstrapProjectId && !bootstrapTargets.bootstrapThreadId) {
-                return;
-              }
 
-              yield* Effect.logDebug("startup phase: publishing bootstrapped welcome event", {
-                environmentId: environment.environmentId,
-                cwd: welcomeBase.cwd,
-                projectName: welcomeBase.projectName,
-                bootstrapProjectId: bootstrapTargets.bootstrapProjectId,
-                bootstrapThreadId: bootstrapTargets.bootstrapThreadId,
-              });
+              yield* Effect.logDebug(
+                "startup phase: publishing completed bootstrap welcome event",
+                {
+                  environmentId: environment.environmentId,
+                  cwd: welcomeBase.cwd,
+                  projectName: welcomeBase.projectName,
+                  ...bootstrapCompletion,
+                },
+              );
               yield* lifecycleEvents.publish({
                 version: 1,
                 type: "welcome",
                 payload: {
                   environment,
                   ...welcomeBase,
-                  ...bootstrapTargets,
+                  ...bootstrapCompletion,
                 },
               });
-            }).pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("startup auto-bootstrap welcome failed", {
-                  cause,
-                }),
-              ),
-            ),
+            }).pipe(Effect.ignoreCause({ log: true })),
           ),
         );
       }
@@ -851,7 +945,11 @@ export const make = (options?: StartupOptions) =>
         lifecycleEvents.publish({
           version: 1,
           type: "welcome",
-          payload: { environment, ...welcomeBase },
+          payload: {
+            environment,
+            ...welcomeBase,
+            bootstrapStatus: serverConfig.autoBootstrapProjectFromCwd ? "pending" : "complete",
+          },
         }),
       );
       yield* options?.activate ?? Effect.void;

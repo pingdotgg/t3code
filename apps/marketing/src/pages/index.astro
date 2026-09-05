@@ -1,4 +1,6 @@
 ---
+import { getImage } from "astro:assets";
+import desktopScreenshot from "../assets/app-desktop.webp";
 import Layout from "../layouts/Layout.astro";
 import {
   ANDROID_PLAY_STORE_URL,
@@ -8,16 +10,13 @@ import {
 } from "../lib/site";
 import { tweets } from "../lib/tweets";
 
-const desktopEndorsementRows = [
-  tweets.filter((_, index) => index % 2 === 0),
-  tweets.filter((_, index) => index % 2 === 1),
-];
+const screenshot = await getImage({
+  src: desktopScreenshot,
+  widths: [864, 1180, 1728, 2360],
+  format: "webp",
+  quality: 90,
+});
 
-const mobileEndorsementRows = [
-  tweets.filter((_, index) => index % 3 === 0),
-  tweets.filter((_, index) => index % 3 === 1),
-  tweets.filter((_, index) => index % 3 === 2),
-];
 ---
 
 <Layout>
@@ -80,14 +79,23 @@ const mobileEndorsementRows = [
       <div data-rise style="--d:520ms">
         <div class="hero-preview">
           <figure class="hero-screenshot-frame">
-            <img
-              src="/app-desktop.webp"
-              alt="T3 Code with a settled thread beside its pull request diff"
-              width="2880"
-              height="1800"
-              loading="eager"
-              decoding="async"
-            />
+            <picture>
+              <!-- Match the hidden mobile layout without requesting a screenshot. -->
+              <source
+                media="(max-width: 820px)"
+                srcset="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+              />
+              <img
+                src={desktopScreenshot.src}
+                srcset={`${screenshot.srcSet.attribute}, ${desktopScreenshot.src} ${desktopScreenshot.width}w`}
+                sizes="(max-width: 960px) min(864px, calc(100vw - 20px)), min(1180px, calc(100vw - 60px))"
+                alt="T3 Code with a settled thread beside its pull request diff"
+                width={desktopScreenshot.width}
+                height={desktopScreenshot.height}
+                loading="eager"
+                decoding="async"
+              />
+            </picture>
           </figure>
         </div>
       </div>
@@ -103,80 +111,29 @@ const mobileEndorsementRows = [
       </div>
     </div>
 
-    <div class="endorsement-carousel endorsement-carousel--desktop" aria-label="Developer endorsements">
-        {
-          desktopEndorsementRows.map((row, rowIndex) => (
-            <div class:list={["endorsement-row", rowIndex === 1 && "is-reverse"]}>
-              <div class="endorsement-track">
-                {[0, 1].map((groupIndex) => (
-                  <div class="endorsement-track-group" aria-hidden={groupIndex === 1 ? "true" : undefined}>
-                    {row.map((tweet) => (
-                      <a
-                        class="endorsement-card"
-                        href={tweet.link}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        aria-label={`Read ${tweet.handle}'s post on X`}
-                        tabindex={groupIndex === 1 ? "-1" : undefined}
-                      >
-                        <div class="endorsement-author">
-                          <img
-                            src={`/pfps/${tweet.handle}.webp`}
-                            alt=""
-                            width="28"
-                            height="28"
-                            loading="lazy"
-                            decoding="async"
-                          />
-                          <div class="endorsement-handle">@{tweet.handle}</div>
-                        </div>
-                        <p>{tweet.excerpt ?? tweet.content}</p>
-                      </a>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))
-        }
-    </div>
-
-    <div class="endorsement-carousel endorsement-carousel--mobile" aria-label="Developer endorsements">
-        {
-          mobileEndorsementRows.map((row, rowIndex) => (
-            <div class:list={["endorsement-row", rowIndex === 1 && "is-reverse"]}>
-              <div class="endorsement-track">
-                {[0, 1].map((groupIndex) => (
-                  <div class="endorsement-track-group" aria-hidden={groupIndex === 1 ? "true" : undefined}>
-                    {row.map((tweet) => (
-                      <a
-                        class="endorsement-card"
-                        href={tweet.link}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        aria-label={`Read ${tweet.handle}'s post on X`}
-                        tabindex={groupIndex === 1 ? "-1" : undefined}
-                      >
-                        <div class="endorsement-author">
-                          <img
-                            src={`/pfps/${tweet.handle}.webp`}
-                            alt=""
-                            width="28"
-                            height="28"
-                            loading="lazy"
-                            decoding="async"
-                          />
-                          <div class="endorsement-handle">@{tweet.handle}</div>
-                        </div>
-                        <p>{tweet.excerpt ?? tweet.content}</p>
-                      </a>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))
-        }
+    <div class="endorsement-carousel" role="region" aria-label="Developer endorsements" tabindex="0">
+      {tweets.map((tweet) => (
+        <a
+          class="endorsement-card"
+          href={tweet.link}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`Read ${tweet.handle}'s post on X`}
+        >
+          <div class="endorsement-author">
+            <img
+              src={`/pfps/${tweet.handle}.webp`}
+              alt=""
+              width="28"
+              height="28"
+              loading="lazy"
+              decoding="async"
+            />
+            <div class="endorsement-handle">@{tweet.handle}</div>
+          </div>
+          <p>{tweet.excerpt ?? tweet.content}</p>
+        </a>
+      ))}
     </div>
   </section>
 
@@ -398,6 +355,7 @@ const mobileEndorsementRows = [
 
 <script>
   import { fetchLatestRelease, RELEASES_URL, type ReleaseAsset } from "../lib/releases";
+  import { startHomeMotion } from "../lib/homeMotion";
 
   type Platform = { os: "mac" | "win" | "linux"; label: string };
 
@@ -463,26 +421,12 @@ const mobileEndorsementRows = [
 
   init();
 
-  // Marks lean a few pixels toward the pointer, each by its own depth.
   const hero = document.querySelector<HTMLElement>(".hero");
   const field = document.querySelector<HTMLElement>(".hero-float");
-  const fine = window.matchMedia("(pointer: fine) and (prefers-reduced-motion: no-preference)").matches;
-  if (hero && field && fine) {
-    let raf = 0;
-    let nx = 0;
-    let ny = 0;
-    const apply = () => {
-      raf = 0;
-      field.style.setProperty("--px", `${(nx * 18).toFixed(1)}px`);
-      field.style.setProperty("--py", `${(ny * 14).toFixed(1)}px`);
-    };
-    hero.addEventListener("pointermove", (e) => {
-      const r = hero.getBoundingClientRect();
-      nx = ((e.clientX - r.left) / r.width - 0.5) * 2;
-      ny = ((e.clientY - r.top) / r.height - 0.5) * 2;
-      if (!raf) raf = requestAnimationFrame(apply);
-    });
-    hero.addEventListener("pointerleave", () => { nx = 0; ny = 0; if (!raf) raf = requestAnimationFrame(apply); });
+  const endorsements = document.querySelector<HTMLElement>(".endorsement-carousel");
+  const caret = document.querySelector<HTMLElement>(".caret");
+  if (hero && field && endorsements && caret) {
+    startHomeMotion({ hero, field, endorsements, caret });
   }
 </script>
 
@@ -655,11 +599,7 @@ const mobileEndorsementRows = [
   :global([data-platform="linux"]) .dl-icon--linux { display: block; }
   :global(html:not([data-platform])) .dl-icon--apple { display: block; }
 
-  /* Floating harness marks. Six points on an ellipse around the hero copy:
-     two small at the top, two high and wide, two low and close. Symmetric,
-     and none of them touch the screenshot. Each mark flies in from its own
-     side on load, then drifts on its own period, and the whole set leans a
-     few pixels toward the pointer. */
+  /* Marks enter once, then drift while visible and lean toward the pointer. */
   .hero-float {
     position: absolute;
     inset: 0;
@@ -677,7 +617,7 @@ const mobileEndorsementRows = [
     height: var(--s);
     margin-left: calc(var(--s) / -2);
     translate: calc(var(--px) * var(--depth)) calc(var(--py) * var(--depth));
-    transition: translate 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+    transition: translate var(--parallax-duration, 0s) cubic-bezier(0.2, 0.7, 0.2, 1);
   }
 
   .hero-float-card {
@@ -694,6 +634,7 @@ const mobileEndorsementRows = [
     animation:
       mark-in 1s cubic-bezier(0.2, 0.7, 0.2, 1) var(--d) both,
       mark-drift var(--dur) ease-in-out calc(var(--d) + 1s) infinite;
+    animation-play-state: running, var(--home-motion-state, paused);
   }
 
   .hero-float-card img {
@@ -717,16 +658,16 @@ const mobileEndorsementRows = [
     50% { transform: translate(var(--dx), var(--dy)) rotate(calc(var(--rot) + var(--wob))); }
   }
 
-  .hf-opencode    { --x: max(-300px, -19vw); --y: 20px;  --s: 64px; --rot: 6deg;  --depth: 0.6; --d: 620ms; --dur: 8.5s;  --dx: 2px;  --dy: -8px;  --wob: 3deg;  --fx: -40px;  --fy: -80px; }
-  .hf-antigravity { --x: min(300px, 19vw);   --y: 20px;  --s: 64px; --rot: -5deg; --depth: 0.6; --d: 580ms; --dur: 9.8s;  --dx: -2px; --dy: -9px;  --wob: -3deg; --fx: 40px;   --fy: -80px; }
-  .hf-claude   { --x: max(-560px, -38vw);  --y: 128px; --s: 96px; --rot: -8deg; --depth: 1.2; --d: 380ms; --dur: 10.5s; --dx: 4px;  --dy: -12px; --wob: -2deg; --fx: -160px; --fy: -40px; --tint: rgba(217, 119, 87, 0.22); }
-  .hf-codex    { --x: min(560px, 38vw);    --y: 128px; --s: 96px; --rot: 7deg;  --depth: 1.2; --d: 460ms; --dur: 9.2s;  --dx: -4px; --dy: -10px; --wob: 2deg;  --fx: 160px;  --fy: -40px; }
-  .hf-grok     { --x: max(-440px, -30vw);  --y: 440px; --s: 80px; --rot: 4deg;  --depth: 0.9; --d: 540ms; --dur: 11.5s; --dx: 3px;  --dy: -9px;  --wob: -3deg; --fx: -120px; --fy: 80px; }
-  .hf-cursor   { --x: min(440px, 30vw);    --y: 440px; --s: 80px; --rot: -5deg; --depth: 0.9; --d: 700ms; --dur: 7.8s;  --dx: -3px; --dy: -11px; --wob: 3deg;  --fx: 120px;  --fy: 80px; }
+  .hf-opencode    { --x: max(-300px, -19vw); --y: 20px; --s: 64px; --rot: 6deg; --depth: 0.6; --d: 620ms; --dur: 8.5s; --dx: 2px; --dy: -8px; --wob: 3deg; --fx: -40px; --fy: -80px; }
+  .hf-antigravity { --x: min(300px, 19vw); --y: 20px; --s: 64px; --rot: -5deg; --depth: 0.6; --d: 580ms; --dur: 9.8s; --dx: -2px; --dy: -9px; --wob: -3deg; --fx: 40px; --fy: -80px; }
+  .hf-claude   { --x: max(-560px, -38vw); --y: 128px; --s: 96px; --rot: -8deg; --depth: 1.2; --d: 380ms; --dur: 10.5s; --dx: 4px; --dy: -12px; --wob: -2deg; --fx: -160px; --fy: -40px; --tint: rgba(217, 119, 87, 0.22); }
+  .hf-codex    { --x: min(560px, 38vw); --y: 128px; --s: 96px; --rot: 7deg; --depth: 1.2; --d: 460ms; --dur: 9.2s; --dx: -4px; --dy: -10px; --wob: 2deg; --fx: 160px; --fy: -40px; }
+  .hf-grok     { --x: max(-440px, -30vw); --y: 440px; --s: 80px; --rot: 4deg; --depth: 0.9; --d: 540ms; --dur: 11.5s; --dx: 3px; --dy: -9px; --wob: -3deg; --fx: -120px; --fy: 80px; }
+  .hf-cursor   { --x: min(440px, 30vw); --y: 440px; --s: 80px; --rot: -5deg; --depth: 0.9; --d: 700ms; --dur: 7.8s; --dx: -3px; --dy: -11px; --wob: 3deg; --fx: 120px; --fy: 80px; }
 
   @media (prefers-reduced-motion: reduce) {
     .hero-float-card { animation: none; transform: rotate(var(--rot)); }
-    .hero-float-mark { transition: none; }
+    .hero-float-mark { translate: none; transition: none; }
   }
 
   @media (max-width: 1180px) {
@@ -749,12 +690,12 @@ const mobileEndorsementRows = [
     }
 
     /* Four above the headline, two beside the CTA. Keeps the copy clear. */
-    .hf-claude      { --x: -37vw; --y: 44px;  --s: 64px; --rot: -10deg; }
-    .hf-opencode    { --x: -12vw; --y: 52px;  --s: 56px; --rot: -4deg; }
-    .hf-antigravity { --x: 12vw;  --y: 52px;  --s: 56px; --rot: 5deg; }
-    .hf-codex       { --x: 37vw;  --y: 44px;  --s: 64px; --rot: 8deg; }
+    .hf-claude      { --x: -37vw; --y: 44px; --s: 64px; --rot: -10deg; }
+    .hf-opencode    { --x: -12vw; --y: 52px; --s: 56px; --rot: -4deg; }
+    .hf-antigravity { --x: 12vw; --y: 52px; --s: 56px; --rot: 5deg; }
+    .hf-codex       { --x: 37vw; --y: 44px; --s: 64px; --rot: 8deg; }
     .hf-grok     { --x: -36vw; --y: 474px; --s: 64px; --rot: -6deg; }
-    .hf-cursor   { --x: 36vw;  --y: 474px; --s: 64px; --rot: 7deg; }
+    .hf-cursor   { --x: 36vw; --y: 474px; --s: 64px; --rot: 7deg; }
   }
 
   @media (max-width: 340px) {
@@ -878,67 +819,22 @@ const mobileEndorsementRows = [
   }
 
   .endorsement-carousel {
-    position: relative;
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-auto-flow: column;
+    grid-template-rows: repeat(2, 132px);
+    grid-auto-columns: clamp(264px, 22vw, 308px);
     gap: 12px;
-  }
-
-  .endorsement-carousel--mobile {
-    display: none;
-  }
-
-  .endorsement-carousel::before,
-  .endorsement-carousel::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    z-index: 2;
-    width: max(48px, calc((100vw - 1240px) / 2 + 56px));
-    pointer-events: none;
-  }
-
-  .endorsement-carousel::before {
-    left: 0;
-    background: linear-gradient(90deg, var(--bg), transparent);
-  }
-
-  .endorsement-carousel::after {
-    right: 0;
-    background: linear-gradient(270deg, var(--bg), transparent);
-  }
-
-  .endorsement-row {
-    overflow: hidden;
-  }
-
-  .endorsement-track {
-    width: max-content;
-    display: flex;
-    animation: endorsementMarquee 76s linear infinite;
-    will-change: transform;
-  }
-
-  .endorsement-track-group {
-    display: flex;
-    gap: 12px;
-    padding-right: 12px;
-  }
-
-  .endorsement-row.is-reverse .endorsement-track {
-    animation-direction: reverse;
-    animation-duration: 84s;
-  }
-
-  .endorsement-carousel:hover .endorsement-track,
-  .endorsement-carousel:focus-within .endorsement-track {
-    animation-play-state: paused;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    /* Percentages resolve against this element's own box rather than the
+       viewport, so the first card lines up with the heading's .container edge
+       even when a classic scrollbar makes 100vw wider than the layout. */
+    padding: 4px max(32px, calc((100% - 1240px) / 2 + 32px));
+    scroll-padding-inline: max(32px, calc((100% - 1240px) / 2 + 32px));
   }
 
   .endorsement-card {
     position: relative;
-    width: clamp(264px, 22vw, 308px);
     height: 132px;
     padding: 14px 16px;
     display: flex;
@@ -1117,6 +1013,15 @@ const mobileEndorsementRows = [
     background: var(--fg);
     margin-left: 4px;
     animation: blink 1s steps(2) infinite;
+    animation-play-state: var(--home-motion-state, paused);
+  }
+
+  @keyframes blink {
+    50% { opacity: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .caret { animation: none; }
   }
 
   .open-pitch {
@@ -1234,19 +1139,6 @@ const mobileEndorsementRows = [
     margin-bottom: 24px;
   }
 
-  @keyframes blink {
-    50% { opacity: 0; }
-  }
-
-  @keyframes endorsementMarquee {
-    from {
-      transform: translateX(0);
-    }
-    to {
-      transform: translateX(-50%);
-    }
-  }
-
   /* ── Responsive ────────────────────────────────────────── */
   @media (max-width: 960px) {
     .hero-preview {
@@ -1273,25 +1165,13 @@ const mobileEndorsementRows = [
     .endorsements-head {
       margin-bottom: 40px;
     }
-    .endorsement-carousel--desktop {
-      display: none;
-    }
-    .endorsement-carousel--mobile {
-      display: flex;
-    }
-    .endorsement-carousel::before,
-    .endorsement-carousel::after {
-      width: 28px;
-    }
-    .endorsement-track {
-      animation-duration: 68s;
-    }
-    .endorsement-row.is-reverse .endorsement-track {
-      animation-duration: 76s;
+    .endorsement-carousel {
+      grid-template-rows: repeat(3, 132px);
+      grid-auto-columns: 268px;
+      padding-inline: 20px;
+      scroll-padding-inline: 20px;
     }
     .endorsement-card {
-      width: 268px;
-      height: 132px;
       padding: 14px;
     }
     .endorsement-card p {
