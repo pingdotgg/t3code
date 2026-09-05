@@ -22,7 +22,7 @@ export function scopeThreadRef(
   return { environmentId, threadId };
 }
 
-export function scopedRefKey(ref: ScopedProjectRef | ScopedThreadRef): string {
+function scopedRefKey(ref: ScopedProjectRef | ScopedThreadRef): string {
   const localId = "projectId" in ref ? ref.projectId : ref.threadId;
   return `${ref.environmentId}:${localId}`;
 }
