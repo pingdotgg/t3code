@@ -1,11 +1,8 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
-import * as NodeURL from "node:url";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -27,18 +24,13 @@ const decodeInspection = Schema.decodeUnknownSync(
 );
 
 const setup = Effect.fn("setup")(function* (version = "0.153.2", mcp = false) {
-  const cwd = yield* Effect.acquireRelease(
-    Effect.promise(() =>
-      NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-monitor-runtime-test-")),
-    ),
-    (dir) => Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true })),
-  );
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-monitor-runtime-test-" });
   // The runtime invokes <binary> app-server; Node executes this local fixture.
-  yield* Effect.promise(() =>
-    NodeFSP.copyFile(
-      NodeURL.fileURLToPath(new URL("../testFixtures/codexMonitorAppServer.cjs", import.meta.url)),
-      NodePath.join(cwd, "app-server"),
-    ),
+  yield* fileSystem.copyFile(
+    yield* path.fromFileUrl(new URL("../testFixtures/codexMonitorAppServer.cjs", import.meta.url)),
+    path.join(cwd, "app-server"),
   );
   const runtime = yield* makeCodexSessionRuntime({
     threadId: ThreadId.make("monitor-test"),
