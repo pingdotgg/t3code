@@ -827,7 +827,12 @@ export function PullRequestCodeTab({
               reference={reference}
               path={resolveFileDiffPath(item.fileDiff)}
               viewed={viewedFiles.get(resolveFileDiffPath(item.fileDiff))}
-              onOptimisticChange={setOptimisticFileViewed}
+              onOptimisticChange={(path, viewed) => {
+                setOptimisticFileViewed(path, viewed);
+                // A checkbox click is a new fold choice. On failure, restore the fold state
+                // captured by the callback that started the request.
+                setFileCollapsed(item.id, viewed ?? item.collapsed === true);
+              }}
               onRefresh={refreshViewedFiles}
             />
           )}
@@ -842,6 +847,7 @@ export function PullRequestCodeTab({
       reference,
       viewedFiles,
       setOptimisticFileViewed,
+      setFileCollapsed,
       refreshViewedFiles,
     ],
   );
