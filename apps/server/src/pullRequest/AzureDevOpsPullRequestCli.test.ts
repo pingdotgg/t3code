@@ -543,10 +543,18 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       });
 
       assert.strictEqual(comments.length, 1);
-      expect(argsOfCall(0)).toContain("rest");
-      expect(argsOfCall(0)).toContain(
+      expect(argsOfCall(0)).toEqual([
+        "rest",
+        "--method",
+        "get",
+        "--url",
         "https://dev.azure.com/acme/platform/_apis/git/r/web/pullRequests/42/threads?api-version=7.1",
-      );
+        "--resource",
+        "499b84ac-1321-427f-aa17-267ca6975798",
+        "--only-show-errors",
+        "--output",
+        "json",
+      ]);
     }),
   );
 
