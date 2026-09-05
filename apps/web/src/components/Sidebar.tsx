@@ -208,6 +208,7 @@ import {
 } from "./ui/combobox";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { SidebarPullSurface } from "./sidebar/SidebarPullSurface";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import {
@@ -3636,8 +3637,10 @@ export default function Sidebar() {
     (projectGroups.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
   return (
-    <>
-      <SidebarChromeHeader isElectron={isElectron} />
+    <SidebarPullSurface
+      header={<SidebarChromeHeader isElectron={isElectron} />}
+      footer={<SidebarChromeFooter />}
+    >
       <SidebarContent
         className="gap-0"
         fixedHeader={
@@ -4295,7 +4298,6 @@ export default function Sidebar() {
           ) : null}
         </SidebarGroup>
       </SidebarContent>
-      <SidebarChromeFooter />
-    </>
+    </SidebarPullSurface>
   );
 }

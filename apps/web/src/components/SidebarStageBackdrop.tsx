@@ -61,7 +61,10 @@ export function SidebarStageBackdrop({ variant }: { variant: SidebarStageBackdro
       aria-hidden
       className="sidebar-stage-backdrop pointer-events-none absolute inset-x-0 top-0 z-0 h-20 select-none overflow-hidden"
     >
-      <StageBackdropArt variant={variant} />
+      {/* A taller canvas keeps the original scale while the outer mask reveals more. */}
+      <div className="h-80">
+        {variant === "nightly" ? <NightlySkyArt extended /> : <DevBlueprintArt extended />}
+      </div>
     </div>
   );
 }
@@ -99,13 +102,26 @@ const NIGHTLY_STARS: ReadonlyArray<{
   { cx: 268, cy: 34, r: 0.4, opacity: 0.45 },
 ];
 
+const NIGHTLY_EXTENDED_STARS = Array.from({ length: 32 }, (_, index) => ({
+  cx: (index * 73 + 31) % 288,
+  cy: 55 + index * 9,
+  r: 0.35 + (index % 3) * 0.12,
+  opacity: 0.35 + (index % 4) * 0.1,
+}));
+
 const NIGHTLY_SPARKLES: ReadonlyArray<{ x: number; y: number }> = [
   { x: 70, y: 28 },
   { x: 160, y: 36 },
   { x: 246, y: 26 },
 ];
 
-function NightlySkyArt({ compact = false }: { compact?: boolean }) {
+function NightlySkyArt({
+  compact = false,
+  extended = false,
+}: {
+  compact?: boolean;
+  extended?: boolean;
+}) {
   const idPrefix = useId().replaceAll(":", "");
   const skyId = `${idPrefix}-stage-night-sky`;
   const glowId = `${idPrefix}-stage-night-glow`;
@@ -119,7 +135,7 @@ function NightlySkyArt({ compact = false }: { compact?: boolean }) {
       className="stage-art stage-nightly h-full w-full"
       fill="none"
       preserveAspectRatio="xMinYMin slice"
-      viewBox={compact ? "96 0 8192 96" : STAGE_BACKDROP_VIEW_BOX}
+      viewBox={compact ? "96 0 8192 96" : extended ? "0 0 8192 384" : STAGE_BACKDROP_VIEW_BOX}
       xmlns="http://www.w3.org/2000/svg"
     >
       <defs>
@@ -161,20 +177,27 @@ function NightlySkyArt({ compact = false }: { compact?: boolean }) {
           />
           <stop offset="1" style={{ stopColor: "var(--stage-night-tertiary)" }} stopOpacity="0.5" />
         </linearGradient>
-        <filter id={softId} x="-24" y="-24" width="336" height="144" filterUnits="userSpaceOnUse">
+        <filter id={softId} x="-24" y="-24" width="336" height="432" filterUnits="userSpaceOnUse">
           <feGaussianBlur stdDeviation="4" />
         </filter>
-        <pattern id={starsId} width="288" height="96" patternUnits="userSpaceOnUse">
+        <pattern
+          id={starsId}
+          width="288"
+          height={extended ? 384 : 96}
+          patternUnits="userSpaceOnUse"
+        >
           <g style={{ fill: "var(--stage-night-line)" }}>
-            {NIGHTLY_STARS.map((star) => (
-              <circle
-                key={`${star.cx}-${star.cy}`}
-                cx={star.cx}
-                cy={star.cy}
-                r={star.r}
-                fillOpacity={star.opacity}
-              />
-            ))}
+            {(extended ? [...NIGHTLY_STARS, ...NIGHTLY_EXTENDED_STARS] : NIGHTLY_STARS).map(
+              (star) => (
+                <circle
+                  key={`${star.cx}-${star.cy}`}
+                  cx={star.cx}
+                  cy={star.cy}
+                  r={star.r}
+                  fillOpacity={star.opacity}
+                />
+              ),
+            )}
           </g>
           <g
             style={{ stroke: "var(--stage-night-sparkle)" }}
@@ -183,40 +206,56 @@ function NightlySkyArt({ compact = false }: { compact?: boolean }) {
             strokeWidth="0.6"
           >
             {NIGHTLY_SPARKLES.map((sparkle) => (
-              <g key={`${sparkle.x}-${sparkle.y}`}>
+              <g className="stage-night-sparkle" key={`${sparkle.x}-${sparkle.y}`}>
                 <path d={`M${sparkle.x - 1.5} ${sparkle.y}H${sparkle.x + 1.5}`} />
                 <path d={`M${sparkle.x} ${sparkle.y - 1.5}V${sparkle.y + 1.5}`} />
               </g>
             ))}
           </g>
         </pattern>
-        <pattern id={glowsId} width="640" height="96" patternUnits="userSpaceOnUse">
-          <rect width="640" height="96" fill={`url(#${glowId})`} />
+        <pattern
+          id={glowsId}
+          width="640"
+          height={extended ? 384 : 96}
+          patternUnits="userSpaceOnUse"
+        >
+          <rect width="640" height={extended ? 384 : 96} fill={`url(#${glowId})`} />
         </pattern>
       </defs>
 
-      <rect width="100%" height="96" fill={`url(#${skyId})`} />
-      <rect width="100%" height="96" fill={`url(#${glowsId})`} />
-      <rect width="100%" height="96" fill={`url(#${starsId})`} />
+      <rect width="100%" height="100%" fill={`url(#${skyId})`} />
+      <rect width="100%" height="100%" fill={`url(#${glowsId})`} />
+      <rect width="100%" height="100%" fill={`url(#${starsId})`} />
 
       <g filter={`url(#${softId})`}>
         <path
-          d="M-12 88C-12 74 0 63 14 63C18 50 30 41 44 41C58 41 70 49 74 62C79 57 86 54 94 54C110 54 123 66 124 82C132 83 138 88 141 96H-12V88Z"
+          d="M-12 88C-12 74 0 63 14 63C18 50 30 41 44 41C58 41 70 49 74 62C79 57 86 54 94 54C110 54 123 66 124 82C132 83 138 88 141 96C156 122 139 148 114 150C106 170 83 173 69 164C46 177 17 161 16 151C-8 159-25 136-12 116V88Z"
           fill={`url(#${cloudId})`}
         />
       </g>
       <g filter={`url(#${softId})`}>
         <path
-          d="M150 96C151 84 161 75 173 75C176 64 186 57 198 57C210 57 220 64 223 75C231 75 238 80 241 87C250 87 257 91 260 96H150Z"
+          d="M150 96C151 84 161 75 173 75C176 64 186 57 198 57C210 57 220 64 223 75C231 75 238 80 241 87C250 87 257 91 260 96C280 117 258 142 239 140C228 158 203 154 197 140C171 149 149 132 150 112V96Z"
           fill={`url(#${cloudId})`}
           fillOpacity="0.8"
         />
       </g>
+      {extended ? (
+        <g filter={`url(#${softId})`} fill={`url(#${cloudId})`} fillOpacity="0.35">
+          <path d="M-20 276C-9 246 16 244 31 252C39 223 65 214 87 231C104 215 129 226 134 245C155 241 176 257 176 276C196 281 201 301 189 317C166 337 132 317 112 328C79 346 62 317 39 325C10 336-20 312-20 276Z" />
+        </g>
+      ) : null}
     </svg>
   );
 }
 
-function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
+function DevBlueprintArt({
+  compact = false,
+  extended = false,
+}: {
+  compact?: boolean;
+  extended?: boolean;
+}) {
   const idPrefix = useId().replaceAll(":", "");
   const paperId = `${idPrefix}-stage-bp-paper`;
   const glowId = `${idPrefix}-stage-bp-glow`;
@@ -233,7 +272,7 @@ function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
       className="stage-art stage-blueprint h-full w-full"
       fill="none"
       preserveAspectRatio="xMinYMin slice"
-      viewBox={compact ? "64 0 8192 96" : STAGE_BACKDROP_VIEW_BOX}
+      viewBox={compact ? "64 0 8192 96" : extended ? "0 0 8192 384" : STAGE_BACKDROP_VIEW_BOX}
       xmlns="http://www.w3.org/2000/svg"
     >
       <defs>
@@ -386,12 +425,12 @@ function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
         </pattern>
       </defs>
 
-      <rect width="100%" height="96" fill={`url(#${paperId})`} />
-      <rect width="100%" height="96" fill={`url(#${glowsId})`} />
-      <rect width="100%" height="96" fill={`url(#${minorGridId})`} />
-      <rect width="100%" height="96" fill={`url(#${majorGridId})`} />
+      <rect width="100%" height="100%" fill={`url(#${paperId})`} />
+      <rect width="100%" height="100%" fill={`url(#${glowsId})`} />
+      <rect width="100%" height="100%" fill={`url(#${minorGridId})`} />
+      <rect width="100%" height="100%" fill={`url(#${majorGridId})`} />
       <rect width="100%" height="6" fill={`url(#${rulerId})`} />
-      <rect width="100%" height="96" fill={`url(#${annotationsId})`} />
+      <rect width="100%" height="100%" fill={`url(#${annotationsId})`} />
     </svg>
   );
 }
