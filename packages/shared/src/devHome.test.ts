@@ -51,6 +51,17 @@ describe("resolveGitWorktreePath", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("recognizes backslash-separated linked-worktree pointers", () =>
+    Effect.gen(function* () {
+      const { root, nested } = yield* makeRepo("worktree");
+      NodeFS.writeFileSync(
+        NodePath.join(root, ".git"),
+        "gitdir: C:\\projects\\repo\\.git\\worktrees\\feature\r\n",
+      );
+      assert.equal(yield* resolveGitWorktreePath(nested), NodePath.resolve(root));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("reports a main checkout as not a linked worktree", () =>
     Effect.gen(function* () {
       const { nested } = yield* makeRepo("checkout");

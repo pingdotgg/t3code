@@ -11,9 +11,8 @@ import * as Result from "effect/Result";
 import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
 
 /**
- * The path a `.git` *file* points at, or undefined when the contents are not a
- * gitdir pointer. Backslashes normalize to `/` so a Windows-authored pointer
- * parses on POSIX.
+ * The raw path a `.git` file points at, or undefined when it is not a gitdir
+ * pointer. Callers apply the path semantics appropriate to their use.
  */
 export const parseGitDirPointer = (gitFileContents: string): string | undefined => {
   const gitdir = gitFileContents
@@ -22,7 +21,7 @@ export const parseGitDirPointer = (gitFileContents: string): string | undefined 
     .find((line) => line.startsWith("gitdir:"))
     ?.slice("gitdir:".length)
     .trim();
-  return gitdir === undefined || gitdir.length === 0 ? undefined : gitdir.replaceAll("\\", "/");
+  return gitdir === undefined || gitdir.length === 0 ? undefined : gitdir;
 };
 
 export const WORKTREE_BRANCH_PREFIX = "t3code";
