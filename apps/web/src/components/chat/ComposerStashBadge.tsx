@@ -1,5 +1,5 @@
 import { BookmarkIcon } from "lucide-react";
-import { memo } from "react";
+import { memo, type RefObject } from "react";
 
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
@@ -13,6 +13,7 @@ import { ComposerBanner } from "./ComposerBanner";
  * the count so the transition replays without a continuous animation.
  */
 export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
+  destinationRef: RefObject<HTMLButtonElement | null>;
   count: number;
   menuOpen: boolean;
   pulseKey: number;
@@ -41,7 +42,7 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
       className="ml-auto"
     >
       <ComposerBanner.Row
-        render={<button type="button" />}
+        render={<button ref={props.destinationRef} type="button" />}
         data-prompt-stash-badge="true"
         aria-label={`Stashed prompts: ${props.count}. Open stash.`}
         aria-expanded={props.menuOpen}
@@ -58,7 +59,12 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
         <ComposerBanner.Icon>
           <BookmarkIcon />
         </ComposerBanner.Icon>
-        <ComposerBanner.Content>Stash</ComposerBanner.Content>
+        <ComposerBanner.Content>
+          Stash
+          <span role="status" className="sr-only">
+            {props.pulsing ? "Draft saved to Stash. Open Stash to restore it." : ""}
+          </span>
+        </ComposerBanner.Content>
         <ComposerBanner.Actions>{count}</ComposerBanner.Actions>
       </ComposerBanner.Row>
     </ComposerBanner.Root>
