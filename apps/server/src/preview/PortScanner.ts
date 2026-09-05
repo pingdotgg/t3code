@@ -39,6 +39,7 @@ import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { withDetachedSpan } from "../serverActivation.ts";
 
 export class PortDiscovery extends Context.Service<
   PortDiscovery,
@@ -547,9 +548,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     );
   };
 
-  const pollTick = Effect.fn("PortDiscovery.pollTick")(
+  const pollTickActive = Effect.fn("PortDiscovery.pollTick")(
     function* () {
-      if ((yield* Ref.get(stateRef)).retainCount <= 0) return;
       const configuredUrls = [
         ...new Set(
           [...(yield* Ref.get(stateRef)).listeners.values()].flatMap(
@@ -578,9 +578,17 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     ),
   );
 
+  // Idle early-return stays outside Effect.fn so no-op ticks create no span; detach ParentSpan (#5410).
+  const pollTick = Effect.gen(function* () {
+    if ((yield* Ref.get(stateRef)).retainCount <= 0) return;
+    yield* pollTickActive();
+  });
+
   // Single layer-scoped polling fiber. Ticks are no-ops when no client is
   // currently retained, so the cost is one Ref.get every POLL_INTERVAL.
-  yield* Effect.forkScoped(pollTick().pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL))));
+  yield* Effect.forkScoped(
+    withDetachedSpan(pollTick.pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL)))),
+  );
 
   const acquireRetention = Effect.fn("PortDiscovery.retain")(function* () {
     const wasIdle = yield* Ref.modify(stateRef, (state) => [
@@ -590,7 +598,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     if (wasIdle) {
       // Run an immediate scan + broadcast so the new retainer doesn't have
       // to wait up to POLL_INTERVAL for the first emission.
-      yield* pollTick();
+      yield* pollTick;
     }
   });
 
@@ -659,6 +667,6 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     registerTerminalProcesses,
     unregisterTerminal,
   });
-}).pipe(Effect.withSpan("PortDiscovery.make"));
+});
 
 export const layer = Layer.effect(PortDiscovery, make);
