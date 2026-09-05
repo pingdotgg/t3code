@@ -3400,6 +3400,9 @@ describe("orchestrator MCP toolkit", () => {
         const testLayer = McpHttpServer.OrchestratorToolkitRegistrationLive.pipe(
           Layer.provideMerge(McpServer.McpServer.layer),
           Layer.provideMerge(orchestrationLayer),
+          Layer.provide(
+            providerSwitchServiceLayer.pipe(Layer.provide(makeProviderAdapterRegistryLayer([]))),
+          ),
           Layer.provide(providerRegistryLayer),
           Layer.provide(unusedScheduledTaskStubLayer),
           Layer.provide(NodeServices.layer),
