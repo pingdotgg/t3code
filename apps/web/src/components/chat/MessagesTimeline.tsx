@@ -3342,7 +3342,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
             alt={viewedImage.alt}
             srcFragment={viewedImage.srcFragment}
             workspaceRoot={workspaceRoot}
-            style={{ maxHeight: "16rem" }}
+            maxHeightRem={16}
             onImageExpand={onImageExpand}
           />
         </div>

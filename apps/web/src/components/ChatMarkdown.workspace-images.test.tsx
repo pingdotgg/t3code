@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 const testState = vi.hoisted(() => ({
   resources: [] as Array<unknown>,
   assetState: "success" as "success" | "loading" | "failure",
+  imageDimensions: undefined as { width: number; height: number } | undefined,
 }));
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
@@ -14,7 +15,11 @@ vi.mock("../assets/assetUrls", () => ({
     testState.resources.push(resource);
     if (testState.assetState === "loading") return { _tag: "Loading" };
     if (testState.assetState === "failure") return { _tag: "Failure" };
-    return { _tag: "Success", url: "https://signed.test/workspace-image.svg" };
+    return {
+      _tag: "Success",
+      url: "https://signed.test/workspace-image.svg",
+      ...(testState.imageDimensions ? { imageDimensions: testState.imageDimensions } : {}),
+    };
   },
 }));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
@@ -42,7 +47,7 @@ vi.mock("~/lib/openPullRequestLink", () => ({
   useOpenChangeRequestLink: () => vi.fn(),
 }));
 
-import ChatMarkdown from "./ChatMarkdown";
+import ChatMarkdown, { ChatMarkdownAssetImage } from "./ChatMarkdown";
 import { FileMarkdownPreview } from "./files/FileMarkdownPreview";
 
 const threadRef = {
@@ -92,6 +97,7 @@ describe("ChatMarkdown workspace images", () => {
   beforeEach(() => {
     testState.resources = [];
     testState.assetState = "success";
+    testState.imageDimensions = undefined;
   });
 
   it.each([
@@ -243,6 +249,42 @@ describe("ChatMarkdown workspace images", () => {
 
     // The sanitizer prefixes authored ids; the loading slot carries it too.
     expect(html).toContain('<span id="user-content-diagram"');
+  });
+
+  it("sizes the slot from server-reported dimensions so a portrait image never grows", () => {
+    testState.imageDimensions = { width: 720, height: 1400 };
+
+    const style = firstInlineStyle(render("![shot](.t3/workspace-image.svg)"));
+
+    expect(style).toMatchObject({ width: "720px", "aspect-ratio": "720 / 1400" });
+  });
+
+  it("folds a caller's height cap into the width bound so the ratio holds", () => {
+    testState.imageDimensions = { width: 720, height: 1400 };
+
+    const html = renderToStaticMarkup(
+      <ChatMarkdownAssetImage
+        environmentId={threadRef.environmentId}
+        resource={{ _tag: "media-file", threadId: threadRef.threadId, path: "/shot.png" }}
+        alt="shot"
+        maxHeightRem={16}
+      />,
+    );
+
+    expect(firstInlineStyle(html)).toMatchObject({
+      "aspect-ratio": "720 / 1400",
+      "max-width": `min(100%, 30rem, ${(16 * 720) / 1400}rem)`,
+    });
+  });
+
+  it("lets an authored size override server-reported dimensions", () => {
+    testState.imageDimensions = { width: 720, height: 1400 };
+
+    const style = firstInlineStyle(
+      render('<img src=".t3/workspace-image.svg" alt="sized" width="96" height="128">'),
+    );
+
+    expect(style).toMatchObject({ width: "96px", "aspect-ratio": "96 / 128" });
   });
 
   it("reserves a slot for an image that is alone in a list item", () => {
