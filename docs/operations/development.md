@@ -72,7 +72,8 @@ Windows investigation while that suite is not a required gate.
 ### Unused code
 
 `vp run knip:check` checks unused files and dependencies across the repo, then
-unused exports and types in `packages/tailscale`. CI enforces both checks.
+unused exports and types in `packages/tailscale` and `packages/effect-codex-app-server`.
+CI enforces both checks.
 Use `vp run knip --workspace apps/web` to audit one workspace, including exports,
 or `vp run knip:production --workspace apps/web` to find code kept alive only by tests.
 The full export audit still has findings and is not a repo-wide CI gate. Extend the
