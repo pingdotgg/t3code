@@ -13,7 +13,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { appAtomRegistry } from "../rpc/atomRegistry";
+import { randomUUID } from "../lib/utils";
 import { serverEnvironment } from "./server";
 
 export interface ThreadCostSnapshot {
@@ -162,6 +162,11 @@ export function useThreadCost(input: {
   readonly refreshKey: string | null;
 }): { readonly cost: ThreadCostSnapshot | null; readonly isPending: boolean } {
   const [currentDay, setCurrentDay] = useState(() => currentThreadCostDay());
+  const scopeKey = JSON.stringify([input.environmentId, input.threadId, input.createdAt]);
+  const [refreshAttempt, setRefreshAttempt] = useState<{
+    readonly scopeKey: string;
+    readonly token: string;
+  } | null>(null);
   useEffect(() => {
     let timeout: number | undefined;
     const schedule = () => {
@@ -177,8 +182,11 @@ export function useThreadCost(input: {
   }, []);
 
   const requestInput = useMemo(
-    () => makeThreadCostInput(input.threadId, input.createdAt, new Date(), currentDay),
-    [currentDay, input.createdAt, input.threadId],
+    () => ({
+      ...makeThreadCostInput(input.threadId, input.createdAt, new Date(), currentDay),
+      ...(refreshAttempt?.scopeKey === scopeKey ? { refreshToken: refreshAttempt.token } : {}),
+    }),
+    [currentDay, input.createdAt, input.threadId, refreshAttempt, scopeKey],
   );
   const queries = useMemo(() => {
     const breakdownQuery = serverEnvironment.usageThreadBreakdown({
@@ -208,15 +216,19 @@ export function useThreadCost(input: {
 
   const previousRefreshKey = useRef(input.refreshKey);
   useEffect(() => {
-    if (input.refreshKey === null || previousRefreshKey.current === input.refreshKey) return;
-    previousRefreshKey.current = input.refreshKey;
+    const refreshKey = input.refreshKey;
+    if (refreshKey === null || previousRefreshKey.current === refreshKey) return;
+    previousRefreshKey.current = refreshKey;
     const timeout = window.setTimeout(() => {
       if (supported.current === true) {
-        appAtomRegistry.refresh(queries.breakdownQuery);
+        setRefreshAttempt({
+          scopeKey,
+          token: JSON.stringify([refreshKey, randomUUID()]),
+        });
       }
     }, 750);
     return () => window.clearTimeout(timeout);
-  }, [input.refreshKey, queries.breakdownQuery]);
+  }, [input.refreshKey, scopeKey]);
 
   return {
     cost:

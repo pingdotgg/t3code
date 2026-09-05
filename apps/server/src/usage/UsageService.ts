@@ -1108,12 +1108,14 @@ export const make = Effect.gen(function* () {
   interface SourceSnapshot {
     readonly completedAtMs: number;
     readonly recordUpperBoundMs: number;
+    readonly scanRevision: number;
     readonly windowStartMs: number;
     readonly sourceKey: string;
     readonly dirs: readonly ScannedDir[];
   }
 
   let sourceSnapshot: SourceSnapshot | null = null;
+  let sourceScanRevision = 0;
   let lastRefreshToken: string | null = null;
   let sourceRefreshSequence = 0;
   const sourceScanSemaphore = yield* Semaphore.make(1);
@@ -1200,6 +1202,7 @@ export const make = Effect.gen(function* () {
           settings.providers.codex,
         ]);
         const snapshotCoversSources = currentSnapshot?.sourceKey === sourceKey;
+        const snapshotComplete = currentSnapshot?.dirs.every(({ complete }) => complete) === true;
         const manualRefresh = refreshToken !== undefined && refreshToken !== lastRefreshToken;
 
         if (
@@ -1207,6 +1210,7 @@ export const make = Effect.gen(function* () {
           currentSnapshot !== null &&
           snapshotCoversWindow &&
           snapshotCoversSources &&
+          snapshotComplete &&
           snapshotAgeMs < SOURCE_SCAN_TTL_MS
         ) {
           return currentSnapshot;
@@ -1223,6 +1227,8 @@ export const make = Effect.gen(function* () {
         // Pricing only matters once records are aggregated, so the rate table
         // loads while transcripts stream instead of gating them: a cold rates
         // fetch on a slow network no longer delays the scan by its own timeout.
+        sourceScanRevision += 1;
+        const scanRevision = sourceScanRevision;
         const [, dirs] = yield* Effect.all(
           [ensureRates(false), collectDirs(scanWindowStartMs, settings)],
           { concurrency: 2 },
@@ -1232,6 +1238,7 @@ export const make = Effect.gen(function* () {
         const nextSnapshot = {
           completedAtMs,
           recordUpperBoundMs,
+          scanRevision,
           windowStartMs: scanWindowStartMs,
           sourceKey,
           dirs,
@@ -1464,19 +1471,24 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const pruned = pruneScanCache(fileCache, {
-      livePaths,
-      walkedRoots,
-      windowStartMs,
-      retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-    });
-    if (pruned > 0) cacheRevision += 1;
-    const prunedIdentities = pruneScanIdentityCache(fileIdentityCache, {
-      livePaths: allPaths,
-      walkedRoots,
-    });
-    if (prunedIdentities > 0) cacheRevision += 1;
-    yield* persistScanCache();
+    // A newer source walk may have populated files after this snapshot left
+    // the scan lane. Only the latest walk can prove that an unseen path
+    // disappeared and persist the resulting cache.
+    if (currentSnapshot.scanRevision === sourceScanRevision) {
+      const pruned = pruneScanCache(fileCache, {
+        livePaths,
+        walkedRoots,
+        windowStartMs,
+        retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+      });
+      if (pruned > 0) cacheRevision += 1;
+      const prunedIdentities = pruneScanIdentityCache(fileIdentityCache, {
+        livePaths: allPaths,
+        walkedRoots,
+      });
+      if (prunedIdentities > 0) cacheRevision += 1;
+      yield* persistScanCache();
+    }
 
     const aggregated = aggregator.finish();
     const finishedAtMs = yield* Clock.currentTimeMillis;
@@ -1583,6 +1595,38 @@ export const make = Effect.gen(function* () {
     const summary = scan.pipe(Effect.map((result) => result.summary));
     return input.sinceDay > input.untilDay ? summary : scanSemaphore.withPermits(1)(summary);
   };
+
+  const runSharedScan = (
+    key: string,
+    scan: Effect.Effect<UsageSummary, UsageReadError>,
+  ): Effect.Effect<UsageSummary, UsageReadError> =>
+    Effect.gen(function* () {
+      const deferred = yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          const existing = inflightScans.get(key);
+          if (existing !== undefined) return existing;
+
+          // Enrollment and detached-fiber creation must be atomic. Otherwise a
+          // canceled first caller can leave a Deferred with no scan to finish it.
+          const created = Deferred.makeUnsafe<UsageSummary, UsageReadError>();
+          inflightScans.set(key, created);
+          // Detached so one departing client cannot tear the scan out from under
+          // the fibers awaiting it; a finished scan warms the cache either way.
+          yield* scan.pipe(
+            Effect.onExit((exit) =>
+              Effect.sync(() => inflightScans.delete(key)).pipe(
+                Effect.andThen(Deferred.done(created, exit)),
+              ),
+            ),
+            Effect.forkDetach,
+          );
+          return created;
+        }),
+      );
+      // Waiting stays interruptible. The detached scan continues for other
+      // callers and still warms the cache if this caller leaves.
+      return yield* Deferred.await(deferred);
+    });
 
   const runBackgroundRefresh = (input: UsageSummaryInput) => {
     // Do not enroll a waiter while merely constructing the effect. An
@@ -1798,7 +1842,9 @@ export const make = Effect.gen(function* () {
     // Older clients request a rescan by changing the query token because they
     // do not have the v13 refresh command. The token must bypass both the
     // normalized ledger and final-snapshot fast paths.
-    if (input.refreshToken !== undefined) return yield* runBackgroundRefresh(input);
+    if (input.refreshToken !== undefined) {
+      return yield* runSharedScan(`refresh:${key}`, runBackgroundRefresh(input));
+    }
     if (isCommonPreset(input)) {
       const normalized = yield* readPresetFromLedger(input);
       if (normalized !== null) return normalized;
@@ -1823,31 +1869,7 @@ export const make = Effect.gen(function* () {
     const cached = usageSnapshots.get(key);
     if (cached !== undefined) return cached;
 
-    const deferred = yield* Effect.uninterruptible(
-      Effect.gen(function* () {
-        const existing = inflightScans.get(key);
-        if (existing !== undefined) return existing;
-
-        // Enrollment and detached-fiber creation must be atomic. Otherwise a
-        // canceled first caller can leave a Deferred with no scan to finish it.
-        const created = Deferred.makeUnsafe<UsageSummary, UsageReadError>();
-        inflightScans.set(key, created);
-        // Detached so one departing client cannot tear the scan out from under
-        // the fibers awaiting it; a finished scan warms the cache either way.
-        yield* scanAndPersist(input).pipe(
-          Effect.onExit((exit) =>
-            Effect.sync(() => inflightScans.delete(key)).pipe(
-              Effect.andThen(Deferred.done(created, exit)),
-            ),
-          ),
-          Effect.forkDetach,
-        );
-        return created;
-      }),
-    );
-    // Waiting stays interruptible. The detached scan continues for other
-    // callers and still warms the cache if this caller leaves.
-    return yield* Deferred.await(deferred);
+    return yield* runSharedScan(key, scanAndPersist(input));
   });
 
   const refreshSummary = (input: UsageSummaryInput) => runBackgroundRefresh(input);
@@ -2022,7 +2044,13 @@ export const make = Effect.gen(function* () {
     // transcript cannot make its drill-down disagree during the source TTL.
     // A thread-only read keeps the targeted identity scan below instead of
     // cold-parsing the entire provider corpus.
-    const currentSnapshot = yield* getReusableSourceSnapshot(windowStartMs, settings);
+    // A manual single-thread refresh must retain the targeted body prefilter.
+    const threadScanRevision = sourceScanRevision;
+    const currentSnapshot = yield* input.refreshToken === undefined
+      ? getReusableSourceSnapshot(windowStartMs, settings)
+      : input.threadId === undefined
+        ? getSourceSnapshot(windowStartMs, startedAtMs, input.refreshToken, settings)
+        : Effect.succeed(null);
 
     const resolveProject = yield* resolveProjects();
     const accumulator = new ThreadUsageAccumulator({
@@ -2143,26 +2171,36 @@ export const make = Effect.gen(function* () {
       }
     }
 
-    // A filtered walk sees only one thread's candidates, so it cannot prove
-    // that other cached files disappeared. Keeping the selected lifetime
-    // records also prevents an old thread from being cold-parsed every turn.
-    if (target === null) {
-      const pruned = pruneScanCache(fileCache, {
-        livePaths,
+    // A newer source walk may have populated files after a reused snapshot
+    // left the scan lane. Only the latest snapshot can prove that an unseen
+    // path disappeared. A targeted direct walk still persists its selected
+    // lifetime records when no reusable snapshot exists.
+    if (
+      currentSnapshot === null
+        ? threadScanRevision === sourceScanRevision
+        : currentSnapshot.scanRevision === sourceScanRevision
+    ) {
+      // A filtered walk sees only one thread's candidates, so it cannot prove
+      // that other cached files disappeared. Keeping the selected lifetime
+      // records also prevents an old thread from being cold-parsed every turn.
+      if (target === null) {
+        const pruned = pruneScanCache(fileCache, {
+          livePaths,
+          walkedRoots,
+          windowStartMs,
+          retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+        });
+        if (pruned > 0) cacheRevision += 1;
+      }
+      const prunedIdentities = pruneScanIdentityCache(fileIdentityCache, {
+        livePaths: allPaths,
         walkedRoots,
-        windowStartMs,
-        retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
       });
-      if (pruned > 0) cacheRevision += 1;
+      if (prunedIdentities > 0) cacheRevision += 1;
+      // Persist selected lifetime records so a restart does not cold-parse the
+      // same old thread again. Unfiltered reads retain the normal bounded cache.
+      yield* persistScanCache();
     }
-    const prunedIdentities = pruneScanIdentityCache(fileIdentityCache, {
-      livePaths: allPaths,
-      walkedRoots,
-    });
-    if (prunedIdentities > 0) cacheRevision += 1;
-    // Persist selected lifetime records so a restart does not cold-parse the
-    // same old thread again. Unfiltered reads retain the normal bounded cache.
-    yield* persistScanCache();
 
     const folded = foldThreadRows(accumulator.finish(), attribution, {
       cap: THREAD_ROW_CAP,

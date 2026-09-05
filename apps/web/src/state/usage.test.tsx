@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   refreshAtom: vi.fn(),
   getAtom: vi.fn(() => ({ waiting: false })),
   usageSummary: vi.fn((_request: { environmentId: string; input: UsageSummaryInput }) => ({})),
+  usageThreadBreakdown: vi.fn((request: unknown) => request),
   executeAtomQuery: vi.fn(),
 }));
 
@@ -38,6 +39,7 @@ vi.mock("./presentation", () => ({ presentationsAtom: {} }));
 vi.mock("./server", () => ({
   serverEnvironment: {
     usageSummary: mocks.usageSummary,
+    usageThreadBreakdown: mocks.usageThreadBreakdown,
     refreshUsageSummary: mocks.refreshSummaryCommand,
     refreshUsageRates: mocks.refreshRatesCommand,
   },
@@ -151,14 +153,16 @@ function Harness({
   input,
   onView,
   projectFilter,
+  refreshThreads = false,
   selectedEnvironmentIds = null,
 }: {
   input: UsageSummaryInput;
   onView: (view: UsageView) => void;
   projectFilter?: string | null;
+  refreshThreads?: boolean;
   selectedEnvironmentIds?: ReadonlySet<EnvironmentId> | null;
 }) {
-  onView(useUsage(input, projectFilter, false, selectedEnvironmentIds));
+  onView(useUsage(input, projectFilter, refreshThreads, selectedEnvironmentIds));
   return null;
 }
 
@@ -167,12 +171,21 @@ async function renderHarness(
   onView: (view: UsageView) => void,
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
   projectFilter?: string | null,
+  refreshThreads = false,
 ) {
   const document = installTestDom();
   const { createRoot } = await import("react-dom/client");
   const root = createRoot(document.createElement("div") as unknown as Element);
   await act(() =>
-    root.render(createElement(Harness, { input, onView, projectFilter, selectedEnvironmentIds })),
+    root.render(
+      createElement(Harness, {
+        input,
+        onView,
+        projectFilter,
+        refreshThreads,
+        selectedEnvironmentIds,
+      }),
+    ),
   );
   return root;
 }
@@ -240,6 +253,7 @@ describe("web useUsage boundary refresh", () => {
     mocks.getAtom.mockReset();
     mocks.getAtom.mockReturnValue({ waiting: false });
     mocks.usageSummary.mockClear();
+    mocks.usageThreadBreakdown.mockClear();
     mocks.executeAtomQuery.mockReset();
     mocks.executeAtomQuery.mockResolvedValue({ _tag: "Success" });
   });
@@ -433,6 +447,7 @@ describe("web usage environment selection", () => {
     mocks.getAtom.mockReset();
     mocks.getAtom.mockReturnValue({ waiting: false });
     mocks.usageSummary.mockClear();
+    mocks.usageThreadBreakdown.mockClear();
     mocks.executeAtomQuery.mockReset();
     mocks.executeAtomQuery.mockResolvedValue({ _tag: "Success" });
   });
@@ -473,6 +488,73 @@ describe("web usage environment selection", () => {
       expect(mocks.refreshUsageRates.mock.calls[0]?.[0]).toMatchObject({ environmentId: "b" });
       expect(mocks.refreshUsageSummary).toHaveBeenCalledOnce();
       expect(mocks.refreshUsageSummary.mock.calls[0]?.[0]).toMatchObject({ environmentId: "b" });
+    } finally {
+      await act(() => root.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("refreshes a healthy environment before another environment's rates settle", async () => {
+    const fastRates = deferred<{ _tag: "Success" | "Failure" }>();
+    const slowRates = deferred<{ _tag: "Success" | "Failure" }>();
+    mocks.statuses = [usageStatus("fast", 10), usageStatus("slow", 20)];
+    mocks.refreshUsageRates.mockImplementation(({ environmentId }: { environmentId: string }) =>
+      environmentId === "fast" ? fastRates.promise : slowRates.promise,
+    );
+    mocks.refreshUsageSummary.mockResolvedValue({ _tag: "Success" });
+    let view!: UsageView;
+    const root = await renderHarness(
+      WINDOW_A,
+      (nextView) => {
+        view = nextView;
+      },
+      null,
+      undefined,
+      true,
+    );
+
+    try {
+      await act(async () => {
+        view.refresh();
+        await Promise.resolve();
+      });
+      expect(mocks.refreshUsageRates).toHaveBeenCalledTimes(2);
+      expect(mocks.refreshUsageSummary).not.toHaveBeenCalled();
+      expect(mocks.refreshAtom).not.toHaveBeenCalled();
+      expect(view.isRefreshing).toBe(true);
+
+      await act(async () => {
+        fastRates.resolve({ _tag: "Success" });
+        await fastRates.promise;
+        await Promise.resolve();
+      });
+      expect(mocks.refreshUsageSummary).toHaveBeenCalledOnce();
+      expect(mocks.refreshUsageSummary.mock.calls[0]?.[0]).toMatchObject({
+        environmentId: "fast",
+      });
+      expect(mocks.refreshAtom).toHaveBeenCalledOnce();
+      expect(mocks.usageThreadBreakdown.mock.calls[0]?.[0]).toMatchObject({
+        environmentId: "fast",
+        input: expect.not.objectContaining({ refreshToken: expect.anything() }),
+      });
+      expect(view.isRefreshing).toBe(true);
+
+      await act(async () => {
+        slowRates.resolve({ _tag: "Success" });
+        await slowRates.promise;
+        await Promise.resolve();
+      });
+      expect(mocks.refreshUsageSummary).toHaveBeenCalledTimes(2);
+      expect(mocks.refreshUsageSummary.mock.calls[1]?.[0]).toMatchObject({
+        environmentId: "slow",
+      });
+      expect(mocks.refreshAtom).toHaveBeenCalledTimes(2);
+      expect(mocks.usageThreadBreakdown.mock.calls[1]?.[0]).toMatchObject({
+        environmentId: "slow",
+        input: expect.not.objectContaining({ refreshToken: expect.anything() }),
+      });
+      expect(view.isRefreshing).toBe(false);
+      expect(view.refreshError).toBeNull();
     } finally {
       await act(() => root.unmount());
       vi.unstubAllGlobals();

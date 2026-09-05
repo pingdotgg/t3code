@@ -273,65 +273,76 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live("does not parse unrelated Codex token content for a targeted thread read", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      const sessionsDir = NodePath.join(home, "codex", "sessions", "2026", "08", "01");
-      yield* Effect.promise(() => NodeFSP.mkdir(sessionsDir, { recursive: true }));
-      const targetPath = NodePath.join(
-        sessionsDir,
-        "rollout-2026-08-01T10-00-00-target-session.jsonl",
-      );
-      const unrelatedPath = NodePath.join(
-        sessionsDir,
-        "rollout-2026-08-01T10-00-00-unrelated-session.jsonl",
-      );
-      yield* Effect.promise(() =>
-        Promise.all([
-          NodeFSP.writeFile(targetPath, codexRollout("target-session", "/work/target", 7)),
-          NodeFSP.writeFile(unrelatedPath, codexRollout("unrelated-session", "/work/other", 999)),
-        ]),
-      );
-
-      yield* Effect.gen(function* () {
-        const config = yield* ServerConfig.ServerConfig;
-        const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
-        yield* runtimeRepository.upsert({
-          threadId: ThreadId.make("target-thread"),
-          providerName: "codex",
-          providerInstanceId: null,
-          adapterKey: "codex",
-          runtimeMode: "full-access",
-          status: "running",
-          lastSeenAt: "2026-08-01T10:00:00.000Z",
-          resumeCursor: { threadId: "target-session" },
-          runtimePayload: null,
-        });
-        const service = yield* UsageService.make;
-        const breakdown = yield* service.readThreadBreakdown({
-          ...WINDOW,
-          threadId: ThreadId.make("target-thread"),
-        });
-        assert.strictEqual(breakdown.rows.length, 1);
-        assert.strictEqual(breakdown.rows[0]?.totals.outputTokens, 7);
-
-        const persisted = (yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+  for (const refreshToken of [undefined, "turn-refresh"]) {
+    it.live(
+      `does not parse unrelated Codex token content for a targeted thread read (${refreshToken ?? "initial"})`,
+      () =>
+        Effect.gen(function* () {
+          const { settings, home } = yield* setup;
+          const sessionsDir = NodePath.join(home, "codex", "sessions", "2026", "08", "01");
+          yield* Effect.promise(() => NodeFSP.mkdir(sessionsDir, { recursive: true }));
+          const targetPath = NodePath.join(
+            sessionsDir,
+            "rollout-2026-08-01T10-00-00-target-session.jsonl",
+          );
+          const unrelatedPath = NodePath.join(
+            sessionsDir,
+            "rollout-2026-08-01T10-00-00-unrelated-session.jsonl",
+          );
           yield* Effect.promise(() =>
-            NodeFSP.readFile(NodePath.join(config.stateDir, "usage-scan-cache.json"), "utf8"),
-          ),
-        )) as { files: Record<string, unknown>; identities: Record<string, unknown> };
-        assert.deepStrictEqual(Object.keys(persisted.files), [targetPath]);
-        assert.deepStrictEqual(
-          Object.keys(persisted.identities).sort(),
-          [targetPath, unrelatedPath].sort(),
-        );
-      }).pipe(
-        Effect.provide(
-          serviceLayers({ prefix: "usage-service-target-prefilter-test", home, settings }),
-        ),
-      );
-    }).pipe(Effect.scoped),
-  );
+            Promise.all([
+              NodeFSP.writeFile(targetPath, codexRollout("target-session", "/work/target", 7)),
+              NodeFSP.writeFile(
+                unrelatedPath,
+                codexRollout("unrelated-session", "/work/other", 999),
+              ),
+            ]),
+          );
+
+          yield* Effect.gen(function* () {
+            const config = yield* ServerConfig.ServerConfig;
+            const runtimeRepository =
+              yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+            yield* runtimeRepository.upsert({
+              threadId: ThreadId.make("target-thread"),
+              providerName: "codex",
+              providerInstanceId: null,
+              adapterKey: "codex",
+              runtimeMode: "full-access",
+              status: "running",
+              lastSeenAt: "2026-08-01T10:00:00.000Z",
+              resumeCursor: { threadId: "target-session" },
+              runtimePayload: null,
+            });
+            const service = yield* UsageService.make;
+            const breakdown = yield* service.readThreadBreakdown({
+              ...WINDOW,
+              threadId: ThreadId.make("target-thread"),
+              ...(refreshToken === undefined ? {} : { refreshToken }),
+            });
+            assert.strictEqual(breakdown.rows.length, 1);
+            assert.strictEqual(breakdown.rows[0]?.totals.outputTokens, 7);
+
+            const persisted = (yield* Schema.decodeUnknownEffect(
+              Schema.fromJsonString(Schema.Unknown),
+            )(
+              yield* Effect.promise(() =>
+                NodeFSP.readFile(NodePath.join(config.stateDir, "usage-scan-cache.json"), "utf8"),
+              ),
+            )) as { files: Record<string, unknown>; identities: Record<string, unknown> };
+            assert.deepStrictEqual(Object.keys(persisted.files), [targetPath]);
+            assert.deepStrictEqual(
+              Object.keys(persisted.identities).sort(),
+              [targetPath, unrelatedPath].sort(),
+            );
+          }).pipe(
+            Effect.provide(
+              serviceLayers({ prefix: "usage-service-target-prefilter-test", home, settings }),
+            ),
+          );
+        }).pipe(Effect.scoped),
+    );
+  }
 
   it.live("filters a targeted thread from the summary's cached source snapshot", () =>
     Effect.gen(function* () {
@@ -382,10 +393,120 @@ describe("UsageService", () => {
         assert.strictEqual(breakdown.rows.length, 1);
         assert.strictEqual(breakdown.rows[0]?.totals.outputTokens, 7);
         assert.strictEqual(breakdown.readAt, summary.readAt);
+
+        const refreshed = yield* service.readThreadBreakdown({
+          ...WINDOW,
+          threadId: ThreadId.make("target-thread"),
+          refreshToken: "completed-turn",
+        });
+        assert.strictEqual(refreshed.rows.length, 1);
+        assert.strictEqual(refreshed.rows[0]?.totals.outputTokens, 77);
       }).pipe(
         Effect.provide(
           serviceLayers({ prefix: "usage-service-target-cached-snapshot-test", home, settings }),
         ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("refreshes thread rows when the caller changes the refresh token", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        yield* service.readSummary(WINDOW);
+        yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
+
+        const breakdown = yield* service.readThreadBreakdown({
+          ...WINDOW,
+          refreshToken: "thread-refresh-1",
+        });
+
+        assert.strictEqual(
+          breakdown.rows.reduce((total, row) => total + row.totals.outputTokens, 0),
+          12,
+        );
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-thread-refresh-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("does not let an older thread breakdown prune a newer source scan", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const baseDir = NodePath.join(home, "server-state");
+      const newerTranscript = NodePath.join(NodePath.dirname(transcript), "newer-thread.jsonl");
+      const threadAggregationStarted = yield* Deferred.make<void>();
+      const releaseThreadAggregation = yield* Deferred.make<void>();
+      let projectReads = 0;
+      const unused = Effect.die(new Error("unused project repository operation"));
+      const projectRepository: ProjectionProjectRepository["Service"] = {
+        upsert: () => unused,
+        getById: () => unused,
+        listAll: () =>
+          Effect.gen(function* () {
+            projectReads += 1;
+            if (projectReads === 2) {
+              yield* Deferred.succeed(threadAggregationStarted, undefined);
+              yield* Deferred.await(releaseThreadAggregation);
+            }
+            return [];
+          }),
+        deleteById: () => unused,
+      };
+      const runtimeRepository: ProviderSessionRuntime.ProviderSessionRuntimeRepository["Service"] =
+        {
+          upsert: () => unused,
+          getByThreadId: () => unused,
+          list: () => Effect.succeed([]),
+          deleteByThreadId: () => unused,
+        };
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-thread-prune-race-test",
+            baseDir,
+            home,
+            settings,
+            projectRepository,
+            runtimeRepository,
+          }),
+        ),
+      );
+
+      const olderThread = yield* service
+        .readThreadBreakdown({ ...WINDOW, refreshToken: "older-thread" })
+        .pipe(
+          Effect.tapCause(() => Deferred.succeed(threadAggregationStarted, undefined)),
+          Effect.forkChild,
+        );
+      yield* Deferred.await(threadAggregationStarted);
+      yield* Effect.promise(() => NodeFSP.writeFile(newerTranscript, claudeLine(2, 7)));
+      yield* service.refreshSummary({
+        ...WINDOW,
+        timeZone: "America/Los_Angeles",
+      });
+      yield* Deferred.succeed(releaseThreadAggregation, undefined);
+      yield* Fiber.join(olderThread);
+
+      const persisted = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+        yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(baseDir, "userdata", "usage-scan-cache.json"), "utf8"),
+        ),
+      );
+      assert.isTrue(
+        typeof persisted === "object" &&
+          persisted !== null &&
+          "files" in persisted &&
+          typeof persisted.files === "object" &&
+          persisted.files !== null &&
+          Object.hasOwn(persisted.files, newerTranscript),
       );
     }).pipe(Effect.scoped),
   );
@@ -1054,6 +1175,43 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("coalesces concurrent caller refresh tokens for the same summary", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const ratesStarted = yield* Deferred.make<void>();
+      const ratesGate = yield* Deferred.make<void>();
+      let ratesFetches = 0;
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-refresh-coalescing-test",
+            home,
+            settings,
+            ratesGate,
+            ratesStarted,
+            onRatesFetch: () => {
+              ratesFetches += 1;
+            },
+          }),
+        ),
+      );
+
+      const reads = yield* Effect.forEach(
+        Array.from({ length: 16 }, (_, index) => `caller-${index}`),
+        (refreshToken) => service.readSummary({ ...WINDOW, refreshToken }),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* Deferred.await(ratesStarted);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(ratesGate, undefined);
+      const summaries = yield* Fiber.join(reads);
+
+      assert.strictEqual(ratesFetches, 1);
+      assert.strictEqual(new Set(summaries.map(({ readAt }) => readAt)).size, 1);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("loads a durable final snapshot without rescanning on the next server", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
@@ -1180,6 +1338,10 @@ describe("UsageService", () => {
 
       const unavailable = yield* service.readSummary(WINDOW).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(unavailable));
+
+      yield* Effect.promise(() => NodeFSP.rm(`${transcript}.bad.jsonl`));
+      const retried = yield* service.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(retried), 5);
     }).pipe(Effect.scoped),
   );
 

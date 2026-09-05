@@ -259,51 +259,45 @@ export function useUsage(
       pendingRefreshViewKey.current = requestViewKey;
       setManualRefreshState(nextRefreshState);
 
-      void Promise.allSettled(
-        refreshEnvironments.map((environment) =>
-          refreshUsageRates({ environmentId: environment.environmentId, input: {} }),
-        ),
-      )
-        .then(() => {
-          const explicitRefreshes = refreshEnvironments.flatMap((environment) =>
-            (environment.summary?.contractVersion ?? 0) < USAGE_EXPLICIT_REFRESH_SINCE
-              ? []
-              : [
-                  refreshUsageSummary({
-                    environmentId: environment.environmentId,
-                    input: requestInput,
-                  }),
-                ],
-          );
-          const legacyOrUnknown = refreshEnvironments.filter(
-            (environment) =>
-              (environment.summary?.contractVersion ?? 0) < USAGE_EXPLICIT_REFRESH_SINCE,
-          );
-          const legacyAnswered = legacyOrUnknown.flatMap((environment) =>
-            environment.summary === null
-              ? []
-              : [
-                  {
-                    environmentId: environment.environmentId,
-                    label: environment.label,
-                    summary: environment.summary,
-                  },
-                ],
-          );
-          const refreshToken = JSON.stringify([
-            makeUsageRefreshToken(legacyAnswered) ?? "unknown",
-            randomUUID(),
-          ]);
-          const fallbackRefreshes = legacyOrUnknown.map(async (environment) => {
-            const refreshed = await executeAtomQuery(
-              appAtomRegistry,
-              serverEnvironment.usageSummary({
+      const legacyOrUnknown = refreshEnvironments.filter(
+        (environment) => (environment.summary?.contractVersion ?? 0) < USAGE_EXPLICIT_REFRESH_SINCE,
+      );
+      const legacyAnswered = legacyOrUnknown.flatMap((environment) =>
+        environment.summary === null
+          ? []
+          : [
+              {
                 environmentId: environment.environmentId,
-                input: { ...requestInput, refreshToken },
-              }),
-              { reportFailure: false, refresh: true },
-            );
-            if (refreshed._tag === "Failure") return refreshed;
+                label: environment.label,
+                summary: environment.summary,
+              },
+            ],
+      );
+      const refreshToken = JSON.stringify([
+        makeUsageRefreshToken(legacyAnswered) ?? "unknown",
+        randomUUID(),
+      ]);
+      const environmentsAfterRates = refreshEnvironments.map(async (environment) => {
+        await Promise.allSettled([
+          refreshUsageRates({ environmentId: environment.environmentId, input: {} }),
+        ]);
+        return environment;
+      });
+      const summaryRefreshes = environmentsAfterRates.map(async (environmentAfterRates) => {
+        const environment = await environmentAfterRates;
+        let result;
+        if ((environment.summary?.contractVersion ?? 0) < USAGE_EXPLICIT_REFRESH_SINCE) {
+          const refreshed = await executeAtomQuery(
+            appAtomRegistry,
+            serverEnvironment.usageSummary({
+              environmentId: environment.environmentId,
+              input: { ...requestInput, refreshToken },
+            }),
+            { reportFailure: false, refresh: true },
+          );
+          if (refreshed._tag === "Failure") {
+            result = refreshed;
+          } else {
             const baseAtom = serverEnvironment.usageSummary({
               environmentId: environment.environmentId,
               input: requestInput,
@@ -313,33 +307,46 @@ export function useUsage(
                 reportFailure: false,
               });
             }
-            return executeAtomQuery(appAtomRegistry, baseAtom, {
+            result = await executeAtomQuery(appAtomRegistry, baseAtom, {
               reportFailure: false,
               refresh: true,
             });
-          });
-
-          if (refreshThreads) {
-            for (const contribution of filterProviderContributionsForProject(
-              projectFilter,
-              merged.providerContributions,
-            )) {
-              if (contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE) continue;
-              appAtomRegistry.refresh(
-                serverEnvironment.usageThreadBreakdown({
-                  environmentId: contribution.environmentId,
-                  input: makeThreadBreakdownInput(
-                    requestInput,
-                    projectFilter,
-                    contribution.providers,
-                    contribution.environmentId,
-                  ),
-                }),
-              );
-            }
           }
-          return Promise.all([...explicitRefreshes, ...fallbackRefreshes]);
-        })
+        } else {
+          result = await refreshUsageSummary({
+            environmentId: environment.environmentId,
+            input: requestInput,
+          });
+        }
+
+        if (refreshThreads) {
+          for (const contribution of filterProviderContributionsForProject(
+            projectFilter,
+            merged.providerContributions,
+          )) {
+            if (
+              contribution.environmentId !== environment.environmentId ||
+              contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE
+            ) {
+              continue;
+            }
+            appAtomRegistry.refresh(
+              serverEnvironment.usageThreadBreakdown({
+                environmentId: contribution.environmentId,
+                input: makeThreadBreakdownInput(
+                  requestInput,
+                  projectFilter,
+                  contribution.providers,
+                  contribution.environmentId,
+                ),
+              }),
+            );
+          }
+        }
+        return result;
+      });
+
+      void Promise.all(summaryRefreshes)
         .then((results) => {
           const nextState = completeUsageRefresh(
             currentViewKey.current,
