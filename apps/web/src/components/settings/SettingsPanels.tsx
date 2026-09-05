@@ -30,6 +30,7 @@ import {
   MAX_PROMPT_FONT_SIZE,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MAX_TERMINAL_FONT_SIZE,
+  MAX_THREAD_CONTEXT_TOKEN_LIMIT,
   MIN_CODE_FONT_SIZE,
   MIN_APPEARANCE_CONTRAST,
   MIN_GLASS_OPACITY,
@@ -38,6 +39,7 @@ import {
   MIN_PROMPT_FONT_SIZE,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_TERMINAL_FONT_SIZE,
+  MIN_THREAD_CONTEXT_TOKEN_LIMIT,
   type QuitConfirmationMode,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -2355,6 +2357,55 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Show skills in slash menu"
             />
+          }
+        />
+
+        <SettingsRow
+          serverScoped
+          {...searchableSetting("thread-context-token-limit")}
+          description="Stop new turns in a thread after its context reaches this size. Start a new thread to continue."
+          resetAction={
+            settings.threadContextTokenLimit !==
+            DEFAULT_UNIFIED_SETTINGS.threadContextTokenLimit ? (
+              <SettingResetButton
+                label="thread token limit"
+                onClick={() =>
+                  updateSettings({
+                    threadContextTokenLimit: DEFAULT_UNIFIED_SETTINGS.threadContextTokenLimit,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex items-center gap-2">
+              <NumberField
+                value={settings.threadContextTokenLimit / 1_000}
+                min={MIN_THREAD_CONTEXT_TOKEN_LIMIT / 1_000}
+                max={MAX_THREAD_CONTEXT_TOKEN_LIMIT / 1_000}
+                step={10}
+                size="sm"
+                className="w-28"
+                onValueCommitted={(value) => {
+                  if (value === null) return;
+                  const nextLimit = Math.round(value) * 1_000;
+                  if (
+                    nextLimit < MIN_THREAD_CONTEXT_TOKEN_LIMIT ||
+                    nextLimit > MAX_THREAD_CONTEXT_TOKEN_LIMIT
+                  ) {
+                    return;
+                  }
+                  updateSettings({ threadContextTokenLimit: nextLimit });
+                }}
+              >
+                <NumberFieldGroup>
+                  <NumberFieldDecrement aria-label="Decrease thread token limit" />
+                  <NumberFieldInput aria-label="Thread token limit in thousands" />
+                  <NumberFieldIncrement aria-label="Increase thread token limit" />
+                </NumberFieldGroup>
+              </NumberField>
+              <span className="text-xs text-muted-foreground">thousand tokens</span>
+            </div>
           }
         />
 
