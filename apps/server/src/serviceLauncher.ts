@@ -7,6 +7,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import type {
   PendingServiceUpdate,
@@ -94,10 +95,29 @@ async function syncDirectory(directory: string): Promise<void> {
   }
 }
 
+function quoteSqliteLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+export function vacuumDatabaseInto(sourcePath: string, destinationPath: string): void {
+  const db = new DatabaseSync(sourcePath, { readOnly: true });
+  try {
+    const vacuumPath =
+      NodePath.sep === "\\" ? destinationPath.replaceAll("\\", "/") : destinationPath;
+    db.exec(`VACUUM INTO ${quoteSqliteLiteral(vacuumPath)}`);
+  } finally {
+    db.close();
+  }
+}
+
 /**
  * Snapshots the database once per update before the first trial. A completed
  * backup is never overwritten because a restarted launcher may be looking at
  * database writes from an earlier attempt by the same trial.
+ *
+ * VACUUM INTO writes one consistent file. A live copy of sqlite plus WAL plus
+ * shm can be a torn snapshot. WAL does not survive VACUUM INTO, so restore
+ * copies this file and drops leftover sidecars.
  */
 async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate): Promise<void> {
   const backupDir = databaseBackupDir(baseDir, pending.id);
@@ -107,13 +127,10 @@ async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate
   await NodeFSP.rm(stagingDir, { recursive: true, force: true });
   await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
   try {
-    for (const suffix of DB_FILE_SUFFIXES) {
-      const source = `${pending.dbPath}${suffix}`;
-      if (suffix !== "" && !(await pathExists(source))) continue;
-      const destination = databaseBackupFile(stagingDir, suffix);
-      await NodeFSP.copyFile(source, destination);
-      await syncFile(destination);
-    }
+    const destination = databaseBackupFile(stagingDir, "");
+    vacuumDatabaseInto(pending.dbPath, destination);
+    await NodeFSP.chmod(destination, 0o600);
+    await syncFile(destination);
     await NodeFSP.rename(stagingDir, backupDir);
     await syncDirectory(NodePath.dirname(backupDir));
   } catch (cause) {
@@ -376,7 +393,8 @@ export class Launcher {
   }
 
   async #startTrial(pending: PendingServiceUpdate): Promise<void> {
-    // The previous child is dead here, so all three SQLite files are quiescent.
+    // The previous child is dead here. VACUUM INTO still snapshots one
+    // consistent file if a sidecar is left behind.
     try {
       await backupDatabaseOnce(this.#baseDir, pending);
     } catch {

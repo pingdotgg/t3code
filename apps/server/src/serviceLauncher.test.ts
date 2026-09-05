@@ -3,8 +3,18 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
-import { Launcher, readServiceState, writeServiceState } from "./serviceLauncher.ts";
+import {
+  Launcher,
+  readServiceState,
+  vacuumDatabaseInto,
+  writeServiceState,
+} from "./serviceLauncher.ts";
 import {
   compareExactServiceVersions,
   decodeServiceState,
@@ -31,6 +41,58 @@ it("orders exact semantic versions without treating build metadata as precedence
   assert.equal(compareExactServiceVersions("2.0.0", "2.0.0-rc.1"), 1);
   assert.equal(compareExactServiceVersions("2.0.0+one", "2.0.0+two"), 0);
 });
+
+function seedSqlite(databasePath: string): void {
+  const seed = new DatabaseSync(databasePath);
+  try {
+    seed.exec(
+      "CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT NOT NULL); INSERT INTO kv VALUES ('phase', 'before');",
+    );
+  } finally {
+    seed.close();
+  }
+}
+
+it("snapshots sqlite with VACUUM INTO and no wal sidecar", async () => {
+  const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-vacuum-backup-"));
+  try {
+    const source = NodePath.join(dir, "state.sqlite");
+    const destination = NodePath.join(dir, "backup");
+    seedSqlite(source);
+    vacuumDatabaseInto(source, destination);
+
+    const restored = new DatabaseSync(destination, { readOnly: true });
+    try {
+      const row = restored.prepare("SELECT v AS v FROM kv WHERE k = 'phase'").get() as {
+        v: string;
+      };
+      assert.equal(row.v, "before");
+    } finally {
+      restored.close();
+    }
+    assert.isFalse(NodeFS.existsSync(`${destination}-wal`));
+    assert.isFalse(NodeFS.existsSync(`${destination}-shm`));
+  } finally {
+    await NodeFSP.rm(dir, { recursive: true, force: true });
+  }
+});
+
+it.skipIf(NodePath.sep === "\\")(
+  "keeps a literal backslash in a POSIX vacuum destination",
+  async () => {
+    const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-vacuum-posix-"));
+    try {
+      const source = NodePath.join(dir, "state.sqlite");
+      const destination = NodePath.join(dir, "back\\up");
+      seedSqlite(source);
+      vacuumDatabaseInto(source, destination);
+      assert.isTrue(NodeFS.existsSync(destination));
+      assert.isFalse(NodeFS.existsSync(NodePath.join(dir, "back", "up")));
+    } finally {
+      await NodeFSP.rm(dir, { recursive: true, force: true });
+    }
+  },
+);
 
 it("rejects contradictory service state", () => {
   assert.isUndefined(
@@ -130,7 +192,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       const statePath = path.join(root, "runtime", "service-state.json");
       const databasePath = path.join(root, "userdata", "state.sqlite");
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
-      yield* fs.writeFileString(databasePath, "before trial");
+      seedSqlite(databasePath);
       // @effect-diagnostics-next-line preferSchemaOverJson:off - embeds a path in fake child source.
       const encodedDatabasePath = JSON.stringify(databasePath);
       const childSource = `
@@ -183,7 +245,7 @@ if (context.update?.status === "pending") {
       const statePath = path.join(root, "runtime", "service-state.json");
       const databasePath = path.join(root, "userdata", "state.sqlite");
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
-      yield* fs.writeFileString(databasePath, "before trial");
+      seedSqlite(databasePath);
       // @effect-diagnostics-next-line preferSchemaOverJson:off - embeds a path in fake child source.
       const encodedDatabasePath = JSON.stringify(databasePath);
       const childSource = `
@@ -236,16 +298,21 @@ if (context.update?.status === "pending") {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-db-" });
       const statePath = path.join(root, "runtime", "service-state.json");
       const databasePath = path.join(root, "userdata", "state.sqlite");
-      const original = "database before migration";
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
-      yield* fs.writeFileString(databasePath, original);
+      seedSqlite(databasePath);
       // @effect-diagnostics-next-line preferSchemaOverJson:off - embeds a path in fake child source.
       const encodedDatabasePath = JSON.stringify(databasePath);
       const childSource = `
 import { writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
 if (context.update?.status === "pending") {
-  writeFileSync(context.update.dbPath, "database after migration");
+  const db = new DatabaseSync(context.update.dbPath);
+  try {
+    db.exec("UPDATE kv SET v = 'after'");
+  } finally {
+    db.close();
+  }
   writeFileSync(context.update.dbPath + "-wal", "trial wal");
   writeFileSync(context.update.dbPath + "-shm", "trial shm");
   process.exit(1);
@@ -281,7 +348,15 @@ if (context.update?.status === "pending") {
       const state = yield* Effect.promise(() => readServiceState(statePath));
       assert.equal(state.activeVersion, "1.0.0");
       assert.equal(state.update?.status, "rolled-back");
-      assert.equal(yield* fs.readFileString(databasePath), original);
+      const restored = new DatabaseSync(databasePath, { readOnly: true });
+      try {
+        const row = restored.prepare("SELECT v AS v FROM kv WHERE k = 'phase'").get() as {
+          v: string;
+        };
+        assert.equal(row.v, "before");
+      } finally {
+        restored.close();
+      }
       assert.isFalse(yield* fs.exists(`${databasePath}-wal`));
       assert.isFalse(yield* fs.exists(`${databasePath}-shm`));
       const updateId = state.update?.id;
