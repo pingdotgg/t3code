@@ -73,13 +73,18 @@ index ff78e2a..f9df318 100644
  				const gutterRow = resolveGutterTarget(e.composedPath()[0]);
  				if (gutterRow?.dataset.lineType === "change-deletion") {
  					const code = gutterRow.closest("[data-code]");
-@@ -1522,6 +1520,7 @@ var Editor = class {
+@@ -1522,6 +1520,12 @@ var Editor = class {
  			if (gutterEl !== void 0) gutterEl.style.gridRow = "span " + gridRow;
  		}
  		fileInstance.updateRenderCache(dirtyLines, tokenizer.themeType, !didLineCountChange, didLineCountChange);
 +		if (fileInstance.file !== void 0) fileInstance.file.contents = textDocument.getText();
 -		if (didLineCountChange) fileInstance.applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer);
-+		if (didLineCountChange) fileInstance.applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer, change.startLine);
++		if (didLineCountChange) {
++			const previousLineCount = change.lineCount - change.lineDelta;
++			// A wider or narrower line-number gutter can rewrap unchanged rows.
++			const layoutStartLine = String(previousLineCount).length === String(change.lineCount).length ? change.startLine : 0;
++			fileInstance.applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer, layoutStartLine);
++		}
  		if (this.#isDiff && (this.#diffSyle === "unified" || didLineCountChange)) this.#resetCache();
  		if (newLineAnnotations !== void 0) {
 @@ -1788,6 +1787,7 @@ var Editor = class {
