@@ -523,7 +523,11 @@ export function reconcileMountedTerminalThreadIds(input: {
     currentThreadIds: input.currentThreadIds,
     openThreadIds: input.openThreadIds,
     activeThreadId: input.activeThreadId,
-    activeThreadOpen: input.activeThreadTerminalOpen,
+    // Keep the active drawer mounted after closing so CSS can finish its
+    // transition and reopening can reuse the viewport. Navigation releases it.
+    activeThreadOpen:
+      input.activeThreadTerminalOpen ||
+      (input.activeThreadId !== null && input.currentThreadIds.includes(input.activeThreadId)),
     maxHiddenThreadCount: input.maxHiddenThreadCount ?? MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   });
 }
