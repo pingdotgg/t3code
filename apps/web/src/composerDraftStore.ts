@@ -64,7 +64,7 @@ const isProviderDriverKind = Schema.is(ProviderDriverKind);
 const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
-const COMPOSER_DRAFT_STORAGE_VERSION = 9;
+const COMPOSER_DRAFT_STORAGE_VERSION = 10;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
 
@@ -2030,14 +2030,28 @@ function stripLegacyModelSeedsFromEmptyDraftSessions(
 
 function migratePersistedComposerDraftStoreState(
   persistedState: unknown,
+  persistedVersion: number,
 ): PersistedComposerDraftStoreState {
   const normalized = normalizeCurrentPersistedComposerDraftStoreState(persistedState);
+  const draftsWithRuntimeModes = { ...normalized.draftsByThreadKey };
+  if (persistedVersion < COMPOSER_DRAFT_STORAGE_VERSION) {
+    for (const [threadKey, draftThread] of Object.entries(normalized.draftThreadsByThreadKey)) {
+      const draft = draftsWithRuntimeModes[threadKey];
+      draftsWithRuntimeModes[threadKey] = {
+        prompt: "",
+        attachments: [],
+        ...draft,
+        runtimeMode: draft?.runtimeMode ?? draftThread.runtimeMode,
+      };
+    }
+  }
+  const draftsByThreadKey = stripLegacyModelSeedsFromEmptyDraftSessions(
+    draftsWithRuntimeModes,
+    normalized.draftThreadsByThreadKey,
+  );
   return {
     ...normalized,
-    draftsByThreadKey: stripLegacyModelSeedsFromEmptyDraftSessions(
-      normalized.draftsByThreadKey,
-      normalized.draftThreadsByThreadKey,
-    ),
+    draftsByThreadKey,
   };
 }
 
@@ -4106,29 +4120,6 @@ export function useEffectiveComposerModelState(input: {
   );
 }
 
-/**
- * Mark a draft thread as promoting once the server has materialized the same thread id.
- *
- * Use the single-thread helper for live `thread.created` events and the
- * iterable helper for bootstrap/recovery paths that discover multiple server
- * threads at once.
- */
-export function markPromotedDraftThread(threadId: ThreadId): void {
-  const store = useComposerDraftStore.getState();
-  const draftThreadTargets: ComposerThreadTarget[] = [];
-  for (const [draftId, draftThread] of Object.entries(store.draftThreadsByThreadKey)) {
-    if (draftThread.threadId === threadId) {
-      draftThreadTargets.push(DraftId.make(draftId));
-    }
-  }
-  if (draftThreadTargets.length === 0) {
-    return;
-  }
-  for (const draftThreadTarget of draftThreadTargets) {
-    store.markDraftThreadPromoting(draftThreadTarget);
-  }
-}
-
 export function markPromotedDraftThreadByRef(threadRef: ScopedThreadRef): void {
   const draftStore = useComposerDraftStore.getState();
   for (const [draftId, draftThread] of Object.entries(draftStore.draftThreadsByThreadKey)) {
@@ -4138,18 +4129,6 @@ export function markPromotedDraftThreadByRef(threadRef: ScopedThreadRef): void {
     ) {
       draftStore.markDraftThreadPromoting(DraftId.make(draftId), threadRef);
     }
-  }
-}
-
-export function markPromotedDraftThreads(serverThreadIds: Iterable<ThreadId>): void {
-  for (const threadId of serverThreadIds) {
-    markPromotedDraftThread(threadId);
-  }
-}
-
-export function markPromotedDraftThreadsByRef(serverThreadRefs: Iterable<ScopedThreadRef>): void {
-  for (const threadRef of serverThreadRefs) {
-    markPromotedDraftThreadByRef(threadRef);
   }
 }
 

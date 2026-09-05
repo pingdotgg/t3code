@@ -1,48 +1,44 @@
 # Terminal runtime
 
-The environment server owns terminal processes, retained output history, and
-session lifecycle. Web, desktop, and mobile clients attach to the same
-server-owned session over the environment RPC connection. The desktop renderer
-does not own a separate PTY. Clients can reconnect to a running PTY or share
-it with another client.
+The environment server owns PTYs, session lifetime, and retained output. Every
+client, including the desktop renderer, attaches through the environment connection.
+This lets clients reconnect or share a running session. Renderer choices stay local
+to each client and do not change terminal contracts.
 
-## Output path
+## Output and retention
 
-PTY output follows this path:
+[Terminal history](../../apps/server/src/terminal/Manager.ts) is incremental.
+PTY callbacks append new chunks; live events carry only those chunks. Materializing
+or copying full scrollback on every callback makes output cost grow with retained
+history, so snapshots and coalesced persistence are the materialization boundaries.
+Persistence queues the mutable history buffer and reads its latest value when the
+write runs. Clear, restart, and close must drain writes before completing their
+lifecycle boundary.
 
-```text
-PTY callback
-  -> ordered process-event drain
-  -> bounded retained-history append
-  -> live terminal output event
-  -> coalesced history persistence
-```
+Server history is capped at 5,000 lines and 8 MiB of UTF-8 text per terminal, so a
+long unterminated line cannot bypass retention. Eviction removes the oldest output
+without splitting Unicode code points; live output is not truncated. Release
+discarded chunk references immediately, even if array compaction happens later.
+Client buffers have a separate 512 KiB cap. Measure throughput with full scrollback
+when changing this path.
 
-Live output events contain only the new PTY data. Full retained history is
-materialized only when the server returns a snapshot or when the coalescing
-persistence worker writes the latest state.
+Restoration must read only the bounded tail of current or legacy history files,
+skip any incomplete UTF-8 prefix, and apply the line limit. Close the read handle
+before rewriting the capped file. Reading whole old logs would defeat the memory
+bound during startup.
 
-Retained history uses an incremental bounded line buffer. Appending one PTY
-chunk may scan and allocate for that new chunk, but it must not split, join, or
-copy the entire retained history for every callback. Empty lines, incomplete
-final lines, trailing newlines, and the configured line limit are preserved
-exactly when history is materialized.
+## Renderer ownership
 
-Discard each line's string reference as soon as the line leaves retained
-history. Array compaction can run later.
+Android and web use the same `libghostty-vt` C ABI for terminal behavior. Platform
+adapters own drawing and input integration, and React stays out of terminal frames.
+The web adapter shares one WebAssembly instance per browser tab while each terminal
+owns and frees its own handles. The canonical upstream pin is
+[`native/libghostty-vt/VERSION`](../../native/libghostty-vt/VERSION); both native and
+web artifacts must be rebuilt when it changes. Web embeds the revision in its build
+info so the ABI check can detect drift without a second pin.
 
-The server's line limit does not limit the byte size of retained history.
-Shared web and mobile client state currently retains at most 512 KiB. A server
-byte limit would change persisted scrollback and needs a separate retention
-decision.
-
-Measure sustained-output changes against a full retained history so terminal
-throughput does not regress unnoticed.
-
-## Persistence
-
-History persistence is keyed by terminal session and coalesces pending writes.
-The worker reads the newest bounded-history state after its debounce instead
-of receiving a newly materialized full string for every PTY callback. Clear,
-restart, close, and final flush operations still force the latest state to
-disk before their lifecycle boundary completes.
+Restoring scrollback must not send terminal replies to the current shell. Historical
+device queries can otherwise provoke fresh replies that appear as junk at the
+prompt. The server strips query/response traffic from retained history, and the
+[web renderer](../../apps/web/src/terminal/ghostty/core.ts) detaches its PTY writer
+during replay. Preserve both protections when changing retention or renderer code.

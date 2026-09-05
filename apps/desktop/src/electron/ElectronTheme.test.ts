@@ -64,7 +64,6 @@ describe("ElectronTheme", () => {
       const error = yield* Effect.flip(electronTheme.setSource("dark"));
 
       assert.instanceOf(error, ElectronTheme.ElectronThemeSetSourceError);
-      assert.isTrue(ElectronTheme.isElectronThemeSetSourceError(error));
       assert.strictEqual(error.source, "dark");
       assert.strictEqual(error.cause, cause);
       assert.include(error.message, "dark");

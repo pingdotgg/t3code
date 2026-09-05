@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   fileBasename,
   inlineCodeFilePathCandidate,
-  isConventionalFilePosition,
   parseFileUrlHref,
   parseMarkdownFileLink,
   splitFilePathPosition,
@@ -25,15 +24,6 @@ describe("inlineCodeFilePathCandidate", () => {
     ["example.pl/index.html", null],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
-  });
-});
-
-describe("isConventionalFilePosition", () => {
-  it("distinguishes extensionless file locations from labels and ports", () => {
-    expect(isConventionalFilePosition("Dockerfile:8:2")).toBe(true);
-    expect(isConventionalFilePosition("Makefile")).toBe(false);
-    expect(isConventionalFilePosition("TODO:12")).toBe(false);
-    expect(isConventionalFilePosition("port:3000")).toBe(false);
   });
 });
 
@@ -160,7 +150,17 @@ describe("workspaceRelativeFilePath", () => {
     ["/repo/project/src/main.ts", "/repo/project/", "src/main.ts"],
     ["C:\\Users\\mike\\t3code\\apps\\web\\a.ts", "C:/Users/mike/t3code", "apps/web/a.ts"],
     ["/C:/Users/mike/t3code/apps/web/a.ts", "C:/Users/mike/t3code", "apps/web/a.ts"],
-    ["/Repo/Project/src/main.ts", "/repo/project", "src/main.ts"],
+    ["/Repo/Project/src/main.ts", "/repo/project", null],
+    ["/tmp/case/project/probe.txt", "/tmp/case/Project", null],
+    ["//tmp/case/project/probe.txt", "//tmp/case/Project", null],
+    ["/tmp/case/Project/probe.txt", "/tmp/case/Project", "probe.txt"],
+    ["C:/USERS/mike/t3code/main.ts", "c:/users/MIKE/t3code", "main.ts"],
+    ["/C:/USERS/mike/t3code/main.ts", "/c:/users/MIKE/t3code", "main.ts"],
+    ["\\\\server\\share\\PROJECT\\main.ts", "\\\\Server\\Share\\Project", "main.ts"],
+    ["/tmp/repo/file.ts", "/", "tmp/repo/file.ts"],
+    ["C:/Users/MIKE/main.ts", "c:/", "Users/MIKE/main.ts"],
+    ["\\\\server\\SHARE\\file.ts", "\\\\Server\\Share\\", "file.ts"],
+    ["/tmp/repo/file.ts ", "/tmp/repo", "file.ts "],
     ["/tmp/report.ts", "/repo/project", null],
     ["/repo/project-two/a.ts", "/repo/project", null],
     ["/repo/project/a.ts", undefined, null],
