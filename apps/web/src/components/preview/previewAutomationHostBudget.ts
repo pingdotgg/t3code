@@ -1,22 +1,8 @@
-/**
- * Reserve for delivering the host's response back to the broker once a wait
- * gives up. Without it a host wait that runs the full request budget always
- * loses the race to the broker's own deadline, so the agent sees an opaque
- * "timed out" instead of the specific failure the host was about to report.
- */
+/** Allow time to deliver an overlay failure before the broker times out. */
 export const PREVIEW_HOST_RESPONSE_MARGIN_MS = 1_500;
 
-/**
- * Share of the request budget reserved when the request is too short for the
- * full margin, so the host still expires first rather than being clamped past
- * the broker's deadline.
- */
 const HOST_RESPONSE_MARGIN_FRACTION = 0.2;
 
-/**
- * Budget a host-side wait so it always expires before the broker's deadline
- * for the same request.
- */
 export function resolveHostWaitBudgetMs(requestTimeoutMs: number): number {
   if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
     return 0;
@@ -26,4 +12,31 @@ export function resolveHostWaitBudgetMs(requestTimeoutMs: number): number {
     Math.ceil(requestTimeoutMs * HOST_RESPONSE_MARGIN_FRACTION),
   );
   return Math.max(0, requestTimeoutMs - reservedMs);
+}
+
+/** Both readiness probes and polling delays share the request's host deadline. */
+export async function waitForHostReadiness(
+  deadlineMs: number,
+  isReady: () => Promise<boolean>,
+): Promise<boolean> {
+  while (Date.now() < deadlineMs) {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let ready: boolean | null;
+    try {
+      ready = await Promise.race([
+        isReady(),
+        new Promise<null>((resolve) => {
+          timeout = setTimeout(() => resolve(null), Math.max(0, deadlineMs - Date.now()));
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (ready === null || Date.now() >= deadlineMs) return false;
+    if (ready) return true;
+    await new Promise<void>((resolve) =>
+      setTimeout(resolve, Math.min(50, deadlineMs - Date.now())),
+    );
+  }
+  return false;
 }
