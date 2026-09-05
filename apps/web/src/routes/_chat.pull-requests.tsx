@@ -86,6 +86,7 @@ import {
   writePullRequestListPreferences,
 } from "../components/pullRequest/pullRequestListPreferences";
 import { assignProjectsToEnvironments } from "../components/pullRequest/pullRequestProjectAssignment.logic";
+import { pullRequestFilterProjects } from "../components/pullRequest/pullRequestProjectFilter.logic";
 import { environmentMachineIcon } from "../components/EnvironmentMachineIcon";
 import { PullRequestDetailPanel } from "../components/pullRequest/PullRequestDetailPanel";
 import {
@@ -356,27 +357,6 @@ function PullRequestsRouteView() {
       ),
     [environments],
   );
-  const scopedProjects = useMemo(() => {
-    // Two machines can hold the same repository, so a title the workspace carries twice is told
-    // apart by the environment it lives on rather than left as two identical rows.
-    const titleCounts = new Map<string, number>();
-    for (const project of projects) {
-      titleCounts.set(project.title, (titleCounts.get(project.title) ?? 0) + 1);
-    }
-    return projects
-      .map((project) => ({
-        id: project.id,
-        environmentId: project.environmentId,
-        title:
-          (titleCounts.get(project.title) ?? 0) > 1
-            ? `${project.title} · ${environmentLabels.get(project.environmentId) ?? project.environmentId}`
-            : project.title,
-        workspaceRoot: project.workspaceRoot,
-        faviconPath: project.faviconPath ?? null,
-        projectIcon: project.projectIcon ?? null,
-      }))
-      .toSorted((left, right) => left.title.localeCompare(right.title));
-  }, [environmentLabels, projects]);
   // The scope the URL asks for, once the environments have had their say about whether it exists.
   const scopedProjectId = useMemo(
     () => resolveProjectScope(search.projectId, projects, projectsKnown),
@@ -385,6 +365,10 @@ function PullRequestsRouteView() {
   const scopedProject = useMemo(
     () => findScopedProject(projects, scopedEnvironmentId, scopedProjectId),
     [projects, scopedEnvironmentId, scopedProjectId],
+  );
+  const scopedProjects = useMemo(
+    () => pullRequestFilterProjects(projects, environmentLabels, scopedProject),
+    [environmentLabels, projects, scopedProject],
   );
 
   // A link from a thread or the sidebar only knows the repository, so the owning project is

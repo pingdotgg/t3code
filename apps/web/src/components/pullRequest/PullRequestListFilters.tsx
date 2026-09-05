@@ -8,6 +8,7 @@ import type {
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import {
+  CheckIcon,
   CircleCheckIcon,
   CircleDashedIcon,
   CircleSlashIcon,
@@ -205,6 +206,7 @@ function PullRequestFilterRadioGroup<Value extends string>({
               <PullRequestFilterOptionIcon option={option} />
               <span className="min-w-0 flex-1 truncate">{option.label}</span>
               {option.unavailable ? <span className="shrink-0">· Unavailable</span> : null}
+              {option.value === value ? <CheckIcon aria-hidden className="size-3.5" /> : null}
             </span>
           </MenuRadioItem>
         );
@@ -455,8 +457,8 @@ export function PullRequestFiltersMenu({
     readonly environmentId: EnvironmentId;
     readonly title: string;
     readonly workspaceRoot: string;
-    readonly faviconPath?: string | null;
-    readonly projectIcon?: ProjectIconOverride | null;
+    readonly faviconPath?: string | null | undefined;
+    readonly projectIcon?: ProjectIconOverride | null | undefined;
   }>;
   projectId: ProjectId | undefined;
   /**
