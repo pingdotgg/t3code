@@ -1350,6 +1350,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   rowSurfaceClassName,
                   "flex h-9 items-center gap-2.5 px-2.5",
                   projectFaviconColor &&
+                    !hasUnsentDraft &&
                     !props.isActive &&
                     !isSelected &&
                     "hover:bg-[color-mix(in_srgb,var(--sidebar-row-project-color)_14%,transparent)]",
@@ -1521,6 +1522,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               className={cn(
                 rowSurfaceClassName,
                 projectFaviconColor &&
+                  !hasUnsentDraft &&
                   !props.isActive &&
                   !isSelected &&
                   "hover:bg-[color-mix(in_srgb,var(--sidebar-row-project-color)_14%,transparent)]",
