@@ -17,7 +17,6 @@ import * as Data from "effect/Data";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Exit from "effect/Exit";
