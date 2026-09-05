@@ -1,4 +1,5 @@
 import {
+  AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   type EnvironmentId,
   type ProjectScript,
@@ -27,6 +28,7 @@ import {
 import { keybindingFromKeyboardEvent } from "~/components/settings/KeybindingsSettings.logic";
 import { commandForProjectScript, nextProjectScriptId } from "~/projectScripts";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import { useComposerMenuState } from "./chat/useComposerMenuState";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -151,18 +153,19 @@ export function ProjectScriptEditorDialog({
   onDelete: (scriptId: string) => void;
   onClose: () => void;
 }) {
+  const canEditProject = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const formId = React.useId();
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
   const [icon, setIcon] = useState<ProjectScriptIcon>("play");
-  const [iconPickerOpen, setIconPickerOpen] = useState(false);
+  const [iconPickerOpen, setIconPickerOpen] = useComposerMenuState(!canEditProject);
   const [runOnWorktreeCreate, setRunOnWorktreeCreate] = useState(false);
   const [keybinding, setKeybinding] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
   const [autoOpenPreview, setAutoOpenPreview] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useComposerMenuState(!canEditProject);
 
   const isOpen = request !== null;
   const isEditing = request?.scriptId != null;
@@ -179,9 +182,10 @@ export function ProjectScriptEditorDialog({
     setPreviewUrl(request.initial.previewUrl ?? "");
     setAutoOpenPreview(request.initial.autoOpenPreview);
     setValidationError(request.error ?? null);
-  }, [request]);
+  }, [request, setIconPickerOpen]);
 
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
     if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) return;
     if (event.key === "Tab") return;
     event.preventDefault();
@@ -197,6 +201,10 @@ export function ProjectScriptEditorDialog({
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!request) return;
+    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+      setValidationError("This connection cannot change project actions.");
+      return;
+    }
     const changesKeybinding =
       (keybinding.trim() || null) !== (request.initial.keybinding?.trim() || null);
     const canChangeKeybinding = readEnvironmentScope(environmentId, AuthSettingsWriteScope);
@@ -276,11 +284,16 @@ export function ProjectScriptEditorDialog({
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
+            {!canEditProject && (
+              <p className="mb-4 text-sm text-muted-foreground">
+                This connection cannot change project actions.
+              </p>
+            )}
             <form id={formId} className="space-y-4" onSubmit={submit}>
               <div className="space-y-1.5">
                 <Label htmlFor="script-name">Name</Label>
                 <div className="flex items-center gap-2">
-                  <Popover onOpenChange={setIconPickerOpen} open={iconPickerOpen}>
+                  <Popover onOpenChange={setIconPickerOpen} open={iconPickerOpen && canEditProject}>
                     <PopoverTrigger
                       render={
                         <Button
@@ -288,6 +301,7 @@ export function ProjectScriptEditorDialog({
                           variant="outline"
                           className="size-9 shrink-0 hover:bg-popover active:bg-popover data-pressed:bg-popover data-pressed:shadow-xs/5 data-pressed:before:shadow-[0_1px_--theme(--color-black/4%)] dark:border-transparent dark:bg-white/[0.035] dark:data-pressed:before:shadow-none"
                           aria-label="Choose icon"
+                          disabled={!canEditProject}
                         />
                       }
                     >
@@ -301,6 +315,7 @@ export function ProjectScriptEditorDialog({
                             <button
                               key={entry.id}
                               type="button"
+                              disabled={!canEditProject}
                               className={`relative flex flex-col items-center gap-2 rounded-md border px-2 py-2 text-xs dark:border-transparent ${
                                 isSelected
                                   ? "border-primary/70 bg-primary/10 dark:ring-1 dark:ring-primary/30"
@@ -321,6 +336,7 @@ export function ProjectScriptEditorDialog({
                   </Popover>
                   <Input
                     id="script-name"
+                    disabled={!canEditProject}
                     autoFocus
                     placeholder="Test"
                     value={name}
@@ -334,7 +350,7 @@ export function ProjectScriptEditorDialog({
                   id="script-keybinding"
                   placeholder="Press shortcut"
                   value={keybinding}
-                  disabled={!canWriteSettings}
+                  disabled={!canEditProject || !canWriteSettings}
                   readOnly
                   onKeyDown={captureKeybinding}
                 />
@@ -352,6 +368,7 @@ export function ProjectScriptEditorDialog({
                 <Label htmlFor="script-command">Command</Label>
                 <Textarea
                   id="script-command"
+                  disabled={!canEditProject}
                   placeholder="bun test"
                   value={command}
                   onChange={(event) => setCommand(event.target.value)}
@@ -361,6 +378,7 @@ export function ProjectScriptEditorDialog({
                 <Label htmlFor="script-preview-url">Preview URL (optional)</Label>
                 <Input
                   id="script-preview-url"
+                  disabled={!canEditProject}
                   placeholder="http://localhost:5173"
                   value={previewUrl}
                   onChange={(event) => setPreviewUrl(event.target.value)}
@@ -373,6 +391,7 @@ export function ProjectScriptEditorDialog({
                 <span>Run automatically on worktree creation</span>
                 <Switch
                   checked={runOnWorktreeCreate}
+                  disabled={!canEditProject}
                   onCheckedChange={(checked) => setRunOnWorktreeCreate(Boolean(checked))}
                 />
               </label>
@@ -384,7 +403,7 @@ export function ProjectScriptEditorDialog({
                 <span>Open preview automatically when this action runs</span>
                 <Switch
                   checked={autoOpenPreview}
-                  disabled={previewUrl.trim().length === 0}
+                  disabled={!canEditProject || previewUrl.trim().length === 0}
                   onCheckedChange={(checked) => setAutoOpenPreview(Boolean(checked))}
                 />
               </label>
@@ -397,6 +416,7 @@ export function ProjectScriptEditorDialog({
                 type="button"
                 variant="destructive-outline"
                 className="mr-auto"
+                disabled={!canEditProject}
                 onClick={() => setDeleteConfirmOpen(true)}
               >
                 Delete
@@ -405,14 +425,14 @@ export function ProjectScriptEditorDialog({
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel
             </Button>
-            <Button form={formId} type="submit">
+            <Button form={formId} type="submit" disabled={!canEditProject}>
               {isEditing ? "Save changes" : "Save action"}
             </Button>
           </DialogFooter>
         </DialogPopup>
       </Dialog>
 
-      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+      <AlertDialog open={deleteConfirmOpen && canEditProject} onOpenChange={setDeleteConfirmOpen}>
         <AlertDialogPopup>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete action "{name}"?</AlertDialogTitle>
@@ -422,8 +442,13 @@ export function ProjectScriptEditorDialog({
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
             <Button
               variant="destructive"
+              disabled={!canEditProject}
               onClick={() => {
                 if (!request?.scriptId) return;
+                if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+                  setValidationError("This connection cannot change project actions.");
+                  return;
+                }
                 setDeleteConfirmOpen(false);
                 onClose();
                 onDelete(request.scriptId);
