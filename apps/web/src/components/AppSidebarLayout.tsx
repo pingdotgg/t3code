@@ -166,12 +166,30 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const [sidebarWidth, setSidebarWidth] = useState(() =>
     readInitialThreadSidebarWidth(sidebarExtraWidth),
   );
+  // Client settings hydrate after mount, so the rail's width contribution is
+  // still 0 when the initializer above runs. Recompute once it changes, or the
+  // panel keeps its no-rail width and the rail eats the thread column instead
+  // of widening the sidebar. A width the user dragged is persisted, and
+  // resolveInitialThreadSidebarWidth preserves it, so this only ever restores
+  // the default.
+  const [appliedExtraWidth, setAppliedExtraWidth] = useState(sidebarExtraWidth);
+  if (appliedExtraWidth !== sidebarExtraWidth) {
+    setAppliedExtraWidth(sidebarExtraWidth);
+    setSidebarWidth(readInitialThreadSidebarWidth(sidebarExtraWidth));
+  }
   // Subscribed rather than read once: the clamp must track live window size,
   // and a clamped drag ends with an unchanged width, which skips the re-render
   // that would otherwise refresh a render-time snapshot.
   const viewportWidth = useSyncExternalStore(subscribeToViewportWidth, readViewportWidth);
-  const sidebarMaximumWidth = resolveThreadSidebarMaximumWidth(viewportWidth);
   const sidebarMinimumWidth = THREAD_SIDEBAR_MIN_WIDTH + sidebarExtraWidth;
+  // On a viewport narrow enough that the main content's floor leaves less room
+  // than the sidebar's own floor, the two constraints cannot both hold. The
+  // floor wins, so the range stays coherent for the drag handle instead of
+  // handing it a maximum below its minimum.
+  const sidebarMaximumWidth = Math.max(
+    sidebarMinimumWidth,
+    resolveThreadSidebarMaximumWidth(viewportWidth),
+  );
   const resetSidebarWidth = () => {
     try {
       removeLocalStorageItem(THREAD_SIDEBAR_WIDTH_STORAGE_KEY);
@@ -185,7 +203,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   // current floor rather than only at mount.
   const clampedSidebarWidth = Math.min(
     Math.max(sidebarWidth, sidebarMinimumWidth),
-    Math.max(sidebarMinimumWidth, sidebarMaximumWidth),
+    sidebarMaximumWidth,
   );
   const [isWindowFullscreen, setIsWindowFullscreen] = useState(() => {
     const getWindowFullscreenState = window.desktopBridge?.getWindowFullscreenState;

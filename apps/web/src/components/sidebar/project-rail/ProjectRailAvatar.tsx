@@ -8,11 +8,14 @@ import { ProjectFavicon, useProjectFaviconAsset } from "../../ProjectFavicon";
 import { resolveProjectInitials, resolveProjectTileColorClassName } from "./projectRailInitials";
 
 /**
- * What a rail tile shows, in falling order of how much it says about the
- * project: its favicon, an icon the user picked, an icon the model actually
- * recognized from the name, and otherwise the project's initials. The model
- * hands out a generic code glyph for names it cannot place, and a rail of
- * identical glyphs is unreadable — initials at least differ per project.
+ * Decides whether a rail tile can show a real icon at all, and falls back to
+ * initials when it cannot. A tile has something to show when the project has a
+ * favicon, an icon the user picked, or a name the icon model recognizes;
+ * `ProjectFavicon` then picks between those exactly as every other surface does
+ * (a user-chosen icon outranks the favicon, since picking one is a deliberate
+ * override). The model hands out a generic code glyph for names it cannot
+ * place, and a rail of identical glyphs is unreadable — initials at least
+ * differ per project.
  */
 export function ProjectRailAvatar({ project }: { project: SidebarProjectSnapshot }) {
   const faviconState = useProjectFaviconAsset({

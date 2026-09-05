@@ -24,6 +24,13 @@ describe("resolveProjectInitials", () => {
     expect(resolveProjectInitials("x")).toBe("X");
   });
 
+  it("keeps astral characters whole", () => {
+    // Indexing by code unit would split the surrogate pair and render a
+    // replacement glyph instead of the emoji.
+    expect(resolveProjectInitials("🚀 Rocket")).toBe("🚀R");
+    expect(resolveProjectInitials("🚀🛰️")).toBe("🚀🛰");
+  });
+
   it("stays renderable for an empty name", () => {
     expect(resolveProjectInitials("")).toBe("?");
     expect(resolveProjectInitials("   ")).toBe("?");

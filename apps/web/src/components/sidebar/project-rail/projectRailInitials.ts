@@ -27,8 +27,11 @@ function splitProjectNameWords(name: string): string[] {
 export function resolveProjectInitials(displayName: string): string {
   const words = splitProjectNameWords(displayName.trim());
   if (words.length === 0) return "?";
-  if (words.length === 1) return words[0]!.slice(0, 2).toUpperCase();
-  return `${words[0]![0]!}${words[1]![0]!}`.toUpperCase();
+  // Indexed by code point, not code unit: a name starting with an emoji or any
+  // other astral character would otherwise yield half a surrogate pair and
+  // render as a replacement glyph.
+  if (words.length === 1) return Array.from(words[0]!).slice(0, 2).join("").toUpperCase();
+  return `${Array.from(words[0]!)[0]!}${Array.from(words[1]!)[0]!}`.toUpperCase();
 }
 
 /** Text color for an initials tile, matching the color the icon model would pick. */

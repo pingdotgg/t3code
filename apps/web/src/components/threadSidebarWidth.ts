@@ -12,9 +12,10 @@ export function resolveThreadSidebarMaximumWidth(viewportWidth: number): number 
 
 /**
  * `extraWidth` covers columns that live inside the sidebar but are not the
- * thread list (today: the project rail). They widen both the default and the
- * floor so turning the rail on never shrinks the thread column below the width
- * it has without it.
+ * thread list (today: the project rail). It widens both the default and the
+ * floor, so a sidebar at its default width keeps the same thread column with
+ * the rail on, and one the user has resized keeps at least the thread column's
+ * minimum.
  */
 export function resolveInitialThreadSidebarWidth(
   storedWidth: number | null,

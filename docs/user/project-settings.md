@@ -13,8 +13,8 @@ let T3 Code detect an icon again.
 Turn on **Settings → General → Project rail** to replace the sidebar's project menu with a column of
 project icons on the left. Select the top tile to see every project's threads, a project tile to see
 only its threads, or the bottom tile to add a project. Hover a tile for the full project name, and
-right-click it to open that project's settings. Projects whose name T3 Code cannot place show their
-initials instead of an icon.
+right-click it to open that project's settings. A project with no favicon or chosen icon, whose name
+T3 Code cannot place, shows its initials instead.
 
 ## Keep the default branch current
 

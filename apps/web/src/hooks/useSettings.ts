@@ -383,7 +383,8 @@ export function useLegacySidebarEnabled(): boolean {
 
 /**
  * Whether the default sidebar shows the Discord-style project rail
- * (Settings → General → Organization) in place of the project scope combobox.
+ * (Settings → General → Organization → Project rail) in place of the project
+ * scope combobox.
  *
  * Hydration-gated for the same reason as the legacy sidebar: the rail changes
  * the sidebar's width floor, so resolving against the pre-hydration schema
