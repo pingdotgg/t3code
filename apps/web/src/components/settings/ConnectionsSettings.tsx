@@ -3248,8 +3248,8 @@ export function ConnectionsSettings() {
                 </AlertDialogTitle>
                 <AlertDialogDescription>
                   {pendingDesktopServerExposureMode === "network-accessible"
-                    ? "T3 Code will restart to expose this environment over the network."
-                    : "T3 Code will restart and limit this environment back to this machine."}
+                    ? "Other devices on your network can pair with this environment, and anyone with a valid pairing credential can run commands here until it expires or is revoked. T3 Code will restart."
+                    : "Only this machine can reach this environment again. Devices that already paired will disconnect. T3 Code will restart."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -3261,7 +3261,9 @@ export function ConnectionsSettings() {
                 </AlertDialogClose>
                 <Button
                   variant={
-                    pendingDesktopServerExposureMode === "local-only" ? "destructive" : "default"
+                    pendingDesktopServerExposureMode === "network-accessible"
+                      ? "destructive"
+                      : "default"
                   }
                   onClick={handleConfirmDesktopServerExposureChange}
                   disabled={
