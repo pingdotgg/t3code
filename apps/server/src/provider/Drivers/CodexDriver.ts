@@ -52,6 +52,7 @@ import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
+import { expandHomePath } from "../../pathExpansion.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
@@ -79,14 +80,23 @@ function isCodexStandaloneCommandPath(commandPath: string): boolean {
   return normalizeCommandPath(commandPath).includes("/packages/standalone/");
 }
 
-const UPDATE = makePackageManagedProviderMaintenanceResolver({
-  provider: DRIVER_KIND,
-  npmPackageName: "@openai/codex",
-  nativeUpdate: {
-    args: ["update"],
-    isCommandPath: isCodexStandaloneCommandPath,
-  },
-});
+/**
+ * `codex update` replaces the standalone tree under `CODEX_HOME`, so the
+ * updater must run with this instance's home or it would update `~/.codex`
+ * and leave the instance's binary behind.
+ */
+function makeCodexMaintenanceResolver(homePath: string) {
+  const resolvedHomePath = homePath ? expandHomePath(homePath) : undefined;
+  return makePackageManagedProviderMaintenanceResolver({
+    provider: DRIVER_KIND,
+    npmPackageName: "@openai/codex",
+    nativeUpdate: {
+      args: ["update"],
+      isCommandPath: isCodexStandaloneCommandPath,
+      ...(resolvedHomePath ? { env: { CODEX_HOME: resolvedHomePath } } : {}),
+    },
+  });
+}
 
 /**
  * Services the driver needs to materialize an instance. Surfaced as the
@@ -151,10 +161,13 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         homePath: homeLayout.effectiveHomePath ?? "",
       } satisfies CodexSettings;
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-        resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
-          binaryPath: effectiveConfig.binaryPath,
-          env: processEnv,
-        }).pipe(
+        resolveProviderMaintenanceCapabilitiesEffect(
+          makeCodexMaintenanceResolver(effectiveConfig.homePath),
+          {
+            binaryPath: effectiveConfig.binaryPath,
+            env: processEnv,
+          },
+        ).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, pathService),

@@ -19,6 +19,7 @@ import {
   homebrewOwnershipFromCommandPath,
   makeCachedProviderMaintenanceResolution,
   makePackageManagedProviderMaintenanceResolver,
+  makeProviderMaintenanceCapabilities,
   normalizeCommandPath,
   npmGlobalPrefixFromCommandPath,
   parseHomebrewLatestVersion,
@@ -505,6 +506,59 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           lockKey: `npm-global:${normalizeCommandPath(keg)}`,
         });
       }),
+  );
+
+  it("quotes copyable command words the shell would split", () => {
+    const posix = makeProviderMaintenanceCapabilities({
+      provider: driver("packageTool"),
+      packageName: "@example/package-tool",
+      updateExecutable: "npm",
+      updateArgs: [
+        "install",
+        "-g",
+        "--prefix",
+        "/Users/Jane Doe/.npm-global",
+        "@example/package-tool@latest",
+      ],
+      updateLockKey: "npm-global",
+      platform: "darwin",
+    });
+    expect(posix.update?.command).toBe(
+      "npm install -g --prefix '/Users/Jane Doe/.npm-global' @example/package-tool@latest",
+    );
+    const windows = makeProviderMaintenanceCapabilities({
+      provider: driver("packageTool"),
+      packageName: null,
+      updateExecutable: "C:\\Program Files\\Tool\\tool.exe",
+      updateArgs: ["update"],
+      updateLockKey: "tool",
+      platform: "win32",
+    });
+    expect(windows.update?.command).toBe("& 'C:\\Program Files\\Tool\\tool.exe' update");
+  });
+
+  it.effect.skipIf(windowsHost)("carries the native updater's environment into the action", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-native-env");
+      const nativePath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
+      writeExecutable(nativePath);
+      const resolver = makePackageManagedProviderMaintenanceResolver({
+        provider: driver("nativePackageTool"),
+        npmPackageName: "@example/native-package-tool",
+        nativeUpdate: {
+          args: ["update"],
+          isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
+          env: { TOOL_HOME: tempDir },
+        },
+      });
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(resolver, {
+        binaryPath: nativePath,
+        env: { PATH: "" },
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+      expect(capabilities.update?.env).toEqual({ TOOL_HOME: tempDir });
+    }),
   );
 
   it("recognizes Homebrew kegs and casks from the real executable path", () => {

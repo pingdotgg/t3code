@@ -72,6 +72,13 @@ export interface ProviderMaintenanceCommandAction {
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
   readonly lockKey: string;
+  /**
+   * Extra environment for the spawned updater, on top of the server's own.
+   * A native updater finds its install through the same variables the
+   * provider runs with (e.g. `CODEX_HOME`), so an instance with a custom home
+   * must update that home and not the default one.
+   */
+  readonly env?: NodeJS.ProcessEnv;
 }
 
 /** Where the provider executable was found; every path is absolute. */
@@ -101,6 +108,8 @@ export interface PackageManagedProviderMaintenanceDefinition {
   readonly nativeUpdate: {
     readonly args: ReadonlyArray<string>;
     readonly isCommandPath: (commandPath: string) => boolean;
+    /** Environment the native updater needs to target this instance's install. */
+    readonly env?: NodeJS.ProcessEnv;
   } | null;
 }
 
@@ -127,13 +136,18 @@ function nonEmptyString(value: unknown): string | null {
  * The copyable command must paste into a shell as-is, so an executable path
  * with spaces or quotes is quoted for the host's default shell.
  */
-function quoteUpdateExecutable(executable: string, platform: NodeJS.Platform): string {
-  const safePath = platform === "win32" ? /^[\w./:\\-]+$/ : /^[\w./:-]+$/;
-  if (safePath.test(executable)) return executable;
-  // Windows terminals default to PowerShell, where a quoted executable needs &.
+function quoteShellWord(word: string, platform: NodeJS.Platform): string {
+  const safeWord = platform === "win32" ? /^[\w./:\\@=-]+$/ : /^[\w./:@=-]+$/;
+  if (safeWord.test(word)) return word;
   return platform === "win32"
-    ? `& '${executable.replace(/['\u2018\u2019]/g, "$&$&")}'`
-    : `'${executable.replaceAll("'", "'\\''")}'`;
+    ? `'${word.replace(/['\u2018\u2019]/g, "$&$&")}'`
+    : `'${word.replaceAll("'", "'\\''")}'`;
+}
+
+function quoteUpdateExecutable(executable: string, platform: NodeJS.Platform): string {
+  const quoted = quoteShellWord(executable, platform);
+  // Windows terminals default to PowerShell, where a quoted executable needs &.
+  return platform === "win32" && quoted !== executable ? `& ${quoted}` : quoted;
 }
 
 export function makeProviderMaintenanceCapabilities(input: {
@@ -145,8 +159,10 @@ export function makeProviderMaintenanceCapabilities(input: {
   /** Shown to the user instead of `<executable> <args>`; use for a bare tool name like `brew`. */
   readonly updateCommand?: string;
   readonly platform?: NodeJS.Platform;
+  readonly env?: NodeJS.ProcessEnv;
   readonly latestVersion?: string | null;
 }): ProviderMaintenanceCapabilities {
+  const platform = input.platform ?? HostProcessPlatform.defaultValue();
   const update =
     input.updateExecutable === null || input.updateLockKey === null
       ? null
@@ -154,15 +170,13 @@ export function makeProviderMaintenanceCapabilities(input: {
           command:
             input.updateCommand ??
             [
-              quoteUpdateExecutable(
-                input.updateExecutable,
-                input.platform ?? HostProcessPlatform.defaultValue(),
-              ),
-              ...input.updateArgs,
+              quoteUpdateExecutable(input.updateExecutable, platform),
+              ...input.updateArgs.map((arg) => quoteShellWord(arg, platform)),
             ].join(" "),
           executable: input.updateExecutable,
           args: input.updateArgs,
           lockKey: input.updateLockKey,
+          ...(input.env ? { env: input.env } : {}),
         };
   return {
     provider: input.provider,
@@ -353,6 +367,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateArgs: nativeUpdate.args,
       updateLockKey: `${definition.provider}-native`,
       platform: context.platform,
+      ...(nativeUpdate.env ? { env: nativeUpdate.env } : {}),
     });
   }
   if (commandPaths.some(isVitePlusGlobalCommandPath)) {

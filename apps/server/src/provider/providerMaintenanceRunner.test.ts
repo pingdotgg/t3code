@@ -129,6 +129,7 @@ function mockSpawnerLayer(
   handler: (
     command: string,
     args: ReadonlyArray<string>,
+    options: { readonly env?: NodeJS.ProcessEnv | undefined },
   ) => {
     readonly stdout?: string;
     readonly stderr?: string;
@@ -142,8 +143,11 @@ function mockSpawnerLayer(
       const childProcess = command as unknown as {
         readonly command: string;
         readonly args: ReadonlyArray<string>;
+        readonly options: { readonly env?: NodeJS.ProcessEnv | undefined };
       };
-      return Effect.succeed(mockHandle(handler(childProcess.command, childProcess.args)));
+      return Effect.succeed(
+        mockHandle(handler(childProcess.command, childProcess.args, childProcess.options)),
+      );
     }),
   );
 }
@@ -306,6 +310,41 @@ describe("providerMaintenanceRunner", () => {
       );
     },
   );
+
+  it.effect("spawns the updater with the environment its capabilities declare", () => {
+    const seen: Array<NodeJS.ProcessEnv | undefined> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+          Effect.succeed({
+            ...lifecycleFor(provider),
+            update: {
+              command: "codex update",
+              executable: "/work/codex-home/packages/standalone/bin/codex",
+              args: ["update"],
+              lockKey: "codex-native",
+              env: { CODEX_HOME: "/work/codex-home" },
+            },
+          }),
+      });
+
+      yield* updater.updateProvider(CODEX_DRIVER);
+      assert.deepStrictEqual(seen, [{ CODEX_HOME: "/work/codex-home" }]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((_command, _args, options) => {
+            seen.push(options.env);
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
 
   it.effect("re-resolves ownership before running and executes the fresh command", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
