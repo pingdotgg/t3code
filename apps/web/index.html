@@ -478,6 +478,12 @@
       }
     </style>
     <title>T3 Code (Alpha)</title>
+    <script>
+      try {
+        var branding = window.desktopBridge?.getAppBranding?.();
+        if (branding && branding.displayName) document.title = branding.displayName;
+      } catch {}
+    </script>
   </head>
   <body>
     <div id="root">
