@@ -412,25 +412,51 @@ const make = Effect.gen(function* () {
           ...(input.cascadeThreads === true ? { force: true } : {}),
         })
         .pipe(
+          Effect.map((result) => ({ type: "deleted" as const, result })),
+          Effect.catchTag("ProjectNotFoundError", (notFound) =>
+            projects.getById(input.projectId, { includeDeleted: true }).pipe(
+              redactOperationFailure(
+                "read-project-after-overlapping-delete",
+                "Unable to confirm the project deletion.",
+              ),
+              Effect.flatMap((reloaded) =>
+                Option.isSome(reloaded) && reloaded.value.deletedAt !== null
+                  ? Effect.succeed({ type: "already_deleted" as const, project: reloaded.value })
+                  : Effect.fail(notFound),
+              ),
+            ),
+          ),
           Effect.tapError(() =>
             Effect.logWarning("Project MCP operation failed.", { operation: "delete-project" }),
           ),
           Effect.mapError((error) =>
-            error._tag === "ProjectNotEmptyError"
-              ? failure(
-                  "project_not_empty",
-                  `Project '${input.projectId}' is not empty. Retry with cascadeThreads=true to delete its thread records first. Workspace files will remain untouched.`,
-                )
-              : error._tag === "ProjectNotFoundError"
-                ? failure("project_not_found", `Project '${input.projectId}' was not found.`)
-                : failure("operation_failed", "Unable to delete the requested project."),
+            error._tag === "ProjectMcpFailure"
+              ? error
+              : error._tag === "ProjectNotEmptyError"
+                ? failure(
+                    "project_not_empty",
+                    `Project '${input.projectId}' is not empty. Retry with cascadeThreads=true to delete its thread records first. Workspace files will remain untouched.`,
+                  )
+                : error._tag === "ProjectNotFoundError"
+                  ? failure("project_not_found", `Project '${input.projectId}' was not found.`)
+                  : failure("operation_failed", "Unable to delete the requested project."),
           ),
         );
+      if (deletion.type === "already_deleted") {
+        return {
+          projectId: input.projectId,
+          deleted: true,
+          alreadyDeleted: true,
+          deletedThreadCount: 0,
+          workspaceRoot: deletion.project.workspaceRoot,
+          workspaceFilesDeleted: false,
+        } satisfies ProjectMcpDeleteResult;
+      }
       return {
         projectId: input.projectId,
         deleted: true,
         alreadyDeleted: false,
-        deletedThreadCount: deletion.deletedThreadCount,
+        deletedThreadCount: deletion.result.deletedThreadCount,
         workspaceRoot: project.workspaceRoot,
         workspaceFilesDeleted: false,
       } satisfies ProjectMcpDeleteResult;

@@ -224,19 +224,25 @@ export const make = Effect.gen(function* () {
       );
     if (headCommit === null) return false;
 
-    const remoteCommits = yield* git
+    const remoteCommit = yield* git
       .execute({
         operation: "SourceControlRepositoryService.cloneRepository.verifyRemoteRefs",
         cwd: destinationPath,
-        args: ["for-each-ref", "--format=%(objectname)", "refs/remotes/origin"],
+        args: [
+          "for-each-ref",
+          "--count=1",
+          "--format=%(objectname)",
+          `--points-at=${headCommit}`,
+          "refs/remotes/origin",
+        ],
         timeoutMs: 5_000,
-        maxOutputBytes: 64 * 1024,
+        maxOutputBytes: 1024,
       })
       .pipe(
-        Effect.map((result) => new Set(result.stdout.split("\n").map((line) => line.trim()))),
-        Effect.orElseSucceed(() => new Set<string>()),
+        Effect.map((result) => result.stdout.trim() || null),
+        Effect.orElseSucceed(() => null),
       );
-    if (!remoteCommits.has(headCommit)) return false;
+    if (remoteCommit !== headCommit) return false;
 
     return yield* git
       .execute({

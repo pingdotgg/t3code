@@ -13,7 +13,9 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -97,10 +99,25 @@ describe("OrchestratorMcpService", () => {
         visibleTurnItems: [],
         updatedAt: now,
       };
-      const archivedParent = {
+      const replacementRunId = RunId.make("run:mcp-create-admission-parent-replacement");
+      const replacementNodeId = NodeId.make("node:mcp-create-admission-parent-replacement");
+      const replacedParentRun = {
         ...activeParent,
-        thread: { ...activeParent.thread, archivedAt: now },
-      } as OrchestrationV2ThreadProjection;
+        runs: [
+          {
+            ...activeParent.runs[0]!,
+            status: "completed" as const,
+            completedAt: now,
+          },
+          {
+            ...activeParent.runs[0]!,
+            id: replacementRunId,
+            ordinal: 2,
+            userMessageId: MessageId.make("message:mcp-create-admission-parent-replacement"),
+            rootNodeId: replacementNodeId,
+          },
+        ],
+      } satisfies OrchestrationV2ThreadProjection;
       const provider = {
         instanceId: providerInstanceId,
         driver: ProviderDriverKind.make("codex"),
@@ -115,14 +132,21 @@ describe("OrchestratorMcpService", () => {
         skills: [],
       } satisfies ServerProvider;
       const projectionReads = yield* Ref.make(0);
+      const currentParent = yield* Ref.make<OrchestrationV2ThreadProjection>(activeParent);
+      const admissionEntered = yield* Deferred.make<void>();
+      const allowAdmission = yield* Deferred.make<void>();
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(ThreadManagementService)({
           getThreadProjection: () =>
-            Ref.updateAndGet(projectionReads, (count) => count + 1).pipe(
-              Effect.map((count) => (count === 1 ? activeParent : archivedParent)),
+            Ref.update(projectionReads, (count) => count + 1).pipe(
+              Effect.andThen(Ref.get(currentParent)),
             ),
-          withProjectCreationAdmission: (_input, effect) => effect(Option.none()),
+          withProjectCreationAdmission: (_input, effect) =>
+            Deferred.succeed(admissionEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(allowAdmission)),
+              Effect.andThen(effect(Option.none())),
+            ),
           dispatch: () => Effect.die("dispatch must not run after parent admission fails"),
         }),
         Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([provider]) }),
@@ -138,14 +162,23 @@ describe("OrchestratorMcpService", () => {
       };
 
       const error = yield* Effect.gen(function* () {
-        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        return yield* service
-          .createThreads(scope, {
-            clientRequestId: "parent-admission-failure",
-            threads: [{ title: "Must not be created" }],
-          })
-          .pipe(Effect.flip);
-      }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+        const creation = yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          return yield* service
+            .createThreads(scope, {
+              clientRequestId: "parent-admission-failure",
+              threads: [{ title: "Must not be created" }],
+            })
+            .pipe(Effect.flip);
+        }).pipe(
+          Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.await(admissionEntered);
+        yield* Ref.set(currentParent, replacedParentRun);
+        yield* Deferred.succeed(allowAdmission, undefined);
+        return yield* Fiber.join(creation);
+      }).pipe(Effect.ensuring(Deferred.succeed(allowAdmission, undefined)));
 
       assert.equal(error.code, "parent_not_active");
       assert.equal(

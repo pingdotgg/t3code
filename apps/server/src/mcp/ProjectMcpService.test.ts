@@ -465,6 +465,103 @@ it.effect("clones before registration and requires explicit cascading for nonemp
   }),
 );
 
+it.effect("reports an overlapping completed deletion as an idempotent result", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:mcp:overlapping-delete");
+    const project = makeProject({
+      id: projectId,
+      title: "Overlapping deletion",
+      workspaceRoot: "/work/overlapping-delete",
+    });
+    const projectState = yield* Ref.make<Project>(project);
+    const deleteAttempts = yield* Ref.make(0);
+    const firstDeleteEntered = yield* Deferred.make<void>();
+    const secondDeleteEntered = yield* Deferred.make<void>();
+    const allowFirstDelete = yield* Deferred.make<void>();
+    const firstDeleteFinished = yield* Deferred.make<void>();
+    const projectService = ProjectService.ProjectService.of({
+      create: () => Effect.die("unused"),
+      bootstrap: () => Effect.die("unused"),
+      update: () => Effect.die("unused"),
+      delete: () => Effect.die("unused"),
+      deleteDetailed: ({ projectId: deletedProjectId }) =>
+        Effect.gen(function* () {
+          const attempt = yield* Ref.updateAndGet(deleteAttempts, (count) => count + 1);
+          if (attempt === 1) {
+            yield* Deferred.succeed(firstDeleteEntered, undefined);
+            yield* Deferred.await(allowFirstDelete);
+            const deleted = { ...project, deletedAt: now } satisfies Project;
+            yield* Ref.set(projectState, deleted);
+            yield* Deferred.succeed(firstDeleteFinished, undefined);
+            return { project: deleted, deletedThreadCount: 2 };
+          }
+          yield* Deferred.succeed(secondDeleteEntered, undefined);
+          yield* Deferred.await(firstDeleteFinished);
+          return yield* new ProjectService.ProjectNotFoundError({
+            projectId: deletedProjectId,
+          });
+        }).pipe(Effect.ensuring(Deferred.succeed(firstDeleteFinished, undefined))),
+      getById: (_projectId, options) =>
+        Ref.get(projectState).pipe(
+          Effect.map((current) =>
+            current.deletedAt !== null && options?.includeDeleted !== true
+              ? Option.none()
+              : Option.some(current),
+          ),
+        ),
+      getByWorkspaceRoot: () => Effect.die("unused"),
+      snapshot: Effect.die("unused"),
+    });
+    const testLayer = ProjectMcp.layer.pipe(
+      Layer.provide(Layer.succeed(ProjectService.ProjectService, projectService)),
+      Layer.provide(Layer.mock(T3ProjectFileLoader.T3ProjectFileLoader)({})),
+      Layer.provide(ServerSettingsService.layerTest({})),
+      Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),
+      Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+      Layer.provide(NodeServices.layer),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectMcp.ProjectMcpService;
+      const first = yield* service
+        .delete(scope, {
+          projectId,
+          cascadeThreads: true,
+          clientRequestId: "overlapping-delete-first",
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(firstDeleteEntered);
+      const second = yield* service
+        .delete(scope, {
+          projectId,
+          cascadeThreads: true,
+          clientRequestId: "overlapping-delete-second",
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(secondDeleteEntered);
+      yield* Deferred.succeed(allowFirstDelete, undefined);
+
+      expect(yield* Fiber.join(first)).toMatchObject({
+        projectId,
+        deleted: true,
+        alreadyDeleted: false,
+        deletedThreadCount: 2,
+      });
+      expect(yield* Fiber.join(second)).toMatchObject({
+        projectId,
+        deleted: true,
+        alreadyDeleted: true,
+        deletedThreadCount: 0,
+      });
+      expect(yield* Ref.get(deleteAttempts)).toBe(2);
+    }).pipe(
+      Effect.provide(testLayer),
+      Effect.ensuring(Deferred.succeed(allowFirstDelete, undefined)),
+      Effect.ensuring(Deferred.succeed(firstDeleteFinished, undefined)),
+    );
+  }),
+);
+
 it.effect("serializes delegated thread admission with cascading project deletion", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:mcp:delete-delegate-race");

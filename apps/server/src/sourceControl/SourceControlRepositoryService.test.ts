@@ -365,9 +365,74 @@ it.effect("recovers a real completed clone after a lost result and rejects unsaf
 
     yield* initializeRepository(sourcePath, "source");
     yield* initializeRepository(otherSourcePath, "other source");
+    yield* fs.writeFileString(`${sourcePath}/CHANGELOG.md`, "second source commit");
+    yield* git.execute({ operation: "test.add.second", cwd: sourcePath, args: ["add", "."] });
+    yield* git.execute({
+      operation: "test.commit.second",
+      cwd: sourcePath,
+      args: ["commit", "-m", "second"],
+    });
 
     const cloned = yield* service.cloneRepository({ remoteUrl: sourcePath, destinationPath });
     assert.strictEqual(cloned.cwd, destinationPath);
+
+    const headCommit = (yield* git.execute({
+      operation: "test.read.head",
+      cwd: destinationPath,
+      args: ["rev-parse", "HEAD"],
+    })).stdout.trim();
+    const previousCommit = (yield* git.execute({
+      operation: "test.read.previous",
+      cwd: destinationPath,
+      args: ["rev-parse", "HEAD^"],
+    })).stdout.trim();
+    yield* git
+      .execute({
+        operation: "test.remove.remote.head",
+        cwd: destinationPath,
+        args: ["symbolic-ref", "-d", "refs/remotes/origin/HEAD"],
+      })
+      .pipe(Effect.ignore);
+    const existingRemoteRefs = (yield* git.execute({
+      operation: "test.list.remote.refs",
+      cwd: destinationPath,
+      args: ["for-each-ref", "--format=%(refname)", "refs/remotes/origin"],
+    })).stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    yield* Effect.forEach(
+      existingRemoteRefs,
+      (refName) =>
+        git.execute({
+          operation: "test.remove.remote.ref",
+          cwd: destinationPath,
+          args: ["update-ref", "-d", refName],
+        }),
+      { discard: true },
+    );
+    const noiseRefCommands = Array.from(
+      { length: 1_700 },
+      (_, index) =>
+        `create refs/remotes/origin/noise-${index.toString().padStart(4, "0")} ${previousCommit}`,
+    );
+    yield* git.execute({
+      operation: "test.create.many.remote.refs",
+      cwd: destinationPath,
+      args: ["update-ref", "--stdin"],
+      stdin: [...noiseRefCommands, `create refs/remotes/origin/zzzz-match ${headCommit}`, ""].join(
+        "\n",
+      ),
+    });
+    const oversizedInventory = yield* git
+      .execute({
+        operation: "test.verify.old.remote-ref-boundary",
+        cwd: destinationPath,
+        args: ["for-each-ref", "--format=%(objectname)", "refs/remotes/origin"],
+        maxOutputBytes: 64 * 1024,
+      })
+      .pipe(Effect.flip);
+    assert.instanceOf(oversizedInventory, GitCommandError);
 
     // Simulate the caller losing the successful clone result before project registration.
     const recovered = yield* service.cloneRepository({ remoteUrl: sourcePath, destinationPath });
