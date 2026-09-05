@@ -7,7 +7,7 @@ import {
   GitPullRequestClosedIcon,
   GitPullRequestDraftIcon,
   GitPullRequestIcon,
-} from "lucide-react";
+} from "~/icons";
 
 import {
   ChangeRequestStatusIcon,

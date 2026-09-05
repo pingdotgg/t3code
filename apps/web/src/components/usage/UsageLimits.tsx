@@ -21,7 +21,7 @@ import {
   paceOf,
   providerLimitsLabel,
 } from "@t3tools/shared/usageLimits";
-import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
+import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "~/icons";
 import { Fragment, useState } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";

@@ -1,6 +1,6 @@
 "use client";
 
-import { PipetteIcon, XIcon } from "lucide-react";
+import { PipetteIcon, XIcon } from "~/icons";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 
 import { Button } from "../ui/button";

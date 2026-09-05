@@ -1,7 +1,7 @@
 "use client";
 
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
-import { CheckIcon } from "lucide-react";
+import { CheckIcon } from "~/icons";
 import { useMemo, useState } from "react";
 import {
   ProviderInstanceId,

@@ -1,7 +1,7 @@
 "use client";
 
 import type { DesktopPreviewColorScheme, EnvironmentId } from "@t3tools/contracts";
-import { Minus, MoreVertical, Plus as PlusIcon, RotateCcw } from "lucide-react";
+import { Minus, MoreVertical, Plus as PlusIcon, RotateCcw } from "~/icons";
 
 import { Button } from "~/components/ui/button";
 import {

@@ -1,5 +1,5 @@
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
-import { Frame, MousePointerClick, Paintbrush, PenLine, RotateCcw, X } from "lucide-react";
+import { Frame, MousePointerClick, Paintbrush, PenLine, RotateCcw, X } from "~/icons";
 import type { ReactNode } from "react";
 
 import type { ComposerImageAttachment } from "~/composerDraftStore";

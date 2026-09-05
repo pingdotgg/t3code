@@ -16,7 +16,7 @@ import {
   MessageSquareIcon,
   PencilIcon,
   Trash2Icon,
-} from "lucide-react";
+} from "~/icons";
 import { useRef, useState } from "react";
 
 import { formatRelativeTimeLabel } from "~/timestampFormat";

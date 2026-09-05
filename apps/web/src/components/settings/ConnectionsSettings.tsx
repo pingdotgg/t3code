@@ -1,4 +1,4 @@
-import { ChevronsLeftRightEllipsisIcon, PlusIcon, QrCodeIcon, TerminalIcon } from "lucide-react";
+import { ChevronsLeftRightEllipsisIcon, PlusIcon, QrCodeIcon, TerminalIcon } from "~/icons";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type KeyboardEvent,

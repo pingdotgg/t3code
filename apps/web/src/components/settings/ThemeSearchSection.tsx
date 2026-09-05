@@ -1,10 +1,4 @@
-import {
-  ExternalLinkIcon,
-  PackagePlusIcon,
-  PaletteIcon,
-  RefreshCwIcon,
-  SearchIcon,
-} from "lucide-react";
+import { ExternalLinkIcon, PackagePlusIcon, PaletteIcon, RefreshCwIcon, SearchIcon } from "~/icons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   importOpenVsxThemeExtension,

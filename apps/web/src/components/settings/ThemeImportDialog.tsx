@@ -1,4 +1,4 @@
-import { DownloadIcon, PlusIcon } from "lucide-react";
+import { DownloadIcon, PlusIcon } from "~/icons";
 import type { ChangeEvent, DragEvent, UIEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../../lib/utils";

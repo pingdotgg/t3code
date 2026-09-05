@@ -21,7 +21,7 @@ import {
   SearchIcon,
   TagIcon,
   UserRoundIcon,
-} from "lucide-react";
+} from "~/icons";
 import { type ElementType, useState } from "react";
 
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";

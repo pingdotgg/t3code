@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { UsageProviderKind } from "@t3tools/contracts";
-import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
+import { CheckIcon, RefreshCwIcon, XIcon } from "~/icons";
 import { useMemo, useState } from "react";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";

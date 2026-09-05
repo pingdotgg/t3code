@@ -18,7 +18,7 @@ import {
   SendIcon,
   TagIcon,
   UsersIcon,
-} from "lucide-react";
+} from "~/icons";
 import { useRef, useState, type ReactNode } from "react";
 
 import { useAtomCommand } from "~/state/use-atom-command";

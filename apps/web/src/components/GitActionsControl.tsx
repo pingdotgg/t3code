@@ -37,7 +37,7 @@ import {
   InfoIcon,
   LockIcon,
   GlobeIcon,
-} from "lucide-react";
+} from "~/icons";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "~/components/Icons";
 import { RadioGroup } from "~/components/ui/radio-group";

@@ -35,7 +35,7 @@ import {
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
-import { InfoIcon, MoreVertical, Plus as PlusIcon } from "lucide-react";
+import { InfoIcon, MoreVertical, Plus as PlusIcon } from "~/icons";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";

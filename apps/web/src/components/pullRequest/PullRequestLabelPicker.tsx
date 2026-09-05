@@ -6,7 +6,7 @@
  * every pull request they merely open.
  */
 import type { EnvironmentId, PullRequestLabelCandidate, PullRequestRef } from "@t3tools/contracts";
-import { CheckIcon, TagIcon } from "lucide-react";
+import { CheckIcon, TagIcon } from "~/icons";
 import { useMemo, useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";

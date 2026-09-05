@@ -1,5 +1,5 @@
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
-import { CloudIcon, LaptopIcon, MonitorIcon, ServerIcon, type LucideProps } from "lucide-react";
+import { CloudIcon, LaptopIcon, MonitorIcon, ServerIcon, type LucideProps } from "~/icons";
 import type { FunctionComponent, SVGProps } from "react";
 
 // Lucide has no Apple desktops, so these two are drawn to its grammar (24

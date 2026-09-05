@@ -5,7 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
-import { ServerIcon } from "lucide-react";
+import { ServerIcon } from "~/icons";
 import { useRef, useState } from "react";
 
 import {

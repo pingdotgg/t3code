@@ -1,4 +1,4 @@
-import { TriangleAlertIcon } from "lucide-react";
+import { TriangleAlertIcon } from "~/icons";
 
 import { useSharedSettingsSync } from "../../hooks/useSettings";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";

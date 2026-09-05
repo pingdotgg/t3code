@@ -1,5 +1,5 @@
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronRightIcon } from "~/icons";
 import { shortcutLabelForCommand } from "../keybindings";
 import {
   type CommandPaletteActionItem,

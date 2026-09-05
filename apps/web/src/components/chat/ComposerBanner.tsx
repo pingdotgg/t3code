@@ -1,6 +1,6 @@
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
-import { ChevronDownIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, XIcon } from "~/icons";
 import type { ComponentProps } from "react";
 
 import { cn } from "~/lib/utils";

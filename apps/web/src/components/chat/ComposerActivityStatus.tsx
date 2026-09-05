@@ -1,4 +1,4 @@
-import { LoaderCircleIcon } from "lucide-react";
+import { LoaderCircleIcon } from "~/icons";
 import { threadSyncLabel, type ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
 

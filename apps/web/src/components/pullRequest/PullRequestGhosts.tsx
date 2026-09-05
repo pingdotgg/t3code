@@ -8,7 +8,7 @@
  * number of bars costs one opacity animation.
  */
 import type { PullRequestListEntry } from "@t3tools/contracts";
-import { ArrowLeftIcon } from "lucide-react";
+import { ArrowLeftIcon } from "~/icons";
 
 import { cn } from "~/lib/utils";
 import { formatRelativeTimeLabel } from "~/timestampFormat";

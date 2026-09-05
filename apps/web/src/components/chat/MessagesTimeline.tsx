@@ -99,7 +99,7 @@ import {
   WrenchIcon,
   XIcon,
   ZapIcon,
-} from "lucide-react";
+} from "~/icons";
 import { Button } from "../ui/button";
 import { useAssetUrlRefresh, useAssetUrls, useAssetUrlState } from "../../assets/assetUrls";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";

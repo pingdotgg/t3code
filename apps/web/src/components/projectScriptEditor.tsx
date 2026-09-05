@@ -15,7 +15,7 @@ import {
   ListChecksIcon,
   PlayIcon,
   WrenchIcon,
-} from "lucide-react";
+} from "~/icons";
 import React, { type FormEvent, type KeyboardEvent, useEffect, useState } from "react";
 
 import {

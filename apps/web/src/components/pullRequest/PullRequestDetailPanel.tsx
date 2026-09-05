@@ -39,7 +39,7 @@ import {
   RefreshCwIcon,
   RotateCcwIcon,
   TriangleAlertIcon,
-} from "lucide-react";
+} from "~/icons";
 import {
   lazy,
   Suspense,

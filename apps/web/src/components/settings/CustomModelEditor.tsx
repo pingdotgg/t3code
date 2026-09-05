@@ -1,6 +1,6 @@
 "use client";
 
-import { PlusIcon, XIcon } from "lucide-react";
+import { PlusIcon, XIcon } from "~/icons";
 import { useMemo, useState } from "react";
 import type { ProviderDriverKind, ServerProviderModel } from "@t3tools/contracts";
 import type { CustomModelDefinition } from "@t3tools/shared/model";

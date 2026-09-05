@@ -1,4 +1,4 @@
-import { ListTodoIcon } from "lucide-react";
+import { ListTodoIcon } from "~/icons";
 import { memo, type ComponentProps } from "react";
 
 import { formatDuration } from "../../session-logic";

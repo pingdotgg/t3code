@@ -7,7 +7,7 @@ import {
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS, resolvePreviewViewport } from "@t3tools/shared/previewViewport";
-import { Link2, Unlink2, X } from "lucide-react";
+import { Link2, Unlink2, X } from "~/icons";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";

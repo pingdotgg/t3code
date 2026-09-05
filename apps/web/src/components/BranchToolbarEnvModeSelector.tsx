@@ -1,4 +1,4 @@
-import { FolderGit2Icon, FolderGitIcon, FolderIcon, HistoryIcon } from "lucide-react";
+import { FolderGit2Icon, FolderGitIcon, FolderIcon, HistoryIcon } from "~/icons";
 import { memo, useMemo } from "react";
 
 import {

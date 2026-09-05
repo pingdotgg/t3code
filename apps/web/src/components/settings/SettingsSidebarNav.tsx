@@ -20,7 +20,7 @@ import {
   SearchIcon,
   Settings2Icon,
   XIcon,
-} from "lucide-react";
+} from "~/icons";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { Button } from "../ui/button";

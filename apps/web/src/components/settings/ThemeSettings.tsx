@@ -8,7 +8,7 @@ import {
   SunIcon,
   Trash2Icon,
   UploadIcon,
-} from "lucide-react";
+} from "~/icons";
 import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme";
 import { readThemeHalvesRaw } from "../../hooks/useTheme";

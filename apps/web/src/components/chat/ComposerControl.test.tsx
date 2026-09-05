@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { BotIcon } from "lucide-react";
+import { BotIcon } from "~/icons";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

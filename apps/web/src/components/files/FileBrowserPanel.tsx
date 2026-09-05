@@ -5,7 +5,7 @@ import type {
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { ChevronsDownUpIcon, ChevronsUpDownIcon, RotateCw } from "lucide-react";
+import { ChevronsDownUpIcon, ChevronsUpDownIcon, RotateCw } from "~/icons";
 import { useEffect, useMemo, useRef } from "react";
 
 import { Button } from "~/components/ui/button";

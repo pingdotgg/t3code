@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import { ChevronDownIcon, type LucideIcon } from "lucide-react";
+import { ChevronDownIcon, type LucideIcon } from "~/icons";
 
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";

@@ -53,7 +53,7 @@ import {
   SettingsIcon,
   SquarePenIcon,
   TextSearchIcon,
-} from "lucide-react";
+} from "~/icons";
 import {
   useCallback,
   useDeferredValue,

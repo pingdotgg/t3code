@@ -16,7 +16,7 @@ import {
   SettingsIcon,
   UserRoundIcon,
   type LucideIcon,
-} from "lucide-react";
+} from "~/icons";
 import { memo, useLayoutEffect, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";

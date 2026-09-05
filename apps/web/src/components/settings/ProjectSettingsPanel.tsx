@@ -26,7 +26,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
-import { ChevronDownIcon, CopyIcon, PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
+import { ChevronDownIcon, CopyIcon, PlusIcon, SettingsIcon, Trash2Icon } from "~/icons";
 import {
   lazy,
   Suspense,

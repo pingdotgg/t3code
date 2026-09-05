@@ -1,5 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { X } from "lucide-react";
+import { X } from "~/icons";
 
 import { isValidHistoryTimestamp, type BrowserHistoryEntry } from "~/browserHistoryStore";
 import { useNowMinute } from "~/hooks/useNowMinute";

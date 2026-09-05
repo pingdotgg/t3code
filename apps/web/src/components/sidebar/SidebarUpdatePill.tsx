@@ -1,5 +1,5 @@
 import type { DesktopUpdateState } from "@t3tools/contracts";
-import { TriangleAlertIcon } from "lucide-react";
+import { TriangleAlertIcon } from "~/icons";
 import { type ComponentProps, useCallback, useEffect, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { isElectron } from "../../env";

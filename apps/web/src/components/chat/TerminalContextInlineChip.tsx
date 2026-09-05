@@ -1,4 +1,4 @@
-import { TerminalIcon } from "lucide-react";
+import { TerminalIcon } from "~/icons";
 
 import { cn } from "~/lib/utils";
 import {

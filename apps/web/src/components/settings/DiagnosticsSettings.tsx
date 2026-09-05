@@ -6,7 +6,7 @@ import {
   FolderOpenIcon,
   InfoIcon,
   RefreshCwIcon,
-} from "lucide-react";
+} from "~/icons";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,

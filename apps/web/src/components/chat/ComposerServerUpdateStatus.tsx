@@ -1,5 +1,5 @@
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
-import { CircleAlertIcon, DownloadIcon, LoaderCircleIcon } from "lucide-react";
+import { CircleAlertIcon, DownloadIcon, LoaderCircleIcon } from "~/icons";
 import { useId, useState } from "react";
 
 import { serverUpdateStageLabel } from "../ServerUpdateAction";
