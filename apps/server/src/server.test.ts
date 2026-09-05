@@ -2242,6 +2242,117 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect.each(["current", "legacy"] as const)(
+    "replaces only the presented %s browser session when pairing again",
+    (cookieKind) =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest({ config: { mode: "web", host: "192.168.1.50" } });
+        const previous = yield* bootstrapBrowserSession();
+        const unrelated = yield* bootstrapBrowserSession();
+        const currentCookie = previous.cookie?.split(";")[0] ?? "";
+        const previousCookie =
+          cookieKind === "legacy"
+            ? currentCookie.replace(/^t3_session_[^=]+=/, "t3_session=")
+            : currentCookie;
+        const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+          headers: { cookie: previousCookie },
+          body: yield* HttpBody.json({ scopes: ["orchestration:read"] }),
+        });
+        assert.equal(pairingResponse.status, 200);
+        const pairing = yield* responseJsonEffect<{ readonly credential: string }>(pairingResponse);
+
+        const replacement = yield* bootstrapBrowserSession(pairing.credential, {
+          headers: { cookie: previousCookie },
+        });
+        assert.equal(replacement.response.status, 200);
+        assert.isDefined(replacement.cookie);
+        const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
+        const readSession = (cookie: string) =>
+          fetchEffect(sessionUrl, { headers: { cookie } }).pipe(
+            Effect.flatMap(
+              responseJsonEffect<{
+                readonly authenticated: boolean;
+                readonly scopes?: ReadonlyArray<string>;
+              }>,
+            ),
+          );
+        assert.equal((yield* readSession(previousCookie)).authenticated, false);
+        assert.deepEqual((yield* readSession(replacement.cookie?.split(";")[0] ?? "")).scopes, [
+          "orchestration:read",
+        ]);
+        assert.equal(
+          (yield* readSession(unrelated.cookie?.split(";")[0] ?? "")).authenticated,
+          true,
+        );
+        const oldTicket = yield* HttpClient.post("/api/auth/websocket-ticket", {
+          headers: { cookie: previousCookie },
+        });
+        assert.equal(oldTicket.status, 401);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("preserves the presented browser session when replacement pairing is invalid", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const previous = yield* bootstrapBrowserSession();
+      const previousCookie = previous.cookie?.split(";")[0] ?? "";
+      const rejected = yield* bootstrapBrowserSession("invalid-pairing-credential", {
+        headers: { cookie: previousCookie },
+      });
+
+      assert.equal(rejected.response.status, 401);
+      assert.isUndefined(rejected.cookie);
+      const sessionResponse = yield* fetchEffect(yield* getHttpServerUrl("/api/auth/session"), {
+        headers: { cookie: previousCookie },
+      });
+      const session = yield* responseJsonEffect<{ readonly authenticated: boolean }>(
+        sessionResponse,
+      );
+      assert.equal(session.authenticated, true);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("pairs a browser without revoking a bearer token presented as its cookie", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const initial = yield* bootstrapBrowserSession();
+      const token = yield* getAuthenticatedBearerSessionToken();
+      const cookieName = initial.cookie?.split("=")[0] ?? "";
+      const replacement = yield* bootstrapBrowserSession(defaultDesktopBootstrapToken, {
+        headers: { cookie: `${cookieName}=${token}` },
+      });
+
+      assert.equal(replacement.response.status, 200);
+      const sessionResponse = yield* fetchEffect(yield* getHttpServerUrl("/api/auth/session"), {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const session = yield* responseJsonEffect<{ readonly authenticated: boolean }>(
+        sessionResponse,
+      );
+      assert.equal(session.authenticated, true);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("accepts valid pairing when the previous browser cookie is invalid", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const initial = yield* bootstrapBrowserSession();
+      const cookieName = initial.cookie?.split("=")[0] ?? "";
+      const replacement = yield* bootstrapBrowserSession(defaultDesktopBootstrapToken, {
+        headers: { cookie: `${cookieName}=invalid-session-token` },
+      });
+
+      assert.equal(replacement.response.status, 200);
+      const sessionResponse = yield* fetchEffect(yield* getHttpServerUrl("/api/auth/session"), {
+        headers: { cookie: replacement.cookie?.split(";")[0] ?? "" },
+      });
+      const session = yield* responseJsonEffect<{ readonly authenticated: boolean }>(
+        sessionResponse,
+      );
+      assert.equal(session.authenticated, true);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect.each(["cookie", "bearer"])(
     "does not migrate a stale legacy cookie when %s auth succeeds",
     (source) =>

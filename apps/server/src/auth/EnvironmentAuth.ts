@@ -423,6 +423,7 @@ export class EnvironmentAuth extends Context.Service<
     readonly createBrowserSession: (
       credential: string,
       requestMetadata: AuthClientMetadata,
+      previousSessionToken?: string,
     ) => Effect.Effect<
       {
         readonly response: AuthBrowserSessionResult;
@@ -693,99 +694,107 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.getSessionState"),
     );
 
-  const createBrowserSession: EnvironmentAuth["Service"]["createBrowserSession"] = (
-    credential,
-    requestMetadata,
-  ) =>
-    bootstrapCredentials.consume(credential).pipe(
-      Effect.mapError(toBootstrapExchangeError),
-      Effect.flatMap((grant) =>
-        sessions
-          .issue({
-            method: "browser-session-cookie",
-            subject: grant.subject,
-            scopes: grant.scopes,
-            client: {
-              ...requestMetadata,
-              ...(grant.label ? { label: grant.label } : {}),
-            },
-          })
-          .pipe(
-            Effect.mapError((cause) => new ServerAuthAuthenticatedSessionIssueError({ cause })),
-          ),
-      ),
-      Effect.map(
-        (session) =>
-          ({
-            response: {
-              authenticated: true,
-              scopes: session.scopes,
-              sessionMethod: session.method,
-              expiresAt: DateTime.toUtc(session.expiresAt),
-            } satisfies AuthBrowserSessionResult,
-            sessionToken: session.token,
-          }) satisfies BootstrapExchangeResult,
-      ),
-      Effect.withSpan("EnvironmentAuth.createBrowserSession"),
-    );
+  const createBrowserSession: EnvironmentAuth["Service"]["createBrowserSession"] = Effect.fn(
+    "EnvironmentAuth.createBrowserSession",
+  )(function* (credential, requestMetadata, previousSessionToken) {
+    const previousSession =
+      previousSessionToken === undefined
+        ? undefined
+        : yield* sessions.verify(previousSessionToken).pipe(
+            Effect.catchIf(SessionStore.isSessionCredentialInvalidError, () => Effect.void),
+            Effect.mapError((cause) => new ServerAuthSessionCredentialValidationError({ cause })),
+          );
+    const grant = yield* bootstrapCredentials
+      .consume(credential)
+      .pipe(Effect.mapError(toBootstrapExchangeError));
+    const session = yield* sessions
+      .issue({
+        method: "browser-session-cookie",
+        subject: grant.subject,
+        scopes: grant.scopes,
+        ...(previousSession?.method === "browser-session-cookie"
+          ? { replaceSessionId: previousSession.sessionId }
+          : {}),
+        client: {
+          ...requestMetadata,
+          ...(grant.label ? { label: grant.label } : {}),
+        },
+      })
+      .pipe(Effect.mapError((cause) => new ServerAuthAuthenticatedSessionIssueError({ cause })));
+    return {
+      response: {
+        authenticated: true,
+        scopes: session.scopes,
+        sessionMethod: session.method,
+        expiresAt: DateTime.toUtc(session.expiresAt),
+      } satisfies AuthBrowserSessionResult,
+      sessionToken: session.token,
+    } satisfies BootstrapExchangeResult;
+  });
 
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) =>
-      bootstrapCredentials.consume(credential, input).pipe(
-        Effect.mapError(toBootstrapExchangeError),
-        Effect.flatMap((grant) =>
-          Effect.gen(function* () {
-            const grantedScopes = requestedScopes ?? grant.scopes;
-            if (!grantedScopes.every((scope) => grant.scopes.includes(scope))) {
-              return yield* new ServerAuthScopeNotGrantedError({});
-            }
-            return yield* sessions
-              .issue({
-                method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
-                subject: grant.subject,
-                scopes: grantedScopes,
-                ...(input?.proofKeyThumbprint
-                  ? {
-                      proofKeyThumbprint: input.proofKeyThumbprint,
-                      ttl: Duration.hours(1),
-                    }
-                  : {}),
-                // Desktop restarts forget the previous bearer token. Replace
-                // its session, including stale entries left by older versions.
-                replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
-                client: {
-                  ...requestMetadata,
-                  ...(grant.label ? { label: grant.label } : {}),
-                },
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
-                ),
-              );
-          }),
-        ),
-        Effect.flatMap((session) =>
-          DateTime.now.pipe(
-            Effect.map(
-              (now) =>
-                ({
-                  access_token: session.token,
-                  issued_token_type: AuthAccessTokenType,
-                  token_type: input?.proofKeyThumbprint ? "DPoP" : "Bearer",
-                  expires_in: Math.max(
-                    0,
-                    Math.floor(
-                      (session.expiresAt.epochMilliseconds - now.epochMilliseconds) / 1000,
-                    ),
+      bootstrapCredentials
+        .consume(credential, {
+          ...input,
+          ...(requestedScopes !== undefined ? { requestedScopes } : {}),
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            cause._tag === "BootstrapCredentialScopeNotGrantedError"
+              ? new ServerAuthScopeNotGrantedError({})
+              : toBootstrapExchangeError(cause),
+          ),
+          Effect.flatMap((grant) =>
+            Effect.gen(function* () {
+              const grantedScopes = requestedScopes ?? grant.scopes;
+              return yield* sessions
+                .issue({
+                  method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
+                  subject: grant.subject,
+                  scopes: grantedScopes,
+                  ...(input?.proofKeyThumbprint
+                    ? {
+                        proofKeyThumbprint: input.proofKeyThumbprint,
+                        ttl: Duration.hours(1),
+                      }
+                    : {}),
+                  // Desktop restarts forget the previous bearer token. Replace
+                  // its session, including stale entries left by older versions.
+                  replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
+                  client: {
+                    ...requestMetadata,
+                    ...(grant.label ? { label: grant.label } : {}),
+                  },
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
                   ),
-                  scope: encodeOAuthScope(session.scopes),
-                }) satisfies AuthAccessTokenResult,
+                );
+            }),
+          ),
+          Effect.flatMap((session) =>
+            DateTime.now.pipe(
+              Effect.map(
+                (now) =>
+                  ({
+                    access_token: session.token,
+                    issued_token_type: AuthAccessTokenType,
+                    token_type: input?.proofKeyThumbprint ? "DPoP" : "Bearer",
+                    expires_in: Math.max(
+                      0,
+                      Math.floor(
+                        (session.expiresAt.epochMilliseconds - now.epochMilliseconds) / 1000,
+                      ),
+                    ),
+                    scope: encodeOAuthScope(session.scopes),
+                  }) satisfies AuthAccessTokenResult,
+              ),
             ),
           ),
-        ),
-        Effect.withSpan("EnvironmentAuth.exchangeBootstrapCredentialForAccessToken"),
-      );
+          Effect.withSpan("EnvironmentAuth.exchangeBootstrapCredentialForAccessToken"),
+        );
 
   const issuePairingCredentialForSubject = (input: {
     readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
