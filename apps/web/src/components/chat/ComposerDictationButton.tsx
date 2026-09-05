@@ -14,9 +14,12 @@ interface ComposerDictationButtonProps {
 
 const DICTATION_TOOLTIPS: Record<DictationPhase, string> = {
   idle: "Dictate with microphone",
+  requesting: "Waiting for microphone...",
   recording: "Stop recording and transcribe",
   transcribing: "Transcribing...",
 };
+
+const DICTATION_BUSY = new Set<DictationPhase>(["requesting", "transcribing"]);
 
 export const ComposerDictationButton = memo(function ComposerDictationButton({
   phase,
@@ -30,7 +33,7 @@ export const ComposerDictationButton = memo(function ComposerDictationButton({
           <button
             type="button"
             onClick={onToggle}
-            disabled={disabled || phase === "transcribing"}
+            disabled={disabled || DICTATION_BUSY.has(phase)}
             aria-label={DICTATION_TOOLTIPS[phase]}
             aria-pressed={phase === "recording"}
             data-chat-composer-dictation={phase}
@@ -41,7 +44,7 @@ export const ComposerDictationButton = memo(function ComposerDictationButton({
           />
         }
       >
-        {phase === "transcribing" ? (
+        {DICTATION_BUSY.has(phase) ? (
           <Spinner className="size-3.5" aria-hidden="true" />
         ) : phase === "recording" ? (
           <span className="relative flex size-3.5 items-center justify-center" aria-hidden="true">

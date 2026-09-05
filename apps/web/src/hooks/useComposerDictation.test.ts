@@ -155,13 +155,36 @@ describe("cleanupTranscript", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ choices: [{ message: { content: "EMPTY" } }] }), {
+        new Response(JSON.stringify({ choices: [{ message: { content: "   " } }] }), {
           status: 200,
         }),
       ),
     );
     try {
       await expect(cleanupTranscript("hello", baseConfig)).rejects.toThrow(/raw transcript/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps a transcript that literally says empty", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({ text: "empty" }), { status: 200 })),
+    );
+    try {
+      const audio = new Blob(["audio"], { type: "audio/webm" });
+      const result = await transcribeAndCleanup(audio, {
+        apiKey: "gsk_test",
+        baseUrl: "https://api.groq.com/openai/v1",
+        model: "whisper-large-v3-turbo",
+        language: "",
+        cleanupEnabled: false,
+        cleanupModel: "",
+        cleanupSystemPrompt: "",
+        vocabulary: "",
+      });
+      expect(result).toEqual({ text: "empty", cleaned: false });
     } finally {
       vi.unstubAllGlobals();
     }

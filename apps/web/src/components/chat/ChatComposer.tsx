@@ -2295,16 +2295,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       if (command === "composer.dictate") {
         // Claim the shortcut even when dictation can't run so it never
-        // falls through to the browser or another handler.
+        // falls through to the browser or another handler. Repeats are
+        // ignored: holding the keys would otherwise toggle twice and cut
+        // the recording short.
         event.preventDefault();
         event.stopPropagation();
+        if (event.repeat) return;
         if (
           !dictationEnabled ||
           isCommandPaletteOpen() ||
           isComposerApprovalState ||
           pendingUserInputs.length > 0 ||
           projectSelectionRequired ||
-          activePendingProgress !== null
+          activePendingProgress !== null ||
+          isConnecting ||
+          noProviderAvailable ||
+          phase === "running"
         ) {
           return;
         }
@@ -3240,11 +3246,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     !(pendingUserInputs.length === 0 && showPlanFollowUpPrompt)
                       ? {
                           phase: dictation.phase,
+                          // Recording can always be stopped: disabling the
+                          // control mid-recording would strand the
+                          // MediaRecorder with no way to finish it.
                           disabled:
-                            isConnecting ||
-                            noProviderAvailable ||
-                            projectSelectionRequired ||
-                            phase === "running",
+                            dictation.phase !== "recording" &&
+                            (isConnecting ||
+                              noProviderAvailable ||
+                              projectSelectionRequired ||
+                              phase === "running"),
                           onToggle: dictation.toggle,
                         }
                       : null

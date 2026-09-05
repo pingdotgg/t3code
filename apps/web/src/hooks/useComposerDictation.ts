@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import { getClientSettings } from "../hooks/useSettings";
 
-export type DictationPhase = "idle" | "recording" | "transcribing";
+export type DictationPhase = "idle" | "requesting" | "recording" | "transcribing";
 
 export interface DictationConfig {
   readonly apiKey: string;
@@ -134,7 +134,7 @@ export async function transcribeRecording(
 
   const payload = (await response.json()) as { text?: unknown };
   const text = typeof payload.text === "string" ? payload.text.trim() : "";
-  if (text.length === 0 || text.toLowerCase() === "empty") {
+  if (text.length === 0) {
     throw new Error("Nothing was transcribed. Try speaking closer to the microphone.");
   }
   return text;
@@ -206,7 +206,7 @@ export async function cleanupTranscript(
   };
   const content = payload.choices?.[0]?.message?.content;
   const cleaned = typeof content === "string" ? content.trim() : "";
-  if (cleaned.length === 0 || cleaned.toLowerCase() === "empty") {
+  if (cleaned.length === 0) {
     throw new Error("Cleanup returned empty output. Using the raw transcript.");
   }
   return cleaned;
@@ -275,9 +275,8 @@ export function useComposerDictation(options: {
   useEffect(() => cancel, [cancel]);
 
   const toggle = useCallback(() => {
-    if (phase === "transcribing") return;
-
-    if (phase === "recording") {
+    if (phase !== "idle") {
+      if (phase !== "recording") return;
       const recorder = recorderRef.current;
       if (recorder && recorder.state !== "inactive") {
         setPhase("transcribing");
@@ -292,18 +291,30 @@ export function useComposerDictation(options: {
     }
 
     const config = readDictationConfig();
-    if (!config) return;
-    if (typeof MediaRecorder === "undefined" || !navigator.mediaDevices?.getUserMedia) return;
+    if (!config) {
+      onErrorRef.current(
+        "Dictation needs an API key, base URL, and transcription model. Open Settings → Dictation (Beta) to complete setup.",
+      );
+      return;
+    }
+    if (typeof MediaRecorder === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      onErrorRef.current("Dictation is not supported in this browser.");
+      return;
+    }
 
     abortRef.current?.abort();
     const aborter = new AbortController();
     abortRef.current = aborter;
     chunksRef.current = [];
+    // `getUserMedia()` is async while `phase` stays `idle`, so a second
+    // toggle in that window would start a parallel session that steals the
+    // shared refs. Park in `requesting` until the recorder is live.
+    setPhase("requesting");
 
     void (async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        if (aborter.signal.aborted) {
+        if (aborter.signal.aborted || abortRef.current !== aborter) {
           for (const track of stream.getTracks()) track.stop();
           return;
         }
@@ -318,7 +329,9 @@ export function useComposerDictation(options: {
           const mimeType = recorder.mimeType || pickRecordingMimeType() || "audio/webm";
           const audio = new Blob(chunksRef.current, { type: mimeType });
           chunksRef.current = [];
+          const wasAborted = aborter.signal.aborted;
           teardownCapture();
+          if (wasAborted) return;
           void (async () => {
             try {
               const { text } = await transcribeAndCleanup(audio, config, aborter.signal);
@@ -338,15 +351,35 @@ export function useComposerDictation(options: {
           })();
         });
         recorder.addEventListener("error", () => {
+          // Abort first: `stop` fires after `error`, and without the abort
+          // the stop handler would upload the partial recording and insert
+          // it into the composer right after this failure is reported.
+          aborter.abort();
           teardownCapture();
           onErrorRef.current("Recording failed. Check microphone access and try again.");
           setPhase("idle");
         });
-        recorder.start();
+        try {
+          recorder.start();
+        } catch {
+          aborter.abort();
+          teardownCapture();
+          setPhase("idle");
+          throw new Error("Recording failed to start.");
+        }
         setPhase("recording");
-      } catch {
+      } catch (error) {
+        // Only touch shared state when this request still owns it: an
+        // obsolete request (superseded by a newer toggle) must not reset
+        // the live session's controller or phase.
+        if (abortRef.current !== aborter) return;
+        teardownCapture();
         abortRef.current = null;
-        onErrorRef.current("Microphone access was denied. Allow microphone access and try again.");
+        onErrorRef.current(
+          error instanceof DOMException && error.name === "NotAllowedError"
+            ? "Microphone access was denied. Allow microphone access and try again."
+            : "Recording failed. Check microphone access and try again.",
+        );
         setPhase("idle");
       }
     })();
