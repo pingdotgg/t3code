@@ -1,3 +1,10 @@
+import type {
+  OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadStreamItem,
+} from "@t3tools/contracts";
+
+import { buildBoundedThreadProjection } from "./threadHistoryPaging.ts";
+
 /** Maximum number of reducer applications allowed during a thread resume. */
 export const THREAD_RESUME_MAX_REPLAY_EVENTS = 128;
 
@@ -21,6 +28,23 @@ export type ThreadResumePlan =
       readonly throughSequence: number;
     }
   | { readonly mode: "snapshot" };
+
+/** Build the bounded snapshot frame used whenever a socket resume needs a snapshot. */
+export function buildBoundedThreadSnapshotStreamItem(input: {
+  readonly snapshotSequence: number;
+  readonly projection: OrchestrationV2ThreadProjection;
+}): Extract<OrchestrationV2ThreadStreamItem, { readonly kind: "snapshot" }> {
+  const bounded = buildBoundedThreadProjection(input);
+  return {
+    kind: "snapshot",
+    snapshotSequence: input.snapshotSequence,
+    projection: bounded.projection,
+    historyCursor: bounded.historyCursor,
+    hasMoreHistory: bounded.hasMoreHistory,
+    latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
+    payloadBudgetExceeded: bounded.payloadBudgetExceeded,
+  };
+}
 
 /**
  * Decide whether a thread subscription should replay the event gap after the

@@ -320,11 +320,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const setThread = Effect.fn("EnvironmentThreadState.setThread")(function* (
     thread: OrchestrationV2ThreadProjection,
     options?: {
-      /** Socket/full snapshots: drop progressive meta with the new timeline. */
+      /** Legacy full snapshots: drop progressive meta with the new timeline. */
       readonly resetHistory?: boolean;
       /**
-       * Explicit progressive meta installed atomically with the projection
-       * (bounded HTTP). Wins over resetHistory when both are supplied.
+       * Explicit progressive meta installed atomically with the projection.
+       * Wins over resetHistory when both are supplied.
        */
       readonly history?: ThreadHistoryMeta;
     },
@@ -401,10 +401,23 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
     if (item.kind === "snapshot") {
       yield* SubscriptionRef.set(lastSequence, item.snapshotSequence);
-      // True socket/full snapshots replace the full timeline; progressive cursor
-      // state from a prior bounded window must not stick around. Bounded HTTP
-      // installs call setThread with explicit history and never route here.
-      yield* setThread(item.projection, { resetHistory: true });
+      const history: ThreadHistoryMeta | undefined =
+        item.historyCursor !== undefined && item.hasMoreHistory !== undefined
+          ? {
+              historyCursor: item.historyCursor,
+              hasMoreHistory: item.hasMoreHistory,
+              loading: false,
+              error: null,
+              expanded: false,
+              latestLocalTurnOrdinal: item.latestLocalTurnOrdinal ?? null,
+            }
+          : undefined;
+      // Legacy full socket snapshots replace the complete timeline. Bounded
+      // fallback snapshots install their paging cursor with the projection.
+      yield* setThread(
+        item.projection,
+        history === undefined ? { resetHistory: true } : { history },
+      );
       return;
     }
 
@@ -710,8 +723,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           switch (httpResult._tag) {
             case "present": {
               // Atomic projection + progressive meta so a settled bounded window
-              // never persists as a complete full-timeline cache entry. Socket
-              // snapshots still go through applyItem (resetHistory).
+              // never persists as a complete full-timeline cache entry. Bounded
+              // socket snapshots install the same metadata through applyItem.
               yield* applyLock.withPermits(1)(
                 Effect.gen(function* () {
                   yield* SubscriptionRef.set(lastSequence, httpResult.snapshot.snapshotSequence);

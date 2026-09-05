@@ -2536,6 +2536,11 @@ export const OrchestrationV2ThreadStreamItem = Schema.Union([
     kind: Schema.Literal("snapshot"),
     snapshotSequence: NonNegativeInt,
     projection: OrchestrationV2ThreadProjection,
+    /** Progressive history metadata for bounded socket fallback snapshots. */
+    historyCursor: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+    hasMoreHistory: Schema.optionalKey(Schema.Boolean),
+    latestLocalTurnOrdinal: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
+    payloadBudgetExceeded: Schema.optionalKey(Schema.Boolean),
   }),
   Schema.Struct({
     kind: Schema.Literal("event"),
