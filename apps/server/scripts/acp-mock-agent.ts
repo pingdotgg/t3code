@@ -30,6 +30,8 @@ const emitXAiAskUserQuestionThenHang =
 const emitContentThenHang = process.env.T3_ACP_EMIT_CONTENT_THEN_HANG === "1";
 const emitPlanThenHang = process.env.T3_ACP_EMIT_PLAN_THEN_HANG === "1";
 const emitActiveToolThenHang = process.env.T3_ACP_EMIT_ACTIVE_TOOL_THEN_HANG === "1";
+const emitGrokMonitorPostTurnPoll = process.env.T3_ACP_EMIT_GROK_MONITOR_POST_TURN_POLL === "1";
+const emitGrokBackgroundTaskStarted = process.env.T3_ACP_EMIT_GROK_BACKGROUND_TASK_STARTED === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const waitForResumeRelease = process.env.T3_ACP_WAIT_FOR_RESUME_RELEASE === "1";
 const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
@@ -832,6 +834,108 @@ const program = Effect.gen(function* () {
           },
         });
 
+        return yield* Effect.never;
+      }
+
+      if (emitGrokMonitorPostTurnPoll) {
+        const monitorCallId = "call-monitor-1";
+        const pollCallId = "call-monitor-poll-1";
+        const taskId = "01a05f41-5107-7550-821e-79e8d1cd7687";
+        const description = "Watch count-sheet Typst unit until done";
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: monitorCallId,
+            title: "monitor",
+            kind: "other",
+            status: "pending",
+            rawInput: { description },
+            _meta: {
+              "x.ai/tool": { version: 1, name: "monitor", kind: "task", namespace: "grok_build" },
+            },
+          },
+        });
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: monitorCallId,
+            status: "completed",
+            rawInput: { description },
+            rawOutput: {
+              type: "Monitor",
+              taskId,
+              timeoutMs: 36_000_000,
+            },
+          },
+        });
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          promptId: promptIdFromRequestMeta(request) ?? "mock-xai-prompt-1",
+          stopReason: "end_turn",
+          agentResult: null,
+        });
+        yield* Effect.sleep("120 millis");
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: pollCallId,
+            title: "get_command_or_subagent_output",
+            kind: "other",
+            status: "completed",
+            rawInput: { variant: "TaskOutput", task_ids: [taskId], timeout_ms: 0 },
+            rawOutput: {
+              type: "TaskOutput",
+              Result: {
+                task_id: taskId,
+                command: `[monitor] ${description}`,
+                status: "completed",
+                exit_code: 0,
+                output: "Monitor finished.",
+              },
+            },
+          },
+        });
+        return yield* Effect.never;
+      }
+
+      if (emitGrokBackgroundTaskStarted) {
+        const toolCallId = "call-fb9d0000-0000-0000-0000-000000000026";
+        const command = "sleep 40; echo done-a";
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: "run_terminal_command",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: { command },
+          },
+        });
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            status: "completed",
+            rawOutput: {
+              type: "BackgroundTaskStarted",
+              task_id: toolCallId,
+              task_type: "bash",
+              status: "running",
+              command,
+            },
+          },
+        });
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          promptId: promptIdFromRequestMeta(request) ?? "mock-xai-prompt-1",
+          stopReason: "end_turn",
+          agentResult: null,
+        });
         return yield* Effect.never;
       }
 
