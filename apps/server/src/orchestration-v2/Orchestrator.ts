@@ -7412,23 +7412,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(threadId));
       }
       if (stored.event.type === "run.updated") {
+        const runId = stored.event.payload.id;
         yield* threadDispatch.withLock(
           threadId,
-          finalizeDelegatedCompletionDelivery(threadId, stored.event.payload.id),
+          finalizeDelegatedCompletionDelivery(threadId, runId),
         );
-        yield* threadDispatch.withLock(
-          threadId,
-          applyDeferredOrganization(threadId, stored.event.payload.id),
+        yield* threadDispatch.withLock(threadId, applyDeferredOrganization(threadId, runId)).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to apply deferred thread organization", {
+              threadId,
+              runId,
+              cause,
+            }),
+          ),
         );
       }
       yield* threadDispatch.withLock(threadId, startNextQueuedRun(threadId));
     }).pipe(
       Effect.catchCause((cause) =>
-        Effect.logWarning("Failed to react to terminal V2 run", {
-          threadId: stored.event.threadId,
-          sequence: stored.sequence,
-          cause,
-        }),
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.failCause(cause)
+          : Effect.logWarning("Failed to react to terminal V2 run", {
+              threadId: stored.event.threadId,
+              sequence: stored.sequence,
+              cause,
+            }),
       ),
     );
 

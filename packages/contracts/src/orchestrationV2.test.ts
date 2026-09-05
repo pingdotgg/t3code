@@ -26,6 +26,7 @@ import {
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
+  OrchestrationV2RpcSchemas,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2Subagent,
   OrchestrationV2ThreadProjection,
@@ -43,6 +44,9 @@ const LegacyShellStreamItem = Schema.Union([
 ]);
 const decodeLegacyShellStreamItem = Schema.decodeUnknownSync(LegacyShellStreamItem);
 const decodeOrchestrationV2Command = Schema.decodeUnknownSync(OrchestrationV2Command);
+const decodeOrchestrationV2ClientCommand = Schema.decodeUnknownSync(
+  OrchestrationV2RpcSchemas.dispatchCommand.input,
+);
 const decodeOrchestrationV2TurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
 const decodeOrchestrationV2CheckpointScope = Schema.decodeUnknownSync(
   OrchestrationV2CheckpointScope,
@@ -61,6 +65,25 @@ const decodeOrchestrationV2ProviderThread = Schema.decodeUnknownSync(Orchestrati
 const decodeOrchestrationV2ThreadShell = Schema.decodeUnknownSync(OrchestrationV2ThreadShell);
 
 describe("orchestration V2 contracts", () => {
+  it("keeps deferred organization apply internal to the server", () => {
+    const applyCommand = {
+      type: "thread.organization.defer.apply",
+      commandId: "command:deferred-organization-apply",
+      threadId: "thread:deferred-organization-apply",
+      runId: "run:deferred-organization-apply",
+    };
+
+    expect(decodeOrchestrationV2Command(applyCommand).type).toBe("thread.organization.defer.apply");
+    expect(() => decodeOrchestrationV2ClientCommand(applyCommand)).toThrow();
+    expect(
+      decodeOrchestrationV2ClientCommand({
+        type: "thread.organization.defer.cancel",
+        commandId: "command:deferred-organization-cancel",
+        threadId: "thread:deferred-organization-apply",
+      }).type,
+    ).toBe("thread.organization.defer.cancel");
+  });
+
   it("lets legacy snapshot decoders ignore enrichment metadata", () => {
     const decoded = decodeLegacyShellStreamItem({
       kind: "snapshot",

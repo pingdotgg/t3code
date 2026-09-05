@@ -32,7 +32,7 @@ import {
   layer as effectWorkerLayer,
   runDaemon as runEffectWorkerDaemon,
 } from "../EffectWorker.ts";
-import { layerFromStores as eventSinkLayer } from "../EventSink.ts";
+import { EventSinkV2, layerFromStores as eventSinkLayer } from "../EventSink.ts";
 import { layer as eventStoreLayer } from "../EventStore.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { layer as orchestratorLayer } from "../Orchestrator.ts";
@@ -232,7 +232,7 @@ export function makeOrchestratorV2ProviderReplayLayer<
     readonly replayGate?: ProviderReplayGate;
   } = {},
 ): Layer.Layer<
-  OrchestratorV2 | ProviderRuntimeRecoveryService | CommandReceiptStoreV2,
+  OrchestratorV2 | ProviderRuntimeRecoveryService | CommandReceiptStoreV2 | EventSinkV2,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const registryLayer = harness.makeProviderAdapterRegistryLayer(
@@ -257,7 +257,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     ) => ProjectionStoreV2["Service"];
   } = {},
 ): Layer.Layer<
-  OrchestratorV2 | ProviderRuntimeRecoveryService | CommandReceiptStoreV2,
+  OrchestratorV2 | ProviderRuntimeRecoveryService | CommandReceiptStoreV2 | EventSinkV2,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const serverConfigLayer = Layer.effect(
@@ -443,6 +443,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       orchestratorProvided,
       providerRuntimeRecoveryProvided,
       commandReceiptStoreProvided,
+      eventSinkProvided,
     ).pipe(Layer.provide(worktreeRepairDependenciesTestLayer), Layer.provide(NodeServices.layer));
   }
   const orchestratorWithWorker = Layer.effect(
@@ -457,5 +458,6 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     orchestratorWithWorker,
     providerRuntimeRecoveryProvided,
     commandReceiptStoreProvided,
+    eventSinkProvided,
   ).pipe(Layer.provide(worktreeRepairDependenciesTestLayer), Layer.provide(NodeServices.layer));
 }

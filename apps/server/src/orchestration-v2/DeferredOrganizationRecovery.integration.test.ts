@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EventId,
   MessageId,
   type ModelSelection,
   ProjectId,
@@ -10,19 +11,23 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as Stream from "effect/Stream";
 
 import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
 import { runV2RecoveryPhase } from "../serverRuntimeStartup.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
+import { EventSinkV2 } from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import { ProviderRuntimeRecoveryService } from "./ProviderRuntimeRecoveryService.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
@@ -199,6 +204,188 @@ it.effect("retries a transient deferred apply read before recording its receipt"
             makeOrchestratorV2ReplayLayerWithRegistry(
               {
                 name: "deferred-organization-receipt:second-runtime",
+                runtimePolicyOverride: { cwd: tempDir },
+              },
+              registryLayer,
+              { databaseLayer, runEffectWorker: false, decorateProjectionStore },
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  ),
+);
+
+it.effect("promotes queued work when terminal deferred apply fails", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* Effect.acquireRelease(
+        fs.makeTempDirectory({ prefix: "t3-deferred-organization-terminal-" }),
+        (directory) => fs.remove(directory, { recursive: true, force: true }).pipe(Effect.orDie),
+      );
+      const databaseLayer = makeSqlitePersistenceLive(path.join(tempDir, "state.sqlite")).pipe(
+        Layer.provide(NodeServices.layer),
+      );
+      const registryLayer = makeProviderAdapterRegistryLayer([adapter]);
+      const threadId = ThreadId.make("thread:deferred-organization-terminal");
+
+      const seeded = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:deferred-organization-terminal:create"),
+            threadId,
+            projectId: ProjectId.make("project:deferred-organization-terminal"),
+            title: "Deferred organization terminal failure",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: tempDir,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:deferred-organization-terminal:active"),
+            threadId,
+            messageId: MessageId.make("message:deferred-organization-terminal:active"),
+            text: "Complete this run before applying organization.",
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "start_immediately" },
+          });
+          const activeRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0];
+          assert.isDefined(activeRun);
+          yield* orchestrator.dispatch({
+            type: "thread.organization.defer",
+            commandId: CommandId.make("command:deferred-organization-terminal:schedule"),
+            threadId,
+            runId: activeRun.id,
+            action: "settle",
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:deferred-organization-terminal:queued"),
+            threadId,
+            messageId: MessageId.make("message:deferred-organization-terminal:queued"),
+            text: "Promote this run after the active run ends.",
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "queue_after_active" },
+          });
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          const queuedRun = projection.runs.find((run) => run.status === "queued");
+          assert.isDefined(queuedRun);
+          return { activeRun, queuedRun };
+        }).pipe(
+          Effect.provide(
+            makeOrchestratorV2ReplayLayerWithRegistry(
+              {
+                name: "deferred-organization-terminal:first-runtime",
+                runtimePolicyOverride: { cwd: tempDir },
+              },
+              registryLayer,
+              { databaseLayer, runEffectWorker: false },
+            ),
+          ),
+        ),
+      );
+
+      const armed = yield* Ref.make(false);
+      const projectionReads = yield* Ref.make(0);
+      const decorateProjectionStore = (store: ProjectionStore.ProjectionStoreV2["Service"]) =>
+        ProjectionStore.ProjectionStoreV2.of({
+          ...store,
+          getThreadProjection: (requestedThreadId) =>
+            Ref.get(armed).pipe(
+              Effect.flatMap((isArmed) =>
+                isArmed
+                  ? Ref.updateAndGet(projectionReads, (count) => count + 1).pipe(
+                      Effect.flatMap((count) =>
+                        count === 3
+                          ? Effect.fail(
+                              new ProjectionStore.ProjectionStoreReadError({
+                                threadId: requestedThreadId,
+                                cause: "simulated terminal deferred apply failure",
+                              }),
+                            )
+                          : store.getThreadProjection(requestedThreadId),
+                      ),
+                    )
+                  : store.getThreadProjection(requestedThreadId),
+              ),
+            ),
+        });
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const eventSink = yield* EventSinkV2;
+          const receipts = yield* CommandReceiptStoreV2;
+          const afterSequence = yield* eventSink.latestSequence({ threadId });
+          const promoted = yield* eventSink.stream({ threadId, afterSequence }).pipe(
+            Stream.filter(
+              (stored) =>
+                stored.event.type === "run.updated" &&
+                stored.event.payload.id === seeded.queuedRun.id &&
+                stored.event.payload.status === "starting",
+            ),
+            Stream.runHead,
+            Effect.forkChild,
+          );
+          yield* Ref.set(armed, true);
+          const completedAt = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make("event:deferred-organization-terminal:completed"),
+                type: "run.updated",
+                threadId,
+                runId: seeded.activeRun.id,
+                ...(seeded.activeRun.rootNodeId === null
+                  ? {}
+                  : { nodeId: seeded.activeRun.rootNodeId }),
+                providerInstanceId: seeded.activeRun.providerInstanceId,
+                occurredAt: completedAt,
+                payload: {
+                  ...seeded.activeRun,
+                  status: "completed",
+                  completedAt,
+                },
+              },
+            ],
+          });
+          assert.isTrue(Option.isSome(yield* Fiber.join(promoted)));
+          yield* Ref.set(armed, false);
+
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(
+            projection.runs.find((run) => run.id === seeded.queuedRun.id)?.status,
+            "starting",
+          );
+          assert.equal(yield* Ref.get(projectionReads), 4);
+          assert.isTrue(
+            Option.isNone(
+              yield* receipts.getByCommandId(
+                CommandId.make(
+                  `command:system:thread-organization-defer:${threadId}:${seeded.activeRun.id}`,
+                ),
+              ),
+            ),
+          );
+        }).pipe(
+          Effect.provide(
+            makeOrchestratorV2ReplayLayerWithRegistry(
+              {
+                name: "deferred-organization-terminal:second-runtime",
                 runtimePolicyOverride: { cwd: tempDir },
               },
               registryLayer,

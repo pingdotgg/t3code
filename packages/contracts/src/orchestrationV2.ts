@@ -2393,6 +2393,19 @@ export const OrchestrationV2Command = Schema.Union([
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
+export type OrchestrationV2ClientCommand = Exclude<
+  OrchestrationV2Command,
+  { readonly type: "thread.organization.defer.apply" }
+>;
+
+export const OrchestrationV2ClientCommand = OrchestrationV2Command.pipe(
+  Schema.refine(
+    (command): command is OrchestrationV2ClientCommand =>
+      command.type !== "thread.organization.defer.apply",
+    { expected: "a client-dispatchable orchestration command" },
+  ),
+);
+
 export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
@@ -2687,7 +2700,7 @@ export class OrchestrationGetWorkflowScriptError extends Schema.TaggedErrorClass
 
 export const OrchestrationV2RpcSchemas = {
   dispatchCommand: {
-    input: OrchestrationV2Command,
+    input: OrchestrationV2ClientCommand,
     output: OrchestrationV2DispatchCommandResult,
   },
   getTurnDiff: {
