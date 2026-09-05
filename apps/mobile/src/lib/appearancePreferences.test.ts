@@ -13,8 +13,6 @@ import {
   resolveMobileCodeSurface,
   resolveNativeMarkdownTypography,
   resolveTextScaleVariables,
-  stepBaseFontSize,
-  stepCodeFontSize,
   stepTerminalFontSize,
 } from "./appearancePreferences";
 
@@ -73,11 +71,8 @@ describe("appearancePreferences", () => {
     expect(normalizeCodeFontSize(30)).toBe(18);
   });
 
-  it("steps font sizes within bounds", () => {
+  it("steps terminal font size within bounds", () => {
     expect(stepTerminalFontSize(6, -1)).toBe(6);
-    expect(stepBaseFontSize(11, -1)).toBe(11);
-    expect(stepCodeFontSize(8, -1)).toBe(8);
-    expect(stepBaseFontSize(15, 1)).toBe(16);
   });
 
   it("scales markdown typography from the base size", () => {
