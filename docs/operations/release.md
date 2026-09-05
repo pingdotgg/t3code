@@ -210,6 +210,8 @@ available.
   - otherwise `GITHUB_REPOSITORY` from GitHub Actions.
 - Required release assets for updater:
   - platform installers (`.exe`, `.dmg`, `.AppImage`, plus macOS `.zip` for Squirrel.Mac update payloads)
+  - publish the Linux AppImage as `T3-Code-x86_64.AppImage`; do not add the release version to its filename
+  - users upgrading from a versioned AppImage must update their launcher path once
   - channel metadata: `latest*.yml` for stable releases, `nightly*.yml` for nightly releases
   - `*.blockmap` files (used for differential downloads)
 - macOS metadata note:
