@@ -1,3 +1,4 @@
+import * as ServerSettings from "../serverSettings.ts";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
@@ -12,6 +13,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
+  type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -2020,57 +2022,193 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
   );
 
   it.effect(
-    "retires live provider effects and requeues replay-safe effects after process loss",
+    "persists shutdown continuation intent through the real event sink without domain events",
     () =>
       Effect.gen(function* () {
         const outbox = yield* EffectOutboxV2;
-        const commandId = CommandId.make("command:foundation-reclaim-running");
-        yield* outbox.enqueue([
-          {
-            id: "effect:a-foundation-cancel-provider-turn",
-            commandId,
-            threadId: ThreadId.make("thread:foundation-reclaim-running"),
-            request: {
-              type: "provider-turn.start",
-              runId: RunId.make("run:foundation-reclaim-running"),
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:shutdown-prepare");
+        const runId = RunId.make("run:shutdown-prepare");
+        const providerThreadId = ProviderThreadId.make("provider-thread:shutdown-prepare");
+        const sessionId = ProviderSessionId.make("session:shutdown-prepare");
+        const attemptId = RunAttemptId.make("attempt:shutdown-prepare");
+        const projection = {
+          thread: makeThread(threadId, now),
+          runs: [
+            {
+              id: runId,
+              ordinal: 1,
+              status: "running",
+              providerInstanceId,
+              providerThreadId,
+              activeAttemptId: attemptId,
             },
-          },
-          {
-            id: "effect:b-foundation-requeue-cleanup",
-            commandId,
-            threadId: ThreadId.make("thread:foundation-reclaim-cleanup"),
-            request: { type: "terminal.cleanup" },
-          },
-        ]);
-        assert.isTrue(
-          Option.isSome(
-            yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
+          ],
+          providerThreads: [
+            {
+              id: providerThreadId,
+              appThreadId: threadId,
+              ownerNodeId: null,
+              driver: "codex",
+              providerInstanceId,
+              providerSessionId: sessionId,
+              status: "active",
+              nativeThreadRef: {
+                driver: "codex",
+                nativeId: "saved-native-thread",
+                strength: "strong",
+              },
+            },
+          ],
+          providerSessions: [
+            { id: sessionId, driver: "codex", providerInstanceId, status: "running" },
+          ],
+          providerTurns: [{ providerThreadId, runAttemptId: attemptId, status: "running" }],
+        } as unknown as OrchestrationV2ThreadProjection;
+        const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+              Layer.mock(ProjectionStoreV2)({
+                getRecoveryThreadIds: () => Effect.succeed([threadId]),
+                getThreadProjection: () => Effect.succeed(projection),
+              }),
+              Layer.mock(OrchestrationEffectWorkerV2)({}),
+            ),
           ),
         );
-        assert.isTrue(
-          Option.isSome(
-            yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
-          ),
+        yield* recovery.prepareForShutdown;
+        yield* recovery.prepareForShutdown;
+        const effects = yield* outbox.listByCommandId(
+          CommandId.make(`command:restart-prepare:${runId}`),
         );
-        assert.deepEqual(yield* outbox.reconcileAfterProcessLoss, {
-          cancelled: 1,
-          requeued: 1,
+        assert.lengthOf(effects, 1);
+        assert.equal(effects[0]?.status, "pending");
+        assert.deepEqual(effects[0]?.request, {
+          type: "provider-runtime.continue",
+          sourceRunId: runId,
         });
-        const cancelled = yield* outbox.get("effect:a-foundation-cancel-provider-turn");
-        assert.isTrue(Option.isSome(cancelled));
-        if (Option.isSome(cancelled)) assert.equal(cancelled.value.status, "cancelled");
-
-        const reclaimed = yield* outbox.claimNext({
-          workerId: "recovery-worker",
-          leaseDurationMs: 30_000,
+        // This fixture shares the database; settle its intent before later claim tests.
+        yield* outbox.cancelUnsettled({
+          threadId,
+          effectTypes: ["provider-runtime.continue"],
+          reason: "fixture complete",
         });
-        assert.isTrue(Option.isSome(reclaimed));
-        if (Option.isSome(reclaimed)) {
-          assert.equal(reclaimed.value.request.type, "terminal.cleanup");
-          assert.equal(reclaimed.value.attemptCount, 2);
-        }
       }),
   );
+
+  it.effect("leaves restart continuation pending until normal worker claims are enabled", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutboxV2;
+      const threadId = ThreadId.make("thread:activation-restart");
+      const commandId = CommandId.make("command:activation-restart");
+      yield* outbox.enqueue([
+        {
+          id: "effect:activation-a-restart",
+          commandId,
+          threadId,
+          request: { type: "provider-runtime.continue", sourceRunId: RunId.make("run:activation") },
+        },
+        {
+          id: "effect:activation-b-cleanup",
+          commandId,
+          threadId,
+          request: { type: "terminal.cleanup" },
+        },
+      ]);
+      const cleanup = yield* outbox.claimNext({
+        workerId: "recovery",
+        leaseDurationMs: 30_000,
+        excludeRestartContinuations: true,
+      });
+      assert.isTrue(Option.isSome(cleanup));
+      if (Option.isSome(cleanup)) {
+        assert.equal(cleanup.value.request.type, "terminal.cleanup");
+        yield* outbox.succeed({ effectId: cleanup.value.id, workerId: "recovery" });
+      }
+      assert.isTrue(
+        Option.isNone(
+          yield* outbox.claimNext({
+            workerId: "recovery",
+            leaseDurationMs: 30_000,
+            excludeRestartContinuations: true,
+          }),
+        ),
+      );
+      const pending = yield* outbox.get("effect:activation-a-restart");
+      assert.isTrue(Option.isSome(pending));
+      if (Option.isSome(pending)) assert.equal(pending.value.status, "pending");
+      const resumed = yield* outbox.claimNext({ workerId: "activated", leaseDurationMs: 30_000 });
+      assert.isTrue(Option.isSome(resumed));
+      if (Option.isSome(resumed)) {
+        assert.equal(resumed.value.request.type, "provider-runtime.continue");
+        yield* outbox.succeed({ effectId: resumed.value.id, workerId: "activated" });
+      }
+    }),
+  );
+
+  for (const replayRequest of [
+    { type: "terminal.cleanup" },
+    { type: "provider-runtime.continue", sourceRunId: RunId.make("run:restart-replay") },
+  ] as const) {
+    it.effect(
+      `retires live provider effects and requeues ${replayRequest.type} after process loss`,
+      () =>
+        Effect.gen(function* () {
+          const outbox = yield* EffectOutboxV2;
+          const commandId = CommandId.make(
+            `command:foundation-reclaim-running:${replayRequest.type}`,
+          );
+          yield* outbox.enqueue([
+            {
+              id: `effect:a-foundation-cancel-provider-turn:${replayRequest.type}`,
+              commandId,
+              threadId: ThreadId.make(`thread:foundation-reclaim-running:${replayRequest.type}`),
+              request: {
+                type: "provider-turn.start",
+                runId: RunId.make(`run:foundation-reclaim-running:${replayRequest.type}`),
+              },
+            },
+            {
+              id: `effect:b-foundation-requeue-cleanup:${replayRequest.type}`,
+              commandId,
+              threadId: ThreadId.make(`thread:foundation-reclaim-cleanup:${replayRequest.type}`),
+              request: replayRequest,
+            },
+          ]);
+          assert.isTrue(
+            Option.isSome(
+              yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
+            ),
+          );
+          assert.isTrue(
+            Option.isSome(
+              yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
+            ),
+          );
+          assert.deepEqual(yield* outbox.reconcileAfterProcessLoss, {
+            cancelled: 1,
+            requeued: 1,
+          });
+          const cancelled = yield* outbox.get(
+            `effect:a-foundation-cancel-provider-turn:${replayRequest.type}`,
+          );
+          assert.isTrue(Option.isSome(cancelled));
+          if (Option.isSome(cancelled)) assert.equal(cancelled.value.status, "cancelled");
+
+          const reclaimed = yield* outbox.claimNext({
+            workerId: "recovery-worker",
+            leaseDurationMs: 30_000,
+          });
+          assert.isTrue(Option.isSome(reclaimed));
+          if (Option.isSome(reclaimed)) {
+            assert.equal(reclaimed.value.request.type, replayRequest.type);
+            assert.equal(reclaimed.value.attemptCount, 2);
+            yield* outbox.succeed({ effectId: reclaimed.value.id, workerId: "recovery-worker" });
+          }
+        }),
+    );
+  }
 
   it.effect("atomically cancels stale runs and their process-bound effects", () =>
     Effect.gen(function* () {
@@ -2132,10 +2270,12 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       );
 
       const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+        Effect.provide(ServerSettings.layerTest()),
         Effect.provideService(
           OrchestrationEffectWorkerV2,
           OrchestrationEffectWorkerV2.of({
             awaitWork: Effect.void,
+            runRecoveryOnce: Effect.succeed(false),
             runOnce: Effect.succeed(false),
             nextClaimableAt: Effect.succeed(Option.none()),
             drain: () => Effect.succeed(0),

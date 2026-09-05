@@ -129,9 +129,14 @@ function nextConfigBlobWithValue(
   return base;
 }
 
+/**
+ * Custom rows come from current settings so name/descriptor edits show
+ * instantly; a bare entry falls back to the live row's driver-default
+ * capabilities (the server fills those in on its next probe).
+ */
 export function deriveProviderModelsForDisplay(input: {
   readonly liveModels: ReadonlyArray<ServerProviderModel> | undefined;
-  readonly customModels: ReadonlyArray<string>;
+  readonly customModels: ReadonlyArray<CustomModelDefinition>;
 }): ReadonlyArray<ServerProviderModel> {
   const liveCustomModelsBySlug = new Map(
     Arr.filterMap(input.liveModels ?? [], (model) =>
@@ -139,15 +144,13 @@ export function deriveProviderModelsForDisplay(input: {
     ),
   );
   const serverModels = input.liveModels?.filter((model) => !model.isCustom) ?? [];
-  const customModels = input.customModels.map(
-    (slug) =>
-      liveCustomModelsBySlug.get(slug) ?? {
-        slug,
-        name: slug,
-        isCustom: true,
-        capabilities: null,
-      },
-  );
+  const customModels = input.customModels.map((entry) => ({
+    slug: entry.slug,
+    name: entry.name,
+    isCustom: true,
+    capabilities:
+      entry.capabilities ?? liveCustomModelsBySlug.get(entry.slug)?.capabilities ?? null,
+  }));
   return [...serverModels, ...customModels];
 }
 
@@ -561,7 +564,7 @@ export function ProviderInstanceCard({
     ? instance.driver
     : null;
   const customModels =
-    instance.driver === "antigravity" ? [] : readConfigStringArray(instance.config, "customModels");
+    instance.driver === "antigravity" ? [] : readConfigCustomModels(instance.config);
   // Server-returned models may lag behind settings writes. Treat probe
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.

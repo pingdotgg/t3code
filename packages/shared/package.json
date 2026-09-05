@@ -282,6 +282,10 @@
     "./orchestrationV2PendingBackgroundWork": {
       "types": "./src/orchestrationV2PendingBackgroundWork.ts",
       "import": "./src/orchestrationV2PendingBackgroundWork.ts"
+    },
+    "./hostClassification": {
+      "types": "./src/hostClassification.ts",
+      "import": "./src/hostClassification.ts"
     }
   },
   "scripts": {

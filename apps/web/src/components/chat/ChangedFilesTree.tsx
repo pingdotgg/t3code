@@ -110,61 +110,14 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
           </Tooltip>
         </div>
       </div>
-      {expanded ? (
-        <ChangedFilesTree
-          key={`changed-files-tree:${runId}`}
-          runId={runId}
-          files={files}
-          allDirectoriesExpanded={allDirectoriesExpanded}
-          resolvedTheme={resolvedTheme}
-          onOpenTurnDiff={onOpenTurnDiff}
-        />
-      ) : compactPreviewVisible ? (
-        <div className="px-2 pb-1.5 pt-1">
-          <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted-foreground">
-            {scopeSummary.map((scope, index) => (
-              <span key={scope.label} className="inline-flex items-center gap-1">
-                {index > 0 ? <span aria-hidden="true">·</span> : null}
-                <span className="font-mono text-foreground/75">{scope.label}</span>
-                <span>
-                  {scope.fileCount} file{scope.fileCount === 1 ? "" : "s"}
-                </span>
-              </span>
-            ))}
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            {previewFiles.map((file) => (
-              <Tooltip key={file.path}>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      className="inline-flex max-w-48 items-center gap-1 rounded-md border border-border/70 bg-background/45 px-1.5 py-1 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      onClick={() => onOpenTurnDiff(runId, file.path)}
-                    />
-                  }
-                >
-                  <PierreEntryIcon
-                    pathValue={file.path}
-                    kind="file"
-                    theme={resolvedTheme}
-                    className="size-3 shrink-0 text-muted-foreground/70"
-                  />
-                  <span className="truncate">{changedFileName(file.path)}</span>
-                </TooltipTrigger>
-                <TooltipPopup side="top">{file.path}</TooltipPopup>
-              </Tooltip>
-            ))}
-            <button
-              type="button"
-              className="rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onClick={() => onExpandedChange(true)}
-            >
-              Show all {files.length} files
-            </button>
-          </div>
-        </div>
-      ) : null}
+      <ChangedFilesTree
+        key={`${runId}:${allDirectoriesExpanded}`}
+        runId={runId}
+        files={files}
+        allDirectoriesExpanded={allDirectoriesExpanded}
+        resolvedTheme={resolvedTheme}
+        onOpenTurnDiff={onOpenTurnDiff}
+      />
     </div>
   );
 });

@@ -2,7 +2,6 @@ import { CursorSettings, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import { beforeEach, vi } from "vite-plus/test";
 

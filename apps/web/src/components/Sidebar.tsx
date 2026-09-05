@@ -874,7 +874,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarThreadStatus(thread);
   const isInFlight =
-    status === "working" || status === "monitoring" || status === "approval" || status === "input";
+    status === "working" || status === "waiting" || status === "approval" || status === "input";
   // A woken thread reappears at its original position (the sort is
   // deliberately static), so the pill has to carry the weight. Snoozing is
   // an explicit act, so the pill clears only when the user re-engages:
@@ -888,16 +888,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     wokeAtDate !== null &&
     (lastVisitedDate === null || lastVisitedDate < wokeAtDate) &&
     thread.settledOverride !== "settled";
-  // In-flight rows (working, or waiting on approval/input) fade as a whole:
-  // there is nothing for the user to do yet, so prominence is reserved for
-  // rows that need a human — done (unread), read-but-unsettled, failed, and
-  // freshly woken. The status label keeps its hue, so waiting rows stay
-  // findable. In-flight rows recede the same as read-ready ones (inbox-zero:
-  // working threads aren't your problem yet) — only the colored status label
-  // stands out.
-  const isInFlight = status === "working" || status === "approval" || status === "input";
-  const shouldRecede =
-    (status === "ready" || isInFlight) && !isUnread && !isWoke && !props.isActive && !isSelected;
+  // Background work always recedes when it is not selected: an unread parent
+  // completion must not pull a still-working thread back into the foreground.
+  // Ready and action-required rows keep their unread and wake prominence.
+  const shouldRecede = shouldRecedeSidebarThread({
+    status,
+    isUnread,
+    isWoke,
+    isActive: props.isActive,
+    isSelected,
+  });
   // Status hues follow the system-wide convention set by sidebar v1 and the
   // mobile Live Activity/widgets (amber approval, indigo input, sky working)
   // so a thread reads the same color everywhere it surfaces.
@@ -2083,7 +2083,11 @@ export default function Sidebar() {
 
   // Project scope: one menu above the list. Scoping filters the list without
   // making the header width depend on the number or length of project names.
-  const [projectScopeKey, setProjectScopeKey] = useState<string | null>(null);
+  // The selection lives in the persisted UI store next to the other sidebar
+  // project preferences, so routes that unmount the sidebar (Settings) and
+  // app restarts keep it.
+  const projectScopeKey = useUiStateStore((store) => store.sidebarProjectScopeKey);
+  const setProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
   // {value, label} items let Base UI drive the combobox selection contract
   // while the popup search filters the same collection.
   const projectScopeItems = useMemo(

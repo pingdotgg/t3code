@@ -942,6 +942,88 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect(
+    "admits restart continuations once and rejects a stale continuation behind newer work",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* OrchestratorV2;
+        const eventSink = yield* EventSinkV2;
+        const threadId = ThreadId.make("runtime-layer-restart-continuation");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("restart-create"),
+          threadId,
+          projectId: ProjectId.make("restart-project"),
+          title: "Restart",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: "/tmp/runtime-layer-restart",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("restart-user-message"),
+          threadId,
+          messageId: MessageId.make("restart-user-message"),
+          text: "Original work",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        const original = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        const now = yield* DateTime.now;
+        yield* eventSink.commitCommand({
+          commandId: CommandId.make("restart-cancel"),
+          threadId,
+          commandType: "provider-runtime.reconcile",
+          acceptedAt: now,
+          events: [
+            {
+              id: EventId.make("restart-cancel-event"),
+              type: "run.updated",
+              threadId,
+              runId: original.id,
+              occurredAt: now,
+              payload: { ...original, status: "cancelled", completedAt: now },
+            },
+          ],
+          effects: [],
+        });
+        const command = {
+          type: "message.dispatch" as const,
+          createdBy: "agent" as const,
+          creationSource: "server" as const,
+          commandId: CommandId.make("restart-automatic-message"),
+          threadId,
+          messageId: MessageId.make("restart-automatic-message"),
+          text: "Continue where you left off.",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" as const },
+          restartContinuationOfRunId: original.id,
+        };
+        yield* orchestrator.dispatch(command);
+        yield* orchestrator.dispatch(command);
+        const admitted = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(admitted.runs, 2);
+        assert.equal(admitted.runs[1]?.restartContinuationOfRunId, original.id);
+        // A differently identified stale delivery still must not create another run.
+        yield* orchestrator.dispatch({
+          ...command,
+          commandId: CommandId.make("restart-stale-race"),
+          messageId: MessageId.make("restart-stale-race"),
+        });
+        const raced = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(raced.runs, 2);
+        assert.isFalse(raced.messages.some((message) => message.id === "restart-stale-race"));
+      }),
+  );
+
   it.effect("rejects settling a thread while a run is active", () =>
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;

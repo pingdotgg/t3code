@@ -61,7 +61,8 @@ function runtimeRequestTestLayer(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStoreV2)({
-          getThreadProjection: () => Effect.succeed(projection),
+          getRuntimeRequest: (_threadId, requestId) =>
+            Effect.succeed(projection.runtimeRequests.find((request) => request.id === requestId)),
         }),
         Layer.mock(ProviderSessionManagerV2)({
           get: getSession,
@@ -107,7 +108,8 @@ it.effect("forwards orchestrator-resolved runtime requests to the live adapter",
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStoreV2)({
-          getThreadProjection: () => Effect.succeed(projection),
+          getRuntimeRequest: (_threadId, requestId) =>
+            Effect.succeed(projection.runtimeRequests.find((request) => request.id === requestId)),
         }),
         Layer.mock(ProviderSessionManagerV2)({
           get: getSession,
@@ -170,7 +172,8 @@ it.effect("rejects expired runtime requests before invoking the live adapter", (
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStoreV2)({
-          getThreadProjection: () => Effect.succeed(projection),
+          getRuntimeRequest: (_threadId, requestId) =>
+            Effect.succeed(projection.runtimeRequests.find((request) => request.id === requestId)),
         }),
         Layer.mock(ProviderSessionManagerV2)({
           get: getSession,

@@ -224,6 +224,7 @@ export const make = Effect.gen(function* () {
       threadSnooze: true,
       environmentThemes: true,
       usageLimitSources: true,
+      usagePriceOverrides: true,
       threadPinning: true,
       threadPinReorder: true,
       threadTitleRegeneration: true,
@@ -231,10 +232,8 @@ export const make = Effect.gen(function* () {
       threadPullRequestLinking: true,
       environmentIcon: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
-      // Running-thread continuation across a self-update (#9167) marks v1
-      // provider session bindings; the v2 recovery path terminalizes running
-      // runs on restart instead, so the capability stays unadvertised until
-      // ProviderRuntimeRecoveryService grows an equivalent.
+      // V2 restart recovery uses the environment-owned opt-in. The old
+      // per-update request flag is not wired into the V2 update RPC path.
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
         ? { serverSelfUpdateProgress: true }
         : {}),

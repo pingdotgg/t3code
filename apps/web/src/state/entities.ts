@@ -10,7 +10,7 @@ import {
   type ThreadHistoryMeta,
 } from "@t3tools/client-runtime/state/threads";
 import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
-import type { EnvironmentId, OrchestrationV2ProjectedTurnItem, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";

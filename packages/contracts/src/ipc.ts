@@ -1124,6 +1124,11 @@ export interface DesktopBridge {
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
   /**
+   * Open a System Settings pane by identifier. Optional: older desktop builds
+   * lack it, and callers no-op when it is missing.
+   */
+  openSystemSettings?: (pane: SystemSettingsPane) => Promise<boolean>;
+  /**
    * Probe this desktop machine for installed remote-capable editor CLIs
    * (used for remote open-in-editor deep links). Optional: older desktop
    * builds lack it; callers fall back to VS Code only.

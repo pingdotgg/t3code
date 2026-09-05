@@ -169,10 +169,10 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         {workspacePath ? <TooltipPopup side="left">{workspacePath}</TooltipPopup> : null}
       </Tooltip>
       <SelectPopup
+        alignItemWithTrigger={false}
         {...(displayMode === "toolbar" ? composerFloatingLayerProps : {})}
         {...(displayMode === "panel"
           ? {
-              alignItemWithTrigger: false,
               popupClassName: THREAD_DETAILS_PANEL_ROW_POPUP_CLASS,
             }
           : {})}

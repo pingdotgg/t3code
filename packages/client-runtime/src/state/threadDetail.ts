@@ -36,7 +36,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
       previousProjection = projection;
       previousValue = projection === null ? null : { environmentId: ref.environmentId, projection };
       return previousValue;
-    }).pipe(Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS), Atom.withLabel(`environment-thread:${key}`));
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread:${key}`));
   });
 
   const visibleTurnItemsAtomFamily = Atom.family((key: string) =>
@@ -44,10 +44,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
       (get): OrchestrationV2ThreadProjection["visibleTurnItems"] =>
         Option.getOrNull(get(threadStateValueAtomFamily(key)).data)?.visibleTurnItems ??
         EMPTY_VISIBLE_TURN_ITEMS,
-    ).pipe(
-      Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),
-      Atom.withLabel(`environment-thread-visible-turn-items:${key}`),
-    ),
+    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-visible-turn-items:${key}`)),
   );
 
   const statusAtomFamily = Atom.family((key: string) =>
@@ -64,7 +61,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
   );
   const historyAtomFamily = Atom.family((key: string) =>
     Atom.make((get) => get(threadStateValueAtomFamily(key)).history).pipe(
-      Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),
+      Atom.setIdleTTL(0),
       Atom.withLabel(`environment-thread-history:${key}`),
     ),
   );

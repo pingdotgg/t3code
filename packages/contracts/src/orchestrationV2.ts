@@ -423,6 +423,8 @@ export const OrchestrationV2Run = Schema.Struct({
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   checkpointId: Schema.NullOr(CheckpointId),
   contextHandoffId: Schema.NullOr(ContextHandoffId),
+  /** Links server-generated restart continuations to the interrupted run. */
+  restartContinuationOfRunId: Schema.optional(RunId),
   sourcePlanRef: Schema.optional(
     Schema.Struct({
       threadId: ThreadId,
@@ -1014,6 +1016,11 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("run_interrupt_result"),
+    message: Schema.String,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("system_notice"),
     message: Schema.String,
   }),
   Schema.Struct({
@@ -1698,6 +1705,11 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("system_notice"),
+    message: Schema.String,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("error"),
     failure: OrchestrationV2ProviderFailure,
     retry: Schema.optional(OrchestrationV2ProviderRetry),
@@ -2175,6 +2187,7 @@ export const OrchestrationV2Command = Schema.Union([
     titleSeed: Schema.optional(TrimmedNonEmptyString),
     modelSelection: Schema.optional(ModelSelection),
     sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
+    restartContinuationOfRunId: Schema.optional(RunId),
     delegatedCompletion: Schema.optional(
       Schema.Struct({
         parentRunId: RunId,

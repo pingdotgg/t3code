@@ -105,6 +105,7 @@ import {
   derivePendingUserInputs,
   derivePhase,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
+  selectHandoffImageResources,
   type TimelineEntriesProjection,
   deriveRevertTurnCountByUserMessageId,
   deriveActivePlanState,
@@ -383,6 +384,7 @@ import {
   reconcileMountedTerminalThreadIds,
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
+  resolveProactiveTurnDiffAction,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
@@ -453,7 +455,6 @@ const EMPTY_FEEDBACK_SUBMISSIONS: ReadonlyArray<CodexFeedbackSubmission> = [];
 // watermark per interval is plenty.
 const VISIT_DISPATCH_THROTTLE_MS = 10_000;
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
-const EMPTY_ATTACHMENT_IDS: string[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
@@ -2120,7 +2121,7 @@ export default function ChatView(props: ChatViewProps) {
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
-  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const projectGroupingSettings = selectProjectGroupingSettings(settings);
   const activeDraftLogicalProjectKey =
     !isServerThread && activeProject
       ? deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings)
@@ -2232,7 +2233,6 @@ export default function ChatView(props: ChatViewProps) {
     },
     [retryEnvironment],
   );
-  const projectGroupingSettings = selectProjectGroupingSettings(settings);
   const logicalProjectEnvironments = useMemo(() => {
     if (!activeProject) return [];
     const logicalKey = deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings);
@@ -2606,7 +2606,10 @@ export default function ChatView(props: ChatViewProps) {
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <button type="button" className="cursor-help rounded-sm text-left">
+                  <button
+                    type="button"
+                    className="block max-w-full cursor-help truncate rounded-sm text-left"
+                  >
                     Server update available
                   </button>
                 }
@@ -2919,16 +2922,6 @@ export default function ChatView(props: ChatViewProps) {
       return next;
     });
   }, []);
-  const committedServerAttachmentIds = useMemo(() => {
-    const attachmentIds = new Set<string>();
-    for (const row of serverVisibleTurnItems) {
-      if (row.item.type !== "user_message") continue;
-      for (const attachment of row.item.attachments) {
-        attachmentIds.add(attachment.id);
-      }
-    }
-    return [...attachmentIds];
-  }, [serverVisibleTurnItems]);
   const downloadFileAttachment = useCallback(
     async (attachment: ChatFileAttachment) => {
       const connection = readPreparedConnection(environmentId);
@@ -2968,10 +2961,19 @@ export default function ChatView(props: ChatViewProps) {
     },
     [activeThreadRef, downloadFileAttachment],
   );
-  const serverAttachmentIds = isServerThread ? committedServerAttachmentIds : EMPTY_ATTACHMENT_IDS;
   const serverAttachmentResources = useMemo(
-    () => selectHandoffImageResources(serverMessages, attachmentPreviewHandoffByMessageId),
-    [serverMessages, attachmentPreviewHandoffByMessageId],
+    () =>
+      selectHandoffImageResources(
+        Object.keys(attachmentPreviewHandoffByMessageId).length === 0
+          ? undefined
+          : serverVisibleTurnItems.flatMap(({ item }) =>
+              item.type === "user_message"
+                ? [{ id: item.messageId, role: "user" as const, attachments: item.attachments }]
+                : [],
+            ),
+        attachmentPreviewHandoffByMessageId,
+      ),
+    [serverVisibleTurnItems, attachmentPreviewHandoffByMessageId],
   );
   const serverAttachmentUrls = useAssetUrls(environmentId, serverAttachmentResources);
   const serverAttachmentUrlById = useMemo(
@@ -4266,17 +4268,21 @@ export default function ChatView(props: ChatViewProps) {
       settings.proactivePanelsEnabled &&
       !shouldUsePlanSidebarSheet &&
       newlyCompletedTurnId !== null;
-    const checkpointReady =
-      eligibleCompletion &&
-      turnDiffSummaries.some((checkpoint) => checkpoint.runId === newlyCompletedTurnId) === true;
-    const shouldOpenTurn = checkpointReady && gitStatusQuery.data?.isRepo === true;
-    const shouldDeferCompletion =
-      eligibleCompletion && !shouldOpenTurn && gitStatusQuery.data?.isRepo !== false;
+    const completedCheckpoint = eligibleCompletion
+      ? turnDiffSummaries.find((checkpoint) => checkpoint.runId === newlyCompletedTurnId)
+      : undefined;
+    const diffAction = eligibleCompletion
+      ? resolveProactiveTurnDiffAction({
+          checkpoint: completedCheckpoint,
+          isGitRepo: gitStatusQuery.data?.isRepo,
+          activeSurfaceKind: activeRightPanelSurface?.kind ?? null,
+        })
+      : "ignore";
     proactiveTurnObservationRef.current = {
       threadKey: activeThreadKey,
-      runningTurnId: shouldDeferCompletion ? (previousRunningTurnId ?? null) : activeRunningTurnId,
+      runningTurnId: diffAction === "defer" ? (previousRunningTurnId ?? null) : activeRunningTurnId,
     };
-    if (!shouldOpenTurn || newlyCompletedTurnId === null) return;
+    if (diffAction !== "open" || newlyCompletedTurnId === null) return;
 
     useDiffPanelStore.getState().selectTurn(activeThreadRef, newlyCompletedTurnId);
     useRightPanelStore.getState().open(activeThreadRef, "diff");
@@ -4288,6 +4294,7 @@ export default function ChatView(props: ChatViewProps) {
     activeRunningTurnId,
     activeThreadKey,
     activeThreadRef,
+    activeRightPanelSurface?.kind,
     clientSettingsHydrated,
     gitStatusQuery.data?.isRepo,
     isServerThread,
@@ -8234,6 +8241,9 @@ export default function ChatView(props: ChatViewProps) {
             activeProjectFaviconPath={activeProject?.faviconPath ?? null}
             activeProjectIcon={activeProject?.projectIcon ?? null}
             onNewThreadInProject={handleNewThreadInActiveProject}
+            {...(activeDraftLogicalProjectKey
+              ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
+              : {})}
           />
         </header>
 
