@@ -1,4 +1,4 @@
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -56,6 +56,7 @@ export class SshPasswordPrompt extends Context.Service<SshPasswordPrompt, SshPas
 export interface SshChildEnvironmentOptions {
   readonly interactiveAuth?: boolean;
   readonly baseEnv?: NodeJS.ProcessEnv;
+  readonly unsetEnv?: ReadonlyArray<string>;
   readonly askpassDirectory?: string;
   readonly authSecret?: string | null;
 }
@@ -179,12 +180,26 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
   PlatformError.PlatformError,
   FileSystem.FileSystem | Path.Path
 > {
-  const baseEnv = { ...input.baseEnv };
+  const platform = yield* HostProcessPlatform;
+  const hostEnvironment = yield* HostProcessEnvironment;
+  const baseEnv: NodeJS.ProcessEnv = { ...hostEnvironment };
+  const normalizeName = (name: string) => (platform === "win32" ? name.toUpperCase() : name);
+  const namesToRemove = new Set(
+    [
+      ...(input.unsetEnv ?? []),
+      ...(platform === "win32" ? Object.keys(input.baseEnv ?? {}) : []),
+    ].map(normalizeName),
+  );
+  for (const name of Object.keys(baseEnv)) {
+    if (namesToRemove.has(normalizeName(name))) {
+      delete baseEnv[name];
+    }
+  }
+  Object.assign(baseEnv, input.baseEnv);
   if (!input.interactiveAuth) {
     return baseEnv;
   }
 
-  const platform = yield* HostProcessPlatform;
   const hostDisplay = input.baseEnv
     ? input.baseEnv.DISPLAY
     : yield* Config.string("DISPLAY").pipe(

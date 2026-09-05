@@ -26,6 +26,7 @@ import { mapRemoteEnvironmentError } from "./errors.ts";
 import {
   BearerConnectionTarget,
   ConnectionBlockedError,
+  ConnectionTransientError,
   SshConnectionTarget,
   type ConnectionAttemptError,
 } from "./model.ts";
@@ -41,6 +42,11 @@ export interface PairingConnectionInput {
 export interface SshConnectionInput {
   readonly target: DesktopSshEnvironmentTarget;
   readonly label?: string;
+}
+
+export interface SshEnvironmentVariablesUpdateInput {
+  readonly environmentId: EnvironmentId;
+  readonly environmentVariables?: DesktopSshEnvironmentTarget["environmentVariables"];
 }
 
 export interface BearerConnectionUpdateInput {
@@ -64,6 +70,9 @@ export class ConnectionOnboarding extends Context.Service<
       EnvironmentId,
       ConnectionAttemptError | Persistence.ConnectionPersistenceError
     >;
+    readonly updateSshEnvironmentVariables: (
+      input: SshEnvironmentVariablesUpdateInput,
+    ) => Effect.Effect<void, ConnectionAttemptError | Persistence.ConnectionPersistenceError>;
     readonly updateBearer: (
       input: BearerConnectionUpdateInput,
     ) => Effect.Effect<void, ConnectionAttemptError | Persistence.ConnectionPersistenceError>;
@@ -129,6 +138,7 @@ export const registerPairingConnection = Effect.fn(
 
 const isBearerCredential = Schema.is(BearerConnectionCredential);
 const isBearerProfile = Schema.is(BearerConnectionProfile);
+const isSshProfile = Schema.is(SshConnectionProfile);
 
 export const updateBearerConnection = Effect.fn(
   "clientRuntime.connection.onboarding.updateBearerConnection",
@@ -242,6 +252,135 @@ export const registerSshConnection = Effect.fn(
   return registration.target.environmentId;
 });
 
+export const prepareSshEnvironmentVariablesUpdate = Effect.fn(
+  "clientRuntime.connection.onboarding.prepareSshEnvironmentVariablesUpdate",
+)(function* (options: {
+  readonly input: SshEnvironmentVariablesUpdateInput;
+  readonly entry: Option.Option<ConnectionCatalogEntry>;
+}) {
+  const entry = Option.getOrNull(options.entry);
+  if (
+    entry === null ||
+    entry.target._tag !== "SshConnectionTarget" ||
+    Option.isNone(entry.profile) ||
+    !isSshProfile(entry.profile.value)
+  ) {
+    return yield* new ConnectionBlockedError({
+      reason: "configuration",
+      detail: "Only saved SSH environments can update their local environment variables.",
+    });
+  }
+
+  const profile = entry.profile.value;
+  const { environmentVariables: _currentEnvironmentVariables, ...baseTarget } = profile.target;
+  const target: DesktopSshEnvironmentTarget = {
+    ...baseTarget,
+    ...(options.input.environmentVariables === undefined
+      ? {}
+      : { environmentVariables: options.input.environmentVariables }),
+  };
+
+  return new SshConnectionRegistration({
+    target: entry.target,
+    profile: new SshConnectionProfile({
+      connectionId: profile.connectionId,
+      environmentId: profile.environmentId,
+      label: profile.label,
+      target,
+    }),
+  });
+});
+
+export const updateSshEnvironmentVariables = Effect.fn(
+  "clientRuntime.connection.onboarding.updateSshEnvironmentVariables",
+)(function* (input: SshEnvironmentVariablesUpdateInput) {
+  const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  const gateway = yield* ClientCapabilities.SshEnvironmentGateway;
+  const entry = (yield* SubscriptionRef.get(registry.entries)).get(input.environmentId);
+  if (entry === undefined) {
+    return yield* new ConnectionBlockedError({
+      reason: "configuration",
+      detail: "Only saved SSH environments can update their local environment variables.",
+    });
+  }
+  const registration = yield* prepareSshEnvironmentVariablesUpdate({
+    input,
+    entry: Option.some(entry),
+  });
+  const previousProfile = Option.getOrNull(entry.profile);
+  if (previousProfile === null || !isSshProfile(previousProfile)) {
+    return yield* new ConnectionBlockedError({
+      reason: "configuration",
+      detail: "Only saved SSH environments can update their local environment variables.",
+    });
+  }
+  const prepareTarget = (target: DesktopSshEnvironmentTarget) =>
+    gateway
+      .prepare({
+        connectionId: registration.profile.connectionId,
+        expectedEnvironmentId: registration.profile.environmentId,
+        target,
+      })
+      .pipe(Effect.asVoid);
+  let restoreError: ConnectionAttemptError | null = null;
+  const restorePreviousTarget = prepareTarget(previousProfile.target).pipe(
+    Effect.catch((error) =>
+      Effect.sync(() => {
+        restoreError = error;
+      }).pipe(
+        Effect.andThen(
+          Effect.logWarning("Could not restore the previous SSH environment after save failed.", {
+            environmentId: input.environmentId,
+            error,
+          }),
+        ),
+      ),
+    ),
+  );
+  yield* registry
+    .registerIfCurrent(entry, registration, {
+      beforeRegister: prepareTarget(registration.profile.target),
+      onFailure: restorePreviousTarget,
+    })
+    .pipe(
+      Effect.mapError((error) => {
+        if (restoreError === null) {
+          return error;
+        }
+        const recovery =
+          "The saved settings are unchanged, but the previous SSH runtime could not be restored. Disconnect and reconnect this environment before continuing.";
+        switch (error._tag) {
+          case "ConnectionPersistenceError":
+            return new Persistence.ConnectionPersistenceError({
+              operation: error.operation,
+              message: `${error.message} ${recovery}`,
+            });
+          case "ConnectionBlockedError":
+            return new ConnectionBlockedError({
+              reason: error.reason,
+              detail: `${error.detail} ${recovery}`,
+              ...(error.traceId === undefined ? {} : { traceId: error.traceId }),
+            });
+          case "ConnectionTransientError":
+            return new ConnectionTransientError({
+              reason: error.reason,
+              detail: `${error.detail} ${recovery}`,
+              ...(error.traceId === undefined ? {} : { traceId: error.traceId }),
+            });
+          case "EnvironmentNotRegisteredError":
+            return error;
+        }
+      }),
+      Effect.catchTags({
+        EnvironmentNotRegisteredError: () =>
+          new ConnectionBlockedError({
+            reason: "configuration",
+            detail: "The SSH environment was removed before the update could be saved.",
+          }),
+      }),
+    );
+});
+
 export const make = Effect.gen(function* () {
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const presentation = yield* ClientCapabilities.ClientPresentation;
@@ -258,6 +397,11 @@ export const make = Effect.gen(function* () {
       ),
     registerSsh: (input) =>
       registerSshConnection(input).pipe(
+        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
+        Effect.provideService(ClientCapabilities.SshEnvironmentGateway, ssh),
+      ),
+    updateSshEnvironmentVariables: (input) =>
+      updateSshEnvironmentVariables(input).pipe(
         Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
         Effect.provideService(ClientCapabilities.SshEnvironmentGateway, ssh),
       ),

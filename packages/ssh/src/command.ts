@@ -38,6 +38,7 @@ export interface SshCommandResult {
 export interface RunSshCommandOptions extends SshAuthOptions {
   readonly preHostArgs?: ReadonlyArray<string>;
   readonly remoteCommandArgs?: ReadonlyArray<string>;
+  readonly unsetEnvironmentVariables?: ReadonlyArray<string>;
   readonly stdin?: string;
   readonly timeoutMs?: number;
 }
@@ -69,8 +70,65 @@ export function parseSshResolveOutput(alias: string, stdout: string): DesktopSsh
   };
 }
 
+export function parseSshSendEnvironmentPatterns(stdout: string): ReadonlyArray<string> {
+  return stdout.split(/\r?\n/u).flatMap((line) => {
+    const trimmed = line.trim();
+    if (!trimmed.toLowerCase().startsWith("sendenv ")) {
+      return [];
+    }
+    return trimmed.slice("sendenv ".length).trim().split(/\s+/u).filter(Boolean);
+  });
+}
+
+function sshEnvironmentNameMatchesPattern(name: string, pattern: string): boolean {
+  const source = pattern
+    .replace(/[.+^${}()|[\]\\]/gu, "\\$&")
+    .replace(/\*/gu, ".*")
+    .replace(/\?/gu, ".");
+  return new RegExp(`^${source}$`, "u").test(name);
+}
+
+export function isSshEnvironmentNameConfiguredForSend(
+  name: string,
+  patterns: ReadonlyArray<string>,
+): boolean {
+  let configured = false;
+  for (const rawPattern of patterns) {
+    const removesPattern = rawPattern.startsWith("-");
+    const pattern = removesPattern ? rawPattern.slice(1) : rawPattern;
+    if (pattern.length > 0 && sshEnvironmentNameMatchesPattern(name, pattern)) {
+      configured = !removesPattern;
+    }
+  }
+  return configured;
+}
+
+function unsupportedSshEnvironmentNames(
+  environmentVariables: NonNullable<DesktopSshEnvironmentTarget["environmentVariables"]>,
+  resolvedConfigOutput: string,
+): ReadonlyArray<string> {
+  const patterns = parseSshSendEnvironmentPatterns(resolvedConfigOutput);
+  return Object.keys(environmentVariables).filter(
+    (name) => !isSshEnvironmentNameConfiguredForSend(name, patterns),
+  );
+}
+
 export function targetConnectionKey(target: DesktopSshEnvironmentTarget): string {
   return `${target.alias}\u0000${target.hostname}\u0000${target.username ?? ""}\u0000${target.port ?? ""}`;
+}
+
+export function sshEnvironmentVariablesEqual(
+  left: DesktopSshEnvironmentTarget["environmentVariables"],
+  right: DesktopSshEnvironmentTarget["environmentVariables"],
+): boolean {
+  const leftEntries = Object.entries(left ?? {});
+  const rightEnvironment = right ?? {};
+  return (
+    leftEntries.length === Object.keys(rightEnvironment).length &&
+    leftEntries.every(
+      ([name, value]) => Object.hasOwn(rightEnvironment, name) && rightEnvironment[name] === value,
+    )
+  );
 }
 
 export function remoteStateKey(target: DesktopSshEnvironmentTarget): string {
@@ -78,6 +136,12 @@ export function remoteStateKey(target: DesktopSshEnvironmentTarget): string {
     .update(targetConnectionKey(target))
     .digest("hex")
     .slice(0, 16);
+}
+
+export function managedRemoteLaunchCommandArgs(
+  target: DesktopSshEnvironmentTarget,
+): ReadonlyArray<string> {
+  return ["sh", "-l", "-s", "--", remoteStateKey(target)];
 }
 
 export function buildSshHostSpec(target: DesktopSshEnvironmentTarget): string {
@@ -133,11 +197,24 @@ export const collectProcessOutput = <E>(
     ),
   );
 
-function redactSshErrorOutput(output: string): string {
-  const redacted = output.replace(
+export function redactSshOutput(
+  output: string,
+  environmentVariables?: Readonly<Record<string, string | undefined>>,
+): string {
+  let redacted = output.replace(
     /("(?:access_token|bearerToken|credential|pairingToken|token)"\s*:\s*")[^"]+(")/giu,
     "$1[redacted]$2",
   );
+  const environmentValues = [
+    ...new Set(
+      Object.values(environmentVariables ?? {}).filter(
+        (value): value is string => value !== undefined && value.length > 0,
+      ),
+    ),
+  ].sort((left, right) => right.length - left.length);
+  for (const value of environmentValues) {
+    redacted = redacted.replaceAll(value, "[redacted]");
+  }
   return redacted.length > MAX_SSH_ERROR_OUTPUT_LENGTH
     ? `${redacted.slice(0, MAX_SSH_ERROR_OUTPUT_LENGTH)}\n[truncated]`
     : redacted;
@@ -181,6 +258,10 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
 > {
   const hostSpec = yield* buildSshHostSpecEffect(target);
   const environment = yield* buildSshChildEnvironment({
+    ...(target.environmentVariables === undefined ? {} : { baseEnv: target.environmentVariables }),
+    ...(input.unsetEnvironmentVariables === undefined
+      ? {}
+      : { unsetEnv: input.unsetEnvironmentVariables }),
     ...(input.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
     ...(input.authSecret === undefined ? {} : { authSecret: input.authSecret }),
   }).pipe(
@@ -200,6 +281,7 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
       batchMode: input.batchMode ?? (input.interactiveAuth ? "no" : "yes"),
     }),
     ...(input.preHostArgs ?? []),
+    "--",
     hostSpec,
     ...(input.remoteCommandArgs ?? []),
   ];
@@ -215,7 +297,6 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
     .spawn(
       ChildProcess.make(sshCommand, args, {
         env: environment,
-        extendEnv: true,
         stdin: {
           stream: stdinStream(input.stdin),
           endOnDone: true,
@@ -261,22 +342,23 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
   );
 
   if (exitCode !== 0) {
-    const diagnosticStdout = redactSshErrorOutput(stdout);
+    const diagnosticStdout = redactSshOutput(stdout, target.environmentVariables);
+    const diagnosticStderr = redactSshOutput(stderr, target.environmentVariables);
     yield* Effect.logWarning("ssh.command.failed", {
       ...sshTargetLogFields(target),
       command: ["ssh", ...args],
       exitCode,
       stdout: diagnosticStdout,
-      stderr,
+      stderr: diagnosticStderr,
     });
     return yield* new SshCommandError({
       command: ["ssh", ...args],
       exitCode,
       stdout: diagnosticStdout,
-      stderr,
+      stderr: diagnosticStderr,
       message: normalizeSshErrorMessage({
         stdout: diagnosticStdout,
-        stderr,
+        stderr: diagnosticStderr,
         fallbackMessage: `SSH command failed for ${hostSpec} (exit ${exitCode}).`,
       }),
     });
@@ -327,6 +409,8 @@ export const runSshCommand = Effect.fn("ssh/command.runSshCommand")(function* (
 
 export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(function* (
   alias: string,
+  environmentVariables?: DesktopSshEnvironmentTarget["environmentVariables"],
+  overrides?: Pick<DesktopSshEnvironmentTarget, "username" | "port">,
 ): Effect.fn.Return<
   DesktopSshEnvironmentTarget,
   SshCommandError | SshInvalidTargetError,
@@ -338,30 +422,85 @@ export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(functi
   }
 
   yield* Effect.logDebug("ssh.target.resolve.start", { alias: trimmedAlias });
-  return yield* runSshCommand(
-    {
-      alias: trimmedAlias,
-      hostname: trimmedAlias,
-      username: null,
-      port: null,
-    },
-    { preHostArgs: ["-G"] },
-  ).pipe(
-    Effect.map((result) => parseSshResolveOutput(trimmedAlias, result.stdout)),
-    Effect.tap((target) =>
-      Effect.logDebug("ssh.target.resolve.succeeded", sshTargetLogFields(target)),
-    ),
+  const unresolvedTarget: DesktopSshEnvironmentTarget = {
+    alias: trimmedAlias,
+    hostname: trimmedAlias,
+    username: overrides?.username ?? null,
+    port: overrides?.port ?? null,
+  };
+  const managedEnvironmentNames = Object.keys(environmentVariables ?? {});
+  const identityResult = yield* runSshCommand(unresolvedTarget, {
+    preHostArgs: ["-G"],
+    unsetEnvironmentVariables: managedEnvironmentNames,
+  }).pipe(
     Effect.catch((cause) =>
-      Effect.logDebug("ssh.target.resolve.fallback", { alias: trimmedAlias, cause }).pipe(
-        Effect.as({
-          alias: trimmedAlias,
-          hostname: trimmedAlias,
-          username: null,
-          port: null,
-        }),
-      ),
+      environmentVariables === undefined
+        ? Effect.logDebug("ssh.target.resolve.fallback", { alias: trimmedAlias, cause }).pipe(
+            Effect.as(null),
+          )
+        : Effect.fail(cause),
     ),
   );
+  if (identityResult === null) {
+    return unresolvedTarget;
+  }
+
+  const identityTarget = parseSshResolveOutput(trimmedAlias, identityResult.stdout);
+  if (environmentVariables === undefined) {
+    yield* Effect.logDebug("ssh.target.resolve.succeeded", sshTargetLogFields(identityTarget));
+    return identityTarget;
+  }
+
+  let commandTarget = identityTarget;
+  let resolvedTarget: DesktopSshEnvironmentTarget | null = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const managedRemoteCommand = managedRemoteLaunchCommandArgs(commandTarget);
+    const baselineResult = yield* runSshCommand(unresolvedTarget, {
+      preHostArgs: ["-G"],
+      remoteCommandArgs: managedRemoteCommand,
+      unsetEnvironmentVariables: managedEnvironmentNames,
+    });
+    const unsupportedBaselineNames = unsupportedSshEnvironmentNames(
+      environmentVariables,
+      baselineResult.stdout,
+    );
+    if (unsupportedBaselineNames.length > 0) {
+      return yield* new SshInvalidTargetError({
+        message: `Add ${unsupportedBaselineNames.join(", ")} to SendEnv for ${trimmedAlias} in your SSH config before forwarding ${unsupportedBaselineNames.length === 1 ? "it" : "them"}.`,
+      });
+    }
+
+    const resolvedResult = yield* runSshCommand(
+      { ...unresolvedTarget, environmentVariables },
+      { preHostArgs: ["-G"], remoteCommandArgs: managedRemoteCommand },
+    );
+    const unsupportedNames = unsupportedSshEnvironmentNames(
+      environmentVariables,
+      resolvedResult.stdout,
+    );
+    if (unsupportedNames.length > 0) {
+      return yield* new SshInvalidTargetError({
+        message: `SendEnv for ${trimmedAlias} no longer selects ${unsupportedNames.join(", ")} after applying the saved local SSH environment.`,
+      });
+    }
+
+    resolvedTarget = {
+      ...parseSshResolveOutput(trimmedAlias, resolvedResult.stdout),
+      environmentVariables,
+    };
+    if (remoteStateKey(resolvedTarget) === remoteStateKey(commandTarget)) {
+      break;
+    }
+    commandTarget = resolvedTarget;
+    resolvedTarget = null;
+  }
+  if (resolvedTarget === null) {
+    return yield* new SshInvalidTargetError({
+      message: `SSH Match command rules for ${trimmedAlias} did not resolve to a stable target. Check command-specific HostName, User, and Port settings.`,
+    });
+  }
+  yield* Effect.logDebug("ssh.target.resolve.succeeded", sshTargetLogFields(resolvedTarget));
+  return resolvedTarget;
 });
 
 export function resolveRemoteT3CliPackageSpec(input: {

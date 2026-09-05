@@ -14,12 +14,15 @@ export {
   ConnectionOnboarding,
   type PairingConnectionInput,
   type SshConnectionInput,
+  type SshEnvironmentVariablesUpdateInput,
   prepareBearerConnectionUpdate,
   preparePairingRegistration,
+  prepareSshEnvironmentVariablesUpdate,
   prepareSshRegistration,
   registerPairingConnection,
   registerSshConnection,
   updateBearerConnection,
+  updateSshEnvironmentVariables,
 } from "./onboarding.ts";
 export * from "./presentation.ts";
 export * as ProfileStore from "./profileStore.ts";

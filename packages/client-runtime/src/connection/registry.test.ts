@@ -27,6 +27,7 @@ import {
   type ConnectionRegistration,
   PrimaryConnectionRegistration,
   RelayConnectionRegistration,
+  SshConnectionRegistration,
   SshConnectionProfile,
   type ConnectionCredential,
   type ConnectionProfile,
@@ -134,6 +135,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   initialCredentials: ReadonlyArray<readonly [string, ConnectionCredential]> = [],
   options?: {
     readonly beforeSessionConnect?: (environmentId: EnvironmentId) => Effect.Effect<void>;
+    readonly beforeSessionRelease?: () => Effect.Effect<void>;
     readonly beforeRegistrationRegister?: (
       registration: ConnectionRegistration,
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
@@ -363,7 +365,10 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
             probe: Effect.void,
             closed: Deferred.await(closed),
           } satisfies RpcSession.RpcSession),
-          () => Ref.update(releasedSessions, (count) => count + 1),
+          () =>
+            (options?.beforeSessionRelease?.() ?? Effect.void).pipe(
+              Effect.andThen(Ref.update(releasedSessions, (count) => count + 1)),
+            ),
         );
         yield* reportProgress({ stage: "synchronizing", prepared });
         yield* session.ready;
@@ -780,6 +785,275 @@ describe("EnvironmentRegistry", () => {
         expect((yield* Ref.get(harness.storedTargets)).has(RELAY_TARGET.environmentId)).toBe(true);
         expect(yield* Ref.get(harness.cacheClears)).toEqual([]);
         expect(yield* Ref.get(harness.ownedDataClears)).toEqual([]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("does not register an update after its environment was removed", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([SSH_CONNECTION], [SSH_PROFILE]);
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const expectedEntry = Option.getOrThrow(
+          Option.fromUndefinedOr(
+            (yield* SubscriptionRef.get(registry.entries)).get(SSH_CONNECTION.environmentId),
+          ),
+        );
+
+        yield* registry.remove(SSH_CONNECTION.environmentId);
+        let prepared = false;
+        let rolledBack = false;
+        const error = yield* registry
+          .registerIfCurrent(
+            expectedEntry,
+            new SshConnectionRegistration({
+              target: SSH_CONNECTION,
+              profile: new SshConnectionProfile({
+                connectionId: SSH_PROFILE.connectionId,
+                environmentId: SSH_PROFILE.environmentId,
+                label: SSH_PROFILE.label,
+                target: {
+                  ...SSH_PROFILE.target,
+                  environmentVariables: { TOKEN: "new-value" },
+                },
+              }),
+            }),
+            {
+              beforeRegister: Effect.sync(() => {
+                prepared = true;
+              }),
+              onFailure: Effect.sync(() => {
+                rolledBack = true;
+              }),
+            },
+          )
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("EnvironmentNotRegisteredError");
+        expect(prepared).toBe(false);
+        expect(rolledBack).toBe(false);
+        expect((yield* Ref.get(harness.storedTargets)).has(SSH_CONNECTION.environmentId)).toBe(
+          false,
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("lets removal win when it starts during update preparation", () =>
+    Effect.gen(function* () {
+      const preparationStarted = yield* Deferred.make<void>();
+      const continuePreparation = yield* Deferred.make<void>();
+      const removalStarted = yield* Deferred.make<void>();
+      const harness = yield* makeHarness([SSH_CONNECTION], [SSH_PROFILE]);
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const expectedEntry = Option.getOrThrow(
+          Option.fromUndefinedOr(
+            (yield* SubscriptionRef.get(registry.entries)).get(SSH_CONNECTION.environmentId),
+          ),
+        );
+        const update = yield* registry
+          .registerIfCurrent(
+            expectedEntry,
+            new SshConnectionRegistration({
+              target: SSH_CONNECTION,
+              profile: new SshConnectionProfile({
+                connectionId: SSH_PROFILE.connectionId,
+                environmentId: SSH_PROFILE.environmentId,
+                label: SSH_PROFILE.label,
+                target: {
+                  ...SSH_PROFILE.target,
+                  environmentVariables: { TOKEN: "new-value" },
+                },
+              }),
+            }),
+            {
+              beforeRegister: Deferred.succeed(preparationStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(continuePreparation)),
+              ),
+            },
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(preparationStarted);
+        const removal = yield* Effect.gen(function* () {
+          yield* Deferred.succeed(removalStarted, undefined);
+          yield* registry.remove(SSH_CONNECTION.environmentId);
+        }).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(removalStarted);
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(continuePreparation, undefined);
+        yield* Fiber.join(update);
+        yield* Fiber.join(removal);
+
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).has(SSH_CONNECTION.environmentId),
+        ).toBe(false);
+        expect((yield* Ref.get(harness.storedTargets)).has(SSH_CONNECTION.environmentId)).toBe(
+          false,
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("rolls back a prepared update when durable registration fails", () =>
+    Effect.gen(function* () {
+      const lifecycle = new Array<string>();
+      const harness = yield* makeHarness([SSH_CONNECTION], [SSH_PROFILE], [], {
+        beforeRegistrationRegister: () =>
+          Effect.sync(() => {
+            lifecycle.push("persist");
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new Persistence.ConnectionPersistenceError({
+                  operation: "register-connection",
+                  message: "Storage is unavailable.",
+                }),
+              ),
+            ),
+          ),
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const expectedEntry = Option.getOrThrow(
+          Option.fromUndefinedOr(
+            (yield* SubscriptionRef.get(registry.entries)).get(SSH_CONNECTION.environmentId),
+          ),
+        );
+        const error = yield* registry
+          .registerIfCurrent(
+            expectedEntry,
+            new SshConnectionRegistration({
+              target: SSH_CONNECTION,
+              profile: new SshConnectionProfile({
+                connectionId: SSH_PROFILE.connectionId,
+                environmentId: SSH_PROFILE.environmentId,
+                label: SSH_PROFILE.label,
+                target: {
+                  ...SSH_PROFILE.target,
+                  environmentVariables: { TOKEN: "new-value" },
+                },
+              }),
+            }),
+            {
+              beforeRegister: Effect.sync(() => {
+                lifecycle.push("prepare");
+              }),
+              onFailure: Effect.sync(() => {
+                lifecycle.push("rollback");
+              }),
+            },
+          )
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("ConnectionPersistenceError");
+        expect(lifecycle).toEqual(["prepare", "persist", "rollback"]);
+        expect(yield* Ref.get(harness.storedProfiles)).toEqual(
+          new Map([[SSH_PROFILE.connectionId, SSH_PROFILE]]),
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("rolls back a prepared update when durable registration defects", () =>
+    Effect.gen(function* () {
+      const lifecycle = new Array<string>();
+      const harness = yield* makeHarness([SSH_CONNECTION], [SSH_PROFILE], [], {
+        beforeRegistrationRegister: () => Effect.die("storage defect"),
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const expectedEntry = Option.getOrThrow(
+          Option.fromUndefinedOr(
+            (yield* SubscriptionRef.get(registry.entries)).get(SSH_CONNECTION.environmentId),
+          ),
+        );
+        const exit = yield* Effect.exit(
+          registry.registerIfCurrent(
+            expectedEntry,
+            new SshConnectionRegistration({
+              target: SSH_CONNECTION,
+              profile: SSH_PROFILE,
+            }),
+            {
+              beforeRegister: Effect.sync(() => {
+                lifecycle.push("prepare");
+              }),
+              onFailure: Effect.sync(() => {
+                lifecycle.push("rollback");
+              }),
+            },
+          ),
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(lifecycle).toEqual(["prepare", "rollback"]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("keeps the committed update when previous runtime cleanup defects", () =>
+    Effect.gen(function* () {
+      let cleanupCount = 0;
+      let rollbackCount = 0;
+      const harness = yield* makeHarness([SSH_CONNECTION], [SSH_PROFILE], [], {
+        beforeSessionRelease: () =>
+          Effect.sync(() => {
+            cleanupCount += 1;
+          }).pipe(Effect.andThen(Effect.die("cleanup defect"))),
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          SSH_CONNECTION.environmentId,
+          (state) => state.phase === "connected",
+        );
+        const expectedEntry = Option.getOrThrow(
+          Option.fromUndefinedOr(
+            (yield* SubscriptionRef.get(registry.entries)).get(SSH_CONNECTION.environmentId),
+          ),
+        );
+        const updatedProfile = new SshConnectionProfile({
+          connectionId: SSH_PROFILE.connectionId,
+          environmentId: SSH_PROFILE.environmentId,
+          label: SSH_PROFILE.label,
+          target: {
+            ...SSH_PROFILE.target,
+            environmentVariables: { TOKEN: "new-value" },
+          },
+        });
+
+        yield* registry.registerIfCurrent(
+          expectedEntry,
+          new SshConnectionRegistration({
+            target: SSH_CONNECTION,
+            profile: updatedProfile,
+          }),
+          {
+            onFailure: Effect.sync(() => {
+              rollbackCount += 1;
+            }),
+          },
+        );
+
+        expect(cleanupCount).toBe(1);
+        expect(rollbackCount).toBe(0);
+        expect(yield* Ref.get(harness.storedProfiles)).toEqual(
+          new Map([[updatedProfile.connectionId, updatedProfile]]),
+        );
+        expect(
+          Option.getOrThrow(
+            (yield* SubscriptionRef.get(registry.entries)).get(SSH_CONNECTION.environmentId)
+              ?.profile ?? Option.none(),
+          ),
+        ).toEqual(updatedProfile);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

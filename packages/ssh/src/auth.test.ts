@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   buildSshAskpassHelperDescriptor,
@@ -71,5 +71,23 @@ describe("ssh auth", () => {
         ["ssh-askpass.cmd", "ssh-askpass.ps1"],
       );
     }),
+  );
+
+  it.effect("removes inherited Windows keys that collide with the overlay by case", () =>
+    Effect.gen(function* () {
+      const env = yield* buildSshChildEnvironment({ baseEnv: { token: "new-value" } });
+
+      assert.equal(env.token, "new-value");
+      assert.notProperty(env, "TOKEN");
+      assert.equal(env.KEEP, "inherited");
+    }).pipe(
+      Effect.provideService(HostProcessPlatform, "win32"),
+      Effect.provideService(HostProcessEnvironment, {
+        TOKEN: "old-value",
+        KEEP: "inherited",
+      }),
+      Effect.provide(NodeServices.layer),
+      Effect.scoped,
+    ),
   );
 });

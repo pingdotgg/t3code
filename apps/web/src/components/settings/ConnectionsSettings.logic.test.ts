@@ -4,8 +4,87 @@ import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
+  parseSshEnvironmentVariables,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
+
+describe("parseSshEnvironmentVariables", () => {
+  it("trims names, preserves values, and ignores empty rows", () => {
+    expect(
+      parseSshEnvironmentVariables([
+        { name: " AWS_PROFILE ", value: "production" },
+        { name: "", value: "" },
+        { name: "TOKEN", value: "  keep spaces  " },
+      ]),
+    ).toEqual({ AWS_PROFILE: "production", TOKEN: "  keep spaces  " });
+  });
+
+  it("rejects names that overlap with object prototype properties", () => {
+    expect(() => parseSshEnvironmentVariables([{ name: "__proto__", value: "value" }])).toThrow(
+      "local SSH process",
+    );
+  });
+
+  it("does not count blank rows toward the variable limit", () => {
+    const blankRows = Array.from({ length: 129 }, () => ({ name: "", value: "" }));
+
+    expect(parseSshEnvironmentVariables([...blankRows, { name: "TOKEN", value: "value" }])).toEqual(
+      { TOKEN: "value" },
+    );
+    expect(() =>
+      parseSshEnvironmentVariables(
+        Array.from({ length: 129 }, (_, index) => ({
+          name: `VARIABLE_${index}`,
+          value: "value",
+        })),
+      ),
+    ).toThrow("limited to 128");
+  });
+
+  it("rejects variables above the combined encoded size limit", () => {
+    expect(() =>
+      parseSshEnvironmentVariables(
+        Array.from({ length: 9 }, (_, index) => ({
+          name: `TOKEN_${index}`,
+          value: "€".repeat(8_192),
+        })),
+      ),
+    ).toThrow("limited to 16 KiB in total");
+  });
+
+  it("rejects missing, invalid, and duplicate names", () => {
+    expect(() => parseSshEnvironmentVariables([{ name: "", value: "secret" }])).toThrow(
+      "needs a name",
+    );
+    expect(() => parseSshEnvironmentVariables([{ name: "BAD-NAME", value: "value" }])).toThrow(
+      "invalid name",
+    );
+    expect(() =>
+      parseSshEnvironmentVariables([
+        { name: "TOKEN", value: "one" },
+        { name: " TOKEN ", value: "two" },
+      ]),
+    ).toThrow("listed more than once");
+    expect(() =>
+      parseSshEnvironmentVariables([
+        { name: "TOKEN", value: "one" },
+        { name: "token", value: "two" },
+      ]),
+    ).toThrow("listed more than once");
+    expect(() => parseSshEnvironmentVariables([{ name: "TOKEN", value: "bad\0value" }])).toThrow(
+      "NUL character",
+    );
+  });
+
+  it("rejects names that can alter the local SSH process", () => {
+    expect(() => parseSshEnvironmentVariables([{ name: "path", value: "/tmp/bin" }])).toThrow(
+      "local SSH process",
+    );
+    expect(() =>
+      parseSshEnvironmentVariables([{ name: "DYLD_INSERT_LIBRARIES", value: "/tmp/payload" }]),
+    ).toThrow("local SSH process");
+  });
+});
 
 const baseWslState: DesktopWslState = {
   enabled: false,

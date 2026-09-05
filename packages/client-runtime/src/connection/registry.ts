@@ -70,6 +70,19 @@ export class EnvironmentRegistry extends Context.Service<
     readonly register: (
       registration: ConnectionRegistration,
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    readonly registerIfCurrent: (
+      expectedEntry: ConnectionCatalogEntry,
+      registration: ConnectionRegistration,
+      options?: {
+        readonly beforeRegister?: Effect.Effect<void, ConnectionAttemptError>;
+        readonly onFailure?: Effect.Effect<void>;
+      },
+    ) => Effect.Effect<
+      void,
+      | ConnectionAttemptError
+      | Persistence.ConnectionPersistenceError
+      | EnvironmentNotRegisteredError
+    >;
     readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
@@ -242,7 +255,14 @@ export const make = Effect.gen(function* () {
     const next = new Map(current);
     next.delete(environmentId);
     yield* SubscriptionRef.set(serviceScopes, next);
-    yield* Scope.close(lease.scope, Exit.void);
+    yield* Scope.close(lease.scope, Exit.void).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Connection supervisor cleanup failed after its lease was removed.", {
+          environmentId,
+          cause,
+        }),
+      ),
+    );
   });
 
   const createServiceScope = Effect.fn("EnvironmentRegistry.createServiceScope")(
@@ -387,24 +407,70 @@ export const make = Effect.gen(function* () {
     yield* createServiceScope(entry);
   });
 
-  const register = Effect.fn("EnvironmentRegistry.register")(function* (
+  const persistRegistrationLocked = Effect.fn("EnvironmentRegistry.persistRegistrationLocked")(
+    function* (registration: ConnectionRegistration) {
+      yield* registrations.register(registration);
+      yield* Ref.update(persistedTargetsByEnvironment, (current) => {
+        const next = new Map(current);
+        next.set(registration.target.environmentId, registration.target);
+        return next;
+      });
+    },
+  );
+
+  const registerLocked = Effect.fn("EnvironmentRegistry.registerLocked")(function* (
     registration: ConnectionRegistration,
   ) {
     const entry = connectionRegistrationCatalogEntry(registration);
-    const environmentId = entry.target.environmentId;
+    yield* persistRegistrationLocked(registration);
+    yield* installEntryLocked(entry);
+  });
+
+  const register = Effect.fn("EnvironmentRegistry.register")(function* (
+    registration: ConnectionRegistration,
+  ) {
+    const environmentId = registration.target.environmentId;
     yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
           return;
         }
-        yield* registrations.register(registration);
-        yield* Ref.update(persistedTargetsByEnvironment, (current) => {
-          const next = new Map(current);
-          next.set(environmentId, registration.target);
-          return next;
-        });
-        yield* installEntryLocked(entry);
+        yield* registerLocked(registration);
+      }),
+    );
+  });
+
+  const registerIfCurrent = Effect.fn("EnvironmentRegistry.registerIfCurrent")(function* (
+    expectedEntry: ConnectionCatalogEntry,
+    registration: ConnectionRegistration,
+    options?: {
+      readonly beforeRegister?: Effect.Effect<void, ConnectionAttemptError>;
+      readonly onFailure?: Effect.Effect<void>;
+    },
+  ) {
+    const environmentId = registration.target.environmentId;
+    yield* withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        const currentEntry = (yield* SubscriptionRef.get(entries)).get(environmentId);
+        if (currentEntry === undefined || !Equal.equals(currentEntry, expectedEntry)) {
+          return yield* new EnvironmentNotRegisteredError({ environmentId });
+        }
+        yield* Effect.uninterruptible(
+          Effect.gen(function* () {
+            const exit = yield* Effect.exit(
+              (options?.beforeRegister ?? Effect.void).pipe(
+                Effect.andThen(persistRegistrationLocked(registration)),
+              ),
+            );
+            if (Exit.isFailure(exit)) {
+              yield* options?.onFailure ?? Effect.void;
+              return yield* Effect.failCause(exit.cause);
+            }
+            yield* installEntryLocked(connectionRegistrationCatalogEntry(registration));
+          }),
+        );
       }),
     );
   });
@@ -663,6 +729,7 @@ export const make = Effect.gen(function* () {
     networkStatus,
     start,
     register,
+    registerIfCurrent,
     registerPlatform,
     reconcilePlatform,
     remove,

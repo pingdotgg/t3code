@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -13,11 +14,17 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   baseSshArgs,
   getLastNonEmptyOutputLine,
+  isSshEnvironmentNameConfiguredForSend,
+  managedRemoteLaunchCommandArgs,
   parseSshResolveOutput,
+  parseSshSendEnvironmentPatterns,
+  redactSshOutput,
   resolveRemoteT3CliPackageSpec,
+  resolveSshTarget,
   runSshCommand,
+  sshEnvironmentVariablesEqual,
 } from "./command.ts";
-import { SshCommandError } from "./errors.ts";
+import { SshCommandError, SshInvalidTargetError } from "./errors.ts";
 
 const encoder = new TextEncoder();
 
@@ -30,6 +37,23 @@ const makeFailedProcess = (input: { readonly stdout: string; readonly stderr?: s
     stderr: stderrStream,
     all: Stream.empty,
     exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    stdin: Sink.drain,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
+};
+
+const makeSuccessfulProcess = (stdout: string) => {
+  const stdoutStream = Stream.make(encoder.encode(stdout));
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(123),
+    stdout: stdoutStream,
+    stderr: Stream.empty,
+    all: stdoutStream,
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
     stdin: Sink.drain,
@@ -65,6 +89,19 @@ const makeNeverFinishingProcess = () => {
 };
 
 describe("ssh command", () => {
+  it.effect("compares SSH environment overlays without exposing them in connection keys", () =>
+    Effect.sync(() => {
+      assert.isTrue(
+        sshEnvironmentVariablesEqual(
+          { AWS_PROFILE: "production", TOKEN: "secret" },
+          { TOKEN: "secret", AWS_PROFILE: "production" },
+        ),
+      );
+      assert.isFalse(sshEnvironmentVariablesEqual({ TOKEN: "old" }, { TOKEN: "replacement" }));
+      assert.isFalse(sshEnvironmentVariablesEqual(undefined, { EMPTY_VALUE: "" }));
+    }),
+  );
+
   it.effect("parses resolved ssh config output into a target", () =>
     Effect.sync(() => {
       assert.deepEqual(
@@ -79,6 +116,19 @@ describe("ssh command", () => {
           port: 2222,
         },
       );
+    }),
+  );
+
+  it.effect("matches exact and wildcard SendEnv entries, including removals", () =>
+    Effect.sync(() => {
+      const patterns = parseSshSendEnvironmentPatterns(
+        ["sendenv TOKEN", "sendenv LC_*", "sendenv -LC_SECRET", ""].join("\n"),
+      );
+      assert.deepEqual(patterns, ["TOKEN", "LC_*", "-LC_SECRET"]);
+      assert.isTrue(isSshEnvironmentNameConfiguredForSend("TOKEN", patterns));
+      assert.isTrue(isSshEnvironmentNameConfiguredForSend("LC_ALL", patterns));
+      assert.isFalse(isSshEnvironmentNameConfiguredForSend("LC_SECRET", patterns));
+      assert.isFalse(isSshEnvironmentNameConfiguredForSend("OTHER", patterns));
     }),
   );
 
@@ -175,9 +225,298 @@ describe("ssh command", () => {
     }).pipe(Effect.provide(processLayer));
   });
 
-  it.effect("redacts credentials from stdout in non-zero command failures", () => {
+  it.effect("adds target environment variables to the local ssh process", () => {
+    let spawnedEnvironment: Readonly<Record<string, string | undefined>> | undefined;
+    const spawner = ChildProcessSpawner.make((command) => {
+      const childProcess = command as unknown as {
+        readonly options: {
+          readonly env?: Readonly<Record<string, string | undefined>>;
+          readonly extendEnv?: boolean;
+        };
+      };
+      spawnedEnvironment = childProcess.options.env;
+      assert.isUndefined(childProcess.options.extendEnv);
+      return Effect.succeed(makeFailedProcess({ stdout: "", stderr: "expected failure" }));
+    });
+    const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    const processLayer = Layer.mergeAll(NodeServices.layer, spawnerLayer);
+
+    return Effect.gen(function* () {
+      yield* Effect.result(
+        runSshCommand(
+          {
+            alias: "devbox",
+            hostname: "devbox.example.com",
+            username: "julius",
+            port: 2222,
+            environmentVariables: {
+              AWS_PROFILE: "production",
+              EMPTY_VALUE: "",
+            },
+          },
+          { remoteCommandArgs: ["true"] },
+        ),
+      );
+
+      assert.equal(spawnedEnvironment?.AWS_PROFILE, "production");
+      assert.equal(spawnedEnvironment?.EMPTY_VALUE, "");
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("terminates SSH options before the host argument", () => {
+    let spawnedArgs: ReadonlyArray<string> = [];
+    const spawner = ChildProcessSpawner.make((command) => {
+      spawnedArgs = command._tag === "StandardCommand" ? command.args : [];
+      return Effect.succeed(makeSuccessfulProcess(""));
+    });
+    const processLayer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    return Effect.gen(function* () {
+      yield* runSshCommand(
+        {
+          alias: "-oProxyCommand=bad",
+          hostname: "ignored.example.com",
+          username: null,
+          port: null,
+        },
+        { remoteCommandArgs: ["true"] },
+      );
+
+      const separatorIndex = spawnedArgs.indexOf("--");
+      assert.isAtLeast(separatorIndex, 0);
+      assert.equal(spawnedArgs[separatorIndex + 1], "-oProxyCommand=bad");
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("validates SendEnv before resolving SSH config with the forwarded variables", () => {
+    const spawnedEnvironments: Array<Readonly<Record<string, string | undefined>> | undefined> = [];
+    const spawner = ChildProcessSpawner.make((command) => {
+      spawnedEnvironments.push(
+        command._tag === "StandardCommand" ? command.options.env : undefined,
+      );
+      return Effect.succeed(
+        makeSuccessfulProcess(
+          ["hostname devbox.example.com", "user julius", "port 2222", "sendenv TOKEN", ""].join(
+            "\n",
+          ),
+        ),
+      );
+    });
+    const processLayer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    return Effect.gen(function* () {
+      const target = yield* resolveSshTarget("devbox", { TOKEN: "forwarded-value" });
+
+      assert.isUndefined(spawnedEnvironments[0]?.TOKEN);
+      assert.isUndefined(spawnedEnvironments[1]?.TOKEN);
+      assert.equal(spawnedEnvironments[2]?.TOKEN, "forwarded-value");
+      assert.deepEqual(target, {
+        alias: "devbox",
+        hostname: "devbox.example.com",
+        username: "julius",
+        port: 2222,
+        environmentVariables: { TOKEN: "forwarded-value" },
+      });
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("removes ambient managed values from baseline SSH config probes", () => {
+    const probeValues = new Array<string | undefined>();
+    const spawner = ChildProcessSpawner.make((command) => {
+      const environment = command._tag === "StandardCommand" ? command.options.env : undefined;
+      probeValues.push(environment?.TOKEN);
+      const sendEnvironment = environment?.TOKEN !== "ambient-blocked";
+      return Effect.succeed(
+        makeSuccessfulProcess(
+          [
+            "hostname devbox.example.com",
+            "user julius",
+            "port 2222",
+            ...(sendEnvironment ? ["sendenv TOKEN"] : []),
+            "",
+          ].join("\n"),
+        ),
+      );
+    });
+    const processLayer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HostProcessEnvironment, { TOKEN: "ambient-blocked" }),
+    );
+
+    return Effect.gen(function* () {
+      const target = yield* resolveSshTarget("devbox", { TOKEN: "saved-allowed" });
+
+      assert.deepEqual(probeValues, [undefined, undefined, "saved-allowed"]);
+      assert.equal(target.environmentVariables?.TOKEN, "saved-allowed");
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("validates SendEnv with the managed remote command", () => {
+    const spawnedArgs: Array<ReadonlyArray<string>> = [];
+    const spawner = ChildProcessSpawner.make((command) => {
+      const args = command._tag === "StandardCommand" ? command.args : [];
+      spawnedArgs.push(args);
+      const commandSpecificConfig = args.includes("sh");
+      return Effect.succeed(
+        makeSuccessfulProcess(
+          [
+            "hostname devbox.example.com",
+            "user julius",
+            "port 2222",
+            ...(commandSpecificConfig ? ["sendenv TOKEN"] : []),
+            "",
+          ].join("\n"),
+        ),
+      );
+    });
+    const processLayer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    return Effect.gen(function* () {
+      const target = yield* resolveSshTarget("devbox", { TOKEN: "forwarded-value" });
+
+      assert.equal(spawnedArgs.length, 3);
+      assert.notInclude(spawnedArgs[0] ?? [], "sh");
+      assert.include(spawnedArgs[1] ?? [], "sh");
+      assert.include(spawnedArgs[2] ?? [], "sh");
+      assert.equal(target.environmentVariables?.TOKEN, "forwarded-value");
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("revalidates with the managed command for the final resolved target", () => {
+    const spawnedArgs = new Array<ReadonlyArray<string>>();
+    let commandProbeCount = 0;
+    const spawner = ChildProcessSpawner.make((command) => {
+      const args = command._tag === "StandardCommand" ? command.args : [];
+      spawnedArgs.push(args);
+      if (!args.includes("sh")) {
+        return Effect.succeed(makeSuccessfulProcess("hostname first.example.com\nsendenv TOKEN\n"));
+      }
+      commandProbeCount += 1;
+      const hostname = commandProbeCount <= 2 ? "second.example.com" : "final.example.com";
+      return Effect.succeed(makeSuccessfulProcess(`hostname ${hostname}\nsendenv TOKEN\n`));
+    });
+    const processLayer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    return Effect.gen(function* () {
+      const target = yield* resolveSshTarget("devbox", { TOKEN: "forwarded-value" });
+
+      assert.equal(spawnedArgs.length, 7);
+      assert.deepEqual(spawnedArgs[5]?.slice(-5), managedRemoteLaunchCommandArgs(target));
+      assert.deepEqual(spawnedArgs[6]?.slice(-5), managedRemoteLaunchCommandArgs(target));
+      assert.equal(target.hostname, "final.example.com");
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("validates SendEnv with the requested SSH username and port", () => {
+    const spawnedArgs = new Array<ReadonlyArray<string>>();
+    const spawner = ChildProcessSpawner.make((command) => {
+      const args = command._tag === "StandardCommand" ? command.args : [];
+      spawnedArgs.push(args);
+      const usesRequestedIdentity =
+        args.includes("developer@devbox") &&
+        args.some((value, index) => value === "-p" && args[index + 1] === "2200");
+      return Effect.succeed(
+        makeSuccessfulProcess(
+          [
+            "hostname devbox.example.com",
+            "user developer",
+            "port 2200",
+            ...(usesRequestedIdentity && args.includes("sh") ? ["sendenv TOKEN"] : []),
+            "",
+          ].join("\n"),
+        ),
+      );
+    });
+    const processLayer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    return Effect.gen(function* () {
+      const target = yield* resolveSshTarget(
+        "devbox",
+        { TOKEN: "forwarded-value" },
+        { username: "developer", port: 2200 },
+      );
+
+      assert.equal(spawnedArgs.length, 3);
+      for (const args of spawnedArgs) {
+        assert.include(args, "developer@devbox");
+        assert.isTrue(args.some((value, index) => value === "-p" && args[index + 1] === "2200"));
+      }
+      assert.equal(target.username, "developer");
+      assert.equal(target.port, 2200);
+      assert.equal(target.environmentVariables?.TOKEN, "forwarded-value");
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("rejects variables not selected by SendEnv", () => {
     const spawner = ChildProcessSpawner.make(() =>
-      Effect.succeed(makeFailedProcess({ stdout: '{"credential":"pairing-secret"}\n' })),
+      Effect.succeed(
+        makeSuccessfulProcess(
+          ["hostname devbox.example.com", "user julius", "port 2222", "sendenv LANG", ""].join(
+            "\n",
+          ),
+        ),
+      ),
+    );
+    const processLayer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    return Effect.gen(function* () {
+      const error = yield* resolveSshTarget("devbox", { TOKEN: "value" }).pipe(Effect.flip);
+      assert.instanceOf(error, SshInvalidTargetError);
+      assert.include(error.message, "Add TOKEN to SendEnv for devbox");
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("rejects a variable removed from SendEnv by the forwarded environment", () => {
+    let resolveCount = 0;
+    const spawner = ChildProcessSpawner.make(() => {
+      resolveCount += 1;
+      return Effect.succeed(
+        makeSuccessfulProcess(
+          resolveCount <= 2
+            ? "hostname devbox.example.com\nsendenv TOKEN\n"
+            : "hostname devbox.example.com\n",
+        ),
+      );
+    });
+    const processLayer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    return Effect.gen(function* () {
+      const error = yield* resolveSshTarget("devbox", { TOKEN: "value" }).pipe(Effect.flip);
+      assert.instanceOf(error, SshInvalidTargetError);
+      assert.include(error.message, "no longer selects TOKEN");
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("redacts credentials and forwarded values in non-zero command failures", () => {
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(
+        makeFailedProcess({
+          stdout: '{"credential":"pairing-secret"}\n',
+          stderr: "Authentication failed for forwarded-secret\n",
+        }),
+      ),
     );
     const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
     const processLayer = Layer.mergeAll(NodeServices.layer, spawnerLayer);
@@ -190,6 +529,7 @@ describe("ssh command", () => {
             hostname: "devbox.example.com",
             username: "julius",
             port: 2222,
+            environmentVariables: { TOKEN: "forwarded-secret" },
           },
           { remoteCommandArgs: ["sh", "-s"] },
         ),
@@ -198,11 +538,27 @@ describe("ssh command", () => {
       assert.isTrue(Result.isFailure(result));
       if (Result.isFailure(result)) {
         assert.instanceOf(result.failure, SshCommandError);
-        assert.equal(result.failure.message, '{"credential":"[redacted]"}');
+        assert.equal(result.failure.message, "Authentication failed for [redacted]");
         assert.equal(result.failure.stdout, '{"credential":"[redacted]"}\n');
+        assert.equal(result.failure.stderr, "Authentication failed for [redacted]\n");
+        assert.notInclude(result.failure.message, "forwarded-secret");
+        assert.notInclude(result.failure.stdout ?? "", "forwarded-secret");
+        assert.notInclude(result.failure.stderr, "forwarded-secret");
       }
     }).pipe(Effect.provide(processLayer));
   });
+
+  it.effect("redacts longer overlapping SSH environment values first", () =>
+    Effect.sync(() => {
+      assert.equal(
+        redactSshOutput("token-long token", {
+          SHORT: "token",
+          LONG: "token-long",
+        }),
+        "[redacted] [redacted]",
+      );
+    }),
+  );
 
   it.effect("fails commands that never finish", () => {
     const spawner = ChildProcessSpawner.make(() => Effect.succeed(makeNeverFinishingProcess()));
