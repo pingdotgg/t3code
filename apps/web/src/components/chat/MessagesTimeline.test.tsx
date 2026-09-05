@@ -1,4 +1,11 @@
-import { CheckpointRef, EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  EnvironmentId,
+  MessageId,
+  RunId,
+  ThreadId,
+  type OrchestrationV2TurnItemStatus,
+} from "@t3tools/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -206,6 +213,18 @@ beforeAll(async () => {
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const MESSAGE_CREATED_AT = "2026-03-17T19:12:28.000Z";
+
+function buildSubagentEntry(id: string, status: OrchestrationV2TurnItemStatus) {
+  return {
+    id,
+    kind: "event",
+    createdAt: MESSAGE_CREATED_AT,
+    projectedItem: {
+      visibility: "local",
+      item: { id, type: "subagent", runId: "run-1", subagentId: id, status },
+    },
+  } as never;
+}
 
 function buildProps() {
   return {
@@ -1563,59 +1582,50 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('aria-label="Hidden work includes a failure"');
   });
 
-  it("renders live subagent progress on the persistent linked card", async () => {
+  it("summarizes a run's agents and keeps failures visible", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
+        onOpenAgents={() => {}}
         timelineEntries={[
-          {
-            id: "subagent-progress",
-            kind: "event",
-            createdAt: MESSAGE_CREATED_AT,
-            projectedItem: {
-              position: 0,
-              visibility: "local",
-              sourceThreadId: "thread-1",
-              sourceItemId: "subagent-progress",
-              item: {
-                id: "subagent-progress",
-                threadId: "thread-1",
-                runId: "run-1",
-                nodeId: "node-subagent-1",
-                providerThreadId: "provider-thread-1",
-                providerTurnId: "provider-turn-1",
-                nativeItemRef: null,
-                parentItemId: null,
-                ordinal: 1,
-                status: "running",
-                title: "Package audit",
-                startedAt: null,
-                completedAt: null,
-                updatedAt: {},
-                type: "subagent",
-                subagentId: "node-subagent-1",
-                origin: "provider_native",
-                driver: "claudeAgent",
-                providerInstanceId: "claudeAgent",
-                childThreadId: "thread-subagent-1",
-                prompt: "Inspect the package",
-                progress: "Reading src/index.ts",
-                result: null,
-              },
-            } as never,
-          },
+          buildSubagentEntry("agent-running", "running"),
+          buildSubagentEntry("agent-failed", "failed"),
         ]}
       />,
     );
 
-    expect(markup).toContain('data-v2-item-type="subagent"');
-    expect(markup).toContain('aria-label="Open Package audit"');
-    expect(markup).toContain("Reading src/index.ts");
-    expect(markup).not.toContain("Inspect the package");
+    expect(markup).toContain('data-agent-spawn-cta="true"');
+    expect(markup).toContain("Kicked off 2 agents");
+    expect(markup).toContain("1 working · ");
+    expect(markup).toContain('<span class="text-destructive">1 failed</span>');
+    expect(markup).toContain(
+      'aria-label="Kicked off 2 agents, 1 working · 1 failed. Open Agents panel"',
+    );
+    expect(markup).toContain("Open Agents");
     expect(markup).not.toContain('data-v2-subagent-result-disclosure="true"');
-    expect(markup).not.toContain("Work Log");
+    expect(markup.match(/data-agent-spawn-cta="true"/gu)).toHaveLength(1);
   });
+
+  it.each(["idle", "completed", "running", "failed"] as const)(
+    "shows resumable idle agents without a completion checkmark alongside %s agents",
+    (status) => {
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          onOpenAgents={() => {}}
+          timelineEntries={[
+            buildSubagentEntry("idle-agent", "idle"),
+            buildSubagentEntry("other-agent", status),
+          ]}
+        />,
+      );
+
+      expect(markup).toContain(`${status === "idle" ? 2 : 1} idle`);
+      expect(markup).not.toContain("✓");
+      expect(markup).not.toContain("completed");
+    },
+  );
 
   it("discloses the full Codex subagent result without projecting child events", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");

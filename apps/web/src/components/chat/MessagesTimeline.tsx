@@ -22,6 +22,7 @@ import {
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
+const NOOP_OPEN_AGENTS = () => {};
 
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
@@ -214,6 +215,7 @@ interface TimelineRowSharedState {
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
+  onOpenAgents: () => void;
   onForkFromRun: (input: {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
@@ -312,6 +314,7 @@ interface MessagesTimelineProps {
   routeThreadKey: string;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
+  onOpenAgents?: () => void;
   parentThreadLink?: {
     readonly threadId: ThreadId;
     readonly title: string;
@@ -380,6 +383,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   routeThreadKey,
   onOpenTurnDiff,
   onOpenThread,
+  onOpenAgents,
   parentThreadLink = null,
   onForkFromRun,
   onRollbackCheckpoint,
@@ -553,6 +557,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const projection = deriveMessagesTimelineRowsWithState(
       {
         timelineEntries,
+        summarizeSubagents: onOpenAgents !== undefined,
         latestRun,
         runningRunId,
         expandedRunIds,
@@ -574,6 +579,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     routeThreadKey,
     workspaceRoot,
     timelineEntries,
+    onOpenAgents,
     latestRun,
     runningRunId,
     expandedRunIds,
@@ -737,6 +743,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onFileDownload,
       onOpenTurnDiff,
       onOpenThread,
+      onOpenAgents: onOpenAgents ?? NOOP_OPEN_AGENTS,
       onForkFromRun,
       onRollbackCheckpoint,
       onToggleTurnFold,
@@ -765,6 +772,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onFileDownload,
       onOpenTurnDiff,
       onOpenThread,
+      onOpenAgents,
       onForkFromRun,
       onRollbackCheckpoint,
       onToggleTurnFold,
@@ -1275,6 +1283,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                   row.kind === "work-live" ||
                   row.kind === "work-toggle" ||
                   row.kind === "thinking" ||
+                  row.kind === "agent-spawn" ||
                   row.kind === "event" ||
                   row.kind === "attempt-fold"
                 ? "pb-2"
@@ -1312,6 +1321,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
       {row.kind === "thinking" ? <ThinkingTimelineRow /> : null}
+      {row.kind === "agent-spawn" ? <AgentSpawnCtaRow row={row} /> : null}
       {row.kind === "event" ? <V2EventTimelineRow row={row} /> : null}
     </div>
   );
@@ -2026,6 +2036,47 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
       };
   }
 }
+
+const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "agent-spawn" }>;
+}) {
+  const { onOpenAgents } = use(TimelineRowCtx);
+  const live = row.working > 0;
+  const lead = `${live || row.idle > 0 ? "Kicked off" : "Ran"} ${row.count} agent${row.count === 1 ? "" : "s"}`;
+  const settled = !live && row.idle === 0 && row.failed === 0 && row.stopped === 0;
+  const progress = [
+    ...(live ? [`${row.working} working`] : []),
+    ...(row.idle > 0 ? [`${row.idle} idle`] : []),
+    ...(row.stopped > 0 ? [`${row.stopped} stopped`] : []),
+  ].join(" · ");
+  const status = settled
+    ? "completed"
+    : [progress, ...(row.failed > 0 ? [`${row.failed} failed`] : [])].filter(Boolean).join(" · ");
+
+  return (
+    <button
+      type="button"
+      aria-label={`${lead}, ${status}. Open Agents panel`}
+      onClick={onOpenAgents}
+      data-v2-item-type="subagent"
+      data-agent-spawn-cta="true"
+      className="flex w-full cursor-pointer items-center gap-2 rounded-md border border-border/60 bg-card/50 px-2.5 py-1.5 text-left text-[13px] transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+    >
+      <BotIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <span className="min-w-0 truncate font-medium">{lead}</span>
+      <span className="ml-auto flex min-w-0 items-center gap-2 font-mono text-[.7rem] text-muted-foreground">
+        <span className="truncate">
+          {settled ? <span aria-hidden="true">✓ </span> : null}
+          {row.failed > 0 ? (progress ? `${progress} · ` : null) : status}
+          {row.failed > 0 ? <span className="text-destructive">{row.failed} failed</span> : null}
+        </span>
+        <span className="shrink-0 text-info-foreground">{live ? "Open Agents ▸" : "View ▸"}</span>
+      </span>
+    </button>
+  );
+});
 
 function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event" }> }) {
   const ctx = use(TimelineRowCtx);
