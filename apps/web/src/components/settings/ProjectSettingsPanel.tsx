@@ -54,6 +54,7 @@ import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
 import { readLocalApi } from "../../localApi";
 import {
   buildProjectScript,
+  clearProjectScriptLifecycleConflicts,
   commandForProjectScript,
   nextProjectScriptId,
 } from "../../projectScripts";
@@ -639,24 +640,13 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
           scripts.map((script) => script.id),
         );
         const nextScript = buildProjectScript(nextId, input);
-        const nextScripts = input.runOnWorktreeCreate
-          ? [
-              ...scripts.map((script) =>
-                script.runOnWorktreeCreate ? { ...script, runOnWorktreeCreate: false } : script,
-              ),
-              nextScript,
-            ]
-          : [...scripts, nextScript];
+        const nextScripts = [...clearProjectScriptLifecycleConflicts(scripts, input), nextScript];
         return persistScripts(nextScripts, input.keybinding, commandForProjectScript(nextId));
       }
 
       const updatedScript = buildProjectScript(scriptId, input);
-      const nextScripts = scripts.map((script) =>
-        script.id === scriptId
-          ? updatedScript
-          : input.runOnWorktreeCreate
-            ? { ...script, runOnWorktreeCreate: false }
-            : script,
+      const nextScripts = clearProjectScriptLifecycleConflicts(scripts, input).map((script) =>
+        script.id === scriptId ? updatedScript : script,
       );
       return persistScripts(nextScripts, input.keybinding, commandForProjectScript(scriptId));
     },
@@ -678,6 +668,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         command: fileScript.command,
         icon: fileScript.icon ?? "play",
         runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
+        runOnWorktreeRemove: fileScript.runOnWorktreeRemove ?? false,
         keybinding: null,
         previewUrl: fileScript.previewUrl ?? null,
         autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
@@ -1197,6 +1188,11 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                       {script.runOnWorktreeCreate ? (
                         <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-[11px] font-normal text-muted-foreground">
                           setup
+                        </span>
+                      ) : null}
+                      {script.runOnWorktreeRemove ? (
+                        <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-[11px] font-normal text-muted-foreground">
+                          teardown
                         </span>
                       ) : null}
                       {script.previewUrl ? (

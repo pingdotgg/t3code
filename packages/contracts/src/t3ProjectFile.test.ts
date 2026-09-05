@@ -16,6 +16,7 @@ describe("T3ProjectFile", () => {
           command: "pnpm dev",
           icon: "play",
           runOnWorktreeCreate: false,
+          runOnWorktreeRemove: true,
           previewUrl: "http://localhost:3000",
           autoOpenPreview: true,
         },

@@ -155,7 +155,9 @@ export function resolveProjectScriptTerminalId(input: {
 }
 
 export function projectScriptMenuLabel(script: ProjectScript): string {
-  return script.runOnWorktreeCreate ? `${script.name} (setup)` : script.name;
+  if (script.runOnWorktreeCreate) return `${script.name} (setup)`;
+  if (script.runOnWorktreeRemove) return `${script.name} (teardown)`;
+  return script.name;
 }
 
 export function projectScriptMenuIcon(icon: ProjectScript["icon"]) {

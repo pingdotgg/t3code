@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
 import {
@@ -31,6 +32,7 @@ import {
 import * as GitManager from "./GitManager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 
 export class GitWorkflowService extends Context.Service<
   GitWorkflowService,
@@ -146,6 +148,8 @@ export const make = Effect.gen(function* () {
   const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
+  const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const ensureGit = Effect.fn("GitWorkflowService.ensureGit")(function* (
     operation: string,
@@ -328,9 +332,32 @@ export const make = Effect.gen(function* () {
         Effect.andThen(git.resolveRemoteTrackingCommit(input)),
       ),
     removeWorktree: (input) =>
-      ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
-        Effect.andThen(git.removeWorktree(input)),
-      ),
+      Effect.gen(function* () {
+        yield* ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd);
+        if (yield* fileSystem.exists(input.path).pipe(Effect.orElseSucceed(() => false))) {
+          yield* projectSetupScriptRunner
+            .runBeforeWorktreeRemove({
+              projectCwd: input.cwd,
+              worktreePath: input.path,
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new GitCommandError({
+                    operation: "GitWorkflowService.removeWorktree",
+                    command: "project teardown script",
+                    cwd: input.path,
+                    exitCode: cause.exitCode,
+                    stdoutLength: cause.stdoutLength,
+                    stderrLength: cause.stderrLength,
+                    detail: cause.message,
+                    cause,
+                  }),
+              ),
+            );
+        }
+        yield* git.removeWorktree(input);
+      }),
     pruneWorktrees: (input) =>
       ensureGitCommand("GitWorkflowService.pruneWorktrees", input.cwd).pipe(
         Effect.andThen(git.pruneWorktrees(input)),

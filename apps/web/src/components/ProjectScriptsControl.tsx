@@ -113,6 +113,7 @@ export default function ProjectScriptsControl({
       command: fileScript.command,
       icon: fileScript.icon ?? "play",
       runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
+      runOnWorktreeRemove: fileScript.runOnWorktreeRemove ?? false,
       keybinding: null,
       previewUrl: fileScript.previewUrl ?? null,
       autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
@@ -195,6 +196,12 @@ export default function ProjectScriptsControl({
                   keybindings,
                   commandForProjectScript(script.id),
                 );
+                const lifecycleLabel = [
+                  script.runOnWorktreeCreate && "setup",
+                  script.runOnWorktreeRemove && "teardown",
+                ]
+                  .filter(Boolean)
+                  .join(", ");
                 return (
                   <MenuItem
                     key={script.id}
@@ -203,7 +210,7 @@ export default function ProjectScriptsControl({
                   >
                     <ScriptIcon icon={script.icon} className="size-4" />
                     <span className="truncate">
-                      {script.runOnWorktreeCreate ? `${script.name} (setup)` : script.name}
+                      {lifecycleLabel ? `${script.name} (${lifecycleLabel})` : script.name}
                     </span>
                     <span className="relative ms-auto flex h-6 min-w-6 items-center justify-end">
                       {shortcutLabel && (
