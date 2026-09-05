@@ -433,7 +433,8 @@ function disabledManagedRelayClient(relayUrl: string): ManagedRelayClient["Servi
   });
 }
 
-const make = Effect.fn("ManagedRelayClient.make")(function* (
+/** @public Service construction is part of the canonical Effect module API. */
+export const make = Effect.fn("ManagedRelayClient.make")(function* (
   options: ManagedRelayClientLayerOptions,
 ) {
   const relayUrl = normalizeSecureRelayUrl(options.relayUrl);

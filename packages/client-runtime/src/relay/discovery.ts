@@ -102,7 +102,8 @@ function relayAccountId(clerkToken: string): Option.Option<string> {
   }
 }
 
-const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
+/** @public Service construction is part of the canonical Effect module API. */
+export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
   const relay = yield* ManagedRelay.ManagedRelayClient;
   const session = yield* ClientCapabilities.CloudSession;
   const connectivity = yield* Connectivity.Connectivity;

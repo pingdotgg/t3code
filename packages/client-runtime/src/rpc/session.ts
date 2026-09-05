@@ -145,7 +145,10 @@ function mapSessionRpcError(
   }
 }
 
-const make = Effect.fn("RpcSessionFactory.make")(function* (options: RpcSessionOptions = {}) {
+/** @public Service construction is part of the canonical Effect module API. */
+export const make = Effect.fn("RpcSessionFactory.make")(function* (
+  options: RpcSessionOptions = {},
+) {
   const webSocketConstructor = yield* Socket.WebSocketConstructor;
   const serverConfigInput: ServerConfigSubscriptionInput = {
     ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
