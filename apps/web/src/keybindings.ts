@@ -9,6 +9,7 @@ import {
   type ThreadJumpKeybindingCommand,
 } from "@t3tools/contracts";
 import { isMacPlatform } from "./lib/utils";
+import { projectScriptIdFromCommand } from "./projectScripts";
 
 export interface ShortcutEventLike {
   type?: string;
@@ -233,6 +234,24 @@ export function resolveShortcutCommand(
     return binding.command;
   }
   return null;
+}
+
+/** App shortcuts use the primary environment; script shortcuts belong to the active project. */
+export function resolveChatShortcutCommand(
+  event: ShortcutEventLike,
+  primaryKeybindings: ResolvedKeybindingsConfig,
+  activeKeybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): KeybindingCommand | null {
+  const primaryCommand = resolveShortcutCommand(event, primaryKeybindings, options);
+  if (primaryCommand !== null && projectScriptIdFromCommand(primaryCommand) === null) {
+    return primaryCommand;
+  }
+
+  const activeCommand = resolveShortcutCommand(event, activeKeybindings, options);
+  return activeCommand !== null && projectScriptIdFromCommand(activeCommand) !== null
+    ? activeCommand
+    : null;
 }
 
 export function formatShortcutKeyLabel(key: string): string {
