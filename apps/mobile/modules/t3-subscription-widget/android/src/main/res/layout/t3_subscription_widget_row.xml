@@ -1,0 +1,10 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingTop="8dp">
+  <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+    <TextView android:id="@+id/t3_widget_label" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:textSize="12sp" android:textStyle="bold" android:textColor="@color/t3_widget_foreground" android:maxLines="1" android:ellipsize="end" />
+    <TextView android:id="@+id/t3_widget_percent" android:layout_width="wrap_content" android:layout_height="wrap_content" android:paddingStart="8dp" android:textSize="12sp" android:textColor="@color/t3_widget_foreground" />
+  </LinearLayout>
+  <TextView android:id="@+id/t3_widget_window" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="10sp" android:textColor="@color/t3_widget_secondary" android:maxLines="1" android:ellipsize="end" />
+  <ProgressBar android:id="@+id/t3_widget_progress" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="6dp" android:max="100" android:progressTint="#0284c7" />
+  <TextView android:id="@+id/t3_widget_reset" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="10sp" android:textColor="@color/t3_widget_secondary" android:maxLines="1" android:ellipsize="end" />
+</LinearLayout>
