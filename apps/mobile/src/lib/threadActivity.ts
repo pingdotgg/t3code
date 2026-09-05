@@ -207,6 +207,7 @@ const turnFoldRowsCache = new WeakMap<
   ThreadFeedEntry,
   Extract<ThreadFeedEntry, { readonly type: "turn-fold" }>
 >();
+let cachedThinkingRow: Extract<ThreadFeedEntry, { readonly type: "thinking" }> | null = null;
 
 export function isContextCompactionActivityGroup(
   entry: Extract<ThreadFeedEntry, { readonly type: "activity-group" }>,
@@ -1588,12 +1589,9 @@ export function deriveThreadFeedPresentation(
   return result;
 }
 
-const THINKING_ROW_ID = "thinking";
-let cachedThinkingRow: Extract<ThreadFeedEntry, { readonly type: "thinking" }> | null = null;
-
 function thinkingRow(createdAt: string, turnId: TurnId | null) {
   if (cachedThinkingRow?.createdAt !== createdAt || cachedThinkingRow.turnId !== turnId) {
-    cachedThinkingRow = { type: "thinking", id: THINKING_ROW_ID, createdAt, turnId };
+    cachedThinkingRow = { type: "thinking", id: "thinking", createdAt, turnId };
   }
   return cachedThinkingRow;
 }

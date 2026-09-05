@@ -2297,9 +2297,69 @@ describe("buildThreadFeed", () => {
       rows[1],
     );
     // Idle threads show no live activity.
-    expect(deriveThreadFeedPresentation(feed, latestTurn, new Set(), new Set(), null)).toEqual(
-      rows.slice(0, 1),
+    expect(
+      deriveThreadFeedPresentation(feed, latestTurn, new Set(), new Set(), null).map(
+        (entry) => entry.type,
+      ),
+    ).toEqual(["message"]);
+  });
+
+  it("hands a settled tool run off to Thinking once assistant text streams after it", () => {
+    const turnId = TurnId.make("turn-streaming-tail");
+    const latestTurn = {
+      turnId,
+      state: "running" as const,
+      requestedAt: "2026-04-01T00:00:00.000Z",
+      startedAt: "2026-04-01T00:00:00.000Z",
+      completedAt: null,
+      assistantMessageId: null,
+    };
+    const feed = buildThreadFeed(
+      makeThread({
+        id: ThreadId.make("thread-streaming-tail"),
+        projectId: ProjectId.make("project-1"),
+        title: "Streaming tail",
+        latestTurn,
+        messages: [
+          {
+            id: MessageId.make("assistant-1"),
+            role: "assistant",
+            text: "Here is what I found",
+            turnId,
+            streaming: true,
+            createdAt: "2026-04-01T00:00:05.000Z",
+            updatedAt: "2026-04-01T00:00:06.000Z",
+          },
+        ],
+        activities: [
+          makeActivity({
+            id: EventId.make("read-completed"),
+            kind: "tool.completed",
+            tone: "tool",
+            summary: "Read file",
+            createdAt: "2026-04-01T00:00:02.000Z",
+            turnId,
+            payload: {
+              itemType: "file_read",
+              toolCallId: "read-1",
+              title: "Read file",
+              status: "completed",
+              detail: "src/index.ts",
+            },
+          }),
+        ],
+      }),
     );
+
+    const rows = deriveThreadFeedPresentation(
+      feed,
+      latestTurn,
+      new Set(),
+      new Set(),
+      latestTurn.startedAt,
+    );
+    expect(rows.map((entry) => entry.type)).toEqual(["work-toggle", "message", "thinking"]);
+    expect(rows[0]).toMatchObject({ live: false, shimmer: false });
   });
 
   it("preserves serialized shell wrappers with non-matching boundary quotes", () => {
