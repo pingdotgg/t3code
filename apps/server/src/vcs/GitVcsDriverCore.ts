@@ -2866,7 +2866,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         entries.some(
           (entry) =>
             /^submodule\.(active|fetchjobs|.*\.(active|update))\n/.test(entry) &&
-            !entry.endsWith(".active\ntrue"),
+            !/^submodule\..+\.active\ntrue$/.test(entry),
         )
       ) {
         return null;
@@ -2936,6 +2936,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         Effect.orElseSucceed(() => input.cwd),
       );
       yield* prepareSubmodules(sourceRoot, worktreePath).pipe(
+        Effect.catch(() =>
+          runGit("GitVcsDriver.updateSubmodules", worktreePath, [
+            "submodule",
+            "update",
+            "--init",
+            "--recursive",
+          ]),
+        ),
         Effect.catch((cause) =>
           Effect.logWarning("worktree submodule checkout failed; submodule paths are empty", {
             worktreePath,

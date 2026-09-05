@@ -1416,6 +1416,8 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       "shallow",
       "uninitialized",
       "inactive",
+      "inactive-true",
+      "unreachable",
       "update-none",
     ] as const) {
       it.effect(`checks out independent submodules from a ${sourceState} source worktree`, () =>
@@ -1504,10 +1506,17 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
             yield* git(submoduleRepo, ["add", "."]);
             yield* git(submoduleRepo, ["commit", "-m", "advance beyond selected pin"]);
           }
-          const excludesOther = sourceState === "inactive" || sourceState === "update-none";
-          if (sourceState === "inactive") {
+          const excludesOther =
+            sourceState === "inactive" ||
+            sourceState === "inactive-true" ||
+            sourceState === "update-none";
+          if (sourceState === "inactive" || sourceState === "inactive-true") {
             yield* git(cwd, ["config", "--unset", "submodule.other module.active"]);
-            yield* git(cwd, ["config", "submodule.active", "shared"]);
+            yield* git(cwd, [
+              "config",
+              "submodule.active",
+              sourceState === "inactive-true" ? "true" : "shared",
+            ]);
           }
           if (sourceState === "update-none") {
             yield* git(cwd, [
@@ -1519,6 +1528,20 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
             ]);
             yield* git(cwd, ["add", ".gitmodules"]);
             yield* git(cwd, ["commit", "-m", "skip other module"]);
+          }
+          if (sourceState === "unreachable") {
+            const gitmodules = yield* fileSystem.readFileString(
+              pathService.join(cwd, ".gitmodules"),
+            );
+            yield* writeTextFile(
+              cwd,
+              ".gitmodules",
+              '[submodule "missing"]\n\tpath = missing\n\turl = /nonexistent/repo.git\n' +
+                gitmodules,
+            );
+            yield* git(cwd, ["update-index", "--add", "--cacheinfo", `160000,${pinned},missing`]);
+            yield* git(cwd, ["add", ".gitmodules"]);
+            yield* git(cwd, ["commit", "-m", "put unreachable submodule before healthy siblings"]);
           }
           const sourceSubmodule = pathService.join(source, "shared");
           if (sourceState !== "uninitialized") {
@@ -1554,6 +1577,19 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
             refName: initialBranch,
             newRefName: "feature/submodules",
           });
+
+          if (sourceState === "unreachable") {
+            // Git clones the remaining siblings before retrying the failed clone;
+            // it may abort before checking out their files.
+            for (const submodule of ["shared", "other module"]) {
+              assert.equal(
+                yield* fileSystem.exists(pathService.join(worktreePath, submodule, ".git")),
+                true,
+              );
+            }
+            assert.equal(yield* git(source, ["status", "--porcelain"]), sourceStatus);
+            return;
+          }
 
           assert.equal(
             yield* fileSystem.exists(pathService.join(worktreePath, "shared", "SHARED.md")),
