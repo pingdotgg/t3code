@@ -19,6 +19,7 @@ import { readCustomModelEntries } from "@t3tools/shared/model";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { createProviderVersionAdvisory } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+import type { ProviderCompactionStrategy } from "./Services/ProviderAdapter.ts";
 
 export const DEFAULT_TIMEOUT_MS = 4_000;
 // Auth status checks involve disk/network lookups and can be slow on first run (especially Windows)
@@ -28,6 +29,19 @@ export const COMPACT_SLASH_COMMAND = {
   name: "compact",
   description: "Summarize the conversation and reduce context usage",
 } satisfies ServerProviderSlashCommand;
+
+/** Reserve /compact for adapters that declare how to run it. */
+export function withCompactionSlashCommand(
+  commands: ReadonlyArray<ServerProviderSlashCommand>,
+  compaction?: ProviderCompactionStrategy,
+): ReadonlyArray<ServerProviderSlashCommand> {
+  const isCompact = (command: ServerProviderSlashCommand) =>
+    command.name.trim().toLowerCase() === COMPACT_SLASH_COMMAND.name;
+  const otherCommands = commands.filter((command) => !isCompact(command));
+  return compaction
+    ? [{ ...commands.find(isCompact), ...COMPACT_SLASH_COMMAND }, ...otherCommands]
+    : otherCommands;
+}
 
 export interface CommandResult {
   readonly stdout: string;
@@ -232,6 +246,7 @@ export function buildServerProvider(input: {
   checkedAt: string;
   models: ReadonlyArray<ServerProviderModel>;
   slashCommands?: ReadonlyArray<ServerProviderSlashCommand>;
+  compaction?: ProviderCompactionStrategy;
   skills?: ReadonlyArray<ServerProviderSkill>;
   probe: ProviderProbeResult;
 }): ServerProviderDraft {
@@ -259,7 +274,7 @@ export function buildServerProvider(input: {
     checkedAt: input.checkedAt,
     ...(input.probe.message ? { message: input.probe.message } : {}),
     models: input.models,
-    slashCommands: [...(input.slashCommands ?? [])],
+    slashCommands: withCompactionSlashCommand(input.slashCommands ?? [], input.compaction),
     skills: [...(input.skills ?? [])],
     ...(input.probe.usageLimits ? { usageLimits: input.probe.usageLimits } : {}),
     ...(versionAdvisory ? { versionAdvisory } : {}),

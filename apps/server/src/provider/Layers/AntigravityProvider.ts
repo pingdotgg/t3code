@@ -27,6 +27,7 @@ import {
 import {
   buildServerProvider,
   isCommandMissingCause,
+  withCompactionSlashCommand,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 
@@ -82,7 +83,7 @@ function nativeCommands(
   commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
 ): ReadonlyArray<ServerProviderSlashCommand> {
   const seen = new Set<string>();
-  return commands.flatMap((command): ServerProviderSlashCommand[] => {
+  const slashCommands = commands.flatMap((command): ServerProviderSlashCommand[] => {
     if (!command.name.trim() || seen.has(command.name)) return [];
     seen.add(command.name);
     const description = command.description.trim();
@@ -95,6 +96,7 @@ function nativeCommands(
       },
     ];
   });
+  return withCompactionSlashCommand(slashCommands);
 }
 
 function isMissingInstallation(error: EffectAcpErrors.AcpError | ProviderSetupError): boolean {

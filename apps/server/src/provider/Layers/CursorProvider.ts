@@ -34,13 +34,13 @@ import {
   buildBooleanOptionDescriptor,
   buildSelectOptionDescriptor,
   buildServerProvider,
-  COMPACT_SLASH_COMMAND,
   collectStreamAsString,
   isCommandMissingCause,
   providerModelsFromSettings,
   type CommandResult,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import { CURSOR_COMPACTION } from "../Services/CursorAdapter.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
@@ -640,7 +640,7 @@ export function buildCursorProviderSnapshot(input: {
       input.cursorSettings.customModels,
       EMPTY_CAPABILITIES,
     ),
-    slashCommands: [COMPACT_SLASH_COMMAND],
+    compaction: CURSOR_COMPACTION,
     probe: {
       installed: true,
       version: input.parsed.version,

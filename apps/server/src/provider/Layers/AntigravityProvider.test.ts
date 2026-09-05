@@ -234,6 +234,25 @@ it.layer(testLayer)("Antigravity provider snapshots", (it) => {
     ),
   );
 
+  it.effect("does not offer native compact commands without an adapter strategy", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.initialize;
+        yield* harness.provider.onSessionStarted(started);
+        yield* harness.provider.onAvailableCommands(
+          [...commands, { name: "compact", description: "Compact the context" }],
+          "/workspace",
+        );
+        const snapshot = yield* harness.provider.snapshot.getSnapshot;
+        expect(snapshot.slashCommands).toEqual(commands);
+        expect((yield* harness.provider.snapshotForCwd("/workspace")).slashCommands).toEqual(
+          commands,
+        );
+      }),
+    ),
+  );
+
   it.effect("records explicit sign-in while disabled without starting a health probe", () =>
     Effect.scoped(
       Effect.gen(function* () {

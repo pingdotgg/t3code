@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import type { ModelCapabilities } from "@t3tools/contracts";
+import { ProviderDriverKind, type ModelCapabilities } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
@@ -10,10 +10,57 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  buildServerProvider,
   isCommandMissingCause,
   providerModelsFromSettings,
   spawnAndCollect,
 } from "./providerSnapshot.ts";
+import type { ProviderCompactionStrategy } from "./Services/ProviderAdapter.ts";
+
+describe("compaction advertisement", () => {
+  it("offers one compact command only when the adapter declares a strategy", () => {
+    const strategies: ReadonlyArray<ProviderCompactionStrategy | undefined> = [
+      undefined,
+      { type: "native", completionTimeout: "45 seconds" },
+      { type: "slash-command", command: "/reduce-context", completionTimeout: "45 seconds" },
+    ];
+    const review = { name: "review", description: "Review the changes" };
+    for (const compaction of strategies) {
+      const snapshot = buildServerProvider({
+        driver: ProviderDriverKind.make("custom-compaction-provider"),
+        presentation: { displayName: "Custom provider" },
+        enabled: true,
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        models: [],
+        ...(compaction ? { compaction } : {}),
+        slashCommands: [
+          { name: "compact", input: { hint: "What to preserve" } },
+          { name: " COMPACT ", description: "Duplicate native command" },
+          review,
+        ],
+        probe: {
+          installed: true,
+          version: null,
+          status: "ready",
+          auth: { status: "authenticated" },
+        },
+      });
+
+      expect(snapshot.slashCommands).toEqual(
+        compaction
+          ? [
+              {
+                name: "compact",
+                description: "Summarize the conversation and reduce context usage",
+                input: { hint: "What to preserve" },
+              },
+              review,
+            ]
+          : [review],
+      );
+    }
+  });
+});
 
 const OPENCODE_CUSTOM_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [
