@@ -465,6 +465,8 @@ const unusedScheduledTaskStubLayer = Layer.succeed(
     setEnabled: () => Effect.die("ScheduledTaskService.setEnabled is unused in this test"),
     delete: () => Effect.die("ScheduledTaskService.delete is unused in this test"),
     runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
+    runNowIdempotent: () =>
+      Effect.die("ScheduledTaskService.runNowIdempotent is unused in this test"),
   }),
 );
 
