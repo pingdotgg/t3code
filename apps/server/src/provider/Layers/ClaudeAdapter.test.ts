@@ -22,6 +22,7 @@ import {
   type RuntimeMode,
   ThreadId,
   ProviderInstanceId,
+  ProjectId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it, vi } from "@effect/vitest";
@@ -43,6 +44,10 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
+import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
+import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { importRecentAgentThreads } from "../../project/AgentSessionImporter.ts";
+import * as AgentSessionScanner from "../../project/AgentSessionScanner.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
@@ -6029,6 +6034,93 @@ describe("ClaudeAdapterLive", () => {
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );
+  });
+
+  it.effect("never resets an imported Claude transcript after its native ID goes missing", () => {
+    const harness = makeHarness({ cwd: process.cwd() });
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(
+      Layer.provide(ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+    );
+    return Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const adapter = yield* ClaudeAdapter;
+      const nativeId = "550e8400-e29b-41d4-a716-446655440000";
+      const threadId = ThreadId.make(`import:claudeAgent:${nativeId}`);
+      const projectId = ProjectId.make("claude-import-recovery");
+      const createdAt = "2026-09-05T08:00:00.000Z";
+      const imported = yield* importRecentAgentThreads({ projectId }).pipe(
+        Effect.provideService(AgentSessionScanner.AgentSessionScanner, {
+          scan: Effect.die("unused"),
+          recentThreads: () =>
+            Stream.succeed({
+              _tag: "Importable",
+              thread: {
+                source: "claudeAgent",
+                providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+                providerSessionId: nativeId,
+                title: "Imported conversation",
+                model: null,
+                createdAt,
+                updatedAt: createdAt,
+                messages: [
+                  { role: "user", text: "Retain this native context", createdAt },
+                  { role: "assistant", text: "Existing response", createdAt },
+                ],
+              },
+              source: {
+                provider: "claudeAgent",
+                providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+                providerSessionId: nativeId,
+                filePath: "/audit/imported-transcript.jsonl",
+                size: 0,
+                mtimeMs: 0,
+                device: 0,
+                inode: 0,
+                birthtimeMs: 0,
+              },
+            }),
+        }),
+        Effect.provide(
+          Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
+            dispatch: () => Effect.succeed({ sequence: 1 }),
+          }),
+        ),
+        Effect.provide(
+          Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+            getProjectShellById: () =>
+              Effect.succeed(
+                Option.some({
+                  id: projectId,
+                  title: "Imported project",
+                  workspaceRoot: process.cwd(),
+                  defaultModelSelection: null,
+                  scripts: [],
+                  createdAt,
+                  updatedAt: createdAt,
+                }),
+              ),
+            getImportedAgentSessionSources: () => Effect.succeed([]),
+            getThreadDetailById: () => Effect.succeed(Option.none()),
+          }),
+        ),
+      );
+      assert.deepEqual(imported, { importedCount: 1, skippedCount: 0 });
+      const binding = Option.getOrThrow(yield* directory.getBinding(threadId));
+      assert.deepEqual(binding.resumeCursor, { threadId, resume: nativeId });
+      harness.query.emit(missingResumeResult(nativeId));
+      const resumed = yield* adapter
+        .startSession({
+          threadId,
+          runtimeMode: "approval-required",
+          resumeCursor: binding.resumeCursor,
+        })
+        .pipe(Effect.result);
+      assert.equal(resumed._tag, "Failure");
+      assert.equal(harness.getCreateQueryInputs().length, 1);
+      assert.equal(harness.getLastCreateQueryInput()!.options.resume, nativeId);
+      assert.equal(yield* adapter.hasSession(threadId), false);
+      assert.deepEqual(Option.getOrThrow(yield* directory.getBinding(threadId)), binding);
+    }).pipe(Effect.provide(Layer.mergeAll(directoryLayer, harness.layer)));
   });
 
   it.effect.each([
