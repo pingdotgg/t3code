@@ -17,6 +17,9 @@ import type {
   EnvironmentThread,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import { videoMimeType } from "@t3tools/shared/video";
+
+export { videoMimeType } from "@t3tools/shared/video";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
@@ -57,6 +60,19 @@ export function isImageAttachment(attachment: ChatAttachment): attachment is Cha
 
 export function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAttachment {
   return attachment.type === "file";
+}
+
+export function isVideoAttachment(attachment: ChatFileAttachment): boolean {
+  return videoMimeType(attachment) !== null;
+}
+
+export function isBrowserPreviewAttachment(attachment: ChatFileAttachment): boolean {
+  const mimeType = attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase();
+  return (
+    /\.(?:html?|pdf)$/i.test(attachment.name) ||
+    mimeType === "application/pdf" ||
+    mimeType === "text/html"
+  );
 }
 
 export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {

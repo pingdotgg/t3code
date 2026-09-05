@@ -1,9 +1,10 @@
 import { WorkerPoolContextProvider, useWorkerPool } from "@pierre/diffs/react";
 import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import * as Schema from "effect/Schema";
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTheme } from "../hooks/useTheme";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
+import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
 
 export class DiffWorkerError extends Schema.TaggedErrorClass<DiffWorkerError>()("DiffWorkerError", {
   operation: Schema.Literals(["create-worker", "get-render-options", "set-render-options"]),
@@ -45,6 +46,39 @@ function DiffWorkerThemeSync({ themeName }: { themeName: DiffThemeName }) {
   return null;
 }
 
+// Plain-text views do not queue a highlight task that could retry a blank first render.
+function DiffWorkerReady({ children }: { children?: ReactNode }) {
+  const workerPool = useWorkerPool();
+  const [ready, setReady] = useState(
+    () => !workerPool || workerPool.isInitialized() || !workerPool.isWorkingPool(),
+  );
+
+  useEffect(() => {
+    if (ready || !workerPool) return;
+
+    let mounted = true;
+    const finish = () => {
+      if (mounted) setReady(true);
+    };
+    // Failed pools use Pierre's existing main-thread highlighter.
+    void workerPool.initialize().then(finish, finish);
+    return () => {
+      mounted = false;
+    };
+  }, [ready, workerPool]);
+
+  return ready ? (
+    children
+  ) : (
+    <div
+      role="status"
+      className="flex min-h-0 flex-1 items-center justify-center p-4 text-xs text-muted-foreground"
+    >
+      Loading code...
+    </div>
+  );
+}
+
 export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
@@ -73,12 +107,13 @@ export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
       }}
       highlighterOptions={{
         theme: diffThemeName,
+        preferredHighlighter: PREFERRED_HIGHLIGHTER,
         tokenizeMaxLineLength: 1_000,
         useTokenTransformer: true,
       }}
     >
       <DiffWorkerThemeSync themeName={diffThemeName} />
-      {children}
+      <DiffWorkerReady>{children}</DiffWorkerReady>
     </WorkerPoolContextProvider>
   );
 }

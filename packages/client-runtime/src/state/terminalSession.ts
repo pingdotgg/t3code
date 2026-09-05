@@ -6,23 +6,42 @@ import type {
   TerminalSummary,
   ThreadId,
 } from "@t3tools/contracts";
+import {
+  appendOutput,
+  DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+  EMPTY_TERMINAL_OUTPUT_STATE,
+  resetOutput,
+  type TerminalOutputState,
+} from "./terminalOutput.ts";
+
+export {
+  DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+  INITIAL_TERMINAL_OUTPUT_CURSOR,
+  readTerminalOutputUpdate,
+  terminalOutputText,
+  type TerminalOutputCursor,
+  type TerminalOutputState,
+  type TerminalOutputUpdate,
+} from "./terminalOutput.ts";
 
 export interface TerminalSessionState {
   readonly summary: TerminalSummary | null;
-  readonly buffer: string;
+  readonly output: TerminalOutputState;
   readonly status: TerminalSessionSnapshot["status"] | "closed";
   readonly error: string | null;
   readonly hasRunningSubprocess: boolean;
   readonly updatedAt: string | null;
   readonly version: number;
+  readonly lifecycleVersion: number;
 }
 
 export interface TerminalBufferState {
-  readonly buffer: string;
+  readonly output: TerminalOutputState;
   readonly status: TerminalSessionSnapshot["status"] | "closed";
   readonly error: string | null;
   readonly updatedAt: string | null;
   readonly version: number;
+  readonly lifecycleVersion: number;
 }
 
 export interface KnownTerminalSessionTarget {
@@ -45,59 +64,50 @@ export function selectRunningSubprocessTerminalIds(
 }
 
 export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
-  buffer: "",
+  output: EMPTY_TERMINAL_OUTPUT_STATE,
   status: "closed",
   error: null,
   updatedAt: null,
   version: 0,
+  lifecycleVersion: 0,
 });
 
 export const EMPTY_TERMINAL_SESSION_STATE = Object.freeze<TerminalSessionState>({
   summary: null,
-  buffer: "",
+  output: EMPTY_TERMINAL_OUTPUT_STATE,
   status: "closed",
   error: null,
   hasRunningSubprocess: false,
   updatedAt: null,
   version: 0,
+  lifecycleVersion: 0,
 });
 
-export const DEFAULT_MAX_TERMINAL_BUFFER_BYTES = 512 * 1024;
-const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
+let terminalAttachGeneration = 0;
 
-function trimBufferToBytes(buffer: string, maxBufferBytes: number): string {
-  if (maxBufferBytes <= 0) {
-    return "";
-  }
-
-  const encoded = textEncoder.encode(buffer);
-  if (encoded.byteLength <= maxBufferBytes) {
-    return buffer;
-  }
-
-  let start = encoded.byteLength - maxBufferBytes;
-  while (start < encoded.length) {
-    const byte = encoded[start];
-    if (byte === undefined || (byte & 0b1100_0000) !== 0b1000_0000) {
-      break;
-    }
-    start += 1;
-  }
-
-  return textDecoder.decode(encoded.subarray(start));
+/** A reinstalled attach stream must not reuse an old renderer's output cursor. */
+export function nextTerminalAttachSeedState(): TerminalBufferState {
+  return {
+    ...EMPTY_TERMINAL_BUFFER_STATE,
+    output: {
+      ...EMPTY_TERMINAL_OUTPUT_STATE,
+      generation: ++terminalAttachGeneration,
+    },
+  };
 }
 
 export function terminalBufferStateFromSnapshot(
   snapshot: TerminalSessionSnapshot,
   maxBufferBytes: number,
+  current: TerminalBufferState = EMPTY_TERMINAL_BUFFER_STATE,
 ): TerminalBufferState {
   return {
-    buffer: trimBufferToBytes(snapshot.history, maxBufferBytes),
+    output: resetOutput(current.output, snapshot.history, maxBufferBytes),
     status: snapshot.status,
     error: null,
     updatedAt: snapshot.updatedAt,
-    version: 1,
+    version: current.version + 1,
+    lifecycleVersion: current.lifecycleVersion,
   };
 }
 
@@ -113,12 +123,13 @@ export function combineTerminalSessionState(
 ): TerminalSessionState {
   return {
     summary,
-    buffer: buffer.buffer,
+    output: buffer.output,
     status: buffer.version > 0 ? buffer.status : (summary?.status ?? buffer.status),
     error: buffer.error,
     hasRunningSubprocess: summary?.hasRunningSubprocess ?? false,
     updatedAt: latestTimestamp(summary?.updatedAt ?? null, buffer.updatedAt),
     version: buffer.version,
+    lifecycleVersion: buffer.lifecycleVersion,
   };
 }
 
@@ -129,12 +140,20 @@ export function applyTerminalAttachStreamEvent(
 ): TerminalBufferState {
   switch (event.type) {
     case "snapshot":
+      return {
+        ...terminalBufferStateFromSnapshot(event.snapshot, maxBufferBytes, current),
+        lifecycleVersion:
+          current.version === 0 ? current.lifecycleVersion : current.lifecycleVersion + 1,
+      };
     case "restarted":
-      return terminalBufferStateFromSnapshot(event.snapshot, maxBufferBytes);
+      return {
+        ...terminalBufferStateFromSnapshot(event.snapshot, maxBufferBytes, current),
+        lifecycleVersion: current.lifecycleVersion + 1,
+      };
     case "output":
       return {
         ...current,
-        buffer: trimBufferToBytes(`${current.buffer}${event.data}`, maxBufferBytes),
+        output: appendOutput(current.output, event.data, maxBufferBytes),
         status: current.status === "closed" ? "running" : current.status,
         error: null,
         version: current.version + 1,
@@ -142,7 +161,7 @@ export function applyTerminalAttachStreamEvent(
     case "cleared":
       return {
         ...current,
-        buffer: "",
+        output: resetOutput(current.output, "", maxBufferBytes),
         error: null,
         version: current.version + 1,
       };

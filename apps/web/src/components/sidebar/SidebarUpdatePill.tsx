@@ -1,5 +1,7 @@
+import type { DesktopUpdateState } from "@t3tools/contracts";
 import { TriangleAlertIcon } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { type ComponentProps, useCallback, useEffect, useId, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { cn } from "../../lib/utils";
@@ -19,7 +21,7 @@ import {
 } from "../desktopUpdate.logic";
 import { showDesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
-import { Separator } from "../ui/separator";
+import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { SidebarMenuItem } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -27,6 +29,37 @@ import {
   shouldContinueDesktopUpdateCheckAnimation,
   shouldShowDesktopUpdateCheckIcon,
 } from "./DesktopUpdateStatusIcon";
+import { SidebarUpdateReleaseNotes } from "./SidebarUpdateReleaseNotes";
+
+type SidebarUpdatePopoverChangeDetails = Parameters<
+  NonNullable<ComponentProps<typeof Popover>["onOpenChange"]>
+>[1];
+type SidebarUpdatePopoverHandle = ReturnType<typeof PopoverCreateHandle>;
+
+export function shouldUseSidebarUpdateReleaseNotesPopover(
+  showUpdateDetails: boolean,
+  state: DesktopUpdateState | null,
+): boolean {
+  return showUpdateDetails && state?.channel === "nightly" && state.releaseNotes.length > 0;
+}
+
+export function handleSidebarUpdateReleaseNotesPopoverOpenChange(
+  _open: boolean,
+  details: Pick<SidebarUpdatePopoverChangeDetails, "reason" | "cancel">,
+): void {
+  // The trigger is the update action, so its presses must not also toggle the Popover.
+  if (details.reason === "trigger-press") details.cancel();
+}
+
+export function openSidebarUpdateReleaseNotesPopoverOnForwardTab(
+  event: { readonly key: string; readonly shiftKey: boolean },
+  handle: Pick<SidebarUpdatePopoverHandle, "open">,
+  triggerId: string,
+): void {
+  if (event.key !== "Tab" || event.shiftKey) return;
+  // Hover-open popovers do not manage focus. Promote this one before native Tab runs.
+  flushSync(() => handle.open(triggerId));
+}
 
 function resolveSidebarUpdatePresentation({
   action,
@@ -53,67 +86,6 @@ function resolveSidebarUpdatePresentation({
     showUpdateDetails,
     showUpdateIconState: showUpdateDetails && !showCheckIcon,
   } as const;
-}
-
-function keyReleaseNoteItems(items: ReadonlyArray<string>) {
-  const occurrences = new Map<string, number>();
-  return items.map((item) => {
-    const occurrence = occurrences.get(item) ?? 0;
-    occurrences.set(item, occurrence + 1);
-    return { item, key: JSON.stringify([item, occurrence]) };
-  });
-}
-
-function SidebarUpdateReleaseNotesTooltip({
-  state,
-  tooltip,
-}: {
-  readonly state: NonNullable<ReturnType<typeof useDesktopUpdateState>>;
-  readonly tooltip: string;
-}) {
-  if (state.channel !== "nightly" || state.releaseNotes.length === 0) {
-    return <>{tooltip}</>;
-  }
-
-  return (
-    <div className="w-fit max-w-[min(24rem,calc(100vw-2rem))] text-left">
-      <div className="px-1">
-        {state.status === "available" ? (
-          <div>
-            <div className="whitespace-nowrap text-sm leading-5 font-medium">
-              Update ready to download
-            </div>
-            {state.availableVersion ? (
-              <div className="mt-0.5 text-xs leading-4 text-update-foreground">
-                {state.availableVersion}
-              </div>
-            ) : null}
-          </div>
-        ) : (
-          <div className="text-sm leading-5 font-medium">{tooltip}</div>
-        )}
-      </div>
-      <div className="max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-4 pb-1">
-        {state.releaseNotes.map((releaseNote, index) => (
-          <div key={releaseNote.version}>
-            {index > 0 && <Separator className="my-3 bg-border/60" />}
-            <section>
-              <h3 className="text-foreground text-xs leading-4 font-semibold">
-                {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
-              </h3>
-              <ul className="mt-2 space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
-                {keyReleaseNoteItems(releaseNote.items).map(({ item, key }) => (
-                  <li className="list-disc break-words" key={key}>
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 export function SidebarUpdateArchitectureWarning() {
@@ -145,6 +117,10 @@ function SidebarUpdateControl() {
   const [isActionPending, setIsActionPending] = useState(false);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [isCheckAnimationLatched, setIsCheckAnimationLatched] = useState(false);
+  const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
+  const suppressReleaseNotesFocusOpen = useRef(false);
+  const releaseNotesPopupRef = useRef<HTMLDivElement>(null);
+  const releaseNotesTriggerId = useId();
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
 
   useEffect(() => {
@@ -180,6 +156,22 @@ function SidebarUpdateControl() {
       ? isDesktopUpdateButtonDisabled(state)
       : !canCheckForUpdate(state);
   const isInteractionDisabled = disabled || isActionPending;
+  const showReleaseNotesPopover = shouldUseSidebarUpdateReleaseNotesPopover(
+    showUpdateDetails,
+    state,
+  );
+
+  useEffect(() => {
+    if (!showReleaseNotesPopover) {
+      releaseNotesPopoverHandle.close();
+      return;
+    }
+
+    const trigger = document.getElementById(releaseNotesTriggerId);
+    if (trigger?.matches(":focus-visible")) {
+      releaseNotesPopoverHandle.open(releaseNotesTriggerId);
+    }
+  }, [releaseNotesPopoverHandle, releaseNotesTriggerId, showReleaseNotesPopover]);
 
   const handleAction = useCallback(async () => {
     const bridge = window.desktopBridge;
@@ -305,70 +297,124 @@ function SidebarUpdateControl() {
     );
   }, [prefersReducedMotion, state?.status]);
 
+  const updateButton = (
+    <button
+      type="button"
+      aria-label={tooltip}
+      aria-disabled={isInteractionDisabled || undefined}
+      className={cn(
+        "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2",
+        isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
+        showUpdateIconState
+          ? cn(
+              "bg-sidebar-control-surface text-sidebar-foreground",
+              !isInteractionDisabled && "hover:bg-sidebar-row-hover",
+            )
+          : cn(
+              "text-[var(--sidebar-icon-color)]",
+              !isInteractionDisabled && "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+            ),
+        disabled && !showUpdateIconState && "opacity-60",
+      )}
+      onClick={handleAction}
+      onBlur={() => {
+        suppressReleaseNotesFocusOpen.current = false;
+      }}
+      onFocus={(event) => {
+        if (!showReleaseNotesPopover || !event.currentTarget.matches(":focus-visible")) return;
+        if (suppressReleaseNotesFocusOpen.current) {
+          suppressReleaseNotesFocusOpen.current = false;
+          return;
+        }
+        flushSync(() => releaseNotesPopoverHandle.open(releaseNotesTriggerId));
+      }}
+      onKeyDown={(event) => {
+        if (!showReleaseNotesPopover) return;
+        openSidebarUpdateReleaseNotesPopoverOnForwardTab(
+          event,
+          releaseNotesPopoverHandle,
+          releaseNotesTriggerId,
+        );
+      }}
+    >
+      <DesktopUpdateStatusIcon
+        key={showCheckIcon ? checkAnimationKey : iconStatus}
+        downloadPercent={state?.downloadPercent ?? null}
+        isCheckAnimating={showCheckIcon && !prefersReducedMotion}
+        onCheckAnimationIteration={handleCheckAnimationIteration}
+        status={iconStatus}
+      />
+    </button>
+  );
+
   return (
     <SidebarMenuItem className="ml-auto shrink-0">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              aria-label={tooltip}
-              aria-disabled={isInteractionDisabled || undefined}
-              className={cn(
-                "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2",
-                isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
-                showUpdateIconState
-                  ? cn(
-                      "bg-update-surface text-update-foreground",
-                      !isInteractionDisabled && "hover:bg-update/12",
-                    )
-                  : cn(
-                      "text-[var(--sidebar-icon-color)]",
-                      !isInteractionDisabled &&
-                        "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-                    ),
-                disabled && !showUpdateIconState && "opacity-60",
-              )}
-              onClick={handleAction}
-            >
-              <DesktopUpdateStatusIcon
-                key={showCheckIcon ? checkAnimationKey : iconStatus}
-                downloadPercent={state?.downloadPercent ?? null}
-                isCheckAnimating={showCheckIcon && !prefersReducedMotion}
-                onCheckAnimationIteration={handleCheckAnimationIteration}
-                status={iconStatus}
+      <Popover
+        handle={releaseNotesPopoverHandle}
+        onOpenChange={(open, details) => {
+          if (open && !showReleaseNotesPopover) {
+            details.cancel();
+            return;
+          }
+          handleSidebarUpdateReleaseNotesPopoverOpenChange(open, details);
+        }}
+      >
+        <Tooltip disabled={showReleaseNotesPopover}>
+          <TooltipTrigger
+            id={releaseNotesTriggerId}
+            render={
+              <PopoverTrigger
+                {...(!showReleaseNotesPopover
+                  ? {
+                      "aria-controls": undefined,
+                      "aria-expanded": undefined,
+                      "aria-haspopup": undefined,
+                    }
+                  : {})}
+                closeDelay={150}
+                handle={releaseNotesPopoverHandle}
+                id={releaseNotesTriggerId}
+                openOnHover={showReleaseNotesPopover}
+                render={updateButton}
               />
-            </button>
-          }
-        />
-        <TooltipPopup
-          align="center"
-          className={
-            showUpdateDetails && state?.channel === "nightly" && state.releaseNotes.length > 0
-              ? // pointer-events-auto overrides the positioner's pointer-events-none so the
-                // release notes stay open (and scrollable) when the cursor moves into them.
-                "pointer-events-auto max-w-none text-balance"
-              : undefined
-          }
-          side="top"
-          style={
-            showUpdateDetails
-              ? {
-                  background:
-                    "color-mix(in srgb, var(--update) 18%, color-mix(in srgb, var(--popover) var(--glass-opacity), transparent))",
-                  borderColor: "var(--update-foreground)",
-                }
-              : undefined
-          }
-          variant={showUpdateDetails ? "glass" : "default"}
-        >
-          {showUpdateDetails && state ? (
-            <SidebarUpdateReleaseNotesTooltip state={state} tooltip={tooltip} />
-          ) : (
-            tooltip
-          )}
-        </TooltipPopup>
-      </Tooltip>
+            }
+          />
+          {!showReleaseNotesPopover ? (
+            <TooltipPopup
+              align="center"
+              side="top"
+              variant={showUpdateDetails ? "glass" : "default"}
+            >
+              {tooltip}
+            </TooltipPopup>
+          ) : null}
+        </Tooltip>
+        {showReleaseNotesPopover && state ? (
+          <PopoverPopup
+            align="center"
+            aria-label="Nightly update release notes"
+            className="max-w-none text-balance shadow-xl shadow-black/25"
+            initialFocus={false}
+            onKeyDownCapture={(event) => {
+              if (
+                event.key === "Escape" &&
+                releaseNotesPopupRef.current?.contains(document.activeElement)
+              ) {
+                suppressReleaseNotesFocusOpen.current = true;
+              }
+            }}
+            ref={releaseNotesPopupRef}
+            side="top"
+            tooltipStyle
+          >
+            <SidebarUpdateReleaseNotes
+              shell={window.desktopBridge}
+              state={state}
+              tooltip={tooltip}
+            />
+          </PopoverPopup>
+        ) : null}
+      </Popover>
     </SidebarMenuItem>
   );
 }

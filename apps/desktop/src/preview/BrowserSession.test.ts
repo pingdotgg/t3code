@@ -63,6 +63,45 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("keeps scopes that differ only by a lone surrogate in separate partitions", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+
+      // TextEncoder folds a lone surrogate to U+FFFD, so without escaping these
+      // two supported ids would hash to one partition and share every cookie.
+      const loneSurrogate = yield* browserSessions.getPartition("p\ud800");
+      const replacementChar = yield* browserSessions.getPartition("p\ufffd");
+      assert.notStrictEqual(loneSurrogate, replacementChar);
+
+      // The escape can't be forged with a literal backslash either.
+      const literal = yield* browserSessions.getPartition("p\\ud800");
+      assert.notStrictEqual(literal, loneSurrogate);
+
+      // And a well-formed scope still lands on its historical partition.
+      assert.strictEqual(
+        yield* browserSessions.getPartition("scope-a"),
+        "persist:t3code-preview-f051bb2c68cb7b2fe969",
+      );
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps legacy defaults disjoint from nondefault profile partitions", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+
+      // These share the same scope string: default environment `a::b`, and
+      // environment `a` with nondefault profile `b`.
+      const legacyDefault = yield* browserSessions.getPartition("a::b");
+      const nondefaultProfile = yield* browserSessions.getPartition("a::b", true, "profile");
+
+      assert.strictEqual(legacyDefault, "persist:t3code-preview-78f0be89237d77f7a70e");
+      assert.strictEqual(nondefaultProfile, "persist:t3code-preview-profile-78f0be89237d77f7a70e");
+      assert.notStrictEqual(nondefaultProfile, legacyDefault);
+      assert.isTrue(browserSessions.isPartition(legacyDefault));
+      assert.isTrue(browserSessions.isPartition(nondefaultProfile));
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("grants clipboard-sanitized-write through both the request and check handlers", () =>
     Effect.gen(function* () {
       const browserSessions = yield* BrowserSession.BrowserSession;
@@ -184,11 +223,33 @@ describe("BrowserSession", () => {
         assert.strictEqual(browserSession.clearStorageData.mock.calls.length, 1);
         assert.deepEqual(browserSession.clearStorageData.mock.calls[0], [
           {
-            storages: ["cookies", "localstorage", "indexdb", "websql", "serviceworkers"],
+            storages: ["cookies", "localstorage", "indexdb", "serviceworkers"],
           },
         ]);
         assert.strictEqual(browserSession.clearCache.mock.calls.length, 1);
       }
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("clears a partition whose session has not been opened yet", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-untouched");
+
+      // Deriving the partition string does not create the session, and the
+      // clear only walks sessions it already holds. Without loading it first
+      // this reports success and deletes nothing — which is what a user
+      // clearing a profile after a restart would get.
+      assert.isUndefined(sessions.get(partition));
+      yield* browserSessions.clearCookies([partition]);
+      assert.isUndefined(sessions.get(partition));
+
+      yield* browserSessions.getSession("scope-untouched");
+      yield* browserSessions.clearCookies([partition]);
+
+      const created = sessions.get(partition);
+      assert.isDefined(created);
+      assert.strictEqual(created.clearStorageData.mock.calls.length, 1);
     }).pipe(Effect.provide(layer)),
   );
 

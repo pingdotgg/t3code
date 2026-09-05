@@ -59,7 +59,11 @@ function NavigationButton(props: {
 }
 export function NavigationHistoryButtons(props: NavigationHistoryButtonsProps) {
   return (
-    <div aria-label="Navigation history" className="flex items-center gap-0.5" role="group">
+    <div
+      aria-label="Navigation history"
+      className="flex items-center gap-[var(--workspace-navigation-control-gap)]"
+      role="group"
+    >
       <NavigationButton
         available={props.canGoBack}
         {...(props.buttonClassName ? { className: props.buttonClassName } : {})}

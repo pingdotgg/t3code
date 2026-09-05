@@ -1,4 +1,5 @@
 import {
+  type EnvironmentId,
   isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
 } from "@t3tools/contracts";
@@ -9,6 +10,7 @@ import {
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
 import { isHeicImageFile } from "../../lib/imageCompression";
+import { isVideoAttachment } from "../../types";
 
 type ComposerAttachmentFileKind = "image" | "file" | "unsupported-image";
 
@@ -73,6 +75,17 @@ export function classifyComposerAttachmentFile(
     return "file";
   }
   return isProviderSendTurnSupportedImageMimeType(file.type) ? "image" : "unsupported-image";
+}
+
+export function isPreviewableComposerVideo(
+  file: ComposerFileAttachment,
+  environmentId: EnvironmentId,
+): boolean {
+  return (
+    isVideoAttachment(file) &&
+    (file.file !== null ||
+      (file.uploadedAttachmentId !== undefined && file.uploadEnvironmentId === environmentId))
+  );
 }
 
 /** Byte limit for adding a generic file to the local composer draft. */
