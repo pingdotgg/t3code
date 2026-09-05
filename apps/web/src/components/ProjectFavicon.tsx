@@ -94,6 +94,19 @@ const PROJECT_ICON_COLOR_BY_NAME: Record<ProjectIconName, ProjectIconColor> = {
   web: "sky",
 };
 
+/**
+ * The color the automatic icon model would tint this project with. Surfaces
+ * that draw their own tile (the project rail's initials) reuse it so one
+ * project reads the same color whichever fallback it lands on.
+ */
+export function resolveAutomaticProjectIconColor(
+  projectName: string,
+  cwd: string,
+): ProjectIconColor | null {
+  const selection = selectProjectIcon(projectName, cwd);
+  return selection.kind === "lucide" ? PROJECT_ICON_COLOR_BY_NAME[selection.icon] : null;
+}
+
 export function ProjectFavicon(input: {
   environmentId: EnvironmentId;
   cwd: string;

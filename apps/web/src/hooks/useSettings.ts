@@ -381,6 +381,21 @@ export function useLegacySidebarEnabled(): boolean {
   return settingsHydrated && legacySidebarEnabled;
 }
 
+/**
+ * Whether the default sidebar shows the Discord-style project rail
+ * (Settings → General → Organization → Project rail) in place of the project
+ * scope combobox.
+ *
+ * Hydration-gated for the same reason as the legacy sidebar: the rail changes
+ * the sidebar's width floor, so resolving against the pre-hydration schema
+ * defaults would lay out one width and then jump to another.
+ */
+export function useSidebarProjectRailEnabled(): boolean {
+  const settingsHydrated = useClientSettingsHydrated();
+  const projectRailEnabled = useClientSettingsValue().sidebarProjectRailEnabled;
+  return settingsHydrated && projectRailEnabled;
+}
+
 /** Read current settings for one environment, merged with client-local preferences. */
 export function useEnvironmentSettings<T = UnifiedSettings>(
   environmentId: EnvironmentId,

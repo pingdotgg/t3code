@@ -145,6 +145,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["long lines code blocks tables diffs file previews"],
   },
   {
+    id: "project-rail",
+    title: "Project rail",
+    to: "/settings/general",
+    searchTerms: ["discord icons column switch projects quick left strip"],
+  },
+  {
     id: "project-grouping",
     title: "Project grouping",
     to: "/settings/general",

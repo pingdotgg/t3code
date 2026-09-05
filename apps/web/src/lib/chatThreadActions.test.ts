@@ -115,6 +115,21 @@ describe("chatThreadActions", () => {
     expect(projectRef).toEqual(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID));
   });
 
+  it("prefers an explicit project override over the viewed thread's project", () => {
+    const scopedProjectId = ProjectId.make("project-3");
+    const projectRef = resolveThreadActionProjectRef(
+      createContext({
+        activeThread: {
+          environmentId: ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+        },
+        projectRefOverride: scopeProjectRef(ENVIRONMENT_ID, scopedProjectId),
+      }),
+    );
+
+    expect(projectRef).toEqual(scopeProjectRef(ENVIRONMENT_ID, scopedProjectId));
+  });
+
   it("falls back to the active draft thread project when there is no active thread", () => {
     const projectRef = resolveThreadActionProjectRef(
       createContext({

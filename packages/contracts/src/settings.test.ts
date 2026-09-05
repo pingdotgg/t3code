@@ -294,6 +294,17 @@ describe("ClientSettings sidebar", () => {
     );
   });
 
+  it("keeps the project rail opt-in and patchable", () => {
+    expect(decodeClientSettings({}).sidebarProjectRailEnabled).toBe(false);
+    expect(
+      decodeClientSettings({ sidebarProjectRailEnabled: true }).sidebarProjectRailEnabled,
+    ).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ sidebarProjectRailEnabled: true }).sidebarProjectRailEnabled,
+    ).toBe(true);
+    expect(() => decodeClientSettingsPatch({ sidebarProjectRailEnabled: "yes" })).toThrow();
+  });
+
   it("keeps unpin confirmation opt-in and patchable", () => {
     expect(decodeClientSettings({}).confirmThreadUnpin).toBe(false);
     expect(decodeClientSettingsPatch({ confirmThreadUnpin: true }).confirmThreadUnpin).toBe(true);

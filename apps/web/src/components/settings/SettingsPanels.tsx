@@ -2092,6 +2092,20 @@ export function GeneralSettingsPanel() {
       <SharedSettingsMismatchAlert />
       <SettingsSection id="organization" title="Organization">
         <SettingsRow
+          {...searchableSetting("project-rail")}
+          description="Switch projects from a column of icons on the left of the sidebar."
+          control={
+            <Switch
+              checked={settings.sidebarProjectRailEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarProjectRailEnabled: Boolean(checked) })
+              }
+              aria-label="Project rail"
+            />
+          }
+        />
+
+        <SettingsRow
           {...searchableSetting("project-grouping")}
           description="Combine matching repositories across environments."
           resetAction={

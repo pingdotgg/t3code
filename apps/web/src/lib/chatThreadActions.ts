@@ -35,6 +35,11 @@ export interface ChatThreadActionContext {
   readonly activeThread: ThreadContextLike | undefined;
   readonly defaultProjectRef: ScopedProjectRef | null;
   readonly handleNewThread: NewThreadHandler;
+  // Set when the surface starting the thread already knows which project it
+  // means, and that answer outranks the viewed thread. Scoping the sidebar to
+  // one project is such a statement: creating a thread from there must land in
+  // the scoped project even while a thread from another project is open.
+  readonly projectRefOverride?: ScopedProjectRef | null;
 }
 
 export function resolveNewDraftStartFromOrigin(input: {
@@ -71,6 +76,9 @@ export function hasExplicitComposerModelSelection(
 export function resolveThreadActionProjectRef(
   context: ChatThreadActionContext,
 ): ScopedProjectRef | null {
+  if (context.projectRefOverride) {
+    return context.projectRefOverride;
+  }
   if (context.activeThread) {
     return scopeProjectRef(context.activeThread.environmentId, context.activeThread.projectId);
   }
