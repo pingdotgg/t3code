@@ -32,6 +32,7 @@ import {
 } from "@t3tools/shared/assistantCitations";
 import { createModelSelection } from "@t3tools/shared/model";
 import { it, assert, describe, vi } from "@effect/vitest";
+import { afterAll } from "vite-plus/test";
 
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -83,6 +84,7 @@ const serverConfigTestLayer = ServerConfig.layerTest(process.cwd(), process.cwd(
 // startSession verifies the workspace folder exists before dispatching to an
 // adapter, so session cwd fixtures must be real directories.
 const fixtureCwdRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "provider-service-test-"));
+afterAll(() => NodeFS.rmSync(fixtureCwdRoot, { recursive: true, force: true }));
 function fixtureCwd(name: string): string {
   const dir = NodePath.join(fixtureCwdRoot, name);
   NodeFS.mkdirSync(dir, { recursive: true });
@@ -488,6 +490,7 @@ for (const [enabled, completed] of [
         const scope = yield* Scope.make();
         const services = yield* Layer.build(
           makeProviderServiceLive().pipe(
+            Layer.provide(NodeServices.layer),
             Layer.provide(
               Layer.succeed(ProviderSessionDirectory.ProviderSessionDirectory, directory),
             ),
@@ -650,6 +653,7 @@ it.effect("ProviderServiceLive flushes deferred completions during shutdown", ()
     const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
     const providerLayer = Layer.mergeAll(
       makeProviderServiceLive().pipe(
+        Layer.provide(NodeServices.layer),
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
         Layer.provide(defaultServerSettingsLayer),
@@ -1059,7 +1063,7 @@ unsupportedRollback.layer("ProviderServiceLive unsupported rewind", (it) => {
         yield* provider.startSession(threadId, {
           providerInstanceId: codexInstanceId,
           threadId,
-          cwd: "/tmp/project",
+          cwd: fixtureCwd("project"),
           runtimeMode: "approval-required",
         });
         if (!active) {
@@ -1113,6 +1117,7 @@ it.effect(
         Layer.provide(runtimeRepositoryLayer),
       );
       const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(NodeServices.layer),
         Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
         Layer.provide(directoryLayer),
         Layer.provide(defaultServerSettingsLayer),
@@ -1412,6 +1417,61 @@ it.effect(
 );
 
 routing.layer("ProviderServiceLive routing", (it) => {
+  it.effect.each([CODEX_DRIVER, CLAUDE_AGENT_DRIVER, CURSOR_DRIVER])(
+    "rejects missing, file, and saved workspace paths before starting %s",
+    (driver) =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const adapter =
+          driver === CODEX_DRIVER
+            ? routing.codex
+            : driver === CLAUDE_AGENT_DRIVER
+              ? routing.claude
+              : routing.cursor;
+        const cwd = fixtureCwd(`missing-workspace-${driver}`);
+        const movedCwd = `${cwd}-moved`;
+        const threadId = asThreadId(`missing-workspace-${driver}`);
+        const input = {
+          provider: driver,
+          providerInstanceId: ProviderInstanceId.make(driver),
+          threadId,
+          runtimeMode: "full-access" as const,
+          cwd,
+        };
+
+        yield* provider.startSession(threadId, input);
+        yield* provider.stopSession({ threadId });
+        adapter.startSession.mockClear();
+        NodeFS.renameSync(cwd, movedCwd);
+
+        const failure = yield* provider.startSession(threadId, input).pipe(Effect.flip);
+        assert.instanceOf(failure, ProviderWorkspaceMissingError);
+        assert.include(failure.message, cwd);
+        assert.equal(adapter.startSession.mock.calls.length, 0);
+
+        const { cwd: _cwd, ...savedInput } = input;
+        const savedFailure = yield* provider.startSession(threadId, savedInput).pipe(Effect.flip);
+        assert.instanceOf(savedFailure, ProviderWorkspaceMissingError);
+        assert.include(savedFailure.message, cwd);
+        assert.equal(adapter.startSession.mock.calls.length, 0);
+
+        NodeFS.writeFileSync(cwd, "not a directory");
+        const fileFailure = yield* provider.startSession(threadId, input).pipe(Effect.flip);
+        assert.instanceOf(fileFailure, ProviderWorkspaceMissingError);
+        assert.include(fileFailure.message, cwd);
+        assert.equal(adapter.startSession.mock.calls.length, 0);
+
+        NodeFS.unlinkSync(cwd);
+        NodeFS.renameSync(movedCwd, cwd);
+        const restored = yield* provider.startSession(threadId, savedInput);
+        assert.equal(restored.cwd, cwd);
+        assert.equal(adapter.startSession.mock.calls.length, 1);
+        yield* provider.stopSession({ threadId });
+        adapter.startSession.mockClear();
+        adapter.stopSession.mockClear();
+      }),
+  );
+
   it.effect("allows promptless continuation only for capable providers", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -1817,7 +1877,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         provider: CODEX_DRIVER,
         providerInstanceId: codexInstanceId,
         threadId,
-        cwd: "/tmp/feedback-project",
+        cwd: fixtureCwd("feedback-project"),
         runtimeMode: "full-access",
       });
       yield* routing.codex.stopSession(threadId);
@@ -1880,7 +1940,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         provider: ProviderDriverKind.make("codex"),
         providerInstanceId: codexInstanceId,
         threadId: asThreadId("thread-attach"),
-        cwd: "/tmp/project",
+        cwd: fixtureCwd("project"),
         runtimeMode: "full-access",
       });
 
@@ -4226,7 +4286,7 @@ boundedListing.layer("ProviderServiceLive session listing", (it) => {
         provider: CODEX_DRIVER,
         providerInstanceId: codexInstanceId,
         threadId: activeSessionThreadId,
-        cwd: "/tmp/project-active-session",
+        cwd: fixtureCwd("project-active-session"),
         runtimeMode: "full-access",
       });
       listThreadIds.mockClear();
