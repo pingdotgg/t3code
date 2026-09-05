@@ -1,0 +1,4 @@
+interface:
+  display_name: "Prepare PR and Evidence"
+  short_description: "Prepare clear PR descriptions and checkable evidence"
+  default_prompt: "Use $prepare-proof-media to prepare this PR for human review: explain the final change, verify its claims, and present readable evidence with honest limitations."
