@@ -197,6 +197,23 @@ function findCursorEffortConfigOption(
   );
 }
 
+function isCursorOptimizeForConfigOption(option: EffectAcpSchema.SessionConfigOption): boolean {
+  const id = option.id.trim().toLowerCase();
+  const name = option.name.trim().toLowerCase();
+  return id === "optimize_for" || name.includes("optimize");
+}
+
+function findCursorOptimizeForConfigOption(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+): EffectAcpSchema.SessionConfigOption | undefined {
+  return configOptions.find(
+    (option) =>
+      option.type === "select" &&
+      getCursorConfigOptionCategory(option) === "model_config" &&
+      isCursorOptimizeForConfigOption(option),
+  );
+}
+
 function isCursorContextConfigOption(option: EffectAcpSchema.SessionConfigOption): boolean {
   const id = option.id.trim().toLowerCase();
   const name = option.name.trim().toLowerCase();
@@ -257,6 +274,24 @@ export function buildCursorCapabilitiesFromConfigOptions(
     return EMPTY_CAPABILITIES;
   }
 
+  const optimizeForOption = findCursorOptimizeForConfigOption(configOptions);
+  const optimizeForOptions =
+    optimizeForOption?.type === "select"
+      ? flattenSessionConfigSelectOptions(optimizeForOption).map((entry) => {
+          if (optimizeForOption.currentValue === entry.value) {
+            return {
+              value: entry.value,
+              label: entry.name,
+              isDefault: true,
+            };
+          }
+          return {
+            value: entry.value,
+            label: entry.name,
+          };
+        })
+      : [];
+
   const reasoningConfig = findCursorEffortConfigOption(configOptions);
   const reasoningEffortLevels =
     reasoningConfig?.type === "select"
@@ -306,6 +341,15 @@ export function buildCursorCapabilitiesFromConfigOptions(
   const fastCurrentValue = getBooleanCurrentValue(fastOption);
   const thinkingCurrentValue = getBooleanCurrentValue(thinkingOption);
   const optionDescriptors = [
+    ...(optimizeForOptions.length > 0
+      ? [
+          buildSelectOptionDescriptor({
+            id: "optimizeFor",
+            label: optimizeForOption?.name?.trim() || "Optimize For",
+            options: optimizeForOptions,
+          }),
+        ]
+      : []),
     ...(reasoningEffortLevels.length > 0
       ? [
           buildSelectOptionDescriptor({
@@ -492,6 +536,22 @@ export function resolveCursorAcpConfigUpdates(
     readonly configId: string;
     readonly value: string | boolean;
   }> = [];
+
+  const optimizeForOption = findCursorOptimizeForConfigOption(configOptions);
+  const requestedOptimizeFor = getProviderOptionStringSelectionValue(selections, "optimizeFor");
+  if (optimizeForOption && requestedOptimizeFor) {
+    const value = findCursorSelectOptionValue(
+      optimizeForOption,
+      (option) =>
+        normalizeCursorConfigOptionToken(option.value) ===
+          normalizeCursorConfigOptionToken(requestedOptimizeFor) ||
+        normalizeCursorConfigOptionToken(option.name) ===
+          normalizeCursorConfigOptionToken(requestedOptimizeFor),
+    );
+    if (value) {
+      updates.push({ configId: optimizeForOption.id, value });
+    }
+  }
 
   const reasoningOption = findCursorEffortConfigOption(configOptions);
   const requestedReasoning = normalizeCursorReasoningValue(

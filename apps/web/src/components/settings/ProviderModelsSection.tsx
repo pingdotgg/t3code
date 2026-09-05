@@ -58,6 +58,7 @@ function describeModelCapabilities(model: ServerProviderModel): string[] {
         (descriptor.id === "reasoningEffort" ||
           descriptor.id === "effort" ||
           descriptor.id === "reasoning" ||
+          descriptor.id === "optimizeFor" ||
           descriptor.id === "variant"),
     )
   ) {
