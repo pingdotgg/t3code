@@ -1,5 +1,5 @@
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
-import { useEffect, useId, useState } from "react";
+import { createContext, useContext, useEffect, useId, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -15,32 +15,56 @@ import { MediaActionsMenu } from "../../components/MediaActionsMenu";
 import { PresentationSource } from "../../components/NativePresentation";
 import { useMediaActions, type MediaActionsSource } from "../../lib/mediaActions";
 import { useAssetUrlState } from "../../state/assets";
-import { MARKDOWN_IMAGE_MAX_WIDTH, resolveMarkdownImageDisplaySize } from "./markdownImageSize";
+import {
+  MARKDOWN_IMAGE_MAX_WIDTH,
+  type MarkdownImageDisplaySize,
+  resolveMarkdownImageDisplaySize,
+} from "./markdownImageSize";
+
+/**
+ * Width the feed lays markdown out in. The feed already knows this from its
+ * viewport, so an image can size its frame on the first render instead of
+ * waiting for its own onLayout, which would change the row's height once
+ * more after the list has positioned the rows below it. It is an upper
+ * bound: a list item or blockquote indents its column, and the measured
+ * width takes over once it is known.
+ */
+export const MarkdownImageAvailableWidthContext = createContext(0);
 
 export function ThreadMarkdownImageView(props: {
   readonly uri: string | null;
   readonly sourceKey: string;
   readonly unavailable: boolean;
   readonly alt: string | null;
+  /** Pixel size from the server, when it could read the header; the frame is final from the first render. */
+  readonly knownSize?: { readonly width: number; readonly height: number } | undefined;
   readonly actionsSource?: MediaActionsSource;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
   const sourceIdentifier = useId();
   const mediaActions = useMediaActions(props.actionsSource);
-  const [availableWidth, setAvailableWidth] = useState(0);
-  const [sourceSize, setSourceSize] = useState<{ width: number; height: number } | null>(null);
+  const contextWidth = useContext(MarkdownImageAvailableWidthContext);
+  const [measuredWidth, setMeasuredWidth] = useState(0);
+  const availableWidth =
+    measuredWidth > 0 && contextWidth > 0
+      ? Math.min(contextWidth, measuredWidth)
+      : contextWidth || measuredWidth;
+  const [decodedSize, setDecodedSize] = useState<{ width: number; height: number } | null>(null);
   const [failedUri, setFailedUri] = useState<string | null>(null);
 
   useEffect(() => {
-    setSourceSize(null);
+    setDecodedSize(null);
   }, [props.sourceKey]);
 
   useEffect(() => {
     setFailedUri(null);
   }, [props.uri]);
 
-  const displaySize =
-    sourceSize === null
+  // The decoded size is what the platform actually drew, so it wins over the
+  // server's header hint once it exists.
+  const sourceSize = decodedSize ?? props.knownSize ?? null;
+  const displaySize: MarkdownImageDisplaySize | null =
+    sourceSize === null || availableWidth <= 0
       ? null
       : resolveMarkdownImageDisplaySize({
           sourceWidth: sourceSize.width,
@@ -54,7 +78,7 @@ export function ThreadMarkdownImageView(props: {
 
   return (
     <View
-      onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width)}
+      onLayout={(event) => setMeasuredWidth(event.nativeEvent.layout.width)}
       style={{ alignSelf: "stretch", gap: 6 }}
     >
       {props.uri === null || failed ? (
@@ -97,14 +121,12 @@ export function ThreadMarkdownImageView(props: {
             >
               <View
                 className="items-center justify-center overflow-hidden rounded-[10px] bg-md-code-bg"
-                style={{
-                  ...frameStyle,
-                }}
+                style={frameStyle}
               >
                 <ThreadMarkdownImageRequest
                   key={props.uri}
                   uri={props.uri}
-                  onLoad={setSourceSize}
+                  onLoad={setDecodedSize}
                   onError={() => setFailedUri(props.uri)}
                 />
               </View>
@@ -173,6 +195,7 @@ export function ThreadMarkdownImage(props: {
           : `workspace:${props.resource.path}`
       }
       unavailable={assetUrl._tag === "Failure"}
+      knownSize={assetUrl._tag === "Success" ? assetUrl.imageDimensions : undefined}
       alt={props.alt}
       actionsSource={props.actionsSource}
       onPressPreview={props.onPressPreview}
