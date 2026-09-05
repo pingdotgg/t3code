@@ -1878,13 +1878,6 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelOpen = rightPanelState.isOpen;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
-  const activeTerminalDrawerPresence = usePanelPresence(
-    Boolean(activeThreadKey && terminalUiState.terminalOpen),
-    true,
-    panelAnimationsActive,
-    activeThreadKey,
-    panelAnimationDurationMs,
-  );
   const rightPanelPresenceValue = useMemo(
     () => ({
       activeSurface: activeRightPanelSurface,
@@ -1960,7 +1953,7 @@ export default function ChatView(props: ChatViewProps) {
         currentThreadIds,
         openThreadIds: existingOpenTerminalThreadKeys,
         activeThreadId: activeThreadKey,
-        activeThreadTerminalOpen: activeTerminalDrawerPresence.present,
+        activeThreadTerminalOpen: terminalUiState.terminalOpen,
         maxHiddenThreadCount: MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
       });
       return currentThreadIds.length === nextThreadIds.length &&
@@ -1968,7 +1961,7 @@ export default function ChatView(props: ChatViewProps) {
         ? currentThreadIds
         : nextThreadIds;
     });
-  }, [activeTerminalDrawerPresence.present, activeThreadKey, existingOpenTerminalThreadKeys]);
+  }, [terminalUiState.terminalOpen, activeThreadKey, existingOpenTerminalThreadKeys]);
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProjectRef = useMemo(
     () =>
@@ -7519,6 +7512,22 @@ export default function ChatView(props: ChatViewProps) {
     return <NoActiveThreadState />;
   }
 
+  const terminalDrawerControls = (
+    <div
+      className="flex shrink-0 h-[calc(env(safe-area-inset-bottom)+2.5rem)] items-center justify-end border-t border-border/60 bg-background pr-[calc(env(safe-area-inset-right)+0.75rem)] pb-[env(safe-area-inset-bottom)]"
+      data-terminal-drawer-controls
+    >
+      <TerminalDrawerToggle
+        terminalAvailable={activeProject !== null}
+        terminalOpen={terminalUiState.terminalOpen}
+        terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
+        onToggleTerminal={() => {
+          if (shouldUseRightPanelSheet && rightPanelOpen) closePreviewPanel();
+          toggleTerminalVisibility();
+        }}
+      />
+    </div>
+  );
   const panelToggleControls = (
     <PanelLayoutControls
       showTerminalControl={false}
@@ -8251,6 +8260,7 @@ export default function ChatView(props: ChatViewProps) {
           >
             {rightPanelContent}
           </RightPanelTabs>
+          {terminalDrawerControls}
         </RightPanelSheet>
       ) : null}
 
@@ -8261,17 +8271,7 @@ export default function ChatView(props: ChatViewProps) {
           onClose={closeExpandedImage}
         />
       )}
-      <div
-        className="absolute inset-x-0 bottom-0 flex h-[calc(env(safe-area-inset-bottom)+2.5rem)] items-center justify-end border-t border-border/60 bg-background pr-[calc(env(safe-area-inset-right)+0.75rem)] pb-[env(safe-area-inset-bottom)]"
-        data-terminal-drawer-controls
-      >
-        <TerminalDrawerToggle
-          terminalAvailable={activeProject !== null}
-          terminalOpen={terminalUiState.terminalOpen}
-          terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
-          onToggleTerminal={toggleTerminalVisibility}
-        />
-      </div>
+      <div className="absolute inset-x-0 bottom-0">{terminalDrawerControls}</div>
     </div>
   );
 }

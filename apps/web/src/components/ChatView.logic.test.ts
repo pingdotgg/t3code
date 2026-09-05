@@ -1399,6 +1399,23 @@ describe("session branch mismatch dismissal", () => {
 });
 
 describe("reconcileMountedTerminalThreadIds", () => {
+  it("retains a closed active drawer until navigation without mounting unopened drawers", () => {
+    const closed = reconcileMountedTerminalThreadIds({
+      currentThreadIds: ["thread-a"],
+      openThreadIds: [],
+      activeThreadId: "thread-a",
+      activeThreadTerminalOpen: false,
+    });
+    expect(closed).toEqual(["thread-a"]);
+    expect(
+      reconcileMountedTerminalThreadIds({
+        currentThreadIds: closed,
+        openThreadIds: [],
+        activeThreadId: "thread-b",
+        activeThreadTerminalOpen: false,
+      }),
+    ).toEqual([]);
+  });
   it("keeps open threads and makes the active thread most recent", () => {
     expect(
       reconcileMountedTerminalThreadIds({
