@@ -458,12 +458,20 @@ export interface PickedThemeFile {
   name: string;
   size: number;
   text: string;
+  /**
+   * Base64 contents, sent only for binary packages such as `.vsix`. `text` is
+   * empty for those, so the renderer reads whichever field the file kind
+   * needs. Binary crosses the bridge encoded, matching how preview frames
+   * travel from the main process.
+   */
+  contentBase64?: string;
 }
 
 export const PickedThemeFileSchema = Schema.Struct({
   name: Schema.String,
   size: Schema.Number,
   text: Schema.String,
+  contentBase64: Schema.optional(Schema.String),
 });
 
 export interface DesktopWslDistro {

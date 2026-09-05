@@ -1,5 +1,7 @@
+import * as NodePath from "@effect/platform-node/NodePath";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
@@ -14,7 +16,64 @@ import {
   getLocalEnvironmentBootstraps,
   getWindowFullscreenState,
   pickProjectFavicon,
+  pickThemeFiles,
 } from "./window.ts";
+
+function fileInfo(size: number): FileSystem.File.Info {
+  return {
+    type: "File",
+    mtime: Option.none(),
+    atime: Option.none(),
+    birthtime: Option.none(),
+    dev: 0,
+    ino: Option.none(),
+    mode: 0,
+    nlink: Option.none(),
+    uid: Option.none(),
+    gid: Option.none(),
+    rdev: Option.none(),
+    size: FileSystem.Size(size),
+    blksize: Option.none(),
+    blocks: Option.none(),
+  };
+}
+
+function testFile(readAlloc: FileSystem.File["readAlloc"]): FileSystem.File {
+  return {
+    [FileSystem.FileTypeId]: FileSystem.FileTypeId,
+    stat: Effect.succeed(fileInfo(0)),
+    seek: () => Effect.void,
+    sync: Effect.void,
+    read: () => Effect.succeed(FileSystem.Size(0)),
+    readAlloc,
+    truncate: () => Effect.void,
+    write: () => Effect.succeed(FileSystem.Size(0)),
+    writeAll: () => Effect.void,
+  };
+}
+
+function pickThemeFilesLayer({
+  fileSize,
+  readAlloc,
+}: {
+  fileSize: number;
+  readAlloc: FileSystem.File["readAlloc"];
+}) {
+  return Layer.mergeAll(
+    Layer.mock(ElectronDialog.ElectronDialog)({
+      pickFiles: () => Effect.succeed(["/themes/aurora.vsix"]),
+    }),
+    Layer.mock(ElectronWindow.ElectronWindow)({
+      focusedMainOrFirst: Effect.succeed(Option.none()),
+    }),
+    FileSystem.layerNoop({
+      exists: () => Effect.succeed(false),
+      stat: () => Effect.succeed(fileInfo(fileSize)),
+      open: () => Effect.succeed(testFile(readAlloc)),
+    }),
+    NodePath.layer,
+  );
+}
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "wsl.exe",
@@ -185,5 +244,53 @@ describe("pickProjectFavicon", () => {
         ],
       ]);
     }),
+  );
+});
+
+describe("pickThemeFiles", () => {
+  it.effect("returns a base64-encoded extension package without text", () => {
+    const bytes = new TextEncoder().encode("theme package");
+    let readCount = 0;
+
+    return Effect.gen(function* () {
+      const result = yield* pickThemeFiles.handler(undefined);
+
+      assert.deepEqual(result, [
+        {
+          name: "aurora.vsix",
+          size: bytes.byteLength,
+          text: "",
+          contentBase64: Buffer.from(bytes).toString("base64"),
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        pickThemeFilesLayer({
+          fileSize: bytes.byteLength,
+          readAlloc: () => Effect.succeed(readCount++ === 0 ? Option.some(bytes) : Option.none()),
+        }),
+      ),
+    );
+  });
+
+  it.effect("reports a package that grows past the read cap as oversized", () =>
+    Effect.gen(function* () {
+      const result = yield* pickThemeFiles.handler(undefined);
+
+      assert.deepEqual(result, [
+        {
+          name: "aurora.vsix",
+          size: 20 * 1024 * 1024 + 1,
+          text: "",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        pickThemeFilesLayer({
+          fileSize: 1,
+          readAlloc: () => Effect.succeed(Option.some(new Uint8Array(64 * 1024))),
+        }),
+      ),
+    ),
   );
 });

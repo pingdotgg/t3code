@@ -1,12 +1,14 @@
 import { DownloadIcon, PlusIcon } from "lucide-react";
-import type { ChangeEvent, DragEvent, UIEvent } from "react";
+import type { ChangeEvent, DragEvent, ReactNode, UIEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../../lib/utils";
 import {
   getCustomThemes,
+  getStoredCustomThemeCollection,
   installCustomTheme,
   parseThemeFile,
   removeCustomTheme,
+  replaceCustomThemeCollection,
   THEME_FILE_VERSION,
   updateCustomTheme,
   type ThemeDefinition,
@@ -18,7 +20,8 @@ import {
   parseVsCodeThemeFile,
   resolveThemeLabelCollisions,
 } from "../../vscodeThemeImport";
-import { Alert } from "../ui/alert";
+import { importVsixThemeFile, MAX_VSIX_BYTES } from "../../vsixThemePackage";
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Dialog, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "../ui/dialog";
 import { ThemeSearchSection } from "./ThemeSearchSection";
@@ -45,6 +48,17 @@ function formatByteSize(bytes: number): string {
 export function describeOversizedThemeFile(bytes: number): string | null {
   if (bytes <= MAX_THEME_FILE_BYTES) return null;
   return `That file is ${formatByteSize(bytes)}. Theme files are only a few KB, so this one was not read (limit ${formatByteSize(MAX_THEME_FILE_BYTES)}).`;
+}
+
+/** Extension packages ship icons and screenshots, so they get the larger cap
+ *  an Open VSX download uses instead of the loose-file one. */
+export function describeOversizedThemePackage(bytes: number): string | null {
+  if (bytes <= MAX_VSIX_BYTES) return null;
+  return `That extension package is ${formatByteSize(bytes)}, past the ${formatByteSize(MAX_VSIX_BYTES)} import limit, so it was not read.`;
+}
+
+export function isThemePackageName(name: string): boolean {
+  return name.toLowerCase().endsWith(".vsix");
 }
 
 function escapeJsonHtml(value: string): string {
@@ -140,8 +154,46 @@ function ThemeJsonEditor({
   );
 }
 
-/** What the import pipeline needs from a file; DOM File satisfies it. */
-type ImportableThemeFile = { name: string; size: number; text: () => Promise<string> };
+/** What the import pipeline needs from a file; DOM File satisfies it.
+ *  `bytes` is only read for extension packages, which are binary. */
+type ImportableThemeFile = {
+  name: string;
+  size: number;
+  text: () => Promise<string>;
+  bytes?: () => Promise<Uint8Array>;
+};
+
+function decodeBase64(value: string): Uint8Array {
+  const binary = atob(value);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function importableThemeFile(file: File): ImportableThemeFile {
+  return {
+    name: file.name,
+    size: file.size,
+    text: () => file.text(),
+    bytes: async () => new Uint8Array(await file.arrayBuffer()),
+  };
+}
+
+/** An extension package waiting on an update-or-cancel decision because its
+ *  collection is already installed. */
+type PendingThemePackage = {
+  label: string;
+  collectionId: string;
+  themes: ReadonlyArray<ThemeDefinition>;
+  installedCollection: ReadonlyArray<ThemeDefinition>;
+};
+
+function ThemeConflictNotice({ title, children }: { title: ReactNode; children: ReactNode }) {
+  return (
+    <Alert>
+      <AlertTitle>{title}</AlertTitle>
+      <AlertDescription className="mt-0.5 text-xs">{children}</AlertDescription>
+    </Alert>
+  );
+}
 
 export function ThemeImportDialog({
   open,
@@ -164,6 +216,7 @@ export function ThemeImportDialog({
   // Imports whose id is already installed wait here for an update-or-copy
   // decision instead of failing.
   const [conflicts, setConflicts] = useState<ReadonlyArray<ThemeDefinition> | null>(null);
+  const [pendingPackage, setPendingPackage] = useState<PendingThemePackage | null>(null);
   const importRequestRef = useRef(0);
 
   useEffect(() => {
@@ -177,6 +230,7 @@ export function ThemeImportDialog({
     setError(null);
     setIsReading(false);
     setConflicts(null);
+    setPendingPackage(null);
   }, [open]);
 
   const readThemeFile = useCallback(async (file: ImportableThemeFile) => {
@@ -263,13 +317,92 @@ export function ThemeImportDialog({
     [onImportedMany, onOpenChange],
   );
 
+  // A package installs as one collection so a later import of the same
+  // extension replaces its variants instead of piling up copies.
+  const installThemePackage = useCallback(
+    (pending: PendingThemePackage) => {
+      try {
+        const imported = replaceCustomThemeCollection(pending.collectionId, pending.themes, {
+          expectedCollection: pending.installedCollection,
+        });
+        setPendingPackage(null);
+        onImportedMany(imported, { updated: pending.installedCollection.length > 0 });
+        onOpenChange(false);
+      } catch (cause) {
+        setPendingPackage(null);
+        setError(
+          cause instanceof Error ? cause.message : "That extension package could not be installed.",
+        );
+      }
+    },
+    [onImportedMany, onOpenChange],
+  );
+
+  const readThemePackage = useCallback(
+    async (file: ImportableThemeFile) => {
+      // Check the size before unzipping: expanding a huge archive is what
+      // would lock the UI.
+      const oversized = describeOversizedThemePackage(file.size);
+      if (oversized) {
+        setError(oversized);
+        return;
+      }
+
+      const requestId = ++importRequestRef.current;
+      setIsReading(true);
+      setError(null);
+      try {
+        const bytes = await file.bytes?.();
+        if (requestId !== importRequestRef.current) return;
+        if (!bytes || bytes.byteLength === 0) {
+          setError("Could not read that extension package.");
+          return;
+        }
+        const themes = await importVsixThemeFile({ name: file.name, bytes });
+        if (requestId !== importRequestRef.current) return;
+        const collection = themes[0]?.collection;
+        if (!collection) throw new Error("That extension has no compatible color themes.");
+        const installedCollection = getStoredCustomThemeCollection(collection.id);
+        const pending = {
+          label: collection.label,
+          collectionId: collection.id,
+          themes,
+          installedCollection,
+        };
+        setFileName(file.name);
+        // An extension already installed under this collection waits for an
+        // explicit update: replacing it drops local edits.
+        if (installedCollection.length > 0) setPendingPackage(pending);
+        else installThemePackage(pending);
+      } catch (cause) {
+        if (requestId !== importRequestRef.current) return;
+        setError(
+          cause instanceof Error ? cause.message : "That extension package could not be imported.",
+        );
+      } finally {
+        if (requestId === importRequestRef.current) setIsReading(false);
+      }
+    },
+    [installThemePackage],
+  );
+
   const readThemeFiles = useCallback(
     (files: ReadonlyArray<ImportableThemeFile>) => {
       if (files.length === 0) return;
+      if (files.some((file) => isThemePackageName(file.name))) {
+        // A package expands into a whole collection with its own update
+        // prompt, so it imports on its own rather than inside a batch.
+        if (files.length > 1) {
+          setError("Import one .vsix extension package at a time.");
+          return;
+        }
+        void readThemePackage(files[0]!);
+        return;
+      }
       if (files.length === 1) void readThemeFile(files[0]!);
       else void readThemeBatch(files);
     },
-    [readThemeBatch, readThemeFile],
+    [readThemeBatch, readThemeFile, readThemePackage],
   );
 
   // On desktop the native picker opens in ~/.vscode/extensions (when it
@@ -285,6 +418,9 @@ export function ThemeImportDialog({
             name: file.name,
             size: file.size,
             text: () => Promise.resolve(file.text),
+            ...(file.contentBase64 === undefined
+              ? {}
+              : { bytes: () => Promise.resolve(decodeBase64(file.contentBase64!)) }),
           })),
         );
       });
@@ -297,7 +433,7 @@ export function ThemeImportDialog({
     (event: ChangeEvent<HTMLInputElement>) => {
       const files = [...(event.currentTarget.files ?? [])];
       event.currentTarget.value = "";
-      readThemeFiles(files);
+      readThemeFiles(files.map(importableThemeFile));
     },
     [readThemeFiles],
   );
@@ -306,7 +442,7 @@ export function ThemeImportDialog({
     (event: DragEvent<HTMLDivElement>) => {
       event.preventDefault();
       setIsDropTarget(false);
-      readThemeFiles([...event.dataTransfer.files]);
+      readThemeFiles([...event.dataTransfer.files].map(importableThemeFile));
     },
     [readThemeFiles],
   );
@@ -464,7 +600,7 @@ export function ThemeImportDialog({
             const fileInput = (
               <input
                 ref={fileInputRef}
-                accept=".json,application/json"
+                accept=".json,.vsix,application/json"
                 className="sr-only"
                 onChange={handleFileChange}
                 multiple
@@ -487,15 +623,33 @@ export function ThemeImportDialog({
                 <ThemeJsonEditor id="theme-json-editor" onChange={setJson} value={json} />
               </div>
             );
+            if (pendingPackage) {
+              return (
+                <div className="space-y-3">
+                  <ThemeConflictNotice title={`“${pendingPackage.label}” is already installed`}>
+                    Updating replaces its installed variants, including any local edits. Variants no
+                    longer in the package will be removed.
+                  </ThemeConflictNotice>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button size="sm" onClick={() => installThemePackage(pendingPackage)}>
+                      Update themes
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setPendingPackage(null)}>
+                      Back
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              );
+            }
             if (conflicts) {
               return (
                 <div className="space-y-3">
-                  <div className="rounded-xl border border-border/70 bg-muted/20 p-3">
-                    <p className="text-sm font-medium">Already installed</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {conflicts.map((theme) => theme.label).join(", ")}
-                    </p>
-                  </div>
+                  <ThemeConflictNotice title="Already installed">
+                    {conflicts.map((theme) => theme.label).join(", ")}
+                  </ThemeConflictNotice>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button size="sm" onClick={() => resolveConflicts("update")}>
                       Update existing
@@ -525,7 +679,7 @@ export function ThemeImportDialog({
                   <div className="min-w-0">
                     <p className="text-sm font-medium">Theme file</p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {fileName ?? "Drop T3 Code or VS Code .json files"}
+                      {fileName ?? "Drop T3 Code or VS Code .json files, or a .vsix extension"}
                     </p>
                   </div>
                   {chooseButton()}
