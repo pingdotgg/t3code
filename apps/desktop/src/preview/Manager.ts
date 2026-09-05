@@ -154,6 +154,7 @@ const decodeScreenshotLayout = Schema.decodeUnknownSync(
       pageY: Schema.Number,
       clientWidth: Schema.Number,
       clientHeight: Schema.Number,
+      zoom: Schema.optional(Schema.Number),
     }),
   }),
 );
@@ -674,6 +675,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             const { cssVisualViewport: viewport } = decodeScreenshotLayout(
               await control.debugger.sendCommand("Page.getLayoutMetrics"),
             );
+            // Layout metrics use CSS pixels, while screenshot clips use DIP.
+            const zoom = viewport.zoom ?? 1;
             // A fitted webview can extend past the host window. An explicit clip
             // captures its whole viewport instead of the host's visible surface.
             const { data } = decodeScreenshot(
@@ -681,10 +684,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 format: "png",
                 captureBeyondViewport: true,
                 clip: {
-                  x: viewport.pageX,
-                  y: viewport.pageY,
-                  width: viewport.clientWidth,
-                  height: viewport.clientHeight,
+                  x: viewport.pageX * zoom,
+                  y: viewport.pageY * zoom,
+                  width: viewport.clientWidth * zoom,
+                  height: viewport.clientHeight * zoom,
                   scale: 1,
                 },
               }),

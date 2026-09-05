@@ -11,7 +11,6 @@ export function captureBrowserScreenshot<T>(tabId: string, capture: () => Promis
     const cover = document.createElement("img");
     const style = document.createElement("style");
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    let animationFrame = 0;
     const expired = new Promise<never>((_, reject) => {
       timeout = setTimeout(
         () => reject(new Error("Browser screenshot preparation timed out.")),
@@ -32,19 +31,10 @@ export function captureBrowserScreenshot<T>(tabId: string, capture: () => Promis
       style.textContent = "webview[data-preview-native-capture] { transform: none !important; }";
       webview.after(cover, style);
       webview.setAttribute("data-preview-native-capture", "");
-      await Promise.race([
-        new Promise<void>((resolve) => {
-          animationFrame = requestAnimationFrame(() => {
-            animationFrame = requestAnimationFrame(() => resolve());
-          });
-        }),
-        expired,
-      ]);
       clearTimeout(timeout);
       return await capture();
     } finally {
       clearTimeout(timeout);
-      cancelAnimationFrame(animationFrame);
       webview.removeAttribute("data-preview-native-capture");
       cover.remove();
       style.remove();
