@@ -43,14 +43,6 @@ const RELAY_STATUS_AND_CONNECT_SCOPES = [
   RelayEnvironmentConnectScope,
 ] satisfies ReadonlyArray<RelayDpopAccessTokenScope>;
 
-export function normalizeRelayBaseUrl(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    return null;
-  }
-  return trimmed.replace(/\/+$/g, "");
-}
-
 function readRelayUrl(): string | null {
   return resolveCloudPublicConfig().relay.url;
 }

@@ -17,7 +17,6 @@ import {
   connectCloudEnvironment,
   listCloudEnvironments,
   listCloudEnvironmentsWithStatus,
-  normalizeRelayBaseUrl,
   refreshCloudEnvironmentConnection,
 } from "./linkEnvironment";
 
@@ -193,13 +192,6 @@ describe("mobile cloud link environment client", () => {
     vi.restoreAllMocks();
     createProofMock.mockClear();
     loadPreferences.mockClear();
-  });
-
-  it("normalizes configured relay base URLs before building DPoP-bound requests", () => {
-    expect(normalizeRelayBaseUrl(" https://relay.example.test/// ")).toBe(
-      "https://relay.example.test",
-    );
-    expect(normalizeRelayBaseUrl("   ")).toBeNull();
   });
 
   it("makes linked environments visible while their status is still loading", () => {
