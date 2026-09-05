@@ -9,10 +9,18 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ThreadActionMenuId } from "../components/threadActionMenu.logic";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
 const state = vi.hoisted(() => ({
   granted: new Set<string>(),
   effects: [] as string[],
-  completed: Promise.withResolvers<void>(),
+  completed: deferred<void>(),
   show: vi.fn<
     (
       items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>>,
@@ -150,7 +158,7 @@ const createMenu = () =>
 beforeEach(() => {
   state.granted = new Set(["primary"]);
   state.effects = [];
-  state.completed = Promise.withResolvers<void>();
+  state.completed = deferred<void>();
   state.show.mockReset().mockResolvedValue(null);
 });
 
@@ -186,7 +194,7 @@ describe("thread menu permissions", () => {
     "%s rechecks after the native menu closes",
     async (action) => {
       state.granted.add("secondary");
-      const choice = Promise.withResolvers<ThreadActionMenuId | null>();
+      const choice = deferred<ThreadActionMenuId | null>();
       state.show.mockReturnValue(choice.promise);
       createMenu().openMenu(position);
       state.granted.delete("secondary");
