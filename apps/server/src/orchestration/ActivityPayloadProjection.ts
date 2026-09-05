@@ -1,3 +1,4 @@
+import { extractActivityChangedFiles } from "@t3tools/shared/activityChangedFiles";
 import type {
   OrchestrationEvent,
   OrchestrationThreadActivity,
@@ -17,68 +18,6 @@ function asTrimmedString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-}
-
-function pushChangedFile(target: string[], seen: Set<string>, value: unknown): void {
-  const normalized = asTrimmedString(value);
-  if (!normalized || seen.has(normalized)) {
-    return;
-  }
-  seen.add(normalized);
-  target.push(normalized);
-}
-
-function collectChangedFiles(
-  value: unknown,
-  target: string[],
-  seen: Set<string>,
-  depth: number,
-): void {
-  if (depth > 4 || target.length >= 12) {
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      collectChangedFiles(entry, target, seen, depth + 1);
-      if (target.length >= 12) {
-        return;
-      }
-    }
-    return;
-  }
-
-  const record = asRecord(value);
-  if (!record) {
-    return;
-  }
-
-  pushChangedFile(target, seen, record.path);
-  pushChangedFile(target, seen, record.filePath);
-  pushChangedFile(target, seen, record.relativePath);
-  pushChangedFile(target, seen, record.filename);
-  pushChangedFile(target, seen, record.newPath);
-  pushChangedFile(target, seen, record.oldPath);
-
-  for (const nestedKey of [
-    "item",
-    "result",
-    "input",
-    "data",
-    "changes",
-    "files",
-    "edits",
-    "patch",
-    "patches",
-    "operations",
-  ]) {
-    if (!(nestedKey in record)) {
-      continue;
-    }
-    collectChangedFiles(record[nestedKey], target, seen, depth + 1);
-    if (target.length >= 12) {
-      return;
-    }
-  }
 }
 
 function projectCommandData(data: Record<string, unknown>): Record<string, unknown> | undefined {
@@ -284,8 +223,7 @@ function projectMcpToolCallData(data: Record<string, unknown>): Record<string, u
     projectedData.kind = data.kind;
   }
 
-  const changedFiles: string[] = [];
-  collectChangedFiles(data, changedFiles, new Set<string>(), 0);
+  const changedFiles = extractActivityChangedFiles(data);
   if (changedFiles.length > 0) {
     projectedData.files = changedFiles.map((path) => ({ path }));
   }
@@ -395,8 +333,7 @@ export function projectActivityPayload(
     projectedData.imagePath = imagePath;
   }
 
-  const changedFiles: string[] = [];
-  collectChangedFiles(data, changedFiles, new Set<string>(), 0);
+  const changedFiles = extractActivityChangedFiles(data);
   if (changedFiles.length > 0) {
     // Both clients discover file names by walking objects with path-like keys.
     projectedData.files = changedFiles.map((path) => ({ path }));

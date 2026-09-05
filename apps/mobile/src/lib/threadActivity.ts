@@ -1,3 +1,4 @@
+import { extractActivityChangedFiles } from "@t3tools/shared/activityChangedFiles";
 import {
   ApprovalRequestId,
   isToolLifecycleItemType,
@@ -460,7 +461,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? (activity.payload as Record<string, unknown>)
       : null;
   const commandPreview = extractToolCommand(payload);
-  const changedFiles = extractChangedFiles(payload);
+  const changedFiles = extractActivityChangedFiles(asRecord(payload?.data));
   const title = extractToolTitle(payload);
   const toolPresentation = extractToolActivityPresentation(payload);
   // Terminal task updates carry identity so they replace each child's progress row.
@@ -1195,70 +1196,6 @@ function extractWorkLogRequestKind(
     return payload.requestKind;
   }
   return requestKindFromRequestType(payload?.requestType) ?? undefined;
-}
-
-function pushChangedFile(target: string[], seen: Set<string>, value: unknown) {
-  const normalized = asTrimmedString(value);
-  if (!normalized || seen.has(normalized)) {
-    return;
-  }
-  seen.add(normalized);
-  target.push(normalized);
-}
-
-function collectChangedFiles(value: unknown, target: string[], seen: Set<string>, depth: number) {
-  if (depth > 4 || target.length >= 12) {
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      collectChangedFiles(entry, target, seen, depth + 1);
-      if (target.length >= 12) {
-        return;
-      }
-    }
-    return;
-  }
-
-  const record = asRecord(value);
-  if (!record) {
-    return;
-  }
-
-  pushChangedFile(target, seen, record.path);
-  pushChangedFile(target, seen, record.filePath);
-  pushChangedFile(target, seen, record.relativePath);
-  pushChangedFile(target, seen, record.filename);
-  pushChangedFile(target, seen, record.newPath);
-  pushChangedFile(target, seen, record.oldPath);
-
-  for (const nestedKey of [
-    "item",
-    "result",
-    "input",
-    "data",
-    "changes",
-    "files",
-    "edits",
-    "patch",
-    "patches",
-    "operations",
-  ]) {
-    if (!(nestedKey in record)) {
-      continue;
-    }
-    collectChangedFiles(record[nestedKey], target, seen, depth + 1);
-    if (target.length >= 12) {
-      return;
-    }
-  }
-}
-
-function extractChangedFiles(payload: Record<string, unknown> | null): string[] {
-  const changedFiles: string[] = [];
-  const seen = new Set<string>();
-  collectChangedFiles(asRecord(payload?.data), changedFiles, seen, 0);
-  return changedFiles;
 }
 
 function compareActivityLifecycleRank(kind: string): number {

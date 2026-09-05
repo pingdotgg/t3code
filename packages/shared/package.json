@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./activityChangedFiles": {
+      "types": "./src/activityChangedFiles.ts",
+      "import": "./src/activityChangedFiles.ts"
+    },
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"
