@@ -57,6 +57,13 @@ a shortcut.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread).
 
+`thread.nextAttention` opens the newest conversation awaiting review. When
+already viewing an attention item, it advances through the remaining items and
+wraps around. Its default shortcut is `alt+l` (`⌥L` on macOS). The queue
+includes completed, failed, input-required, and approval-required agents; it
+ignores running agents and removes an item when you open or dismiss its
+notification. Repeated updates from the same agent update its existing item.
+
 ## Reserved shortcuts
 
 In the desktop app, `mod+w` closes the focused terminal or the active right-panel
