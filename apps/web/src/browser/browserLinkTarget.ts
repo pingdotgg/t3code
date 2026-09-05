@@ -55,6 +55,7 @@ export function isWebUrl(url: string): boolean {
  * hydration the snapshot is the schema default ("system"), so a link clicked
  * in the first moments after launch would ignore a persisted "app" — opening
  * is asynchronous anyway, so waiting costs nothing the user can see.
+ * Read failures reject rather than choosing a browser without the saved preference.
  */
 export async function resolveBrowserLinkTargetPreference(): Promise<BrowserLinkTarget> {
   await ensureClientSettingsHydrated();
