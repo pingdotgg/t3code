@@ -36,6 +36,11 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
 
     const sweep = Effect.gen(function* () {
       const bindings = yield* directory.listBindings();
+      const liveClaudeThreadIds = new Set(
+        (yield* providerService.listSessions())
+          .filter((session) => session.provider === "claudeAgent")
+          .map((session) => session.threadId),
+      );
       const now = yield* Clock.currentTimeMillis;
       let reapedCount = 0;
 
@@ -79,6 +84,17 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
           yield* Effect.logDebug("provider.session.reaper.skipped-background-work", {
             threadId: binding.threadId,
             backgroundLiveness: thread.backgroundLiveness,
+            idleDurationMs,
+          });
+          continue;
+        }
+
+        // Claude's process is also its cross-session messaging endpoint, so
+        // a live idle session must remain addressable by its peers.
+        if (binding.provider === "claudeAgent" && liveClaudeThreadIds.has(binding.threadId)) {
+          yield* Effect.logDebug("provider.session.reaper.skipped-messaging-endpoint", {
+            threadId: binding.threadId,
+            provider: binding.provider,
             idleDurationMs,
           });
           continue;

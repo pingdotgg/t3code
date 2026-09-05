@@ -5,6 +5,7 @@ import {
   TurnId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderSession,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -147,6 +148,7 @@ describe("ProviderSessionReaper", () => {
 
   async function createHarness(input: {
     readonly readModel: ReturnType<typeof makeReadModel>;
+    readonly activeSessions?: ReadonlyArray<ProviderSession>;
     readonly stopSessionImplementation?: (input: {
       readonly threadId: ThreadId;
     }) => ReturnType<ProviderServiceShape["stopSession"]>;
@@ -169,7 +171,7 @@ describe("ProviderSessionReaper", () => {
       respondToRequest: () => unsupported(),
       respondToUserInput: () => unsupported(),
       stopSession,
-      listSessions: () => Effect.succeed([]),
+      listSessions: () => Effect.succeed(input.activeSessions ?? []),
       getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
       assertConversationRollbackSupported: () => unsupported(),
       getInstanceInfo: (instanceId) => {
@@ -249,7 +251,7 @@ describe("ProviderSessionReaper", () => {
           session: {
             threadId,
             status: "ready",
-            providerName: "claudeAgent",
+            providerName: "codex",
             runtimeMode: "full-access",
             activeTurnId: null,
             lastError: null,
@@ -265,9 +267,9 @@ describe("ProviderSessionReaper", () => {
     await runtime!.runPromise(
       repository.upsert({
         threadId,
-        providerName: "claudeAgent",
+        providerName: "codex",
         providerInstanceId: null,
-        adapterKey: "claudeAgent",
+        adapterKey: "codex",
         runtimeMode: "full-access",
         status: "running",
         lastSeenAt: "2026-04-14T00:00:00.000Z",
@@ -285,6 +287,66 @@ describe("ProviderSessionReaper", () => {
     expect(harness.stopSession.mock.calls[0]?.[0]).toEqual({ threadId });
     expect(harness.stoppedThreadIds.has(threadId)).toBe(true);
   });
+
+  it.each(["ready", "error"] as const)(
+    "keeps stale %s Claude sessions alive for cross-session messaging",
+    async (status) => {
+      const threadId = ThreadId.make(`thread-reaper-claude-messaging-${status}`);
+      const now = "2026-01-01T00:00:00.000Z";
+      const harness = await createHarness({
+        activeSessions: [
+          {
+            threadId,
+            provider: ProviderDriverKind.make("claudeAgent"),
+            status: "ready",
+            runtimeMode: "full-access",
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        readModel: makeReadModel([
+          {
+            id: threadId,
+            session: {
+              threadId,
+              status,
+              providerName: "claudeAgent",
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: now,
+            },
+          },
+        ]),
+      });
+      const repository = await runtime!.runPromise(
+        Effect.service(ProviderSessionRuntime.ProviderSessionRuntimeRepository),
+      );
+
+      await runtime!.runPromise(
+        repository.upsert({
+          threadId,
+          providerName: "claudeAgent",
+          providerInstanceId: null,
+          adapterKey: "claudeAgent",
+          runtimeMode: "full-access",
+          status: "running",
+          lastSeenAt: "2026-04-14T00:00:00.000Z",
+          resumeCursor: {
+            opaque: "resume-claude-messaging",
+          },
+          runtimePayload: null,
+        }),
+      );
+
+      await startReaper();
+      await runtime!.runPromise(drainFibers);
+
+      expect(harness.stopSession).not.toHaveBeenCalled();
+      const remaining = await runtime!.runPromise(repository.getByThreadId({ threadId }));
+      expect(Option.isSome(remaining)).toBe(true);
+    },
+  );
 
   it("skips stale sessions when the thread still has an active turn", async () => {
     const threadId = ThreadId.make("thread-reaper-active-turn");
@@ -486,7 +548,7 @@ describe("ProviderSessionReaper", () => {
           id: failedThreadId,
           session: {
             threadId: failedThreadId,
-            status: "ready",
+            status: "error",
             providerName: "claudeAgent",
             runtimeMode: "full-access",
             activeTurnId: null,
@@ -572,7 +634,7 @@ describe("ProviderSessionReaper", () => {
           id: defectThreadId,
           session: {
             threadId: defectThreadId,
-            status: "ready",
+            status: "error",
             providerName: "claudeAgent",
             runtimeMode: "full-access",
             activeTurnId: null,
