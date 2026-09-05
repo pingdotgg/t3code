@@ -7,13 +7,13 @@ interface UsageRefreshStatus {
   readonly summary: unknown | null;
 }
 
-/** Tracks only environments that had a value when pull-to-refresh began. */
+/** Tracks environments whose next request can produce a completion transition. */
 export function usagePullRefreshTargets(
   environments: readonly UsageRefreshStatus[],
 ): ReadonlySet<EnvironmentId> {
   return new Set(
     environments.flatMap((environment) =>
-      environment.summary === null ? [] : [environment.environmentId],
+      environment.summary === null && environment.isPending ? [] : [environment.environmentId],
     ),
   );
 }
