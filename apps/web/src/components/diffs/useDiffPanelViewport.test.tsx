@@ -21,6 +21,7 @@ type ViewportHandle = NonNullable<Parameters<typeof useDiffPanelViewport>[0]>;
 const SCOPE = "environment-1:thread-1:unstaged";
 const SELECTION: DiffPanelSelection = { kind: "unstaged" };
 let currentViewer: ViewerFixture | undefined;
+let renderedItemsAvailable = true;
 
 // Model Pierre's public position/scroll API and its cleanup order, not DOM geometry.
 class ViewerFixture {
@@ -37,7 +38,7 @@ class ViewerFixture {
   constructor(readonly onScroll: (scrollTop: number, viewer: ViewerFixture) => void) {}
 
   getRenderedItems() {
-    return this.items;
+    return renderedItemsAvailable ? this.items : [];
   }
 
   getTopForItem(id: string) {
@@ -124,6 +125,7 @@ describe("diff panel viewport lifecycle", () => {
   let renderer: ReactTestRenderer | undefined;
 
   beforeEach(() => {
+    renderedItemsAvailable = true;
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     useDiffPanelStore.setState({
       byThreadKey: {},
@@ -240,7 +242,7 @@ describe("diff panel viewport lifecycle", () => {
     });
     await act(async () => renderer!.update(<Panel />));
     expect(currentViewer!.targets).toEqual([
-      { type: "position", position: 1300, behavior: "instant" },
+      { type: "item", id: "first", offset: -1300, align: "start", behavior: "instant" },
       { type: "item", id: "tree", align: "start" },
     ]);
     expect(currentViewer!.scrollTop).toBe(800);
@@ -258,10 +260,34 @@ describe("diff panel viewport lifecycle", () => {
     await act(async () => renderer!.update(<></>));
     await act(async () => renderer!.update(<Panel />));
     expect(currentViewer!.targets).toEqual([
-      { type: "position", position: 1300, behavior: "instant" },
+      { type: "item", id: "first", offset: -1300, align: "start", behavior: "instant" },
     ]);
-    expect(currentViewer!.scrollTop).toBe(1268);
+    expect(currentViewer!.scrollTop).toBe(1300);
+    await act(async () => renderer!.update(<></>));
+    await act(async () => renderer!.update(<Panel />));
+    expect(currentViewer!.scrollTop).toBe(1300);
   });
+
+  it.each([0, 1300])(
+    "retains saved position %s when a viewer has no rendered items",
+    async (position) => {
+      useDiffPanelStore.getState().setViewport(SCOPE, {
+        scrollTop: position,
+        revealSelection: null,
+      });
+      renderedItemsAvailable = false;
+      await act(async () => {
+        renderer = create(<Panel />);
+      });
+      expect(currentViewer!.targets).toEqual([]);
+      expect(currentViewer!.scrollTop).toBe(0);
+      await act(async () => renderer!.update(<></>));
+      expect(useDiffPanelStore.getState().viewportByScopeKey[SCOPE]?.scrollTop).toBe(position);
+      renderedItemsAvailable = true;
+      await act(async () => renderer!.update(<Panel />));
+      expect(currentViewer!.scrollTop).toBe(position);
+    },
+  );
 
   it.each(["thread", "environment"])(
     "does not resurrect a removed %s during unmount",

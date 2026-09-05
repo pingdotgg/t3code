@@ -72,20 +72,26 @@ export function useDiffPanelViewport(
       capture.restoredInstance = instance;
       viewer.scrollTo({ type: "item", id: selectedFileKey, align: "start" });
     } else if (capture.restoredInstance !== instance) {
-      capture.restoredInstance = instance;
-      const anchor = capture.fileAnchor;
+      let anchor = capture.fileAnchor;
       // Position targets subtract Pierre's sticky header, so restore relative to a file instead.
-      if (anchor && instance.getTopForItem(anchor.fileKey) !== undefined) {
-        viewer.scrollTo({
-          type: "item",
-          id: anchor.fileKey,
-          offset: anchor.offset,
-          align: "start",
-          behavior: "instant",
-        });
-      } else {
-        viewer.scrollTo({ type: "position", position: capture.scrollTop, behavior: "instant" });
+      if (!anchor || instance.getTopForItem(anchor.fileKey) === undefined) {
+        anchor = undefined;
+        for (const item of instance.getRenderedItems()) {
+          const top = instance.getTopForItem(item.id);
+          if (top === undefined) continue;
+          anchor = { fileKey: item.id, offset: top - capture.scrollTop };
+          break;
+        }
       }
+      if (!anchor) return;
+      capture.restoredInstance = instance;
+      viewer.scrollTo({
+        type: "item",
+        id: anchor.fileKey,
+        offset: anchor.offset,
+        align: "start",
+        behavior: "instant",
+      });
     }
   }, [scopeKey, selectedFileKey, selection, viewer]);
 
