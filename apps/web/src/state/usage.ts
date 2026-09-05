@@ -47,12 +47,20 @@ export interface EnvironmentUsageStatus {
  */
 const usageByWindowAtom = Atom.family((windowKey: string) =>
   Atom.make((get): readonly EnvironmentUsageStatus[] => {
-    const input = JSON.parse(windowKey) as UsageSummaryInput;
+    const { refreshTokens, ...input } = JSON.parse(windowKey) as UsageSummaryInput & {
+      readonly refreshTokens: Readonly<Record<string, string>>;
+    };
     const presentations = get(environmentPresentations.presentationsAtom);
 
     const statuses: EnvironmentUsageStatus[] = [];
     for (const [environmentId, presentation] of presentations) {
-      const result = get(serverEnvironment.usageSummary({ environmentId, input }));
+      const refreshToken = refreshTokens[environmentId];
+      const result = get(
+        serverEnvironment.usageSummary({
+          environmentId,
+          input: refreshToken === undefined ? input : { ...input, refreshToken },
+        }),
+      );
       statuses.push({
         environmentId,
         label: presentation.entry.target.label,
@@ -68,7 +76,8 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
 export interface UsageView {
   readonly merged: MergedUsage;
   readonly environments: readonly EnvironmentUsageStatus[];
-  /** True until at least one environment has answered. */
+  readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
+  /** True until at least one selected environment has answered. */
   readonly isPending: boolean;
   /**
    * True while environments that have not failed are still answering. Failed
@@ -79,8 +88,11 @@ export interface UsageView {
   readonly refresh: () => void;
 }
 
-export function useUsage(input: UsageSummaryInput): UsageView {
-  const [refreshToken, setRefreshToken] = useState<string>();
+export function useUsage(
+  input: UsageSummaryInput,
+  selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
+): UsageView {
+  const [refreshTokens, setRefreshTokens] = useState<Readonly<Record<string, string>>>({});
   const rangeKey = useMemo(
     () =>
       JSON.stringify({
@@ -109,7 +121,7 @@ export function useUsage(input: UsageSummaryInput): UsageView {
         resolution: input.resolution,
         sinceTime: input.sinceTime,
         untilTime: input.untilTime,
-        refreshToken,
+        refreshTokens,
       }),
     [
       input.sinceDay,
@@ -118,7 +130,7 @@ export function useUsage(input: UsageSummaryInput): UsageView {
       input.resolution,
       input.sinceTime,
       input.untilTime,
-      refreshToken,
+      refreshTokens,
     ],
   );
   const atom = usageByWindowAtom(windowKey);
@@ -127,10 +139,18 @@ export function useUsage(input: UsageSummaryInput): UsageView {
   const retained = retainUsageStatuses(rangeKey, currentEnvironments, settledStatuses.current);
   settledStatuses.current = retained.settled;
   const environments = retained.visible;
-
+  const selectedEnvironments = useMemo(
+    () =>
+      selectedEnvironmentIds === null
+        ? environments
+        : environments.filter((environment) =>
+            selectedEnvironmentIds.has(environment.environmentId),
+          ),
+    [environments, selectedEnvironmentIds],
+  );
   const answered = useMemo<readonly EnvironmentUsage[]>(
     () =>
-      environments.flatMap((environment) =>
+      selectedEnvironments.flatMap((environment) =>
         environment.summary === null
           ? []
           : [
@@ -141,7 +161,7 @@ export function useUsage(input: UsageSummaryInput): UsageView {
               },
             ],
       ),
-    [environments],
+    [selectedEnvironments],
   );
 
   // Refreshing only the derived atom would re-read the per-environment SWR
@@ -153,8 +173,8 @@ export function useUsage(input: UsageSummaryInput): UsageView {
   // not the refetch succeeds: an offline environment still recounts tokens.
   const refresh = useCallback(() => {
     const nextToken = makeUsageRefreshToken(answered);
-    const currentInput = JSON.parse(windowKey) as UsageSummaryInput;
-    const rateRefreshes = environments.map(({ environmentId }) =>
+    const input = JSON.parse(rangeKey) as UsageSummaryInput;
+    const rateRefreshes = selectedEnvironments.map(({ environmentId }) =>
       runAtomCommand(
         appAtomRegistry,
         serverEnvironment.refreshUsageRates,
@@ -163,28 +183,44 @@ export function useUsage(input: UsageSummaryInput): UsageView {
       ),
     );
     void Promise.allSettled(rateRefreshes).then(() => {
-      if (nextToken !== undefined && nextToken !== refreshToken) {
-        setRefreshToken(nextToken);
+      const selectedIds = new Set(selectedEnvironments.map(({ environmentId }) => environmentId));
+      const tokenChanged =
+        nextToken !== undefined &&
+        [...selectedIds].some((environmentId) => refreshTokens[environmentId] !== nextToken);
+      if (tokenChanged) {
+        setRefreshTokens((current) => ({
+          ...current,
+          ...Object.fromEntries(
+            [...selectedIds].map((environmentId) => [environmentId, nextToken]),
+          ),
+        }));
         return;
       }
-      for (const { environmentId } of environments) {
+      for (const { environmentId } of selectedEnvironments) {
+        const refreshToken = refreshTokens[environmentId];
         appAtomRegistry.refresh(
-          serverEnvironment.usageSummary({ environmentId, input: currentInput }),
+          serverEnvironment.usageSummary({
+            environmentId,
+            input: refreshToken === undefined ? input : { ...input, refreshToken },
+          }),
         );
       }
     });
-  }, [answered, environments, refreshToken, windowKey]);
+  }, [answered, rangeKey, refreshTokens, selectedEnvironments]);
 
   const merged = useMemo(() => mergeUsage(answered, USAGE_CONTRACT_VERSION), [answered]);
 
-  const answeredCount = environments.filter((environment) => environment.summary !== null).length;
-  const stillReporting = environments.filter(
+  const answeredCount = selectedEnvironments.filter(
+    (environment) => environment.summary !== null,
+  ).length;
+  const stillReporting = selectedEnvironments.filter(
     (environment) => environment.summary === null && environment.error === null,
   ).length;
 
   return {
     merged,
     environments,
+    selectedEnvironments,
     isPending: answeredCount === 0 && stillReporting > 0,
     isPartial: answeredCount > 0 && stillReporting > 0,
     refresh,
