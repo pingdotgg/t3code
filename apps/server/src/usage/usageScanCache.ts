@@ -365,22 +365,18 @@ export function pruneScanCache(cache: ScanCache, options: PruneOptions): number 
   return removed;
 }
 
-/**
- * Within-file de-duplication, applied before an entry is cached.
- *
- * Callers stitching an incremental parse together pass one `seen` set across
- * the line and tail record batches so the whole file stays deduplicated as a
- * unit; the set is mutated in place.
- */
-export function dedupeWithinFile(
-  records: readonly UsageRecord[],
-  seen: Set<string> = new Set(),
-): readonly UsageRecord[] {
+/** Within-file de-duplication, retaining the final complete Claude snapshot. */
+export function dedupeWithinFile(records: readonly UsageRecord[]): readonly UsageRecord[] {
+  const indexByKey = new Map<string, number>();
   const kept: UsageRecord[] = [];
   for (const record of records) {
     if (record.dedupeKey !== null) {
-      if (seen.has(record.dedupeKey)) continue;
-      seen.add(record.dedupeKey);
+      const existing = indexByKey.get(record.dedupeKey);
+      if (existing !== undefined) {
+        kept[existing] = record;
+        continue;
+      }
+      indexByKey.set(record.dedupeKey, kept.length);
     }
     kept.push(record);
   }

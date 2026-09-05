@@ -21,6 +21,7 @@ import type {
 import { UsageDay } from "@t3tools/contracts";
 
 import { makeDayFormatter, type ProjectAttribution } from "./usageAggregation.ts";
+import { normalizeUsagePath } from "./usagePaths.ts";
 import {
   priceUsage,
   usageComponentCosts,
@@ -94,8 +95,14 @@ export interface ThreadUsageOptions {
  * share of the summary.
  */
 export class ThreadUsageAccumulator {
-  readonly #groups = new Map<string, MutableSessionGroup>();
-  readonly #seen = new Set<string>();
+  readonly #recordsByKey = new Map<
+    string,
+    { readonly record: UsageRecord; readonly context: ThreadRecordContext }
+  >();
+  readonly #unkeyedRecords: {
+    readonly record: UsageRecord;
+    readonly context: ThreadRecordContext;
+  }[] = [];
   readonly #toDay: (timestampMs: number) => string;
   readonly #options: ThreadUsageOptions;
 
@@ -105,11 +112,16 @@ export class ThreadUsageAccumulator {
   }
 
   add(record: UsageRecord, context: ThreadRecordContext): boolean {
-    if (record.dedupeKey !== null) {
-      if (this.#seen.has(record.dedupeKey)) return false;
-      this.#seen.add(record.dedupeKey);
+    const inWindow = this.#isInWindow(record);
+    if (record.dedupeKey === null) {
+      this.#unkeyedRecords.push({ record, context });
+      return inWindow;
     }
+    this.#recordsByKey.set(record.dedupeKey, { record, context });
+    return inWindow;
+  }
 
+  #isInWindow(record: UsageRecord): boolean {
     if (
       !Number.isFinite(record.timestampMs) ||
       Math.abs(record.timestampMs) > MAX_DATE_TIMESTAMP_MS
@@ -130,7 +142,15 @@ export class ThreadUsageAccumulator {
       (day < this.#options.sinceDay || day > this.#options.untilDay)
     )
       return false;
+    return true;
+  }
 
+  #foldRecord(
+    record: UsageRecord,
+    context: ThreadRecordContext,
+    groups: Map<string, MutableSessionGroup>,
+  ): void {
+    const day = this.#toDay(record.timestampMs);
     const resolvedProject = this.#options.resolveProject?.(record.cwd) ?? null;
     const projectAttribution =
       resolvedProject !== null
@@ -141,7 +161,7 @@ export class ThreadUsageAccumulator {
     const projectKey =
       resolvedProject === null ? null : `id:${resolvedProject.projectId.replaceAll("\u0000", "")}`;
     const groupKey = JSON.stringify([context.sessionKey, record.cwd]);
-    let group = this.#groups.get(groupKey);
+    let group = groups.get(groupKey);
     if (group === undefined) {
       group = {
         sessionKey: context.sessionKey,
@@ -157,7 +177,7 @@ export class ThreadUsageAccumulator {
         daily: new Map(),
         agents: new Map(),
       };
-      this.#groups.set(groupKey, group);
+      groups.set(groupKey, group);
     }
 
     const priced = priceUsage(
@@ -193,11 +213,17 @@ export class ThreadUsageAccumulator {
       agent.totals = addTotals(agent.totals, record.totals);
       agent.costUsd += priced.costUsd;
     }
-    return true;
   }
 
   finish(): readonly SessionUsageGroup[] {
-    return [...this.#groups.values()].map((group) => ({
+    const groups = new Map<string, MutableSessionGroup>();
+    for (const { record, context } of this.#unkeyedRecords) {
+      if (this.#isInWindow(record)) this.#foldRecord(record, context, groups);
+    }
+    for (const { record, context } of this.#recordsByKey.values()) {
+      if (this.#isInWindow(record)) this.#foldRecord(record, context, groups);
+    }
+    return [...groups.values()].map((group) => ({
       sessionKey: group.sessionKey,
       provider: group.provider,
       sessionId: group.sessionId,
@@ -282,10 +308,10 @@ function worktreeThreadForCwd(
   cwd: string,
   worktreeToThread: ReadonlyMap<string, ThreadRef>,
 ): ThreadRef | undefined {
-  const normalizedCwd = normalizePath(cwd);
+  const normalizedCwd = normalizeUsagePath(cwd);
   let deepest: { readonly pathLength: number; readonly ref: ThreadRef } | undefined;
   for (const [worktree, ref] of worktreeToThread) {
-    const normalizedWorktree = normalizePath(worktree);
+    const normalizedWorktree = normalizeUsagePath(worktree);
     const prefix = normalizedWorktree.endsWith("/") ? normalizedWorktree : `${normalizedWorktree}/`;
     if (normalizedCwd !== normalizedWorktree && !normalizedCwd.startsWith(prefix)) continue;
     if (deepest === undefined || normalizedWorktree.length > deepest.pathLength) {
@@ -293,23 +319,6 @@ function worktreeThreadForCwd(
     }
   }
   return deepest?.ref;
-}
-
-function normalizePath(value: string): string {
-  const slashPath = value.replaceAll("\\", "/");
-  const rooted = slashPath.startsWith("/");
-  const segments: string[] = [];
-  for (const segment of slashPath.split("/")) {
-    if (segment === "" || segment === ".") continue;
-    if (segment === "..") {
-      if (segments.length > 0 && segments.at(-1) !== "..") segments.pop();
-      else if (!rooted) segments.push(segment);
-      continue;
-    }
-    segments.push(segment);
-  }
-  const normalized = `${rooted ? "/" : ""}${segments.join("/")}`;
-  return normalized === "" ? (rooted ? "/" : ".") : normalized;
 }
 
 function toAgentRow([agentId, slice]: readonly [string, MutableAgentSlice]): UsageAgentRow {

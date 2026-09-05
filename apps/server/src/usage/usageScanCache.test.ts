@@ -299,7 +299,7 @@ describe("pruneScanCache with an unwalked root", () => {
 });
 
 describe("dedupeWithinFile", () => {
-  it("keeps the first record per dedupe key", () => {
+  it("keeps the final record per dedupe key", () => {
     const kept = dedupeWithinFile([
       record({ totals: { ...record().totals, outputTokens: 1 } }),
       record({ totals: { ...record().totals, outputTokens: 999 } }),
@@ -307,7 +307,7 @@ describe("dedupeWithinFile", () => {
     ]);
 
     expect(kept).toHaveLength(2);
-    expect(kept[0]?.totals.outputTokens).toBe(1);
+    expect(kept[0]?.totals.outputTokens).toBe(999);
   });
 
   it("keeps every record that has no dedupe key", () => {
