@@ -19,6 +19,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
+import { checkpointStartRef } from "../checkpointing/Utils.ts";
 import { parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "./IdAllocator.ts";
@@ -294,13 +295,25 @@ export const layer: Layer.Layer<
             cwd: input.scope.cwd,
             checkpointRef,
           });
-          if (exists) {
-            return;
+          if (!exists) {
+            yield* checkpointStore.captureCheckpoint({ cwd: input.scope.cwd, checkpointRef });
           }
-
+          const startRef = checkpointStartRef(
+            checkpointRefForScopeOrdinal({
+              scopeId: input.scope.id,
+              ordinalWithinScope: input.ordinalWithinScope + 1,
+            }),
+          );
+          if (
+            yield* checkpointStore.hasCheckpointRef({
+              cwd: input.scope.cwd,
+              checkpointRef: startRef,
+            })
+          )
+            return;
           yield* checkpointStore.captureCheckpoint({
             cwd: input.scope.cwd,
-            checkpointRef,
+            checkpointRef: startRef,
           });
         }),
       ).pipe(
@@ -377,7 +390,7 @@ export const layer: Layer.Layer<
             scopeId: input.scope.id,
             ordinalWithinScope: input.ordinalWithinScope,
           });
-          const previousCheckpointRef = checkpointRefForScopeOrdinal({
+          const legacyPreviousCheckpointRef = checkpointRefForScopeOrdinal({
             scopeId: input.scope.id,
             ordinalWithinScope: Math.max(0, input.ordinalWithinScope - 1),
           });
@@ -430,6 +443,13 @@ export const layer: Layer.Layer<
             });
           }
 
+          const startRef = checkpointStartRef(checkpointRef);
+          const previousCheckpointRef = (yield* checkpointStore.hasCheckpointRef({
+            cwd: input.scope.cwd,
+            checkpointRef: startRef,
+          }))
+            ? startRef
+            : legacyPreviousCheckpointRef;
           const previousExists = yield* checkpointStore.hasCheckpointRef({
             cwd: input.scope.cwd,
             checkpointRef: previousCheckpointRef,
@@ -529,7 +549,10 @@ export const layer: Layer.Layer<
         input.scope.cwd,
         checkpointStore.deleteCheckpointRefs({
           cwd: input.scope.cwd,
-          checkpointRefs: input.checkpoints.map((checkpoint) => checkpoint.ref),
+          checkpointRefs: input.checkpoints.flatMap((checkpoint) => [
+            checkpoint.ref,
+            checkpointStartRef(checkpoint.ref),
+          ]),
         }),
       ).pipe(
         Effect.mapError(
