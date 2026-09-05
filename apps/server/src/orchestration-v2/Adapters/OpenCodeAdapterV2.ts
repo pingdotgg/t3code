@@ -935,7 +935,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           updatedAt: now,
           lastError: null,
         };
-        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        const events = yield* Queue.unbounded<ProviderAdapterV2Event, Cause.Done>();
+        let nativeStreamEnded = false;
         const threads = new Map<string, OpenCodeThreadState>();
         const pendingRequests = new Map<string, PendingOpenCodeRequest>();
         const pendingRequestsByNativeId = new Map<string, PendingOpenCodeRequest>();
@@ -2560,6 +2561,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           Effect.flatMap((exit) =>
             Effect.gen(function* () {
               if (abortController.signal.aborted) return;
+              nativeStreamEnded = true;
               const detail = Exit.isFailure(exit)
                 ? openCodeRuntimeErrorDetail(Cause.squash(exit.cause))
                 : "OpenCode event stream ended unexpectedly. Send another message to reconnect.";
@@ -2571,6 +2573,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                     threadDisposition: "broken",
                   });
               }
+              yield* Queue.end(events);
             }),
           ),
           Effect.forkIn(scope),
@@ -2790,6 +2793,11 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             }),
           startTurn: (turnInput) =>
             Effect.gen(function* () {
+              if (nativeStreamEnded) {
+                return yield* protocolError(
+                  "OpenCode event stream has ended; reconnect the provider session before starting another turn.",
+                );
+              }
               const sessionId = nativeThreadId(turnInput.providerThread);
               const state = threads.get(sessionId);
               if (state === undefined) {

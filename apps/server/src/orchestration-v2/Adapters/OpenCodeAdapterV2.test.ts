@@ -947,7 +947,6 @@ describe("OpenCodeAdapterV2", () => {
       );
       yield* harness.startTurn();
       const terminalEvents = yield* harness.runtime.events.pipe(
-        Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
         Effect.forkScoped,
       );
@@ -963,6 +962,7 @@ describe("OpenCodeAdapterV2", () => {
       const terminal = received.find((event) => event.type === "turn.terminal");
       assert.equal(terminal?.status, "failed");
       assert.equal(terminal?.failure?.class, "transport_error");
+      assert.equal((yield* Effect.exit(harness.startTurn()))._tag, "Failure");
     }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
   );
 
