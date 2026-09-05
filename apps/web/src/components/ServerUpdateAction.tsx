@@ -179,7 +179,7 @@ export function ServerUpdateAction({
 
   if (selfUpdate === "desktop-managed" && !desktopAppUpdate) {
     return (
-      <span className="text-muted-foreground text-xs">
+      <span className="min-w-0 text-muted-foreground text-xs">
         Update the desktop app on that machine to update this server.
       </span>
     );
