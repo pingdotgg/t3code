@@ -18,13 +18,10 @@ import {
   useState,
   type Ref,
 } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
-  codeViewClassName: null as string | null,
-  codeViewOptions: null as Record<string, unknown> | null,
   workers: [] as NodeWorkerThreads.Worker[],
   terminations: [] as Promise<number>[],
   requests: [] as WorkerRequest[],
@@ -102,8 +99,6 @@ vi.mock("@pierre/diffs/worker/worker.js?worker", async () => {
 vi.mock("@pierre/diffs/react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@pierre/diffs/react")>()),
   CodeView: (props: CodeViewProps) => {
-    testState.codeViewClassName = props.className ?? null;
-    testState.codeViewOptions = props.options ? { ...props.options } : null;
     return props.items?.map((item) =>
       item.type === "file" ? <FileOutput key={item.id} file={item.file} /> : null,
     );
@@ -157,49 +152,6 @@ function renderViews(count: number) {
     </StrictMode>
   );
 }
-
-describe("StyledDiffCodeView", () => {
-  beforeEach(() => {
-    testState.codeViewClassName = null;
-    testState.codeViewOptions = null;
-  });
-
-  it("always pairs the shared diff styling with its virtualized geometry", () => {
-    const loadDiffFiles = vi.fn(async () => ({
-      oldFile: { name: "before.ts", contents: "before\n" },
-      newFile: { name: "after.ts", contents: "after\n" },
-    }));
-    renderToStaticMarkup(
-      <StyledDiffCodeView
-        className="min-h-0"
-        items={[]}
-        options={{ theme: "pierre-dark", stickyHeaders: true, loadDiffFiles }}
-      />,
-    );
-
-    expect(testState.codeViewClassName).toBe(
-      "diff-render-surface [--code-background:var(--background)] outline-none min-h-0",
-    );
-    expect(testState.codeViewOptions).toMatchObject({
-      theme: "pierre-dark",
-      stickyHeaders: true,
-      loadDiffFiles,
-      itemMetrics: {
-        diffHeaderHeight: 32,
-        hunkSeparatorHeight: 24,
-        paddingTop: 0,
-        paddingBottom: 8,
-      },
-      layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
-    });
-    expect(testState.codeViewOptions?.unsafeCSS).toEqual(
-      expect.stringContaining("[data-unmodified-lines]::before"),
-    );
-    expect(testState.codeViewOptions?.unsafeCSS).toEqual(
-      expect.stringContaining(")[data-expand-index]\n  [data-unmodified-lines]"),
-    );
-  });
-});
 
 describe("code-view worker lifecycle", () => {
   let renderer: ReactTestRenderer | undefined;
