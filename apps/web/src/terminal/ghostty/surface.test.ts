@@ -151,6 +151,7 @@ describe("GhosttyTerminalSurface visibility", () => {
     const onData = vi.fn<(data: string) => void>();
 
     return {
+      canvas,
       mount,
       frames,
       paint,
@@ -210,6 +211,161 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("paints one complete synchronized frame across split markers while answering VT queries", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write("\x1b[?1049h\x1b[HOLD first\x1b[2;1HOLD second");
+    harness.flushFrame();
+    harness.snapshot.mockClear();
+    harness.paint.mockClear();
+
+    surface.write("\x1b[?20");
+    expect(harness.frames.size).toBe(1);
+    surface.write("26h\x1b[HNEW first\x1b[5n");
+    expect(harness.onData).toHaveBeenCalledWith("\x1b[0n");
+    expect(harness.frames.size).toBe(0);
+    harness.flushFrame();
+    vi.advanceTimersByTime(200);
+    surface.write("\x1b[2;1HNEW second\x1b[?2026");
+    harness.flushFrame();
+    expect(harness.snapshot).not.toHaveBeenCalled();
+    expect(harness.paint).not.toHaveBeenCalled();
+
+    surface.write("l");
+    harness.flushFrame();
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+    expect(harness.renderedSnapshot.rowData.slice(0, 2).map((row) => row.text)).toEqual([
+      "NEW first",
+      "NEW second",
+    ]);
+    expect(
+      harness.paint.mock.calls.some(
+        ([operation, args]) => operation === "fillText" && String(args[0]).includes("NEW first"),
+      ),
+    ).toBe(true);
+    vi.advanceTimersByTime(1_000);
+    harness.flushFrame();
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("expires an unterminated update once without extending its deadline on later output", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write("before");
+    harness.flushFrame();
+    harness.snapshot.mockClear();
+    surface.write("\x1b[?2026h\rpartial");
+    vi.advanceTimersByTime(499);
+    expect(harness.snapshot).not.toHaveBeenCalled();
+    surface.write(" frame");
+    vi.advanceTimersByTime(1);
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+    expect(harness.renderedSnapshot.rowData[0]?.text).toBe("partial frame");
+    vi.advanceTimersByTime(2_000);
+    harness.flushFrame();
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+
+    surface.write("\rnormal ");
+    harness.flushFrame();
+    expect(harness.snapshot).toHaveBeenCalledTimes(2);
+    surface.write("\x1b[?2026h\rnext group");
+    harness.flushFrame();
+    expect(harness.snapshot).toHaveBeenCalledTimes(2);
+    surface.write("\x1b[?2026l");
+    harness.flushFrame();
+    expect(harness.snapshot).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["hide", "zero-size", "dispose"] as const)(
+    "cancels a synchronized-output deadline on %s",
+    async (action) => {
+      const harness = createHarness();
+      const surface = await harness.create();
+      surface.write("before");
+      harness.flushFrame();
+      surface.write("\x1b[?2026hpartial");
+      harness.snapshot.mockClear();
+      if (action === "hide") surface.setVisible(false);
+      else if (action === "zero-size") {
+        harness.mount.clientWidth = 0;
+        harness.resize();
+      } else surface.dispose();
+      vi.advanceTimersByTime(1_000);
+      harness.flushFrame();
+      expect(harness.snapshot).not.toHaveBeenCalled();
+      if (action === "dispose") return;
+      if (action === "hide") surface.setVisible(true);
+      else {
+        harness.mount.clientWidth = 168;
+        harness.resize();
+      }
+      expect(harness.snapshot).not.toHaveBeenCalled();
+      surface.write("\x1b[?2026l");
+      harness.flushFrame();
+      expect(harness.snapshot).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("replays a reset immediately and cancels the previous synchronized deadline", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write("\x1b[?2026hpartial");
+    harness.snapshot.mockClear();
+    surface.resetAndWrite("replacement");
+    harness.flushFrame();
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+    expect(harness.renderedSnapshot.rowData[0]?.text).toBe("replacement");
+    vi.advanceTimersByTime(1_000);
+    harness.flushFrame();
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])(
+    "defers DPR backing-store changes until synchronized output closes, restored=%s",
+    async (restore) => {
+      const harness = createHarness();
+      const surface = await harness.create();
+      surface.write("old");
+      harness.flushFrame();
+      const width = harness.canvas.width;
+      const height = harness.canvas.height;
+      surface.write("\x1b[?2026h\rnew");
+      harness.snapshot.mockClear();
+      window.devicePixelRatio = 2;
+      harness.resize();
+      expect([harness.canvas.width, harness.canvas.height]).toEqual([width, height]);
+      expect(harness.snapshot).not.toHaveBeenCalled();
+      if (restore) {
+        window.devicePixelRatio = 1;
+        harness.resize();
+      }
+      surface.write("\x1b[?2026l");
+      harness.flushFrame();
+      expect([harness.canvas.width, harness.canvas.height]).toEqual([
+        width * (restore ? 1 : 2),
+        height * (restore ? 1 : 2),
+      ]);
+      expect(harness.renderedSnapshot.rowData[0]?.text).toBe("new");
+    },
+  );
+
+  it("repaints a real grid resize immediately after Ghostty ends the synchronized mode", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write("old");
+    harness.flushFrame();
+    surface.write("\x1b[?2026h\rnew");
+    harness.snapshot.mockClear();
+    harness.mount.clientWidth = 176;
+    harness.resize();
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+    expect(harness.canvas.width).toBe(176);
+    expect(harness.renderedSnapshot.rowData[0]?.text).toBe("new");
+    vi.advanceTimersByTime(1_000);
+    harness.flushFrame();
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
   });
 
   it("stops hidden snapshots and paint while preserving live VT replies and the next cursor", async () => {
