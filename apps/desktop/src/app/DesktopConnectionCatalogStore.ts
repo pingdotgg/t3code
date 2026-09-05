@@ -534,16 +534,17 @@ export const make = Effect.gen(function* () {
       );
       if (readPath !== catalogPath) {
         yield* writeCatalog(decrypted).pipe(
-          Effect.catchTag("DesktopConnectionCatalogStoreWriteError", (cause) =>
-            Effect.fail(
-              new DesktopConnectionCatalogStorePromotionError({
-                operation: "promote-legacy-catalog",
-                sourceCatalogPath: readPath,
-                catalogPath,
-                cause,
-              }),
-            ),
-          ),
+          Effect.catchTags({
+            DesktopConnectionCatalogStoreWriteError: (cause) =>
+              Effect.fail(
+                new DesktopConnectionCatalogStorePromotionError({
+                  operation: "promote-legacy-catalog",
+                  sourceCatalogPath: readPath,
+                  catalogPath,
+                  cause,
+                }),
+              ),
+          }),
         );
       }
       return Option.some(decrypted);
