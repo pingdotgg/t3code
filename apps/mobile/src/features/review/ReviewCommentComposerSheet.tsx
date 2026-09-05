@@ -3,7 +3,11 @@ import { TextInputWrapper } from "expo-paste-input";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Platform, Pressable, ScrollView, View, useWindowDimensions } from "react-native";
-import { KeyboardAvoidingView, KeyboardStickyView } from "react-native-keyboard-controller";
+import {
+  KeyboardAvoidingView,
+  KeyboardStickyView,
+  useKeyboardState,
+} from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 
@@ -17,6 +21,8 @@ import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/
 import { useNativePaste } from "../../lib/useNativePaste";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
 import { appendReviewCommentToDraft } from "../../state/use-thread-composer-state";
+import { isAndroidKeyboardAnimationUsable } from "../keyboard/androidKeyboardRecovery";
+import { useAndroidKeyboardRecovery } from "../keyboard/useAndroidKeyboardRecovery";
 import {
   clearReviewCommentTarget,
   formatReviewCommentContext,
@@ -43,6 +49,13 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   const isAndroid = Platform.OS === "android";
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
+  const { isQuarantined: isKeyboardStateQuarantined, markInputFocused } =
+    useAndroidKeyboardRecovery();
+  const isKeyboardAnimationUsable = isAndroidKeyboardAnimationUsable({
+    isKeyboardVisible,
+    isQuarantined: isKeyboardStateQuarantined,
+  });
   const { width } = useWindowDimensions();
   const { themeAppearance: selectedTheme } = useAppearancePreferences();
   const target = useReviewCommentTarget();
@@ -262,6 +275,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
                         textAlignVertical="top"
                         value={commentText}
                         onChangeText={setCommentText}
+                        onFocus={markInputFocused}
                         className="h-full min-h-0 flex-1 border-0 bg-transparent px-0 py-0 font-sans text-base"
                       />
                     </TextInputWrapper>
@@ -308,6 +322,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
       </KeyboardAvoidingView>
       {isAndroid && target ? (
         <KeyboardStickyView
+          enabled={isKeyboardAnimationUsable}
           className="absolute inset-x-0 bottom-0"
           offset={{ closed: 0, opened: 0 }}
         >
