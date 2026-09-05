@@ -446,6 +446,7 @@ export default function DiffPanel({
     collapseScopeKey,
     diffSelection,
     selectedDiffFileKey,
+    codeViewFiles[0]?.fileKey ?? null,
   );
 
   const treeRevealScope = useMemo(

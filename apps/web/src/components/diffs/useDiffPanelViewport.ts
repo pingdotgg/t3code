@@ -24,6 +24,7 @@ export function useDiffPanelViewport(
   scopeKey: string | null,
   selection: DiffPanelSelection,
   selectedFileKey: string | null,
+  firstFileKey: string | null,
 ) {
   const captureRef = useRef<{
     scopeKey: string | null;
@@ -75,13 +76,12 @@ export function useDiffPanelViewport(
       let anchor = capture.fileAnchor;
       // Position targets subtract Pierre's sticky header, so restore relative to a file instead.
       if (!anchor || instance.getTopForItem(anchor.fileKey) === undefined) {
-        anchor = undefined;
-        for (const item of instance.getRenderedItems()) {
-          const top = instance.getTopForItem(item.id);
-          if (top === undefined) continue;
-          anchor = { fileKey: item.id, offset: top - capture.scrollTop };
-          break;
-        }
+        // Item metadata exists before the first rendered rows, including while workers load.
+        const top = firstFileKey ? instance.getTopForItem(firstFileKey) : undefined;
+        anchor =
+          firstFileKey && top !== undefined
+            ? { fileKey: firstFileKey, offset: top - capture.scrollTop }
+            : undefined;
       }
       if (!anchor) return;
       capture.restoredInstance = instance;
@@ -93,7 +93,7 @@ export function useDiffPanelViewport(
         behavior: "instant",
       });
     }
-  }, [scopeKey, selectedFileKey, selection, viewer]);
+  }, [firstFileKey, scopeKey, selectedFileKey, selection, viewer]);
 
   return useCallback(
     (scrollTop: number, instance: DiffViewportInstance) => {

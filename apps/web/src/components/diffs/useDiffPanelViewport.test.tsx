@@ -1,4 +1,4 @@
-import type { CodeViewScrollTarget } from "@pierre/diffs";
+import { CodeView, parseDiffFromFile, type CodeViewScrollTarget } from "@pierre/diffs";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId, TurnId } from "@t3tools/contracts";
 import {
@@ -28,6 +28,7 @@ class ViewerFixture {
   mounted = false;
   scrollTop = 0;
   targets: CodeViewScrollTarget[] = [];
+  pendingTarget: CodeViewScrollTarget | undefined;
   items = [
     { id: "first", top: 0 },
     { id: "external", top: 200 },
@@ -53,6 +54,20 @@ class ViewerFixture {
   scrollTo(target: CodeViewScrollTarget) {
     if (!this.mounted) throw new Error("Cannot scroll an unmounted viewer");
     this.targets.push(target);
+    if (!renderedItemsAvailable) {
+      this.pendingTarget = target;
+      return;
+    }
+    this.applyTarget(target);
+  }
+
+  finishRendering() {
+    renderedItemsAvailable = true;
+    if (this.pendingTarget) this.applyTarget(this.pendingTarget);
+    this.pendingTarget = undefined;
+  }
+
+  private applyTarget(target: CodeViewScrollTarget) {
     // Pierre's position target subtracts the sticky header; item targets do not.
     if (target.type === "position") this.userScroll(Math.max(0, target.position - 32));
     if (target.type === "item") {
@@ -101,17 +116,19 @@ function Panel({
   scope = SCOPE,
   selection = SELECTION,
   fileKey = null,
+  firstFileKey = "first",
   ready = true,
   revision = 0,
 }: {
   scope?: string;
   selection?: DiffPanelSelection;
   fileKey?: string | null;
+  firstFileKey?: string | null;
   ready?: boolean;
   revision?: number;
 }) {
   const [viewer, setViewer] = useState<ViewportHandle | null>(null);
-  const onScroll = useDiffPanelViewport(viewer, scope, selection, fileKey);
+  const onScroll = useDiffPanelViewport(viewer, scope, selection, fileKey, firstFileKey);
   const reveal = useCodeViewFileReveal(viewer, selection);
   return (
     <>
@@ -269,7 +286,7 @@ describe("diff panel viewport lifecycle", () => {
   });
 
   it.each([0, 1300])(
-    "retains saved position %s when a viewer has no rendered items",
+    "restores saved position %s when the same viewer finishes its delayed first render",
     async (position) => {
       useDiffPanelStore.getState().setViewport(SCOPE, {
         scrollTop: position,
@@ -279,15 +296,58 @@ describe("diff panel viewport lifecycle", () => {
       await act(async () => {
         renderer = create(<Panel />);
       });
-      expect(currentViewer!.targets).toEqual([]);
+      const original = currentViewer!;
       expect(currentViewer!.scrollTop).toBe(0);
-      await act(async () => renderer!.update(<></>));
-      expect(useDiffPanelStore.getState().viewportByScopeKey[SCOPE]?.scrollTop).toBe(position);
-      renderedItemsAvailable = true;
+      original.finishRendering();
       await act(async () => renderer!.update(<Panel />));
+      expect(currentViewer).toBe(original);
       expect(currentViewer!.scrollTop).toBe(position);
     },
   );
+
+  it("can target registered Pierre items before the first render", () => {
+    vi.stubGlobal("document", {
+      createElement: () => ({ style: { removeProperty() {} }, remove() {} }),
+    });
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      vi.fn(() => 1),
+    );
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    const viewer = new CodeView({ layout: { paddingTop: 0, paddingBottom: 0, gap: 0 } });
+    try {
+      viewer.setItems([
+        {
+          type: "diff",
+          id: "first",
+          fileDiff: parseDiffFromFile(
+            { name: "first.ts", contents: "before\n" },
+            { name: "first.ts", contents: "after\n" },
+          ),
+        },
+      ]);
+      expect(viewer.getRenderedItems()).toEqual([]);
+      expect(viewer.getTopForItem("first")).toBe(0);
+    } finally {
+      viewer.cleanUp();
+    }
+  });
+
+  it("waits for a known file without discarding the saved position", async () => {
+    useDiffPanelStore.getState().setViewport(SCOPE, {
+      scrollTop: 1300,
+      revealSelection: null,
+    });
+    await act(async () => {
+      renderer = create(<Panel firstFileKey={null} />);
+    });
+    const original = currentViewer!;
+    expect(original.targets).toEqual([]);
+    expect(original.scrollTop).toBe(0);
+    await act(async () => renderer!.update(<Panel />));
+    expect(currentViewer).toBe(original);
+    expect(original.scrollTop).toBe(1300);
+  });
 
   it.each(["thread", "environment"])(
     "does not resurrect a removed %s during unmount",
