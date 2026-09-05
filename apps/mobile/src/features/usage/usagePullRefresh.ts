@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { UsageSummaryInput } from "@t3tools/contracts";
 
 interface UsageRefreshStatus {
   readonly environmentId: EnvironmentId;
@@ -25,4 +26,14 @@ export function isUsagePullRefreshPending(
   return environments.some(
     (environment) => environment.isPending && targets.has(environment.environmentId),
   );
+}
+
+/** Starts the explicit rescan before committing a rebased window to the screen. */
+export async function refreshRebasedUsageWindow(
+  input: UsageSummaryInput,
+  refresh: (input: UsageSummaryInput) => Promise<void>,
+  commit: (input: UsageSummaryInput) => void,
+): Promise<void> {
+  await refresh(input);
+  commit(input);
 }
