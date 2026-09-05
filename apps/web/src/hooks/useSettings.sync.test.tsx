@@ -27,6 +27,7 @@ const state = vi.hoisted(() => ({
     };
   }>,
   persist: vi.fn(),
+  toast: vi.fn(),
 }));
 
 vi.mock("~/connection/runtime", () => ({ connectionAtomRuntime: undefined }));
@@ -42,14 +43,15 @@ vi.mock("~/rpc/atomRegistry", () => ({
 }));
 vi.mock("~/state/environments", () => ({
   useEnvironments: () => ({ environments: state.environments }),
-  usePrimaryEnvironment: () => state.environments[0],
+  usePrimaryEnvironment: () =>
+    state.environments.find((environment) => environment.environmentId === primaryId) ?? null,
 }));
 vi.mock("~/state/server", () => ({
   serverEnvironment: { updateSettings: Symbol("updateSettings") },
   primaryServerSettingsAtom: undefined,
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => state.persist }));
-vi.mock("~/components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
+vi.mock("~/components/ui/toast", () => ({ toastManager: { add: state.toast } }));
 vi.mock("~/themePalette", () => ({}));
 vi.mock("./useTheme", () => ({}));
 
@@ -109,6 +111,7 @@ beforeEach(() => {
   }));
   state.persist.mockReset();
   state.persist.mockResolvedValue(AsyncResult.success(DEFAULT_SERVER_SETTINGS));
+  state.toast.mockReset();
 });
 
 afterEach(async () => {
@@ -164,17 +167,35 @@ describe("shared settings writes", () => {
     },
   );
 
-  it("rechecks a cold remote grant that resolves to denied after the handler renders", async () => {
-    await mountEditor();
-    const previousUpdate = renderer!.root.findByType("button").props.onClick as () => void;
-    await act(() => {
-      state.registry!.set(state.sessions.get(remoteId)!, AsyncResult.success(session([])));
-    });
-    previousUpdate();
+  it.each(["primary", "hosted"] as const)(
+    "rechecks a cold remote grant that resolves to denied after the %s handler renders",
+    async (mode) => {
+      if (mode === "hosted") {
+        state.environments = state.environments.filter(
+          (environment) => environment.environmentId !== primaryId,
+        );
+      }
+      await mountEditor();
+      const previousUpdate = renderer!.root.findByType("button").props.onClick as () => void;
+      await act(() => {
+        state.registry!.set(state.sessions.get(remoteId)!, AsyncResult.success(session([])));
+      });
+      previousUpdate();
 
-    expect(state.persist).toHaveBeenCalledExactlyOnceWith({
-      environmentId: primaryId,
-      input: { patch },
-    });
-  });
+      if (mode === "primary") {
+        expect(state.persist).toHaveBeenCalledExactlyOnceWith({
+          environmentId: primaryId,
+          input: { patch },
+        });
+        expect(state.toast).not.toHaveBeenCalled();
+      } else {
+        expect(state.persist).not.toHaveBeenCalled();
+        expect(state.toast).toHaveBeenCalledExactlyOnceWith({
+          type: "warning",
+          title: "Setting not saved",
+          description: "This connection does not have permission to change these settings.",
+        });
+      }
+    },
+  );
 });
