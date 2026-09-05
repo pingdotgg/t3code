@@ -63,6 +63,8 @@ import {
 import { SidebarHeaderActions } from "./sidebar-header-actions";
 import { SidebarFilterButton } from "./sidebar-filter-button";
 import { createSidebarHeaderItems } from "./sidebar-native-header-items";
+import { MobileNavigationHistoryButtons } from "../navigation/MobileNavigationHistoryButtons";
+import { useMobileNavigationHistory } from "../navigation/MobileNavigationHistoryProvider";
 import { SidebarNavigationShell } from "./sidebar-navigation-shell";
 import {
   PendingTaskListRow,
@@ -141,6 +143,7 @@ function ThreadNavigationSidebarPane(
   props: ThreadNavigationSidebarProps & { readonly nativeChrome: boolean },
 ) {
   const insets = useSafeAreaInsets();
+  const navigationHistory = useMobileNavigationHistory();
   const projects = useProjects();
   const threads = useThreadShells();
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
@@ -1118,11 +1121,15 @@ function ThreadNavigationSidebarPane(
   const nativeHeaderItems = useMemo(
     () =>
       createSidebarHeaderItems({
+        canGoBack: navigationHistory.canGoBack,
+        canGoForward: navigationHistory.canGoForward,
         filterIcon,
         filterMenu,
+        onBack: navigationHistory.back,
+        onForward: navigationHistory.forward,
         onOpenSettings: props.onOpenSettings,
       }),
-    [filterIcon, filterMenu, props.onOpenSettings],
+    [filterIcon, filterMenu, navigationHistory, props.onOpenSettings],
   );
   // Snoozed threads need no special case: the shelf header is a list row
   // even while collapsed.
@@ -1277,6 +1284,7 @@ function ThreadNavigationSidebarPane(
             }
           />
           <View className="flex-row items-center gap-2.5">
+            <MobileNavigationHistoryButtons grouped />
             <ControlPillMenu actions={listMenuActions} onPressAction={handleListMenuAction}>
               <SidebarFilterButton accessibilityLabel="Filter and sort threads" icon={filterIcon} />
             </ControlPillMenu>

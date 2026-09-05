@@ -113,7 +113,12 @@ export function HomeRouteScreen() {
           options={
             Platform.OS === "android"
               ? { headerShown: false }
-              : { title: "", headerTitle: "", unstable_headerLeftItems: () => [] }
+              : {
+                  title: "",
+                  headerTitle: "",
+                  headerLeft: () => null,
+                  unstable_headerLeftItems: () => [],
+                }
           }
         />
         <WorkspaceSidebarToolbar
@@ -145,6 +150,7 @@ export function HomeRouteScreen() {
           options={{
             ...getConnectionAwareBrandHeaderOptions({
               headerWidth: windowWidth,
+              trailingItemCount: Platform.OS === "ios" ? 3 : 1,
               onOpenEnvironments: () =>
                 navigation.navigate("SettingsSheet", {
                   screen: "SettingsContent",

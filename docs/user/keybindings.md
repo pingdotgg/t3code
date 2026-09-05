@@ -53,6 +53,8 @@ a shortcut.
 
 ## Commands with special behavior
 
+`navigation.back` and `navigation.forward` move through visited locations using `mod+[` and `mod+]`. Both are also available in the command palette.
+
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread).

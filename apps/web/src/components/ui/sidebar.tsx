@@ -320,16 +320,16 @@ function Sidebar({
   );
 }
 
+export const WORKSPACE_TITLEBAR_CONTROL_CLASS =
+  "size-[var(--workspace-titlebar-control-size)]! [-webkit-app-region:no-drag]";
+
 function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
   const { toggleSidebar } = useSidebar();
   const isOpen = useSidebarVisibility();
 
   return (
     <Button
-      className={cn(
-        "size-[var(--workspace-titlebar-control-size)]! [-webkit-app-region:no-drag]",
-        className,
-      )}
+      className={cn(WORKSPACE_TITLEBAR_CONTROL_CLASS, className)}
       data-sidebar="trigger"
       data-slot="sidebar-trigger"
       aria-pressed={isOpen}

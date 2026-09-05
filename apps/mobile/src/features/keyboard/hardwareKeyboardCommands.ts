@@ -5,6 +5,7 @@ export type HardwareKeyboardCommand =
   | "newTask"
   | "focusSearch"
   | "back"
+  | "forward"
   | "files"
   | "terminal"
   | "review"
@@ -66,7 +67,8 @@ export function parseActiveThreadPath(pathname: string): {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 } | null {
-  const match = /^\/threads\/([^/]+)\/([^/]+)(?:\/|$)/.exec(pathname);
+  const pathOnly = pathname.replace(/[?#].*$/, "");
+  const match = /^\/threads\/([^/]+)\/([^/]+)(?:\/|$)/.exec(pathOnly);
   if (!match?.[1] || !match[2]) return null;
   try {
     return {
@@ -76,4 +78,17 @@ export function parseActiveThreadPath(pathname: string): {
   } catch {
     return null;
   }
+}
+
+export function hasHardwareBackTarget(pathname: string, canGoBack: boolean): boolean {
+  return canGoBack || getHardwareBackFallbackPath(pathname) !== null;
+}
+
+export function getHardwareBackFallbackPath(pathname: string): string | null {
+  const thread = parseActiveThreadPath(pathname);
+  if (!thread) return null;
+  const pathOnly = pathname.replace(/[?#].*$/, "");
+  return /^\/threads\/[^/]+\/[^/]+\/?$/.test(pathOnly)
+    ? "/"
+    : `/threads/${encodeURIComponent(thread.environmentId)}/${encodeURIComponent(thread.threadId)}`;
 }

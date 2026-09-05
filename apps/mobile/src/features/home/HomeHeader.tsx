@@ -15,6 +15,9 @@ import { resolveMobileStageLabel } from "../../lib/mobileBranding";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
+import { MobileNavigationHistoryButtons } from "../navigation/MobileNavigationHistoryButtons";
+import { useMobileNavigationHistory } from "../navigation/MobileNavigationHistoryProvider";
+import { createNativeNavigationHistoryItems } from "../navigation/native-navigation-history-items";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import {
   createNativeMailSearchToolbarItem,
@@ -229,6 +232,8 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
               }
             />
 
+            <MobileNavigationHistoryButtons />
+
             <ControlPillMenu
               actions={menuActions}
               isAnchoredToRight
@@ -307,6 +312,7 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
 }
 
 function IosHomeHeader(props: HomeHeaderProps) {
+  const navigationHistory = useMobileNavigationHistory();
   const searchBarRef = useRef<SearchBarCommands>(null);
   const iconColor = useUniwindTheme()["--color-icon"];
   // Thread List v2 lays the list out in fixed creation order, so the
@@ -325,11 +331,26 @@ function IosHomeHeader(props: HomeHeaderProps) {
     ...props,
     listOrganization: !threadListV2Enabled,
   });
+  const navigationHeaderItems = useMemo(
+    () =>
+      createNativeNavigationHistoryItems({
+        canGoBack: navigationHistory.canGoBack,
+        canGoForward: navigationHistory.canGoForward,
+        identifierPrefix: "home-navigation",
+        onBack: navigationHistory.back,
+        onForward: navigationHistory.forward,
+      }),
+    [navigationHistory],
+  );
 
   return (
     <>
       <NativeStackScreenOptions
-        optionsVersion={filterMenu.items}
+        optionsVersion={{
+          canGoBack: navigationHistory.canGoBack,
+          canGoForward: navigationHistory.canGoForward,
+          filterMenuItems: filterMenu.items,
+        }}
         options={{
           // Static header config (glass, title, fonts) lives in Stack.tsx
           // (GLASS_HEADER_OPTIONS). Only dynamic values are set here.
@@ -337,6 +358,7 @@ function IosHomeHeader(props: HomeHeaderProps) {
           unstable_headerRightItems:
             Platform.OS === "ios"
               ? () => [
+                  ...navigationHeaderItems,
                   withNativeGlassHeaderItem({
                     accessibilityLabel: "Open settings",
                     icon: { name: "ellipsis", type: "sfSymbol" } as const,

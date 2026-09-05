@@ -22,6 +22,7 @@ import {
 } from "../panelAnimations";
 import LegacyThreadSidebar from "./LegacySidebar";
 import ThreadSidebar from "./Sidebar";
+import { NavigationHistoryControls } from "./NavigationHistoryControls";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import {
@@ -78,6 +79,13 @@ function SidebarControl() {
     environmentIdentificationMode === "artwork",
   );
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
+  const backdropControlClass =
+    isSidebarVisible && stageBackdropVariant
+      ? cn(
+          "focus-visible:ring-white/90 [&_svg]:stroke-white/90! [&_svg]:opacity-100! not-aria-disabled:hover:[&_svg]:stroke-white! not-aria-disabled:[:hover,[data-pressed]]:bg-white/15",
+          resolveSidebarStageFocusRingOffsetClass(stageBackdropVariant),
+        )
+      : undefined;
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -112,15 +120,7 @@ function SidebarControl() {
         <TooltipTrigger
           render={
             <SidebarTrigger
-              className={cn(
-                "pointer-events-auto",
-                isSidebarVisible &&
-                  stageBackdropVariant &&
-                  "focus-visible:ring-white/90 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white! [:hover,[data-pressed]]:bg-white/15",
-                isSidebarVisible &&
-                  stageBackdropVariant &&
-                  resolveSidebarStageFocusRingOffsetClass(stageBackdropVariant),
-              )}
+              className={cn("pointer-events-auto", backdropControlClass)}
               aria-label="Toggle main sidebar"
             />
           }
@@ -129,6 +129,11 @@ function SidebarControl() {
           Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
         </TooltipPopup>
       </Tooltip>
+      <div className="pointer-events-auto ml-[var(--workspace-navigation-control-gap)]">
+        <NavigationHistoryControls
+          {...(backdropControlClass ? { buttonClassName: backdropControlClass } : {})}
+        />
+      </div>
     </div>
   );
 }
@@ -175,6 +180,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   });
   const sidebarProviderStyle = {
     "--sidebar-width": `${sidebarWidth}px`,
+    "--workspace-titlebar-content-left":
+      "calc(var(--workspace-controls-left) + 3 * var(--workspace-titlebar-control-size) + 2 * var(--workspace-navigation-control-gap) + var(--workspace-titlebar-control-gap))",
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
     ...(isMacosDesktop && !isWindowFullscreen
       ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }

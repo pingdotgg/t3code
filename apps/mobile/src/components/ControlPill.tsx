@@ -84,9 +84,11 @@ export function ControlPill(props: {
       ? props.disabled
         ? "accent-icon-subtle"
         : "accent-primary-foreground"
-      : variant === "danger"
-        ? "accent-danger-foreground"
-        : "accent-icon";
+      : props.disabled
+        ? "accent-icon-subtle"
+        : variant === "danger"
+          ? "accent-danger-foreground"
+          : "accent-icon";
 
   const isCircle =
     variant === "circle" || variant === "danger" || (variant === "primary" && !props.label);
@@ -103,6 +105,7 @@ export function ControlPill(props: {
       : variant === "danger"
         ? "bg-danger"
         : "bg-subtle",
+    props.disabled && variant !== "primary" && "opacity-55",
     props.className,
   );
   const labelClassName = cn(

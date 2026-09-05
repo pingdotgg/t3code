@@ -1,10 +1,13 @@
+import type { MenuAction } from "@react-native-menu/menu";
 import type { ReactNode } from "react";
 import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
+import { ControlPillMenu } from "./ControlPill";
 import { cn } from "../lib/cn";
+import { MobileNavigationHistoryButtons } from "../features/navigation/MobileNavigationHistoryButtons";
 
 export interface AndroidHeaderAction {
   readonly accessibilityLabel: string;
@@ -47,9 +50,22 @@ export function AndroidScreenHeader(props: {
   readonly actions?: ReadonlyArray<AndroidHeaderAction>;
   readonly trailing?: ReactNode;
   readonly onBack?: () => void;
+  readonly backDisabled?: boolean;
   readonly embedded?: boolean;
+  readonly showNavigationHistory?: boolean;
 }) {
   const insets = useSafeAreaInsets();
+  const navigationHistoryVisible = !props.embedded && props.showNavigationHistory !== false;
+  const actions = props.actions ?? [];
+  const collapseActions = navigationHistoryVisible && actions.length > 2;
+  const visibleActions = collapseActions ? actions.slice(0, 1) : actions;
+  const overflowActions = collapseActions ? actions.slice(1) : [];
+  const overflowMenuActions: MenuAction[] = overflowActions.map((action) => ({
+    id: action.accessibilityLabel,
+    title: action.accessibilityLabel,
+    ...(typeof action.icon === "string" ? { image: action.icon } : {}),
+    ...(action.disabled ? { attributes: { disabled: true } } : {}),
+  }));
 
   return (
     <View
@@ -61,11 +77,15 @@ export function AndroidScreenHeader(props: {
       <View className="min-h-12 flex-row items-center gap-2">
         {props.onBack ? (
           <Pressable
-            accessibilityLabel="Navigate up"
+            accessibilityLabel="Back"
             accessibilityRole="button"
+            disabled={props.backDisabled}
             hitSlop={8}
             onPress={props.onBack}
-            className="-mr-2 size-11 items-center justify-center"
+            className={cn(
+              "-mr-2 size-11 items-center justify-center",
+              props.backDisabled && "opacity-55",
+            )}
           >
             <SymbolView
               name="chevron.left"
@@ -90,7 +110,7 @@ export function AndroidScreenHeader(props: {
           ) : null}
         </View>
 
-        {props.actions?.map((action) => (
+        {visibleActions.map((action) => (
           <AndroidHeaderIconButton
             key={action.accessibilityLabel}
             accessibilityLabel={action.accessibilityLabel}
@@ -99,6 +119,20 @@ export function AndroidScreenHeader(props: {
             onPress={action.onPress}
           />
         ))}
+        {overflowMenuActions.length > 0 ? (
+          <ControlPillMenu
+            actions={overflowMenuActions}
+            isAnchoredToRight
+            onPressAction={({ nativeEvent }) => {
+              overflowActions
+                .find((action) => action.accessibilityLabel === nativeEvent.event)
+                ?.onPress();
+            }}
+          >
+            <AndroidHeaderIconButton accessibilityLabel="More actions" icon="ellipsis" />
+          </ControlPillMenu>
+        ) : null}
+        {navigationHistoryVisible ? <MobileNavigationHistoryButtons grouped /> : null}
         {props.trailing}
       </View>
     </View>
