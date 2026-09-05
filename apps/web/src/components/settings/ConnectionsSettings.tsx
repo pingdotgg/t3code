@@ -48,6 +48,8 @@ import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestam
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 import {
   applyWslEnableSelection,
+  describeAddEnvironmentProgress,
+  displayPairingHost,
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
   selectQrEndpointOption,
@@ -539,6 +541,40 @@ function endpointShareHint(endpoint: AdvertisedEndpoint, url: string): string {
       return "Clients on this machine";
   }
 }
+
+type AddEnvironmentProgress = {
+  readonly mode: "remote" | "ssh";
+  readonly host: string;
+  readonly startedAtMs: number;
+};
+
+const AddEnvironmentProgressPanel = memo(function AddEnvironmentProgressPanel({
+  progress,
+}: {
+  progress: AddEnvironmentProgress;
+}) {
+  const nowMs = useRelativeTimeTick(1_000);
+  const { title, detail, elapsedLabel } = describeAddEnvironmentProgress({
+    mode: progress.mode,
+    host: progress.host,
+    elapsedMs: Math.max(0, nowMs - progress.startedAtMs),
+  });
+  return (
+    <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-muted/30 px-4 py-3">
+      <Spinner className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+      <div role="status" className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium text-foreground">{title}</span>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{detail}</p>
+      </div>
+      <span
+        aria-hidden
+        className="shrink-0 font-mono text-xs tabular-nums leading-5 text-muted-foreground"
+      >
+        {elapsedLabel}
+      </span>
+    </div>
+  );
+});
 
 type PairingLinkListRowProps = {
   pairingLink: ServerPairingLinkRecord;
@@ -1841,7 +1877,9 @@ export function ConnectionsSettings() {
   // Tracks the arrow-key/hover highlight so Enter selects it instead of submitting the typed text.
   const highlightedSshHostRef = useRef<DesktopDiscoveredSshHost | undefined>(undefined);
   const [savedBackendError, setSavedBackendError] = useState<string | null>(null);
-  const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);
+  const [addEnvironmentProgress, setAddEnvironmentProgress] =
+    useState<AddEnvironmentProgress | null>(null);
+  const isAddingSavedBackend = addEnvironmentProgress !== null;
   const [removingSavedEnvironmentId, setRemovingSavedEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const [isUpdatingDesktopServerExposure, setIsUpdatingDesktopServerExposure] = useState(false);
@@ -2169,14 +2207,19 @@ export function ConnectionsSettings() {
   // Shared by manual SSH submission and discovered-host selection.
   const connectSavedBackendSshTarget = useCallback(
     async (target: DesktopSshEnvironmentTarget) => {
-      setIsAddingSavedBackend(true);
+      // A discovered-host pick already started the clock before resolving the alias.
+      setAddEnvironmentProgress((current) => ({
+        mode: "ssh",
+        host: target.alias,
+        startedAtMs: current?.startedAtMs ?? Date.now(),
+      }));
       setSavedBackendError(null);
       const result = await connectSshEnvironment({ target, label: "" });
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           setSavedBackendError(formatDesktopSshConnectionError(squashAtomCommandFailure(result)));
         }
-        setIsAddingSavedBackend(false);
+        setAddEnvironmentProgress(null);
         return;
       }
 
@@ -2191,7 +2234,7 @@ export function ConnectionsSettings() {
         title: "Environment connected",
         description: `${target.alias} is ready over an SSH-managed tunnel.`,
       });
-      setIsAddingSavedBackend(false);
+      setAddEnvironmentProgress(null);
     },
     [connectSshEnvironment],
   );
@@ -2214,7 +2257,6 @@ export function ConnectionsSettings() {
       return;
     }
 
-    setIsAddingSavedBackend(true);
     setSavedBackendError(null);
     let remotePairingInput: ReturnType<typeof parseRemotePairingFields>;
     try {
@@ -2232,10 +2274,14 @@ export function ConnectionsSettings() {
           description: message,
         }),
       );
-      setIsAddingSavedBackend(false);
       return;
     }
 
+    setAddEnvironmentProgress({
+      mode: "remote",
+      host: displayPairingHost(remotePairingInput.host),
+      startedAtMs: Date.now(),
+    });
     const result = await connectPairing(remotePairingInput);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
@@ -2250,7 +2296,7 @@ export function ConnectionsSettings() {
           }),
         );
       }
-      setIsAddingSavedBackend(false);
+      setAddEnvironmentProgress(null);
       return;
     }
 
@@ -2265,7 +2311,7 @@ export function ConnectionsSettings() {
       title: "Backend added",
       description: "The environment is saved and will reconnect on app startup.",
     });
-    setIsAddingSavedBackend(false);
+    setAddEnvironmentProgress(null);
   }, [
     connectPairing,
     connectSavedBackendSshTarget,
@@ -2293,7 +2339,7 @@ export function ConnectionsSettings() {
     async (target: DesktopDiscoveredSshHost) => {
       if (isAddingSavedBackend || !desktopBridge) return;
 
-      setIsAddingSavedBackend(true);
+      setAddEnvironmentProgress({ mode: "ssh", host: target.alias, startedAtMs: Date.now() });
       setSavedBackendError(null);
       setSavedBackendSshHost(target.alias);
       let resolved: DesktopSshEnvironmentTarget;
@@ -2301,7 +2347,7 @@ export function ConnectionsSettings() {
         resolved = await desktopBridge.resolveSshHost(target.alias);
       } catch (error) {
         setSavedBackendError(formatDesktopSshConnectionError(error));
-        setIsAddingSavedBackend(false);
+        setAddEnvironmentProgress(null);
         return;
       }
       setSavedBackendSshUsername(resolved.username ?? "");
@@ -2536,15 +2582,14 @@ export function ConnectionsSettings() {
     <div className="space-y-4">
       {renderRemoteFields()}
       {savedBackendError ? <p className="text-xs text-destructive">{savedBackendError}</p> : null}
-      <Button
-        variant="outline"
-        className="w-full"
-        disabled={isAddingSavedBackend}
-        onClick={() => void handleAddSavedBackend()}
-      >
-        <PlusIcon className="size-3.5" />
-        {isAddingSavedBackend ? "Adding…" : "Add environment"}
-      </Button>
+      {addEnvironmentProgress ? (
+        <AddEnvironmentProgressPanel progress={addEnvironmentProgress} />
+      ) : (
+        <Button variant="outline" className="w-full" onClick={() => void handleAddSavedBackend()}>
+          <PlusIcon className="size-3.5" />
+          Add environment
+        </Button>
+      )}
     </div>
   );
   const renderSshFields = () => (
@@ -2657,15 +2702,14 @@ export function ConnectionsSettings() {
             {savedBackendError ?? discoveredSshHostsError}
           </div>
         ) : null}
-        <Button
-          variant="outline"
-          className="w-full"
-          disabled={isAddingSavedBackend}
-          onClick={() => void handleAddSavedBackend()}
-        >
-          <PlusIcon className="size-3.5" />
-          {isAddingSavedBackend ? "Adding…" : "Add environment"}
-        </Button>
+        {addEnvironmentProgress ? (
+          <AddEnvironmentProgressPanel progress={addEnvironmentProgress} />
+        ) : (
+          <Button variant="outline" className="w-full" onClick={() => void handleAddSavedBackend()}>
+            <PlusIcon className="size-3.5" />
+            Add environment
+          </Button>
+        )}
       </div>
     </div>
   );

@@ -2,6 +2,8 @@ import type { AdvertisedEndpoint, DesktopWslState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  describeAddEnvironmentProgress,
+  displayPairingHost,
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
   selectQrEndpointOption,
@@ -181,5 +183,60 @@ describe("selectQrEndpointOption", () => {
     const loopbackOnly = options.slice(0, 1);
     expect(selectQrEndpointOption(loopbackOnly, null, null)?.id).toBe("desktop-loopback:4780");
     expect(selectQrEndpointOption([], "anything", "anything")).toBeNull();
+  });
+});
+
+describe("describeAddEnvironmentProgress", () => {
+  const describeAt = (mode: "remote" | "ssh", elapsedMs: number) =>
+    describeAddEnvironmentProgress({ mode, host: "devbox", elapsedMs });
+
+  it("formats elapsed time as m:ss, flooring partial seconds", () => {
+    expect(describeAt("ssh", 0).elapsedLabel).toBe("0:00");
+    expect(describeAt("ssh", 4_000).elapsedLabel).toBe("0:04");
+    expect(describeAt("ssh", 92_000).elapsedLabel).toBe("1:32");
+    expect(describeAt("ssh", 725_000).elapsedLabel).toBe("12:05");
+    expect(describeAt("ssh", 4_999).elapsedLabel).toBe("0:04");
+  });
+
+  it("swaps the remote detail for the slow hint at the threshold", () => {
+    expect(describeAt("remote", 7_999).detail).toBe(
+      "Verifying the pairing code and saving the environment.",
+    );
+    expect(describeAt("remote", 8_000).detail).toBe(
+      "Still waiting for the host. Check that it is reachable from this device.",
+    );
+  });
+
+  it("swaps the SSH detail for the slow hint at the threshold", () => {
+    expect(describeAt("ssh", 7_999).detail).toBe(
+      "Starting the T3 Code server on the remote machine.",
+    );
+    expect(describeAt("ssh", 8_000).detail).toBe(
+      "Still working. First-time setup installs T3 Code on the remote machine and can take a few minutes.",
+    );
+  });
+
+  it("names the host being contacted in each mode", () => {
+    expect(
+      describeAddEnvironmentProgress({ mode: "remote", host: "backend.example.com", elapsedMs: 0 })
+        .title,
+    ).toBe("Contacting backend.example.com…");
+    expect(
+      describeAddEnvironmentProgress({ mode: "ssh", host: "devbox", elapsedMs: 0 }).title,
+    ).toBe("Connecting to devbox over SSH…");
+  });
+});
+
+describe("displayPairingHost", () => {
+  it("keeps a bare host or host:port as typed", () => {
+    expect(displayPairingHost("backend.example.com")).toBe("backend.example.com");
+    expect(displayPairingHost(" 10.13.37.3:3773 ")).toBe("10.13.37.3:3773");
+  });
+
+  it("drops the scheme, path, and pairing token from a URL", () => {
+    expect(displayPairingHost("https://backend.example.com/pair#token=ABC")).toBe(
+      "backend.example.com",
+    );
+    expect(displayPairingHost("http://10.13.37.3:3773")).toBe("10.13.37.3:3773");
   });
 });
