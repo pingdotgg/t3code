@@ -1,14 +1,24 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  EnvironmentId,
+  type AuthEnvironmentScope,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const permissions = vi.hoisted(() => ({ canWriteSettings: false }));
+const permissions = vi.hoisted(() => ({ canWriteSettings: false, canEditProject: true }));
 
 vi.mock("~/state/session", () => ({
-  readEnvironmentScope: () => permissions.canWriteSettings,
-  useEnvironmentScope: () => permissions.canWriteSettings,
+  readEnvironmentScope: (_id: EnvironmentId, scope: AuthEnvironmentScope) =>
+    scope === AuthOrchestrationOperateScope
+      ? permissions.canEditProject
+      : permissions.canWriteSettings,
+  useEnvironmentScope: (_id: EnvironmentId, scope: AuthEnvironmentScope) =>
+    scope === AuthOrchestrationOperateScope
+      ? permissions.canEditProject
+      : permissions.canWriteSettings,
 }));
 vi.mock("./ui/dialog", () => ({
   Dialog: "div",
@@ -63,6 +73,7 @@ describe("ProjectScriptEditorDialog", () => {
 
   beforeEach(() => {
     permissions.canWriteSettings = false;
+    permissions.canEditProject = true;
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   });
 
@@ -74,6 +85,7 @@ describe("ProjectScriptEditorDialog", () => {
   async function openEditor(
     onSubmit = vi.fn().mockResolvedValue(AsyncResult.success(undefined)),
     editorRequest = request,
+    actions = { onDelete: vi.fn(), onClose: vi.fn() },
   ) {
     await act(() => {
       renderer = create(
@@ -82,8 +94,8 @@ describe("ProjectScriptEditorDialog", () => {
           request={editorRequest}
           scripts={[]}
           onSubmit={onSubmit}
-          onDelete={vi.fn()}
-          onClose={vi.fn()}
+          onDelete={actions.onDelete}
+          onClose={actions.onClose}
         />,
       );
     });
@@ -231,4 +243,46 @@ describe("ProjectScriptEditorDialog", () => {
       }
     },
   );
+
+  it.each([false, true])(
+    "requires project access to save even with settings access (revoked: %s)",
+    async (revokeBeforeSubmit) => {
+      permissions.canEditProject = revokeBeforeSubmit;
+      permissions.canWriteSettings = true;
+      const onSubmit = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
+      const root = await openEditor(onSubmit);
+      const submit = root.findByType("form").props.onSubmit;
+
+      permissions.canEditProject = false;
+      await act(async () => {
+        await submit({ preventDefault() {} });
+      });
+      expect(onSubmit).not.toHaveBeenCalled();
+
+      permissions.canEditProject = true;
+      await act(async () => {
+        await submit({ preventDefault() {} });
+      });
+      expect(onSubmit).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("rechecks project access before deleting from an already open confirmation", async () => {
+    const actions = { onDelete: vi.fn(), onClose: vi.fn() };
+    const root = await openEditor(undefined, request, actions);
+    await act(() => {
+      root.findByProps({ variant: "destructive-outline" }).props.onClick();
+    });
+    const confirmDelete = root.findByProps({ variant: "destructive" }).props.onClick;
+
+    permissions.canEditProject = false;
+    await act(() => confirmDelete());
+    expect(actions.onDelete).not.toHaveBeenCalled();
+    expect(actions.onClose).not.toHaveBeenCalled();
+
+    permissions.canEditProject = true;
+    await act(() => confirmDelete());
+    expect(actions.onDelete).toHaveBeenCalledExactlyOnceWith(request.scriptId);
+    expect(actions.onClose).toHaveBeenCalledOnce();
+  });
 });
