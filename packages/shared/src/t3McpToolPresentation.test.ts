@@ -33,8 +33,12 @@ describe("resolveT3McpToolPresentation", () => {
       displayName: "Get thread worktree status",
       logo: "t3-code",
     });
-    expect(resolveT3McpToolPresentation("mcp__t3-code__t3_worktree_list")).toEqual({
+    expect(resolveT3McpToolPresentation("t3-code.t3_worktree_list")).toEqual({
       displayName: "List project git worktrees",
+      logo: "t3-code",
+    });
+    expect(resolveT3McpToolPresentation("mcp__t3-code__t3_thread_checkout")).toEqual({
+      displayName: "Check out a thread branch or worktree",
       logo: "t3-code",
     });
   });

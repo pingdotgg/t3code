@@ -1,5 +1,7 @@
 import {
   WorktreeMcpFailure,
+  WorktreeMcpCheckoutInput,
+  WorktreeMcpCheckoutResult,
   WorktreeMcpHandoffInput,
   WorktreeMcpHandoffResult,
   WorktreeMcpListInput,
@@ -15,7 +17,7 @@ const dependencies = [McpInvocationContext.McpInvocationContext, WorktreeMcpServ
 
 export const WorktreeHandoffTool = Tool.make("t3_worktree_handoff", {
   description:
-    "Move this agent thread into a new git worktree. Creates the worktree branch (optionally from origin), re-points the thread at the worktree, and by default runs the project's setup script there. Changing the workspace detaches the live provider session, so the current turn ends shortly after the handoff is recorded; call this as the last action of the turn. To keep working after the handoff, pass continuationPrompt with the remaining work: it is queued as the thread's next message and starts a new turn inside the worktree with the conversation preserved. Without it the thread stays idle until the next message. The worktree is not removed automatically when the thread is deleted. Fails if the thread is already attached to a worktree.",
+    "Move this agent thread into a new git worktree. Creates the worktree branch (optionally from origin), re-points the thread at the worktree, and by default runs the project's setup script there. Changing the workspace detaches the live provider session, so the current turn ends shortly after the handoff is recorded; call this as the last action of the turn. To keep working after the handoff, pass continuationPrompt with the remaining work: it is queued as the thread's next message and starts a new turn inside the worktree with the conversation preserved. Without it the thread stays idle until the next message. The source worktree and the new worktree are not removed automatically.",
   parameters: WorktreeMcpHandoffInput,
   success: WorktreeMcpHandoffResult,
   failure: WorktreeMcpFailure,
@@ -61,8 +63,24 @@ export const WorktreeListTool = Tool.make("t3_worktree_list", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+export const ThreadCheckoutTool = Tool.make("t3_thread_checkout", {
+  description:
+    "Change this existing T3 thread to a branch, project root, listed worktree, or a newly created worktree. This performs the git checkout when needed and updates the durable thread binding only after verifying the actual ref. It never stashes or discards files, deletes existing worktrees, or interrupts other threads. A workspace change detaches the calling provider session; pass continuationPrompt to queue the next turn in the selected checkout. Use t3_worktree_list and t3_worktree_status first.",
+  parameters: WorktreeMcpCheckoutInput,
+  success: WorktreeMcpCheckoutResult,
+  failure: WorktreeMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Check out a branch or worktree for this thread")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true);
+
 export const WorktreeToolkit = Toolkit.make(
   WorktreeHandoffTool,
   WorktreeStatusTool,
   WorktreeListTool,
+  ThreadCheckoutTool,
 );

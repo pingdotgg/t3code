@@ -70,16 +70,28 @@ messages, review titles, and descriptions from your changes.
 Choose the writing style and model in **Settings → Source Control**. **Repository conventions**
 uses the project's instructions and recent commit subjects.
 
-### Let an agent inspect its checkout
+### Let an agent change its checkout
 
 Agents running through T3 Code can inspect the checkout recorded on their thread and compare it
 with Git's actual branch. They can also list the project root and Git-registered worktrees,
 including detached checkouts, dirty state, and the durable branch and worktree path recorded for
 other threads using each checkout. Git resolves symlinked checkout paths through the repository's
 real common-directory and physical-worktree identity, including when a project opens in a nested
-folder. Worktree results are paginated, and missing or unreadable checkouts are
-reported without hiding the rest. These read paths apply only to the calling thread's current
-project and do not create, remove, prune, or revive worktrees.
+folder. Worktree results are paginated, and missing or unreadable checkouts are reported without
+hiding the rest.
+
+An agent can move its current thread to an existing branch, return to the project root, reuse an
+unclaimed worktree, or create a new worktree. T3 Code performs the Git operation before it updates
+the thread's saved branch and worktree path. It refuses to switch a dirty checkout and will not
+silently stash or discard files. It also refuses to take over a worktree owned by another thread or
+switch a shared root while another thread is bound there.
+
+Moving between workspace paths ends the current agent turn in the selected checkout. The agent can
+queue a continuation as part of that move so a replacement turn starts there without needing the
+browser to stay open. Without a continuation, the thread remains idle until its next message. These
+controls apply only to the calling thread and its current project. They do not remove, prune, or
+revive existing worktrees. If creating a new worktree fails before its durable thread binding
+commits, T3 Code attempts to remove only that newly created checkout as rollback.
 
 ## Review and merge
 

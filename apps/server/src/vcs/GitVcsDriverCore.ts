@@ -3355,7 +3355,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const createRef: GitVcsDriver.GitVcsDriver["Service"]["createRef"] = Effect.fn("createRef")(
     function* (input) {
-      yield* executeGit("GitVcsDriver.createRef", input.cwd, ["branch", input.refName], {
+      yield* executeGit(
+        "GitVcsDriver.createRef.validate",
+        input.cwd,
+        ["check-ref-format", "--branch", input.refName],
+        {
+          timeoutMs: 5_000,
+          fallbackErrorDetail: "invalid git branch name",
+        },
+      );
+      yield* executeGit("GitVcsDriver.createRef", input.cwd, ["branch", "--", input.refName], {
         timeoutMs: 10_000,
         fallbackErrorDetail: "git branch create failed",
       });

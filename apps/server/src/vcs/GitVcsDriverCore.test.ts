@@ -399,7 +399,7 @@ it.effect("invalidates a ref snapshot when a mutation fails after changing Git",
           if (!ChildProcess.isStandardCommand(command)) {
             return yield* Effect.die("expected a standard Git command");
           }
-          if (command.args[0] === "branch" && command.args[1] === "feature/partial-failure") {
+          if (command.args[0] === "branch" && command.args.includes("feature/partial-failure")) {
             const handle = yield* delegate.spawn(command);
             yield* handle.exitCode;
             return makeNonRepositoryHandle();
@@ -1544,6 +1544,27 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("rejects option-like branch names without changing upstream configuration", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+
+        const upstreamBefore = yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]);
+        const error = yield* driver
+          .createRef({ cwd, refName: "--unset-upstream" })
+          .pipe(Effect.flip);
+
+        assert.equal(error.operation, "GitVcsDriver.createRef.validate");
+        assert.equal(yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]), upstreamBefore);
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
+      }),
+    );
+
     it.effect("returns the existing refName when rename source and target match", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -1559,6 +1580,33 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
 
         assert.equal(result.branch, current);
       }),
+    );
+
+    it.effect(
+      "resolves an explicit remote ref instead of a same-named untracked local branch",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* git(remote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "origin", remote]);
+          yield* git(cwd, ["push", "origin", "HEAD:refs/heads/feature"]);
+          const remoteFeatureCommit = yield* git(cwd, ["rev-parse", "origin/feature"]);
+          yield* git(cwd, ["checkout", "-b", "feature"]);
+          yield* writeTextFile(cwd, "local-only.txt", "local\n");
+          yield* git(cwd, ["add", "local-only.txt"]);
+          yield* git(cwd, ["commit", "-m", "local feature"]);
+          const localFeatureCommit = yield* git(cwd, ["rev-parse", "feature"]);
+          yield* git(cwd, ["checkout", initialBranch]);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+
+          const switched = yield* driver.switchRef({ cwd, refName: "origin/feature" });
+
+          assert.equal(switched.refName, null);
+          assert.notEqual(localFeatureCommit, remoteFeatureCommit);
+          assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), remoteFeatureCommit);
+        }),
     );
   });
 
@@ -1629,7 +1677,6 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           const cwd = yield* makeTmpDir();
           yield* initRepoWithCommit(cwd);
           const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
-          const fileSystem = yield* FileSystem.FileSystem;
           const pathService = yield* Path.Path;
           const worktreePath = pathService.join(worktreesRoot, "linked\nworktree");
           const driver = yield* GitVcsDriver.GitVcsDriver;
