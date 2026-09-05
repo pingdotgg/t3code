@@ -272,6 +272,8 @@ function ComposerSkillDecorator(props: { skillLabel: string; skillDescription: s
       contentEditable={false}
       spellCheck={false}
       data-composer-skill-chip="true"
+      role="img"
+      aria-label={`Skill: ${props.skillLabel}`}
     >
       <span
         aria-hidden="true"
