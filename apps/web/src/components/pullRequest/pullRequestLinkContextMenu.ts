@@ -19,7 +19,7 @@ export const openOnHostLabel = (provider: string): string =>
   OPEN_ON_HOST_LABELS[provider] ?? "Open on host";
 
 /** Copy first: it is the reason to right-click a number rather than click it. */
-export function pullRequestLinkContextMenuItems(
+function pullRequestLinkContextMenuItems(
   openLabel: string,
 ): readonly ContextMenuItem<PullRequestLinkContextMenuAction>[] {
   return [
